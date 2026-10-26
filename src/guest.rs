@@ -69,12 +69,12 @@ impl Image {
                 if opcode<0xb8 {w=8;}
                 dst=view((opcode&7) as usize,w);src=dst;
                 let value=r.unsigned(w)?;
-                ("MOV immediate".to_owned(),compile(&format!("const v {w} {value}\nwrite dst v\npreserve_flags all\nretire"),w))
+                (format!("MOV {},0x{value:0digits$x}",register_name(dst),digits=(w/4) as usize),compile(&format!("const v {w} {value}\nwrite dst v\npreserve_flags all\nretire"),w))
             }
             0x70..=0x7f=>{
                 disp=r.byte()? as i8 as i32;
                 let name=format!("j{}",CONDITIONS[(opcode&15) as usize]);
-                (name.clone(),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
+                (format!("{} 0x{:08x}",name.to_ascii_uppercase(),r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
             }
             0x0f=>{
                 let second=r.byte()?;
@@ -83,14 +83,14 @@ impl Image {
                     dst=reg;src=rm;
                     if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});src=reg;}
                     let text=operand_text("imul",w,address.is_some(),true,None)?;
-                    ("IMUL".into(),compile(&text,w))
+                    (format!("IMUL {},{}",register_name(dst),operand_name(src,address)),compile(&text,w))
                 }else{
                 if !(0x90..=0x9f).contains(&second) {return Err(GuestError::Decode(format!("unsupported opcode 0f {second:02x}")));}
                 let m=r.byte()?;
                 if m>>6!=3 || (m>>3)&7!=0 {return Err(GuestError::Decode("SETcc profile supports register destination with /0 only".into()));}
                 w=8;dst=view((m&7) as usize,w);src=dst;
                 let name=format!("set{}",CONDITIONS[(second&15) as usize]);
-                (name.clone(),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
+                (format!("{} {}",name.to_ascii_uppercase(),register_name(dst)),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
                 }
             }
             0x69|0x6b=>{
@@ -102,7 +102,7 @@ impl Image {
                     .replace("read a dst $W","read a src $W")
                     .replace("read b src $W",&format!("const b $W {immediate}"));
                 if memory{text=text.replace("read a src $W","read_address addr\nload a addr $W");}
-                ("IMUL immediate".into(),compile(&instantiate(text,w),w))
+                (format!("IMUL {},{},0x{immediate:0digits$x}",register_name(dst),operand_name(src,address),digits=(w/4) as usize),compile(&instantiate(text,w),w))
             }
             0xc0|0xc1|0xd0|0xd1|0xd2|0xd3=>{
                 if opcode&1==0{w=8;}
@@ -112,13 +112,13 @@ impl Image {
                 if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=view(0,w);}
                 let immediate=match opcode{0xc0|0xc1=>Some(u32::from(r.byte()?)),0xd0|0xd1=>Some(1),_=>None};
                 let text=operand_text(name,w,memory,false,immediate)?;
-                (name.to_ascii_uppercase(),compile(&text,w))
+                (format!("{} {},{}",name.to_ascii_uppercase(),operand_name(dst,address),immediate.map(|v|format!("0x{v:02x}")).unwrap_or_else(||"CL".into())),compile(&text,w))
             }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
             0x40..=0x4f=>{
                 dst=view((opcode&7) as usize,w);src=dst;
                 let name=if opcode<0x48{"inc"}else{"dec"};
-                (name.to_ascii_uppercase(),compile(&instantiate(description(name).map_err(GuestError::Decode)?,w),w))
+                (format!("{} {}",name.to_ascii_uppercase(),register_name(dst)),compile(&instantiate(description(name).map_err(GuestError::Decode)?,w),w))
             }
             // AL/AX/EAX immediate arithmetic and TEST.
             0x04|0x05|0x0c|0x0d|0x14|0x15|0x1c|0x1d|0x24|0x25|0x2c|0x2d|0x34|0x35|0x3c|0x3d|0xa8|0xa9=>{
@@ -126,7 +126,7 @@ impl Image {
                 let name=if opcode>=0xa8{"test"}else{alu_name((opcode>>3)&7)};
                 let value=r.unsigned(w)?;
                 let text=operand_text(name,w,false,false,Some(value))?;
-                (format!("{} immediate",name.to_ascii_uppercase()),compile(&text,w))
+                (format!("{} {},0x{value:0digits$x}",name.to_ascii_uppercase(),register_name(dst),digits=(w/4) as usize),compile(&text,w))
             }
             0x00..=0x03|0x08..=0x0b|0x10..=0x13|0x18..=0x1b|0x20..=0x23|0x28..=0x2b|0x30..=0x33|0x38..=0x3b|0x84|0x85|0x88..=0x8b|0x80|0x81|0x83|0xf6|0xf7|0xfe|0xff=>{
                 if opcode&1==0{w=8;}
@@ -150,7 +150,10 @@ impl Image {
                 let immediate=if opcode==0x83{Some((r.byte()? as i8 as i32 as u32)&super::mask(w) as u32)}
                     else if group1||(group3&&extension==0){Some(r.unsigned(w)?)}else{None};
                 let text=operand_text(name,w,memory,reverse,immediate)?;
-                (name.to_ascii_uppercase(),compile(&text,w))
+                let left=operand_name(dst,if reverse{None}else{address});
+                let right=if let Some(value)=immediate{format!("0x{value:0digits$x}",digits=(w/4) as usize)}else{operand_name(src,if reverse{address}else{None})};
+                let label=if matches!(name,"not"|"neg"|"inc"|"dec"){format!("{} {left}",name.to_ascii_uppercase())}else{format!("{} {left},{right}",name.to_ascii_uppercase())};
+                (label,compile(&text,w))
             }
             0xe4|0xe6=>{
                 let port=r.byte()?;if port!=0xe9{return Err(GuestError::Decode(format!("unsupported monitor port {port:02x}")));}
@@ -163,6 +166,34 @@ impl Image {
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
     }
+}
+fn register_name(view:View)->&'static str {
+    const BYTE:[&str;8]=["AL","CL","DL","BL","AH","CH","DH","BH"];
+    const WORD:[&str;8]=["AX","CX","DX","BX","SP","BP","SI","DI"];
+    const DWORD:[&str;8]=["EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI"];
+    match view.width{8=>BYTE[view.register+if view.low==8{4}else{0}],16=>WORD[view.register],_=>DWORD[view.register]}
+}
+fn operand_name(view:View,address:Option<AddressContext>)->String {
+    let Some(address)=address else{return register_name(view).into();};
+    let mut terms=Vec::new();let displacement;
+    match address.effective {
+        EffectiveAddress::Bits16{form,displacement:d}=>{
+            let base=match form{Address16::BxSi=>"BX+SI",Address16::BxDi=>"BX+DI",Address16::BpSi=>"BP+SI",Address16::BpDi=>"BP+DI",Address16::Si=>"SI",Address16::Di=>"DI",Address16::Bp=>"BP",Address16::Bx=>"BX",Address16::Direct=>""};
+            if !base.is_empty(){terms.push(base.to_owned());}displacement=i64::from(d as i16);
+            if terms.is_empty(){terms.push(format!("0x{d:04x}"));}
+            else if displacement!=0{terms.push(format!("{}{:#x}",if displacement<0{"-"}else{"+"},displacement.unsigned_abs()));}
+        }
+        EffectiveAddress::Bits32{base,index,scale,displacement:d}=>{
+            if let Some(base)=base{terms.push(format!("{base:?}").to_ascii_uppercase());}
+            if let Some(index)=index{let index=format!("{index:?}").to_ascii_uppercase();let prefix=if terms.is_empty(){""}else{"+"};terms.push(if scale==1{format!("{prefix}{index}")}else{format!("{prefix}{index}*{scale}")});}
+            displacement=i64::from(d as i32);
+            if terms.is_empty(){terms.push(format!("0x{d:08x}"));}
+            else if displacement!=0{terms.push(format!("{}{:#x}",if displacement<0{"-"}else{"+"},displacement.unsigned_abs()));}
+        }
+    }
+    let segment=address.effective.resolve(&[0;8],address.override_segment).expect("decoded effective address").segment;
+    let segment=format!("{segment:?}").to_ascii_uppercase();let size=match view.width{8=>"byte",16=>"word",_=>"dword"};
+    format!("{size} {segment}:[{}]",terms.concat())
 }
 fn alu_name(group:u8)->&'static str { ["add","or","adc","sbb","and","sub","xor","cmp"][group as usize] }
 // Bind operand locations before validating tokens; flag semantics remain in PIL.

@@ -272,6 +272,30 @@ impl Debugger {
     fn step_preview(&self)->Option<super::guest::Operation> {
         self.image.as_ref()?.decode(&self.ram,self.cpu.eip).ok().map(|d|d.operation)
     }
+    fn listing(&self,start:u32,count:u64)->Result<String,String>{
+        if count==0||count>256{return Err("list count must be 1..256 instructions".into());}
+        let mut lines=Vec::new();
+        if let Some(image)=&self.image{
+            if start<super::guest::ENTRY||start>=image.end{return Err("listing address outside loaded image".into());}
+            let mut ip=start;
+            for _ in 0..count {
+                if ip>=image.end{break;}
+                match image.decode(&self.ram,ip){
+                    Ok(d)=>{
+                        let signature=image.fetch_signature(&self.ram,ip,d.length).map_err(|e|format!("{e:?}"))?;
+                        let bytes=signature[..d.length as usize].iter().map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+                        lines.push(format!("{} {ip:08x}  {bytes:<44} {}",if ip==self.cpu.eip{"*"}else{" "},d.label));
+                        ip+=d.length;if matches!(d.operation,super::guest::Operation::Halt){break;}
+                    }
+                    Err(e)=>{lines.push(format!("  {ip:08x}  {e:?}"));break;}
+                }
+            }
+        }else{
+            if !self.instructions.contains_key(&start){return Err("no instruction at listing address".into());}
+            for (ip,instruction) in self.instructions.range(start..).take(count as usize){lines.push(format!("{} {ip:08x} {}",if *ip==self.cpu.eip{"*"}else{" "},instruction.label));}
+        }
+        Ok(lines.join("\n"))
+    }
     fn dump_memory(&self,address:u32,count:u64,width:super::memory::MemWidth,decimal:bool)->Result<String,String>{
         if count==0||count>256{return Err("dump count must be 1..256 values".into());}
         let bytes=usize::from(width.bytes());let length=(count as usize)*bytes;
@@ -299,6 +323,7 @@ impl Debugger {
             []=>String::new(),
             ["help"]=>concat!(
                 "help | demo counter|echo|memory|selftest|hello|factorials|loop | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
+                "list [count 1..256] | list <address> <count> (bytes, operands, branch targets; * marks EIP)\n",
                 "cache [stats|on|off|clear] (binary monitor)\n",
                 "time [steps 1..1000000] | bench [iterations 1..100000] [samples 1..9] | stress [passes 1..1000]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
@@ -312,18 +337,11 @@ impl Debugger {
             ["demo",name]=>{self.load_demo(name)?;format!("loaded {} at EIP={:08x}",self.demo,self.cpu.eip)}
             ["load",path]=>{let bytes=std::fs::read(path).map_err(|e|e.to_string())?;self.load_image(&bytes,path)?;format!("loaded {} guest bytes at EIP=00000100",bytes.len())}
             ["check"]=>self.check_current()?,
-            ["list"] if self.image.is_some()=>{
-                let image=self.image.as_ref().unwrap();let mut ip=self.cpu.eip;let mut lines=Vec::new();
-                for _ in 0..16 {
-                    match image.decode(&self.ram,ip) {
-                        Ok(d)=>{lines.push(format!("{ip:08x} {}",d.label));ip+=d.length;if matches!(d.operation,super::guest::Operation::Halt){break;}},
-                        Err(e)=>{lines.push(format!("{ip:08x} {e:?}"));break;}
-                    }
-                }lines.join("\n")
-            }
-            ["list"]=>{
-                self.instructions.iter().map(|(ip,i)|format!("{} {ip:08x} {}",
-                    if *ip==self.cpu.eip {"*"}else{" "},i.label)).collect::<Vec<_>>().join("\n")
+            ["list"]=>self.listing(self.cpu.eip,16)?,
+            ["list",count]=>self.listing(self.cpu.eip,number(count)?)?,
+            ["list",start,count]=>{
+                let start=u32::try_from(number(start)?).map_err(|_|"listing address must fit 32 bits")?;
+                self.listing(start,number(count)?)?
             }
             ["step"]|["s"]=>{
                 let from=self.cpu.eip;let stop=self.step();

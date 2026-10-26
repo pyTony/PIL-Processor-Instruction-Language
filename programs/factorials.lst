@@ -1,12 +1,12 @@
-0100  66 be 01 00 00 00        MOV r6,0x1
-0106  66 bf 00 04 00 00        MOV r7,0x400
-010c  66 bb 01 00 00 00        MOV r3,0x1
-0112  66 bd 0d 00 00 00        MOV r5,0xd
-0118  66 b8 01 00 00 00        MOV r0,0x1
-011e  66 bc 04 00 00 00        MOV r4,0x4
+0100  66 be 01 00 00 00        MOV ESI,0x1
+0106  66 bf 00 04 00 00        MOV EDI,0x400
+010c  66 bb 01 00 00 00        MOV EBX,0x1
+0112  66 bd 0d 00 00 00        MOV EBP,0xd
+0118  66 b8 01 00 00 00        MOV EAX,0x1
+011e  66 bc 04 00 00 00        MOV ESP,0x4
 0124  66 89 c2                 MOV EDX,EAX ; previous factorial
 0127  66 89 f1                 MOV ECX,ESI ; multiply by n using n additions
-012a  66 b8 00 00 00 00        MOV r0,0x0
+012a  66 b8 00 00 00 00        MOV EAX,0x0
 0130  66 01 d0                 ADD EAX,EDX
 0133  66 29 d9                 SUB ECX,EBX
 0136  75 f8                    JNE multiply
