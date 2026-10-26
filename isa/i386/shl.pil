@@ -1,0 +1,30 @@
+# Count and conditional effects are explicit PIL, not interpreter x86 logic.
+read a dst $W
+read b src $W
+const count_mask $W 31
+and count b count_mask
+const one $W 1
+const width $W $W
+const yes 1 1
+const no 1 0
+zero is_zero count
+not active is_zero
+xor count_minus_one count one
+zero single count_minus_one
+sub last count one
+shl r a count
+shl previous a last
+bit cf previous $SIGN
+ult cf_defined count width
+bit sf r $SIGN
+zero zf r
+parity pf r
+xor of sf cf
+write dst r
+flag_if CF cf cf_defined active
+flag_if OF of single active
+flag_if AF no no active
+flag_if SF sf yes active
+flag_if ZF zf yes active
+flag_if PF pf yes active
+retire

@@ -78,12 +78,41 @@ impl Image {
             }
             0x0f=>{
                 let second=r.byte()?;
+                if second==0xaf {
+                    let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
+                    dst=reg;src=rm;
+                    if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});src=reg;}
+                    let text=operand_text("imul",w,address.is_some(),true,None)?;
+                    ("IMUL".into(),compile(&text,w))
+                }else{
                 if !(0x90..=0x9f).contains(&second) {return Err(GuestError::Decode(format!("unsupported opcode 0f {second:02x}")));}
                 let m=r.byte()?;
                 if m>>6!=3 || (m>>3)&7!=0 {return Err(GuestError::Decode("SETcc profile supports register destination with /0 only".into()));}
                 w=8;dst=view((m&7) as usize,w);src=dst;
                 let name=format!("set{}",CONDITIONS[(second&15) as usize]);
                 (name.clone(),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
+                }
+            }
+            0x69|0x6b=>{
+                let m=r.byte()?;dst=view(((m>>3)&7) as usize,w);src=view((m&7) as usize,w);
+                let memory=m>>6!=3;
+                if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});src=dst;}
+                let immediate=if opcode==0x6b{(r.byte()? as i8 as i32 as u32)&super::mask(w) as u32}else{r.unsigned(w)?};
+                let mut text=description("imul").map_err(GuestError::Decode)?
+                    .replace("read a dst $W","read a src $W")
+                    .replace("read b src $W",&format!("const b $W {immediate}"));
+                if memory{text=text.replace("read a src $W","read_address addr\nload a addr $W");}
+                ("IMUL immediate".into(),compile(&instantiate(text,w),w))
+            }
+            0xc0|0xc1|0xd0|0xd1|0xd2|0xd3=>{
+                if opcode&1==0{w=8;}
+                let m=r.byte()?;let name=match (m>>3)&7{4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
+                dst=view((m&7) as usize,w);src=view(1,w);
+                let memory=m>>6!=3;
+                if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=view(0,w);}
+                let immediate=match opcode{0xc0|0xc1=>Some(u32::from(r.byte()?)),0xd0|0xd1=>Some(1),_=>None};
+                let text=operand_text(name,w,memory,false,immediate)?;
+                (name.to_ascii_uppercase(),compile(&text,w))
             }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
             0x40..=0x4f=>{
