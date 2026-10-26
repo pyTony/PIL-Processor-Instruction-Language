@@ -1,3 +1,15 @@
+# Typed dumps verified — runtime PR #12
+
+https://github.com/pyTony/pil_proof/pull/12 awaits user review. Dev code
+381cac63ee71c552d248177ba0156e07ddce7b79 passed CI run40373417827:
+144 tests,Ubuntu12.39 s/Windows16.80 s. Existing23 cases match3,044,833 bytes;
+standalone62-file source, launchers, generated Rust and unpacked native checks
+passed. Runtime head52834b3e0dbefbf724408b21dedb4cce19647568 is based on
+main4e87b848590f85a842d03b84bd23bb6a3fcbbaa9 after merged PR #11.
+New mem8/mem16/mem32 values/ASCII/decimal documented; no dump user run yet.
+User Windows0.13 alpha.1 multiplication/shift proof passed all23 cases and
+REPL startup. No release/tag published. Next: fixed-point Mandelbrot workload.
+
 # Typed memory dumps —0.13.0-alpha.2
 
 New mem8/mem16/mem32 ADDRESS [COUNT] [hex|dec]. Count is values1..256;

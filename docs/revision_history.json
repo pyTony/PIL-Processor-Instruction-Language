@@ -893,7 +893,7 @@
     {
       "version": "0.13.0-alpha.2",
       "date": "2026-10-26",
-      "status": "typed dump validation pending; separate delivery after PR #11 merge",
+      "status": "host-verified; runtime PR #12 awaits review",
       "features": [
         "mem8/mem16/mem32 typed dumps",
         "printable ASCII and unsigned decimal",
@@ -901,7 +901,17 @@
       ],
       "rust_verification": {
         "tests_supplied": 144,
-        "status": "pending hosted CI for typed dumps"
+        "tests_passed": 144,
+        "tests_failed": 0,
+        "ubuntu_seconds": 12.39,
+        "windows_seconds": 16.8,
+        "source_commit": "381cac63ee71c552d248177ba0156e07ddce7b79",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40373417827",
+        "verifier_cases": 23,
+        "matched_trace_bytes": 3044833,
+        "runtime_export": "62-file isolated checks passed",
+        "native_archive": "unpacked verification passed",
+        "user_dump_commands": "not yet reported"
       },
       "runtime_files": 62,
       "provenance": "original debugger code; no new external materials/dependencies"

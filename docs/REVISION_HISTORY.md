@@ -385,3 +385,9 @@ Cache29997 hits/7 misses/0 invalidations. Direct CPU baseline passed; samples
 [0.0044,0.0043,0.0044,0.0043,0.0043] ms,median0.004300 ms/0.430 ns per
 iteration. Narrower scope,not386 cycles.10000 iterations/30003 instructions
 per sample,5 samples plus1 excluded warmup. REPL startup confirmed.
+
+0.13.0-alpha.2 host verification at381cac63ee71c552d248177ba0156e07ddce7b79:
+https://github.com/pyTony/pil_proof/actions/runs/40373417827 —144 passed,
+Ubuntu12.39 s/Windows16.80 s. Existing23 cases/3,044,833 trace bytes match.
+Standalone62-file source and unpacked native delivery checks passed. Runtime
+PR #12 awaits review; typed dump user verification unreported.
