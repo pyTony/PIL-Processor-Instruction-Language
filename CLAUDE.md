@@ -1,3 +1,15 @@
+# Runtime PR #15 ready for user review
+
+https://github.com/pyTony/pil_proof/pull/15 delivers0.14.0-alpha.2.
+Runtime head46053bcd2193060477efa43c0cbc6a8647b5e5c1; source dev
+441844483574e5b55c7eb8691fdce7ff828a6a4c; base main
+cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c.66-file runtime-only projection.
+Windows/Linux157 tests and full-image comparison passed CI40384865363.
+After user merges:git pull --ff-only origin main; Windows
+.\tools\mandelbrot.ps1 -Compare; shell sh tools/mandelbrot.sh --compare 256 32.
+No user alpha.2 full-image comparison reported yet. Keep follow-up development
+on dev; main only runtime exports. No release/tag published.
+
 # Full-image backend comparison verified —0.14.0-alpha.2
 
 Core dev a5db4e29542b4b62bdcc4389df17e741de8d094e passed CI40384865363:

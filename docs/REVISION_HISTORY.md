@@ -470,3 +470,7 @@ User Windows0.14alpha.1 normal render1484.024 ms is separately recorded.
 Prepare delivery/v0.14.0-alpha.2 from main cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c;
 user reviews/merges in browser. No tag/release; development stays dev.
 Next: user full-image comparison,then additional device/machine-state support.
+
+Runtime-only PR #15: https://github.com/pyTony/pil_proof/pull/15;
+head46053bcd2193060477efa43c0cbc6a8647b5e5c1,source441844483574e5b55c7eb8691fdce7ff828a6a4c.
+User review pending; no tag/release published.

@@ -1075,7 +1075,7 @@
     {
       "version": "0.14.0-alpha.2",
       "date": "2026-10-26",
-      "status": "host-verified; runtime-only delivery being prepared",
+      "status": "host-verified; runtime-only PR #15 awaits user review",
       "features": [
         "full-image generated Rust comparison",
         "26-case per-instruction gate",
@@ -1118,6 +1118,12 @@
           "image_compile_seconds": 1.792
         },
         "scope": "single cold render each; checkpoint capture and draining included; setup/reference/files/process startup/compilation excluded; not median benchmark or386 cycles"
+      },
+      "runtime_delivery": {
+        "pull_request": "https://github.com/pyTony/pil_proof/pull/15",
+        "head": "46053bcd2193060477efa43c0cbc6a8647b5e5c1",
+        "source_commit": "441844483574e5b55c7eb8691fdce7ff828a6a4c",
+        "base_main": "cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c"
       }
     }
   ]
