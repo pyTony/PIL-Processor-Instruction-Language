@@ -701,3 +701,16 @@ User reported preceding sourced23ab45 passing52,728 hardware cases on native
 Windows/x86_64 AuthenticAMD CPUID1 EAX00a20f10 (ECXfed8320b),rustc1.99.1.
 Fingerprint0bc8895949b33008; one selected test passed,166 filtered out.
 Artifacts under target/host-cpu-oracle. This is correctness,not a benchmark.
+
+## Independent overnight work: shifts and multiplication —27 October2026
+
+User authorized substantial independent work while away. First slice extends
+host oracle to SHL/SHR/SAR8/16/32 (CL forms) and truncated two-operand IMUL16/32.
+All256 count bytes cross boundary inputs; deterministic random pairs and both
+carry/metadata states remain. Count-zero preserves flags/markers; active shift
+undefined masks depend independently on masked count and width. IMUL compares
+only CF/OF to hardware and checks its other four zero/undefined PIL outputs.
+Expected226,008 hardware cases/50 encoding variants/23 harness checks and169
+Rust tests. Hosted execution pending. No runtime change for this slice.
+Next candidate: rotate descriptions/decoder/forms with independent oracles.
+Keep new runtime work ondev; prepare a strict delivery PR only after checks.

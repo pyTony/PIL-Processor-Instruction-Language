@@ -1,3 +1,16 @@
+# Independent overnight work: shifts and multiplication —27 October2026
+
+User authorized substantial independent work while away. First slice extends
+host oracle to SHL/SHR/SAR8/16/32 (CL forms) and truncated two-operand IMUL16/32.
+All256 count bytes cross boundary inputs; deterministic random pairs and both
+carry/metadata states remain. Count-zero preserves flags/markers; active shift
+undefined masks depend independently on masked count and width. IMUL compares
+only CF/OF to hardware and checks its other four zero/undefined PIL outputs.
+Expected226,008 hardware cases/50 encoding variants/23 harness checks and169
+Rust tests. Hosted execution pending. No runtime change for this slice.
+Next candidate: rotate descriptions/decoder/forms with independent oracles.
+Keep new runtime work ondev; prepare a strict delivery PR only after checks.
+
 # Logical hardware oracle expansion —27 October2026
 
 Adds AND/OR/XOR/TEST8/16/32 to the development-only CPU oracle. Independent

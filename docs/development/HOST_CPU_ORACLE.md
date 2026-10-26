@@ -181,3 +181,19 @@ EAX00a00f11. All16 native harness checks,39 existing backend trace cases,
 full256x256 Mandelbrot and isolated runtime/package checks passed. No ARM run
 is claimed. The72-file runtime export is unchanged except source provenance
 and its checksum; no delivery PR or Cargo version bump is needed.
+
+## Shift and truncated-IMUL expansion (execution pending)
+
+SHL/SHR/SAR CL forms at8/16/32 bits and two-operand IMUL16/32 add11 native
+encoding variants. Shift counts0..255 cross all boundary values;512 random
+pairs per width/form remain. New total226,008 cases/50 variants,plus23 native
+harness answers. One portable count/mask regression raises Rust tests to169.
+
+Shift counts are masked by31. Zero preserves flags/metadata. Active shifts
+define SF/ZF/PF,leave AF undefined and define OF only for masked count1.
+SHL/SHR CF is excluded at or above operand width; SAR CF stays defined.
+IMUL defines CF/OF and leaves PF/AF/ZF/SF undefined. All undefined native
+values remain recorded but excluded from hardware equality; separate PIL
+concrete-zero and exact metadata policies still apply. Schema2 is unchanged.
+Modern results cover the admitted common semantics,not386 timing/system
+behavior or undocumented count rules. Runtime instructions remain unchanged.

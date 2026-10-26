@@ -1558,6 +1558,22 @@
           "runtime_export_files": 72,
           "arm": "not executed for this increment"
         }
+      },
+      "shift_imul_host_oracle_development": {
+        "date": "2026-10-27",
+        "status": "implemented;hosted execution pending",
+        "authorization": "user requested substantial independent work while away",
+        "operations": [
+          "SHL8/16/32 CL",
+          "SHR8/16/32 CL",
+          "SAR8/16/32 CL",
+          "IMUL16/32 two operand"
+        ],
+        "expected_hardware_cases": 226008,
+        "encoding_variants": 50,
+        "known_answer_checks": 23,
+        "expected_tests": 169,
+        "runtime_changed": false
       }
     }
   ]

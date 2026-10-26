@@ -432,3 +432,10 @@ already listed above. AF is undefined for AND/OR/XOR/TEST; observed nativeAF
 is not promoted to a processor-independent requirement. No external vectors
 or code imported. Windows52,728-case evidence is the user's console transcript
 for d23ab45,kept separately from hosted CI.
+
+## Shift/multiplication host-oracle expansion —27 October2026
+
+Original native CL-shift and two-operand IMUL stubs/cases. Architectural masks
+follow the existing Intel386/IntelSDM shift and IMUL references listed above.
+Independent count/mask checks do not consult PIL's undefined metadata. No
+external vectors or source imported; no cycle/timing conformity is claimed.
