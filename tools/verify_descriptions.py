@@ -108,6 +108,25 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
             classified |= m
             flags &= ~m
             undefined |= m
+        elif op == "flag_if":
+            n,nw=values[t[2]];defined,dw=values[t[3]];active,cw=values[t[4]]
+            assert (nw,dw,cw)==(1,1,1)
+            m=1<<FLAGS[t[1]];assert not classified&m;classified|=m
+            if active:
+                flags &= ~m
+                if defined:flags|=n<<FLAGS[t[1]];undefined&=~m
+                else:undefined|=m
+        elif op == "ult":
+            x,w=values[t[2]];y,yw=values[t[3]];assert w==yw
+            values[t[1]]=(int(x<y),1)
+        elif op in ("shl","lshr","ashr"):
+            x,w=values[t[2]];n,_=values[t[3]]
+            if op=="ashr":
+                if x&(1<<(w-1)):x-=1<<w
+                result=x>>min(n,w-1)
+            elif n>=w:result=0
+            else:result=x<<n if op=="shl" else x>>n
+            values[t[1]]=(result&((1<<w)-1),w)
         elif op == "select":
             c,cw=values[t[2]]
             assert cw==1 and values[t[3]][1]==values[t[4]][1]
@@ -237,6 +256,27 @@ if __name__ == "__main__":
                 assert got==want,(width,x,y,got,want)
                 imul_count+=1
     print(f"{imul_count:,} independent signed IMUL cases passed.")
+    shift_count=0
+    for op in ("shl","shr","sar"):
+        for width in (8,16,32):
+            code=tokens(op,width);mask=(1<<width)-1;sign=1<<(width-1)
+            values=range(256) if width==8 else (0,1,3,sign-1,sign,mask,0xa55aa55a)
+            for a in values:
+                for raw in list(range(32))+[32,33,63,64,255]:
+                    for initial,u in ((0x202,0),(0xad7,0x8d5)):
+                        n=raw&31;x=a&mask
+                        if not n:want=(a,initial,u)
+                        else:
+                            result=((x<<n) if op=="shl" else (x>>n) if op=="shr" else ((x-(1<<width) if x&sign else x)>>n))&mask
+                            cf_undefined=op!="sar" and n>=width
+                            cf=0 if cf_undefined else (x>>(width-n))&1 if op=="shl" else int(bool(x&sign)) if n>=width else (x>>(n-1))&1
+                            of=0 if n!=1 or op=="sar" else int(bool((x^result)&sign)) if op=="shl" else int(bool(x&sign))
+                            flags=(initial&~0x8d5)|cf|(int((result&255).bit_count()%2==0)<<2)|(int(result==0)<<6)|(int(bool(result&sign))<<7)|(of<<11)
+                            want=((a&~mask)|result,flags,16|(0x800 if n>1 else 0)|int(cf_undefined))
+                        got=interpret(code,a,raw,width,initial,u)
+                        assert got==want,(op,width,a,raw,got,want)
+                        shift_count+=1
+    print(f"{shift_count:,} independent shift cases passed.")
     arithmetic_count=count
     def condition_flags(bits):
         return 0x202 | sum(((bits >> i)&1) << bit for i,bit in enumerate((0,2,4,6,7,11)))

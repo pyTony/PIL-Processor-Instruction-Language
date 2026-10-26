@@ -558,3 +558,47 @@ fn multiply_validation_rejects_invalid_widths_and_conversion_directions(){
     for text in ["const a 16 1\nsext b a 8\npreserve_flags all\nretire","const a 8 1\nconst b 16 1\nmul c a b\npreserve_flags all\nretire","const a 64 1\nsext b a 65\npreserve_flags all\nretire"] {assert!(compile(text,8).is_err());}
     assert!(compile(&instantiate(description("imul").unwrap(),8),8).is_err());
 }
+
+fn shift_oracle(op:&str,a:u32,count:u32,w:u8,f:u32,u:u32)->(u32,u32,u32){
+    let n=count&31;if n==0{return (a,f,u);}
+    let m=mask(w) as u32;let sign=1u32<<(w-1);let mut result=a&m;let mut carry=0;
+    for _ in 0..n {if op=="shl"{carry=u32::from(result&sign!=0);result=(result<<1)&m;}else{carry=result&1;result=(result>>1)|if op=="sar"{result&sign}else{0};}}
+    let cf_undefined=op!="sar"&&n>=u32::from(w);
+    let undefined=16|if n>1{0x800}else{0}|u32::from(cf_undefined);
+    let overflow=if n!=1{0}else if op=="shl"{u32::from(result&sign!=0)^carry}else if op=="shr"{u32::from(a&sign!=0)}else{0};
+    let flags=(f&!0x8d5)|if cf_undefined{0}else{carry}|(u32::from((result as u8).count_ones()%2==0)<<2)|(u32::from(result==0)<<6)|(u32::from(result&sign!=0)<<7)|(overflow<<11);
+    ((a&!m)|result,flags,undefined)
+}
+#[test]
+fn shifts_match_exhaustive_byte_and_wide_edge_oracles(){
+    for op in ["shl","shr","sar"] {for w in [8,16,32] {
+        let p=compile(&instantiate(description(op).unwrap(),w),w).unwrap();
+        let values:Vec<u32>=if w==8{(0..256).collect()}else{vec![0,1,3,mask(w) as u32,1u32<<(w-1),(1u32<<(w-1))-1,0xa55aa55a]};
+        for a in values{for count in 0..=255{for (f,u) in [(0x202,0),(0xad7,0x8d5)]{
+            let mut c=Cpu::default();c.regs[0]=a;c.regs[1]=count;c.eflags=f;c.undefined_flags=u;
+            execute(&p,&mut c,View{register:0,low:0,width:w},View{register:1,low:0,width:w}).unwrap();
+            assert_eq!((c.regs[0],c.eflags,c.undefined_flags),shift_oracle(op,a,count,w,f,u),"{op}/{w} a={a:x} count={count}");
+        }}}
+    }}
+}
+#[test]
+fn conditional_flags_validate_types_and_stage_until_retirement(){
+    for text in ["const a 8 1\nflag_if CF a a a\npreserve_flags remaining\nretire","const a 1 1\nflag_if CF a a a\nflag CF a\npreserve_flags remaining\nretire","const a 8 1\nconst b 16 2\nult c a b\npreserve_flags all\nretire"] {assert!(compile(text,8).is_err());}
+    let p=compile("const t 1 1\nconst f 1 0\nflag_if CF t f f\nflag_if OF t f t\npreserve_flags remaining\nretire",8).unwrap();
+    let c=run(&p,0,0,0xad7);assert_eq!(c.eflags,0x2d7);assert_eq!(c.undefined_flags,0x800);
+}
+#[test]
+fn generic_shifts_define_counts_at_and_above_64_without_host_panics(){
+    use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
+    let dir=std::env::temp_dir().join(format!("pil-shifts-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));fs::create_dir(&dir).unwrap();
+    let mut source=String::from("#![allow(dead_code,unused_variables,unused_mut)]\n");let mut checks=String::new();let mut id=0;
+    for op in ["shl","lshr","ashr"]{for count in [0,1,63,64,u64::MAX]{
+        let text=format!("const a 64 9223372036854775809\nconst count 64 {count}\n{op} wide a count\ntrunc r wide 8\nbit high wide 63\nwrite dst r\nflag CF high\npreserve_flags remaining\nretire");
+        let p=compile(&text,8).unwrap();let input=0x8000000000000001u64;
+        let expected=if op=="shl"{input.checked_shl(u32::try_from(count).unwrap_or(u32::MAX)).unwrap_or(0)}else if op=="lshr"{input.checked_shr(u32::try_from(count).unwrap_or(u32::MAX)).unwrap_or(0)}else{((input as i64)>>count.min(63)) as u64};
+        let c=run(&p,0,0,0);assert_eq!(c.regs[0],expected as u8 as u32);assert_eq!(c.eflags,(expected>>63) as u32);
+        source.push_str(&format!("mod p{id}{{ {} }}\n",emit_rust(&p)));checks.push_str(&format!("{{let mut r=[0u32;8];let mut f=0;p{id}::execute(&mut r,&mut f,(0,0),(1,0)).unwrap();assert_eq!(r[0],{}u32);assert_eq!(f,{}u32);}}\n",expected as u8,expected>>63));id+=1;
+    }}
+    source.push_str(&format!("fn main(){{{checks}}}"));let path=dir.join("proof.rs");fs::write(&path,source).unwrap();let exe=dir.join(if cfg!(windows){"proof.exe"}else{"proof"});
+    let output=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).arg("--edition=2021").arg(&path).arg("-o").arg(&exe).output().unwrap();assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));assert!(Command::new(&exe).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
+}

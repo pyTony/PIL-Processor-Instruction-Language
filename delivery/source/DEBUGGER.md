@@ -237,7 +237,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.12.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.13.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -253,7 +253,7 @@ The ordinary debugger remains the cached PIL interpreter.
 
 Before reporting speed, it compares complete instruction-by-instruction traces:
 registers, EFLAGS, undefined flags, EIP, RAM contents and serial RX/TX queues.
-Eighteen cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
+Twenty-three cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
 read-only store and branch-limit faults, a changed-code stop, empty RX and full
 TX. Stop kinds/metadata are compared; descriptive strings are not trace fields.
 Any mismatch fails the command rather than reporting a passing benchmark.
@@ -311,7 +311,7 @@ and [Microsoft WSL filesystems](https://learn.microsoft.com/en-us/windows/wsl/fi
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the eighteen-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the 23-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -338,7 +338,7 @@ OR/XOR/TEST clear CF/OF, classify AF undefined and update SF/ZF/PF. TEST and
 CMP do not write their operands; they can read protected RAM. NOT and NOP
 preserve flags and undefined metadata. INC/DEC preserve CF and its metadata.
 NEG computes zero minus its operand. New ALU forms use the same staged RAM
-retirement and segment checks as existing instructions. Implicit-product MUL/IMUL, DIV, shifts, stack
+retirement and segment checks as existing instructions. Implicit-product MUL/IMUL, DIV, stack
 operations, CALL/RET and general device I/O are still outside this profile.
 The verifier adds ALU8/16/32 fixtures plus read-only TEST and NEG fault cases.
 
@@ -362,8 +362,25 @@ $env:CARGO_TARGET_DIR = "target/windows"
 ./tools/compare.ps1 -Iterations 10000 -Samples 5
 ```
 
-This verifies all 18 cases, then measures compiled Rust and cached interpreter.
+This verifies all 23 cases, then measures compiled Rust and cached interpreter.
 An x86-64 PC also reports the direct CPU arithmetic baseline. That baseline
 still times ADD/SUB/JNZ; it is not an IMUL benchmark or an emulated 386 clock rate.
 For WSL sharing the folder, use `export CARGO_TARGET_DIR=target/wsl` and
 `sh tools/compare.sh 10000 5` in the WSL shell.
+
+## Shifts (0.13 alpha)
+
+SHL (SAL alias), SHR and SAR support byte/word/dword register or memory operands.
+D0/D1 /4,/5,/7 use count1; D2/D3 use CL; C0/C1 use imm8. Counts are masked
+with31 at every width. Rotates, /6, SHLD and SHRD remain unsupported.
+
+A masked zero count preserves the operand, all flags and undefined markers.
+Nonzero counts update SF/ZF/PF, leave AF undefined, and define OF only for count1.
+CF is the last bit shifted out; SHL/SHR classify it undefined when count>=width.
+SAR sign-fills, rounds negative values downward and keeps CF defined. Undefined
+values follow the existing concrete-zero-plus-marker policy. This follows the
+Intel SDM flag classification where it clarifies the older386 manual listing.
+
+Memory forms use the existing read-modify-write permission checks even when the
+masked count is zero. A failed read or write preserves CPU state and RAM.
+The verifier includes shifts at all widths and protected zero/nonzero stores.

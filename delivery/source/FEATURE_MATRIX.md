@@ -1,4 +1,4 @@
-# PIL 0.12.0-alpha.1 feature matrix
+# PIL 0.13.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -9,6 +9,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | PIL data widths | Supported | Explicit 1..64-bit intermediate values; 8/16/32-bit guest operands |
 | Arithmetic and flags | Supported subset | ADD, ADC, SUB, SBB, CMP, AND, OR, XOR, TEST, NOT, NEG, INC, DEC; truncated signed IMUL16/32; flag preservation and undefined markers |
 | Multiplication | Supported subset | 0F AF and 69/6B truncated signed IMUL16/32, register/memory sources; no implicit double-width forms |
+| Shifts | Supported subset | SHL/SAL, SHR, SAR8/16/32; count1, CL, imm8; register/memory; no rotates or double shifts |
 | Register views | Supported | 32-bit registers, low 16 bits, AL/AH-style byte views |
 | Conditional flow | Supported subset | Sixteen predicates, short binary Jcc; supplied-context wider flow semantics |
 | SETcc | Supported subset | Register byte destinations in decoder; sixteen conditions |
@@ -19,7 +20,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Token interpreter | Supported | Default debugger engine; cached and uncached modes |
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
-| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; eighteen full-state trace cases and loop timings |
+| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 23 full-state trace cases and loop timings |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |
 | Native engine in REPL / JIT | Planned | Debugger still interprets tokens; compiled backend is a separate proof runner |
@@ -33,7 +34,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | VGA / PS/2 / SD / WLAN | Planned | No device implementation bundled; retain intended WLAN-to-SD workflow later |
 | BIOS / DOS / Windows 3.1x boot | Planned | No firmware or operating-system boot yet |
 | Paging / A20 / interrupts | Planned | No page tables, A20 gate, privilege transitions or exception delivery |
-| x87 / floating point / Mandelbrot | Planned | No x87; truncated signed IMUL exists; shifts and image output still needed |
+| x87 / floating point / Mandelbrot | Planned | No x87; signed IMUL and shifts exist; image workload still needed |
 | ARM native target / Wine bindings | Planned | Fixed proof runs natively on ARM64; no Wine/ABI library or general translation runtime |
 
 The compiled proof compares registers, EFLAGS, undefined-flag metadata, EIP,

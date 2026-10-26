@@ -139,3 +139,32 @@ fn imul_fetch_lengths_and_unimplemented_implicit_forms_are_diagnostics(){
     let (mut image,ram)=Image::load(&[0x69,0xc0,1,0]).unwrap();image.segments[1].limit=ENTRY+2;
     assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
 }
+
+#[test]
+fn shift_count_forms_cl_aliases_and_high_bytes(){
+    use super::super::Cpu;
+    for (bytes,input,cl,expected) in [
+        (vec![0xd0,0xe4],0x12348078,0,0x12340078),
+        (vec![0xd3,0xe1],0,0x12340001,0x12340002),
+        (vec![0x66,0xc1,0xf8,8],0xfffffe01,0,0xfffffffe),
+        (vec![0xc1,0xe8,32],0x12348001,0,0x12348001),
+        (vec![0x66,0xd3,0xe8],0x80000000,255,1),
+    ]{
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=input;c.regs[1]=cl;
+        execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(if bytes==vec![0xd3,0xe1]{c.regs[1]}else{c.regs[0]},expected,"{bytes:02x?}");
+    }
+}
+#[test]
+fn memory_shift_rmw_checks_zero_counts_and_preserves_fault_state(){
+    use super::super::Cpu;
+    for (bytes,count,expected) in [(vec![0xd1,0x27],1,0x80000002),(vec![0xc1,0x3f,0],0,0x80008001),(vec![0x66,0xd3,0x3f],8,0xff800080)] {
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[1]=count;c.regs[3]=0x400;c.eflags=0xad7;c.undefined_flags=0x8d5;let before=c.clone();
+        let ram=execute_one(&bytes,&mut c,0x80008001,false).unwrap();assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),expected);
+        let mut c=before.clone();assert!(execute_one(&bytes,&mut c,0x80008001,true).is_err());assert_eq!(c,before);
+    }
+}
+#[test]
+fn rotate_extensions_and_truncated_shift_operands_stay_diagnostics(){
+    for bytes in [vec![0xc1,0xe0],vec![0xc0,0x66],vec![0xd1,0xc0],vec![0xd3,0xf0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    assert_eq!(description("shl").unwrap(),description("sal").unwrap());
+}

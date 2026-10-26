@@ -1,5 +1,12 @@
 # Changes
 
+## 0.13.0-alpha.1
+
+- Add total shifts/ult/flag_if PIL operations, interpreter and generated Rust.
+- Add SHL/SAL, SHR, SAR register/memory/count forms at8/16/32 bits.
+- Add six tests (140 total), independent shift oracle and23-case verifier.
+- Put direct post-build debugger usage at the top of README.
+
 ## 0.12.0-alpha.1
 
 - Add generic sext/mul tokens, interpreter and Rust emission.

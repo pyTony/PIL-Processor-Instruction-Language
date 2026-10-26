@@ -29,6 +29,9 @@ composition in the prototype, not a general include directive.
 | sext out input WIDTH | Sign-extend a bit vector to an equal or wider width |
 | trunc out input WIDTH | Truncate |
 | add/sub/mul/xor/and/or out left right | Modular arithmetic or bitwise operation |
+| shl/lshr/ashr out input count | Total shifts; oversized counts zero-fill or sign-fill; no implicit count masking |
+| ult out left right | Unsigned comparison of equal-width values; bv<1> output |
+| flag_if CF value defined active | If active, define value or mark undefined; otherwise preserve value and metadata; all three inputs bv<1> |
 | not out input | Bitwise complement at the input width |
 | bit out input INDEX | Extract a bv<1> |
 | zero out input | bv<1> result of testing for zero |
@@ -220,3 +223,14 @@ Neither operation directly changes flags. imul.pil widens two16/32-bit values
 to32/64 bits, multiplies, truncates and compares the exact product with the
 sign-extended low result. CF/OF indicate lost sign information; other arithmetic
 flags are declared undefined. $DOUBLE expands to twice the operand width.
+
+## Conditional flag effects and shifts
+
+flag_if classifies its flag exactly once. With active0, it preserves both value
+and diagnostic marker. With active1/defined1 it writes the supplied value and
+clears the marker; active1/defined0 writes concrete zero and marks undefined.
+All effects remain staged until retire. Invalid input types and duplicate flag
+classification are rejected. Generic shifts take an unsigned count of any
+bit-vector width. A count>=data width gives zero for shl/lshr and a repeated
+sign bit for ashr; counts are never implicitly reduced modulo the host width.
+The x86 descriptions explicitly AND with31 before invoking these operations.

@@ -1,3 +1,11 @@
+# PIL 0.13.0-alpha.1
+
+- Add generic total shifts, unsigned comparison and conditional flag effects.
+- Decode SHL/SAL, SHR, SAR8/16/32: count1, CL and imm8, register/memory.
+- Preserve flags and undefined markers at masked zero; classify undefined flags.
+- Expand full-state verification to23 cases, including protected zero-count RMW.
+- Include signed IMUL from0.12 and a prominent post-build debugger quick start.
+
 # PIL 0.12.0-alpha.1
 
 - Add generic signed extension and modular multiplication PIL operations.

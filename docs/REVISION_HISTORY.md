@@ -331,3 +331,10 @@ not execution of the16-bit image or a386 clock estimate.
 Separate preceding standalone interpreter run10000/3: [3.225,3.216,3.172] ms,
 median3.216 ms,9,330,161 ins/s; retain separately from comparison samples.
 No implementation changes in this evidence update.0.12 user runs remain pending.
+
+## 0.13.0-alpha.1 — shifts and direct debugger startup
+
+SHL/SAL,SHR,SAR register/memory,count1/CL/imm8 plus generic shift/ult/flag_if
+operations. Six new tests (140 total pending CI),23 verifier cases,62 runtime
+files. README quick start added following user's difficulty finding debugger
+usage after build. Intel PRM and SDM references logged; no external code imports.

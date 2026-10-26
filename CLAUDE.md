@@ -1,3 +1,17 @@
+# Shifts and debugger discoverability — 0.13.0-alpha.1 development
+
+SHL/SAL,SHR,SAR8/16/32 supportcount1/CL/imm8 and register/memory. Generic
+shl/lshr/ashr total shifts, ult comparison and flag_if conditional flag effects
+keep x86 count masking/flags in PIL. Counts mask31; zero preserves flags and
+markers; CF undefined for SHL/SHR count>=width, OF undefined ifcount>1,
+AF undefined ifnonzero. Memory RMW validates writes even atzero count.
+Six tests added (140 total pending CI);23 verifier cases;62 runtime files.
+Independent Python shift oracle added. README now starts with direct launch
+commands because user couldn't find them after building (guide was in docs).
+Current main remains0.11; runtime projection also includes0.12 IMUL. Prepare
+one runtime-only PR based on current main, superseding PR #10 if unmerged.
+Next: actual fixed-point Mandelbrot image workload (shifts/multiply ready).
+
 # User PC full comparison verified — 0.11.0-alpha.1
 
 Windows/x86_64 user run10000/5 matched14 cases/2,460,193 bytes. Generated

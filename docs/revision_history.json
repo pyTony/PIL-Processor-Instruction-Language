@@ -767,6 +767,23 @@
       },
       "runtime_files": 59,
       "provenance": "Intel 80386 IMUL entry, reference only; original code"
+    },
+    {
+      "version": "0.13.0-alpha.1",
+      "date": "2026-10-26",
+      "status": "development; hosted verification pending",
+      "features": [
+        "generic total shifts, ult and flag_if",
+        "SHL/SAL SHR SAR8/16/32 register/memory count1/CL/imm8",
+        "23-case full-state verification",
+        "post-build debugger README quick start"
+      ],
+      "rust_verification": {
+        "tests_supplied": 140,
+        "status": "pending CI"
+      },
+      "runtime_files": 62,
+      "provenance": "Intel PRM SAL and SDM Vol2B flags clarification; reference only; original code"
     }
   ]
 }

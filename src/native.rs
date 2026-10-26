@@ -55,6 +55,18 @@ pub fn cases()->Result<Vec<Case>,String> {
         let mut fault=case(if w==16{"imul_fault16"}else{"imul_fault32"},bytes)?;
         fault.regs[0]=123;fault.regs[3]=0xffff;tests.push(fault);
     }
+    for w in [8,16,32]{
+        let mut bytes=Vec::new();
+        for extension in [4,5,7]{for count in [0,1,7,8,15,16,31,32,255]{
+            if w==32{bytes.push(0x66);}bytes.extend([if w==8{0xc0}else{0xc1},0xc0|(extension<<3),count]);
+        }for memory in [false,true]{for opcode in [if w==8{0xd0}else{0xd1},if w==8{0xd2}else{0xd3}]{
+            if w==32{bytes.push(0x66);}bytes.extend([opcode,(if memory{7}else{0xc0})|(extension<<3)]);
+        }}}
+        bytes.push(0xf4);let mut test=case(match w{8=>"shift8",16=>"shift16",_=>"shift32"},bytes)?;
+        test.regs[0]=0x80008081;test.regs[1]=255;test.regs[3]=0x400;test.flags=0xad7;test.patch=Some((0x500,vec![0x81,0x80,0,0x80]));tests.push(test);
+    }
+    for count in [0,1]{let mut test=case(if count==0{"shift_readonly_zero"}else{"shift_readonly_one"},vec![0xc1,0x27,count,0xf4])?;
+        test.regs[3]=0x400;test.protect=Some((0x500,4));tests.push(test);}
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {

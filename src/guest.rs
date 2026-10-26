@@ -104,6 +104,16 @@ impl Image {
                 if memory{text=text.replace("read a src $W","read_address addr\nload a addr $W");}
                 ("IMUL immediate".into(),compile(&instantiate(text,w),w))
             }
+            0xc0|0xc1|0xd0|0xd1|0xd2|0xd3=>{
+                if opcode&1==0{w=8;}
+                let m=r.byte()?;let name=match (m>>3)&7{4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
+                dst=view((m&7) as usize,w);src=view(1,w);
+                let memory=m>>6!=3;
+                if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=view(0,w);}
+                let immediate=match opcode{0xc0|0xc1=>Some(u32::from(r.byte()?)),0xd0|0xd1=>Some(1),_=>None};
+                let text=operand_text(name,w,memory,false,immediate)?;
+                (name.to_ascii_uppercase(),compile(&text,w))
+            }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
             0x40..=0x4f=>{
                 dst=view((opcode&7) as usize,w);src=dst;
