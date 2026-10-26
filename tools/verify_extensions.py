@@ -4,7 +4,7 @@ from verify_descriptions import tokens,interpret
 count=0
 for source in (8,16):
     for dest in (16,32):
-        if source>=dest:continue
+        if source>dest:continue
         for signed in (False,True):
             code=tokens(('movsx' if signed else 'movzx')+str(source),dest)
             for n in range(1<<source):

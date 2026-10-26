@@ -224,7 +224,7 @@ fn near_branch_targets_preserve_flags_and_fault_before_retirement(){
 fn extending_moves_exhaust_bytes_and_word_boundaries_preserving_flags(){
     use super::super::Cpu;
     for w in [16,32]{for signed in [false,true]{for source_width in [8,16]{
-        if source_width>=w{continue;}
+        if source_width>w{continue;}
         let mut values:Vec<u32>=if source_width==8{(0..=255).collect()}else{vec![0,1,0x7fff,0x8000,0xffff]};values.push(0x12348080);
         for value in values{
             let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.extend([0x0f,if signed{0xbe}else{0xb6}+if source_width==16{1}else{0},0xc1]);
@@ -253,7 +253,7 @@ fn extension_high_bytes_and_accumulator_aliases_read_original_registers(){
 #[test]
 fn extending_memory_moves_are_readonly_and_use_source_access_width(){
     use super::super::Cpu;
-    for (bytes,value,result)in [(vec![0x0f,0xbe,0x07],0x80,0xabcdff80),(vec![0x66,0x0f,0xb6,0x07],0xff,255),(vec![0x66,0x0f,0xbf,0x07],0x8001,0xffff8001)]{
+    for (bytes,value,result)in [(vec![0x0f,0xbe,0x07],0x80,0xabcdff80),(vec![0x0f,0xbf,0x07],0x8001,0xabcd8001),(vec![0x0f,0xb7,0x07],0x8001,0xabcd8001),(vec![0x66,0x0f,0xb6,0x07],0xff,255),(vec![0x66,0x0f,0xbf,0x07],0x8001,0xffff8001)]{
         let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=0xabcd1234;c.regs[3]=0x400;
         let ram=execute_one(&bytes,&mut c,value,true).unwrap();assert_eq!(c.regs[0],result);assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),value);
     }
@@ -286,6 +286,6 @@ fn lea_all_operand_address_sizes_wrap_without_segment_or_ram_access(){
 }
 #[test]
 fn extension_and_lea_disassembly_and_invalid_encodings(){
-    for(bytes,label)in [(vec![0x66,0x0f,0xbe,0xc4],"MOVSX EAX,AH"),(vec![0x0f,0xb6,0x07],"MOVZX AX,byte DS:[BX]"),(vec![0x66,0x0f,0xbf,0x46,0xff],"MOVSX EAX,word SS:[BP-0x1]"),(vec![0x64,0x67,0x66,0x8d,0x44,0xb3,0xfc],"LEA EAX,[EBX+ESI*4-0x4]"),(vec![0x98],"CBW"),(vec![0x66,0x98],"CWDE"),(vec![0x99],"CWD"),(vec![0x66,0x99],"CDQ")]{assert_eq!(decode(&bytes).unwrap().label,label);}
-    for bytes in [vec![0x0f,0xb6],vec![0x66,0x0f,0xbf,0x86,0],vec![0x8d,0xc0],vec![0x8d,0x06,0],vec![0x0f,0xb7,0xc0],vec![0x0f,0xbf,0xc0]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:?}");}
+    for(bytes,label)in [(vec![0x66,0x0f,0xbe,0xc4],"MOVSX EAX,AH"),(vec![0x0f,0xb6,0x07],"MOVZX AX,byte DS:[BX]"),(vec![0x66,0x0f,0xbf,0x46,0xff],"MOVSX EAX,word SS:[BP-0x1]"),(vec![0x64,0x67,0x66,0x8d,0x44,0xb3,0xfc],"LEA EAX,[EBX+ESI*4-0x4]"),(vec![0x0f,0xbf,0xf8],"MOVSX DI,AX"),(vec![0x0f,0xbf,0xff],"MOVSX DI,DI"),(vec![0x0f,0xb7,0xff],"MOVZX DI,DI"),(vec![0x98],"CBW"),(vec![0x66,0x98],"CWDE"),(vec![0x99],"CWD"),(vec![0x66,0x99],"CDQ")]{assert_eq!(decode(&bytes).unwrap().label,label);}
+    for bytes in [vec![0x0f,0xb6],vec![0x66,0x0f,0xbf,0x86,0],vec![0x8d,0xc0],vec![0x8d,0x06,0]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:?}");}
 }

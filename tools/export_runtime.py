@@ -53,8 +53,8 @@ def verify(destination):
     windows=os.name=='nt'
     script=['pwsh','-NoProfile','-File','tools/debug.ps1'] if windows else ['sh','tools/debug.sh']
     subprocess.run(script+(['-Check'] if windows else ['--check']),cwd=destination,env=env,check=True)
-    result=subprocess.run(script,cwd=destination,env=env,input='serial rx 41\nrun 1000\ncheck\nserial tx\ndemo hello\nrun 1000\nserial tx\ndemo factorials\ntime 1000\ncheck\nbench 16 2\ncache stats\ncache off\nbench 16 2\ncache on\nstress 2\nquit\n',text=True,capture_output=True,check=True)
-    if not all(text in result.stdout for text in ['PASS: selftest','serial output: 41 | A','TX: 41','Hello, world!\\n','TX: 48 65 6c 6c 6f 2c 20 77 6f 72 6c 64 21 0a','PASS: factorials','PASS: counted-loop benchmark','PASS: factorial stress','cache=on (cold per sample)','cache=off (cold per sample)']):
+    result=subprocess.run(script,cwd=destination,env=env,input='serial rx 41\nrun 1000\ncheck\nserial tx\ndemo hello\nrun 1000\nserial tx\ndemo factorials\ntime 1000\ncheck\ndemo extensions\nrun 1000\ncheck\nbench 16 2\ncache stats\ncache off\nbench 16 2\ncache on\nstress 2\nquit\n',text=True,capture_output=True,check=True)
+    if not all(text in result.stdout for text in ['PASS: selftest','serial output: 41 | A','TX: 41','Hello, world!\\n','TX: 48 65 6c 6c 6f 2c 20 77 6f 72 6c 64 21 0a','PASS: factorials','PASS: extensions','PASS: counted-loop benchmark','PASS: factorial stress','cache=on (cold per sample)','cache=off (cold per sample)']):
         raise SystemExit('runtime debugger transcript failed:\n'+result.stdout+result.stderr)
     exe=destination/'target/debug'/('pil-proof.exe' if windows else 'pil-proof')
     generated=subprocess.check_output([str(exe),'--emit-rust','32','add_ram'],cwd=destination,env=env)

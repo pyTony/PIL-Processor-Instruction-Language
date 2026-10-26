@@ -1,5 +1,5 @@
 # MOVSX: independent source/destination widths; all flags preserved.
-require_width 32
+require_width 16_or_32
 read a src 16
 sext r a $W
 write dst r

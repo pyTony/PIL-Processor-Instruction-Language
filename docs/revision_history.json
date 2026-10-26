@@ -1292,6 +1292,24 @@
         }
       },
       "coverage_note": "Feature matrix on dev explicitly records rejected16-to16 MOVSX/MOVZX; queued for next runtime delivery."
+    },
+    {
+      "version": "0.15.0-alpha.3",
+      "date": "2026-10-26",
+      "status": "development; hosted Rust CI pending",
+      "features": [
+        "16-to16 MOVSX/MOVZX register/memory",
+        "extensions demo and checker",
+        "equal-width alias/fault and upper-half preservation coverage"
+      ],
+      "rust_verification": {
+        "tests_supplied": 165,
+        "verifier_cases": 39,
+        "status": "pending"
+      },
+      "python_extension_oracle_cases": 263190,
+      "runtime_files": 72,
+      "provenance": "Original code/demo/tests; Intel386 encoding tables and SingleStepTests metadata consulted, hardware vectors not imported or executed"
     }
   ]
 }

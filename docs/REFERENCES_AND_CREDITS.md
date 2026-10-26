@@ -341,9 +341,20 @@ The CSV advertises16/32-bit destinations with16-bit sources for0FB7/0FBF;
 unprefixed hardware-derived test archives are listed. This is metadata review,
 not an execution/validation of those vectors. No test data or external code is
 imported. Thanks to Daniel Balsom and contributors for the hardware-test work.
-The monitor still deliberately rejects16-to16 forms. Feature matrix clarification
+The0.15alpha.2 monitor deliberately rejected16-to16 forms. Feature matrix clarification
 is queued for the next runtime export; execution semantics are unchanged.
 
 Intel386 Section17.2 ModR/M tables also consulted to correct the reported
 encoding:0F BF F8 selects DI,AX;DI,DI would require0F BF FF with16-bit operands.
 https://read.seas.harvard.edu/~kohler/class/aosref/i386/s17_02.htm
+
+## Same-width MOVSX/MOVZX support —0.15alpha.3
+
+The earlier coverage restriction is now removed, using the existing equal-width
+sext/zext behavior rather than a special decoder-side copy. Source references:
+Intel386 MOVSX/MOVZX entries and ModR/M tables; SingleStepTests/80386 CSV rows
+0FB7/0FBF (r16/32 with r/m16) and archive inventory, as recorded above. The
+original1986 instruction tables list widening forms only; broader encoding
+metadata motivates this compatibility increment. Raw hardware vectors have not
+been imported or executed. Register, alias, read-only-memory and fault checks
+are original project tests; demo bytes are independently authored for this project.

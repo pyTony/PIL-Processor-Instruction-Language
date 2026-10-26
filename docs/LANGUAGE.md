@@ -243,10 +243,10 @@ The x86 descriptions explicitly AND with31 before invoking these operations.
 ## Extending moves, accumulator conversion and LEA
 
 The binary monitor supports MOVZX and MOVSX with byte sources and16/32-bit
-register destinations (0F B6/BE), and word sources with32-bit destinations
+register destinations (0F B6/BE), and word sources with16/32-bit destinations
 (0F B7/BF). Sources can be registers, including AH/CH/DH/BH, or memory.
 Memory reads check only the source width; read-only memory is permitted.
-The unlisted16-to16 forms remain monitor diagnostics.
+The16-to16 forms copy the word unchanged and preserve upper register halves.
 
 Opcode98 executes CBW (AL to AX) or, with66, CWDE (AX to EAX). Opcode99
 executes CWD (AX sign into DX) or, with66, CDQ (EAX sign into EDX). CWD/CDQ
@@ -266,3 +266,28 @@ movzx16/movsx16 (word source); movzx/movsx alias the byte forms. Destination
 width comes from --emit-rust WIDTH. lea and cwd use16/32-bit destination width;
 cdq aliases cwd. The binary decoder binds98/99 implicit registers before PIL
 validation. The interpreter and generated runner execute the same tokens.
+
+## Extension instruction demo
+
+```text
+demo extensions
+list 64
+run 1000
+check
+regs
+mem16 0x180 1 hex
+```
+
+This original15-instruction guest exercises MOVZX/MOVSX, CBW/CWDE/CDQ, LEA,
+16-to16 register copies (including DI self-aliases), and word memory sources.
+Expected final values: EAX=FFFFFF80, EBX=00000080, ECX=FFFFFF80,
+EDX=FFFFFFFF, ESI=00000085, DI=BP=SP=FF80 and RAM word0x180=FF80.
+The checker verifies every register, that RAM word, preserved flags and halt.
+
+The decoder now accepts word-source MOVSX/MOVZX with16-bit as well as32-bit
+destinations. At16-to16 both operations copy the word unchanged; the destination
+register's upper16 bits and flags/undefined markers are preserved. Memory
+sources still perform a real word read with normal segment/RAM checks, including
+read-only sources. A same-register instruction is not skipped, so fetch and
+memory checks retain their normal behavior. In16-bit operand size,0F BF F8
+selects DI,AX;0F BF FF selects DI,DI.

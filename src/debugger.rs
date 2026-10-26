@@ -62,6 +62,7 @@ impl Debugger {
         d.load_demo(demo)?; Ok(d)
     }
     fn load_demo(&mut self, name: &str) -> Result<(),String> {
+        if name=="extensions" {return self.load_image(&super::guest::extension_bytes(),"extensions");}
         if name=="mandelbrot" {return self.load_image(&super::mandelbrot::guest_bytes(8,16)?,"mandelbrot");}
         if name=="factorials" {return self.load_image(&super::guest::factorial_bytes()?,"factorials");}
         if name=="loop" {return self.load_image(&super::guest::loop_bytes(super::guest::LOOP_ITERATIONS)?,"loop");}
@@ -97,7 +98,7 @@ impl Debugger {
                 }
                 code.insert(0x304,Instruction{label:"HARNESS_HALT",action:Action::HarnessHalt});
             }
-            _ => return Err("demo must be counter, echo, memory, selftest, hello, factorials, loop or mandelbrot".into()),
+            _ => return Err("demo must be counter, echo, memory, selftest, hello, factorials, loop, mandelbrot or extensions".into()),
         }
         self.cache.clear();self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
@@ -227,7 +228,7 @@ impl Debugger {
     fn check_selftest(&mut self)->Result<(),String> {
         let expected=super::guest::selftest_bytes()?;
         if self.image.is_none() || self.initial_ram.bytes().get(super::guest::ENTRY as usize..super::guest::ENTRY as usize+expected.len())!=Some(expected.as_slice()) {
-            return Err("no built-in check for this program; supported images: selftest, factorials, loop, mandelbrot".into());
+            return Err("no built-in check for this program; supported images: selftest, factorials, loop, mandelbrot, extensions".into());
         }
         if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)) || self.cpu.regs[2]&0xffff!=0x600d {
             return Err(format!("selftest has not passed: DX={:04x}",self.cpu.regs[2]&0xffff));
@@ -260,6 +261,12 @@ impl Debugger {
         Ok(())
     }
     fn check_current(&mut self)->Result<String,String> {
+        if self.has_image(&super::guest::extension_bytes()){
+            if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)){return Err("extension demo has not halted".into());}
+            if self.cpu.regs!=[0xffffff80,0xffffff80,0xffffffff,0x80,0xff80,0xff80,0x85,0xff80]
+                || self.cpu.eflags!=0x202 || self.cpu.undefined_flags!=0 || self.ram.load(0x180,super::memory::MemWidth::Word)!=Ok(0xff80){return Err("extension demo result/flags mismatch".into());}
+            return Ok("PASS: extensions; MOVZX/MOVSX, CBW/CWDE/CDQ, LEA, same-width aliases/memory and preserved flags".into());
+        }
         if self.has_image(&super::mandelbrot::guest_bytes(8,16)?){
             if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)){return Err("Mandelbrot demo has not halted".into());}
             if self.tx_events!=super::mandelbrot::reference(8,16)?{return Err("Mandelbrot pixels mismatch".into());}

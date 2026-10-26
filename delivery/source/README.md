@@ -20,6 +20,7 @@ intentionally runs zero tests; see [automated verification](#automated-verificat
 | `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
 | `demo hello` | Binary Hello-world output through mock serial |
 | `demo factorials` | Binary 1!..12! table; `time 1000` then `check`; 12!=479001600 |
+| `demo extensions` | Conversion/address instructions, same-width moves and flags; `run 1000` then `check` |
 | `demo mandelbrot` | Small 8x8 fixed-point image; `time 1000000` then `check`; serial pixel bytes |
 | `demo loop` | Binary 65,536-iteration counted loop; `time 250000` then `check` |
 | `demo counter` | Small predecoded subtract-and-branch example |
@@ -264,7 +265,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.15.0-alpha.2. This is an alpha of the host execution proof, not an OS
+areas in 0.15.0-alpha.3. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -303,7 +304,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 34-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the 39-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -347,7 +348,7 @@ $env:CARGO_TARGET_DIR = "target/windows"
 ./tools/compare.ps1 -Iterations 10000 -Samples 5
 ```
 
-This verifies all 34 cases, then measures compiled Rust and cached interpreter.
+This verifies all 39 cases, then measures compiled Rust and cached interpreter.
 An x86-64 PC also reports the direct CPU arithmetic baseline. That baseline
 still times ADD/SUB/JNZ; it is not an IMUL benchmark or an emulated 386 clock rate.
 For WSL sharing the folder, use `export CARGO_TARGET_DIR=target/wsl` and
@@ -483,7 +484,7 @@ Or run the built executable with `--compare-mandelbrot [SIZE] [ITERATIONS]`.
 This requires a local `rustc`; normal image rendering still needs only the
 built executable. Size/iteration bounds are the same as the image renderer.
 
-The command first runs the existing 34-case instruction-by-instruction verifier.
+The command first runs the existing 39-case instruction-by-instruction verifier.
 It then compiles the selected complete guest image from validated PIL into Rust
 and runs both engines. Every pixel must match the independent Q12 reference;
 CPU registers, flags, undefined flags, EIP, RAM, serial queues and stop status
@@ -506,10 +507,10 @@ without Compare to save/view BMP and PGM images.
 ## Extending moves, accumulator conversion and LEA
 
 The binary monitor supports MOVZX and MOVSX with byte sources and16/32-bit
-register destinations (0F B6/BE), and word sources with32-bit destinations
+register destinations (0F B6/BE), and word sources with16/32-bit destinations
 (0F B7/BF). Sources can be registers, including AH/CH/DH/BH, or memory.
 Memory reads check only the source width; read-only memory is permitted.
-The unlisted16-to16 forms remain monitor diagnostics.
+The16-to16 forms copy the word unchanged and preserve the upper register half.
 
 Opcode98 executes CBW (AL to AX) or, with66, CWDE (AX to EAX). Opcode99
 executes CWD (AX sign into DX) or, with66, CDQ (EAX sign into EDX). CWD/CDQ
@@ -538,3 +539,28 @@ development tests. The automated suite and Windows/Linux CI live on the
 [Actions page](https://github.com/pyTony/pil_proof/actions). CI checks both the
 full development suite and an isolated runtime export. DELIVERY.json identifies
 the development source revision used for this delivery.
+
+## Extension instruction demo
+
+```text
+demo extensions
+list 64
+run 1000
+check
+regs
+mem16 0x180 1 hex
+```
+
+This original15-instruction guest exercises MOVZX/MOVSX, CBW/CWDE/CDQ, LEA,
+16-to16 register copies (including DI self-aliases), and word memory sources.
+Expected final values: EAX=FFFFFF80, EBX=00000080, ECX=FFFFFF80,
+EDX=FFFFFFFF, ESI=00000085, DI=BP=SP=FF80 and RAM word0x180=FF80.
+The checker verifies every register, that RAM word, preserved flags and halt.
+
+The decoder now accepts word-source MOVSX/MOVZX with16-bit as well as32-bit
+destinations. At16-to16 both operations copy the word unchanged; the destination
+register's upper16 bits and flags/undefined markers are preserved. Memory
+sources still perform a real word read with normal segment/RAM checks, including
+read-only sources. A same-register instruction is not skipped, so fetch and
+memory checks retain their normal behavior. In16-bit operand size,0F BF F8
+selects DI,AX;0F BF FF selects DI,DI.

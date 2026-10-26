@@ -1,3 +1,17 @@
+# Same-width extension compatibility —0.15.0-alpha.3 development
+
+MOVSX/MOVZX16-to16 now accepted via existing equal-width sext/zext PIL tokens.
+No special decoder arithmetic; word-source descriptions allow16/32 destinations.
+Registers/aliases preserve upper halves and flags; memory forms still word-read
+with normal checks. Original demo extensions runs15 instructions then check
+verifies all8 regs,flags/markers,RAM180 andhalt. Nine demos now; unsupported
+check diagnostic names extensions too. Existing boundary/source tests expanded;
+one new demo regression (165 total pending hosted CI).39 compiled cases incl
+read-only word sources,GP/SS/RAM faults. Python263,190 independent cases passed.
+72 runtime files; isolated/native package smoke transcripts include the demo.
+References/provenance updated; no hardware vectors imported/executed. Main/dev
+separation retained. Next: hosted CI, runtime export and separate alpha.3 PR.
+
 # Claude release/ISA smoke results recorded —0.15alpha.2
 
 PR17 is merged (API confirmed). User supplied Claude release report:manifest

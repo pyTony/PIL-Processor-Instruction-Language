@@ -12,6 +12,20 @@ pub fn selftest_bytes()->Result<Vec<u8>,String> {
 pub fn hello_bytes()->Result<Vec<u8>,String> {
     include_str!("../programs/hello.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
 }
+// Original demonstration image: aliases, preserved flags, LEA and equal-width moves.
+pub fn extension_bytes()->Vec<u8>{vec![
+    0x66,0xb8,0x80,0,0,0, // EAX=80
+    0x66,0x0f,0xb6,0xd8, // MOVZX EBX,AL
+    0x66,0x0f,0xbe,0xc8, // MOVSX ECX,AL
+    0x98,0x66,0x98,0x66,0x99, // CBW,CWDE,CDQ
+    0xbf,0,0,0x8d,0x71,5, // DI=0; LEA SI,[BX+DI+5]
+    0x0f,0xbf,0xf8, // MOVSX DI,AX
+    0x0f,0xb7,0xef, // MOVZX BP,DI
+    0x0f,0xbf,0xff,0x0f,0xb7,0xff, // DI self aliases
+    0x89,0x07, // MOV word DS:[BX],AX -> linear180
+    0x0f,0xbf,0x2f,0x0f,0xb7,0x27, // word memory sources -> BP,SP
+    0xf4,
+]}
 pub const LOOP_ITERATIONS:u32=65536;
 pub const FACTORIALS:[u32;12]=[1,2,6,24,120,720,5040,40320,362880,3628800,39916800,479001600];
 pub fn factorial_bytes()->Result<Vec<u8>,String> {
@@ -89,7 +103,6 @@ impl Image {
                     (format!("{} 0x{:08x}",name.to_ascii_uppercase(),r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
                 }else if matches!(second,0xb6|0xb7|0xbe|0xbf){
                     let source_width=if second&1==0{8}else{16};
-                    if source_width>=w{return Err(GuestError::Decode("MOVSX/MOVZX profile requires a wider destination".into()));}
                     let m=r.byte()?;dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,source_width);
                     let name=if second&8==0{"movzx"}else{"movsx"};
                     let mut text=description(&format!("{name}{source_width}")).map_err(GuestError::Decode)?;

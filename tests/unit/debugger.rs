@@ -354,11 +354,21 @@ fn check_distinguishes_unsupported_demos_from_incomplete_checked_images(){
     for name in ["hello","counter","echo","memory"]{
         let mut d=Debugger::new(name).unwrap();let before=d.cpu.clone();let ram=d.ram.clone();let serial=d.serial.snapshot();
         let error=d.command("check").unwrap_err();
-        assert_eq!(error,"no built-in check for this program; supported images: selftest, factorials, loop, mandelbrot");
+        assert_eq!(error,"no built-in check for this program; supported images: selftest, factorials, loop, mandelbrot, extensions");
         assert_eq!(d.cpu,before);assert_eq!(d.ram,ram);assert_eq!(d.serial.snapshot(),serial);
     }
-    for name in ["selftest","factorials","loop","mandelbrot"]{
+    for name in ["selftest","factorials","loop","mandelbrot","extensions"]{
         let mut d=Debugger::new(name).unwrap();let error=d.command("check").unwrap_err();
         assert!(!error.contains("no built-in check"),"{name}: {error}");
     }
+}
+
+#[test]
+fn extensions_demo_runs_lists_and_checks_new_instruction_forms(){
+    let mut d=Debugger::new("extensions").unwrap();
+    let listing=d.command("list 64").unwrap().0;
+    for label in ["MOVZX EBX,AL","MOVSX ECX,AL","CBW","CWDE","CDQ","LEA SI,[BX+DI+0x5]","MOVSX DI,AX","MOVSX DI,DI","MOVZX DI,DI","MOVSX BP,word DS:[BX]"]{assert!(listing.contains(label),"missing {label}: {listing}");}
+    assert!(d.command("check").is_err());
+    let (done,stop)=d.run(1000).unwrap();assert_eq!(done,15);assert!(matches!(stop,Stop::Halt(_)));
+    assert!(d.command("check").unwrap().0.starts_with("PASS: extensions"));
 }

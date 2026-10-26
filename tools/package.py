@@ -37,10 +37,10 @@ with tempfile.TemporaryDirectory() as temp:
     subprocess.run([str(exe),'--numeric-test'],cwd=delivery,check=True)
     subprocess.run([str(exe),'--compare-backends','16','2'],cwd=delivery,check=True)
     subprocess.run([str(exe),'--mandelbrot','8','8'],cwd=delivery,check=True)
-    commands='serial rx 41\nrun 1000\ncheck\nserial tx\nload programs/hello.bin\nrun 1000\nserial tx\nload programs/factorials.bin\ntime 1000\ncheck\nbench 16 2\ncache stats\ncache off\nbench 16 2\ncache on\nstress 2\nquit\n'
+    commands='serial rx 41\nrun 1000\ncheck\nserial tx\nload programs/hello.bin\nrun 1000\nserial tx\nload programs/factorials.bin\ntime 1000\ncheck\ndemo extensions\nrun 1000\ncheck\nbench 16 2\ncache stats\ncache off\nbench 16 2\ncache on\nstress 2\nquit\n'
     launch=['pwsh','-NoProfile','-File','debug.ps1'] if os.name=='nt' else ['sh','debug.sh']
     result=subprocess.run(launch,cwd=delivery,input=commands,text=True,capture_output=True,check=True)
-    if 'PASS: selftest' not in result.stdout or 'serial output: 41 | A' not in result.stdout or 'TX: 41' not in result.stdout or 'Hello, world!\\n' not in result.stdout or 'PASS: factorials' not in result.stdout or 'PASS: counted-loop benchmark' not in result.stdout or 'PASS: factorial stress' not in result.stdout or 'cache=on (cold per sample)' not in result.stdout or 'cache=off (cold per sample)' not in result.stdout:
+    if 'PASS: selftest' not in result.stdout or 'serial output: 41 | A' not in result.stdout or 'TX: 41' not in result.stdout or 'Hello, world!\\n' not in result.stdout or 'PASS: factorials' not in result.stdout or 'PASS: extensions' not in result.stdout or 'PASS: counted-loop benchmark' not in result.stdout or 'PASS: factorial stress' not in result.stdout or 'cache=on (cold per sample)' not in result.stdout or 'cache=off (cold per sample)' not in result.stdout:
         raise SystemExit('unpacked debugger smoke test failed:\n'+result.stdout+result.stderr)
     print('Unpacked delivery: binary, launcher, guest program and serial console passed')
 print(dist/(name+'.zip'))

@@ -445,7 +445,7 @@ fn generated_rust_matches_interpreter() {
         for w in [8,16,32] {variants.push((op.to_owned(),w));}
     }
     for op in ["movzx8","movsx8","cwd"]{for w in [16,32]{variants.push((op.into(),w));}}
-    for op in ["movzx16","movsx16"]{variants.push((op.into(),32));}
+    for op in ["movzx16","movsx16"]{for w in [16,32]{variants.push((op.into(),w));}}
     for name in CONDITIONS_NAMES {variants.push((format!("set{name}"),8));}
     for (id,(op,w)) in variants.iter().enumerate() {
         let w=*w;
@@ -617,5 +617,5 @@ fn independent_source_widths_validate_views_before_any_effect(){
     let before=c.clone();
     for bad in [View{register:0,low:8,width:32},View{register:8,low:0,width:8},View{register:0,low:25,width:8}]{assert!(execute(&p,&mut c,dst,bad).is_err());assert_eq!(c,before);}
     for text in ["read a src 7\npreserve_flags all\nretire","read a src 8\nread b src 16\npreserve_flags all\nretire","read a dst 8\npreserve_flags all\nretire"]{assert!(compile(text,32).is_err(),"{text}");}
-    for name in ["movsx16","movzx16"]{assert!(compile(&instantiate(description(name).unwrap(),16),16).is_err());}
+    for name in ["movsx16","movzx16"]{assert_eq!(compile(&instantiate(description(name).unwrap(),16),16).unwrap().source_width,16);assert!(compile(&instantiate(description(name).unwrap(),8),8).is_err());}
 }
