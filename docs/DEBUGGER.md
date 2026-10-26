@@ -552,3 +552,7 @@ movzx16/movsx16 (word source); movzx/movsx alias the byte forms. Destination
 width comes from --emit-rust WIDTH. lea and cwd use16/32-bit destination width;
 cdq aliases cwd. The binary decoder binds98/99 implicit registers before PIL
 validation. The interpreter and generated runner execute the same tokens.
+
+`check` supports selftest, factorials, loop and the small Mandelbrot demo.
+Other programs report that no built-in check is available; a supported but
+incomplete image retains its specific verification failure message.
