@@ -584,7 +584,7 @@
     {
       "version": "0.11.0-alpha.1",
       "date": "2026-10-26",
-      "status": "development; host verification pending",
+      "status": "host-verified; runtime-only PR #9 awaits user review",
       "features": [
         "OR XOR TEST NOT NEG INC DEC NOP",
         "ALU register/memory both directions",
@@ -593,10 +593,24 @@
       ],
       "rust_verification": {
         "tests_supplied": 128,
-        "status": "pending hosted CI"
+        "tests_passed": 128,
+        "tests_failed": 0,
+        "ubuntu_seconds": 7.5,
+        "windows_seconds": 16.08,
+        "source_commit": "aab72b00d47f77aa31ad30abb404070472fcb49c",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40364437807",
+        "verifier_cases": 14,
+        "matched_trace_bytes": 2460193,
+        "runtime_export": "58-file standalone checks passed",
+        "native_archive": "unpacked verification passed",
+        "phone": "not yet reported"
       },
       "runtime_files": 58,
-      "provenance": "Intel 80386 manual opcode chapters and Appendix A; reference only; original code"
+      "provenance": "Intel 80386 manual opcode chapters and Appendix A; reference only; original code",
+      "python_verification": {
+        "arithmetic_logical_cases": 1184058,
+        "conditional_cases": 1030
+      }
     }
   ]
 }

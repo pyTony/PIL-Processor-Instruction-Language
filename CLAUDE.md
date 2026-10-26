@@ -1,3 +1,14 @@
+# Instruction expansion verified — PR #9
+
+Runtime-only PR https://github.com/pyTony/pil_proof/pull/9 is ready for review.
+Core dev aab72b00d47f77aa31ad30abb404070472fcb49c passed CI run40364437807:
+128 tests, Ubuntu7.50 s / Windows16.08 s. Fourteen full-state cases matched
+2,460,193 bytes; isolated58-file runtime, emitted Rust, launchers and unpacked
+deliveries passed. Python1,184,058 arithmetic/logical +1,030 conditional cases
+passed. Runtime head b043980156a81306b1957e9d56047ef737b3ed82, based on
+main3923d9f0020fc0858097c5e18bf4ab1ff1bb8465. No new phone run reported.
+No release/tag published; preserve dev/runtime-main branch policy.
+
 # Expanded instruction profile — 0.11.0-alpha.1 development
 
 OR/XOR/TEST/NOT/NEG/INC/DEC/NOP added in PIL and monitor decoder. Binary
@@ -5,7 +16,7 @@ ALU supports register/memory both directions, accumulator immediates and
 80/81/83 groups. F6/F7 /0 TEST,/2 NOT,/3 NEG; FE/FF /0 INC,/1 DEC;
 40..4F INC/DEC;90 NOP. Unsupported-opcode tests now use62 instead of90.
 Operand locations are bound into PIL before validation; no duplicated CPU flags.
-Six new tests,128 total pending CI; compiled proof14 cases (ALU8/16/32,
+Six new tests,128 total; host CI passed (see above); compiled proof14 cases (ALU8/16/32,
 readonly TEST/NEG added). Runtime export58 files. No stack/multiply/shifts yet.
 
 # User phone compiled backend verified — alpha.2

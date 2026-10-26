@@ -270,3 +270,10 @@ and accumulator operands. Six new Rust semantic/decoder tests (128 total)
 pending hosted execution; fourteen compiled/interpreted verification cases.
 Python independent logic oracle extended to OR/XOR/TEST. Runtime58 files.
 Reference-only use of Intel 80386 manual recorded; no third-party code imported.
+
+Verification completed at aab72b00d47f77aa31ad30abb404070472fcb49c:
+https://github.com/pyTony/pil_proof/actions/runs/40364437807 — 128 tests passed
+on Ubuntu7.50 s and Windows16.08 s. Fourteen traces matched2,460,193 bytes.
+Python oracle1,184,058 arithmetic/logical +1,030 conditional cases passed.
+Standalone58-file runtime and unpacked native deliveries passed. Runtime-only
+PR #9 awaits user review; phone verification of this revision remains pending.
