@@ -1,3 +1,26 @@
+# 0.15.0-alpha.2 diagnostic follow-up verified
+
+Core patch54149d44cba6079d4ccf4f1b1716ac2f4511821a passed CI40405704118:
+164 tests on Ubuntu15.29 s/Windows22.30 s;34-case per-instruction proof matched
+4,394,242 bytes.72-file isolated source/helpers and unpacked native deliveries
+passed; full Mandelbrot regression matched65,536 pixels/256 checkpoints.
+Version metadata bumped to0.15alpha.2 after the core patch because ISA PR16 was
+merged separately at main33377e984e4e7d54b99cf6db2f1e9c57b238b35c. Execution
+logic unchanged by version/docs/evidence follow-up. Prepare separate runtime PR.
+Unsupported check diagnostic fixed,8-demo regression added;5 formatting spots
+clarified,not a full clippy/rustfmt rewrite. Runtime README explicitly says
+cargo test0 is intentional; automated tests/CI live ondev. Claude's runtime
+review passed8 demos; no-tests conclusion does not describe development branch.
+No new external sources/code/dependencies. No release/tag; no phonealpha.2 result yet.
+
+# Diagnostic follow-up will be0.15.0-alpha.2
+
+PR #16 merged original ISA head0d4da793e2159ff21ccd129d034d0738a1adfe1d.
+Runtime check-message/README/formatting follow-up needs a separate alpha.2 PR.
+Core patch54149d44cba6079d4ccf4f1b1716ac2f4511821a is being verified by
+CI40405704118 (all164 tests already passed on both hosts; release checks pending).
+Version/docs metadata bumped after core patch; execution logic unchanged.
+
 # Claude runtime review follow-up
 
 Claude inspected runtime main0.14alpha.1 and correctly observed cargo test0,

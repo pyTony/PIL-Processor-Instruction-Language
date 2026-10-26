@@ -1,5 +1,10 @@
 # Changes
 
+## 0.15.0-alpha.2
+
+- Fix unsupported-program check diagnostics; add all8 demo regression coverage.
+- Explain runtime/dev test placement and clarify5 formatting hotspots.
+
 ## 0.15.0-alpha.1
 
 - Add MOVZX/MOVSX byte-to16/32 and word-to32, register/memory sources.

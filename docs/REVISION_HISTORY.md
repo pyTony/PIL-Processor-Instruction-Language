@@ -541,3 +541,18 @@ ambiguous formatting; no wholesale rustfmt/style rewrite or clippy-clean claim.
 Pending runtimePR16 (head0d4da793e2159ff21ccd129d034d0738a1adfe1d) is ready for
 ISA expansion; append this tested follow-up only if still open,otherwise export
 a separately versioned delivery. Keep development/tests/provenance ondev.
+
+## 0.15.0-alpha.2 diagnostic delivery verification
+
+Core patch54149d44cba6079d4ccf4f1b1716ac2f4511821a passed CI40405704118:
+164 tests on Ubuntu15.29 s/Windows22.30 s;34-case per-instruction proof matched
+4,394,242 bytes.72-file isolated source/helpers and unpacked native deliveries
+passed; full Mandelbrot regression matched65,536 pixels/256 checkpoints.
+Version metadata bumped to0.15alpha.2 after the core patch because ISA PR16 was
+merged separately at main33377e984e4e7d54b99cf6db2f1e9c57b238b35c. Execution
+logic unchanged by version/docs/evidence follow-up. Prepare separate runtime PR.
+Unsupported check diagnostic fixed,8-demo regression added;5 formatting spots
+clarified,not a full clippy/rustfmt rewrite. Runtime README explicitly says
+cargo test0 is intentional; automated tests/CI live ondev. Claude's runtime
+review passed8 demos; no-tests conclusion does not describe development branch.
+No new external sources/code/dependencies. No release/tag; no phonealpha.2 result yet.

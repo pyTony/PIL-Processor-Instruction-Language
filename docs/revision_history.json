@@ -1181,7 +1181,7 @@
     {
       "version": "0.15.0-alpha.1",
       "date": "2026-10-26",
-      "status": "ISA host-verified; debugger diagnostic follow-up pending CI",
+      "status": "host-verified; runtime-only PR #16 merged",
       "features": [
         "MOVZX/MOVSX8-to16/32 and16-to32",
         "CBW/CWDE/CWD/CDQ",
@@ -1211,6 +1211,22 @@
         "matched_checkpoint_bytes": 1134592,
         "status": "both hosts passed"
       },
+      "runtime_delivery": {
+        "pull_request": "https://github.com/pyTony/pil_proof/pull/16",
+        "head": "0d4da793e2159ff21ccd129d034d0738a1adfe1d",
+        "source_commit": "1ebf5ac9609ddaff6553920243268ef6301940e2"
+      }
+    },
+    {
+      "version": "0.15.0-alpha.2",
+      "date": "2026-10-26",
+      "status": "host-verified; separate runtime delivery being prepared",
+      "features": [
+        "accurate unsupported-program check diagnostic",
+        "all8 demo regression coverage",
+        "unambiguous spacing of4 EIP assignments and REPL conditionals",
+        "runtime README explains development test placement"
+      ],
       "review_follow_up": {
         "source": "User-supplied Claude review of runtime main0.14alpha.1",
         "test_policy": "dev holds automated suite/CI; main intentionally has no tests",
@@ -1221,8 +1237,25 @@
           "runtime README explains development test placement"
         ],
         "tests_supplied": 164,
-        "status": "CI pending"
-      }
+        "status": "host-verified"
+      },
+      "rust_verification": {
+        "tests_supplied": 164,
+        "tests_passed": 164,
+        "tests_failed": 0,
+        "ubuntu_seconds": 15.29,
+        "windows_seconds": 22.3,
+        "source_commit": "54149d44cba6079d4ccf4f1b1716ac2f4511821a",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40405704118",
+        "verifier_cases": 34,
+        "matched_trace_bytes": 4394242,
+        "standalone_runtime": "72-file build/platform helpers passed",
+        "native_archive": "unpacked delivery passed",
+        "full_image_regression": "65536 pixels and256 checkpoints matched",
+        "version_metadata": "0.15alpha.2 after core patch; execution logic unchanged"
+      },
+      "runtime_files": 72,
+      "provenance": "User-supplied Claude runtime review; original diagnostic/test changes, no new external material"
     }
   ]
 }

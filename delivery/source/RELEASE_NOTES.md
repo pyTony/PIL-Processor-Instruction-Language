@@ -1,6 +1,12 @@
+# PIL 0.15.0-alpha.2
+
+- Report when the current program has no built-in check, with supported images.
+- Keep specific verification failures for supported but unfinished programs.
+- Explain runtime/dev automated-test placement in the runtime README.
+- Clarify assignment/conditional formatting in the debugger.
+
 # PIL 0.15.0-alpha.1
 
-- Clarify unsupported-program check errors and runtime/dev test-suite placement.
 
 - Add MOVZX/MOVSX byte-to16/32 and word-to32, register/memory sources.
 - Add CBW/CWDE, CWD/CDQ and LEA with independent operand/address sizes.

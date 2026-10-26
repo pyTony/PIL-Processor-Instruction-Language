@@ -1,5 +1,9 @@
 # PIL 386 debugger
 
+This is a runtime-only delivery. Automated tests and CI live on the
+[dev branch](https://github.com/pyTony/pil_proof/tree/dev). `cargo test` here
+intentionally runs zero tests; see [automated verification](#automated-verification).
+
 ## Documentation
 
 | Read this | What it covers |
@@ -260,7 +264,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.15.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.15.0-alpha.2. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:

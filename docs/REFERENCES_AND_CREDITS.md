@@ -1,6 +1,6 @@
 # References, provenance and credits
 
-Maintained with the project. Last updated: 26 October 2026 (v0.15.0-alpha.1).
+Maintained with the project. Last updated: 26 October 2026 (v0.15.0-alpha.2).
 
 ## What this release contains
 
