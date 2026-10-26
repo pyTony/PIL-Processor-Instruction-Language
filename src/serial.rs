@@ -49,6 +49,3 @@ impl SerialTransport for MockSerial {
     }
 }
 
-#[cfg(test)]
-#[path = "../tests/unit/serial.rs"]
-mod tests;

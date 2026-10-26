@@ -10,6 +10,7 @@ pub struct FlowContext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecError {
     MemoryAccess { eip:u32, address:u32, bytes:u8, write:bool },
+    StackSegment { eip: u32, error_code: u16 },
     InvalidBinding,
     InvalidContext,
     GeneralProtection { eip: u32, error_code: u16 },

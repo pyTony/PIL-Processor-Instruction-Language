@@ -1,0 +1,78 @@
+0100  b8 ff ff                   MOV AX,0xffff
+0103  b9 01 00                   MOV CX,1
+0106  01 c8                      ADD AX,CX
+0108  0f 92 c3                   SETB BL
+010b  0f 94 c7                   SETE BH
+010e  ba 01 01                   MOV DX,0x0101
+0111  39 d3                      CMP BX,DX
+0113  74 04                      JE next check (skip failure stop)
+0115  ba ad de                   MOV DX,0xdead ; failure
+0118  f4                         HLT ; monitor stop
+0119  39 c8                      CMP AX,CX ; CF=1
+011b  11 c8                      ADC AX,CX
+011d  ba 02 00                   MOV DX,2
+0120  39 d0                      CMP AX,DX
+0122  74 04                      JE next check (skip failure stop)
+0124  ba ad de                   MOV DX,0xdead ; failure
+0127  f4                         HLT ; monitor stop
+0128  39 d1                      CMP CX,DX ; CF=1
+012a  19 c8                      SBB AX,CX
+012c  ba 00 00                   MOV DX,0
+012f  39 d0                      CMP AX,DX
+0131  74 04                      JE next check (skip failure stop)
+0133  ba ad de                   MOV DX,0xdead ; failure
+0136  f4                         HLT ; monitor stop
+0137  b0 f0                      MOV AL,0xf0
+0139  b1 0f                      MOV CL,0x0f
+013b  20 c8                      AND AL,CL
+013d  0f 94 c3                   SETE BL
+0140  b1 01                      MOV CL,1
+0142  38 cb                      CMP BL,CL
+0144  74 04                      JE next check (skip failure stop)
+0146  ba ad de                   MOV DX,0xdead ; failure
+0149  f4                         HLT ; monitor stop
+014a  b9 03 00                   MOV CX,3
+014d  ba 01 00                   MOV DX,1
+0150  29 d1                      SUB CX,DX
+0152  75 fc                      JNE -4 ; three iterations
+0154  66 b8 78 56 34 12          MOV EAX,0x12345678
+015a  66 bb 00 04 00 00          MOV EBX,0x400
+0160  be 00 00                   MOV SI,0
+0163  66 89 00                   MOV dword DS:[BX+SI],EAX
+0166  66 8b 10                   MOV EDX,dword DS:[BX+SI]
+0169  66 39 d0                   CMP EAX,EDX
+016c  74 04                      JE next check (skip failure stop)
+016e  ba ad de                   MOV DX,0xdead ; failure
+0171  f4                         HLT ; monitor stop
+0172  bd 00 04                   MOV BP,0x400
+0175  66 89 46 00                MOV dword SS:[BP+0],EAX
+0179  66 8b 56 00                MOV EDX,dword SS:[BP+0]
+017d  66 39 d0                   CMP EAX,EDX
+0180  74 04                      JE next check (skip failure stop)
+0182  ba ad de                   MOV DX,0xdead ; failure
+0185  f4                         HLT ; monitor stop
+0186  64 66 89 07                MOV dword FS:[BX],EAX
+018a  64 66 8b 17                MOV EDX,dword FS:[BX]
+018e  66 39 d0                   CMP EAX,EDX
+0191  74 04                      JE next check (skip failure stop)
+0193  ba ad de                   MOV DX,0xdead ; failure
+0196  f4                         HLT ; monitor stop
+0197  66 be 02 00 00 00          MOV ESI,2
+019d  67 66 89 44 b3 fc          MOV dword DS:[EBX+ESI*4-4],EAX
+01a3  67 66 8b 54 b3 fc          MOV EDX,dword DS:[EBX+ESI*4-4]
+01a9  66 39 d0                   CMP EAX,EDX
+01ac  74 04                      JE next check (skip failure stop)
+01ae  ba ad de                   MOV DX,0xdead ; failure
+01b1  f4                         HLT ; monitor stop
+01b2  b9 01 00                   MOV CX,1
+01b5  01 0f                      ADD word DS:[BX],CX
+01b7  8b 17                      MOV DX,word DS:[BX]
+01b9  b8 79 56                   MOV AX,0x5679
+01bc  39 d0                      CMP AX,DX
+01be  74 04                      JE next check (skip failure stop)
+01c0  ba ad de                   MOV DX,0xdead ; failure
+01c3  f4                         HLT ; monitor stop
+01c4  e4 e9                      IN AL,0xe9 ; wait for mock RX
+01c6  e6 e9                      OUT 0xe9,AL ; mock TX
+01c8  ba 0d 60                   MOV DX,0x600d ; success
+01cb  f4                         HLT ; monitor stop
