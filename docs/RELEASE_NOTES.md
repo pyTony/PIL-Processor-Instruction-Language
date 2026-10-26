@@ -1,3 +1,10 @@
+# PIL 0.15.0-alpha.3
+
+- Accept16-to16 MOVSX/MOVZX register and memory sources using existing PIL conversions.
+- Add demo extensions with a built-in checker and readable instruction listing.
+- Preserve upper register halves, flags, word-source access checks and precise faults.
+- Expand compiled proof to39 cases and independent extension/address checks to263,190.
+
 # PIL 0.15.0-alpha.2
 
 - Report when the current program has no built-in check, with supported images.

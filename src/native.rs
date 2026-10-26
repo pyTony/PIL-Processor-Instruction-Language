@@ -85,6 +85,13 @@ pub fn cases()->Result<Vec<Case>,String> {
     for segment in [SegmentRegister::Ds,SegmentRegister::Ss]{t.image.segments[segment.index()].access=super::address::SegmentAccess::Unusable;}tests.push(t);
     let mut t=case("lea32",vec![0x64,0x67,0x66,0x8d,0x44,0x8b,0xfc,0x67,0x8d,0x03,0xf4])?;
     t.regs[3]=0x1234fff0;t.regs[1]=8;t.flags=0xad7;t.image.segments[SegmentRegister::Fs.index()].access=super::address::SegmentAccess::Unusable;tests.push(t);
+    tests.push(case("extensions_demo",guest::extension_bytes())?);
+    let mut t=case("same_width_readonly",vec![0x0f,0xb7,0x07,0x0f,0xbf,0x0f,0x0f,0xbf,0x3f,0x0f,0xb7,0x2f,0xf4])?;
+    t.regs[0]=0xabcd1234;t.regs[1]=0x89ab0000;t.regs[3]=0x400;t.regs[5]=0x12340000;t.regs[7]=0xdead0000;t.flags=0xad7;
+    t.patch=Some((0x500,vec![1,0x80]));t.protect=Some((0x500,2));tests.push(t);
+    let mut t=case("same_width_gp",vec![0x0f,0xbf,0x07,0xf4])?;t.regs[3]=0xffff;t.regs[0]=0x12345678;tests.push(t);
+    let mut t=case("same_width_ss",vec![0x0f,0xbf,0x46,0,0xf4])?;t.regs[5]=0xffff;t.regs[0]=0x12345678;tests.push(t);
+    let mut t=case("same_width_ram",vec![0x0f,0xb7,0x07,0xf4])?;t.regs[3]=0xf00;t.regs[0]=0x12345678;tests.push(t);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {

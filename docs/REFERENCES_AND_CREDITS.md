@@ -120,3 +120,49 @@ semantics. Original PIL/Rust/Python implementation and tests; no manual text,
 external implementation, test vectors or dependencies imported. Same-width
 MOVSX/MOVZX forms are outside the documented monitor profile. Generic source
 binding validation and original mathematical oracles are project work.
+
+## Same-width extension coverage follow-up
+
+User-supplied Claude release/ISA smoke report recorded separately from hosted CI.
+Its16-to16 compatibility claim prompted another review of Intel386 MOVSX/MOVZX
+entries and SingleStepTests/80386 metadata/listing:
+https://github.com/SingleStepTests/80386/blob/main/80386.csv
+https://github.com/SingleStepTests/80386/tree/main/v1_ex_real_mode
+The CSV advertises16/32-bit destinations with16-bit sources for0FB7/0FBF;
+unprefixed hardware-derived test archives are listed. This is metadata review,
+not an execution/validation of those vectors. No test data or external code is
+imported. Thanks to Daniel Balsom and contributors for the hardware-test work.
+The0.15alpha.2 monitor deliberately rejected16-to16 forms. Feature matrix clarification
+is queued for the next runtime export; execution semantics are unchanged.
+
+Intel386 Section17.2 ModR/M tables also consulted to correct the reported
+encoding:0F BF F8 selects DI,AX;DI,DI would require0F BF FF with16-bit operands.
+https://read.seas.harvard.edu/~kohler/class/aosref/i386/s17_02.htm
+
+## Same-width MOVSX/MOVZX support —0.15alpha.3
+
+The earlier coverage restriction is now removed, using the existing equal-width
+sext/zext behavior rather than a special decoder-side copy. Source references:
+Intel386 MOVSX/MOVZX entries and ModR/M tables; SingleStepTests/80386 CSV rows
+0FB7/0FBF (r16/32 with r/m16) and archive inventory, as recorded above. The
+original1986 instruction tables list widening forms only; broader encoding
+metadata motivates this compatibility increment. Raw hardware vectors have not
+been imported or executed. Register, alias, read-only-memory and fault checks
+are original project tests; demo bytes are independently authored for this project.
+
+## External validation suites reviewed26 October2026
+
+SingleStepTests/80386 revision459d49fbe6280e9ed46fee887b58dacd9cb880ab:
+README,80386.csv and LICENSE consulted. Software is MIT; data public domain
+unless otherwise noted. Captures use80386EX,not a386DX cycle model.
+https://github.com/SingleStepTests/80386/blob/459d49fbe6280e9ed46fee887b58dacd9cb880ab/LICENSE
+
+barotto/test386.asm revisioncfd052d1e64d5375dea5a681c1eadeed64ceda2c:
+README and COPYING consulted. README specifies GPLv3-or-later. Intended as a
+separate external BIOS-test ROM after machine-level prerequisites exist.
+https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ceda2c/README.md
+https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ceda2c/COPYING
+
+No third-party tests, code or ROMs imported/executed. Thanks to Daniel Balsom,
+SingleStepTests contributors and barotto for making these validation resources
+available,and to Tony for suggesting them. Detailed integration work stays ondev.
