@@ -280,9 +280,28 @@
         "windows_seconds": 10.6,
         "runtime_export": "build/scripts/Hello-world/generated Rust passed on both hosts",
         "native_packages": "unpacked Hello-world transcript passed on both hosts",
-        "phone_hello": "not yet reported"
+        "phone_hello": "user-confirmed: 28 steps, EIP 0x138, Hello-world plus newline in console and TX"
       },
       "provenance": "original project fixture; no new third-party material"
+    },
+    {
+      "version": "0.8.0",
+      "date": "2026-10-26",
+      "status": "development; host CI pending",
+      "features": [
+        "guest factorials 1!..12! via repeated addition",
+        "counted-loop guest and timing commands",
+        "fresh-state verified stress/benchmark samples",
+        "release benchmark helpers and runtime/archive integration"
+      ],
+      "rust_verification": {
+        "tests_supplied": 101,
+        "host_ci": "pending",
+        "phone_numeric": "not yet reported"
+      },
+      "runtime_files": 44,
+      "timing_scope": "host wall time; includes decoding/PIL compilation/interpreter; not guest cycles",
+      "provenance": "original fixture/code; existing instruction references; Python math.factorial independent reference"
     }
   ]
 }

@@ -18,6 +18,8 @@ jobs:
       - run: cargo run --locked -- --selftest
       - run: python tools/build_selftest.py --check
       - run: python tools/build_hello.py --check
+      - run: python tools/build_numeric.py --check
+      - run: cargo run --locked -- --numeric-test
       - run: python tools/verify_memory.py
       - run: python tools/verify_descriptions.py
       - run: python tools/verify_flow.py
@@ -28,6 +30,11 @@ jobs:
         run: ./tools/debug.ps1 -Check
       - run: python tools/export_runtime.py target/runtime-source --verify
       - run: cargo build --release --locked
+      - if: runner.os == 'Linux'
+        run: sh tools/bench.sh 16 2
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/bench.ps1 -Iterations 16 -Samples 2
       - run: python tools/package.py
       - uses: actions/upload-artifact@v4
         with:

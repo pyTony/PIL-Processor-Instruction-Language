@@ -1,5 +1,12 @@
 # Changes
 
+## 0.8.0
+
+- Add guest factorial table and counted loop, with exact output/state checks.
+- Add bounded time/bench/stress commands and optimized benchmark scripts.
+- Include numeric fixtures in runtime exports and native archives.
+- Add seven debugger regression tests (101 development tests total).
+
 ## 0.7.0 (development)
 
 - Add 16/32-bit effective addresses, segment overrides and cached-segment checks.

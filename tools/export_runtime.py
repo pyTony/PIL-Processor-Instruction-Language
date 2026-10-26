@@ -5,9 +5,9 @@ import argparse,hashlib,json,os,re,subprocess,sys
 ROOT=Path(__file__).resolve().parents[1]
 # Explicit run/build inputs only. Tests and development documents cannot leak
 # through a broad repository copy. These patterns are intentionally narrow.
-PATTERNS=('src/*.rs','isa/i386/*.pil','programs/selftest.hex','programs/selftest.lst','programs/hello.hex','programs/hello.lst',
+PATTERNS=('src/*.rs','isa/i386/*.pil','programs/selftest.hex','programs/selftest.lst','programs/hello.hex','programs/hello.lst','programs/factorials.hex','programs/factorials.lst','programs/loop.hex','programs/loop.lst',
           'Cargo.toml','Cargo.lock','.gitattributes','tools/build.sh','tools/build.ps1',
-          'tools/debug.sh','tools/debug.ps1')
+          'tools/debug.sh','tools/debug.ps1','tools/bench.sh','tools/bench.ps1')
 DOCUMENTS={'README.md':'README.md','DEBUGGER.md':'docs/DEBUGGER.md',
            'REFERENCES_AND_CREDITS.md':'docs/REFERENCES_AND_CREDITS.md',
            'RELEASE_NOTES.md':'docs/RELEASE_NOTES.md'}
@@ -53,8 +53,8 @@ def verify(destination):
     windows=os.name=='nt'
     script=['pwsh','-NoProfile','-File','tools/debug.ps1'] if windows else ['sh','tools/debug.sh']
     subprocess.run(script+(['-Check'] if windows else ['--check']),cwd=destination,env=env,check=True)
-    result=subprocess.run(script,cwd=destination,env=env,input='serial rx 41\nrun 1000\ncheck\nserial tx\ndemo hello\nrun 1000\nserial tx\nquit\n',text=True,capture_output=True,check=True)
-    if not all(text in result.stdout for text in ['PASS: selftest','serial output: 41 | A','TX: 41','Hello, world!\\n','TX: 48 65 6c 6c 6f 2c 20 77 6f 72 6c 64 21 0a']):
+    result=subprocess.run(script,cwd=destination,env=env,input='serial rx 41\nrun 1000\ncheck\nserial tx\ndemo hello\nrun 1000\nserial tx\ndemo factorials\ntime 1000\ncheck\nbench 16 2\nstress 2\nquit\n',text=True,capture_output=True,check=True)
+    if not all(text in result.stdout for text in ['PASS: selftest','serial output: 41 | A','TX: 41','Hello, world!\\n','TX: 48 65 6c 6c 6f 2c 20 77 6f 72 6c 64 21 0a','PASS: factorials','PASS: counted-loop benchmark','PASS: factorial stress']):
         raise SystemExit('runtime debugger transcript failed:\n'+result.stdout+result.stderr)
     exe=destination/'target/debug'/('pil-proof.exe' if windows else 'pil-proof')
     generated=subprocess.check_output([str(exe),'--emit-rust','32','add_ram'],cwd=destination,env=env)

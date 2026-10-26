@@ -181,3 +181,56 @@ fn hello_reset_replays_console_output_and_standalone_image() {
     d.reset();assert!(d.tx_events.is_empty());assert_eq!(d.serial.lengths(),(0,0));
     d.command("run").unwrap();assert_eq!(d.serial.take_tx(),b"Hello, world!\n");
 }
+
+#[test]
+fn factorial_guest_computes_all_twelve_results_and_detects_corruption() {
+    let mut d=Debugger::new("factorials").unwrap();assert!(d.command("check").is_err());
+    assert_eq!(d.run(1000).unwrap(),(336,Stop::Halt(0x146)));
+    assert!(d.command("check").unwrap().0.contains("12!=479001600"));
+    assert_eq!(d.cpu.regs[0],479001600);assert!(d.tx_events.is_empty());
+    d.command("poke 0x510 00").unwrap();assert!(d.command("check").is_err());
+    d.reset();assert_eq!(d.run(1000).unwrap().0,336);assert!(d.command("check").is_ok());
+}
+#[test]
+fn counted_loop_iterations_steps_and_flags_match_for_varied_counts() {
+    for n in [1,2,17,257] {
+        let mut d=Debugger::new("counter").unwrap();d.load_image(&super::super::guest::loop_bytes(n).unwrap(),"loop.bin").unwrap();
+        assert_eq!(d.run(1000).unwrap(),(3*n as usize+3,Stop::Halt(0x11a)));
+        assert_eq!(d.cpu.regs[0],n);assert_eq!(d.cpu.regs[1],0);assert!(d.command("check").is_ok());
+        d.cpu.eflags|=1;assert!(d.command("check").is_err());
+    }
+}
+#[test]
+fn timed_run_honours_breakpoints_and_invalid_budget_preserves_continuation() {
+    let mut d=Debugger::new("loop").unwrap();d.command("break 0x112").unwrap();
+    let output=d.command("time 10000").unwrap().0;
+    assert!(output.contains("3 completed steps; breakpoint"));let c=d.cpu.clone();let marker=d.stopped_at_break;
+    for bad in ["time 0","time 1000001","time 0x10000000000000000"] {assert!(d.command(bad).is_err());assert_eq!(d.cpu,c);assert_eq!(d.stopped_at_break,marker);}
+    let output=d.command("time 1").unwrap().0;assert!(output.contains("1 completed steps"));assert!(output.contains("elapsed="));assert_eq!(d.cpu.eip,0x115);
+}
+#[test]
+fn timed_run_zero_steps_has_no_division_by_zero_or_state_change() {
+    let mut d=Debugger::new("factorials").unwrap();d.run(1000).unwrap();let c=d.cpu.clone();let ram=d.ram.clone();
+    let output=d.command("time 1").unwrap().0;assert!(output.contains("0 completed steps"));assert!(output.contains("rate unavailable"));assert_eq!(d.cpu,c);assert_eq!(d.ram,ram);
+}
+#[test]
+fn large_run_batches_keep_exact_total_budget() {
+    let mut d=Debugger::new("loop").unwrap();let (steps,stop)=d.run_large(10001).unwrap();
+    assert_eq!(steps,10001);assert!(matches!(stop,Stop::Budget(_)));
+    let (_,stop)=d.run_large(4).unwrap();assert!(matches!(stop,Stop::Budget(_)));
+}
+#[test]
+fn benchmark_is_repeatable_and_does_not_replace_debugger_state() {
+    let mut d=Debugger::new("echo").unwrap();d.serial.inject_rx(&[65]).unwrap();d.command("break 0x201").unwrap();let c=d.cpu.clone();let ram=d.ram.clone();let serial=d.serial.clone();
+    let output=d.command("bench 16 2").unwrap().0;
+    assert!(output.contains("51 completed instructions/sample"));assert!(output.contains("2 measured samples, 1 excluded warmup"));assert!(output.contains("median="));
+    assert_eq!(d.cpu,c);assert_eq!(d.ram,ram);assert_eq!(d.serial,serial);assert!(d.breakpoints.contains(&0x201));
+}
+#[test]
+fn numeric_stress_verifies_every_fresh_run_and_rejects_invalid_counts() {
+    assert!(factorial_stress(2).unwrap().contains("24 results verified; 672 completed instructions"));
+    let mut d=Debugger::new("loop").unwrap();let c=d.cpu.clone();
+    for command in ["bench 0","bench 100001","bench 16 0","bench 16 10","bench 4294967296","stress 0","stress 1001","stress 4294967296"] {
+        assert!(d.command(command).is_err(),"{command}");assert_eq!(d.cpu,c);
+    }
+}

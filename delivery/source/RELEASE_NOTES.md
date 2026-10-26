@@ -1,3 +1,15 @@
+# PIL 0.8.0
+
+- Add real guest programs computing 1!..12! and a 65,536-iteration integer loop.
+- Check every factorial RAM result and final loop registers/flags.
+- Add time, bench and stress commands with bounded counts and fresh-state samples.
+- Add release benchmark helper scripts for Termux/Linux and Windows.
+- Include numeric binaries/listings in source builds and native deliveries.
+
+Timing measures host interpreter throughput including decoding and PIL
+compilation; it does not estimate original 386 clock cycles. Mandelbrot and
+floating-point arithmetic are not included in this version.
+
 # PIL 0.7.1
 
 Add `demo hello`, a 57-byte guest Hello-world program with no input required.

@@ -12,6 +12,16 @@ pub fn selftest_bytes()->Result<Vec<u8>,String> {
 pub fn hello_bytes()->Result<Vec<u8>,String> {
     include_str!("../programs/hello.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
 }
+pub const LOOP_ITERATIONS:u32=65536;
+pub const FACTORIALS:[u32;12]=[1,2,6,24,120,720,5040,40320,362880,3628800,39916800,479001600];
+pub fn factorial_bytes()->Result<Vec<u8>,String> {
+    include_str!("../programs/factorials.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
+}
+pub fn loop_bytes(iterations:u32)->Result<Vec<u8>,String> {
+    if !(1..=100000).contains(&iterations){return Err("loop iterations must be 1..100000".into());}
+    let mut bytes:Vec<u8>=include_str!("../programs/loop.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect::<Result<_,_>>()?;
+    bytes[2..6].copy_from_slice(&iterations.to_le_bytes());Ok(bytes)
+}
 const CONDITIONS:[&str;16]=["o","no","b","ae","e","ne","be","a","s","ns","p","np","l","ge","le","g"];
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum GuestError { Decode(String), Execution(ExecError) }

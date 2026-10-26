@@ -1,3 +1,18 @@
+# v0.8 numerical workload development
+
+User confirmed v0.7.1 Hello-world on Termux: 28 steps, halt 0x138, correct
+14-byte console/TX text including newline. New work: factorials 1!..12! guest
+(71 bytes, 336 instructions, halt 0x146) and counted loop (27 bytes, default
+65536 iterations / 196611 instructions, halt 0x11a). No new ISA or decoder ops.
+Timing includes decoder and PIL compilation; benchmark excludes image setup,
+result checking and console I/O. One excluded warmup; fresh state per sample.
+Time respects debugger stops and 1M-step bound; stress verifies every table.
+101 dev tests supplied; hosted CI pending. Mandelbrot postponed until signed
+multiply/shift and image output exist. Runtime-only export is 44 files. Keep
+all tests, logs, tools and this handoff on dev; never merge dev into main.
+
+## Earlier notes
+
 # v0.7.1 Hello-world verified on hosts
 
 PR #4: https://github.com/pyTony/pil_proof/pull/4 (runtime-only main delivery).

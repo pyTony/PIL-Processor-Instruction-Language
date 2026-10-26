@@ -112,3 +112,71 @@ program using MOV AL, OUT 0xe9 and HLT, with 28 completed steps. The build also
 writes `target/programs/hello.bin`; use `load target/programs/hello.bin` to open
 it, or consult `programs/hello.lst` for instruction addresses. `check` applies
 to the diagnostic selftest; Hello-world can be inspected directly via serial tx.
+
+
+## Numerical checks and loop timing
+
+The factorial program uses only existing MOV/ADD/SUB/CMP/Jcc instructions.
+It multiplies by repeated addition and stores all results 1!..12! as little-endian
+dwords at linear RAM 0x500..0x52f. 12! is 479001600; 13! exceeds unsigned
+32-bit range, so this example deliberately stops at 12. It executes 336 guest
+instructions and halts at EIP=0x146.
+
+```
+demo factorials
+time 1000
+check
+regs
+mem 0x500 48
+stress 100
+```
+
+`check` verifies all twelve RAM results, final registers and arithmetic flags.
+`stress N` runs N fresh copies, checking every table; default 25, range 1..1000.
+It leaves your current debugger state alone and reports total elapsed host time,
+including setup and verification. A changed result makes the check fail.
+
+For a tight loop:
+
+```
+demo loop
+time 250000
+check
+bench 1000 3
+```
+
+The default guest counts 65,536 iterations with ADD/SUB/JNE: 196,611 completed
+instructions including setup; halt at EIP=0x11a. `time N` runs the current
+program for up to N steps (default 10,000; maximum 1,000,000), respects
+breakpoints/waits/faults and reports elapsed milliseconds and instructions/s.
+Use more `time` or `run` commands to continue a budget-limited run. HLT is a
+monitor stop and is excluded from completed-instruction counts.
+
+`bench ITERATIONS SAMPLES` runs a fresh counted-loop image per sample,
+checks its answer, excludes one warmup and reports sample times, median and
+instructions/s. Defaults are 1000 iterations and 3 samples; allowed ranges are
+1..100000 and 1..9. Your loaded debugger program is preserved. Timing includes
+decoding, PIL description compilation and interpreter dispatch. Image setup,
+result checking and console output are outside the benchmark sample interval.
+This is current interpreter throughput, not simulated 386 cycles or CPU MHz.
+
+For representative timings, use an optimized build. From a source checkout:
+
+```sh
+sh tools/bench.sh 10000 5
+# equivalent: cargo run --release --locked -- --bench 10000 5
+```
+
+Windows: `./tools/bench.ps1 -Iterations 10000 -Samples 5`.
+The report identifies build profile, version and host OS/architecture. Compare
+runs on the same host/profile; CPU scheduling and phone power state affect time.
+`pil-proof --numeric-test` runs small automatic correctness checks.
+`pil-proof --stress 100` runs the factorial stress test from the shell.
+
+The build also writes factorials.bin and loop.bin in target/programs. Their
+instruction listings are in programs/. Native archives include those binaries
+under programs/ and can run the same debugger commands and --bench/--stress
+options directly, without compiling.
+
+A 256×256 Mandelbrot renderer is a later workload: signed fixed-point multiply,
+shifts, framebuffer storage and image output are not implemented by this monitor.

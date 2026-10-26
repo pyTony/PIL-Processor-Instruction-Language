@@ -215,3 +215,9 @@ complete provenance register and revision records remain on dev.
 Hello-world (v0.7.1): original MOV AL / OUT 0xe9 / HLT byte fixture and listing.
 Uses the already-documented instruction/monitor references; no new materials
 or third-party code imported.
+
+Numerical workloads (v0.8.0) are original byte fixtures using existing documented
+MOV, ADD, SUB, CMP and Jcc semantics. Expected factorials are ordinary integer
+mathematics, independently cross-checked by Python math.factorial in the dev
+builder. Timing uses Rust standard-library Instant, not a hardware-cycle model.
+No new third-party code/data imported or external dependencies added.

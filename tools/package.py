@@ -7,6 +7,7 @@ build=Path(os.environ.get('CARGO_TARGET_DIR',root/'target'))
 if not build.is_absolute():build=root/build
 binary=build/'release'/('pil-proof.exe' if os.name=='nt' else 'pil-proof')
 subprocess.run([str(binary),'--selftest'],check=True)
+subprocess.run([str(binary),'--numeric-test'],check=True)
 version=re.search(r'^version = "([^"]+)"', (root/'Cargo.toml').read_text(),re.M)[1]
 name=f'pil-proof-{version}-{platform.system().lower()}-{platform.machine().lower()}'
 dist=root/'dist';dist.mkdir(exist_ok=True)
@@ -16,7 +17,11 @@ with tempfile.TemporaryDirectory() as temp:
     hello=Path(temp)/'hello.bin'
     subprocess.run([str(binary),'--write-hello',str(hello)],check=True)
     files={binary:binary.name,image:'programs/selftest.bin',hello:'programs/hello.bin'}
-    for src,dst in [('delivery/README.md','README.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('delivery/source/DEBUGGER.md','DEBUGGER.md'),('delivery/source/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('delivery/source/RELEASE_NOTES.md','RELEASE_NOTES.md'),('programs/selftest.lst','programs/selftest.lst'),('programs/hello.lst','programs/hello.lst')]:
+    for example in ['factorials','loop']:
+        path=Path(temp)/(example+'.bin')
+        subprocess.run([str(binary),'--write-'+example,str(path)],check=True)
+        files[path]='programs/'+example+'.bin'
+    for src,dst in [('delivery/README.md','README.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('delivery/source/DEBUGGER.md','DEBUGGER.md'),('delivery/source/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('delivery/source/RELEASE_NOTES.md','RELEASE_NOTES.md'),('programs/selftest.lst','programs/selftest.lst'),('programs/hello.lst','programs/hello.lst'),('programs/factorials.lst','programs/factorials.lst'),('programs/loop.lst','programs/loop.lst')]:
         files[root/src]=dst
     with zipfile.ZipFile(dist/(name+'.zip'),'w',zipfile.ZIP_DEFLATED) as archive:
         manifest=[]
@@ -29,10 +34,11 @@ with tempfile.TemporaryDirectory() as temp:
     delivery=unpacked/'pil-proof';exe=delivery/binary.name
     exe.chmod(0o755) # Python extractall does not restore ZIP Unix permissions.
     subprocess.run([str(exe),'--selftest'],cwd=delivery,check=True)
-    commands='serial rx 41\nrun 1000\ncheck\nserial tx\nload programs/hello.bin\nrun 1000\nserial tx\nquit\n'
+    subprocess.run([str(exe),'--numeric-test'],cwd=delivery,check=True)
+    commands='serial rx 41\nrun 1000\ncheck\nserial tx\nload programs/hello.bin\nrun 1000\nserial tx\nload programs/factorials.bin\ntime 1000\ncheck\nbench 16 2\nstress 2\nquit\n'
     launch=['pwsh','-NoProfile','-File','debug.ps1'] if os.name=='nt' else ['sh','debug.sh']
     result=subprocess.run(launch,cwd=delivery,input=commands,text=True,capture_output=True,check=True)
-    if 'PASS: selftest' not in result.stdout or 'serial output: 41 | A' not in result.stdout or 'TX: 41' not in result.stdout or 'Hello, world!\\n' not in result.stdout:
+    if 'PASS: selftest' not in result.stdout or 'serial output: 41 | A' not in result.stdout or 'TX: 41' not in result.stdout or 'Hello, world!\\n' not in result.stdout or 'PASS: factorials' not in result.stdout or 'PASS: counted-loop benchmark' not in result.stdout or 'PASS: factorial stress' not in result.stdout:
         raise SystemExit('unpacked debugger smoke test failed:\n'+result.stdout+result.stderr)
     print('Unpacked delivery: binary, launcher, guest program and serial console passed')
 print(dist/(name+'.zip'))

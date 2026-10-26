@@ -124,3 +124,17 @@ https://github.com/pyTony/pil_proof/actions/runs/40324429616
 runtime builds, Hello-world serial transcripts, generated Rust and unpacked
 native delivery checks passed on both. Runtime-only PR #4 targets main from
 delivery/v0.7.1. Phone Hello-world execution remains unreported.
+
+## v0.8.0 — numerical stress and loop timing
+
+User requested numerical stress/tight-loop timing, preferably 256×256 Mandelbrot,
+or factorials if the instruction additions were too large. Select factorials
+and a counted integer loop using the existing decoder/ISA; Mandelbrot needs
+additional arithmetic/framebuffer work. Add 71-byte factorial and 27-byte loop
+programs, bounded time/bench/stress commands, result checks, release helper
+scripts and runtime/archive integration. Seven tests added (101 dev tests).
+
+User confirmed v0.7.1 Hello-world on Termux: 28 steps, EIP=0x138, console
+Hello, world! plus newline and matching 14-byte TX output.
+Host v0.8 verification pending. Development remains on dev; runtime-only main
+delivery will contain 44 files. No new third-party material used.
