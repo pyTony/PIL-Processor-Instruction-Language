@@ -425,3 +425,11 @@ ins/s;7.57x. Compilation3.077 s excluded; direct CPU baseline passed,median
 0.002174 ms/0.217 ns per iteration.10000/5 with1 excluded warmup. Cache29997
 hits/7 misses/0 invalidations. Separate target/wsl recommended for shared builds.
 No controlled Windows-vs-WSL ratio inferred.
+
+0.14 verification at6c7297ea7c4075e73bb5738167ead7a496152f11,CI40378440616:
+155 passed on Ubuntu13.60 s/Windows17.87 s;26 cases/4,273,138 trace bytes.
+Full256x256/32 exact65,536 pixels,12,940,344 guest instructions,255 TX retry
+drains;single render1599.244/1664.788 ms respectively. Independent Python
+PGM/BMP oracle passed,rasterSHA256=3855106a06087a62fdfc6e322767988e441137f5e13071b473f43e2f20140619.
+Standalone66-file source and unpacked native render checks passed. Runtime-only
+PR #14 awaits user review; no phone/PC user render reported or tag published.

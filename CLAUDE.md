@@ -1,3 +1,18 @@
+# Mandelbrot verified — runtime PR #14
+
+https://github.com/pyTony/pil_proof/pull/14 awaits user review. Core source
+6c7297ea7c4075e73bb5738167ead7a496152f11 passed CI40378440616:155 tests,
+Ubuntu13.60 s/Windows17.87 s;26 compiled cases/4,273,138 matching trace bytes.
+Full256x256/32 rendered65,536 exact pixels in12,940,344 instructions,255 TX
+backpressure retries:Ubuntu1599.244 ms/Windows1664.788 ms (single renders).
+Independent Python PGM/BMP checks passed,rasterSHA256
+3855106a06087a62fdfc6e322767988e441137f5e13071b473f43e2f20140619.
+Standalone66-file source,helpers,emitted Rust and unpacked render passed.
+Full image is interpreted; compiled proof includes only tiny2x2 image. Output
+BMP/PGM/guest.bin/report stays under target/mandelbrot; no VGA/OS/firmware.
+Delivery head daa9e99d095e7202006598401d1905290edd4acc based on main df69e8d622b42167b44ad6eded4f0826736e04bc.
+No user0.14 run yet; no release/tag published. WSL0.13 comparison recorded.
+
 # Mandelbrot workload development —0.14.0-alpha.1
 
 Original dynamically assembled Q12 guest renders powers-of-two2..256 with1..64

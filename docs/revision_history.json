@@ -995,7 +995,7 @@
     {
       "version": "0.14.0-alpha.1",
       "date": "2026-10-26",
-      "status": "development; hosted verification pending",
+      "status": "host-verified; runtime-only PR #14 awaits review",
       "features": [
         "Q12 guest Mandelbrot through256x256",
         "serial TX draining and exact mathematical raster checking",
@@ -1005,10 +1005,32 @@
       ],
       "rust_verification": {
         "tests_supplied": 155,
-        "status": "pending hosted CI"
+        "tests_passed": 155,
+        "tests_failed": 0,
+        "ubuntu_seconds": 13.6,
+        "windows_seconds": 17.87,
+        "source_commit": "6c7297ea7c4075e73bb5738167ead7a496152f11",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40378440616",
+        "verifier_cases": 26,
+        "matched_trace_bytes": 4273138,
+        "runtime_export": "66-file standalone checks passed",
+        "native_archive": "unpacked render passed",
+        "user_render": "not yet reported"
       },
       "runtime_files": 66,
-      "provenance": "Intel branch manuals,Netpbm PGM,Microsoft BMP reference only; original code"
+      "provenance": "Intel branch manuals,Netpbm PGM,Microsoft BMP reference only; original code",
+      "full_image_verification": {
+        "size": 256,
+        "iteration_limit": 32,
+        "pixels_verified": 65536,
+        "guest_instructions": 12940344,
+        "tx_backpressure_retries": 255,
+        "raster_sha256": "3855106a06087a62fdfc6e322767988e441137f5e13071b473f43e2f20140619",
+        "independent_python": "all PGM/BMP pixels and BMP layout passed",
+        "ubuntu_ms": 1599.244,
+        "windows_ms": 1664.788,
+        "scope": "single interpreted image runs; includes TX draining; excludes setup/reference/files; not386 cycles"
+      }
     }
   ]
 }
