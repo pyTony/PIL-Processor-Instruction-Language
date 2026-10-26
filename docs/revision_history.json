@@ -792,15 +792,14 @@
     {
       "version": "0.13.0-alpha.1",
       "date": "2026-10-26",
-      "status": "typed dump development update; validation pending",
+      "status": "host-verified; runtime PR #11 merged by user",
       "features": [
         "generic total shifts, ult and flag_if",
         "SHL/SAL SHR SAR8/16/32 register/memory count1/CL/imm8",
         "23-case full-state verification",
         "post-build debugger README quick start",
         "linked documentation indexes in development, source and native READMEs",
-        "complete demo tables and run/list budget explanation",
-        "mem8/mem16/mem32 typed dumps with printable ASCII and unsigned decimal"
+        "complete demo tables and run/list budget explanation"
       ],
       "runtime_files": 62,
       "provenance": "Intel PRM SAL and SDM Vol2B flags clarification; reference only; original code",
@@ -823,7 +822,7 @@
         "arithmetic_logical_cases": 1184058,
         "conditional_cases": 1030
       },
-      "rust_verification_before_typed_dumps": {
+      "rust_verification": {
         "tests_supplied": 140,
         "tests_passed": 140,
         "tests_failed": 0,
@@ -836,12 +835,76 @@
         "runtime_export": "62-file isolated checks passed",
         "native_archive": "unpacked verification passed",
         "phone": "not yet reported",
-        "pc_user_run": "not yet reported"
+        "pc_user_run": "user-confirmed all23 cases and direct CPU baseline passed"
       },
+      "pc_comparison": {
+        "reported_by": "user",
+        "date": "2026-10-26",
+        "host": "windows/x86_64",
+        "profile": "release",
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "measured_samples": 5,
+        "excluded_warmups": 1,
+        "verifier_cases": 23,
+        "matched_trace_bytes": 3044833,
+        "generated_samples_ms": [
+          0.2978,
+          0.2978,
+          0.2978,
+          0.3041,
+          0.2978
+        ],
+        "generated_median_ns": 297800,
+        "generated_ins_per_second": 100748825,
+        "interpreter_samples_ms": [
+          3.286,
+          3.28,
+          3.461,
+          3.275,
+          3.274
+        ],
+        "interpreter_median_ms": 3.28,
+        "interpreter_ins_per_second": 9146141,
+        "cache_hits": 29997,
+        "cache_misses": 7,
+        "cache_invalidations": 0,
+        "observed_ratio": 11.02,
+        "generated_compile_seconds_excluded": 3.577,
+        "pc_native": {
+          "checked": true,
+          "eax": 10000,
+          "ecx": 0,
+          "samples_ms": [
+            0.0044,
+            0.0043,
+            0.0044,
+            0.0043,
+            0.0043
+          ],
+          "median_ms": 0.0043,
+          "ns_per_iteration": 0.43,
+          "scope": "direct64-bit-mode arithmetic baseline; excludes emulator work"
+        },
+        "repl_startup": "confirmed by user",
+        "scope": "fixed-image guarded compiled runner; ADD/SUB/JNZ timing workload,not shift/IMUL throughput"
+      }
+    },
+    {
+      "version": "0.13.0-alpha.2",
+      "date": "2026-10-26",
+      "status": "typed dump validation pending; separate delivery after PR #11 merge",
+      "features": [
+        "mem8/mem16/mem32 typed dumps",
+        "printable ASCII and unsigned decimal",
+        "full-range validation without mutation"
+      ],
       "rust_verification": {
         "tests_supplied": 144,
         "status": "pending hosted CI for typed dumps"
-      }
+      },
+      "runtime_files": 62,
+      "provenance": "original debugger code; no new external materials/dependencies"
     }
   ]
 }

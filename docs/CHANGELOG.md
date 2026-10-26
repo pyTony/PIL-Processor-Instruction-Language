@@ -1,10 +1,12 @@
 # Changes
 
-## 0.13.0-alpha.1
+## 0.13.0-alpha.2
 
 - Add mem8/mem16/mem32 dumps, printable ASCII and optional unsigned decimal.
 - Validate full ranges/counts before output; preserve legacy mem format.
 - Add four debugger regression tests (144 total).
+
+## 0.13.0-alpha.1
 
 - Add total shifts/ult/flag_if PIL operations, interpreter and generated Rust.
 - Add SHL/SAL, SHR, SAR register/memory/count forms at8/16/32 bits.

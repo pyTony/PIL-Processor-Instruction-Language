@@ -373,3 +373,15 @@ safe ASCII rendering. Existing mem unchanged. Four debugger tests added
 (144 total pending CI) for widths/endian/unaligned/ASCII, rows/defaults,
 factorial decimal values and invalid ranges with state preservation.
 Original implementation; no new reference materials or imports.
+
+User merged PR #11 while typed dumps were under validation. Dump update gets
+its own0.13.0-alpha.2 revision and runtime PR based on merged main.
+
+User Windows0.13.0-alpha.1 comparison passed all23 cases/3,044,833 bytes.
+Generated median0.297800 ms/100,748,825 ins/s from [0.2978,0.2978,0.2978,
+0.3041,0.2978] ms. Interpreter median3.280 ms/9,146,141 ins/s from
+[3.286,3.280,3.461,3.275,3.274] ms. Observed11.02x; build3.577 s excluded.
+Cache29997 hits/7 misses/0 invalidations. Direct CPU baseline passed; samples
+[0.0044,0.0043,0.0044,0.0043,0.0043] ms,median0.004300 ms/0.430 ns per
+iteration. Narrower scope,not386 cycles.10000 iterations/30003 instructions
+per sample,5 samples plus1 excluded warmup. REPL startup confirmed.
