@@ -246,3 +246,9 @@ Rust inline asm on x86-64. Rust Reference inline assembly documentation
 clobber handling. Microsoft KB896458 documents lack of native 16-bit support
 on Windows x64; the baseline therefore uses equivalent arithmetic in 64-bit
 mode, rather than executing the monitor image directly. No source imported.
+
+## Alpha.2 verifier diagnostics
+
+Original trace parser, state-field diagnostics and regression tests. No new
+external references, copied code or third-party dependencies. Phone timing
+evidence is the user's supplied alpha.1 Termux console output.

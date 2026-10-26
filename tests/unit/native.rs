@@ -31,3 +31,26 @@ fn native_cpu_baseline_is_checked_or_explicitly_unavailable() {
     #[cfg(not(target_arch="x86_64"))] assert!(report.contains("PC_NATIVE unavailable"));
     assert!(cpu_benchmark(0,2).is_err());
 }
+
+#[test]
+fn verifier_names_state_fields_and_first_divergent_instruction() {
+    fn sample()->Vec<u8>{let mut out=Vec::new();for ip in [0x102,0x104]{super::super::trace::record(&mut out,3,[0;5],&[0;8],0x202,0,ip,&[1,2,3],&[65],&[66]);}out}
+    let original=sample();let size=original.len()/2;
+    for (offset,label) in [(4,"stop.kind"),(24,"EAX"),(56,"EFLAGS"),(60,"undefined_flags"),(64,"EIP"),(73,"RAM[0x1]"),(79,"RX[0x0]"),(84,"TX[0x0]")] {
+        let mut altered=original.clone();altered[size+offset]^=1;
+        let error=verify_traces(&original,&altered).unwrap_err();
+        assert!(error.contains("case 3 (loop17), step 2, record 2, instruction EIP=00000102"),"{error}");
+        assert!(error.contains(label),"expected {label}: {error}");
+    }
+}
+#[test]
+fn verifier_rejects_malformed_equal_traces_and_extra_records() {
+    let mut bytes=Vec::new();super::super::trace::record(&mut bytes,0,[0;5],&[0;8],0x202,0,0x100,&[1,2,3],&[65],&[66]);
+    for length in 1..bytes.len(){assert!(verify_traces(&bytes[..length],&bytes[..length]).is_err(),"length {length}");}
+    assert!(verify_traces(&[],&[]).is_err());
+    let mut bad=bytes.clone();bad[68..72].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(verify_traces(&bad,&bad).unwrap_err().contains("truncated trace"));
+    let mut extra=bytes.clone();extra.extend_from_slice(&bytes);
+    assert!(verify_traces(&bytes,&extra).unwrap_err().contains("interpreter record missing"));
+    assert!(verify_traces(&extra,&bytes).unwrap_err().contains("generated record missing"));
+}

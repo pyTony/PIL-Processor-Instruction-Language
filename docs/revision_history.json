@@ -444,7 +444,7 @@
     {
       "version": "0.10.0-alpha.1",
       "date": "2026-10-26",
-      "status": "host-verified alpha candidate; runtime-only PR #7",
+      "status": "merged runtime PR #7; host-verified; user phone interpreter benchmarks passed",
       "features": [
         "offline compiled Rust guest runner from validated PIL",
         "nine-case exact CPU/RAM/serial traces",
@@ -490,7 +490,50 @@
           "native_compile_seconds": 3.346
         },
         "scope": "generated fixed-image guarded dispatch; direct CPU is a different 64-bit arithmetic microbenchmark scope"
+      },
+      "phone_benchmark": {
+        "host": "android/aarch64",
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "measured_samples": 5,
+        "excluded_warmups": 1,
+        "uncached_ms": [
+          368.701,
+          368.558,
+          368.477,
+          377.75,
+          385.848
+        ],
+        "uncached_median_ms": 368.701,
+        "uncached_ins_per_second": 81375,
+        "cached_ms": [
+          7.16,
+          7.075,
+          7.192,
+          7.135,
+          7.134
+        ],
+        "cached_median_ms": 7.135,
+        "cached_ins_per_second": 4205340,
+        "cached_hits": 29997,
+        "cached_misses": 7,
+        "cached_invalidations": 0
       }
+    },
+    {
+      "version": "0.10.0-alpha.2",
+      "date": "2026-10-26",
+      "status": "development; hosted Rust verification pending",
+      "features": [
+        "first divergence case/step/EIP/field diagnostics",
+        "bounded trace parsing rejects malformed equal inputs",
+        "retain both traces on mismatch"
+      ],
+      "rust_verification": {
+        "tests_supplied": 122,
+        "status": "pending hosted CI"
+      },
+      "provenance": "original code; no new external reference materials"
     }
   ]
 }

@@ -89,9 +89,50 @@ fn run(mut state:State,step:fn(&mut State)->[u32;5],budget:usize,mut trace:Optio
  }let ip=state.eip;(state,budget,[10,ip,0,0,0])
 }
 "#;
+// Parse borrowed slices: damaged length fields cannot cause allocations or panics.
+struct TraceRecord<'a> { header:[u32;17], sections:[&'a [u8];3] }
+fn trace_record<'a>(bytes:&'a [u8],at:&mut usize)->Result<Option<TraceRecord<'a>>,String> {
+    if *at==bytes.len(){return Ok(None);}
+    fn take<'a>(bytes:&'a [u8],at:&mut usize,len:usize)->Result<&'a [u8],String> {
+        let end=at.checked_add(len).ok_or("trace length overflow")?;
+        let part=bytes.get(*at..end).ok_or_else(||format!("truncated trace at byte {}: need {len}, {} remain",*at,bytes.len().saturating_sub(*at)))?;
+        *at=end;Ok(part)
+    }
+    let mut header=[0;17];
+    for value in &mut header {*value=u32::from_le_bytes(take(bytes,at,4)?.try_into().unwrap());}
+    let mut sections:[&[u8];3]=[&[];3];
+    for section in &mut sections {let len=u32::from_le_bytes(take(bytes,at,4)?.try_into().unwrap()) as usize;*section=take(bytes,at,len)?;}
+    Ok(Some(TraceRecord{header,sections}))
+}
 pub fn verify_traces(expected:&[u8],actual:&[u8])->Result<(),String> {
-    if expected.len()!=actual.len(){return Err(format!("backend trace lengths differ: interpreter {}, generated {}",expected.len(),actual.len()));}
-    if let Some(at)=expected.iter().zip(actual).position(|(a,b)|a!=b){return Err(format!("backend trace differs at byte {at}"));}Ok(())
+    const FIELDS:[&str;17]=["case","stop.kind","stop.eip","stop.detail0","stop.detail1","stop.detail2","EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI","EFLAGS","undefined_flags","EIP"];
+    const CASES:[&str;9]=["selftest","hello","factorials","loop17","readonly_store","branch_fault","code_guard","rx_wait","tx_blocked"];
+    let (mut left,mut right,mut record,mut step)=(0,0,0,0);
+    let mut previous=None;let mut start_eip=guest::ENTRY;
+    loop {
+        record+=1;
+        let a=trace_record(expected,&mut left).map_err(|e|format!("interpreter record {record}: {e}"))?;
+        let b=trace_record(actual,&mut right).map_err(|e|format!("generated record {record}: {e}"))?;
+        let (a,b)=match (a,b) {
+            (None,None)=>return if record==1{Err("empty backend traces".into())}else{Ok(())},
+            (Some(a),Some(b))=>(a,b),
+            (a,_)=>return Err(format!("backend trace record {record}: {} record missing",if a.is_none(){"interpreter"}else{"generated"})),
+        };
+        let id=a.header[0];
+        if previous!=Some(id){step=0;start_eip=guest::ENTRY;}
+        step+=1;
+        let name=CASES.get(id as usize).copied().unwrap_or("unknown");
+        let context=format!("backend trace case {id} ({name}), step {step}, record {record}, instruction EIP={start_eip:08x}");
+        for (index,field) in FIELDS.iter().enumerate(){
+            if a.header[index]!=b.header[index]{return Err(format!("{context}: {field}: interpreter={:08x}, generated={:08x}",a.header[index],b.header[index]));}
+        }
+        for (index,field) in ["RAM","RX","TX"].iter().enumerate(){
+            let (a,b)=(a.sections[index],b.sections[index]);
+            if a.len()!=b.len(){return Err(format!("{context}: {field}.length: interpreter={}, generated={}",a.len(),b.len()));}
+            if let Some(offset)=a.iter().zip(b).position(|(a,b)|a!=b){return Err(format!("{context}: {field}[0x{offset:x}]: interpreter={:02x}, generated={:02x}",a[offset],b[offset]));}
+        }
+        previous=Some(id);start_eip=a.header[16];
+    }
 }
 struct Proof {stdout:String,bytes:usize,compile_secs:f64,executable:PathBuf,trace_path:PathBuf}
 fn proof_at(directory:&Path,iterations:u32,samples:u32)->Result<Proof,String> {
@@ -107,7 +148,9 @@ fn proof_at(directory:&Path,iterations:u32,samples:u32)->Result<Proof,String> {
     if !output.status.success(){return Err(format!("generated verifier failed: {}",String::from_utf8_lossy(&output.stderr)));}
     let stdout=String::from_utf8(output.stdout).map_err(|e|e.to_string())?;
     let expected=super::debugger::backend_trace(&tests)?;let actual=fs::read(&trace_path).map_err(|e|e.to_string())?;
-    verify_traces(&expected,&actual)?;fs::write(directory.join("interpreter.trace"),&expected).map_err(|e|e.to_string())?;
+    // Preserve both sides even on mismatch so the failure is reproducible.
+    fs::write(directory.join("interpreter.trace"),&expected).map_err(|e|e.to_string())?;
+    verify_traces(&expected,&actual).map_err(|e|format!("{e}\nArtifacts: {}",directory.display()))?;
     Ok(Proof{stdout,bytes:expected.len(),compile_secs:compile_time.as_secs_f64(),executable,trace_path})
 }
 pub fn verify_at(directory:&Path)->Result<String,String> {

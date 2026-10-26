@@ -1,5 +1,11 @@
 # Changes
 
+## 0.10.0-alpha.2
+
+- Identify first verifier divergence by case, step, instruction EIP and state field.
+- Reject malformed/truncated traces and retain both traces on mismatch.
+- Add two verifier regression tests; record alpha.1 phone benchmarks.
+
 ## 0.10.0-alpha.1
 
 - Generate and compile fixed-image Rust guest runners using shared PIL emission.

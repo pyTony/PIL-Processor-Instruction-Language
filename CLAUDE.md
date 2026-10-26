@@ -1,3 +1,15 @@
+# Verifier diagnostics — 0.10.0-alpha.2 development
+
+Alpha.1 runtime PR #7 was merged as dc9e3f3351aca235aea2d20da48f88a966e328cc.
+User Termux alpha.1 release loop 10000/5 passed: uncached median368.701 ms,
+81375 ins/s; cached7.135 ms,4205340 ins/s,29997 hits/7 misses/0 invalidations.
+Observed cache ratio51.67x. Generated-Rust phone and user PC runs remain pending.
+
+Alpha.2 adds first-divergence case/step/instruction EIP/field diagnostics,
+bounded trace parsing (including equal malformed inputs), and saves both
+trace files before comparison. Two regression tests added,122 total pending CI.
+No new guest instructions. Develop on dev; export runtime-only delivery to main.
+
 # Alpha verification complete — PR #7
 
 Runtime-only alpha candidate: https://github.com/pyTony/pil_proof/pull/7

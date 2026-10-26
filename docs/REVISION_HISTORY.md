@@ -3,7 +3,7 @@
 Every delivered revision receives a version, feature/change summary, test
 status, provenance update and source fingerprint. User-reported results are
 recorded separately from checks executed in the authoring environment.
-No Git commits have been created; these release numbers are not commit IDs.
+Early revisions used archive snapshots; current revisions are tracked in Git.
 Dates use the user's Europe/Helsinki calendar date.
 
 | Revision | Date | Changes | Verification evidence |
@@ -227,3 +227,18 @@ PC_NATIVE is the equivalent arithmetic microbenchmark in 64-bit mode, excludes
 PIL/virtual RAM/guards and is not the 16-bit image. Do not equate it with 386
 cycles or compare its scope to a complete PC emulator. Phone native and user PC
 measurements remain unreported. Full sample outputs are in the CI job logs.
+
+## Alpha.1 user phone benchmarks; alpha.2 verifier diagnostics
+
+User-reported Termux release run, android/aarch64, 10000 iterations and
+30003 completed instructions/sample; five samples plus one excluded warmup.
+Uncached samples368.701,368.558,368.477,377.750,385.848 ms; median368.701 ms,
+81375 ins/s. Cached7.160,7.075,7.192,7.135,7.134 ms; median7.135 ms,
+4205340 ins/s. Cache29997 hits,7 misses,0 invalidations; observed51.67x.
+No 386 cycle rate or phone compiled-backend result is implied.
+PR #7 merged as dc9e3f3351aca235aea2d20da48f88a966e328cc.
+
+Alpha.2 improves verifier diagnostics and retention; adds two regression tests
+(122 total pending hosted CI). Tests inject field changes on the second
+instruction and malformed/truncated/extra records. No external code/materials
+were used for this change; trace format and implementation are project originals.

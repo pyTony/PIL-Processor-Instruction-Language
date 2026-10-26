@@ -351,3 +351,10 @@ timer overhead remain included. It is an arithmetic microbenchmark, not native
 execution of the 16-bit monitor image or an original-386 cycle estimate.
 On non-x86-64 hosts the x86-specific baseline is explicitly unavailable; the
 compiled Rust backend still builds for the local host.
+
+Verifier mismatch reports include the case, step (starting at 1), instruction
+EIP and field, such as EAX, EFLAGS, RAM[0x500] or TX[0x0]. RAM indices are
+linear byte addresses; RX/TX indices are queue positions. A terminal halt,
+fault or wait attempt also has a trace record. Truncated and malformed traces
+fail verification. Both interpreter.trace and generated.trace are retained
+under the reported artifacts path on a mismatch. No timings run after failure.
