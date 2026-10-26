@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "releases": [
+    {
+      "version": "0.1.0",
+      "date": "2026-10-26",
+      "features": [
+        "ADD 8/16/32",
+        "typed token interpreter",
+        "Rust source emitter",
+        "register views"
+      ],
+      "status": "user-verified",
+      "rust_verification": {
+        "reported_by": "user",
+        "environment": "Termux on Android",
+        "tests_passed": 7,
+        "tests_failed": 0,
+        "reported_test_execution_seconds": 0.67
+      },
+      "archive": "pil_design_and_rust_proof_v01.zip",
+      "archive_sha256": "aa0a595271d093153d44c56b3a845bb19ac3c3232cc60bda42155c7116ec09ce"
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-10-26",
+      "features": [
+        "SUB/CMP/ADC/SBB",
+        "incoming flag reads",
+        "carry/borrow tests",
+        "reference and attribution register"
+      ],
+      "status": "user-verified",
+      "rust_verification": {
+        "reported_by": "user",
+        "environment": "Termux on Android",
+        "tests_passed": 14,
+        "tests_failed": 0,
+        "reported_test_execution_seconds": 2.57
+      },
+      "archive": "pil_design_and_rust_proof_v02.zip",
+      "archive_sha256": "8c60a5020dda5f8c9c4b1d9811e71268a690241573967b6353850a8b45260e3c"
+    },
+    {
+      "version": "0.3.0",
+      "date": "2026-10-26",
+      "status": "user-verified",
+      "features": [
+        "explicit complete flag classification",
+        "undefined flag diagnostic mask",
+        "AND",
+        "16 SETcc conditions",
+        "select and write_if",
+        "revision history and source checksums"
+      ],
+      "rust_verification": {
+        "reported_by": "user",
+        "environment": "Termux on Android",
+        "project_directory": "~/pil_proof",
+        "tests_passed": 20,
+        "tests_failed": 0,
+        "reported_runs_seconds": [
+          3.3,
+          3.39
+        ],
+        "execution_status": "user reports both cargo test runs passed"
+      },
+      "description_verification": {
+        "method": "independent Python execution of actual PIL descriptions",
+        "status": "passed",
+        "enumerated_arithmetic_cases": 789372,
+        "enumerated_conditional_cases": 1030,
+        "additional_checks": "parent-register preservation",
+        "rust_compilation_verified": false
+      },
+      "source_manifest": "SHA256SUMS"
+    },
+    {
+      "version": "0.4.0",
+      "date": "2026-10-26",
+      "status": "user-verified",
+      "features": [
+        "guest EIP and decoded flow context",
+        "16 Jcc predicates at 16/32 bits",
+        "short/near signed displacement validation",
+        "restartable protected-code limit result",
+        "in-place guarded patch",
+        "serial mock and REPL roadmap"
+      ],
+      "rust_verification": {
+        "reported_by": "user",
+        "environment": "Termux on Android",
+        "project_directory": "~/pil_proof",
+        "tests_passed": 28,
+        "tests_failed": 0,
+        "reported_test_execution_seconds": 4.3
+      },
+      "description_verification": {
+        "arithmetic_cases_passed": 789372,
+        "conditional_cases_passed": 1030,
+        "jcc_context_cases_passed": 12288,
+        "additional_check": "staged-effect branch fault"
+      },
+      "source_manifest": "SHA256SUMS",
+      "source_baseline_sha256": {
+        "src/main.rs": "0aa3085df81b672f6095eb3f7aeba5c59069b5c0ffdbd8e1e67cb0f2c7865d0d",
+        "Cargo.toml": "4e09000bb52b11c5ef26a8041c751325eea52159e527c92357568991cf5df45f",
+        "verify_descriptions.py": "ff6fc325340c4fc46eea579b49642540fe1f86550ce28db528c9c64fa758fcc2"
+      },
+      "planned_next": "serial mock transport and interactive CLI debugger; tests/ directory later",
+      "end_goal": "PC emulator on TTGO ESP32; VGA, PS/2, SD card and WLAN board adapters",
+      "board_installation_workflow": "Preserve existing Internet/WLAN-to-SD system/disk-image installation and boot selection",
+      "patch_verification": {
+        "status": "passed in authoring environment",
+        "checks": [
+          "read-only preflight",
+          "in-place application and file checksums",
+          "Cargo.lock/target/user file preservation",
+          "repeat application is a no-op",
+          "edited source rejection",
+          "old documentation/history merge",
+          "normal write-failure rollback"
+        ]
+      }
+    },
+    {
+      "version": "0.5.0",
+      "date": "2026-10-26",
+      "status": "prepared; awaiting Rust verification",
+      "features": [
+        "mock serial transport",
+        "interactive host REPL debugger",
+        "counter and one-byte echo demos",
+        "root cleanup and tests/unit",
+        "Git rules and first-push notes",
+        "CLAUDE.md continuation handoff"
+      ],
+      "rust_verification": {
+        "tests_supplied": 46,
+        "execution_status": "not compiled or run in authoring environment; no Rust toolchain"
+      },
+      "source_manifest": "docs/SHA256SUMS",
+      "project_directory": "~/pil_proof",
+      "description_verification": {
+        "status": "passed after relocation",
+        "arithmetic_cases": 789372,
+        "conditional_cases": 1030,
+        "jcc_context_cases": 12288,
+        "additional_check": "staged-effect fault"
+      },
+      "patch_verification": {
+        "status": "passed",
+        "checks": [
+          "preflight writes nothing",
+          "migration and checksums",
+          "README/design preservation",
+          "all include/test paths resolve",
+          "idempotence",
+          "edited source rejection",
+          "target collision rejection",
+          "normal write-failure rollback"
+        ]
+      }
+    }
+  ]
+}

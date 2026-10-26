@@ -1,0 +1,18 @@
+# All 16 x86 condition subcodes, expressed with generic bit operations.
+# Values are bv<1>; bitwise NOT therefore implements Boolean inversion.
+read_flag cond_o OF
+not cond_no cond_o
+read_flag cond_b CF
+not cond_ae cond_b
+read_flag cond_e ZF
+not cond_ne cond_e
+or cond_be cond_b cond_e
+not cond_a cond_be
+read_flag cond_s SF
+not cond_ns cond_s
+read_flag cond_p PF
+not cond_np cond_p
+xor cond_l cond_s cond_o
+not cond_ge cond_l
+or cond_le cond_l cond_e
+not cond_g cond_le

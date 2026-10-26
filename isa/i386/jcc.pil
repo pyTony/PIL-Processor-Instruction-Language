@@ -1,0 +1,12 @@
+# Combined with conditions.pil. Caller supplies the already decoded signed
+# displacement and the offset immediately following this instruction.
+# Only a taken target is truncated to operand width and checked against CS.limit.
+require_width 16_or_32
+read_ip fallthrough next 32
+trunc base fallthrough $W
+read_disp delta $W
+add wrapped base delta
+zext target wrapped 32
+branch_if target $CONDITION
+preserve_flags all
+retire

@@ -1,0 +1,24 @@
+# CMP: subtraction flags, without a destination write.
+read a dst $W
+read b src $W
+zext aw a $EXT
+zext bw b $EXT
+sub wide aw bw
+trunc r wide $W
+bit cf wide $W
+xor ab a b
+xor ar a r
+and overflow ab ar
+bit of overflow $SIGN
+xor abr ab r
+bit af abr 4
+bit sf r $SIGN
+zero zf r
+parity pf r
+flag CF cf
+flag PF pf
+flag AF af
+flag ZF zf
+flag SF sf
+flag OF of
+retire

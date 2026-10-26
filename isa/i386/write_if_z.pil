@@ -1,0 +1,7 @@
+# Generic predicated write demonstration. This is not an x86 CMOV
+# instruction and is not advertised as part of the 386 instruction set.
+read source src $W
+read_flag take ZF
+write_if dst source take
+preserve_flags all
+retire

@@ -1,0 +1,8 @@
+# Combined with conditions.pil. SETcc writes exactly one byte on a 386.
+require_width 8
+const yes 8 1
+const no 8 0
+select result $CONDITION yes no
+write dst result
+preserve_flags all
+retire
