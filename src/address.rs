@@ -56,6 +56,8 @@ impl EffectiveAddress {
 // Caller has already performed descriptor-load, present and privilege checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SegmentAccess {
+    // Supplied by callers/tests; the current monitor creates usable caches only.
+    #[allow(dead_code)]
     Unusable,
     Data { writable: bool, expand_down: bool, big: bool },
     Code { readable: bool },
