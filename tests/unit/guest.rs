@@ -36,7 +36,7 @@ fn all_short_conditions_and_register_setcc_decode() {
     for cc in 0..16 {
         let d=decode(&[0x70+cc,0xfe]).unwrap();
         if let Operation::Pil{flow,..}=d.operation {assert_eq!(flow.displacement,-2);assert_eq!(flow.displacement_bits,8);}else{panic!("branch");}
-        assert!(decode(&[0x0f,0x62+cc,0xc4]).is_ok());
+        assert!(decode(&[0x0f,0x90+cc,0xc4]).is_ok());
     }
 }
 

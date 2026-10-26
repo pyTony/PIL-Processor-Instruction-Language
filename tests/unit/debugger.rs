@@ -143,7 +143,7 @@ fn actual_guest_selftest_runs_through_decoder_and_pil_to_serial() {
 fn executable_breakpoint_and_reset_restore_program_and_data() {
     let mut d=Debugger::new("selftest").unwrap();d.command("break 0x100").unwrap();
     assert_eq!(d.run(100).unwrap(),(0,Stop::Breakpoint(0x100)));assert_eq!(d.run(1).unwrap(),(1,Stop::Budget(0x103)));
-    d.command("poke 0x100 90").unwrap();d.reset();assert_eq!(d.ram.load(0x100,super::super::memory::MemWidth::Byte),Ok(0xb8));
+    d.command("poke 0x100 62").unwrap();d.reset();assert_eq!(d.ram.load(0x100,super::super::memory::MemWidth::Byte),Ok(0xb8));
     assert_eq!(d.cpu.eip,0x100);assert!(d.breakpoints.contains(&0x100));
 }
 #[test]
@@ -153,7 +153,7 @@ fn corrupted_guest_check_reaches_failure_marker() {
 }
 #[test]
 fn binary_decode_error_preserves_cpu_and_ram() {
-    let mut d=Debugger::new("selftest").unwrap();d.command("poke 0x100 90").unwrap();let c=d.cpu.clone();let m=d.ram.clone();
+    let mut d=Debugger::new("selftest").unwrap();d.command("poke 0x100 62").unwrap();let c=d.cpu.clone();let m=d.ram.clone();
     assert!(matches!(d.step(),Stop::Decode{eip:0x100,..}));assert_eq!(d.cpu,c);assert_eq!(d.ram,m);
     assert!(d.load_image(&[],"bad").is_err());assert_eq!(d.cpu,c);assert_eq!(d.ram,m);
 }
@@ -278,7 +278,7 @@ fn cache_controls_and_reset_load_keep_the_requested_mode() {
 }
 #[test]
 fn patched_cached_opcode_reports_error_without_cpu_or_ram_mutation() {
-    let mut d=Debugger::new("hello").unwrap();d.step();d.cpu.eip=0x100;d.command("poke 0x100 90").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();
+    let mut d=Debugger::new("hello").unwrap();d.step();d.cpu.eip=0x100;d.command("poke 0x100 62").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();
     assert!(matches!(d.step(),Stop::Decode{eip:0x100,..}));assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);assert_eq!(d.cache.stats().invalidations,1);
 }
 #[test]
