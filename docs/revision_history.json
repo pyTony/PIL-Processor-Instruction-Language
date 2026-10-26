@@ -233,7 +233,16 @@
         "selftest_completed_steps": 63,
         "build_debug_scripts": "passed on both hosts",
         "native_zip_creation": "passed on both hosts",
-        "ci_run": "https://github.com/pyTony/pil_proof/actions/runs/40318741977"
+        "ci_run": "https://github.com/pyTony/pil_proof/actions/runs/40318741977",
+        "termux_manual_selftest": {
+          "status": "user-confirmed PASS",
+          "completed_steps": 63,
+          "eip": "0x1cb",
+          "dx": "0x600d",
+          "ram_signatures": "PASS",
+          "console_serial": "41 | A",
+          "tx": "41"
+        }
       },
       "source_manifest": "docs/SHA256SUMS",
       "delivery_policy": {
@@ -251,6 +260,21 @@
         "results": "92 dev tests and isolated runtime build/scripts/serial/generated Rust passed on Ubuntu/Windows; native archives verified unpacked",
         "runtime_test_count": 0
       }
+    },
+    {
+      "version": "0.7.1",
+      "date": "2026-10-26",
+      "status": "development; CI pending",
+      "features": [
+        "57-byte Hello-world guest",
+        "demo hello and --write-hello",
+        "build/archive/runtime export includes hello image"
+      ],
+      "rust_verification": {
+        "tests_supplied": 94,
+        "host_ci": "pending"
+      },
+      "provenance": "original project fixture; no new third-party material"
     }
   ]
 }

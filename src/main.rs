@@ -473,6 +473,10 @@ fn emit_rust(p: &Program) -> String {
 }
 fn main() -> R<()> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str)==Some("--write-hello") {
+        let path=args.get(2).ok_or("usage: pil-proof --write-hello PATH")?;
+        std::fs::write(path,guest::hello_bytes()?).map_err(|e|e.to_string())?;return Ok(());
+    }
     if args.get(1).map(String::as_str)==Some("--write-selftest") {
         let path=args.get(2).ok_or("usage: pil-proof --write-selftest PATH")?;
         std::fs::write(path,guest::selftest_bytes()?).map_err(|e|e.to_string())?;return Ok(());

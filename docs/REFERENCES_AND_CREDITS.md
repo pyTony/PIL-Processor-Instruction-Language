@@ -211,3 +211,7 @@ Generated native ZIPs carry this attribution register and source history.
 The runtime export and user documentation templates are original project work.
 Main and native archives carry a release-specific attribution summary; the
 complete provenance register and revision records remain on dev.
+
+Hello-world (v0.7.1): original MOV AL / OUT 0xe9 / HLT byte fixture and listing.
+Uses the already-documented instruction/monitor references; no new materials
+or third-party code imported.

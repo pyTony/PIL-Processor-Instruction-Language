@@ -106,3 +106,14 @@ Both hosts passed the 92 dev tests (Ubuntu 4.90 s, Windows 7.57 s), the isolated
 ZIP checks. Runtime cargo test reports zero tests because tests stay on dev.
 PR #2 closed; runtime-only PR #3 targets main from delivery/v0.7.0, commit
 fd97dca67d25a4d1e4f59ffdc9bbf53baabdb94b. Main remains unchanged until approval.
+
+## v0.7.1 — Hello-world guest example
+
+Add a 57-byte executable Hello-world guest, demo selection, binary generation
+and build/archive/runtime-export integration. Two debugger tests check exact
+output, no RX dependency, halted EIP and reset/replay. No decoder or ISA changes.
+Development stays on dev; main receives a separate 38-file runtime export.
+
+User confirmed v0.7 Termux executable selftest: 63 completed steps, halted at
+EIP 0x1cb, PASS with DX=600D, RAM signatures, console output 41 | A and TX: 41.
+This confirms the manual test as well as the previous automated host checks.

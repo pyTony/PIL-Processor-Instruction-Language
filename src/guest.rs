@@ -9,6 +9,9 @@ pub const RAM_BYTES:usize=4096;
 pub fn selftest_bytes()->Result<Vec<u8>,String> {
     include_str!("../programs/selftest.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
 }
+pub fn hello_bytes()->Result<Vec<u8>,String> {
+    include_str!("../programs/hello.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
+}
 const CONDITIONS:[&str;16]=["o","no","b","ae","e","ne","be","a","s","ns","p","np","l","ge","le","g"];
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum GuestError { Decode(String), Execution(ExecError) }

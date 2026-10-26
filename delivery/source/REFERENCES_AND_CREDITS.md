@@ -26,3 +26,6 @@ and HLT stop behaviour are monitor conventions. This release does not import
 Tiny386, QEMU, TinyEMU, SingleStepTests, SeaBIOS or FMOPL code/data.
 
 Detailed development provenance is retained on the repository's dev branch.
+
+The Hello-world image is original project code using the same documented MOV,
+OUT and HLT monitor profile. No additional source material was imported.

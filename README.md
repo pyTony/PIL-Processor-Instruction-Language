@@ -79,3 +79,21 @@ verified baseline and current work separately.
 Sources: `src/`, descriptions: `isa/i386/`, tests: `tests/unit/`, reproducible
 guest fixtures: `programs/`, helpers: `tools/`. No third-party emulator source,
 BIOS or OS image is bundled. A project-wide licence has not yet been selected.
+
+
+## Hello, world!
+
+In the debugger:
+
+```
+demo hello
+run 1000
+serial tx
+```
+
+The guest sends `Hello, world!` followed by a newline. The console displays
+that newline as `\n`. No RX input is needed. This is a 57-byte real guest
+program using MOV AL, OUT 0xe9 and HLT, with 28 completed steps. The build also
+writes `target/programs/hello.bin`; use `load target/programs/hello.bin` to open
+it, or consult `programs/hello.lst` for instruction addresses. `check` applies
+to the diagnostic selftest; Hello-world can be inspected directly via serial tx.

@@ -1,3 +1,13 @@
+# Current v0.7.1 work — Hello-world
+
+User confirmed the v0.7 diagnostic selftest on Termux: 63 steps, PASS, EIP=1cb,
+DX=600D, RAM signatures and console/TX byte 41. Add demo hello (57 guest bytes,
+28 steps, output Hello, world! plus newline), --write-hello and build/package
+integration. 94 dev tests supplied; host CI pending. Keep tests/history here
+on dev and export a 38-file run/build/user-doc tree for a separate main PR.
+
+## Earlier notes
+
 # Current PR status
 
 PR #2 is closed. PR #3 (delivery/v0.7.0 -> main) is the runtime-only delivery,

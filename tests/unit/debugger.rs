@@ -164,3 +164,20 @@ fn monitor_input_and_output_backpressure_retry_without_duplicate_output() {
     assert_eq!(d.step(),Stop::Advanced);let before=d.cpu.clone();assert_eq!(d.step(),Stop::TxBlocked(0x102));assert_eq!(d.cpu,before);assert!(d.tx_events.is_empty());
     d.serial.take_tx();let out=d.command("step").unwrap().0;assert!(out.contains("serial output: 00 | \\x00"));assert_eq!(d.tx_events,vec![0]);assert_eq!(d.serial.take_tx(),vec![0]);
 }
+
+#[test]
+fn hello_guest_outputs_text_without_input() {
+    let mut d=Debugger::new("hello").unwrap();
+    assert_eq!(d.run(100).unwrap(),(28,Stop::Halt(0x138)));
+    assert_eq!(d.serial.take_tx(),b"Hello, world!\n");
+    assert_eq!(d.serial.lengths(),(0,0));assert_eq!(d.cpu.eflags,0x202);
+    assert!(d.command("check").is_err());
+}
+#[test]
+fn hello_reset_replays_console_output_and_standalone_image() {
+    let mut d=Debugger::new("counter").unwrap();let bytes=super::super::guest::hello_bytes().unwrap();
+    assert_eq!(bytes.len(),57);d.load_image(&bytes,"hello.bin").unwrap();
+    let output=d.command("run").unwrap().0;assert!(output.contains("Hello, world!\\n"));
+    d.reset();assert!(d.tx_events.is_empty());assert_eq!(d.serial.lengths(),(0,0));
+    d.command("run").unwrap();assert_eq!(d.serial.take_tx(),b"Hello, world!\n");
+}
