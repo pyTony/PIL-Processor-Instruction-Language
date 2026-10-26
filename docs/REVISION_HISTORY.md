@@ -338,3 +338,13 @@ SHL/SAL,SHR,SAR register/memory,count1/CL/imm8 plus generic shift/ult/flag_if
 operations. Six new tests (140 total pending CI),23 verifier cases,62 runtime
 files. README quick start added following user's difficulty finding debugger
 usage after build. Intel PRM and SDM references logged; no external code imports.
+
+## User Windows interactive debugger confirmation
+
+User supplied a selftest transcript after running one step: next run completed
+62 instructions (63 total), stopped EIP1cb and passed DX600D/RAM/TX41 checks.
+RAM500 contained79 56 34 12 78 56 34 12. RAM5000 correctly reported out of
+bounds for the4-KiB monitor. Register/TX output agreed. The transcript does
+not contain a version banner; surrounding session was0.11, no0.13 run inferred.
+User requested a README documentation index after finding launch instructions
+in docs. Linked indexes added to development, runtime-source and native READMEs.

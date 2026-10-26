@@ -1,4 +1,13 @@
 # PIL debugger delivery
+## Documentation
+
+| Read this | What it covers |
+|---|---|
+| [Debugger guide](DEBUGGER.md) | Start the debugger, commands, demos, memory and serial; supported encodings |
+| [Feature matrix](FEATURE_MATRIX.md) | Implemented, partial and planned emulator features |
+| [Release notes](RELEASE_NOTES.md) | Changes in this delivery and earlier versions |
+| [References and credits](REFERENCES_AND_CREDITS.md) | Reference manuals, attribution and third-party material status |
+
 
 Unpack this whole directory. No Rust or Python is needed for these native
 binaries. Run the binary built for your operating system and CPU.

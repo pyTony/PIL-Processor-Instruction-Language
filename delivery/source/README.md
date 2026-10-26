@@ -1,5 +1,14 @@
 # PIL 386 debugger
 
+## Documentation
+
+| Read this | What it covers |
+|---|---|
+| [Debugger guide](docs/DEBUGGER.md) | Start the debugger, commands, demos, memory and serial; supported encodings |
+| [Feature matrix](docs/FEATURE_MATRIX.md) | Implemented, partial and planned emulator features |
+| [Release notes](docs/RELEASE_NOTES.md) | Changes in this delivery and earlier versions |
+| [References and credits](docs/REFERENCES_AND_CREDITS.md) | Reference manuals, attribution and third-party material status |
+
 ## Start the debugger
 
 After a release build, start it directly in PowerShell:

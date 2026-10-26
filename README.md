@@ -1,5 +1,24 @@
 # PIL development branch
 
+## Documentation
+
+| Read this | What it covers |
+|---|---|
+| [Debugger guide](docs/DEBUGGER.md) | Launch commands, debugger commands, demos, memory, serial and instruction profile |
+| [Feature matrix](delivery/source/FEATURE_MATRIX.md) | Implemented, partial and planned features in the user delivery |
+| [Release notes](delivery/source/RELEASE_NOTES.md) | User-facing changes by delivery version |
+| [Language reference](docs/LANGUAGE.md) | PIL tokens, widths, flag metadata, memory effects and Rust emission |
+| [Development status](docs/development/STATUS.md) | Current work, verified results and remaining limits |
+| [Roadmap](docs/ROADMAP.md) | Emulator milestones, TTGO devices and portability goals |
+| [GitHub workflow](docs/GITHUB.md) | Branch, contribution and runtime delivery procedures |
+| [Changelog](docs/CHANGELOG.md) | Development changes by version |
+| [Revision history](docs/REVISION_HISTORY.md) | Verification evidence and user-reported results |
+| [Machine-readable history](docs/revision_history.json) | Structured versions, checks and benchmark measurements |
+| [References and credits](docs/REFERENCES_AND_CREDITS.md) | Consulted materials, attribution and licence findings |
+| [Initial language design](docs/design/processor_instruction_language_v01.md) | Historical design proposal; current behavior is in the language reference |
+| [Claude continuation notes](CLAUDE.md) | Verified state and handoff for continued development |
+| [Tiny386 adapter plan](docs/platform/tiny386-adapter.md) | Planned hardware-emulation boundary and reuse considerations |
+
 ## Start the debugger
 
 After a release build, start it directly in PowerShell:
@@ -98,12 +117,7 @@ to `main` through a separate delivery branch/PR. Pull `main` after approving
 that delivery PR; do not merge dev directly into main. [Development status](docs/development/STATUS.md) records the
 verified baseline and current work separately.
 
-- [Debugger guide and instruction profile](docs/DEBUGGER.md)
-- [Language](docs/LANGUAGE.md)
-- [References and credits](docs/REFERENCES_AND_CREDITS.md)
-- [Revision history](docs/REVISION_HISTORY.md)
-- [Development roadmap](docs/ROADMAP.md)
-- [Claude continuation notes](CLAUDE.md)
+
 
 Sources: `src/`, descriptions: `isa/i386/`, tests: `tests/unit/`, reproducible
 guest fixtures: `programs/`, helpers: `tools/`. No third-party emulator source,

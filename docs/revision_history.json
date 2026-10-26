@@ -776,14 +776,28 @@
         "generic total shifts, ult and flag_if",
         "SHL/SAL SHR SAR8/16/32 register/memory count1/CL/imm8",
         "23-case full-state verification",
-        "post-build debugger README quick start"
+        "post-build debugger README quick start",
+        "linked documentation indexes in development, source and native READMEs"
       ],
       "rust_verification": {
         "tests_supplied": 140,
         "status": "pending CI"
       },
       "runtime_files": 62,
-      "provenance": "Intel PRM SAL and SDM Vol2B flags clarification; reference only; original code"
+      "provenance": "Intel PRM SAL and SDM Vol2B flags clarification; reference only; original code",
+      "prior_user_debugger_evidence": {
+        "reported_by": "user",
+        "host": "Windows PowerShell",
+        "version": "not in transcript; prior session0.11",
+        "first_step": 1,
+        "subsequent_completed_steps": 62,
+        "total_completed_steps": 63,
+        "selftest": "PASS",
+        "halt_eip": "0x1cb",
+        "ram_0x500_hex": "79 56 34 12 78 56 34 12",
+        "ram_0x5000": "correct bounds error",
+        "serial_tx_hex": "41"
+      }
     }
   ]
 }
