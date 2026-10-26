@@ -287,3 +287,8 @@ undefined AF and SHL/SHR CF at count>=width):
 https://cdrdv2-public.intel.com/782151/253667-sdm-vol-2b.pdf
 Reference only; no text/code imported. Original descriptions, generic PIL
 operations, decoder bindings and regression fixtures. No new dependencies.
+
+## Typed debugger memory dumps
+
+Original implementation and tests; no new external reference materials,
+third-party code or dependencies. ASCII rendering is byte-based (0x20..0x7e).

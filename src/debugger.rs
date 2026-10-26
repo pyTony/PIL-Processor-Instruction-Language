@@ -272,6 +272,26 @@ impl Debugger {
     fn step_preview(&self)->Option<super::guest::Operation> {
         self.image.as_ref()?.decode(&self.ram,self.cpu.eip).ok().map(|d|d.operation)
     }
+    fn dump_memory(&self,address:u32,count:u64,width:super::memory::MemWidth,decimal:bool)->Result<String,String>{
+        if count==0||count>256{return Err("dump count must be 1..256 values".into());}
+        let bytes=usize::from(width.bytes());let length=(count as usize)*bytes;
+        if u64::from(address)+length as u64>0x1_0000_0000{return Err("RAM range out of bounds".into());}
+        let start=usize::try_from(address).map_err(|_|"address out of range")?;
+        let end=start.checked_add(length).ok_or("address out of range")?;
+        let data=self.ram.bytes().get(start..end).ok_or("RAM range out of bounds")?;
+        let digits=if decimal{match bytes{1=>3,2=>5,_=>10}}else{bytes*2};
+        let columns=(16/bytes)*(digits+1)-1;let mut lines=Vec::new();
+        for (row,chunk) in data.chunks(16).enumerate(){
+            let values=chunk.chunks_exact(bytes).map(|item|{
+                let value=item.iter().enumerate().fold(0u32,|value,(i,b)|value|(u32::from(*b)<<(i*8)));
+                if decimal{format!("{value:>digits$}")}else{format!("{value:0digits$x}")}
+            }).collect::<Vec<_>>().join(" ");
+            let ascii:String=chunk.iter().map(|&b|if (0x20..=0x7e).contains(&b){char::from(b)}else{'.'}).collect();
+            let at=u64::from(address)+(row*16) as u64;
+            lines.push(format!("{at:08x}: {values:<columns$} |{ascii:<16}|"));
+        }
+        Ok(lines.join("\n"))
+    }
     fn command(&mut self,line:&str)->Result<(String,bool),String> {
         let tx_before=self.tx_events.len();
         let words:Vec<_>=line.split_whitespace().collect();
@@ -284,6 +304,7 @@ impl Debugger {
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
                 "break <address> | delete <address> | breaks | reset | quit\n",
                 "serial status | serial rx <hex bytes...> | serial tx | serial clear\n",
+                "mem8|mem16|mem32 <address> [values 1..256] [hex|dec] (little-endian + printable ASCII)\n",
                 "mem <address> [count] | poke <address> <hex bytes...> | protect <address> <count>\n",
                 "Image profile: IN/OUT 0xe9 connect to mock serial; HLT is a monitor stop.\n",
                 "Other demos use harness operations. Type check after selftest halts.").into(),
@@ -327,6 +348,14 @@ impl Debugger {
             ["bench",iterations,samples]=>benchmark_mode(parse_count(iterations)?,parse_count(samples)?,self.cache.enabled())?,
             ["stress"]=>factorial_stress(25)?,
             ["stress",passes]=>factorial_stress(parse_count(passes)?)?,
+            [cmd,addr,rest @ ..] if matches!(*cmd,"mem8"|"mem16"|"mem32")=>{
+                if rest.len()>2{return Err("usage: mem8|mem16|mem32 ADDRESS [COUNT] [hex|dec]".into());}
+                let width=match *cmd{"mem8"=>super::memory::MemWidth::Byte,"mem16"=>super::memory::MemWidth::Word,_=>super::memory::MemWidth::Dword};
+                let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
+                let count=if let Some(count)=rest.first(){number(count)?}else{16/u64::from(width.bytes())};
+                let decimal=match rest.get(1).copied().unwrap_or("hex"){"hex"=>false,"dec"=>true,_=>return Err("dump format must be hex or dec".into())};
+                self.dump_memory(address,count,width,decimal)?
+            }
             ["mem",addr]|["mem",addr,_]=>{
                 let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
                 let count=if words.len()==3 {number(words[2])?}else{16};

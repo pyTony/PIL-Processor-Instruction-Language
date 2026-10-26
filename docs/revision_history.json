@@ -792,30 +792,16 @@
     {
       "version": "0.13.0-alpha.1",
       "date": "2026-10-26",
-      "status": "host-verified; runtime-only PR #11 awaits review",
+      "status": "typed dump development update; validation pending",
       "features": [
         "generic total shifts, ult and flag_if",
         "SHL/SAL SHR SAR8/16/32 register/memory count1/CL/imm8",
         "23-case full-state verification",
         "post-build debugger README quick start",
         "linked documentation indexes in development, source and native READMEs",
-        "complete demo tables and run/list budget explanation"
+        "complete demo tables and run/list budget explanation",
+        "mem8/mem16/mem32 typed dumps with printable ASCII and unsigned decimal"
       ],
-      "rust_verification": {
-        "tests_supplied": 140,
-        "tests_passed": 140,
-        "tests_failed": 0,
-        "ubuntu_seconds": 12.43,
-        "windows_seconds": 22.0,
-        "source_commit": "1a35fa53fcddd5a89e86813699736e5cc3c68832",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40371543845",
-        "verifier_cases": 23,
-        "matched_trace_bytes": 3044833,
-        "runtime_export": "62-file isolated checks passed",
-        "native_archive": "unpacked verification passed",
-        "phone": "not yet reported",
-        "pc_user_run": "not yet reported"
-      },
       "runtime_files": 62,
       "provenance": "Intel PRM SAL and SDM Vol2B flags clarification; reference only; original code",
       "prior_user_debugger_evidence": {
@@ -836,6 +822,25 @@
         "signed_imul_cases": 65680,
         "arithmetic_logical_cases": 1184058,
         "conditional_cases": 1030
+      },
+      "rust_verification_before_typed_dumps": {
+        "tests_supplied": 140,
+        "tests_passed": 140,
+        "tests_failed": 0,
+        "ubuntu_seconds": 12.43,
+        "windows_seconds": 22.0,
+        "source_commit": "1a35fa53fcddd5a89e86813699736e5cc3c68832",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40371543845",
+        "verifier_cases": 23,
+        "matched_trace_bytes": 3044833,
+        "runtime_export": "62-file isolated checks passed",
+        "native_archive": "unpacked verification passed",
+        "phone": "not yet reported",
+        "pc_user_run": "not yet reported"
+      },
+      "rust_verification": {
+        "tests_supplied": 144,
+        "status": "pending hosted CI for typed dumps"
       }
     }
   ]

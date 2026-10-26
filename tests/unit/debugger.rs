@@ -292,3 +292,35 @@ fn full_65536_iteration_loop_passes_with_cache_reuse_and_batched_runs() {
     let mut d=Debugger::new("loop").unwrap();assert_eq!(d.run_large(250000).unwrap(),(196611,Stop::Halt(0x11a)));assert!(d.command("check").is_ok());
     assert_eq!(d.cache.stats(),super::super::cache::Stats{hits:196605,misses:7,invalidations:0,evictions:0});
 }
+
+#[test]
+fn typed_dumps_show_little_endian_values_and_safe_ascii(){
+    let mut d=Debugger::new("counter").unwrap();d.command("poke 0x10 41 42 20 7e 00 1b 7f ff").unwrap();
+    for (command,values) in [("mem8 0x10 8","41 42 20 7e 00 1b 7f ff"),("mem16 0x10 4","4241 7e20 1b00 ff7f"),("mem32 0x10 2","7e204241 ff7f1b00")] {
+        let out=d.command(command).unwrap().0;assert!(out.starts_with("00000010: "));assert!(out.contains(values),"{out}");assert!(out.ends_with("|AB ~....        |"),"{out}");assert!(!out.contains(char::from(27)));
+    }
+    let out=d.command("mem16 0x11 2").unwrap().0;assert!(out.contains("2042 007e"),"{out}");
+}
+#[test]
+fn typed_dumps_default_to_sixteen_bytes_and_split_partial_rows(){
+    let mut d=Debugger::new("counter").unwrap();d.command("poke 0 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f 50 51 52").unwrap();
+    for command in ["mem8 0","mem16 0","mem32 0"]{let out=d.command(command).unwrap().0;assert_eq!(out.lines().count(),1);assert!(out.ends_with("|ABCDEFGHIJKLMNOP|"));}
+    let out=d.command("mem16 0 9").unwrap().0;let rows:Vec<_>=out.lines().collect();assert_eq!(rows.len(),2);assert!(rows[1].starts_with("00000010: 5251"));assert!(rows[1].ends_with("|QR              |"));
+    // Legacy byte dump retains its exact existing syntax/output.
+    assert_eq!(d.command("mem 0 2").unwrap().0,"00000000: 41 42");
+}
+#[test]
+fn typed_decimal_dump_reads_factorials_as_unsigned_values(){
+    let mut d=Debugger::new("factorials").unwrap();d.run(1000).unwrap();let out=d.command("mem32 0x500 12 dec").unwrap().0;
+    let values:Vec<u32>=out.lines().flat_map(|line|line.split('|').next().unwrap().split_once(':').unwrap().1.split_whitespace()).map(|s|s.parse().unwrap()).collect();
+    assert_eq!(values,super::super::guest::FACTORIALS);
+    d.command("poke 0 ff ff ff ff").unwrap();assert!(d.command("mem32 0 1 dec").unwrap().0.contains("4294967295"));
+    assert!(d.command("mem8 0 1 dec").unwrap().0.contains("255"));assert!(d.command("mem16 0 1 dec").unwrap().0.contains("65535"));
+}
+#[test]
+fn typed_dump_rejects_invalid_ranges_and_does_not_mutate_debugger(){
+    let mut d=Debugger::new("counter").unwrap();d.command("serial rx 41").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();let queues=d.serial.snapshot();let cache=d.cache.stats();
+    for command in ["mem8 0 0","mem16 0 257","mem32 254 1","mem32 0xffffffff 1","mem8 0x100000000 1","mem16 0 2 oct","mem8 0 1 hex extra","mem32 0 -1"]{assert!(d.command(command).is_err(),"{command}");}
+    assert!(d.command("mem8 255 1").is_ok());assert!(d.command("mem16 254 1").is_ok());assert!(d.command("mem32 252 1").is_ok());
+    assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);assert_eq!(d.serial.snapshot(),queues);assert_eq!(d.cache.stats(),cache);
+}

@@ -247,3 +247,30 @@ timer overhead remain included. It is an arithmetic microbenchmark, not native
 execution of the 16-bit monitor image or an original-386 cycle estimate.
 On non-x86-64 hosts the x86-specific baseline is explicitly unavailable; the
 compiled Rust backend still builds for the local host.
+
+
+## Typed memory dumps
+
+```text
+mem8 0x500 16
+mem16 0x500 8
+mem32 0x500 4
+mem32 0x500 12 dec
+```
+
+`mem8`, `mem16` and `mem32` display unsigned 8-,16- and 32-bit values with an
+ASCII column. Counts are numbers of values, not bytes: the first three examples
+each inspect 16 bytes. `hex` is the default; optional `dec` displays unsigned
+decimal values. After `demo factorials`, `run 1000`, `check`, the last command
+shows the 12 results as 1,2,6,...,479001600.
+
+Values use little-endian byte order and unaligned addresses are allowed. The
+ASCII column follows the underlying bytes in address order: space through `~`
+are displayed, with `.` for control bytes, DEL and bytes above 0x7e. Nothing is
+sent as terminal control codes. Rows contain at most 16 bytes, with padding for
+a partial final row. Addresses are linear monitor RAM addresses.
+
+Omitting the count displays 16 bytes (16/8/4 values). Counts must be 1..256
+values; the entire byte range must fit RAM. Invalid requests produce an error
+without partial output or changes to CPU, RAM, serial queues or cache state.
+The existing `mem ADDRESS [BYTE_COUNT]` command keeps its previous output.

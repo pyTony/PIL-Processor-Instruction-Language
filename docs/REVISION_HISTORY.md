@@ -364,3 +364,12 @@ all12 results through12!=479001600,confirmed by48-byte RAM dump. Stress100
 passed1200 results/33600 instructions in89.580 ms including setup/checking.
 Transcript has no version banner; surrounding Windows session was0.11,not a
 new0.13 verification. These timings differ in scope from the counted-loop bench.
+
+## Typed memory dumps in pending0.13 alpha
+
+User requested8/16/32-bit values and visible ASCII. Added mem8/mem16/mem32
+with value counts, hex/unsigned-decimal selection, little-endian grouping and
+safe ASCII rendering. Existing mem unchanged. Four debugger tests added
+(144 total pending CI) for widths/endian/unaligned/ASCII, rows/defaults,
+factorial decimal values and invalid ranges with state preservation.
+Original implementation; no new reference materials or imports.

@@ -1,3 +1,14 @@
+# Typed memory dumps added to pending0.13 delivery
+
+New mem8/mem16/mem32 ADDRESS [COUNT] [hex|dec]. Count is values1..256;
+defaults16/8/4 values (16 bytes). Little-endian,unaligned,16-byte rows,
+printable ASCII0x20..7e with dots for others. Decimal is unsigned.
+Full-range validation before formatting; read-only operation, legacy mem unchanged.
+Four tests added (144 total pending CI). Existing23 backend cases unchanged.
+Update pending PR #11 rather than open another overlapping runtime PR. Main
+was still0.11 when starting this request; never merge dev into main.
+No external sources/dependencies used for this debugger feature.
+
 # User PC factorial workload confirmed
 
 Latest user transcript:336 steps,halt146,PASS all12 results incl479001600;
