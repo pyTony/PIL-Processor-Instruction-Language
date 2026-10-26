@@ -74,7 +74,7 @@ enum Token {
     Retire,
 }
 #[derive(Clone, Debug)]
-struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool }
+struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool }
 
 fn number(s: &str) -> R<u64> {
     if let Some(hex) = s.strip_prefix("0x") {
@@ -103,6 +103,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let mut branched = false;
     let mut stored = false;
     let mut flags_seen = 0u32;
+    let mut source_width=None;
     for (line_no, raw) in source.lines().enumerate() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() { continue; }
@@ -200,9 +201,16 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["read", out, binding, w] => {
                     let w = width(w)?;
-                    if w != operand_width { return Err("binding width mismatch".into()); }
                     let b = match *binding { "dst" => Binding::Dst, "src" => Binding::Src,
                         _ => return Err("expected dst or src".into()) };
+                    match b {
+                        Binding::Dst if w!=operand_width=>return Err("destination binding width mismatch".into()),
+                        Binding::Src=>{
+                            if ![8,16,32].contains(&w){return Err("source binding width must be 8,16,32".into());}
+                            if source_width.is_some_and(|old|old!=w){return Err("inconsistent source binding widths".into());}
+                            source_width=Some(w);
+                        },_=>{},
+                    }
                     Token::Read(define(&mut names, &mut widths, out, w)?, b, w)
                 }
                 ["const", out, w, n] => {
@@ -271,7 +279,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)));
-    Ok(Program { tokens, widths, operand_width, uses_flow, uses_displacement, uses_memory })
+    Ok(Program { tokens, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -315,7 +323,7 @@ fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
 fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>)->Result<(),ExecError> {
     if p.uses_memory && ram.is_none() {return Err(ExecError::InvalidContext);}
     dst.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
-    src.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
+    src.validate(p.source_width).map_err(|_|ExecError::InvalidBinding)?;
     context.validate(p.operand_width,p.uses_displacement)?;
     let mut pending_eip=context.next_eip;
     let mut pending_store:Option<(u32,MemWidth,u32)>=None;
@@ -434,6 +442,12 @@ fn description(name: &str) -> R<String> {
         "inc" => Some(include_str!("../isa/i386/inc.pil")),
         "dec" => Some(include_str!("../isa/i386/dec.pil")),
         "nop" => Some(include_str!("../isa/i386/nop.pil")),
+        "movzx"|"movzx8" => Some(include_str!("../isa/i386/movzx8.pil")),
+        "movzx16" => Some(include_str!("../isa/i386/movzx16.pil")),
+        "movsx"|"movsx8" => Some(include_str!("../isa/i386/movsx8.pil")),
+        "movsx16" => Some(include_str!("../isa/i386/movsx16.pil")),
+        "lea" => Some(include_str!("../isa/i386/lea.pil")),
+        "cwd"|"cdq" => Some(include_str!("../isa/i386/cwd.pil")),
         "imul" => Some(include_str!("../isa/i386/imul.pil")),
         "jmp" => Some(include_str!("../isa/i386/jmp.pil")),
         "shl"|"sal" => Some(include_str!("../isa/i386/shl.pil")),
@@ -454,7 +468,7 @@ fn description(name: &str) -> R<String> {
             return Ok(format!("{}\n{}",CONDITIONS,JCC.replace("$CONDITION", &format!("cond_{condition}"))));
         }
     }
-    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/shl/sal/shr/sar, set<condition>, j<condition>, or write_if_z".into())
+    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
     text.as_ref().replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
@@ -478,7 +492,7 @@ fn emit_rust_functions(p:&Program)->String {
     out.push_str(&format!(
         "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
-         if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + w as u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
+         if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + {}u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
          if {} && ram.is_none() {{ return Err(ExecError::InvalidContext); }}\n\
          let mut pending_store: Option<(u32,MemWidth,u32)> = None;\n\
@@ -486,7 +500,7 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_flags = *flags;\n\
          let mut pending_undefined = *undefined;\n\
          let mut pending_dst: Option<u64> = None;\n",
-        p.operand_width,p.uses_displacement,p.uses_memory));
+        p.operand_width,p.source_width,p.uses_displacement,p.uses_memory));
     for t in &p.tokens {
         let line = match *t {
             Token::Read(o,b,w) => {
