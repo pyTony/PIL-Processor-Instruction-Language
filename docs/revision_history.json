@@ -1070,6 +1070,39 @@
         "invalidations": 0,
         "evictions": 0,
         "scope": "single interpreted render; serial draining included; setup/reference/files excluded; not386 cycles"
+      },
+      "user_termux_comparison": {
+        "host": "android/aarch64",
+        "profile": "release",
+        "iterations": 10000,
+        "samples": 5,
+        "excluded_warmups": 1,
+        "verified_cases": 26,
+        "matched_trace_bytes": 4273138,
+        "generated_samples_ms": [
+          0.751846,
+          0.712808,
+          0.700462,
+          0.694038,
+          0.693039
+        ],
+        "generated_median_ms": 0.700462,
+        "generated_instructions_per_second": 42833159,
+        "interpreter_samples_ms": [
+          8.63,
+          7.261,
+          7.13,
+          7.121,
+          7.168
+        ],
+        "interpreter_median_ms": 7.168,
+        "interpreter_instructions_per_second": 4185439,
+        "observed_ratio": 10.23,
+        "generated_compile_seconds": 16.91,
+        "cache_hits": 29997,
+        "cache_misses": 7,
+        "cache_invalidations": 0,
+        "scope": "counted-loop comparison plus26 per-instruction proof cases; not full-image Mandelbrot; compilation excluded; PC_NATIVE unavailable on ARM64 as expected"
       }
     },
     {

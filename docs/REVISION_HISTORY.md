@@ -474,3 +474,14 @@ Next: user full-image comparison,then additional device/machine-state support.
 Runtime-only PR #15: https://github.com/pyTony/pil_proof/pull/15;
 head46053bcd2193060477efa43c0cbc6a8647b5e5c1,source441844483574e5b55c7eb8691fdce7ff828a6a4c.
 User review pending; no tag/release published.
+
+## User Termux0.14alpha.1 backend comparison
+
+Termux android/aarch64 release0.14.0-alpha.1,10000 loop iterations,5 measured
+samples plus1 excluded warmup:all26 cases/4,273,138 trace bytes matched,
+including mandelbrot2 (291 steps),near branch and jump faults. Generated median
+0.700462 ms (42,833,159 guest ins/s),cached interpreter7.168 ms (4,185,439 ins/s),
+10.23x; generated compilation16.910 s excluded. Cache29997 hits/7 misses/0
+invalidations. PC_NATIVE unavailable on ARM64 as expected; emitted Rust does
+execute natively on the phone. This is the counted-loop comparison,not a full
+256x256 render or alpha.2 --compare-mandelbrot result. No execution changes.
