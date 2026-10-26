@@ -1502,6 +1502,43 @@
           "error": "DEC8 80-1=7F has odd low-byte parity; corrected expected written flags from814 to810",
           "runtime_semantics_changed": false
         }
+      },
+      "logical_host_oracle_development": {
+        "date": "2026-10-27",
+        "status": "implemented;hosted execution pending",
+        "operations": [
+          "AND",
+          "OR",
+          "XOR",
+          "TEST"
+        ],
+        "widths": [
+          8,
+          16,
+          32
+        ],
+        "expected_hardware_cases": 85176,
+        "encoding_variants": 39,
+        "known_answer_harness_checks": 16,
+        "expected_tests_x86_64": 168,
+        "record_schema": 2,
+        "record_bytes": 112,
+        "runtime_changed": false,
+        "mask_policy": "independent defined/preserved/undefined partition; AF excluded from hardware value comparison; PIL zero and marker checked separately",
+        "prior_user_windows_evidence": {
+          "source": "d23ab45dcb7cb2a6aefdb4c608fad423d5504c93",
+          "hardware_cases": 52728,
+          "host": "windows/x86_64",
+          "vendor": "AuthenticAMD",
+          "cpuid1_eax": "00a20f10",
+          "cpuid1_ecx": "fed8320b",
+          "cpuid1_edx": "178bfbff",
+          "rustc": "1.99.1",
+          "case_data_fnv64": "0bc8895949b33008",
+          "tests_passed": 1,
+          "filtered_out": 166,
+          "classification": "user-reported correctness;not timing"
+        }
       }
     }
   ]

@@ -423,3 +423,12 @@ Original native stubs/cases,using the already cited Intel386 opcode and flag
 references for INC/DEC/NEG/NOT and modern IntelSDM/ABI sources above for
 long-mode encoding differences. No external code or vectors imported. WSL
 20,280-case baseline evidence is the user's console transcript at48556af.
+
+## Logical native-oracle expansion —27 October2026
+
+Original register stubs,cases and independent flag-policy tests. Uses existing
+Intel386 logical-operation/AppendixC references and modern IntelSDM sources
+already listed above. AF is undefined for AND/OR/XOR/TEST; observed nativeAF
+is not promoted to a processor-independent requirement. No external vectors
+or code imported. Windows52,728-case evidence is the user's console transcript
+for d23ab45,kept separately from hosted CI.

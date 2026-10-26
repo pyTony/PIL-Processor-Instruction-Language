@@ -2,25 +2,56 @@
 use super::*;
 // Architectural comparison mask, including defined and preserved arithmetic bits.
 // Never derive comparison coverage from the DUT's undefined mask.
-const DEFINED:u32=0x8d5;
-fn divergence(actual:&Cpu,expected:&Cpu)->Option<String>{
+const ARITH:u32=0x8d5;
+#[derive(Clone,Copy,Debug)]
+struct FlagPolicy{defined:u32,preserved:u32,undefined:u32}
+fn flag_policy(op:usize)->FlagPolicy{
+    let(defined,preserved,undefined)=match op{
+        5|6=>(ARITH&!1,!ARITH|1,0),8=>(0,u32::MAX,0),
+        9..=12=>(ARITH&!0x10,!ARITH,0x10),
+        0..=4|7=>(ARITH,!ARITH,0),_=>unreachable!(),
+    };FlagPolicy{defined,preserved,undefined}
+}
+fn divergence(actual:&Cpu,expected:&Cpu,policy:FlagPolicy)->Option<String>{
     for (i,name) in ["EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI"].iter().enumerate(){
         if actual.regs[i]!=expected.regs[i]{return Some(format!("{name}: PIL={:08x},hardware={:08x}",actual.regs[i],expected.regs[i]));}
     }
     let diff=actual.eflags^expected.eflags;
-    if diff&DEFINED!=0{return Some(format!("EFLAGS.defined: PIL={:08x},hardware={:08x},mask={DEFINED:08x}",actual.eflags,expected.eflags));}
-    if diff&!DEFINED!=0{return Some("EFLAGS.preserved mismatch".into());}
+    if diff&policy.defined!=0{return Some(format!("EFLAGS.defined: PIL={:08x},hardware={:08x},mask={:08x}",actual.eflags,expected.eflags,policy.defined));}
+    if diff&policy.preserved!=0{return Some("EFLAGS.preserved mismatch".into());}
+    if actual.eflags&policy.undefined!=0{return Some("EFLAGS.undefined concrete zero policy mismatch (not a hardware requirement)".into());}
     if actual.undefined_flags!=expected.undefined_flags{return Some("undefined-flag classification mismatch".into());}
     if actual.eip!=expected.eip{return Some("EIP mismatch".into());}None
 }
 #[test]
 fn host_cpu_oracle_rejects_corrupted_results_even_when_marked_undefined(){
     let expected=Cpu{eflags:0x202,eip:0x100,..Cpu::default()};
-    for i in 0..8{let mut changed=expected.clone();changed.regs[i]=1;assert!(divergence(&changed,&expected).is_some());}
-    for (bits,label) in [(1,"EFLAGS.defined"),(0x200,"EFLAGS.preserved")]{let mut changed=expected.clone();changed.eflags^=bits;changed.undefined_flags=DEFINED;assert!(divergence(&changed,&expected).unwrap().contains(label));}
-    let mut changed=expected.clone();changed.undefined_flags=1;assert!(divergence(&changed,&expected).is_some());
-    let mut changed=expected.clone();changed.eip+=1;assert!(divergence(&changed,&expected).is_some());
-    assert!(divergence(&expected,&expected).is_none());
+    for i in 0..8{let mut changed=expected.clone();changed.regs[i]=1;assert!(divergence(&changed,&expected,flag_policy(0)).is_some());}
+    for (bits,label) in [(1,"EFLAGS.defined"),(0x200,"EFLAGS.preserved")]{let mut changed=expected.clone();changed.eflags^=bits;changed.undefined_flags=ARITH;assert!(divergence(&changed,&expected,flag_policy(0)).unwrap().contains(label));}
+    let mut changed=expected.clone();changed.undefined_flags=1;assert!(divergence(&changed,&expected,flag_policy(0)).is_some());
+    let mut changed=expected.clone();changed.eip+=1;assert!(divergence(&changed,&expected,flag_policy(0)).is_some());
+    assert!(divergence(&expected,&expected,flag_policy(0)).is_none());
+}
+#[test]
+fn host_cpu_logical_masks_ignore_only_hardware_af_and_enforce_pil_policy(){
+    for op in 0..13{let p=flag_policy(op);
+        assert_eq!(p.defined|p.preserved|p.undefined,u32::MAX);
+        assert_eq!((p.defined&p.preserved)|(p.defined&p.undefined)|(p.preserved&p.undefined),0);
+    }
+    for op in 9..13{let p=flag_policy(op);
+        // Real hardware AF may be one; PIL's deterministic zero is a separate policy.
+        let expected=Cpu{eflags:0x212,undefined_flags:0x10,eip:0x100,..Cpu::default()};
+        let mut actual=expected.clone();actual.eflags&=!0x10;
+        assert!(divergence(&actual,&expected,p).is_none());
+        let mut wrong=actual.clone();wrong.eflags|=0x10;
+        assert!(divergence(&wrong,&expected,p).unwrap().contains("concrete zero policy"));
+        for bit in [1,4,0x40,0x80,0x800]{let mut wrong=actual.clone();wrong.eflags^=bit;wrong.undefined_flags=ARITH;
+            assert!(divergence(&wrong,&expected,p).unwrap().contains("EFLAGS.defined"));}
+        let mut wrong=actual.clone();wrong.eflags^=0x200;
+        assert!(divergence(&wrong,&expected,p).unwrap().contains("EFLAGS.preserved"));
+        let mut wrong=actual;wrong.undefined_flags=0;
+        assert!(divergence(&wrong,&expected,p).unwrap().contains("classification"));
+    }
 }
 #[test]
 #[cfg_attr(not(target_arch="x86_64"),ignore="requires an actual x86-64 host; no hardware verification on this target")]
@@ -61,15 +92,19 @@ fn hardware(op:usize,w:u8,mut a:u64,mut b:u64,mut d:u64)->Hardware{
         (6,8)=>run!(".byte 0xfe,0xc8"),(6,16)=>run!(".byte 0x66,0xff,0xc8"),(6,32)=>run!(".byte 0xff,0xc8"),
         (7,8)=>run!(".byte 0xf6,0xd8"),(7,16)=>run!(".byte 0x66,0xf7,0xd8"),(7,32)=>run!(".byte 0xf7,0xd8"),
         (8,8)=>run!(".byte 0xf6,0xd0"),(8,16)=>run!(".byte 0x66,0xf7,0xd0"),(8,32)=>run!(".byte 0xf7,0xd0"),
+        (9,8)=>run!(".byte 0x20,0xc8"),(9,16)=>run!(".byte 0x66,0x21,0xc8"),(9,32)=>run!(".byte 0x21,0xc8"),
+        (10,8)=>run!(".byte 0x08,0xc8"),(10,16)=>run!(".byte 0x66,0x09,0xc8"),(10,32)=>run!(".byte 0x09,0xc8"),
+        (11,8)=>run!(".byte 0x30,0xc8"),(11,16)=>run!(".byte 0x66,0x31,0xc8"),(11,32)=>run!(".byte 0x31,0xc8"),
+        (12,8)=>run!(".byte 0x84,0xc8"),(12,16)=>run!(".byte 0x66,0x85,0xc8"),(12,32)=>run!(".byte 0x85,0xc8"),
         _=>unreachable!(),
     }Hardware{a,b,d,g0,g1,input_flags,output_flags}
 }
-fn written_flags(op:usize)->u32{match op{5|6=>DEFINED&!1,8=>0,_=>DEFINED}}
+fn changed_flags(op:usize)->u32{let p=flag_policy(op);p.defined|p.undefined}
 fn check_hardware(h:&Hardware,op:usize,w:u8,a:u64,b:u64,d:u64)->Result<(),String>{
     if h.b!=b||h.d!=d||h.g0!=GUARD0||h.g1!=GUARD1{return Err(format!("native source/sentinel corruption: {h:?}"));}
     if h.input_flags&1!=d&1{return Err("native CF seeding failed".into());}
-    if (h.input_flags^h.output_flags)&!u64::from(written_flags(op))!=0{return Err("native preserved flags changed".into());}
-    if op==4{if h.a!=a{return Err("native CMP changed its operand".into());}}
+    if (h.input_flags^h.output_flags)&!u64::from(changed_flags(op))!=0{return Err("native preserved flags changed".into());}
+    if matches!(op,4|12){if h.a!=a{return Err("native non-writing instruction changed its operand".into());}}
     else if w==32{if h.a>>32!=0{return Err("native32-bit destination did not zero its upper half".into());}}
     else if (h.a^a)&!mask(w)!=0{return Err("native byte/word changed untouched bits".into());}Ok(())
 }
@@ -82,9 +117,11 @@ fn harness_selfcheck()->Result<(),String>{
         (5,8,0x7f,0,0,0x80,0x890),(5,8,0x7f,0,1,0x80,0x890),
         (6,8,0x80,0,0,0x7f,0x810),(6,8,0x80,0,1,0x7f,0x810),
         (7,8,1,0,0,0xff,0x95),(8,8,0xf0,0,1,0x0f,0),
+        (9,8,0xf0,0x0f,1,0,0x44),(10,8,0x80,1,1,0x81,0x84),
+        (11,8,0xff,0xff,1,0,0x44),(12,8,0xf0,0x0f,1,0xf0,0x44),
     ]{
         let h=hardware(op,w,a,b,carry);check_hardware(&h,op,w,a,b,carry)?;
-        if h.a&mask(w)!=result||h.output_flags&u64::from(written_flags(op))!=flags{return Err(format!("native harness known-answer failure: {h:?}"));}
+        if h.a&mask(w)!=result||h.output_flags&u64::from(flag_policy(op).defined)!=flags{return Err(format!("native harness known-answer failure: {h:?}"));}
     }Ok(())
 }
 fn encoded(op:usize,w:u8,native:bool)->Vec<u8>{
@@ -92,7 +129,7 @@ fn encoded(op:usize,w:u8,native:bool)->Vec<u8>{
     if (native&&w==16)||(!native&&w==32){bytes.push(0x66);}
     let pair=match op{
         0..=4=>[[0x00,0xc8],[0x28,0xc8],[0x10,0xc8],[0x18,0xc8],[0x38,0xc8]][op],
-        5=>[0xfe,0xc0],6=>[0xfe,0xc8],7=>[0xf6,0xd8],8=>[0xf6,0xd0],_=>unreachable!(),
+        5=>[0xfe,0xc0],6=>[0xfe,0xc8],7=>[0xf6,0xd8],8=>[0xf6,0xd0],9=>[0x20,0xc8],10=>[0x08,0xc8],11=>[0x30,0xc8],12=>[0x84,0xc8],_=>unreachable!(),
     };
     bytes.extend([pair[0]+u8::from(w!=8),pair[1]]);bytes
 }
@@ -123,8 +160,8 @@ pub fn verify()->Result<(),String>{
 fn verify_at(dir:&std::path::Path)->Result<(),String>{
     let mut json=BufWriter::new(fs::File::create(dir.join("cases.jsonl")).map_err(|e|e.to_string())?);
     let(mut source,mut dispatch,mut data)=(String::new(),String::new(),Vec::new());let mut count=0u32;
-    for(op,name)in ["add","sub","adc","sbb","cmp","inc","dec","neg","not"].iter().enumerate(){for(wi,w)in [8,16,32].into_iter().enumerate(){
-        let variant=op*3+wi;let bytes=encoded(op,w,false);let native_bytes=encoded(op,w,true);
+    for(op,name)in ["add","sub","adc","sbb","cmp","inc","dec","neg","not","and","or","xor","test"].iter().enumerate(){for(wi,w)in [8,16,32].into_iter().enumerate(){
+        let policy=flag_policy(op);let variant=op*3+wi;let bytes=encoded(op,w,false);let native_bytes=encoded(op,w,true);
         let(image,ram)=super::super::guest::Image::load(&bytes)?;
         let decoded=image.decode(&ram,super::super::guest::ENTRY).map_err(|e|format!("{e:?}"))?;
         let super::super::guest::Operation::Pil{program,dst,src,flow,address:None}=decoded.operation else{return Err("expected register PIL instruction".into());};
@@ -137,25 +174,25 @@ fn verify_at(dir:&std::path::Path)->Result<(),String>{
             seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;let a=seed&m;
             seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;pairs.push((a,seed&m));
         }
-        let metadata:&[u32]=if op>=5{&[DEFINED&!1,DEFINED]}else{&[DEFINED&!1]};
+        let metadata:&[u32]=if op>=9{&[0,ARITH]}else if op>=5{&[ARITH&!1,ARITH]}else{&[ARITH&!1]};
         for &undefined_in in metadata{for carry in [0,1]{for &(a,b)in &pairs{
             let a=(0x13579bdfu64<<32)|u64::from(initial_low(a,w,false));
             let b=(0xfedcba98u64<<32)|u64::from(initial_low(b,w,true));
             let d=(0x0badf00du64<<32)|0x2468ac00|carry;
             let h=hardware(op,w,std::hint::black_box(a),std::hint::black_box(b),d);check_hardware(&h,op,w,a,b,d)?;
             let initial=Cpu{regs:[a as u32,b as u32,d as u32,0x22446688,0x11223344,0x55aa55aa,0x12345678,0x87654321],eflags:h.input_flags as u32,undefined_flags:undefined_in,eip:super::super::guest::ENTRY};
-            let mut expected=initial.clone();expected.regs[0]=h.a as u32;expected.eflags=h.output_flags as u32;expected.undefined_flags=initial.undefined_flags&!written_flags(op);expected.eip=flow.next_eip;
-            writeln!(json,"{{\"id\":{count},\"op\":\"{name}\",\"width\":{w},\"carry\":{carry},\"guest_bytes\":\"{}\",\"native_bytes\":\"{}\",\"regs_in\":{:?},\"flags_in\":{},\"regs_expected\":{:?},\"flags_expected\":{},\"comparison_mask\":{DEFINED},\"written_flags_mask\":{},\"undefined_in\":{},\"undefined_expected\":{},\"native_rax_in\":\"{a:016x}\",\"native_rax_out\":\"{:016x}\"}}",hex(&bytes),hex(&native_bytes),initial.regs,initial.eflags,expected.regs,expected.eflags,written_flags(op),initial.undefined_flags,expected.undefined_flags,h.a).map_err(|e|e.to_string())?;
+            let mut expected=initial.clone();expected.regs[0]=h.a as u32;expected.eflags=h.output_flags as u32;expected.undefined_flags=(initial.undefined_flags&policy.preserved)|policy.undefined;expected.eip=flow.next_eip;
+            writeln!(json,"{{\"id\":{count},\"op\":\"{name}\",\"width\":{w},\"carry\":{carry},\"guest_bytes\":\"{}\",\"native_bytes\":\"{}\",\"regs_in\":{:?},\"flags_in\":{},\"regs_expected\":{:?},\"flags_expected\":{},\"record_schema\":2,\"defined_mask\":{},\"preserved_mask\":{},\"undefined_mask\":{},\"changed_flags_mask\":{},\"undefined_in\":{},\"undefined_expected\":{},\"native_rax_in\":\"{a:016x}\",\"native_rax_out\":\"{:016x}\"}}",hex(&bytes),hex(&native_bytes),initial.regs,initial.eflags,expected.regs,expected.eflags,policy.defined,policy.preserved,policy.undefined,changed_flags(op),initial.undefined_flags,expected.undefined_flags,h.a).map_err(|e|e.to_string())?;
             let mut actual=initial.clone();super::super::execute_flow(&program,&mut actual,dst,src,flow).map_err(|e|format!("{e:?}"))?;
-            if let Some(error)=divergence(&actual,&expected){json.flush().map_err(|e|e.to_string())?;return Err(format!("host CPU case{count} {name}{w} carry{carry}: {error}; initial={initial:?}"));}
-            for n in [count,variant as u32,u32::from(w),initial.eflags,initial.undefined_flags,expected.eflags].into_iter().chain(initial.regs).chain(expected.regs).chain([initial.eip,expected.eip,expected.undefined_flags,DEFINED]){data.extend_from_slice(&n.to_le_bytes());}
+            if let Some(error)=divergence(&actual,&expected,policy){json.flush().map_err(|e|e.to_string())?;return Err(format!("host CPU case{count} {name}{w} carry{carry}: {error}; initial={initial:?}"));}
+            for n in [count,variant as u32,u32::from(w),initial.eflags,initial.undefined_flags,expected.eflags].into_iter().chain(initial.regs).chain(expected.regs).chain([initial.eip,expected.eip,expected.undefined_flags,policy.defined,policy.preserved,policy.undefined]){data.extend_from_slice(&n.to_le_bytes());}
             count+=1;
         }}}
     }}
     json.flush().map_err(|e|e.to_string())?;fs::write(dir.join("hardware.bin"),&data).map_err(|e|e.to_string())?;
-    source.push_str("fn main(){let data=include_bytes!(\"hardware.bin\");assert_eq!(data.len()%104,0);let mut count=0;for c in data.chunks_exact(104){let n=|i:usize|u32::from_le_bytes(c[i*4..i*4+4].try_into().unwrap());let id=n(0);let mut regs=[0;8];for i in 0..8{regs[i]=n(6+i);}let mut flags=n(3);let mut undefined=n(4);let mut eip=n(22);match n(1){\n");
+    source.push_str("fn main(){let data=include_bytes!(\"hardware.bin\");assert_eq!(data.len()%112,0);let mut count=0;for c in data.chunks_exact(112){let n=|i:usize|u32::from_le_bytes(c[i*4..i*4+4].try_into().unwrap());let id=n(0);let mut regs=[0;8];for i in 0..8{regs[i]=n(6+i);}let mut flags=n(3);let mut undefined=n(4);let mut eip=n(22);match n(1){\n");
     source.push_str(&dispatch);
-    source.push_str("_=>panic!(\"bad variant\"),}for i in 0..8{assert_eq!(regs[i],n(14+i),\"case{id} register{i}\");}assert_eq!((flags^n(5))&0x8d5,0,\"case{id} EFLAGS.defined\");assert_eq!((flags^n(3))&!0x8d5u32,0,\"case{id} EFLAGS.preserved\");assert_eq!(undefined,n(24),\"case{id} undefined flags\");assert_eq!(eip,n(23),\"case{id} EIP\");count+=1;}println!(\"PASS: HOST_GENERATED {count} hardware cases\");}\n");
+    source.push_str("_=>panic!(\"bad variant\"),}for i in 0..8{assert_eq!(regs[i],n(14+i),\"case{id} register{i}\");}assert_eq!((flags^n(5))&n(25),0,\"case{id} EFLAGS.defined\");assert_eq!((flags^n(3))&n(26),0,\"case{id} EFLAGS.preserved\");assert_eq!(flags&n(27),0,\"case{id} PIL undefined concrete zero policy (not hardware)\");assert_eq!(undefined,n(24),\"case{id} undefined flags\");assert_eq!(eip,n(23),\"case{id} EIP\");count+=1;}println!(\"PASS: HOST_GENERATED {count} hardware cases\");}\n");
     let path=dir.join("generated.rs");fs::write(&path,source).map_err(|e|e.to_string())?;
     let bin=dir.join(if cfg!(windows){"generated.exe"}else{"generated"});let rustc=std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into());
     let built=Command::new(&rustc).arg("--edition=2021").arg("-O").arg(&path).arg("-o").arg(&bin).output().map_err(|e|e.to_string())?;
@@ -166,7 +203,7 @@ fn verify_at(dir:&std::path::Path)->Result<(),String>{
     if !output.status.success(){return Err(format!("generated result differs from hardware: {}",String::from_utf8_lossy(&output.stderr)));}
     let fingerprint=data.iter().fold(0xcbf29ce484222325u64,|h,b|(h^u64::from(*b)).wrapping_mul(0x100000001b3));
     let toolchain=Command::new(&rustc).arg("--version").output().ok().map(|o|String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_else(||"unavailable".into());
-    let report=format!("PASS: HOST_CPU {count} native CPU cases match interpreter and generated Rust; ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT8/16/32,CF0/1.\nTwelve known-answer harness checks passed;27 encoding variants; fixed independent comparison mask=0x8d5; preserved flags/registers/EIP and operation-specific undefined metadata checked.\nNative RAX upper-half policy checked separately; guest16-bit-default and native64-bit-mode encodings are recorded separately. This validates the admitted overlap,not a64-bit guest decoder or386 system/undefined/timing behavior.\n{}\nhost={}/{} version={} source={}\ntoolchain={}\ncase_data_fnv64={fingerprint:016x} (non-cryptographic fingerprint); no timing benchmark.\nArtifacts: {}",host_identity(),std::env::consts::OS,std::env::consts::ARCH,env!("CARGO_PKG_VERSION"),source_revision(),toolchain,dir.display());
+    let report=format!("PASS: HOST_CPU {count} native CPU cases match interpreter and generated Rust; ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT/AND/OR/XOR/TEST8/16/32,CF0/1.\nSixteen known-answer harness checks passed;39 encoding variants; independent defined/preserved/undefined masks (logical AF excluded from hardware comparison); preserved flags/registers/EIP and operation-specific undefined metadata checked.\nNative RAX upper-half policy checked separately; guest16-bit-default and native64-bit-mode encodings are recorded separately. This validates the admitted overlap,not a64-bit guest decoder or386 system/undefined/timing behavior.\n{}\nhost={}/{} version={} source={}\ntoolchain={}\ncase_data_fnv64={fingerprint:016x} (non-cryptographic fingerprint); no timing benchmark.\nArtifacts: {}",host_identity(),std::env::consts::OS,std::env::consts::ARCH,env!("CARGO_PKG_VERSION"),source_revision(),toolchain,dir.display());
     fs::write(dir.join("report.txt"),&report).map_err(|e|e.to_string())?;println!("{report}");Ok(())
 }
 }

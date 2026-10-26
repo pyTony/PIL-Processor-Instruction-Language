@@ -23,7 +23,8 @@ hardware test on an unsupported target fails rather than claiming a pass.
 
 ## Admitted operations and independence
 
-ADD,SUB,ADC,SBB,CMP,INC,DEC,NEG,NOT8/16/32 using fixed accumulator/source registers. Twelve
+ADD,SUB,ADC,SBB,CMP,INC,DEC,NEG,NOT,AND,OR,XOR,TEST8/16/32 using fixed
+accumulator/source registers. Sixteen
 independent known-answer cases check native opcode/operand/carry/flag plumbing
 before trusting the oracle. Boundary pairs plus512 deterministic pseudorandom
 pairs per variant run with CF0 andCF1. They are original project cases,not
@@ -35,13 +36,16 @@ PUSHFQ/POP snapshots actual flags before and after the target,without compiler
 instructions between them. Snapshots supply actual inputs independently of
 diagnostic metadata. INC/DEC
 preserve CF; NOT preserves all flags; NEG and the binary arithmetic forms
-define all six outputs. Unary cases include known and undefined CF metadata.
+define all six outputs. Logical operations leave AF undefined. Unary cases
+include known and undefined CF metadata; logical cases start with either no
+undefined arithmetic flags or all six marked undefined.
 
 | Operation | Written arithmetic flags | Preserved arithmetic flags | Metadata policy |
 |---|---|---|---|
 | ADD/SUB/ADC/SBB/CMP/NEG | CF/PF/AF/ZF/SF/OF | None | Clear all six undefined markers |
 | INC/DEC | PF/AF/ZF/SF/OF | CF | Preserve incoming CF marker; clear the other five |
 | NOT | None | CF/PF/AF/ZF/SF/OF | Preserve every marker |
+| AND/OR/XOR/TEST | CF/PF/ZF/SF/OF | None | Set AF undefined; clear the other five markers |
 
 Undefined metadata is a PIL diagnostic policy checked from this independent
 specification; the hardware supplies concrete flag values,not metadata.
@@ -51,8 +55,9 @@ stack operations retain Rust's default assembly stack/memory/flag clobbers;
 volatile registers are explicit so the compiler handles the platform ABI.
 
 Hardware source/sentinel registers and flags outside the fixed architectural
-mask0x8d5 must remain unchanged. Full nativeRAX also checks byte/word merging,
-32-bit zero-extension and CMP's non-writing behavior,including its upper half.
+mask0x8d5 must remain unchanged. LogicalAF is allowed to change but its actual
+hardware value is excluded from comparison. No mask is inferred from DUT state. Full nativeRAX also checks byte/word merging,
+32-bit zero-extension and CMP/TEST's non-writing behavior,including the upper half.
 These native64-bit write-policy checks are separate from the386 low32 result.
 
 The386 decoder consumes separately recorded guest bytes (16-bit defaults),
@@ -72,7 +77,8 @@ fault delivery,BCD,privileged operations or386 timing are validated by this slic
 Under CARGO_TARGET_DIR (default target)/host-cpu-oracle/run-*/:
 - cases.jsonl:case IDs,widths,carry,guest/native bytes,input/expected model state
   and nativeRAX upper halves;
-- hardware.bin:version-specific26-word records used by the generated runner;
+- hardware.bin:schema2 records of28 little-endianu32 words (112 bytes),used
+  by the generated runner; old runs used26 words/104 bytes;
 - generated.rs/executable,build.stderr,generated.stdout and generated.stderr;
 - report.txt:case count,mask/scope,CPU vendor/rawCPUID1,OS/architecture,Rust
   toolchain,source revision and a non-cryptographic FNV64 case fingerprint.
@@ -136,3 +142,33 @@ from814 to810. All12 harness constants were also checked independently with
 a small Python calculation. No DUT semantics were changed to obtain the pass.
 Runtime export remains72 files with unchanged contents apart from source
 provenance/checksums. This development work needs no runtime delivery PR.
+
+## Logical expansion (hosted execution pending)
+
+The new default has39 variants and85,176 hardware cases,plus16 known-answer
+harness checks. AND/OR/XOR/TEST use register forms20/21,08/09,30/31,84/85.
+TEST never writes its operand,including nativeRAX's upper32 bits. No new
+guest instruction is implemented by this verification increment.
+
+Independent per-operation masks partition all32 flag bits into defined,
+preserved,undefined sets. The comparator never uses DUT metadata to choose
+which values count. For logical forms,AF's actual hardware value is recorded
+but ignored; PIL's concrete-zero behavior and undefined marker are checked
+separately. CF/OF must clear; SF/ZF/PF follow hardware. Preservation covers
+all remaining bits. Logical cases start both with zero and all-arithmetic
+undefined metadata to exercise new AF marking and defined-marker clearing.
+
+Schema2 keeps words0..24 from earlier records. Word25 is now the defined mask;
+26 is preserved and27 undefined. The generated runner reads all three masks,
+checks concrete zero only as PIL policy and checks the exact diagnostic marker.
+JSON records carry record_schema=2 and all masks; flags_expected retains raw
+hardware bits even where a mask excludes them. Old artifacts are historical
+and should be run with their own recorded generated runner.
+
+A portable corruption test permits nativeAF=1 with PILAF=0,then rejects a wrong
+PIL zero policy,missing AF marker,and changes to each defined flag or preserved
+IF. Claiming all flags undefined cannot hide a wrong defined result.
+
+User Windows baseline atd23ab45 passed52,728 cases,one selected test with166
+filtered out,on AuthenticAMD EAX00a20f10/ECXfed8320b,rustc1.99.1,fingerprint
+0bc8895949b33008. This is user-reported correctness evidence,not throughput.

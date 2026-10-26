@@ -682,3 +682,19 @@ both backends on AuthenticAMD CPUID1 EAX00a20f10,linux/x86_64,rustc1.99.1.
 Fingerprint8b8c01e8fdeff584; one selected test passed,166 filtered out.
 Artifacts were isolated under target/wsl. This is user-reported correctness,
 not a throughput measurement or a full-suite run.
+
+## Logical hardware oracle expansion —27 October2026
+
+Adds AND/OR/XOR/TEST8/16/32 to the development-only CPU oracle. Independent
+flag policies partition every bit into defined,preserved,undefined. LogicalAF
+is excluded from native value equality; concrete zero and AF diagnostic marker
+are checked separately as PIL policy. TEST preserves the full nativeRAX.
+One portable mask/corruption regression added:168 tests expected onx86-64,
+85,176 hardware cases/39 encoding variants/16 known-answer harness checks.
+Record schema2 is28 little-endianu32 words (112 bytes),with independent masks.
+Hosted execution pending; runtime unchanged and no new instruction support claim.
+
+User reported preceding sourced23ab45 passing52,728 hardware cases on native
+Windows/x86_64 AuthenticAMD CPUID1 EAX00a20f10 (ECXfed8320b),rustc1.99.1.
+Fingerprint0bc8895949b33008; one selected test passed,166 filtered out.
+Artifacts under target/host-cpu-oracle. This is correctness,not a benchmark.
