@@ -914,6 +914,33 @@
         "runtime_export": "62-file isolated checks passed",
         "native_archive": "unpacked verification passed",
         "user_dump_commands": "not yet reported"
+      },
+      "user_windows_comparison": {
+        "iterations": 10000,
+        "samples": 5,
+        "verified_cases": 23,
+        "matched_trace_bytes": 3044833,
+        "generated_samples_ms": [
+          0.2979,
+          0.2978,
+          0.3003,
+          0.2977,
+          0.2976
+        ],
+        "generated_median_ms": 0.2978,
+        "interpreter_samples_ms": [
+          3.591,
+          3.607,
+          3.562,
+          3.413,
+          3.305
+        ],
+        "interpreter_median_ms": 3.562,
+        "observed_ratio": 11.96,
+        "generated_compile_seconds": 3.613,
+        "direct_cpu_median_ms": 0.0022,
+        "direct_cpu_ns_per_iteration": 0.22,
+        "scope": "User report, separate runs, host timing; direct CPU narrower scope; not386 cycles"
       }
     },
     {
@@ -990,7 +1017,8 @@
         ],
         "native_cpu_median_ms": 0.002174,
         "scope": "loop arithmetic; no controlled OS performance comparison"
-      }
+      },
+      "user_windows_debugger": "Confirmed operand/byte/target/current-EIP listing, pause after100 then236 remaining steps, factorial check and all12 decimal RAM values"
     },
     {
       "version": "0.14.0-alpha.1",
@@ -1047,7 +1075,7 @@
     {
       "version": "0.14.0-alpha.2",
       "date": "2026-10-26",
-      "status": "development; hosted Rust CI pending",
+      "status": "host-verified; runtime-only delivery being prepared",
       "features": [
         "full-image generated Rust comparison",
         "26-case per-instruction gate",
@@ -1056,10 +1084,41 @@
       ],
       "rust_verification": {
         "tests_supplied": 157,
-        "status": "pending"
+        "tests_passed": 157,
+        "tests_failed": 0,
+        "ubuntu_seconds": 11.13,
+        "windows_seconds": 26.02,
+        "source_commit": "a5db4e29542b4b62bdcc4389df17e741de8d094e",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40384865363",
+        "verifier_cases": 26,
+        "matched_trace_bytes": 4273138,
+        "standalone_runtime": "66-file isolated build and scripts passed",
+        "native_archive": "unpacked delivery checks passed"
       },
       "runtime_files": 66,
-      "provenance": "Original code extending existing emitter/trace format; no new sources or dependencies"
+      "provenance": "Original code extending existing emitter/trace format; no new sources or dependencies",
+      "full_image_comparison": {
+        "size": 256,
+        "iteration_limit": 32,
+        "pixels_verified": 65536,
+        "instructions_each": 12940344,
+        "tx_retries_each": 255,
+        "matching_checkpoints": 256,
+        "matching_checkpoint_bytes": 1134592,
+        "ubuntu": {
+          "generated_ms": 110.936,
+          "interpreter_ms": 1283.57,
+          "observed_ratio": 11.57,
+          "image_compile_seconds": 0.616
+        },
+        "windows": {
+          "generated_ms": 232.995,
+          "interpreter_ms": 2930.892,
+          "observed_ratio": 12.58,
+          "image_compile_seconds": 1.792
+        },
+        "scope": "single cold render each; checkpoint capture and draining included; setup/reference/files/process startup/compilation excluded; not median benchmark or386 cycles"
+      }
     }
   ]
 }

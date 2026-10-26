@@ -227,8 +227,9 @@ instruction listings are in programs/. Native archives include those binaries
 under programs/ and can run the same debugger commands and --bench/--stress
 options directly, without compiling.
 
-The 256×256 Mandelbrot workload uses signed fixed-point multiply,
-shifts, framebuffer storage and image output are not implemented by this monitor.
+The Mandelbrot guest uses signed fixed-point multiply and shifts, streams
+pixels through serial, and saves a 256×256 image on the host. It needs no guest
+framebuffer or VGA emulation. See the image workload section below.
 
 
 ## Interpreter cache and timing comparisons

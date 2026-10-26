@@ -49,7 +49,7 @@ for the interpreter's general code-write handling. It emits functions from the
 same validated PIL descriptions rather than hand-writing a separate CPU.
 
 Normal debugger binaries need no Rust compiler once built. --compare-backends
-requires rustc locally and saves generated source, executable and trace files
+and --compare-mandelbrot require rustc locally and saves generated source, executable and trace files
 under target/backend-comparison (or CARGO_TARGET_DIR). Compilation and process
 startup are outside native sample timings. Native dispatch, code guards and
 black_box per step remain inside; compare release builds on the same host.

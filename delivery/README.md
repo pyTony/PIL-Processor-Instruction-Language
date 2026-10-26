@@ -147,8 +147,9 @@ instruction listings are in programs/. Native archives include those binaries
 under programs/ and can run the same debugger commands and --bench/--stress
 options directly, without compiling.
 
-A 256×256 Mandelbrot renderer is a later workload: signed fixed-point multiply,
-shifts, framebuffer storage and image output are not implemented by this monitor.
+The Mandelbrot guest uses signed fixed-point multiply and shifts, streams
+pixels through serial, and saves a 256×256 image on the host. It needs no guest
+framebuffer or VGA emulation. See the image workload section below.
 
 
 ## Interpreter cache and timing comparisons
@@ -337,9 +338,10 @@ are 0. Values are bounded to fit the guest's signed 32-bit products.
 
 Timing measures the cached token interpreter including serial-drain handling;
 it excludes setup, reference checking and file output. It is not a 386 cycle
-rate or compiled-backend image benchmark. The compiled proof checks a tiny
-2x2 Mandelbrot guest instruction by instruction; full-size image execution is
-currently interpreted. No VGA, firmware or OS boot is implied.
+rate. Normal rendering is interpreted; --compare-mandelbrot also executes the
+full image as generated Rust. The 26-case verifier includes a tiny image traced
+after every instruction; the full-image comparison checks state at serial-drain
+boundaries and halt. No VGA, firmware or OS boot is implied.
 
 Small interactive example (64 output bytes, no queue draining needed):
 
@@ -354,3 +356,16 @@ serial tx
 This demo is 8x8 at 16 iterations. Manual `load` of a larger generated guest can
 pause when TX is full; use `serial tx` to drain then continue, or use the image
 helper to handle draining automatically.
+
+## Full-image generated Rust comparison
+
+With rustc installed, run `./pil-proof --compare-mandelbrot 256 32`
+(Windows: `.\pil-proof.exe --compare-mandelbrot 256 32`). The command first gates
+with the 26-case per-instruction verifier, then checks every image pixel against
+the mathematical reference and full state at each serial drain/halt boundary.
+Instruction counts and TX retry counts must also agree. Artifacts go under
+target/backend-comparison (or CARGO_TARGET_DIR), including both pixel streams
+and state checkpoints. Comparison does not write a BMP; use --mandelbrot to
+render the image. Each engine has one cold render timed, including checkpoint
+capture and serial draining, excluding setup, compilation, child process startup,
+reference checking and files. This is not a median benchmark or 386 cycles.

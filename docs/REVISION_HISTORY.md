@@ -447,3 +447,26 @@ included,setup/reference/files/compilation excluded. Existing interpreter image
 render and REPL unchanged. Two tests added (157 total pending hosted CI).
 Original code, no new external sources or dependencies. Main stays runtime-only.
 Next: validate both hosts, export66 files and prepare separate runtime PR.
+
+Earlier user reports now explicitly indexed: Windows0.13alpha.2 compared23
+cases/3,044,833 bytes,generated0.2978 ms vs interpreter3.562 ms (11.96x),
+compile3.613 s excluded. Its direct CPU baseline0.0022 ms has narrower scope.
+User alpha.3 listing/current marker,100+236 factorial instructions and all12
+decimal RAM values were also confirmed. These are user reports,not newCI runs.
+
+## 0.14.0-alpha.2 hosted verification
+
+Core dev a5db4e29542b4b62bdcc4389df17e741de8d094e passed CI40384865363:
+157 tests on Ubuntu11.13 s/Windows26.02 s; existing26-case per-instruction
+proof still matched4,273,138 bytes. Full256x256/32:65,536 pixels,12,940,344
+instructions,255 retries each engine. All256 drain/halt CPU/RAM/flags/serial/
+stop checkpoints matched1,134,592 bytes. Generated/interpreter single render:
+Ubuntu110.936/1283.570 ms (11.57x),Windows232.995/2930.892 ms (12.58x).
+Image compilation0.616/1.792 s excluded,as is the separate verifier build.
+Includes checkpoint capture/draining; excludes setup/reference/files/startup.
+Standalone66-file source/scripts and unpacked native delivery checks passed.
+Follow-up files correct old docs and record evidence; execution source unchanged.
+User Windows0.14alpha.1 normal render1484.024 ms is separately recorded.
+Prepare delivery/v0.14.0-alpha.2 from main cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c;
+user reviews/merges in browser. No tag/release; development stays dev.
+Next: user full-image comparison,then additional device/machine-state support.

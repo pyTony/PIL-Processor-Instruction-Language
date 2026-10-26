@@ -1,3 +1,20 @@
+# Full-image backend comparison verified —0.14.0-alpha.2
+
+Core dev a5db4e29542b4b62bdcc4389df17e741de8d094e passed CI40384865363:
+157 tests on Ubuntu11.13 s/Windows26.02 s; existing26-case per-instruction
+proof still matched4,273,138 bytes. Full256x256/32:65,536 pixels,12,940,344
+instructions,255 retries each engine. All256 drain/halt CPU/RAM/flags/serial/
+stop checkpoints matched1,134,592 bytes. Generated/interpreter single render:
+Ubuntu110.936/1283.570 ms (11.57x),Windows232.995/2930.892 ms (12.58x).
+Image compilation0.616/1.792 s excluded,as is the separate verifier build.
+Includes checkpoint capture/draining; excludes setup/reference/files/startup.
+Standalone66-file source/scripts and unpacked native delivery checks passed.
+Follow-up files correct old docs and record evidence; execution source unchanged.
+User Windows0.14alpha.1 normal render1484.024 ms is separately recorded.
+Prepare delivery/v0.14.0-alpha.2 from main cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c;
+user reviews/merges in browser. No tag/release; development stays dev.
+Next: user full-image comparison,then additional device/machine-state support.
+
 # Full-image compiled comparison —0.14.0-alpha.2 development
 
 PR #14 is merged at main cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c.
