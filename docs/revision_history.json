@@ -542,7 +542,44 @@
         "runtime_export": "50-file isolated build/launchers/generated backend passed",
         "native_archive": "unpacked checks passed"
       },
-      "provenance": "original code; no new external reference materials"
+      "provenance": "original code; no new external reference materials",
+      "phone_comparison": {
+        "reported_by": "user",
+        "date": "2026-10-26",
+        "host": "android/aarch64",
+        "profile": "release",
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "measured_samples": 5,
+        "excluded_warmups": 1,
+        "verifier_cases": 9,
+        "matched_trace_bytes": 2046769,
+        "generated_samples_ms": [
+          0.493461,
+          0.761154,
+          0.767385,
+          0.764269,
+          0.771961
+        ],
+        "generated_median_ns": 764269,
+        "generated_ins_per_second": 39257120,
+        "interpreter_samples_ms": [
+          9.476,
+          6.874,
+          6.878,
+          6.89,
+          6.916
+        ],
+        "interpreter_median_ms": 6.89,
+        "interpreter_ins_per_second": 4354547,
+        "cache_hits": 29997,
+        "cache_misses": 7,
+        "cache_invalidations": 0,
+        "observed_ratio": 9.02,
+        "generated_compile_seconds_excluded": 5.201,
+        "pc_native": "unavailable on aarch64; x86_64 required",
+        "scope": "offline fixed-image guarded dispatch; not JIT or 386 cycles"
+      }
     }
   ]
 }

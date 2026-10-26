@@ -248,3 +248,17 @@ https://github.com/pyTony/pil_proof/actions/runs/40360385843 — 122 passed on
 Ubuntu in8.35 s and Windows in12.67 s. Nine cases/2,046,769 trace bytes,
 verification-only invocation, isolated runtime and unpacked native checks passed.
 Runtime-only PR #8 awaits user review; no GitHub release/tag published.
+
+## Alpha.2 — first user-confirmed Android generated-backend result
+
+User console evidence, Termux android/aarch64, sh tools/compare.sh 10000 5:
+all nine cases matched 2,046,769 trace bytes, including faults/serial waits.
+Generated samples [0.493461,0.761154,0.767385,0.764269,0.771961] ms;
+median0.764269 ms,39,257,120 guest instructions/s. Cached interpreter samples
+[9.476,6.874,6.878,6.890,6.916] ms; median6.890 ms,4,354,547 ins/s.
+30,003 completed instructions/sample; five measured samples and one excluded
+warmup; cache29997 hits/7 misses/0 invalidations. Observed9.02x improvement.
+Generated compilation5.201 s is excluded from timing samples.
+The direct x86-64 CPU loop is unavailable on this aarch64 phone as expected;
+the generated runner compiled and ran natively for aarch64. User PC results
+remain pending. No new tests or implementation changes in this evidence update.

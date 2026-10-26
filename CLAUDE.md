@@ -1,3 +1,13 @@
+# User phone compiled backend verified — alpha.2
+
+User ran sh tools/compare.sh 10000 5 on Termux android/aarch64.
+All9 cases matched2,046,769 bytes. Generated median0.764269 ms,
+39,257,120 guest instructions/s; cached interpreter median6.890 ms,
+4,354,547 ins/s. Observed9.02x; compilation5.201 s excluded.
+PC_NATIVE is explicitly unavailable on aarch64, as expected; generated Rust
+compiled and executed natively for the phone. User PC comparison remains pending.
+This is a guarded fixed-image proof, not a native REPL or 386 cycle estimate.
+
 # Alpha.2 verification complete — runtime PR #8
 
 https://github.com/pyTony/pil_proof/pull/8 awaits user review. Core dev source
