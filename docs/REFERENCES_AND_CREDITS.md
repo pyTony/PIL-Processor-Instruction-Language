@@ -416,3 +416,10 @@ v6 usesNode24. Hosted Windows/Linux runner compatibility is checked by CI.
 https://github.com/actions/checkout/blob/v5/action.yml
 https://github.com/actions/upload-artifact/blob/v6/action.yml
 No external code or vectors copied. Tests remain ondev; no new guest support.
+
+## Unary native-oracle expansion —27 October2026
+
+Original native stubs/cases,using the already cited Intel386 opcode and flag
+references for INC/DEC/NEG/NOT and modern IntelSDM/ABI sources above for
+long-mode encoding differences. No external code or vectors imported. WSL
+20,280-case baseline evidence is the user's console transcript at48556af.

@@ -23,16 +23,18 @@ hardware test on an unsupported target fails rather than claiming a pass.
 
 ## Admitted operations and independence
 
-ADD,SUB,ADC,SBB,CMP8/16/32 using fixed accumulator/source registers. Six
+ADD,SUB,ADC,SBB,CMP,INC,DEC,NEG,NOT8/16/32 using fixed accumulator/source registers. Twelve
 independent known-answer cases check native opcode/operand/carry/flag plumbing
 before trusting the oracle. Boundary pairs plus512 deterministic pseudorandom
 pairs per variant run with CF0 andCF1. They are original project cases,not
 SingleStepTests vectors. This is not an exhaustive input-space claim.
 
 Curated literal instruction bytes execute in an out-of-line Rust function's
-assembly block. BT seeds CF; PUSHFQ/POP snapshots actual flags before and after
-the target,without compiler instructions between them. BT's other arithmetic
-flag values are inputs only:every admitted target defines all six outputs.
+assembly block. CMP AL,CL varies input arithmetic flags; BT seeds CF.
+PUSHFQ/POP snapshots actual flags before and after
+the target,without compiler instructions between them. Snapshots supply actual inputs independently of diagnostic metadata. INC/DEC
+preserve CF; NOT preserves all flags; NEG and the binary arithmetic forms
+define all six outputs. Unary cases include known and undefined CF metadata.
 No privileged/reserved flag values are loaded and DF is never changed. Balanced
 stack operations retain Rust's default assembly stack/memory/flag clobbers;
 volatile registers are explicit so the compiler handles the platform ABI.
@@ -46,8 +48,8 @@ The386 decoder consumes separately recorded guest bytes (16-bit defaults),
 while native stubs execute long-mode bytes (32-bit defaults). The interpreter
 executes that decoded PIL and the generated functions execute the same tokens;
 both are checked independently against the hardware result. Each check covers
-all8 modeled registers,nextEIP,defined arithmetic flags,preserved other flags
-and expected undefined-marker clearing. Comparison never trusts the DUT's own
+all8 modeled registers,nextEIP,defined arithmetic flags,preserved flags
+and operation-specific undefined-marker preservation/clearing. Comparison never trusts the DUT's own
 undefined mask to decide which bits to ignore.
 
 Only the stated native registers/flags are captured; this is not arbitrary
@@ -95,3 +97,17 @@ AuthenticAMD. Existing39-case backend verification,full256x256 Mandelbrot
 comparison and isolated runtime/package checks also passed on both hosts.
 The checkoutv5/upload-artifactv6 Node24 actions completed successfully.
 This is hosted CI evidence; no local ARM execution is claimed.
+
+## Unary expansion (hosted execution pending)
+
+The new default has27 variants and52,728 cases. Unary forms use FE/FF /0
+(INC),FE/FF /1 (DEC),F6/F7 /3 (NEG),F6/F7 /2 (NOT); long-mode single-byte
+40..4F encodings are deliberately avoided because they are REX prefixes.
+Metadata has independent known-CF/undefined-CF inputs; raw native flags still
+provide concrete values in both cases. JSON records now include comparison
+and written masks plus input/expected undefined metadata. Binary records keep
+the existing104-byte layout. Prior20,280-case results below remain historical.
+
+User reported the preceding source48556af passing20,280 cases under WSL on
+AuthenticAMD (CPUID1 EAX00a20f10),rustc1.99.1,with fingerprint8b8c01e8fdeff584.
+The helper ran one test with166 filtered out; artifacts used target/wsl.

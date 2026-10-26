@@ -663,3 +663,19 @@ Node24 action updates:checkoutv5,upload-artifactv6. User-linked old run403778939
 failed9632f84 due E0271 inMandelbrot argument closure; fixed historically. Its
 Node20 warning was separate; Windows was canceled by matrix fail-fast.
 No runtime/Cargo version change. Keep tests and tooling ondev,not main.
+
+## Unary hardware oracle expansion —27 October2026
+
+Extends the development-only host oracle with INC/DEC/NEG/NOT8/16/32.
+CMP AL,CL varies incoming arithmetic flags before BT selects CF0/1. INC/DEC
+must preserve CF value and metadata; NOT must preserve all flags/metadata.
+Unary cases start both with known and undefined CF metadata. Independent
+written masks,12 native known answers and decoded operand bindings are used.
+Expected52,728 cases/27 variants,167 tests; hosted execution pending.
+Runtime semantics/version/export are unchanged; tooling stays ondev.
+
+User WSL evidence for preceding source48556af:20,280 hardware cases passed
+both backends on AuthenticAMD CPUID1 EAX00a20f10,linux/x86_64,rustc1.99.1.
+Fingerprint8b8c01e8fdeff584; one selected test passed,166 filtered out.
+Artifacts were isolated under target/wsl. This is user-reported correctness,
+not a throughput measurement or a full-suite run.

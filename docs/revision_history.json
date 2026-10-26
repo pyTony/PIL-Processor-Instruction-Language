@@ -1453,6 +1453,37 @@
           "runtime_packages": "isolated exports and unpacked delivery checks passed",
           "arm": "not executed for this increment"
         }
+      },
+      "unary_host_oracle_development": {
+        "date": "2026-10-27",
+        "status": "implemented; hosted execution pending",
+        "instructions": [
+          "INC",
+          "DEC",
+          "NEG",
+          "NOT"
+        ],
+        "widths": [
+          8,
+          16,
+          32
+        ],
+        "expected_hardware_cases": 52728,
+        "variants": 27,
+        "tests": 167,
+        "runtime_changed": false,
+        "prior_user_wsl_evidence": {
+          "source": "48556afca68f2ae4405ec448b2b7c25d2ebd26b0",
+          "hardware_cases": 20280,
+          "vendor": "AuthenticAMD",
+          "cpuid1_eax": "00a20f10",
+          "host": "linux/x86_64 WSL",
+          "rustc": "1.99.1",
+          "case_data_fnv64": "8b8c01e8fdeff584",
+          "tests_passed": 1,
+          "tests_filtered_out": 166,
+          "classification": "user-reported correctness; not timing"
+        }
       }
     }
   ]
