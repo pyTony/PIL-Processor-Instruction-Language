@@ -10,7 +10,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Arithmetic and flags | Supported subset | ADD, ADC, SUB, SBB, CMP, AND, OR, XOR, TEST, NOT, NEG, INC, DEC; truncated signed IMUL16/32; flag preservation and undefined markers |
 | Multiplication | Supported subset | 0F AF and 69/6B truncated signed IMUL16/32, register/memory sources; no implicit double-width forms |
 | Shifts | Supported subset | SHL/SAL, SHR, SAR8/16/32; count1, CL, imm8; register/memory; no rotates or double shifts |
-| Data conversion / addresses | Supported subset | MOVZX/MOVSX8-to16/32 and16-to32, CBW/CWDE/CWD/CDQ, LEA16/32; all preserve flags |
+| Data conversion / addresses | Supported subset | MOVZX/MOVSX8-to16/32 and16-to32;16-to16 forms are currently rejected by the monitor profile. CBW/CWDE/CWD/CDQ and LEA16/32 preserve flags |
 | Register views | Supported | 32-bit registers, low 16 bits, AL/AH-style byte views |
 | Conditional flow | Supported subset | Sixteen predicates, short/near binary Jcc and relative JMP; no indirect/far jumps |
 | SETcc | Supported subset | Register byte destinations in decoder; sixteen conditions |

@@ -1,3 +1,20 @@
+# Claude release/ISA smoke results recorded —0.15alpha.2
+
+PR17 is merged (API confirmed). User supplied Claude release report:manifest
+complete/matching,DELIVERY/Cargo versions agree,warning-free build,selftest/
+factorials/smallMandelbrot/loop PASS,hello correct. Custom binary confirmed
+MOVZX EBX,AL=80;MOVSX ECX,AL=FFFFFF80;CWDE EAX=FFFFFF80;CDQ EDX=FFFFFFFF;
+LEA SI,[BX+DI+5]=85. Host unspecified; this is reported evidence,not a local run.
+Same-width MOVSX rejected with no changes,as current profile intends. Encoding
+correction:0F BF F8 is DI,AX in16-bit operand size;DI,DI is0F BF FF.
+Feature matrix template ondev now explicitly notes16-to16 MOVSX/MOVZX rejection;
+this documentation will ship with the next runtime export. No execution changes.
+Intel386 tables list widening forms only; SingleStepTests386 metadata consulted:
+0FB7/0FBF rows advertise r16/32,r/m16; unprefixed real-mode MOO files exist.
+No hardware vectors downloaded/imported/executed; do not claim those passed or
+conclude from modern-host execution alone. Consider same-width support with
+independent expected-state checks in a future compatibility increment.
+
 # Runtime PR #17 ready — diagnostic follow-up
 
 https://github.com/pyTony/pil_proof/pull/17 delivers0.15.0-alpha.2.

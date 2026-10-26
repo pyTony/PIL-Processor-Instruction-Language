@@ -1220,7 +1220,7 @@
     {
       "version": "0.15.0-alpha.2",
       "date": "2026-10-26",
-      "status": "host-verified; runtime-only PR #17 awaits user review",
+      "status": "host-verified; runtime PR #17 merged; user-supplied Claude release/ISA checks passed",
       "features": [
         "accurate unsupported-program check diagnostic",
         "all8 demo regression coverage",
@@ -1261,7 +1261,37 @@
         "head": "9c40f41cec5971c740573734ad72d456691bbc91",
         "source_commit": "0ced9f0e9263162f7ffe4259be9f2020d4f8c93a",
         "base_main": "33377e984e4e7d54b99cf6db2f1e9c57b238b35c"
-      }
+      },
+      "user_supplied_claude_release_check": {
+        "version": "0.15.0-alpha.2",
+        "source": "User-pasted Claude report; host not stated",
+        "manifest": "SHA256SUMS matches and covers tracked files",
+        "metadata": "DELIVERY.json and Cargo.toml agree",
+        "build": "no compiler warnings",
+        "programs": [
+          "selftest PASS",
+          "factorials PASS",
+          "small Mandelbrot PASS",
+          "loop PASS",
+          "hello correct"
+        ],
+        "custom_binary_results": {
+          "MOVZX EBX,AL": "00000080",
+          "MOVSX ECX,AL": "FFFFFF80",
+          "CWDE EAX": "FFFFFF80",
+          "CDQ EDX": "FFFFFFFF",
+          "LEA SI,[BX+DI+5]": "0085"
+        },
+        "same_width_probe": {
+          "bytes": "0F BF F8",
+          "reported_label": "MOVSX DI,DI",
+          "correct_label_in_16_bit_operand_size": "MOVSX DI,AX",
+          "DI_DI_bytes": "0F BF FF",
+          "observed": "monitor rejected; state unchanged",
+          "hardware_claim": "Claude reports386 accepts same-width; raw hardware vectors not independently executed"
+        }
+      },
+      "coverage_note": "Feature matrix on dev explicitly records rejected16-to16 MOVSX/MOVZX; queued for next runtime delivery."
     }
   ]
 }

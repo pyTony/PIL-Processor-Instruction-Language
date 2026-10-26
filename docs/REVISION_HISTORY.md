@@ -560,3 +560,20 @@ No new external sources/code/dependencies. No release/tag; no phonealpha.2 resul
 Runtime-only PR #17: https://github.com/pyTony/pil_proof/pull/17;
 head9c40f41cec5971c740573734ad72d456691bbc91,source0ced9f0e9263162f7ffe4259be9f2020d4f8c93a.
 User review pending. Tests/history remain ondev; main retains runtime-only policy.
+
+## User-supplied Claude0.15alpha.2 release/ISA smoke report
+
+PR17 is merged (API confirmed). User supplied Claude release report:manifest
+complete/matching,DELIVERY/Cargo versions agree,warning-free build,selftest/
+factorials/smallMandelbrot/loop PASS,hello correct. Custom binary confirmed
+MOVZX EBX,AL=80;MOVSX ECX,AL=FFFFFF80;CWDE EAX=FFFFFF80;CDQ EDX=FFFFFFFF;
+LEA SI,[BX+DI+5]=85. Host unspecified; this is reported evidence,not a local run.
+Same-width MOVSX rejected with no changes,as current profile intends. Encoding
+correction:0F BF F8 is DI,AX in16-bit operand size;DI,DI is0F BF FF.
+Feature matrix template ondev now explicitly notes16-to16 MOVSX/MOVZX rejection;
+this documentation will ship with the next runtime export. No execution changes.
+Intel386 tables list widening forms only; SingleStepTests386 metadata consulted:
+0FB7/0FBF rows advertise r16/32,r/m16; unprefixed real-mode MOO files exist.
+No hardware vectors downloaded/imported/executed; do not claim those passed or
+conclude from modern-host execution alone. Consider same-width support with
+independent expected-state checks in a future compatibility increment.

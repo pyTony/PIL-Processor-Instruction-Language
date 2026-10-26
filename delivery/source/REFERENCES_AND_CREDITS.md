@@ -120,3 +120,21 @@ semantics. Original PIL/Rust/Python implementation and tests; no manual text,
 external implementation, test vectors or dependencies imported. Same-width
 MOVSX/MOVZX forms are outside the documented monitor profile. Generic source
 binding validation and original mathematical oracles are project work.
+
+## Same-width extension coverage follow-up
+
+User-supplied Claude release/ISA smoke report recorded separately from hosted CI.
+Its16-to16 compatibility claim prompted another review of Intel386 MOVSX/MOVZX
+entries and SingleStepTests/80386 metadata/listing:
+https://github.com/SingleStepTests/80386/blob/main/80386.csv
+https://github.com/SingleStepTests/80386/tree/main/v1_ex_real_mode
+The CSV advertises16/32-bit destinations with16-bit sources for0FB7/0FBF;
+unprefixed hardware-derived test archives are listed. This is metadata review,
+not an execution/validation of those vectors. No test data or external code is
+imported. Thanks to Daniel Balsom and contributors for the hardware-test work.
+The monitor still deliberately rejects16-to16 forms. Feature matrix clarification
+is queued for the next runtime export; execution semantics are unchanged.
+
+Intel386 Section17.2 ModR/M tables also consulted to correct the reported
+encoding:0F BF F8 selects DI,AX;DI,DI would require0F BF FF with16-bit operands.
+https://read.seas.harvard.edu/~kohler/class/aosref/i386/s17_02.htm
