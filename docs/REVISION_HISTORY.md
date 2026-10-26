@@ -138,3 +138,12 @@ User confirmed v0.7.1 Hello-world on Termux: 28 steps, EIP=0x138, console
 Hello, world! plus newline and matching 14-byte TX output.
 Host v0.8 verification pending. Development remains on dev; runtime-only main
 delivery will contain 44 files. No new third-party material used.
+
+v0.8 host verification at dev 2ff2bcb89bbc03ac46870413a6dabfb7cd5d90b9:
+https://github.com/pyTony/pil_proof/actions/runs/40331078455
+101 tests passed on Ubuntu (7.71 s) and Windows (13.29 s). Numeric CLI checks
+verified all factorials and fresh-state loop/stress samples. Release benchmark
+helpers, isolated 44-file runtime builds/scripts/generated Rust, and unpacked
+native archive numeric transcripts passed on both platforms. Timing values are
+host-dependent measurements, not pass thresholds. Runtime-only PR #5 targets
+main from delivery/v0.8.0. Phone numerical results remain unreported.

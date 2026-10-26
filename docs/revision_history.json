@@ -287,7 +287,7 @@
     {
       "version": "0.8.0",
       "date": "2026-10-26",
-      "status": "development; host CI pending",
+      "status": "host-verified; runtime-only delivery PR #5",
       "features": [
         "guest factorials 1!..12! via repeated addition",
         "counted-loop guest and timing commands",
@@ -296,8 +296,17 @@
       ],
       "rust_verification": {
         "tests_supplied": 101,
-        "host_ci": "pending",
-        "phone_numeric": "not yet reported"
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40331078455",
+        "phone_numeric": "not yet reported",
+        "source_commit": "2ff2bcb89bbc03ac46870413a6dabfb7cd5d90b9",
+        "tests_passed": 101,
+        "tests_failed": 0,
+        "ubuntu_seconds": 7.71,
+        "windows_seconds": 13.29,
+        "numeric_cli": "PASS: factorial table and repeated fresh loop/stress samples",
+        "runtime_export": "44-file standalone build/scripts/generated Rust and numerical transcript passed on both",
+        "native_archive": "unpacked numeric checks passed on both",
+        "release_benchmark_helpers": "passed on both hosts"
       },
       "runtime_files": 44,
       "timing_scope": "host wall time; includes decoding/PIL compilation/interpreter; not guest cycles",

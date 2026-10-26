@@ -1,3 +1,14 @@
+# v0.8 host verification complete
+
+Runtime-only PR #5: https://github.com/pyTony/pil_proof/pull/5
+Dev source 2ff2bcb89bbc03ac46870413a6dabfb7cd5d90b9 passed 101 tests on
+Ubuntu (7.71 s) and Windows (13.29 s), numeric CLI, release benchmark helpers,
+standalone 44-file runtime and unpacked native delivery numerical checks.
+CI: https://github.com/pyTony/pil_proof/actions/runs/40331078455
+Phone numerical results remain unreported. Time includes current decode/PIL
+compile overhead; do not claim 386 cycles or hardware MHz. Mandelbrot remains
+future work. Development stays on dev, main uses the separate runtime export.
+
 # v0.8 numerical workload development
 
 User confirmed v0.7.1 Hello-world on Termux: 28 steps, halt 0x138, correct
