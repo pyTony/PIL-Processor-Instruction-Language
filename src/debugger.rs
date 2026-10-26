@@ -48,6 +48,7 @@ struct Debugger {
     demo: String,
     image:Option<super::guest::Image>,
     tx_events:Vec<u8>,
+    cache:super::cache::DecodeCache,
 }
 
 impl Debugger {
@@ -56,7 +57,7 @@ impl Debugger {
             cpu: Cpu::default(), initial: Cpu::default(),
             ram:Ram::new(256),initial_ram:Ram::new(256),
             instructions: BTreeMap::new(), breakpoints: BTreeSet::new(),
-            stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),image:None,tx_events:Vec::new(),
+            stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),image:None,tx_events:Vec::new(),cache:super::cache::DecodeCache::default(),
         };
         d.load_demo(demo)?; Ok(d)
     }
@@ -97,7 +98,7 @@ impl Debugger {
             }
             _ => return Err("demo must be counter, echo, memory, selftest, hello, factorials or loop".into()),
         }
-        self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
+        self.cache.clear();self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
         self.breakpoints.clear();self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();
         Ok(())
@@ -106,35 +107,36 @@ impl Debugger {
         let (image,ram)=super::guest::Image::load(bytes)?;
         let mut cpu=Cpu::default();cpu.eip=super::guest::ENTRY;cpu.eflags=0x202;
         self.initial=cpu.clone();self.cpu=cpu;self.initial_ram=ram.clone();self.ram=ram;
-        self.image=Some(image);self.instructions.clear();self.breakpoints.clear();
+        self.cache.clear();self.image=Some(image);self.instructions.clear();self.breakpoints.clear();
         self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();Ok(())
     }
     fn step_image(&mut self)->Stop {
         use super::guest::{GuestError,Operation};
-        let decoded=match self.image.as_ref().unwrap().decode(&self.ram,self.cpu.eip) {
+        let decoded=match self.cache.fetch(self.image.as_ref().unwrap(),&self.ram,self.cpu.eip) {
             Ok(d)=>d,Err(GuestError::Execution(e))=>return Stop::Fault(e),
             Err(GuestError::Decode(message))=>return Stop::Decode{eip:self.cpu.eip,message},
         };
-        match decoded.operation {
+        match &decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
                 let result=match address {
-                    Some(a)=>super::execute_segmented(&program,&mut self.cpu,dst,src,flow,&mut self.ram,a),
-                    None=>execute_flow(&program,&mut self.cpu,dst,src,flow),
+                    Some(a)=>super::execute_segmented(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*a),
+                    None=>execute_flow(program,&mut self.cpu,*dst,*src,*flow),
                 };
                 match result{Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e)}
             }
             Operation::Input{next}=>{
                 let byte=match self.serial.try_read(){Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
-                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip=next;Stop::Advanced
+                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip=*next;Stop::Advanced
             }
             Operation::Output{next}=>{
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err(){return Stop::TxBlocked(self.cpu.eip);}
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip=next;Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip=*next;Stop::Advanced
             }
             Operation::Halt=>Stop::Halt(self.cpu.eip),
         }
     }
     fn reset(&mut self) {
+        self.cache.clear();
         self.cpu=self.initial.clone();self.ram=self.initial_ram.clone();self.serial.clear();self.tx_events.clear();self.stopped_at_break=None;
         // Keep breakpoints while resetting the currently loaded demo.
     }
@@ -195,7 +197,7 @@ impl Debugger {
         let start=std::time::Instant::now();let (n,stop)=self.run_large(budget)?;let elapsed=start.elapsed();
         let rate=if n==0 || elapsed.as_nanos()==0 {"rate unavailable (no completed steps or clock interval)".into()}
             else {format!("{:.0} guest instructions/s; {:.1} ns/instruction",n as f64/elapsed.as_secs_f64(),elapsed.as_secs_f64()*1e9/n as f64)};
-        Ok(format!("{n} completed steps; {}\nelapsed={:.3} ms; {rate}\nHost wall time includes decoder, PIL compilation and interpreter dispatch; not 386 cycles.",Self::stop_text(&stop),elapsed.as_secs_f64()*1000.0))
+        Ok(format!("{n} completed steps; {}\nelapsed={:.3} ms; {rate}\nHost wall time: PIL token interpreter; fetch validation, cache misses/compilation and dispatch; not 386 cycles.\n{}",Self::stop_text(&stop),elapsed.as_secs_f64()*1000.0,self.cache.summary()))
     }
     fn flags(&self)->String {
         let mut text=format!("EFLAGS={:08x} undefined={:08x}",self.cpu.eflags,self.cpu.undefined_flags);
@@ -277,6 +279,7 @@ impl Debugger {
             []=>String::new(),
             ["help"]=>concat!(
                 "help | demo counter|echo|memory|selftest|hello|factorials|loop | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
+                "cache [stats|on|off|clear] (binary monitor)\n",
                 "time [steps 1..1000000] | bench [iterations 1..100000] [samples 1..9] | stress [passes 1..1000]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
                 "break <address> | delete <address> | breaks | reset | quit\n",
@@ -313,11 +316,15 @@ impl Debugger {
                 if n==0 || n>MAX_RUN as u64 {return Err(format!("run budget must be 1..{MAX_RUN}"));}
                 let (n,stop)=self.run(n as usize)?;format!("{n} completed steps; {}",Self::stop_text(&stop))
             }
+            ["cache"]|["cache","stats"]=>self.cache.summary(),
+            ["cache","on"]=>{self.cache.set_enabled(true);self.cache.summary()},
+            ["cache","off"]=>{self.cache.set_enabled(false);self.cache.summary()},
+            ["cache","clear"]=>{self.cache.clear();self.cache.summary()},
             ["time"]=>self.timed_run(MAX_RUN)?,
             ["time",budget]=>{let n=number(budget)?;if n==0||n>MAX_TIMED as u64{return Err(format!("timed budget must be 1..{MAX_TIMED}"));}self.timed_run(n as usize)?},
-            ["bench"]=>benchmark(1000,3)?,
-            ["bench",iterations]=>benchmark(parse_count(iterations)?,3)?,
-            ["bench",iterations,samples]=>benchmark(parse_count(iterations)?,parse_count(samples)?)?,
+            ["bench"]=>benchmark_mode(1000,3,self.cache.enabled())?,
+            ["bench",iterations]=>benchmark_mode(parse_count(iterations)?,3,self.cache.enabled())?,
+            ["bench",iterations,samples]=>benchmark_mode(parse_count(iterations)?,parse_count(samples)?,self.cache.enabled())?,
             ["stress"]=>factorial_stress(25)?,
             ["stress",passes]=>factorial_stress(parse_count(passes)?)?,
             ["mem",addr]|["mem",addr,_]=>{
@@ -438,22 +445,23 @@ pub fn selftest()->Result<(),String> {
 fn parse_count(text:&str)->Result<u32,String> {
     u32::try_from(number(text)?).map_err(|_|"count must fit 32 bits".into())
 }
-pub fn benchmark(iterations:u32,samples:u32)->Result<String,String> {
+pub fn benchmark(iterations:u32,samples:u32)->Result<String,String> {benchmark_mode(iterations,samples,true)}
+pub fn benchmark_mode(iterations:u32,samples:u32,cached:bool)->Result<String,String> {
     let bytes=super::guest::loop_bytes(iterations)?;
     if !(1..=9).contains(&samples){return Err("benchmark samples must be 1..9".into());}
-    let steps=3*iterations as usize+3;let mut timings=Vec::new();
+    let steps=3*iterations as usize+3;let mut timings=Vec::new();let mut stats=super::cache::Stats::default();
     for sample in 0..=samples {
-        let mut d=Debugger::new("counter")?;d.load_image(&bytes,"benchmark")?;
+        let mut d=Debugger::new("counter")?;d.load_image(&bytes,"benchmark")?;d.cache.set_enabled(cached);
         let start=std::time::Instant::now();let (done,stop)=d.run_large(steps+1)?;let elapsed=start.elapsed();
         if done!=steps || !matches!(stop,Stop::Halt(_)){return Err(format!("benchmark execution stopped: {}",Debugger::stop_text(&stop)));}
         d.check_loop(iterations)?;
-        if sample!=0 {timings.push(elapsed.as_secs_f64());}
+        if sample!=0 {timings.push(elapsed.as_secs_f64());stats=d.cache.stats();}
     }
     let values=timings.iter().map(|s|format!("{:.3}",s*1000.0)).collect::<Vec<_>>().join(", ");
     timings.sort_by(|a,b|a.partial_cmp(b).unwrap());let mid=timings.len()/2;
     let median=if timings.len()%2==0{(timings[mid-1]+timings[mid])/2.0}else{timings[mid]};
     let rate=if median==0.0{0.0}else{steps as f64/median};
-    Ok(format!("PASS: counted-loop benchmark; {iterations} iterations; {steps} completed instructions/sample\nsamples_ms=[{values}]; median={:.3} ms; {rate:.0} guest instructions/s\n{samples} measured samples, 1 excluded warmup; fresh CPU/RAM per sample.\nHost wall time includes decoder, PIL compilation and interpreter dispatch; excludes image setup, result checking and console output. Not 386 cycles. version={} host={}/{} profile={}",median*1000.0,env!("CARGO_PKG_VERSION"),std::env::consts::OS,std::env::consts::ARCH,if cfg!(debug_assertions){"debug"}else{"release"}))
+    Ok(format!("PASS: counted-loop benchmark; {iterations} iterations; {steps} completed instructions/sample\nsamples_ms=[{values}]; median={:.3} ms; {rate:.0} guest instructions/s\n{samples} measured samples, 1 excluded warmup; fresh CPU/RAM per sample.\nEngine=PIL-token-interpreter cache={} (cold per sample); last_sample_hits={} misses={} invalidations={}.\nHost wall time includes fetch validation, misses/compilation and interpreter dispatch; excludes image setup, checking and console output. Not 386 cycles. version={} host={}/{} profile={}",median*1000.0,if cached{"on"}else{"off"},stats.hits,stats.misses,stats.invalidations,env!("CARGO_PKG_VERSION"),std::env::consts::OS,std::env::consts::ARCH,if cfg!(debug_assertions){"debug"}else{"release"}))
 }
 pub fn factorial_stress(passes:u32)->Result<String,String> {
     if !(1..=1000).contains(&passes){return Err("stress passes must be 1..1000".into());}

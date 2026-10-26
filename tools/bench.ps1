@@ -1,9 +1,11 @@
-param([int]$Iterations = 1000, [int]$Samples = 3)
+param([int]$Iterations = 1000, [int]$Samples = 3, [switch]$Uncached)
 $ErrorActionPreference = 'Stop'
 & "$PSScriptRoot/build.ps1" -Release
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     $buildRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
-    & "$buildRoot/release/pil-proof.exe" --bench $Iterations $Samples
+    $benchArgs = @('--bench', $Iterations, $Samples)
+    if ($Uncached) { $benchArgs += '--uncached' }
+    & "$buildRoot/release/pil-proof.exe" @benchArgs
     if ($LASTEXITCODE -ne 0) { throw 'benchmark failed' }
 } finally { Pop-Location }

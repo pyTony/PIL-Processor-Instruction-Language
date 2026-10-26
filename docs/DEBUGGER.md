@@ -156,7 +156,7 @@ monitor stop and is excluded from completed-instruction counts.
 checks its answer, excludes one warmup and reports sample times, median and
 instructions/s. Defaults are 1000 iterations and 3 samples; allowed ranges are
 1..100000 and 1..9. Your loaded debugger program is preserved. Timing includes
-decoding, PIL description compilation and interpreter dispatch. Image setup,
+fetch validation, cache lookup, decoding/compilation on misses and token interpretation. Image setup,
 result checking and console output are outside the benchmark sample interval.
 This is current interpreter throughput, not simulated 386 cycles or CPU MHz.
 
@@ -180,3 +180,50 @@ options directly, without compiling.
 
 A 256×256 Mandelbrot renderer is a later workload: signed fixed-point multiply,
 shifts, framebuffer storage and image output are not implemented by this monitor.
+
+
+## Interpreter cache and timing comparisons
+
+Execution uses the PIL token interpreter. The x86 decoder produces typed PIL
+programs; the interpreter executes their tokens. `--emit-rust` generates Rust
+source as a separate facility. The debugger does not execute generated native
+code or a JIT.
+
+The binary monitor now caches up to 256 decoded instructions and their compiled
+PIL programs. Cache entries contain no saved register values or arithmetic
+results. Addresses, flags, RAM protections and side effects are evaluated on
+every execution. Every hit re-fetches/checks all encoded bytes; changed bytes,
+image extent or segment context cause re-decoding. Debugger poke and guest
+stores to code therefore take effect when that instruction executes again.
+Errors are not cached. At capacity, the cache is cleared before inserting a new
+entry. Reset/load/toggling clears entries and counters; the selected on/off mode
+persists across reset and program loads. Predecoded demos do not use this cache.
+
+```
+cache stats
+cache off
+bench 10000 5
+cache on
+bench 10000 5
+```
+
+`cache clear` empties entries and zeroes counters. `cache stats` shows hits,
+misses, byte/context invalidations and capacity evictions for the loaded image.
+Bench uses a separate fresh debugger and the selected cache mode; its own final
+sample counters appear in the benchmark report. Each sample starts with an
+empty cache, so first-visit decoding/compilation is inside the timing interval.
+The one excluded warmup is a separate run, not cache preloading for samples.
+
+For a release-build comparison from a source checkout:
+
+```sh
+sh tools/bench.sh 10000 5 --uncached
+sh tools/bench.sh 10000 5
+```
+
+Windows: add `-Uncached` to `tools/bench.ps1` for the uncached measurement.
+Native binaries accept `--bench 10000 5 --uncached` or `--bench 10000 5`.
+Both modes still interpret PIL. Cached timing includes byte validation, lookup,
+cache-miss decoding/compilation and token dispatch; uncached mode decodes and
+compiles on every visit. Compare the same iteration/sample counts, host and
+build profile. These are host wall-time results, not 386 clock cycles.
