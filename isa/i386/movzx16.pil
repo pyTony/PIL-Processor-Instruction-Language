@@ -1,0 +1,7 @@
+# MOVZX: independent source/destination widths; all flags preserved.
+require_width 32
+read a src 16
+zext r a $W
+write dst r
+preserve_flags all
+retire

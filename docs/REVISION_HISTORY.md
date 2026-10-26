@@ -496,3 +496,18 @@ Generated Rust151.897 ms vs cached interpreter2991.931 ms,19.70x in one cold
 render each. Verifier compilation17.165 s and image compilation2.706 s excluded.
 Checkpoint capture/draining included; setup/reference/files/startup excluded.
 Not a median benchmark or386 cycle measurement. No execution changes.
+
+## 0.15.0-alpha.1 instruction expansion
+
+MOVZX/MOVSX byte-to16/32 and word-to32 (register/memory/high-byte),CBW/CWDE,
+CWD/CDQ andLEA16/32 added with original PIL descriptions. Independently typed
+source bindings (fixed8/16/32 per program); destination/read-dst still operand
+width. Interpreter/emitter validate ranges before effects. LEA reuses effective
+address resolution/read_address,never translates/accesses data RAM/segments;
+CS fetch remains checked. Mixed operand/address sizes and overlap are tested.
+All new instructions preserve flags/undefined metadata. Six new Rust tests
+(163 total pending hosted CI),extended generated-function test and8 new full-state
+cases (34 total). Independent Python132,118 extension/address cases passed.
+Six new PIL files; runtime72 files. References/credits record consulted Intel386
+manual entries. No external code/data/dependencies imported. Main stays runtime-only.
+Next: Windows/Linux CI,then export and PR from main336610f56b46fd69a6aa5a2e2354dc64311800a5.

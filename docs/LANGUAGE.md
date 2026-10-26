@@ -10,7 +10,12 @@ One operation per line; whitespace separates fields; # begins a comment.
 Values are named SSA bit vectors. Every value must be defined before use,
 and a name may only be assigned once. Widths range from 1 to 64; arithmetic
 wraps at the declared width. Binary operands require equal widths.
-The operand bindings currently support 8, 16 and 32 bits.
+The destination binding uses the instruction operand width (8/16/32). The
+source binding independently uses8/16/32 bits, fixed by its read statements;
+all reads of src must agree on that width. If src is unread, its binding width
+still defaults to operand width. Runtime View widths must match these compiled
+widths. Generated APIs infer widths from the program and validate register/bit
+ranges before effects. This supports MOVZX/MOVSX without decoder-side arithmetic.
 
 $W, $EXT and $SIGN are text-template parameters: operand width, width+1 and
 width-1. The prototype instantiates them before validation/tokenization.
@@ -234,3 +239,30 @@ classification are rejected. Generic shifts take an unsigned count of any
 bit-vector width. A count>=data width gives zero for shl/lshr and a repeated
 sign bit for ashr; counts are never implicitly reduced modulo the host width.
 The x86 descriptions explicitly AND with31 before invoking these operations.
+
+## Extending moves, accumulator conversion and LEA
+
+The binary monitor supports MOVZX and MOVSX with byte sources and16/32-bit
+register destinations (0F B6/BE), and word sources with32-bit destinations
+(0F B7/BF). Sources can be registers, including AH/CH/DH/BH, or memory.
+Memory reads check only the source width; read-only memory is permitted.
+The unlisted16-to16 forms remain monitor diagnostics.
+
+Opcode98 executes CBW (AL to AX) or, with66, CWDE (AX to EAX). Opcode99
+executes CWD (AX sign into DX) or, with66, CDQ (EAX sign into EDX). CWD/CDQ
+leave EAX untouched. Word destinations preserve their upper register halves.
+All of these instructions preserve flags and undefined-flag markers.
+
+LEA8D calculates a memory-form effective offset into a16/32-bit register.
+Operand size and address size are independent:16-bit addresses wrap then zero
+extend for32-bit destinations;32-bit offsets truncate for16-bit destinations.
+It performs no data load, adds no segment base and checks no data-segment
+access/limit. Segment overrides do not change the result. Instruction fetch
+still uses the normal CS checks. A register-source LEA is a monitor diagnostic.
+Disassembly shows an address expression without a data size or segment.
+
+Standalone descriptions are named movzx8/movsx8 (byte source) and
+movzx16/movsx16 (word source); movzx/movsx alias the byte forms. Destination
+width comes from --emit-rust WIDTH. lea and cwd use16/32-bit destination width;
+cdq aliases cwd. The binary decoder binds98/99 implicit registers before PIL
+validation. The interpreter and generated runner execute the same tokens.

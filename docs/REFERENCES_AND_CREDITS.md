@@ -311,3 +311,19 @@ calibrated luminance image. No new dependencies or firmware reuse.
 Original extension of the project PIL Rust emitter, trace parser and Mandelbrot
 workload. No additional external code, dependencies or reference material used.
 Thanks to Tony for the Windows full-image reference-checked render report.
+
+## Extension/address instructions —0.15
+
+Intel80386 Programmer's Reference Manual1986, Chapter17 entries, consulted
+26 October2026 through the Harvard HTML mirror:
+- MOVSX: https://read.seas.harvard.edu/~kohler/class/aosref/i386/MOVSX.htm
+- MOVZX: https://read.seas.harvard.edu/~kohler/class/aosref/i386/MOVZX.htm
+- LEA: https://read.seas.harvard.edu/~kohler/class/aosref/i386/LEA.htm
+- CBW/CWDE: https://read.seas.harvard.edu/~kohler/class/aosref/i386/CBW.htm
+- CWD/CDQ: https://read.seas.harvard.edu/~kohler/class/aosref/i386/CWD.htm
+
+Used for encodings, source/destination sizes, preserved flags and LEA offset-only
+semantics. Original PIL/Rust/Python implementation and tests; no manual text,
+external implementation, test vectors or dependencies imported. Same-width
+MOVSX/MOVZX forms are outside the documented monitor profile. Generic source
+binding validation and original mathematical oracles are project work.

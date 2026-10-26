@@ -219,3 +219,73 @@ fn near_branch_targets_preserve_flags_and_fault_before_retirement(){
     let(mut image,ram)=Image::load(&[0xe9,0xff,0x7f]).unwrap();image.segments[1].limit=ENTRY+2;
     let d=image.decode(&ram,ENTRY).unwrap();let mut c=Cpu::default();c.eip=ENTRY;let old=c.clone();if let Operation::Pil{program,dst,src,flow,..}=d.operation{assert!(super::super::execute_flow(&program,&mut c,dst,src,flow).is_err());}else{panic!("PIL");}assert_eq!(c,old);
 }
+
+#[test]
+fn extending_moves_exhaust_bytes_and_word_boundaries_preserving_flags(){
+    use super::super::Cpu;
+    for w in [16,32]{for signed in [false,true]{for source_width in [8,16]{
+        if source_width>=w{continue;}
+        let mut values:Vec<u32>=if source_width==8{(0..=255).collect()}else{vec![0,1,0x7fff,0x8000,0xffff]};values.push(0x12348080);
+        for value in values{
+            let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.extend([0x0f,if signed{0xbe}else{0xb6}+if source_width==16{1}else{0},0xc1]);
+            let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=0xabcd5678;c.regs[1]=value;c.eflags=0xad7;c.undefined_flags=0x8d5;
+            execute_one(&bytes,&mut c,0,false).unwrap();
+            let expected=if signed{if source_width==8{value as i8 as i32 as u32}else{value as i16 as i32 as u32}}else{value&super::super::mask(source_width)as u32};
+            assert_eq!(c.regs[0],if w==16{0xabcd0000|(expected&0xffff)}else{expected});assert_eq!(c.regs[1],value);
+            assert_eq!((c.eflags,c.undefined_flags),(0xad7,0x8d5));
+        }
+    }}}
+}
+#[test]
+fn extension_high_bytes_and_accumulator_aliases_read_original_registers(){
+    use super::super::Cpu;
+    for(bytes,input,result)in [(vec![0x0f,0xb6,0xc4],0x12348055,0x12340080),(vec![0x66,0x0f,0xbe,0xc4],0x12348055,0xffffff80),(vec![0x98],0x12340080,0x1234ff80),(vec![0x66,0x98],0xabcd8000,0xffff8000)]{
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=input;c.eflags=0xad7;c.undefined_flags=16;
+        execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(c.regs[0],result);assert_eq!((c.eflags,c.undefined_flags),(0xad7,16));
+    }
+    for w in [16,32]{for value in [0,1,0x7fff,0x8000,0x7fffffff,0x80000000,u32::MAX]{
+        let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.push(0x99);
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=value;c.regs[2]=0x12345678;c.eflags=0xad7;c.undefined_flags=16;
+        execute_one(&bytes,&mut c,0,false).unwrap();let negative=value&(1<<(w-1))!=0;
+        assert_eq!(c.regs[2],if w==16{0x12340000|if negative{0xffff}else{0}}else if negative{u32::MAX}else{0});assert_eq!(c.regs[0],value);assert_eq!((c.eflags,c.undefined_flags),(0xad7,16));
+    }}
+}
+#[test]
+fn extending_memory_moves_are_readonly_and_use_source_access_width(){
+    use super::super::Cpu;
+    for (bytes,value,result)in [(vec![0x0f,0xbe,0x07],0x80,0xabcdff80),(vec![0x66,0x0f,0xb6,0x07],0xff,255),(vec![0x66,0x0f,0xbf,0x07],0x8001,0xffff8001)]{
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=0xabcd1234;c.regs[3]=0x400;
+        let ram=execute_one(&bytes,&mut c,value,true).unwrap();assert_eq!(c.regs[0],result);assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),value);
+    }
+    // Exactly one byte left in DS and RAM: byte source succeeds; word source faults.
+    for word in [false,true]{
+        let (mut image,mut ram)=Image::load(&[0x66,0x0f,if word{0xb7}else{0xb6},0x07]).unwrap();
+        image.segments[SegmentRegister::Ds.index()].base=0;image.segments[SegmentRegister::Ds.index()].limit=4095;
+        ram.store(4095,MemWidth::Byte,0x80).unwrap();let mut c=Cpu::default();c.eip=ENTRY;c.regs[3]=4095;c.regs[0]=0x1234;let old=c.clone();let old_ram=ram.clone();
+        if let Operation::Pil{program,dst,src,flow,address:Some(a)}=image.decode(&ram,ENTRY).unwrap().operation{
+            let result=super::super::execute_segmented(&program,&mut c,dst,src,flow,&mut ram,a);
+            if word{assert!(result.is_err());assert_eq!(c,old);}else{result.unwrap();assert_eq!(c.regs[0],0x80);}
+        }else{panic!("memory PIL");}assert_eq!(ram,old_ram);
+    }
+}
+#[test]
+fn lea_all_operand_address_sizes_wrap_without_segment_or_ram_access(){
+    use super::super::Cpu;
+    for wide in [false,true]{for addr32 in [false,true]{
+        let mut bytes=vec![0x64];if wide{bytes.push(0x66);}if addr32{bytes.push(0x67);}
+        bytes.extend(if addr32{vec![0x8d,0x44,0x8b,0xfc]}else{vec![0x8d,0x40,0xff]});
+        let (mut image,mut ram)=Image::load(&bytes).unwrap();for i in [0,2,3,4,5]{image.segments[i].access=SegmentAccess::Unusable;image.segments[i].base=0xffffffff;image.segments[i].limit=0;}
+        ram.protect(0,RAM_BYTES).unwrap();let old_ram=ram.clone();let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=0xabcd1234;c.regs[3]=0xfffffff0;c.regs[1]=8;c.regs[6]=0x12340030;c.eflags=0xad7;c.undefined_flags=0x8d5;
+        let offset=if addr32{12}else{0x1f};
+        if let Operation::Pil{program,dst,src,flow,address:Some(a)}=image.decode(&ram,ENTRY).unwrap().operation{super::super::execute_segmented(&program,&mut c,dst,src,flow,&mut ram,a).unwrap();}else{panic!("LEA PIL");}
+        assert_eq!(c.regs[0],if wide{offset}else{0xabcd0000|offset});assert_eq!((c.eflags,c.undefined_flags),(0xad7,0x8d5));assert_eq!(ram,old_ram);
+    }}
+    // Address32 -> destination16 truncation is independent of wrap at address width.
+    let mut c=Cpu::default();c.eip=ENTRY;c.regs[3]=0x12348000;c.regs[0]=0xabcd1234;
+    execute_one(&[0x67,0x8d,0x03],&mut c,0,false).unwrap();assert_eq!(c.regs[0],0xabcd8000);
+}
+#[test]
+fn extension_and_lea_disassembly_and_invalid_encodings(){
+    for(bytes,label)in [(vec![0x66,0x0f,0xbe,0xc4],"MOVSX EAX,AH"),(vec![0x0f,0xb6,0x07],"MOVZX AX,byte DS:[BX]"),(vec![0x66,0x0f,0xbf,0x46,0xff],"MOVSX EAX,word SS:[BP-0x1]"),(vec![0x64,0x67,0x66,0x8d,0x44,0xb3,0xfc],"LEA EAX,[EBX+ESI*4-0x4]"),(vec![0x98],"CBW"),(vec![0x66,0x98],"CWDE"),(vec![0x99],"CWD"),(vec![0x66,0x99],"CDQ")]{assert_eq!(decode(&bytes).unwrap().label,label);}
+    for bytes in [vec![0x0f,0xb6],vec![0x66,0x0f,0xbf,0x86,0],vec![0x8d,0xc0],vec![0x8d,0x06,0],vec![0x0f,0xb7,0xc0],vec![0x0f,0xbf,0xc0]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:?}");}
+}

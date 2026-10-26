@@ -1,0 +1,8 @@
+# CWD/CDQ: sign-fill the separately bound high register.
+require_width 16_or_32
+read a src $W
+bit sign a $SIGN
+sext r sign $W
+write dst r
+preserve_flags all
+retire

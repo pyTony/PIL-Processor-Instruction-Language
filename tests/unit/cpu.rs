@@ -444,6 +444,8 @@ fn generated_rust_matches_interpreter() {
     for op in ["add","sub","cmp","adc","sbb","and","write_if_z"] {
         for w in [8,16,32] {variants.push((op.to_owned(),w));}
     }
+    for op in ["movzx8","movsx8","cwd"]{for w in [16,32]{variants.push((op.into(),w));}}
+    for op in ["movzx16","movsx16"]{variants.push((op.into(),32));}
     for name in CONDITIONS_NAMES {variants.push((format!("set{name}"),8));}
     for (id,(op,w)) in variants.iter().enumerate() {
         let w=*w;
@@ -452,12 +454,14 @@ fn generated_rust_matches_interpreter() {
         dispatch.push_str(&format!("{id} => p{id}::execute_with_metadata(&mut regs,&mut f,&mut undefined,(0,0),(1,0)).unwrap(),\n"));
         let mut record=|a:u32,b:u32,initial:u32| {
             let mut c=Cpu::default();c.regs[0]=a;c.regs[1]=b;c.eflags=initial;c.undefined_flags=ARITH_FLAGS;
-            execute(&p,&mut c,View{register:0,low:0,width:w},View{register:1,low:0,width:w}).unwrap();
+            execute(&p,&mut c,View{register:0,low:0,width:w},View{register:1,low:0,width:p.source_width}).unwrap();
             for n in [id as u32,a,b,initial,ARITH_FLAGS,c.regs[0],c.eflags,c.undefined_flags] {
                 cases.extend_from_slice(&n.to_le_bytes());
             }
         };
-        if op.starts_with("set") {
+        if op.starts_with("mov") {
+            for b in (0..=255).chain([0x7fff,0x8000,0xffff,0x12348080]){record(0xabcd1234,b,0xad7);}
+        } else if op.starts_with("set") {
             for bits in 0..64 {record(0xabcd_1234,0,condition_flags(bits));}
         } else if op=="write_if_z" {
             let m=mask(w) as u32;
@@ -601,4 +605,17 @@ fn generic_shifts_define_counts_at_and_above_64_without_host_panics(){
     }}
     source.push_str(&format!("fn main(){{{checks}}}"));let path=dir.join("proof.rs");fs::write(&path,source).unwrap();let exe=dir.join(if cfg!(windows){"proof.exe"}else{"proof"});
     let output=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).arg("--edition=2021").arg(&path).arg("-o").arg(&exe).output().unwrap();assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));assert!(Command::new(&exe).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn independent_source_widths_validate_views_before_any_effect(){
+    let p=compile(&instantiate(description("movsx8").unwrap(),32),32).unwrap();
+    assert_eq!(p.source_width,8);
+    let mut c=Cpu::default();c.regs[0]=0x12348055;c.eflags=0xad7;c.undefined_flags=ARITH_FLAGS;
+    let dst=View{register:0,low:0,width:32};let src=View{register:0,low:8,width:8};
+    execute(&p,&mut c,dst,src).unwrap();assert_eq!(c.regs[0],0xffffff80);assert_eq!((c.eflags,c.undefined_flags),(0xad7,ARITH_FLAGS));
+    let before=c.clone();
+    for bad in [View{register:0,low:8,width:32},View{register:8,low:0,width:8},View{register:0,low:25,width:8}]{assert!(execute(&p,&mut c,dst,bad).is_err());assert_eq!(c,before);}
+    for text in ["read a src 7\npreserve_flags all\nretire","read a src 8\nread b src 16\npreserve_flags all\nretire","read a dst 8\npreserve_flags all\nretire"]{assert!(compile(text,32).is_err(),"{text}");}
+    for name in ["movsx16","movzx16"]{assert!(compile(&instantiate(description(name).unwrap(),16),16).is_err());}
 }

@@ -1177,6 +1177,25 @@
         "image_compile_seconds": 2.706,
         "scope": "single cold render per engine; serial draining and checkpoint capture included; setup/reference/files/process startup/compilation excluded; not median benchmark or386 cycles"
       }
+    },
+    {
+      "version": "0.15.0-alpha.1",
+      "date": "2026-10-26",
+      "status": "development; hosted Rust CI pending",
+      "features": [
+        "MOVZX/MOVSX8-to16/32 and16-to32",
+        "CBW/CWDE/CWD/CDQ",
+        "LEA16/32 independent address/operand sizes",
+        "independently typed source bindings"
+      ],
+      "rust_verification": {
+        "tests_supplied": 163,
+        "status": "pending",
+        "verifier_cases": 34
+      },
+      "python_extension_oracle_cases": 132118,
+      "runtime_files": 72,
+      "provenance": "Intel80386 manual MOVSX/MOVZX/LEA/CBW/CWD entries consulted; original implementation/oracles, no code/data imports"
     }
   ]
 }

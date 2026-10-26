@@ -321,7 +321,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 26-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the 34-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -365,7 +365,7 @@ $env:CARGO_TARGET_DIR = "target/windows"
 ./tools/compare.ps1 -Iterations 10000 -Samples 5
 ```
 
-This verifies all 26 cases, then measures compiled Rust and cached interpreter.
+This verifies all 34 cases, then measures compiled Rust and cached interpreter.
 An x86-64 PC also reports the direct CPU arithmetic baseline. That baseline
 still times ADD/SUB/JNZ; it is not an IMUL benchmark or an emulated 386 clock rate.
 For WSL sharing the folder, use `export CARGO_TARGET_DIR=target/wsl` and
@@ -501,7 +501,7 @@ Or run the built executable with `--compare-mandelbrot [SIZE] [ITERATIONS]`.
 This requires a local `rustc`; normal image rendering still needs only the
 built executable. Size/iteration bounds are the same as the image renderer.
 
-The command first runs the existing 26-case instruction-by-instruction verifier.
+The command first runs the existing 34-case instruction-by-instruction verifier.
 It then compiles the selected complete guest image from validated PIL into Rust
 and runs both engines. Every pixel must match the independent Q12 reference;
 CPU registers, flags, undefined flags, EIP, RAM, serial queues and stop status
@@ -520,3 +520,30 @@ run-*/: the verification traces in verification/, and emitted source, executable
 both raw pixel streams, state checkpoints and report.txt in mandelbrot/.
 The compare command produces comparison artifacts; use the normal render command
 without Compare to save/view BMP and PGM images.
+
+## Extending moves, accumulator conversion and LEA
+
+The binary monitor supports MOVZX and MOVSX with byte sources and16/32-bit
+register destinations (0F B6/BE), and word sources with32-bit destinations
+(0F B7/BF). Sources can be registers, including AH/CH/DH/BH, or memory.
+Memory reads check only the source width; read-only memory is permitted.
+The unlisted16-to16 forms remain monitor diagnostics.
+
+Opcode98 executes CBW (AL to AX) or, with66, CWDE (AX to EAX). Opcode99
+executes CWD (AX sign into DX) or, with66, CDQ (EAX sign into EDX). CWD/CDQ
+leave EAX untouched. Word destinations preserve their upper register halves.
+All of these instructions preserve flags and undefined-flag markers.
+
+LEA8D calculates a memory-form effective offset into a16/32-bit register.
+Operand size and address size are independent:16-bit addresses wrap then zero
+extend for32-bit destinations;32-bit offsets truncate for16-bit destinations.
+It performs no data load, adds no segment base and checks no data-segment
+access/limit. Segment overrides do not change the result. Instruction fetch
+still uses the normal CS checks. A register-source LEA is a monitor diagnostic.
+Disassembly shows an address expression without a data size or segment.
+
+Standalone descriptions are named movzx8/movsx8 (byte source) and
+movzx16/movsx16 (word source); movzx/movsx alias the byte forms. Destination
+width comes from --emit-rust WIDTH. lea and cwd use16/32-bit destination width;
+cdq aliases cwd. The binary decoder binds98/99 implicit registers before PIL
+validation. The interpreter and generated runner execute the same tokens.
