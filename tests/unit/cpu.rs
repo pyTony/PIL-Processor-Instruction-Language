@@ -392,12 +392,12 @@ fn generated_flow_matches_interpreter() {
     for name in CONDITIONS_NAMES {for w in [16,32] {
         let p=branch_program(name,w);let (dst,src)=views(w);
         source.push_str(&format!("mod p{id} {{ {} }}\n",emit_rust(&p)));
-        dispatch.push_str(&format!("{id} => p{id}::execute_with_flow(&mut regs,&mut f,&mut undefined,&mut ip,(0,0),(1,0),p{id}::FlowContext{{next_eip:next,displacement:disp,displacement_bits:bits,code_limit:limit}}).map_err(|e|match e {{p{id}::ExecError::GeneralProtection{{eip,error_code}} => (1,eip,error_code as u32),p{id}::ExecError::MemoryAccess{{eip,..}}=>(4,eip,0),p{id}::ExecError::InvalidContext=>(2,0,0),p{id}::ExecError::InvalidBinding=>(3,0,0)}}),\n"));
+        dispatch.push_str(&format!("{id} => p{id}::execute_with_flow(&mut regs,&mut f,&mut undefined,&mut ip,(0,0),(1,0),p{id}::FlowContext{{next_eip:next,displacement:disp,displacement_bits:bits,code_limit:limit}}).map_err(|e|match e {{p{id}::ExecError::GeneralProtection{{eip,error_code}} => (1,eip,error_code as u32),p{id}::ExecError::StackSegment{{eip,error_code}}=>(5,eip,error_code as u32),p{id}::ExecError::MemoryAccess{{eip,..}}=>(4,eip,0),p{id}::ExecError::InvalidContext=>(2,0,0),p{id}::ExecError::InvalidBinding=>(3,0,0)}}),\n"));
         for flag_bits in 0..64 {
             for (next,disp,bits,limit) in [(0x1234_5678,-128,8,u32::MAX),(0, -1,8,u32::MAX),(u32::MAX,1,8,u32::MAX),(0x100,127,8,0x100),(0x100,128,8,u32::MAX),(0x100,1,w,0x101)] {
                 let initial=condition_flags(flag_bits);let mut c=Cpu::default();c.eip=0x100;c.regs[0]=7;c.regs[1]=9;c.eflags=initial;c.undefined_flags=16;
                 let status=match execute_flow(&p,&mut c,dst,src,FlowContext{next_eip:next,displacement:disp,displacement_bits:bits,code_limit:limit}) {
-                    Ok(())=>(0,0,0),Err(ExecError::GeneralProtection{eip,error_code})=>(1,eip,error_code as u32),Err(ExecError::MemoryAccess{eip,..})=>(4,eip,0),Err(ExecError::InvalidContext)=>(2,0,0),Err(ExecError::InvalidBinding)=>(3,0,0),
+                    Ok(())=>(0,0,0),Err(ExecError::GeneralProtection{eip,error_code})=>(1,eip,error_code as u32),Err(ExecError::StackSegment{eip,error_code})=>(5,eip,error_code as u32),Err(ExecError::MemoryAccess{eip,..})=>(4,eip,0),Err(ExecError::InvalidContext)=>(2,0,0),Err(ExecError::InvalidBinding)=>(3,0,0),
                 };
                 for n in [id,initial,next,disp as u32,bits as u32,limit,c.eip,c.regs[0],c.regs[1],c.eflags,c.undefined_flags,status.0,status.1,status.2] {cases.extend_from_slice(&n.to_le_bytes());}
             }

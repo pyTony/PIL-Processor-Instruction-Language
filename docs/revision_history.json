@@ -208,6 +208,27 @@
         "reverse_apply_check": "passed",
         "git_diff_check": "passed"
       }
+    },
+    {
+      "version": "0.7.0",
+      "date": "2026-10-26",
+      "status": "development; host CI pending",
+      "upstream_base_commit": "13ea986c53384cdfd9103cc346c9d32ebeed8881",
+      "features": [
+        "16/32-bit effective addresses and normalized segment caches",
+        "shared segmented interpreter/generated execution",
+        "limited binary monitor and executable 204-byte selftest",
+        "automatic serial console echo",
+        "build/debug scripts and native user delivery archives",
+        "dev development branch and main delivery PR workflow"
+      ],
+      "rust_verification": {
+        "tests_supplied": 92,
+        "segmented_generated_cases": 153,
+        "host_ci": "pending",
+        "termux": "not yet reported"
+      },
+      "source_manifest": "docs/SHA256SUMS"
     }
   ]
 }

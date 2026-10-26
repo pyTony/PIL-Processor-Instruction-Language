@@ -1,4 +1,4 @@
-//! Host REPL for predecoded PIL programs, not arbitrary x86 binaries.
+//! Host REPL for PIL demos and a small executable 386 monitor profile.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Write};
 use super::{compile, description, execute_flow, instantiate, number, Cpu, Program, View};
@@ -32,6 +32,7 @@ enum Stop {
     Halt(u32),
     MissingInstruction(u32),
     Fault(ExecError),
+    Decode{eip:u32,message:String},
 }
 
 struct Debugger {
@@ -44,6 +45,8 @@ struct Debugger {
     stopped_at_break: Option<u32>,
     serial: MockSerial,
     demo: String,
+    image:Option<super::guest::Image>,
+    tx_events:Vec<u8>,
 }
 
 impl Debugger {
@@ -52,11 +55,12 @@ impl Debugger {
             cpu: Cpu::default(), initial: Cpu::default(),
             ram:Ram::new(256),initial_ram:Ram::new(256),
             instructions: BTreeMap::new(), breakpoints: BTreeSet::new(),
-            stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),
+            stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),image:None,tx_events:Vec::new(),
         };
         d.load_demo(demo)?; Ok(d)
     }
     fn load_demo(&mut self, name: &str) -> Result<(),String> {
+        if name=="selftest" {return self.load_image(&super::guest::selftest_bytes()?,"selftest");}
         // Construct first; a failed selection must not destroy the current state.
         let mut code=BTreeMap::new();let mut cpu=Cpu::default();cpu.eflags=0x202;
         match name {
@@ -87,19 +91,52 @@ impl Debugger {
                 }
                 code.insert(0x304,Instruction{label:"HARNESS_HALT",action:Action::HarnessHalt});
             }
-            _ => return Err("demo must be counter, echo or memory".into()),
+            _ => return Err("demo must be counter, echo, memory or selftest".into()),
         }
-        self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
+        self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
-        self.breakpoints.clear();self.stopped_at_break=None;self.serial.clear();self.demo=name.into();
+        self.breakpoints.clear();self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();
         Ok(())
     }
+    fn load_image(&mut self,bytes:&[u8],name:&str)->Result<(),String> {
+        let (image,ram)=super::guest::Image::load(bytes)?;
+        let mut cpu=Cpu::default();cpu.eip=super::guest::ENTRY;cpu.eflags=0x202;
+        self.initial=cpu.clone();self.cpu=cpu;self.initial_ram=ram.clone();self.ram=ram;
+        self.image=Some(image);self.instructions.clear();self.breakpoints.clear();
+        self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();Ok(())
+    }
+    fn step_image(&mut self)->Stop {
+        use super::guest::{GuestError,Operation};
+        let decoded=match self.image.as_ref().unwrap().decode(&self.ram,self.cpu.eip) {
+            Ok(d)=>d,Err(GuestError::Execution(e))=>return Stop::Fault(e),
+            Err(GuestError::Decode(message))=>return Stop::Decode{eip:self.cpu.eip,message},
+        };
+        match decoded.operation {
+            Operation::Pil{program,dst,src,flow,address}=>{
+                let result=match address {
+                    Some(a)=>super::execute_segmented(&program,&mut self.cpu,dst,src,flow,&mut self.ram,a),
+                    None=>execute_flow(&program,&mut self.cpu,dst,src,flow),
+                };
+                match result{Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e)}
+            }
+            Operation::Input{next}=>{
+                let byte=match self.serial.try_read(){Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
+                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip=next;Stop::Advanced
+            }
+            Operation::Output{next}=>{
+                if self.serial.try_write(self.cpu.regs[0] as u8).is_err(){return Stop::TxBlocked(self.cpu.eip);}
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip=next;Stop::Advanced
+            }
+            Operation::Halt=>Stop::Halt(self.cpu.eip),
+        }
+    }
     fn reset(&mut self) {
-        self.cpu=self.initial.clone();self.ram=self.initial_ram.clone();self.serial.clear();self.stopped_at_break=None;
+        self.cpu=self.initial.clone();self.ram=self.initial_ram.clone();self.serial.clear();self.tx_events.clear();self.stopped_at_break=None;
         // Keep breakpoints while resetting the currently loaded demo.
     }
     fn step(&mut self) -> Stop {
         self.stopped_at_break=None;
+        if self.image.is_some(){return self.step_image();}
         let instruction=match self.instructions.get(&self.cpu.eip) {
             Some(i)=>i, None=>return Stop::MissingInstruction(self.cpu.eip),
         };
@@ -119,7 +156,7 @@ impl Debugger {
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err() {
                     return Stop::TxBlocked(self.cpu.eip);
                 }
-                self.cpu.eip=*next;Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip=*next;Stop::Advanced
             }
             Action::HarnessHalt=>Stop::Halt(self.cpu.eip),
         }
@@ -148,30 +185,63 @@ impl Debugger {
     fn stop_text(stop:&Stop)->String {
         match stop {
             Stop::Advanced=>"stepped".into(),
+            Stop::Decode{eip,message}=>format!("decode stopped at EIP={eip:08x}: {message}; instruction not committed"),
             Stop::Breakpoint(ip)=>format!("breakpoint before EIP={ip:08x}"),
             Stop::Budget(ip)=>format!("budget exhausted at EIP={ip:08x}"),
             Stop::WaitingRx(ip)=>format!("RX empty; waiting at EIP={ip:08x}"),
             Stop::TxBlocked(ip)=>format!("TX full; waiting at EIP={ip:08x}"),
             Stop::Halt(ip)=>format!("harness halted at EIP={ip:08x}"),
             Stop::MissingInstruction(ip)=>format!("no predecoded instruction at EIP={ip:08x}"),
+            Stop::Fault(ExecError::StackSegment{eip,error_code})=>format!("#SS({error_code}) at EIP={eip:08x}; instruction not committed"),
             Stop::Fault(ExecError::GeneralProtection{eip,error_code})=>format!("#GP({error_code}) at EIP={eip:08x}; instruction not committed"),
             Stop::Fault(ExecError::MemoryAccess{eip,address,bytes,write})=>format!("RAM {} fault: address={address:08x} bytes={bytes} at EIP={eip:08x}; instruction not committed",if *write {"write"}else{"read"}),
             Stop::Fault(e)=>format!("execution error: {e:?}"),
         }
     }
+    fn check_selftest(&mut self)->Result<(),String> {
+        let expected=super::guest::selftest_bytes()?;
+        if self.image.is_none() || self.initial_ram.bytes().get(super::guest::ENTRY as usize..super::guest::ENTRY as usize+expected.len())!=Some(expected.as_slice()) {
+            return Err("check requires the supplied selftest image".into());
+        }
+        if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)) || self.cpu.regs[2]&0xffff!=0x600d {
+            return Err(format!("selftest has not passed: DX={:04x}",self.cpu.regs[2]&0xffff));
+        }
+        for (address,value) in [(0x500,0x12345679),(0x504,0x12345678),(0x600,0x12345678),(0x700,0x12345678)] {
+            if self.ram.load(address,super::memory::MemWidth::Dword)!=Ok(value){return Err(format!("selftest RAM mismatch at {address:08x}"));}
+        }
+        // Check successful output history, so draining serial tx does not invalidate it.
+        if self.tx_events!=[0x41] {return Err("selftest expects exactly TX=41; queue RX=41 before running".into());}
+        Ok(())
+    }
+    fn step_preview(&self)->Option<super::guest::Operation> {
+        self.image.as_ref()?.decode(&self.ram,self.cpu.eip).ok().map(|d|d.operation)
+    }
     fn command(&mut self,line:&str)->Result<(String,bool),String> {
+        let tx_before=self.tx_events.len();
         let words:Vec<_>=line.split_whitespace().collect();
         let response=match words.as_slice() {
             []=>String::new(),
             ["help"]=>concat!(
-                "help | demo counter|echo|memory | list | step | run [1..10000] | continue [budget]\n",
+                "help | demo counter|echo|memory|selftest | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
                 "break <address> | delete <address> | breaks | reset | quit\n",
                 "serial status | serial rx <hex bytes...> | serial tx | serial clear\n",
                 "mem <address> [count] | poke <address> <hex bytes...> | protect <address> <count>\n",
-                "MOCK_RX/TX and HARNESS_HALT are harness operations, not x86 I/O instructions.").into(),
+                "Image profile: IN/OUT 0xe9 connect to mock serial; HLT is a monitor stop.\n",
+                "Other demos use harness operations. Type check after selftest halts.").into(),
             ["quit"]|["exit"]=>return Ok(("bye".into(),true)),
             ["demo",name]=>{self.load_demo(name)?;format!("loaded {} at EIP={:08x}",self.demo,self.cpu.eip)}
+            ["load",path]=>{let bytes=std::fs::read(path).map_err(|e|e.to_string())?;self.load_image(&bytes,path)?;format!("loaded {} guest bytes at EIP=00000100",bytes.len())}
+            ["check"]=>{self.check_selftest()?;"PASS: selftest DX=600D, RAM signatures and mock TX=41".into()}
+            ["list"] if self.image.is_some()=>{
+                let image=self.image.as_ref().unwrap();let mut ip=self.cpu.eip;let mut lines=Vec::new();
+                for _ in 0..16 {
+                    match image.decode(&self.ram,ip) {
+                        Ok(d)=>{lines.push(format!("{ip:08x} {}",d.label));ip+=d.length;if matches!(d.operation,super::guest::Operation::Halt){break;}},
+                        Err(e)=>{lines.push(format!("{ip:08x} {e:?}"));break;}
+                    }
+                }lines.join("\n")
+            }
             ["list"]=>{
                 self.instructions.iter().map(|(ip,i)|format!("{} {ip:08x} {}",
                     if *ip==self.cpu.eip {"*"}else{" "},i.label)).collect::<Vec<_>>().join("\n")
@@ -229,7 +299,9 @@ impl Debugger {
             }
             ["break",addr]=>{
                 let ip=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
-                if !self.instructions.contains_key(&ip) {return Err("no instruction at breakpoint address".into());}
+                if let Some(image)=&self.image {
+                    if ip<super::guest::ENTRY || ip>=image.end{return Err("breakpoint outside image".into());}
+                } else if !self.instructions.contains_key(&ip) {return Err("no instruction at breakpoint address".into());}
                 self.breakpoints.insert(ip);format!("breakpoint at {ip:08x}")
             }
             ["delete",addr]=>{
@@ -259,13 +331,28 @@ impl Debugger {
             }
             _=>return Err("unknown command or arguments; type help".into()),
         };
+        let response=if self.tx_events.len()>tx_before {
+            let bytes=&self.tx_events[tx_before..];
+            let hex=bytes.iter().map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+            let text=bytes.iter().flat_map(|b|std::ascii::escape_default(*b)).map(char::from).collect::<String>();
+            format!("{response}\nserial output: {hex} | {text}")
+        }else{response};
         Ok((response,false))
     }
 }
 
-pub fn repl<R:BufRead,W:Write>(mut input:R,mut output:W)->io::Result<()> {
+pub fn repl<R:BufRead,W:Write>(input:R,output:W)->io::Result<()> {
+    let debugger=Debugger::new("counter").map_err(|e|io::Error::new(io::ErrorKind::Other,e))?;
+    repl_with(input,output,debugger)
+}
+pub fn repl_image<R:BufRead,W:Write>(input:R,output:W,path:&str)->io::Result<()> {
     let mut debugger=Debugger::new("counter").map_err(|e|io::Error::new(io::ErrorKind::Other,e))?;
-    writeln!(output,"PIL debugger: predecoded demos; no x86 binary loader. Type help.")?;
+    let bytes=std::fs::read(path)?;
+    debugger.load_image(&bytes,path).map_err(|e|io::Error::new(io::ErrorKind::Other,e))?;
+    repl_with(input,output,debugger)
+}
+fn repl_with<R:BufRead,W:Write>(mut input:R,mut output:W,mut debugger:Debugger)->io::Result<()> {
+    writeln!(output,"PIL debugger: PIL demos and limited 386 binary monitor. Type help.")?;
     let mut line=String::new();
     loop {
         write!(output,"pil> ")?;output.flush()?;line.clear();
@@ -281,3 +368,10 @@ pub fn repl<R:BufRead,W:Write>(mut input:R,mut output:W)->io::Result<()> {
 #[cfg(test)]
 #[path = "../tests/unit/debugger.rs"]
 mod tests;
+
+pub fn selftest()->Result<(),String> {
+    let mut d=Debugger::new("selftest")?;d.serial.inject_rx(&[0x41]).map_err(|_|"RX injection failed")?;
+    let (steps,stop)=d.run(MAX_RUN)?;
+    if !matches!(stop,Stop::Halt(_)){return Err(format!("selftest stopped: {}",Debugger::stop_text(&stop)));}
+    d.check_selftest()?;println!("PASS: selftest, {steps} completed steps; DX=600D; RAM signatures; mock TX=41");Ok(())
+}

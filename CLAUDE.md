@@ -1,3 +1,37 @@
+# Current continuation status — v0.7 development
+
+Develop on dev; main is the reviewed user delivery branch. The user approves
+PRs in the browser and pulls in ~/pil_proof. Keep build output in target/ or
+dist/, not extra directories in home. Use PRs instead of patch-only delivery.
+
+Baseline: main 13ea986c53384cdfd9103cc346c9d32ebeed8881 (merged PR #1).
+v0.6 passed 65 Rust tests on Termux in 9.47 s.
+
+v0.7 adds address.rs (decoded 16/32-bit offsets and normalized loaded caches),
+execute_segmented and generated execute_with_segments; checks occur per token
+width/direction before RAM access. A later branch fault cancels a translated
+staged store. StackSegment(0) distinguishes SS bounds. Descriptor loads and
+privilege checks are caller responsibilities; paging/A20/interrupts are absent.
+
+guest.rs decodes a small documented raw-binary monitor profile in 4-KiB RAM.
+The original 204-byte programs/selftest.hex + listing are reproduced by
+python3 tools/build_selftest.py --check. Rust writes the actual .bin during
+build. Do not claim a general 386 decoder, UART, full HLT semantics or OS boot.
+
+sh tools/build.sh; sh tools/debug.sh; serial rx 41; run 1000; check.
+Automatic: sh tools/debug.sh --check. Windows: tools/build.ps1 / debug.ps1.
+Successful TX appears automatically in console as hex/escaped text without
+draining the queue. Check uses output history, so serial tx does not spoil it.
+Selftest requires DX=600D, four RAM signatures and TX=41. DX=DEAD means failure.
+
+92 Rust tests supplied, including 153 segmented generated/interpreted cases.
+No local Rust toolchain; hosted Ubuntu/Windows CI is pending. Do not equate
+host CI with a new Termux run. Native ZIPs are host-specific, not Android/ESP32.
+See docs/development/STATUS.md and docs/DEBUGGER.md for current limitations.
+No third-party code imported; keep provenance and revision logs/checksums.
+
+## Historical handoff snapshots
+
 # Current continuation status — v0.6 working patch
 
 Repository: https://github.com/pyTony/pil_proof (private), main; inspected base

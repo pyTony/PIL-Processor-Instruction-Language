@@ -1,3 +1,68 @@
+# Executable test program and monitor profile — v0.7
+
+Use `sh tools/debug.sh` (Termux/Linux) or `./tools/debug.ps1` (Windows) to
+build and load programs/selftest.bin. To choose another raw binary, supply its
+path to the script. The CLI equivalent is `pil-proof --repl --load PATH`.
+`demo selftest` loads the same built-in image without a file. `load PATH`
+replaces the current image only after the entire file is read and validated.
+
+```
+list
+step
+serial rx 41
+run 1000
+check
+mem 0x500 8
+regs
+serial tx
+```
+
+The selftest stops with DX=600D on success or DX=DEAD at an inline failed
+check. It waits at IN for RX if none is queued. `check` verifies the success
+stop, four RAM signatures and successful serial output history. It stays valid
+after `serial tx` drains bytes. `pil-proof --selftest` injects 41, executes,
+checks the result and exits nonzero on failure. It is a smoke test for the
+implemented pipeline, not a replacement for unit/generated-code comparisons.
+
+Successful TX is echoed automatically after step/run as hex and escaped text,
+without consuming the transport queue. Bytes 00 and control characters are
+escaped. Debugger command input is separate: use `serial rx` for guest input.
+Reset clears output history and queues, restores the image and keeps breakpoints.
+
+## Image environment
+
+Raw bytes are loaded at offset 0x100 in 4096 bytes of RAM. CS=0, DS=0x10,
+SS=0x20, FS=0x30, ES=GS=0; caches have normal 64-KiB limits. Default operand
+and address sizes are 16 bits. This monitor supplies the already-loaded caches;
+it does not execute segment loads, privilege changes or descriptor tables.
+Code is fetched from RAM and decoded at each step, so poke can change code.
+Image boundaries and unsupported instructions yield monitor diagnostics with
+source EIP preserved; they are not synthesized guest #UD/#PF exceptions.
+
+Supported encodings:
+
+- B0..BF MOV immediate to register, including byte high-register views.
+- 88..8B MOV register/register or register/memory, 8/16/32-bit operands.
+- 00/01 ADD register/register and memory destination.
+- 10/11 ADC, 18/19 SBB, 20/21 AND, 28/29 SUB, 38/39 CMP: register/register.
+- 70..7F short Jcc; 0F 90..9F SETcc with register destination and /0.
+- 66 operand size, 67 address size, all six segment override prefixes.
+- 16-bit ModR/M and 32-bit ModR/M/SIB, disp8 sign extension and disp16/32.
+- E4 E9 / E6 E9: IN AL / OUT AL on monitor mock port 0xe9.
+- F4 HLT: monitor stop at the instruction, without interrupt/privilege semantics.
+
+One prefix of each supported group is accepted. Repeated group prefixes,
+LOCK/REP, near Jcc and all other encodings stop with an unsupported diagnostic.
+The debug port uses nonblocking transport with wait/retry; it is not an 8250
+UART, and real hardware IN behaviour is not modeled by that wait convention.
+No instruction cache, paging, A20 masking, interrupts, BIOS or OS loader exists.
+
+`programs/selftest.lst` gives exact instruction addresses and source intent.
+`python3 tools/build_selftest.py --check` confirms reproducible fixture bytes.
+The helper is an original fixed-image builder, not a general assembler.
+
+## Earlier predecoded examples and command reference
+
 # Interactive debugger and mock serial
 
 Start from the existing project:

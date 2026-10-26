@@ -183,3 +183,30 @@ separate future work. RAM faults do not set arithmetic flags.
 Generated Rust embeds the same RAM implementation while the description
 interpreter and independent Python oracle exercise token semantics separately.
 The supplied 65 Rust tests remain unexecuted in this authoring environment.
+
+
+## v0.7: supplied address and segment context
+
+The PIL vocabulary is unchanged. In flat execution, read_address/load/store
+continue to use linear RAM addresses. With execute_segmented or generated
+execute_with_segments, read_address supplies the resolved offset. Each load or
+store translates its own offset using its actual token width and direction.
+
+AddressContext carries a decoded EffectiveAddress (16-bit form or 32-bit
+base/index/scale/displacement), optional segment override, and six normalized
+SegmentCache values. Resolution snapshots the instruction's input registers.
+Offsets wrap to address width. DS/SS selection follows base role; EBP as an
+index alone does not select SS. Displacements are normalized by the caller.
+
+Cache limits are inclusive expanded byte limits, not raw descriptor fields.
+Expand-down lower bounds exclude the limit; upper bounds use the cache B bit.
+Multi-byte offset spans do not wrap. Base+offset is a wrapping 32-bit linear
+sum. Crossing the end of flat RAM, including the 4-GiB linear boundary, remains
+a host RAM diagnostic; per-byte linear wrap is outside this prototype.
+
+Segment bounds yield GeneralProtection(0) or StackSegment(0) for SS, at the
+source EIP, before RAM access. Data/code permissions and unusable data caches
+are checked. Invalid loaded SS caches are InvalidContext caller errors. The
+caller must already have checked descriptor loads, presence and privilege;
+there are no GDT/LDT loads, #NP delivery, CR2/page tables, or mode transitions.
+All stores still commit only at retirement, including after translation.

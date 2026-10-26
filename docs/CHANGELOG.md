@@ -1,5 +1,15 @@
 # Changes
 
+## 0.7.0 (development)
+
+- Add 16/32-bit effective addresses, segment overrides and cached-segment checks.
+- Share segmented execution with generated Rust, preserving staged stores on faults.
+- Add a small binary decoder and a reproducible executable 204-byte selftest.
+- Echo successful guest serial output in the debugger without draining it.
+- Add compile/debug helpers for Termux/Linux and Windows and native ZIP packaging.
+- Use dev for development and main for reviewed deliveries; add host CI.
+- Supply 92 Rust tests, including 153 segmented generated/interpreted cases.
+
 ## 0.6.0
 
 - Add flat RAM with little-endian 8/16/32-bit reads, stores and read-only ranges.

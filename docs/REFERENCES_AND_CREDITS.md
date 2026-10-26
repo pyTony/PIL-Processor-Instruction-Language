@@ -1,6 +1,6 @@
 # References, provenance and credits
 
-Maintained with the project. Last updated: 26 October 2026 (v0.3.0).
+Maintained with the project. Last updated: 26 October 2026 (v0.7.0).
 
 ## What this release contains
 
@@ -186,3 +186,24 @@ Upstream baseline inspected: pyTony/pil_proof, commit
 cfd4143512497c8afd28df9ef6739a96fc62b9f0 (26 October 2026).
 GitHub: https://github.com/pyTony/pil_proof
 The complete materialized source tree was checked against its Git blob hashes.
+
+
+## v0.7 addressing, monitor and delivery provenance
+
+Consulted Intel's 80386 Programmer's Reference Manual (1986), university-hosted
+copies, on 26 October 2026:
+
+- [2.5, operand selection and effective addresses](https://www.read.seas.harvard.edu/~kohler/class/aosref/i386/s02_05.htm)
+- [6.3, segment type/limit checks and expand-down bounds](https://www.read.seas.harvard.edu/~kohler/class/aosref/i386/s06_03.htm)
+- [17.1, independent address/operand size and prefixes](https://www.read.seas.harvard.edu/~kohler/class/aosref/i386/s17_01.htm)
+- [17.2, encodings, ModR/M/SIB and displacement rules](https://www.read.seas.harvard.edu/~kohler/class/aosref/i386/s17_02.htm)
+
+address.rs, the limited monitor decoder, fixture builder and the 204-byte guest
+test program are original project code. No manual text, third-party assembler,
+emulator implementation or external test corpus was copied. Port 0xe9 is a
+project monitor convention; RX waiting and HLT stopping are explicit harness
+behaviour, not claims of complete PC device or privileged-instruction semantics.
+
+GitHub Actions uses actions/checkout and actions/upload-artifact on hosted
+Ubuntu/Windows runners; these are build services, not bundled source dependencies.
+Generated native ZIPs carry this attribution register and source history.

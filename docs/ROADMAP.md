@@ -1,3 +1,16 @@
+# Roadmap — v0.7 development
+
+- Baseline v0.6 passed all 65 Rust tests on Termux (9.47 s).
+- Current: segmented addressing, a limited executable guest selftest, debugger
+  serial console output, compile/debug scripts and user ZIP deliveries.
+- Development happens on dev; main receives reviewed delivery PRs.
+- Next: decoder coverage and a real PC bus/UART boundary, then system state,
+  descriptor loading and interrupt/exception delivery. Paging and OS boot remain
+  later milestones. Preserve the intended TTGO WLAN/SD installation workflow.
+- RAM staging is not a general MMIO/device rollback mechanism.
+
+## Historical roadmap notes
+
 # Roadmap update — v0.6
 
 - v0.5 is user-verified: 46 Rust tests passed in 4.27 s; REPL startup succeeded.

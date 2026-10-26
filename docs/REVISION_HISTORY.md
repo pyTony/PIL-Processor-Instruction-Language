@@ -73,3 +73,15 @@ and independent Python checks are separate from a Rust test result.
 User-confirmed Termux verification, 26 October 2026: 65 passed, 0 failed,
 0 ignored, 0 measured, 0 filtered out; finished in 9.47 s. This confirms
 the Rust suite on the phone; the manual memory REPL smoke test is not yet reported.
+
+## v0.7.0 — development, 26 October 2026
+
+Based on merged PR #1, main commit 13ea986c53384cdfd9103cc346c9d32ebeed8881.
+Adds decoded effective addresses and cache-based segment checking, a limited
+binary monitor, executable selftest, serial console echo, build/debug scripts
+and native delivery packaging. User requested dev as the development branch,
+main for applicable user deliveries, and browser approval followed by pull.
+
+92 Rust tests supplied (27 new), including 153 segmented generated/interpreted
+cases. Rust execution is pending hosted CI; no local Rust compiler exists.
+Termux v0.7 and Windows launcher manual checks remain unreported.

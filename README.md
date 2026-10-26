@@ -1,59 +1,74 @@
 # PIL PC emulator prototype
 
-A 386 CPU description language, Rust token interpreter and Rust-source backend.
-The eventual target is a PC emulator on TTGO ESP32 with VGA, PS/2, SD and WLAN.
-This is an early CPU/debugger prototype; it does not boot an OS or load x86 binaries.
+A processor instruction language, Rust interpreter and Rust-source generator,
+with an interactive debugger and a small executable 386 test program.
+The eventual target is a TTGO ESP32 PC emulator with VGA, PS/2, SD and WLAN.
+This version is a host prototype; it does not boot DOS or Windows.
 
-## Build and run
+## Build and debug
+
+In Termux or Linux, with Rust installed:
 
 ```sh
-cargo test
-cargo run -- --repl
-python3 tools/verify_descriptions.py
-python3 tools/verify_flow.py
+sh tools/build.sh
+sh tools/debug.sh
 ```
 
-Version 0.4 passed 28 Rust tests on the user's Termux phone. Version 0.5 adds
-serial mocks and the REPL, with 46 Rust tests awaiting compilation/verification.
-The authoring environment has no Rust compiler. See [continuation notes](CLAUDE.md).
+On Windows PowerShell:
 
-Try `help`, `list`, `step`, `run`, `regs`, `flags`, and `break 0x102` in the REPL.
-For serial: `demo echo`, `run`, `serial rx 41`, `run`, `serial tx`.
+```powershell
+./tools/build.ps1
+./tools/debug.ps1
+```
 
-## Source layout
+These build the debugger and write `target/programs/selftest.bin`, then load
+that real byte program at CS:0100. In the debugger, type one command per line:
 
-| Directory | Contents |
-|---|---|
-| src/ | Interpreter, code generator, flow model, mock serial and debugger |
-| isa/i386/ | Instruction/condition descriptions |
-| tests/unit/ | CPU, transport and debugger unit tests |
-| tools/ | Independent Python description/flow checks |
-| docs/ | Design, language, debugger, roadmap, provenance and history |
+```
+list
+step
+serial rx 41
+run 1000
+check
+regs
+serial tx
+```
 
-- [Debugger guide](docs/DEBUGGER.md)
+Success reports `PASS` and `DX=600D`. Guest serial output appears directly in
+the console: `serial output: 41 | A`. `serial tx` also retrieves queued bytes.
+The program checks arithmetic, flags, conditional branches, register views,
+16/32-bit addresses, DS/SS/FS memory and serial input/output. It tests the
+implemented execution path, not the complete 386 instruction set.
+
+For an automatic check: `sh tools/debug.sh --check`, or on Windows
+`./tools/debug.ps1 -Check`. `cargo test --locked` runs the full Rust suite.
+
+## Debugger and deliveries
+
+`help`, `list`, `step`, `run`, `regs`, `flags`, `mem`, `poke`, `break` and
+`reset` inspect and control execution. `demo counter`, `demo echo` and
+`demo memory` retain the earlier predecoded examples. `load PATH` loads another
+raw binary within the [supported monitor profile](docs/DEBUGGER.md).
+
+Native build archives include the executable, launchers, selftest binary,
+listing and documentation. See [delivery instructions](delivery/README.md).
+CI archives are Linux x86-64 and Windows x86-64; they do not run on Android or
+ESP32. Termux builds produce the phone's own binary. Releases remain prototypes.
+
+## Project branches and documentation
+
+`main` is the delivery branch. `dev` contains current development; changes are
+tested there and proposed to `main` through a PR. Pull `main` after approving
+a release PR. [Development status](docs/development/STATUS.md) records the
+verified baseline and current work separately.
+
+- [Debugger guide and instruction profile](docs/DEBUGGER.md)
 - [Language](docs/LANGUAGE.md)
-- [Roadmap](docs/ROADMAP.md)
 - [References and credits](docs/REFERENCES_AND_CREDITS.md)
 - [Revision history](docs/REVISION_HISTORY.md)
-- [First GitHub push](docs/GITHUB.md)
+- [Development roadmap](docs/ROADMAP.md)
+- [Claude continuation notes](CLAUDE.md)
 
-Continue in `~/pil_proof`; updates are guarded in-place patches.
-No third-party emulator source or disk images are bundled. A distribution
-licence for the project's own code has not yet been selected.
-
-## Working v0.6 patch
-
-Adds flat little-endian RAM load/store/RMW effects, full-range bounds and
-read-only checks, deferred store commit, fault context, and a debugger memory
-demo. The patch is based on upstream commit cfd4143512497c8afd28df9ef6739a96fc62b9f0.
-
-```sh
-cargo test --locked
-python3 tools/verify_memory.py
-cargo run -- --repl
-```
-
-Try `demo memory`, `step`, `mem 0x10 4`, `step`, `regs`. There are 65 Rust tests
-supplied; the authoring environment has no Rust toolchain, so the new build
-awaits verification. The independent Python memory oracle checks 560 cases.
-The RAM faults are emulator errors, not architectural x86 page faults.
+Sources: `src/`, descriptions: `isa/i386/`, tests: `tests/unit/`, reproducible
+guest fixtures: `programs/`, helpers: `tools/`. No third-party emulator source,
+BIOS or OS image is bundled. A project-wide licence has not yet been selected.

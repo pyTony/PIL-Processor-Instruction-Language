@@ -129,3 +129,38 @@ fn protected_memory_demo_faults_at_store_without_changing_state() {
     assert_eq!(d.step(),Stop::Fault(ExecError::MemoryAccess{eip:0x300,address:0x10,bytes:4,write:true}));
     assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);
 }
+
+#[test]
+fn actual_guest_selftest_runs_through_decoder_and_pil_to_serial() {
+    let mut d=Debugger::new("selftest").unwrap();let (_,stop)=d.run(1000).unwrap();
+    assert!(matches!(stop,Stop::WaitingRx(_)),"{stop:?}");
+    assert!(d.command("check").is_err());d.command("serial rx 41").unwrap();
+    let text=d.command("run").unwrap().0;assert!(text.contains("serial output: 41 | A"));
+    assert_eq!(d.cpu.regs[2]&0xffff,0x600d);assert!(d.command("check").unwrap().0.starts_with("PASS"));
+    assert_eq!(d.command("serial tx").unwrap().0,"TX: 41");assert!(d.command("check").is_ok());
+}
+#[test]
+fn executable_breakpoint_and_reset_restore_program_and_data() {
+    let mut d=Debugger::new("selftest").unwrap();d.command("break 0x100").unwrap();
+    assert_eq!(d.run(100).unwrap(),(0,Stop::Breakpoint(0x100)));assert_eq!(d.run(1).unwrap(),(1,Stop::Budget(0x103)));
+    d.command("poke 0x100 90").unwrap();d.reset();assert_eq!(d.ram.load(0x100,super::super::memory::MemWidth::Byte),Ok(0xb8));
+    assert_eq!(d.cpu.eip,0x100);assert!(d.breakpoints.contains(&0x100));
+}
+#[test]
+fn corrupted_guest_check_reaches_failure_marker() {
+    let mut d=Debugger::new("selftest").unwrap();d.command("poke 0x101 00 00").unwrap();
+    let (_,stop)=d.run(1000).unwrap();assert!(matches!(stop,Stop::Halt(_)));assert_eq!(d.cpu.regs[2]&0xffff,0xdead);assert!(d.command("check").is_err());
+}
+#[test]
+fn binary_decode_error_preserves_cpu_and_ram() {
+    let mut d=Debugger::new("selftest").unwrap();d.command("poke 0x100 90").unwrap();let c=d.cpu.clone();let m=d.ram.clone();
+    assert!(matches!(d.step(),Stop::Decode{eip:0x100,..}));assert_eq!(d.cpu,c);assert_eq!(d.ram,m);
+    assert!(d.load_image(&[],"bad").is_err());assert_eq!(d.cpu,c);assert_eq!(d.ram,m);
+}
+#[test]
+fn monitor_input_and_output_backpressure_retry_without_duplicate_output() {
+    let mut d=Debugger::new("counter").unwrap();d.load_image(&[0xe4,0xe9,0xe6,0xe9,0xf4],"io").unwrap();
+    d.serial=MockSerial::new(1,1);assert_eq!(d.step(),Stop::WaitingRx(0x100));d.serial.inject_rx(&[0]).unwrap();d.serial.try_write(99).unwrap();
+    assert_eq!(d.step(),Stop::Advanced);let before=d.cpu.clone();assert_eq!(d.step(),Stop::TxBlocked(0x102));assert_eq!(d.cpu,before);assert!(d.tx_events.is_empty());
+    d.serial.take_tx();let out=d.command("step").unwrap().0;assert!(out.contains("serial output: 00 | \\x00"));assert_eq!(d.tx_events,vec![0]);assert_eq!(d.serial.take_tx(),vec![0]);
+}

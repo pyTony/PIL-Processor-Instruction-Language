@@ -1,11 +1,13 @@
 //! PIL proof: text -> validated typed tokens -> register/flag interpreter.
-//! No dependencies, no x86 decoder, memory or system instructions yet.
+//! No external crates or x86 binary decoder; RAM and supplied segment contexts.
 use std::collections::HashMap;
 mod flow;
 mod memory;
+mod address;
 use memory::{Ram, MemWidth};
 mod serial;
 mod debugger;
+mod guest;
 use flow::{ExecError, FlowContext};
 
 type R<T> = Result<T, String>;
@@ -271,15 +273,19 @@ fn execute(p: &Program, cpu: &mut Cpu, dst: View, src: View) -> R<()> {
 }
 fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->Result<(),ExecError> {
     if p.uses_memory {return Err(ExecError::InvalidContext);}
-    execute_state(p,cpu,dst,src,context,None,0)
+    execute_state(p,cpu,dst,src,context,None,0,None)
 }
 fn execute_memory(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError> {
-    execute_state(p,cpu,dst,src,context,Some(ram),address)
+    execute_state(p,cpu,dst,src,context,Some(ram),address,None)
+}
+fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError> {
+    let (offset, memory_context)=address.resolve(&cpu.regs)?;
+    execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context))
 }
 fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
     ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
 }
-fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32)->Result<(),ExecError> {
+fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>)->Result<(),ExecError> {
     if p.uses_memory && ram.is_none() {return Err(ExecError::InvalidContext);}
     dst.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
     src.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
@@ -297,12 +303,15 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::ReadAddress(o)=>values[o]=value(address as u64,32),
             Token::Load(o,a,w)=>{
                 let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
-                let v=m.load(values[a].bits as u32,w).map_err(|f|access_error(cpu.eip,f))?;
+                let offset=values[a].bits as u32;
+                let addr=match memory_context {Some(c)=>c.translate(offset,w,false,cpu.eip)?,None=>offset};
+                let v=m.load(addr,w).map_err(|f|access_error(cpu.eip,f))?;
                 values[o]=value(v as u64,w.bits());
             }
             Token::Store(a,v,w)=>{
                 let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
-                let addr=values[a].bits as u32;
+                let offset=values[a].bits as u32;
+                let addr=match memory_context {Some(c)=>c.translate(offset,w,true,cpu.eip)?,None=>offset};
                 m.check_write(addr,w).map_err(|f|access_error(cpu.eip,f))?;
                 pending_store=Some((addr,w,values[v].bits as u32));
             }
@@ -398,9 +407,12 @@ fn emit_rust(p: &Program) -> String {
     // The included module has an inner documentation comment; in the emitted
     // standalone body it must be an ordinary comment.
     out.push_str("\n");out.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());
+    out.push_str("\npub mod address {\n");
+    out.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());
+    out.push_str("\n}\n");
     out=out.lines().map(|line|line.strip_prefix("//!").map(|s|format!("//{s}")).unwrap_or_else(||line.to_owned())).collect::<Vec<_>>().join("\n");
     out.push_str(&format!(
-        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32) -> Result<(), ExecError> {{\n\
+        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + w as u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
@@ -418,8 +430,8 @@ fn emit_rust(p: &Program) -> String {
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
-            Token::Load(o,a,w)=>format!("let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(v{a} as u32,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;"),
-            Token::Store(a,v,w)=>format!("ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(v{a} as u32,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; pending_store=Some((v{a} as u32,MemWidth::{w:?},v{v} as u32));"),
+            Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;"),
+            Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; pending_store=Some((store_addr,MemWidth::{w:?},v{v} as u32));"),
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
             Token::ReadDisp(o,w) => format!("let v{o}: u64 = (context.displacement as u32 as u64) & {}u64;",mask(w)),
             Token::BranchIf(a,c) => format!("if v{c} != 0 {{ if v{a} as u32 > context.code_limit {{ return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}}); }} pending_eip = v{a} as u32; }}"),
@@ -451,8 +463,9 @@ fn emit_rust(p: &Program) -> String {
     out.push_str("}\n");
     out.push_str("pub fn execute_with_flow(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext)->Result<(),ExecError>{\n");
     if p.uses_memory {out.push_str("Err(ExecError::InvalidContext)\n}\n");}
-    else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0)\n}\n");}
-    out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address)\n}\n");
+    else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None)\n}\n");}
+    out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None)\n}\n");
+    out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context))\n}\n");
     out.push_str("pub fn execute_with_metadata(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,dst:(usize,u8),src:(usize,u8))->Result<(), &'static str> {\n");
     if p.uses_flow || p.uses_memory {out.push_str("Err(\"flow context required: use execute_with_flow\")\n");}
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
@@ -460,7 +473,18 @@ fn emit_rust(p: &Program) -> String {
 }
 fn main() -> R<()> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str)==Some("--write-selftest") {
+        let path=args.get(2).ok_or("usage: pil-proof --write-selftest PATH")?;
+        std::fs::write(path,guest::selftest_bytes()?).map_err(|e|e.to_string())?;return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--selftest") {
+        return debugger::selftest();
+    }
     if args.get(1).map(String::as_str)==Some("--repl") {
+        if args.len()>2 {
+            if args.len()!=4 || args[2]!="--load" {return Err("usage: pil-proof --repl [--load PATH]".into());}
+            return debugger::repl_image(std::io::stdin().lock(),std::io::stdout().lock(),&args[3]).map_err(|e|e.to_string());
+        }
         return debugger::repl(std::io::stdin().lock(),std::io::stdout().lock()).map_err(|e|e.to_string());
     }
     if args.get(1).map(String::as_str)==Some("--demo-branch") {
@@ -495,3 +519,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../tests/unit/memory_cpu.rs"]
 mod memory_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/segment_cpu.rs"]
+mod segment_tests;

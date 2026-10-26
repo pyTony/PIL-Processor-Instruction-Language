@@ -1,0 +1,33 @@
+name: Check
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main, dev]
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked
+      - run: cargo run --locked -- --selftest
+      - run: python tools/build_selftest.py --check
+      - run: python tools/verify_memory.py
+      - run: python tools/verify_descriptions.py
+      - run: python tools/verify_flow.py
+      - if: runner.os == 'Linux'
+        run: sh tools/debug.sh --check
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/debug.ps1 -Check
+      - run: cargo build --release --locked
+      - run: python tools/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pil-proof-${{ matrix.os }}
+          path: dist/*.zip
