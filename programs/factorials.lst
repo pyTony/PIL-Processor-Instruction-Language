@@ -1,0 +1,18 @@
+0100  66 be 01 00 00 00        MOV r6,0x1
+0106  66 bf 00 04 00 00        MOV r7,0x400
+010c  66 bb 01 00 00 00        MOV r3,0x1
+0112  66 bd 0d 00 00 00        MOV r5,0xd
+0118  66 b8 01 00 00 00        MOV r0,0x1
+011e  66 bc 04 00 00 00        MOV r4,0x4
+0124  66 89 c2                 MOV EDX,EAX ; previous factorial
+0127  66 89 f1                 MOV ECX,ESI ; multiply by n using n additions
+012a  66 b8 00 00 00 00        MOV r0,0x0
+0130  66 01 d0                 ADD EAX,EDX
+0133  66 29 d9                 SUB ECX,EBX
+0136  75 f8                    JNE multiply
+0138  66 89 05                 MOV dword DS:[DI],EAX ; linear 0x500 onward
+013b  66 01 e7                 ADD EDI,ESP ; next result slot
+013e  66 01 de                 ADD ESI,EBX ; next n
+0141  66 39 ee                 CMP ESI,EBP ; stop at n=13
+0144  75 de                    JNE factorial
+0146  f4                       HLT ; expected EAX=479001600 (12!)

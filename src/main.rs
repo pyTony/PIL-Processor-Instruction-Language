@@ -473,6 +473,23 @@ fn emit_rust(p: &Program) -> String {
 }
 fn main() -> R<()> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str)==Some("--write-factorials") || args.get(1).map(String::as_str)==Some("--write-loop") {
+        let path=args.get(2).ok_or("usage: pil-proof --write-factorials|--write-loop PATH")?;
+        let bytes=if args[1]=="--write-factorials"{guest::factorial_bytes()?}else{guest::loop_bytes(guest::LOOP_ITERATIONS)?};
+        std::fs::write(path,bytes).map_err(|e|e.to_string())?;return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--numeric-test") {return debugger::numeric_test();}
+    if args.get(1).map(String::as_str)==Some("--bench") {
+        if args.len()>4{return Err("usage: pil-proof --bench [iterations] [samples]".into());}
+        let n=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{1000};
+        let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{3};
+        println!("{}",debugger::benchmark(n,samples)?);return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--stress") {
+        if args.len()>3{return Err("usage: pil-proof --stress [passes]".into());}
+        let passes=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"passes out of range")?}else{25};
+        println!("{}",debugger::factorial_stress(passes)?);return Ok(());
+    }
     if args.get(1).map(String::as_str)==Some("--write-hello") {
         let path=args.get(2).ok_or("usage: pil-proof --write-hello PATH")?;
         std::fs::write(path,guest::hello_bytes()?).map_err(|e|e.to_string())?;return Ok(());

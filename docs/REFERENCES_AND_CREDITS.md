@@ -29,3 +29,8 @@ Detailed development provenance is retained on the repository's dev branch.
 
 The Hello-world image is original project code using the same documented MOV,
 OUT and HLT monitor profile. No additional source material was imported.
+
+The factorial and counted-loop programs and timing commands are original
+project work using the same documented instructions. Factorial results use
+integer arithmetic; host timings use the Rust standard library. No new
+third-party implementation or dataset is bundled.
