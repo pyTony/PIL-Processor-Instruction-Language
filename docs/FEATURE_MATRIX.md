@@ -1,4 +1,4 @@
-# PIL 0.14.0-alpha.1 feature matrix
+# PIL 0.14.0-alpha.2 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -34,7 +34,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | VGA / PS/2 / SD / WLAN | Planned | No device implementation bundled; retain intended WLAN-to-SD workflow later |
 | BIOS / DOS / Windows 3.1x boot | Planned | No firmware or operating-system boot yet |
 | Paging / A20 / interrupts | Planned | No page tables, A20 gate, privilege transitions or exception delivery |
-| Mandelbrot image workload | Supported proof | Q12 guest, serial-streamed pixels, reference checking, BMP/PGM output through256x256 |
+| Mandelbrot image workload | Supported proof | Q12 guest, serial-streamed pixels, reference checking, BMP/PGM output through256x256; optional full-image generated-Rust comparison with drain/halt state checks |
 | x87 / floating point | Planned | No x87; Mandelbrot uses integer fixed-point |
 | ARM native target / Wine bindings | Planned | Fixed proof runs natively on ARM64; no Wine/ABI library or general translation runtime |
 
@@ -49,7 +49,7 @@ for the interpreter's general code-write handling. It emits functions from the
 same validated PIL descriptions rather than hand-writing a separate CPU.
 
 Normal debugger binaries need no Rust compiler once built. --compare-backends
-requires rustc locally and saves generated source, executable and trace files
+and --compare-mandelbrot require rustc locally and saves generated source, executable and trace files
 under target/backend-comparison (or CARGO_TARGET_DIR). Compilation and process
 startup are outside native sample timings. Native dispatch, code guards and
 black_box per step remain inside; compare release builds on the same host.

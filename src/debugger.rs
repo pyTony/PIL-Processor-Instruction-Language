@@ -561,12 +561,21 @@ pub fn backend_trace(cases:&[super::native::Case])->Result<Vec<u8>,String> {
 }
 
 pub fn render_mandelbrot(size:u32,iterations:u32)->Result<super::mandelbrot::Render,String>{
+    render_mandelbrot_checked(size,iterations,false)
+}
+pub fn render_mandelbrot_checked(size:u32,iterations:u32,capture:bool)->Result<super::mandelbrot::Render,String>{
     let bytes=super::mandelbrot::guest_bytes(size,iterations)?;let mut d=Debugger::new("counter")?;d.load_image(&bytes,"mandelbrot render")?;
     let expected_pixels=(size*size)as usize;let budget=u64::from(size)*u64::from(size)*(u64::from(iterations)*26+40);
+    let mut checkpoints=Vec::new();
     let(mut pixels,mut steps,mut blocked)=(Vec::new(),0u64,0u32);let start=std::time::Instant::now();
     loop{
         if steps>budget{return Err("Mandelbrot instruction budget exhausted".into());}
-        match d.step(){
+        let stop=d.step();
+        if capture && matches!(stop,Stop::TxBlocked(_)|Stop::Halt(_)){
+            let (rx,tx)=d.serial.snapshot();let kind=if matches!(stop,Stop::Halt(_)){1}else{3};
+            super::trace::record(&mut checkpoints,0,[kind,d.cpu.eip,0,0,0],&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx);
+        }
+        match stop{
             Stop::Advanced=>steps+=1,
             Stop::TxBlocked(_)=>{let chunk=d.serial.take_tx();if chunk.is_empty(){return Err("empty blocked TX queue".into());}pixels.extend(chunk);blocked+=1;},
             Stop::Halt(_)=>{pixels.extend(d.serial.take_tx());break;},
@@ -577,5 +586,5 @@ pub fn render_mandelbrot(size:u32,iterations:u32)->Result<super::mandelbrot::Ren
     let seconds=start.elapsed().as_secs_f64();
     let reference=super::mandelbrot::reference(size,iterations)?;
     if pixels!=reference{return Err(format!("Mandelbrot pixel mismatch: expected {}, received {}",reference.len(),pixels.len()));}
-    Ok(super::mandelbrot::Render{pixels,steps,seconds,blocked,cache:d.cache.summary()})
+    Ok(super::mandelbrot::Render{pixels,steps,seconds,blocked,cache:d.cache.summary(),checkpoints})
 }

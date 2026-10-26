@@ -203,8 +203,9 @@ instruction listings are in programs/. Native archives include those binaries
 under programs/ and can run the same debugger commands and --bench/--stress
 options directly, without compiling.
 
-A 256×256 Mandelbrot renderer is a later workload: signed fixed-point multiply,
-shifts, framebuffer storage and image output are not implemented by this monitor.
+The Mandelbrot guest uses signed fixed-point multiply and shifts, streams
+pixels through serial, and saves a 256×256 image on the host. It needs no guest
+framebuffer or VGA emulation. See the image workload section below.
 
 
 ## Interpreter cache and timing comparisons
@@ -493,9 +494,10 @@ are 0. Values are bounded to fit the guest's signed 32-bit products.
 
 Timing measures the cached token interpreter including serial-drain handling;
 it excludes setup, reference checking and file output. It is not a 386 cycle
-rate or compiled-backend image benchmark. The compiled proof checks a tiny
-2x2 Mandelbrot guest instruction by instruction; full-size image execution is
-currently interpreted. No VGA, firmware or OS boot is implied.
+rate. Normal rendering is interpreted; --compare-mandelbrot also executes the
+full image as generated Rust. The 26-case verifier includes a tiny image traced
+after every instruction; the full-image comparison checks state at serial-drain
+boundaries and halt. No VGA, firmware or OS boot is implied.
 
 Small interactive example (64 output bytes, no queue draining needed):
 
@@ -512,3 +514,14 @@ pause when TX is full; use `serial tx` to drain then continue, or use the image
 helper to handle draining automatically.
 
 Relative branches now include0F80..8F near Jcc rel16/32 and EB/E9 JMP rel8/16/32. Taken targets retain width wrapping and CS limit checks; flags are preserved. Indirect/far jumps remain unsupported.
+
+## Full-image backend comparison from the shell
+
+Use `pil-proof --compare-mandelbrot [SIZE] [ITERATIONS]`, default256/32;
+Windows helper `./tools/mandelbrot.ps1 -Compare`, shell helper
+`sh tools/mandelbrot.sh --compare 256 32`. This requires rustc and first runs the
+26-case per-instruction verifier. The full image checks every pixel and CPU/RAM/
+flags/serial/stop state at serial-drain/halt boundaries. One cold render per
+engine includes draining and checkpoint capture, excluding setup/reference/files
+and generated compilation. Comparison artifacts live in target/backend-comparison
+(or CARGO_TARGET_DIR). The REPL engine remains the PIL token interpreter.
