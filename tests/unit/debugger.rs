@@ -348,3 +348,17 @@ fn listing_validates_limits_and_uses_live_bytes_for_binary_and_predecoded_demos(
 fn mandelbrot_debugger_demo_checks_pixels_after_tx_is_drained(){
     let mut d=Debugger::new("mandelbrot").unwrap();assert!(d.command("check").is_err());let(_,stop)=d.run_large(1000000).unwrap();assert!(matches!(stop,Stop::Halt(_)));assert_eq!(d.serial.take_tx().len(),64);assert!(d.command("check").unwrap().0.contains("all 64 serial pixels"));
 }
+
+#[test]
+fn check_distinguishes_unsupported_demos_from_incomplete_checked_images(){
+    for name in ["hello","counter","echo","memory"]{
+        let mut d=Debugger::new(name).unwrap();let before=d.cpu.clone();let ram=d.ram.clone();let serial=d.serial.snapshot();
+        let error=d.command("check").unwrap_err();
+        assert_eq!(error,"no built-in check for this program; supported images: selftest, factorials, loop, mandelbrot");
+        assert_eq!(d.cpu,before);assert_eq!(d.ram,ram);assert_eq!(d.serial.snapshot(),serial);
+    }
+    for name in ["selftest","factorials","loop","mandelbrot"]{
+        let mut d=Debugger::new(name).unwrap();let error=d.command("check").unwrap_err();
+        assert!(!error.contains("no built-in check"),"{name}: {error}");
+    }
+}

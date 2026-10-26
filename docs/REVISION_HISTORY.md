@@ -526,3 +526,18 @@ typed8/16/32. LEA resolves offset without data segment checks or data RAM access
 Prepare runtime-only delivery/v0.15.0-alpha.1 from current main; user merges.
 Next useful ISA work: stack/call/return with explicitly staged register effects.
 No release/tag published; preserve main/dev separation and reference records.
+
+## Runtime review follow-up
+
+Claude inspected runtime main0.14alpha.1 and correctly observed cargo test0,
+all8 demos/checks passed,cleanbuild/manifest. No-tests conclusion reflects the
+intentional export: full tests/CI ondev (163 passed Windows/LinuxCI40404626380).
+Do not duplicate tests onto main. Runtime README now explains this distinction.
+Valid finding fixed:unsupported check reports no built-in check and names the
+4 supported images; incomplete supported programs retain specific failures.
+One new regression test covers all8 demos/read-only state (164 pending CI).
+Four EIP assignment spacings and separate REPL if lines address reported
+ambiguous formatting; no wholesale rustfmt/style rewrite or clippy-clean claim.
+Pending runtimePR16 (head0d4da793e2159ff21ccd129d034d0738a1adfe1d) is ready for
+ISA expansion; append this tested follow-up only if still open,otherwise export
+a separately versioned delivery. Keep development/tests/provenance ondev.

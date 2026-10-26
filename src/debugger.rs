@@ -127,11 +127,11 @@ impl Debugger {
             }
             Operation::Input{next}=>{
                 let byte=match self.serial.try_read(){Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
-                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip=*next;Stop::Advanced
+                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip = *next;Stop::Advanced
             }
             Operation::Output{next}=>{
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err(){return Stop::TxBlocked(self.cpu.eip);}
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip=*next;Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;Stop::Advanced
             }
             Operation::Halt=>Stop::Halt(self.cpu.eip),
         }
@@ -157,13 +157,13 @@ impl Debugger {
             Action::MockRx{next} => {
                 let byte=match self.serial.try_read() {Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
                 self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);
-                self.cpu.eip=*next;Stop::Advanced
+                self.cpu.eip = *next;Stop::Advanced
             }
             Action::MockTx{next} => {
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err() {
                     return Stop::TxBlocked(self.cpu.eip);
                 }
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip=*next;Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;Stop::Advanced
             }
             Action::HarnessHalt=>Stop::Halt(self.cpu.eip),
         }
@@ -227,7 +227,7 @@ impl Debugger {
     fn check_selftest(&mut self)->Result<(),String> {
         let expected=super::guest::selftest_bytes()?;
         if self.image.is_none() || self.initial_ram.bytes().get(super::guest::ENTRY as usize..super::guest::ENTRY as usize+expected.len())!=Some(expected.as_slice()) {
-            return Err("check requires the supplied selftest image".into());
+            return Err("no built-in check for this program; supported images: selftest, factorials, loop, mandelbrot".into());
         }
         if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)) || self.cpu.regs[2]&0xffff!=0x600d {
             return Err(format!("selftest has not passed: DX={:04x}",self.cpu.regs[2]&0xffff));
@@ -480,7 +480,10 @@ fn repl_with<R:BufRead,W:Write>(mut input:R,mut output:W,mut debugger:Debugger)-
         write!(output,"pil> ")?;output.flush()?;line.clear();
         if input.read_line(&mut line)?==0 {break;}
         match debugger.command(line.trim()) {
-            Ok((text,quit))=>{if !text.is_empty(){writeln!(output,"{text}")?;}if quit{break;}}
+            Ok((text,quit))=>{
+                if !text.is_empty(){writeln!(output,"{text}")?;}
+                if quit{break;}
+            }
             Err(e)=>writeln!(output,"error: {e}")?,
         }
     }

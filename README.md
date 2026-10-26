@@ -1,5 +1,8 @@
 # PIL development branch
 
+Automated tests and CI belong on this dev branch: `cargo test --locked`.
+Main is a runtime-only export and intentionally runs zero development tests.
+
 ## Documentation
 
 | Read this | What it covers |

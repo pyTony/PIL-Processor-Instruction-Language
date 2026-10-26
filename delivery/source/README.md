@@ -525,3 +525,12 @@ movzx16/movsx16 (word source); movzx/movsx alias the byte forms. Destination
 width comes from --emit-rust WIDTH. lea and cwd use16/32-bit destination width;
 cdq aliases cwd. The binary decoder binds98/99 implicit registers before PIL
 validation. The interpreter and generated runner execute the same tokens.
+
+## Automated verification
+
+This is a runtime-only source delivery. `cargo test` here intentionally runs no
+development tests. The automated suite and Windows/Linux CI live on the
+[dev branch](https://github.com/pyTony/pil_proof/tree/dev) and the
+[Actions page](https://github.com/pyTony/pil_proof/actions). CI checks both the
+full development suite and an isolated runtime export. DELIVERY.json identifies
+the development source revision used for this delivery.
