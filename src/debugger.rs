@@ -60,6 +60,7 @@ impl Debugger {
         d.load_demo(demo)?; Ok(d)
     }
     fn load_demo(&mut self, name: &str) -> Result<(),String> {
+        if name=="hello" {return self.load_image(&super::guest::hello_bytes()?,"hello");}
         if name=="selftest" {return self.load_image(&super::guest::selftest_bytes()?,"selftest");}
         // Construct first; a failed selection must not destroy the current state.
         let mut code=BTreeMap::new();let mut cpu=Cpu::default();cpu.eflags=0x202;
@@ -91,7 +92,7 @@ impl Debugger {
                 }
                 code.insert(0x304,Instruction{label:"HARNESS_HALT",action:Action::HarnessHalt});
             }
-            _ => return Err("demo must be counter, echo, memory or selftest".into()),
+            _ => return Err("demo must be counter, echo, memory, selftest or hello".into()),
         }
         self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
@@ -222,7 +223,7 @@ impl Debugger {
         let response=match words.as_slice() {
             []=>String::new(),
             ["help"]=>concat!(
-                "help | demo counter|echo|memory|selftest | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
+                "help | demo counter|echo|memory|selftest|hello | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
                 "break <address> | delete <address> | breaks | reset | quit\n",
                 "serial status | serial rx <hex bytes...> | serial tx | serial clear\n",

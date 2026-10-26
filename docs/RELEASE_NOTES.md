@@ -1,3 +1,9 @@
+# PIL 0.7.1
+
+Add `demo hello`, a 57-byte guest Hello-world program with no input required.
+Build scripts also write hello.bin. Successful serial output appears in the
+debugger console and is available through serial tx.
+
 # PIL 0.7.0
 
 - Run an included 204-byte 386 guest program in the interactive debugger.
