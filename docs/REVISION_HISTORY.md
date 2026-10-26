@@ -485,3 +485,14 @@ including mandelbrot2 (291 steps),near branch and jump faults. Generated median
 invalidations. PC_NATIVE unavailable on ARM64 as expected; emitted Rust does
 execute natively on the phone. This is the counted-loop comparison,not a full
 256x256 render or alpha.2 --compare-mandelbrot result. No execution changes.
+
+## User Termux0.14alpha.2 full-image comparison
+
+User Termux android/aarch64 release --compare-mandelbrot256/32 passed the
+26-case gate (4,273,138 exact per-instruction trace bytes),all65,536 reference
+pixels and256 CPU/RAM/flags/queues/stop checkpoints (1,134,592 exact bytes).
+Both engines completed12,940,344 guest instructions and255 TX retries.
+Generated Rust151.897 ms vs cached interpreter2991.931 ms,19.70x in one cold
+render each. Verifier compilation17.165 s and image compilation2.706 s excluded.
+Checkpoint capture/draining included; setup/reference/files/startup excluded.
+Not a median benchmark or386 cycle measurement. No execution changes.

@@ -1108,7 +1108,7 @@
     {
       "version": "0.14.0-alpha.2",
       "date": "2026-10-26",
-      "status": "host-verified; runtime-only PR #15 awaits user review",
+      "status": "host-verified; runtime PR #15 merged; user Termux full-image comparison verified",
       "features": [
         "full-image generated Rust comparison",
         "26-case per-instruction gate",
@@ -1157,6 +1157,25 @@
         "head": "46053bcd2193060477efa43c0cbc6a8647b5e5c1",
         "source_commit": "441844483574e5b55c7eb8691fdce7ff828a6a4c",
         "base_main": "cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c"
+      },
+      "user_termux_full_image_comparison": {
+        "host": "android/aarch64",
+        "profile": "release",
+        "size": 256,
+        "iteration_limit": 32,
+        "verified_gate_cases": 26,
+        "matched_gate_trace_bytes": 4273138,
+        "pixels_verified": 65536,
+        "matching_checkpoints": 256,
+        "matching_checkpoint_bytes": 1134592,
+        "guest_instructions_each": 12940344,
+        "tx_backpressure_retries_each": 255,
+        "generated_ms": 151.897,
+        "interpreter_ms": 2991.931,
+        "observed_ratio": 19.7,
+        "verifier_compile_seconds": 17.165,
+        "image_compile_seconds": 2.706,
+        "scope": "single cold render per engine; serial draining and checkpoint capture included; setup/reference/files/process startup/compilation excluded; not median benchmark or386 cycles"
       }
     }
   ]

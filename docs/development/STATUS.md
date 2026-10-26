@@ -1,3 +1,15 @@
+# User phone full-image comparison confirmed —0.14.0-alpha.2
+
+User Termux android/aarch64 release --compare-mandelbrot256/32 passed the
+26-case gate (4,273,138 exact per-instruction trace bytes),all65,536 reference
+pixels and256 CPU/RAM/flags/queues/stop checkpoints (1,134,592 exact bytes).
+Both engines completed12,940,344 guest instructions and255 TX retries.
+Generated Rust151.897 ms vs cached interpreter2991.931 ms,19.70x in one cold
+render each. Verifier compilation17.165 s and image compilation2.706 s excluded.
+Checkpoint capture/draining included; setup/reference/files/startup excluded.
+Not a median benchmark or386 cycle measurement. Runtime PR #15 is confirmed
+merged. No execution changes.
+
 # User phone alpha.1 comparison confirmed
 
 Termux android/aarch64 release0.14.0-alpha.1,10000 loop iterations,5 measured
