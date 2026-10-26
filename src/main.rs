@@ -11,6 +11,7 @@ mod guest;
 mod cache;
 mod native;
 mod trace;
+mod mandelbrot;
 use flow::{ExecError, FlowContext};
 
 type R<T> = Result<T, String>;
@@ -434,6 +435,7 @@ fn description(name: &str) -> R<String> {
         "dec" => Some(include_str!("../isa/i386/dec.pil")),
         "nop" => Some(include_str!("../isa/i386/nop.pil")),
         "imul" => Some(include_str!("../isa/i386/imul.pil")),
+        "jmp" => Some(include_str!("../isa/i386/jmp.pil")),
         "shl"|"sal" => Some(include_str!("../isa/i386/shl.pil")),
         "shr" => Some(include_str!("../isa/i386/shr.pil")),
         "sar" => Some(include_str!("../isa/i386/sar.pil")),
@@ -546,6 +548,11 @@ fn emit_rust_functions(p:&Program)->String {
 }
 fn main() -> R<()> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str)==Some("--mandelbrot") {
+        if args.len()>4{return Err("usage: pil-proof --mandelbrot [size 2..256 power of two] [iterations 1..64]".into());}
+        let parse=|i:usize,default:u32|->R<u32>{if let Some(x)=args.get(i){u32::try_from(number(x.as_str())?).map_err(|_|"parameter out of range".into())}else{Ok(default)}};
+        println!("{}",mandelbrot::render_files(parse(2,256)?,parse(3,32)?)?);return Ok(());
+    }
     if args.get(1).map(String::as_str)==Some("--verify-backends") {
         if args.len()!=2{return Err("usage: pil-proof --verify-backends".into());}
         println!("{}",native::verify()?);return Ok(());

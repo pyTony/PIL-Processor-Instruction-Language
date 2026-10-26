@@ -62,6 +62,7 @@ impl Debugger {
         d.load_demo(demo)?; Ok(d)
     }
     fn load_demo(&mut self, name: &str) -> Result<(),String> {
+        if name=="mandelbrot" {return self.load_image(&super::mandelbrot::guest_bytes(8,16)?,"mandelbrot");}
         if name=="factorials" {return self.load_image(&super::guest::factorial_bytes()?,"factorials");}
         if name=="loop" {return self.load_image(&super::guest::loop_bytes(super::guest::LOOP_ITERATIONS)?,"loop");}
         if name=="hello" {return self.load_image(&super::guest::hello_bytes()?,"hello");}
@@ -96,7 +97,7 @@ impl Debugger {
                 }
                 code.insert(0x304,Instruction{label:"HARNESS_HALT",action:Action::HarnessHalt});
             }
-            _ => return Err("demo must be counter, echo, memory, selftest, hello, factorials or loop".into()),
+            _ => return Err("demo must be counter, echo, memory, selftest, hello, factorials, loop or mandelbrot".into()),
         }
         self.cache.clear();self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
@@ -259,6 +260,11 @@ impl Debugger {
         Ok(())
     }
     fn check_current(&mut self)->Result<String,String> {
+        if self.has_image(&super::mandelbrot::guest_bytes(8,16)?){
+            if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)){return Err("Mandelbrot demo has not halted".into());}
+            if self.tx_events!=super::mandelbrot::reference(8,16)?{return Err("Mandelbrot pixels mismatch".into());}
+            return Ok("PASS: 8x8 Mandelbrot; all 64 serial pixels match Q12 reference".into());
+        }
         if self.has_image(&super::guest::factorial_bytes()?){return self.check_factorials();}
         // The loop image's only variable field is its initial ECX immediate.
         if let Some(data)=self.initial_ram.bytes().get((super::guest::ENTRY+2) as usize..(super::guest::ENTRY+6) as usize) {
@@ -322,7 +328,7 @@ impl Debugger {
         let response=match words.as_slice() {
             []=>String::new(),
             ["help"]=>concat!(
-                "help | demo counter|echo|memory|selftest|hello|factorials|loop | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
+                "help | demo counter|echo|memory|selftest|hello|factorials|loop|mandelbrot | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
                 "list [count 1..256] | list <address> <count> (bytes, operands, branch targets; * marks EIP)\n",
                 "cache [stats|on|off|clear] (binary monitor)\n",
                 "time [steps 1..1000000] | bench [iterations 1..100000] [samples 1..9] | stress [passes 1..1000]\n",
@@ -552,4 +558,24 @@ pub fn backend_trace(cases:&[super::native::Case])->Result<Vec<u8>,String> {
         if !stopped{return Err(format!("trace budget exhausted for {}",case.name));}
     }
     Ok(out)
+}
+
+pub fn render_mandelbrot(size:u32,iterations:u32)->Result<super::mandelbrot::Render,String>{
+    let bytes=super::mandelbrot::guest_bytes(size,iterations)?;let mut d=Debugger::new("counter")?;d.load_image(&bytes,"mandelbrot render")?;
+    let expected_pixels=(size*size)as usize;let budget=u64::from(size)*u64::from(size)*(u64::from(iterations)*26+40);
+    let(mut pixels,mut steps,mut blocked)=(Vec::new(),0u64,0u32);let start=std::time::Instant::now();
+    loop{
+        if steps>budget{return Err("Mandelbrot instruction budget exhausted".into());}
+        match d.step(){
+            Stop::Advanced=>steps+=1,
+            Stop::TxBlocked(_)=>{let chunk=d.serial.take_tx();if chunk.is_empty(){return Err("empty blocked TX queue".into());}pixels.extend(chunk);blocked+=1;},
+            Stop::Halt(_)=>{pixels.extend(d.serial.take_tx());break;},
+            stop=>return Err(format!("Mandelbrot stopped: {}",Debugger::stop_text(&stop))),
+        }
+        if d.tx_events.len()>expected_pixels{return Err("too many Mandelbrot pixels".into());}
+    }
+    let seconds=start.elapsed().as_secs_f64();
+    let reference=super::mandelbrot::reference(size,iterations)?;
+    if pixels!=reference{return Err(format!("Mandelbrot pixel mismatch: expected {}, received {}",reference.len(),pixels.len()));}
+    Ok(super::mandelbrot::Render{pixels,steps,seconds,blocked,cache:d.cache.summary()})
 }
