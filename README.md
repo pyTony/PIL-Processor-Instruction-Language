@@ -9,6 +9,18 @@
 | [Release notes](docs/RELEASE_NOTES.md) | Changes in this delivery and earlier versions |
 | [References and credits](docs/REFERENCES_AND_CREDITS.md) | Reference manuals, attribution and third-party material status |
 
+## Built-in demos
+
+| Command | Purpose |
+|---|---|
+| `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
+| `demo hello` | Binary Hello-world output through mock serial |
+| `demo factorials` | Binary 1!..12! table; `time 1000` then `check`; 12!=479001600 |
+| `demo loop` | Binary 65,536-iteration counted loop; `time 250000` then `check` |
+| `demo counter` | Small predecoded subtract-and-branch example |
+| `demo echo` | Predecoded one-byte serial echo; waits for RX input |
+| `demo memory` | Predecoded RAM store/load and protection example |
+
 ## Start the debugger
 
 After a release build, start it directly in PowerShell:
@@ -28,9 +40,17 @@ At the `pil>` prompt, enter one command per line:
 demo hello
 run 1000
 serial tx
+demo factorials
+time 1000
+check
 help
 quit
 ```
+
+`run` without a budget executes at most 100 instructions. Factorials needs 336
+from a fresh start; `budget exhausted` means it paused. Use `run 1000` to finish
+from the current position, then `check`. `list` shows up to 16 instructions.
+
 
 Build and open the debugger together with `.\tools\debug.ps1` on Windows or
 `sh tools/debug.sh` on Linux/Termux. These helpers load the diagnostic selftest;
