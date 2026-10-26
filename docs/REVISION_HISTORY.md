@@ -117,3 +117,10 @@ Development stays on dev; main receives a separate 38-file runtime export.
 User confirmed v0.7 Termux executable selftest: 63 completed steps, halted at
 EIP 0x1cb, PASS with DX=600D, RAM signatures, console output 41 | A and TX: 41.
 This confirms the manual test as well as the previous automated host checks.
+
+v0.7.1 host verification passed at dev c1eca1982401e179b5eaa893d25a0572490a28b8:
+https://github.com/pyTony/pil_proof/actions/runs/40324429616
+94 tests passed on Ubuntu (5.90 s) and Windows (10.60 s). Isolated 38-file
+runtime builds, Hello-world serial transcripts, generated Rust and unpacked
+native delivery checks passed on both. Runtime-only PR #4 targets main from
+delivery/v0.7.1. Phone Hello-world execution remains unreported.

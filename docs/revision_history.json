@@ -264,7 +264,7 @@
     {
       "version": "0.7.1",
       "date": "2026-10-26",
-      "status": "development; CI pending",
+      "status": "host-verified; delivery PR #4 ready",
       "features": [
         "57-byte Hello-world guest",
         "demo hello and --write-hello",
@@ -272,7 +272,15 @@
       ],
       "rust_verification": {
         "tests_supplied": 94,
-        "host_ci": "pending"
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40324429616",
+        "source_commit": "c1eca1982401e179b5eaa893d25a0572490a28b8",
+        "tests_passed": 94,
+        "tests_failed": 0,
+        "ubuntu_seconds": 5.9,
+        "windows_seconds": 10.6,
+        "runtime_export": "build/scripts/Hello-world/generated Rust passed on both hosts",
+        "native_packages": "unpacked Hello-world transcript passed on both hosts",
+        "phone_hello": "not yet reported"
       },
       "provenance": "original project fixture; no new third-party material"
     }

@@ -1,3 +1,11 @@
+# v0.7.1 Hello-world verified on hosts
+
+PR #4: https://github.com/pyTony/pil_proof/pull/4 (runtime-only main delivery).
+Dev source c1eca198 passed 94 tests on Ubuntu (5.90 s) and Windows (10.60 s)
+in CI run 40324429616. Isolated runtime and unpacked archive Hello-world serial
+transcripts passed. User has not yet reported phone Hello-world execution.
+Keep full tests/history here on dev; never merge this branch into main.
+
 # Current v0.7.1 work — Hello-world
 
 User confirmed the v0.7 diagnostic selftest on Termux: 63 steps, PASS, EIP=1cb,
