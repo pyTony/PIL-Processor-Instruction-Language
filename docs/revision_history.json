@@ -893,17 +893,15 @@
     {
       "version": "0.13.0-alpha.2",
       "date": "2026-10-26",
-      "status": "readable listing follow-up under validation",
+      "status": "host-verified; user merged typed dump PR #12",
       "features": [
         "mem8/mem16/mem32 typed dumps",
         "printable ASCII and unsigned decimal",
-        "full-range validation without mutation",
-        "readable instruction bytes,operands and branch targets",
-        "bounded list COUNT / list ADDRESS COUNT"
+        "full-range validation without mutation"
       ],
       "runtime_files": 62,
       "provenance": "original debugger code; no new external materials/dependencies",
-      "rust_verification_before_listing": {
+      "rust_verification": {
         "tests_supplied": 144,
         "tests_passed": 144,
         "tests_failed": 0,
@@ -916,11 +914,33 @@
         "runtime_export": "62-file isolated checks passed",
         "native_archive": "unpacked verification passed",
         "user_dump_commands": "not yet reported"
-      },
+      }
+    },
+    {
+      "version": "0.13.0-alpha.3",
+      "date": "2026-10-26",
+      "status": "host-verified listing code; runtime follow-up after PR #12 merge",
+      "features": [
+        "readable instruction bytes/registers/immediates/memory/branch targets",
+        "bounded list COUNT / list ADDRESS COUNT",
+        "real register names in numeric fixtures"
+      ],
       "rust_verification": {
         "tests_supplied": 148,
-        "status": "pending hosted CI for readable listings"
-      }
+        "tests_passed": 148,
+        "tests_failed": 0,
+        "ubuntu_seconds": 8.32,
+        "windows_seconds": 18.29,
+        "source_commit": "0e2d8d495f84c27830dda4ae0cf31579247e9afd",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40374526560",
+        "verifier_cases": 23,
+        "matched_trace_bytes": 3044833,
+        "runtime_export": "62-file isolated checks passed",
+        "native_archive": "unpacked verification passed",
+        "note": "post-CI version/docs metadata only; execution source unchanged"
+      },
+      "runtime_files": 62,
+      "provenance": "original display formatting from decoded metadata; no new external references"
     }
   ]
 }

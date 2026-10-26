@@ -1,3 +1,13 @@
+# Readable listings verified — alpha.3 follow-up
+
+User merged typed-dump PR #12 before the listing addition; main7efaf780d0041b9c6c56260810f87940a4b4d175
+contains dumps,not readable listings. Prepare separate runtime alpha.3 PR based
+on that main. Listing code0e2d8d495f84c27830dda4ae0cf31579247e9afd passed
+CI40374526560:148 tests,Ubuntu8.32 s/Windows18.29 s;23 cases/3,044,833 bytes.
+Standalone62-file source/emitted/native package checks passed. Version/docs
+metadata changed toalpha.3 afterward; execution source unchanged. Preserve
+main/runtime separation; no user listing run or release/tag claimed.
+
 # Readable instruction listings added to pending dump delivery
 
 User found factorial listing uninformative. Decoder labels now contain actual

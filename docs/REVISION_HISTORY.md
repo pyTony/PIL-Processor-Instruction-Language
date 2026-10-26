@@ -400,3 +400,9 @@ arguments. Fix generated numeric .lst files to name EAX etc.without changing
 code bytes. Four tests added (148 total pending CI) for operand labels,targets,
 full factorial listing,limits/live edits and preservation. No external code or
 materials introduced; formatting uses the existing decoded operand metadata.
+
+User merged PR #12 at its typed-dump head52834b3e0dbefbf724408b21dedb4cce19647568
+before the listing follow-up was ready. Listing gets separate0.13.0-alpha.3.
+Code source0e2d8d495f84c27830dda4ae0cf31579247e9afd passed148 tests on Ubuntu
+8.32 s/Windows18.29 s in CI40374526560;23 cases matched3,044,833 bytes.
+Only version/docs metadata changes after this test run; execution source unchanged.
