@@ -76,9 +76,18 @@ impl Image {
                 let name=format!("j{}",CONDITIONS[(opcode&15) as usize]);
                 (format!("{} 0x{:08x}",name.to_ascii_uppercase(),r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
             }
+            0xeb|0xe9=>{
+                disp_bits=if opcode==0xeb{8}else{w};
+                let raw=r.unsigned(disp_bits)?;disp=match disp_bits{8=>raw as i8 as i32,16=>raw as i16 as i32,_=>raw as i32};
+                (format!("JMP 0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description("jmp").map_err(GuestError::Decode)?,w),w))
+            }
             0x0f=>{
                 let second=r.byte()?;
-                if second==0xaf {
+                if (0x80..=0x8f).contains(&second){
+                    disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
+                    let name=format!("j{}",CONDITIONS[(second&15) as usize]);
+                    (format!("{} 0x{:08x}",name.to_ascii_uppercase(),r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
+                }else if second==0xaf {
                     let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
                     dst=reg;src=rm;
                     if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});src=reg;}
@@ -162,7 +171,8 @@ impl Image {
             0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
-        if !(0x70..=0x7f).contains(&opcode) {disp_bits=32;}
+        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0x0f) {disp_bits=32;}
+        if opcode==0x0f && disp==0 && disp_bits==8 {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
     }

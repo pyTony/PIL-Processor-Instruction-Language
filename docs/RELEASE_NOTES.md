@@ -1,3 +1,12 @@
+# PIL 0.14.0-alpha.1
+
+- Add original Q12 Mandelbrot guest and independent reference checking.
+- Stream pixels through mock serial; save BMP/PGM, guest binary and report.
+- Add release render helpers; support256x256 and small debugger demo.
+- Decode near Jcc and short/near relative JMP using existing PIL flow effects.
+- Expand compiled full-state proof to26 cases including tiny image and faults.
+- Add independent Python raster/BMP checks and full-size hosted render checks.
+
 # PIL 0.13.0-alpha.3
 
 - Show encoded bytes, registers/immediates, memory operands and branch targets.
