@@ -511,3 +511,18 @@ cases (34 total). Independent Python132,118 extension/address cases passed.
 Six new PIL files; runtime72 files. References/credits record consulted Intel386
 manual entries. No external code/data/dependencies imported. Main stays runtime-only.
 Next: Windows/Linux CI,then export and PR from main336610f56b46fd69a6aa5a2e2354dc64311800a5.
+
+## 0.15.0-alpha.1 hosted verification
+
+Core source6ba1ac3b8affe72702290a067a9c1c95f9626626 passed CI40404626380:
+163 Rust tests,Ubuntu14.66 s/Windows31.44 s;34 per-instruction cases matched
+4,394,242 trace bytes. Python132,118 independent extension/address cases passed.
+Isolated72-file source/scripts/emitted Rust and unpacked native deliveries passed.
+Full256x256 Mandelbrot regression matched65,536 pixels and256 checkpoints
+(1,134,592 bytes) on both engines/hosts. No phone0.15 result yet. Execution code
+unchanged by this evidence/docs follow-up. New instructions: MOVZX/MOVSX,
+CBW/CWDE,CWD/CDQ,LEA; all flags/markers preserved. Source bindings independently
+typed8/16/32. LEA resolves offset without data segment checks or data RAM access.
+Prepare runtime-only delivery/v0.15.0-alpha.1 from current main; user merges.
+Next useful ISA work: stack/call/return with explicitly staged register effects.
+No release/tag published; preserve main/dev separation and reference records.

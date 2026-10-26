@@ -1181,7 +1181,7 @@
     {
       "version": "0.15.0-alpha.1",
       "date": "2026-10-26",
-      "status": "development; hosted Rust CI pending",
+      "status": "host-verified; runtime-only delivery being prepared",
       "features": [
         "MOVZX/MOVSX8-to16/32 and16-to32",
         "CBW/CWDE/CWD/CDQ",
@@ -1190,12 +1190,27 @@
       ],
       "rust_verification": {
         "tests_supplied": 163,
-        "status": "pending",
-        "verifier_cases": 34
+        "tests_passed": 163,
+        "tests_failed": 0,
+        "ubuntu_seconds": 14.66,
+        "windows_seconds": 31.44,
+        "source_commit": "6ba1ac3b8affe72702290a067a9c1c95f9626626",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40404626380",
+        "verifier_cases": 34,
+        "matched_trace_bytes": 4394242,
+        "runtime_export": "72-file isolated build/platform scripts/emitted Rust passed",
+        "native_archive": "unpacked delivery checks passed",
+        "user_phone": "not yet reported"
       },
       "python_extension_oracle_cases": 132118,
       "runtime_files": 72,
-      "provenance": "Intel80386 manual MOVSX/MOVZX/LEA/CBW/CWD entries consulted; original implementation/oracles, no code/data imports"
+      "provenance": "Intel80386 manual MOVSX/MOVZX/LEA/CBW/CWD entries consulted; original implementation/oracles, no code/data imports",
+      "full_image_regression": {
+        "pixels_verified": 65536,
+        "matching_checkpoints": 256,
+        "matched_checkpoint_bytes": 1134592,
+        "status": "both hosts passed"
+      }
     }
   ]
 }

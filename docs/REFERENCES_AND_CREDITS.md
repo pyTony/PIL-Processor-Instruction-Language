@@ -1,6 +1,6 @@
 # References, provenance and credits
 
-Maintained with the project. Last updated: 26 October 2026 (v0.7.0).
+Maintained with the project. Last updated: 26 October 2026 (v0.15.0-alpha.1).
 
 ## What this release contains
 
@@ -36,7 +36,9 @@ No project-wide distribution licence has yet been selected for our own code.
 
 All formulae below are our descriptions, checked against an independent
 arithmetic oracle. They are not extracted Intel pseudocode or a hardware test
-suite. Memory exceptions and encoded operands are not implemented yet.
+suite. The rows below retain early verification milestones. The current monitor
+implements the documented encoded operands and segmented/RAM checks; guest
+exception delivery remains future work.
 
 | Implementation | Semantics reference | Verification evidence |
 |---|---|---|
