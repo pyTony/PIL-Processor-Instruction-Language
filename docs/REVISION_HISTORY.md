@@ -348,3 +348,19 @@ bounds for the4-KiB monitor. Register/TX output agreed. The transcript does
 not contain a version banner; surrounding session was0.11, no0.13 run inferred.
 User requested a README documentation index after finding launch instructions
 in docs. Linked indexes added to development, runtime-source and native READMEs.
+
+0.13 hosted verification completed at1a35fa53fcddd5a89e86813699736e5cc3c68832:
+https://github.com/pyTony/pil_proof/actions/runs/40371543845 —140 passed on
+Ubuntu12.43 s and Windows22.00 s;23 cases/3,044,833 exact trace bytes.
+Standalone62-file runtime and unpacked native checks passed. Independent
+Python59,940 shifts and65,680 signed products plus prior oracles passed.
+Later docs-only commits add indexes/all7 demos/run-budget explanation; local
+links/checksums checked without repeating unchanged Rust execution tests.
+PR #11 supersedes unmerged signed-multiply PR #10; user main remains runtime-only.
+
+User PC factorial debugger run:336 steps,halt146,0.979 ms,343172 ins/s;
+cache18 entries,319 hits,18 misses,0 invalidations/evictions. Check passed
+all12 results through12!=479001600,confirmed by48-byte RAM dump. Stress100
+passed1200 results/33600 instructions in89.580 ms including setup/checking.
+Transcript has no version banner; surrounding Windows session was0.11,not a
+new0.13 verification. These timings differ in scope from the counted-loop bench.

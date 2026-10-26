@@ -1,3 +1,17 @@
+# Shifts and documentation verified — runtime PR #11
+
+https://github.com/pyTony/pil_proof/pull/11 is ready for review; supersedes
+unmerged PR #10 and includes its signed IMUL implementation. Core source
+1a35fa53fcddd5a89e86813699736e5cc3c68832 passed CI run40371543845:
+140 tests,Ubuntu12.43 s/Windows22.00 s. All23 cases matched3,044,833 bytes.
+Standalone62-file source, scripts, emitted Rust and unpacked deliveries passed.
+Python59,940 shifts+65,680 IMUL+1,184,058 arithmetic/logical+1,030 conditional
+cases passed. Later docs-only changes have separate link/checksum checks.
+Docs indexes, direct launch examples, all7 demos and default100-step behavior
+are documented following user feedback. User PC remains on main; no new0.13
+phone/PC run supplied. Next: actual fixed-point Mandelbrot image workload.
+Keep dev/main separation; no tag/release published.
+
 # Shifts and debugger discoverability — 0.13.0-alpha.1 development
 
 SHL/SAL,SHR,SAR8/16/32 supportcount1/CL/imm8 and register/memory. Generic

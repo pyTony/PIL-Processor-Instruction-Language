@@ -25,8 +25,8 @@
 |---|---|
 | `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
 | `demo hello` | Binary Hello-world output through mock serial |
-| `demo factorials` | Binary1!..12! table; `time 1000` then `check`;12!=479001600 |
-| `demo loop` | Binary65,536-iteration counted loop; `time 250000` then `check` |
+| `demo factorials` | Binary 1!..12! table; `time 1000` then `check`; 12!=479001600 |
+| `demo loop` | Binary 65,536-iteration counted loop; `time 250000` then `check` |
 | `demo counter` | Small predecoded subtract-and-branch example |
 | `demo echo` | Predecoded one-byte serial echo; waits for RX input |
 | `demo memory` | Predecoded RAM store/load and protection example |
@@ -56,6 +56,11 @@ check
 help
 quit
 ```
+
+`run` without a budget executes at most 100 instructions. Factorials needs 336
+from a fresh start; `budget exhausted` means it paused. Use `run 1000` to finish
+from the current position, then `check`. `list` shows up to 16 instructions.
+
 
 Build and open the debugger together with `.\tools\debug.ps1` on Windows or
 `sh tools/debug.sh` on Linux/Termux. These helpers load the diagnostic selftest;

@@ -735,12 +735,33 @@
         "median_ms": 3.216,
         "guest_instructions_per_second": 9330161,
         "scope": "separate standalone run; not the interpreter samples from backend comparison"
+      },
+      "pc_factorial_debugger": {
+        "reported_by": "user",
+        "version_evidence": "surrounding Windows session0.11; transcript has no version banner",
+        "steps": 336,
+        "halt_eip": "0x146",
+        "elapsed_ms": 0.979,
+        "guest_instructions_per_second": 343172,
+        "ns_per_instruction": 2914.0,
+        "cache_entries": 18,
+        "cache_hits": 319,
+        "cache_misses": 18,
+        "cache_invalidations": 0,
+        "cache_evictions": 0,
+        "check": "PASS: all12 RAM results;12!=479001600",
+        "ram_0x500_hex": "01 00 00 00 02 00 00 00 06 00 00 00 18 00 00 00 78 00 00 00 d0 02 00 00 b0 13 00 00 80 9d 00 00 80 89 05 00 00 5f 37 00 00 15 61 02 00 fc 8c 1c",
+        "stress_runs": 100,
+        "stress_results_verified": 1200,
+        "stress_completed_instructions": 33600,
+        "stress_elapsed_ms": 89.58,
+        "stress_scope": "includes fresh setup and verification; not tight-loop throughput"
       }
     },
     {
       "version": "0.12.0-alpha.1",
       "date": "2026-10-26",
-      "status": "host-verified; runtime-only PR #10 awaits user review",
+      "status": "host-verified; delivery PR #10 superseded by combined PR #11",
       "features": [
         "generic sext/mul tokens",
         "truncated signed IMUL16/32",
@@ -771,17 +792,29 @@
     {
       "version": "0.13.0-alpha.1",
       "date": "2026-10-26",
-      "status": "development; hosted verification pending",
+      "status": "host-verified; runtime-only PR #11 awaits review",
       "features": [
         "generic total shifts, ult and flag_if",
         "SHL/SAL SHR SAR8/16/32 register/memory count1/CL/imm8",
         "23-case full-state verification",
         "post-build debugger README quick start",
-        "linked documentation indexes in development, source and native READMEs"
+        "linked documentation indexes in development, source and native READMEs",
+        "complete demo tables and run/list budget explanation"
       ],
       "rust_verification": {
         "tests_supplied": 140,
-        "status": "pending CI"
+        "tests_passed": 140,
+        "tests_failed": 0,
+        "ubuntu_seconds": 12.43,
+        "windows_seconds": 22.0,
+        "source_commit": "1a35fa53fcddd5a89e86813699736e5cc3c68832",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40371543845",
+        "verifier_cases": 23,
+        "matched_trace_bytes": 3044833,
+        "runtime_export": "62-file isolated checks passed",
+        "native_archive": "unpacked verification passed",
+        "phone": "not yet reported",
+        "pc_user_run": "not yet reported"
       },
       "runtime_files": 62,
       "provenance": "Intel PRM SAL and SDM Vol2B flags clarification; reference only; original code",
@@ -797,6 +830,12 @@
         "ram_0x500_hex": "79 56 34 12 78 56 34 12",
         "ram_0x5000": "correct bounds error",
         "serial_tx_hex": "41"
+      },
+      "python_verification": {
+        "shift_cases": 59940,
+        "signed_imul_cases": 65680,
+        "arithmetic_logical_cases": 1184058,
+        "conditional_cases": 1030
       }
     }
   ]
