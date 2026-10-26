@@ -10,5 +10,7 @@ try {
     New-Item -ItemType Directory -Force "$buildRoot/programs" | Out-Null
     & "$buildRoot/$profile/pil-proof.exe" --write-selftest "$buildRoot/programs/selftest.bin"
     if ($LASTEXITCODE -ne 0) { throw 'selftest image generation failed' }
+    & "$buildRoot/$profile/pil-proof.exe" --write-hello "$buildRoot/programs/hello.bin"
+    if ($LASTEXITCODE -ne 0) { throw 'hello image generation failed' }
     Write-Output "Built $buildRoot/$profile/pil-proof.exe and $buildRoot/programs/selftest.bin"
 } finally { Pop-Location }
