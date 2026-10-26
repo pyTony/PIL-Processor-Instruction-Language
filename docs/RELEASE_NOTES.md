@@ -1,3 +1,9 @@
+# PIL 0.13.0-alpha.2
+
+- Add mem8/mem16/mem32 typed debugger dumps with printable ASCII.
+- Support little-endian grouping, unaligned reads and optional unsigned decimal.
+- Validate full ranges/counts and retain the original mem command format.
+
 # PIL 0.13.0-alpha.1
 
 - Add generic total shifts, unsigned comparison and conditional flag effects.

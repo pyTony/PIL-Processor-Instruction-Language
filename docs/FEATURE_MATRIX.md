@@ -1,4 +1,4 @@
-# PIL 0.13.0-alpha.1 feature matrix
+# PIL 0.13.0-alpha.2 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
