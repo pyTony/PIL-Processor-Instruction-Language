@@ -486,8 +486,8 @@ pub fn backend_trace(cases:&[super::native::Case])->Result<Vec<u8>,String> {
     for (id,case) in cases.iter().enumerate() {
         let mut d=Debugger::new("counter")?;d.load_image(&case.bytes,case.name)?;d.image=Some(case.image.clone());
         d.cpu.regs=case.regs;d.cpu.eflags=case.flags;
-        if let Some((at,len))=case.protect {d.ram.protect(at,len).map_err(|e|format!("{e:?}"))?;}
         if let Some((at,bytes))=&case.patch {d.ram.write_bytes(*at,bytes).map_err(|e|format!("{e:?}"))?;}
+        if let Some((at,len))=case.protect {d.ram.protect(at,len).map_err(|e|format!("{e:?}"))?;}
         d.serial.inject_rx(&case.rx).map_err(|e|format!("{e:?}"))?;
         for b in &case.tx {d.serial.try_write(*b).map_err(|e|format!("{e:?}"))?;}
         let mut stopped=false;
