@@ -22,6 +22,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
 | Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 39 full-state trace cases and loop timings |
+| External hardware-derived suites | Planned | SingleStepTests CPU adapter and later test386.asm ROM; no external vectors/ROM executed yet |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |
 | Native engine in REPL / JIT | Planned | Debugger still interprets tokens; compiled backend is a separate proof runner |

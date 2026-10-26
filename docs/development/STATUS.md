@@ -1,3 +1,20 @@
+# Same-width support/demo verified; external-suite plan recorded
+
+Core036ff225fcd30a16079fa48e1387fd29891d8a34 passed CI40408105698:
+165 tests,Ubuntu15.27 s/Windows22.70 s;39 full-state cases matched4,494,466
+trace bytes. Includes15-step extensions demo,read-only equal-width word reads
+and preciseGP/SS/RAM faults. Python263,190 independent cases passed.72-file
+isolated build/helpers and unpacked native archive exercise/check the new demo;
+full256x256 Mandelbrot regression passed both hosts. No useralpha.3 run yet.
+Follow-up changes: help strings list9 demos/5 checkers; docs/provenance/evidence
+only, no execution logic change. Help text manually checked; core tests as above.
+User suggested SingleStepTests andbarotto/test386.asm. README/licences reviewed
+at pinned revisions; dev plan docs/development/EXTERNAL_TEST_SUITES.md records
+MIT software/public-domain data forSST andGPLv3-or-later forbarotto. No external
+vectors/code/ROM imported or executed. First external CPU adapter must preserve
+original state/addresses and compare each backend to hardware; testROM islater.
+Prepare separate0.15alpha.3 runtime PR from main; keep test/plan/history ondev.
+
 # Same-width extension compatibility —0.15.0-alpha.3 development
 
 MOVSX/MOVZX16-to16 now accepted via existing equal-width sext/zext PIL tokens.

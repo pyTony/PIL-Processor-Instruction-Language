@@ -591,3 +591,20 @@ read-only word sources,GP/SS/RAM faults. Python263,190 independent cases passed.
 72 runtime files; isolated/native package smoke transcripts include the demo.
 References/provenance updated; no hardware vectors imported/executed. Main/dev
 separation retained. Next: hosted CI, runtime export and separate alpha.3 PR.
+
+## 0.15.0-alpha.3 hosted verification and suite research
+
+Core036ff225fcd30a16079fa48e1387fd29891d8a34 passed CI40408105698:
+165 tests,Ubuntu15.27 s/Windows22.70 s;39 full-state cases matched4,494,466
+trace bytes. Includes15-step extensions demo,read-only equal-width word reads
+and preciseGP/SS/RAM faults. Python263,190 independent cases passed.72-file
+isolated build/helpers and unpacked native archive exercise/check the new demo;
+full256x256 Mandelbrot regression passed both hosts. No useralpha.3 run yet.
+Follow-up changes: help strings list9 demos/5 checkers; docs/provenance/evidence
+only, no execution logic change. Help text manually checked; core tests as above.
+User suggested SingleStepTests andbarotto/test386.asm. README/licences reviewed
+at pinned revisions; dev plan docs/development/EXTERNAL_TEST_SUITES.md records
+MIT software/public-domain data forSST andGPLv3-or-later forbarotto. No external
+vectors/code/ROM imported or executed. First external CPU adapter must preserve
+original state/addresses and compare each backend to hardware; testROM islater.
+Prepare separate0.15alpha.3 runtime PR from main; keep test/plan/history ondev.

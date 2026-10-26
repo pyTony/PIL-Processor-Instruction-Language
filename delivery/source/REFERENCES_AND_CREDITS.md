@@ -149,3 +149,20 @@ original1986 instruction tables list widening forms only; broader encoding
 metadata motivates this compatibility increment. Raw hardware vectors have not
 been imported or executed. Register, alias, read-only-memory and fault checks
 are original project tests; demo bytes are independently authored for this project.
+
+## External validation suites reviewed26 October2026
+
+SingleStepTests/80386 revision459d49fbe6280e9ed46fee887b58dacd9cb880ab:
+README,80386.csv and LICENSE consulted. Software is MIT; data public domain
+unless otherwise noted. Captures use80386EX,not a386DX cycle model.
+https://github.com/SingleStepTests/80386/blob/459d49fbe6280e9ed46fee887b58dacd9cb880ab/LICENSE
+
+barotto/test386.asm revisioncfd052d1e64d5375dea5a681c1eadeed64ceda2c:
+README and COPYING consulted. README specifies GPLv3-or-later. Intended as a
+separate external BIOS-test ROM after machine-level prerequisites exist.
+https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ceda2c/README.md
+https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ceda2c/COPYING
+
+No third-party tests, code or ROMs imported/executed. Thanks to Daniel Balsom,
+SingleStepTests contributors and barotto for making these validation resources
+available,and to Tony for suggesting them. Detailed integration work stays ondev.

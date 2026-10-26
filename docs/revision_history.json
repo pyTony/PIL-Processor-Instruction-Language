@@ -1296,7 +1296,7 @@
     {
       "version": "0.15.0-alpha.3",
       "date": "2026-10-26",
-      "status": "development; hosted Rust CI pending",
+      "status": "host-verified; runtime delivery being prepared",
       "features": [
         "16-to16 MOVSX/MOVZX register/memory",
         "extensions demo and checker",
@@ -1304,12 +1304,46 @@
       ],
       "rust_verification": {
         "tests_supplied": 165,
+        "tests_passed": 165,
+        "tests_failed": 0,
+        "ubuntu_seconds": 15.27,
+        "windows_seconds": 22.7,
+        "source_commit": "036ff225fcd30a16079fa48e1387fd29891d8a34",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40408105698",
         "verifier_cases": 39,
-        "status": "pending"
+        "matched_trace_bytes": 4494466,
+        "runtime_export": "72-file isolated build/scripts/new demo passed",
+        "native_archive": "unpacked new demo passed",
+        "full_image_regression": "both hosts passed",
+        "follow_up": "help text and docs/evidence only; execution logic unchanged"
       },
       "python_extension_oracle_cases": 263190,
       "runtime_files": 72,
-      "provenance": "Original code/demo/tests; Intel386 encoding tables and SingleStepTests metadata consulted, hardware vectors not imported or executed"
+      "provenance": "Original code/demo/tests; Intel386 encoding tables and SingleStepTests metadata consulted, hardware vectors not imported or executed",
+      "external_suites_review": {
+        "source": "user suggestions",
+        "SingleStepTests/80386": {
+          "revision": "459d49fbe6280e9ed46fee887b58dacd9cb880ab",
+          "licence": "software MIT; data public domain unless otherwise noted",
+          "model": "80386EX",
+          "files_consulted": [
+            "README.md",
+            "LICENSE",
+            "80386.csv"
+          ],
+          "vectors_executed": false
+        },
+        "barotto/test386.asm": {
+          "revision": "cfd052d1e64d5375dea5a681c1eadeed64ceda2c",
+          "licence": "GPLv3-or-later per README",
+          "files_consulted": [
+            "README.md",
+            "COPYING"
+          ],
+          "rom_executed": false
+        },
+        "plan": "docs/development/EXTERNAL_TEST_SUITES.md"
+      }
     }
   ]
 }

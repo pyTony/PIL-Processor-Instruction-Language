@@ -1,6 +1,6 @@
 # References, provenance and credits
 
-Maintained with the project. Last updated: 26 October 2026 (v0.15.0-alpha.2).
+Maintained with the project. Last updated: 26 October 2026 (v0.15.0-alpha.3).
 
 ## What this release contains
 
@@ -20,7 +20,8 @@ No project-wide distribution licence has yet been selected for our own code.
 | ID | Material / author or project | How used | Current status |
 |---|---|---|---|
 | INTEL-386 | Intel, 80386 Programmer's Reference Manual, 1986 | Architectural background, widths, flags, instruction and system-mode requirements | Consulted; hosted manual copies, no manual text bundled |
-| SST-386 | Daniel Balsom and SingleStepTests contributors, 80386 tests | Candidate hardware-derived tests and 80386.csv metadata | README inspected; tests/data not imported or run |
+| TEST386 | barotto/test386.asm and contributors | Later BIOS-replacement integration tests | README/COPYING inspected; GPLv3-or-later; no source/ROM imported or run |
+| SST-386 | Daniel Balsom and SingleStepTests contributors, 80386 tests | Candidate hardware-derived tests and 80386.csv metadata | README,CSV,LICENSE inspected; software MIT,data public domain unless noted; no vectors imported/run |
 | TINY386 | Chunhui He and Tiny386 contributors | ESP32 feasibility, device implementation and adapter planning | README, licence, instruction file and selected PC/VGA sources inspected; no code imported |
 | ESP-S3 | Espressif Systems, ESP32-S3 product and ESP-IDF documentation | Host architecture and memory/execution constraints | Consulted; no code copied |
 | ESP-32 | Espressif Systems, original ESP32 memory documentation | Distinguish original ESP32 memory limitations from S3 | Consulted; no code copied |
@@ -121,7 +122,8 @@ that every line has been audited.
 | Other TinyEMU/QEMU-derived files | Tiny386 README says some parts are MIT | Inspect each selected file; do not infer all QEMU code is MIT |
 | SeaBIOS | Tiny386 README identifies LGPL-3 | Track firmware separately and record actual source/build/licence details |
 | Optional FMOPL | Tiny386 README identifies LGPL | Inspect exact licence/version and distribution obligations if enabled |
-| SingleStepTests data/metadata | Redistribution terms not audited in this work | Inspect applicable licences and provenance before import |
+| SingleStepTests software/data | LICENSE reviewed: software MIT,data public domain unless otherwise noted | Retain software notices and check any per-file exceptions before importing |
+| barotto/test386.asm | GPLv3-or-later per README; COPYING inspected | Keep as separate external ROM; retain applicable notices when redistributing |
 | Intel manual content | Copyrighted reference; redistribution terms not established | Link/reference; do not bulk-copy prose or tables without establishing permission |
 
 None of these proposed components is currently bundled, so no third-party
@@ -358,3 +360,20 @@ original1986 instruction tables list widening forms only; broader encoding
 metadata motivates this compatibility increment. Raw hardware vectors have not
 been imported or executed. Register, alias, read-only-memory and fault checks
 are original project tests; demo bytes are independently authored for this project.
+
+## External validation suites reviewed26 October2026
+
+SingleStepTests/80386 revision459d49fbe6280e9ed46fee887b58dacd9cb880ab:
+README,80386.csv and LICENSE consulted. Software is MIT; data public domain
+unless otherwise noted. Captures use80386EX,not a386DX cycle model.
+https://github.com/SingleStepTests/80386/blob/459d49fbe6280e9ed46fee887b58dacd9cb880ab/LICENSE
+
+barotto/test386.asm revisioncfd052d1e64d5375dea5a681c1eadeed64ceda2c:
+README and COPYING consulted. README specifies GPLv3-or-later. Intended as a
+separate external BIOS-test ROM after machine-level prerequisites exist.
+https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ceda2c/README.md
+https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ceda2c/COPYING
+
+No third-party tests, code or ROMs imported/executed. Thanks to Daniel Balsom,
+SingleStepTests contributors and barotto for making these validation resources
+available,and to Tony for suggesting them. Detailed integration work stays ondev.

@@ -335,7 +335,7 @@ impl Debugger {
         let response=match words.as_slice() {
             []=>String::new(),
             ["help"]=>concat!(
-                "help | demo counter|echo|memory|selftest|hello|factorials|loop|mandelbrot | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
+                "help | demo counter|echo|memory|selftest|hello|factorials|loop|mandelbrot|extensions | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
                 "list [count 1..256] | list <address> <count> (bytes, operands, branch targets; * marks EIP)\n",
                 "cache [stats|on|off|clear] (binary monitor)\n",
                 "time [steps 1..1000000] | bench [iterations 1..100000] [samples 1..9] | stress [passes 1..1000]\n",
@@ -345,7 +345,7 @@ impl Debugger {
                 "mem8|mem16|mem32 <address> [values 1..256] [hex|dec] (little-endian + printable ASCII)\n",
                 "mem <address> [count] | poke <address> <hex bytes...> | protect <address> <count>\n",
                 "Image profile: IN/OUT 0xe9 connect to mock serial; HLT is a monitor stop.\n",
-                "Other demos use harness operations. Type check after selftest halts.").into(),
+                "Counter, echo and memory use harness operations. Check selftest, factorials, loop, mandelbrot or extensions.").into(),
             ["quit"]|["exit"]=>return Ok(("bye".into(),true)),
             ["demo",name]=>{self.load_demo(name)?;format!("loaded {} at EIP={:08x}",self.demo,self.cpu.eip)}
             ["load",path]=>{let bytes=std::fs::read(path).map_err(|e|e.to_string())?;self.load_image(&bytes,path)?;format!("loaded {} guest bytes at EIP=00000100",bytes.len())}

@@ -5,6 +5,14 @@ separate delivery branch; never merge the dev tree into main. The applicable
 user documentation is maintained in delivery/source/. CI validates the isolated
 export in addition to development tests. Full history and planning remain here.
 
+## Independent validation next
+
+See [external test suites](development/EXTERNAL_TEST_SUITES.md). First build a
+pinned SingleStepTests one-instruction adapter that preserves original machine
+state and checks both backends against hardware expectations. A separate
+barotto test386.asm ROM becomes useful after reset/ROM mapping,stack/CALL/RET
+and bus I/O exist. No external-suite passes are claimed yet.
+
 ## Feature roadmap and historical notes
 
 # Roadmap — v0.7 development

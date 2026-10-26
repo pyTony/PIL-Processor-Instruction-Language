@@ -11,6 +11,7 @@ Main is a runtime-only export and intentionally runs zero development tests.
 | [Feature matrix](delivery/source/FEATURE_MATRIX.md) | Implemented, partial and planned features in the user delivery |
 | [Release notes](delivery/source/RELEASE_NOTES.md) | User-facing changes by delivery version |
 | [Language reference](docs/LANGUAGE.md) | PIL tokens, widths, flag metadata, memory effects and Rust emission |
+| [External test suites](docs/development/EXTERNAL_TEST_SUITES.md) | Pinned suites, licence findings and CPU/ROM adapter plan |
 | [Development status](docs/development/STATUS.md) | Current work, verified results and remaining limits |
 | [Roadmap](docs/ROADMAP.md) | Emulator milestones, TTGO devices and portability goals |
 | [GitHub workflow](docs/GITHUB.md) | Branch, contribution and runtime delivery procedures |
