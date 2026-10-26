@@ -660,3 +660,7 @@ mod memory_tests;
 #[cfg(test)]
 #[path = "../tests/unit/segment_cpu.rs"]
 mod segment_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/host_cpu.rs"]
+mod host_cpu_tests;

@@ -1423,6 +1423,22 @@
         "first_implementation": "ABI-safe host ADD/SUB/ADC/SBB/CMP8/16/32 oracle,independent masks and both backends;separate pinned386 adapter",
         "verification": "documentation,55-row JSON,relative links and hashes checked;no new runtime/hardware passes",
         "references": "Intel386/SDM,AMD APM listing,Microsoft x64/ABI,psABI project,archived Microsoft OS requirements with edition/retrieval caveats"
+      },
+      "host_oracle_development": {
+        "date": "2026-10-27",
+        "status": "implemented;hosted CI pending",
+        "scope": "ADD/SUB/ADC/SBB/CMP8/16/32,CF0/1;independent native flags/registers vs bothPIL backends",
+        "tests_supplied_x86_64": 167,
+        "other_targets": "166 plus1 hardware test ignored",
+        "external_suite_vectors": 0,
+        "runtime_layout": "unchanged72-file export;development-only module/helper",
+        "actions": "checkoutv5 andupload-artifactv6 useNode24",
+        "reported_old_failure": {
+          "run": 40377893902,
+          "commit": "9632f842ca22be891b1bb16a3bb5e8d3b008e625",
+          "cause": "E0271 Mandelbrot argument closure,already fixed",
+          "node_warning": "not the Rust failure cause"
+        }
       }
     }
   ]

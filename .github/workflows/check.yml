@@ -13,8 +13,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - run: cargo test --locked
+      - uses: actions/checkout@v5
+      - run: cargo test --locked -- --show-output
       - run: cargo run --locked -- --selftest
       - run: python tools/build_selftest.py --check
       - run: python tools/build_hello.py --check
@@ -59,10 +59,13 @@ jobs:
         shell: pwsh
         run: ./tools/mandelbrot.ps1 -Compare -Size 256 -Iterations 32
       - run: python tools/package.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: pil-proof-${{ matrix.os }}
           path: |
             dist/*.zip
+            target/host-cpu-oracle/run-*/report.txt
+            target/host-cpu-oracle/run-*/cases.jsonl
+            target/host-cpu-oracle/run-*/hardware.bin
             target/mandelbrot/256x256-i32/*
             target/backend-comparison/run-*/mandelbrot/*

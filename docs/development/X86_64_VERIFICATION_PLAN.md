@@ -1,6 +1,8 @@
 # Modern CPU verification and an x86-64 PIL subset
 
-Updated 27 October 2026. All milestones below are planned. Today's compiled
+Updated 27 October 2026. The original milestones below define the plan. The first register-ALU oracle
+slice is now implemented ondev; see [usage/status](HOST_CPU_ORACLE.md). Broader
+64-bit guest support remains planned. Today's compiled
 runner emits Rust for fixed 386 images. PC_NATIVE is a narrow ADD/SUB/JNZ
 timing baseline, not a general hardware oracle or an x86-64 guest decoder.
 

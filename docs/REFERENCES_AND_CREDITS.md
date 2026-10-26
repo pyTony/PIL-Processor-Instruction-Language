@@ -402,3 +402,17 @@ added. References consulted:
 
 No manual prose,OS media,implementation or test vectors imported. Modern-CPU
 evidence is explicitly distinct from386-specific behavior and machine boot tests.
+
+## Initial modern-host ALU oracle and Actions maintenance —27 October2026
+
+Original fixed-byte native stubs and generated/interpreted comparison cases.
+Rust inline-assembly reference and CPUID API consulted for operand/clobber/stack
+contracts and toolchain compatibility:
+https://doc.rust-lang.org/reference/inline-assembly.html
+https://doc.rust-lang.org/core/arch/x86_64/fn.__cpuid.html
+
+Actions runtime metadata checked directly:checkout v5 usesNode24;upload-artifact
+v6 usesNode24. Hosted Windows/Linux runner compatibility is checked by CI.
+https://github.com/actions/checkout/blob/v5/action.yml
+https://github.com/actions/upload-artifact/blob/v6/action.yml
+No external code or vectors copied. Tests remain ondev; no new guest support.

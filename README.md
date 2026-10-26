@@ -12,6 +12,7 @@ Main is a runtime-only export and intentionally runs zero development tests.
 | [Release notes](delivery/source/RELEASE_NOTES.md) | User-facing changes by delivery version |
 | [Language reference](docs/LANGUAGE.md) | PIL tokens, widths, flag metadata, memory effects and Rust emission |
 | [386 completion TODO](docs/development/ISA_COMPLETION_PLAN.md) | Remaining instruction forms,dependencies and acceptance gates |
+| [Host CPU oracle](docs/development/HOST_CPU_ORACLE.md) | Development-only real-PC ALU correctness comparison and artifacts |
 | [x86-64 verification plan](docs/development/X86_64_VERIFICATION_PLAN.md) | Shared lessons,modern CPU oracle and true64-bit subset |
 | [ISA backlog](docs/development/ISA_BACKLOG.json) | Machine-readable family/form TODO inventory |
 | [OS compatibility targets](docs/development/OS_COMPATIBILITY_TARGETS.md) | Windows editions,minimums and future machine milestones |

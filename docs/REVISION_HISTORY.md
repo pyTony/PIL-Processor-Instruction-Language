@@ -644,3 +644,19 @@ machine goals,not current boot support or guaranteed TTGO memory feasibility.
 Plans linked from README/roadmap/external-suite notes; references and history
 updated. Documentation-only; no runtime changes or new CPU verification claimed.
 Keep this work ondev; no runtime delivery PR or Cargo version bump is needed.
+
+## Actual-host ALU oracle development and old CI clarification —27 October2026
+
+Adds optional x86-64 hardware comparison for ADD/SUB/ADC/SBB/CMP8/16/32,
+CF0/1,boundary/random cases and fixed independent mask8d5. Literal native
+bytes,CF/flags snapshots and source/sentinel/upper-half checks precede both
+PIL comparisons; guest and long-mode encodings are separately recorded.
+Six known-answer stub checks; original cases only,not external386 vectors.
+Artifacts:target/host-cpu-oracle/run-*/ includingdata,source,CPU/toolchain/source
+provenance and first-field failures. Helper python tools/verify_host_cpu.py.
+Two tests added:167 onx86-64 expected,166 plus1 ignored onARM. Hosted CI pending.
+Source includes only a cfg(test) module; runtime export remains72 files.
+Node24 action updates:checkoutv5,upload-artifactv6. User-linked old run40377893902
+failed9632f84 due E0271 inMandelbrot argument closure; fixed historically. Its
+Node20 warning was separate; Windows was canceled by matrix fail-fast.
+No runtime/Cargo version change. Keep tests and tooling ondev,not main.
