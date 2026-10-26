@@ -98,3 +98,9 @@ assembler, guest algorithm, mathematical references, image writers and tests;
 no external source code/assets imported. Thanks to the documentation authors
 and maintainers. Escape-iteration PGM is an intensity visualization, not a
 calibrated luminance image. No new dependencies or firmware reuse.
+
+## Full-image backend comparison
+
+Original extension of the project PIL Rust emitter, trace parser and Mandelbrot
+workload. No additional external code, dependencies or reference material used.
+Thanks to Tony for the Windows full-image reference-checked render report.

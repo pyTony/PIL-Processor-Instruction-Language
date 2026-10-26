@@ -995,7 +995,7 @@
     {
       "version": "0.14.0-alpha.1",
       "date": "2026-10-26",
-      "status": "host-verified; runtime-only PR #14 awaits review",
+      "status": "host-verified and runtime PR #14 merged; user Windows render verified",
       "features": [
         "Q12 guest Mandelbrot through256x256",
         "serial TX draining and exact mathematical raster checking",
@@ -1015,7 +1015,7 @@
         "matched_trace_bytes": 4273138,
         "runtime_export": "66-file standalone checks passed",
         "native_archive": "unpacked render passed",
-        "user_render": "not yet reported"
+        "user_render": "Windows user256x256/32 passed"
       },
       "runtime_files": 66,
       "provenance": "Intel branch manuals,Netpbm PGM,Microsoft BMP reference only; original code",
@@ -1030,7 +1030,36 @@
         "ubuntu_ms": 1599.244,
         "windows_ms": 1664.788,
         "scope": "single interpreted image runs; includes TX draining; excludes setup/reference/files; not386 cycles"
+      },
+      "user_windows_render": {
+        "pixels": 65536,
+        "guest_instructions": 12940344,
+        "elapsed_ms": 1484.024,
+        "tx_backpressure_retries": 255,
+        "cache_entries": 43,
+        "cache_hits": 12940557,
+        "cache_misses": 43,
+        "invalidations": 0,
+        "evictions": 0,
+        "scope": "single interpreted render; serial draining included; setup/reference/files excluded; not386 cycles"
       }
+    },
+    {
+      "version": "0.14.0-alpha.2",
+      "date": "2026-10-26",
+      "status": "development; hosted Rust CI pending",
+      "features": [
+        "full-image generated Rust comparison",
+        "26-case per-instruction gate",
+        "pixel plus drain/halt state equivalence",
+        "single-render timing and artifact preservation"
+      ],
+      "rust_verification": {
+        "tests_supplied": 157,
+        "status": "pending"
+      },
+      "runtime_files": 66,
+      "provenance": "Original code extending existing emitter/trace format; no new sources or dependencies"
     }
   ]
 }

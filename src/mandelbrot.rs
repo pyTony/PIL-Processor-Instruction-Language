@@ -47,7 +47,7 @@ pub fn reference(size:u32,iterations:u32)->Result<Vec<u8>,String>{
         }pixels.push(color);
     }}Ok(pixels)
 }
-pub struct Render{pub pixels:Vec<u8>,pub steps:u64,pub seconds:f64,pub blocked:u32,pub cache:String}
+pub struct Render{pub pixels:Vec<u8>,pub steps:u64,pub seconds:f64,pub blocked:u32,pub cache:String,pub checkpoints:Vec<u8>}
 pub fn bitmap(size:u32,pixels:&[u8])->Result<Vec<u8>,String>{
     if !(1..=256).contains(&size)||pixels.len()!=size as usize*size as usize{return Err("bitmap dimensions mismatch".into());}
     let stride=(size as usize*3+3)&!3;let length=54+stride*size as usize;let mut out=vec![0u8;length];out[..2].copy_from_slice(b"BM");

@@ -433,3 +433,17 @@ drains;single render1599.244/1664.788 ms respectively. Independent Python
 PGM/BMP oracle passed,rasterSHA256=3855106a06087a62fdfc6e322767988e441137f5e13071b473f43e2f20140619.
 Standalone66-file source and unpacked native render checks passed. Runtime-only
 PR #14 awaits user review; no phone/PC user render reported or tag published.
+
+## 0.14.0-alpha.2 — full-image compiled comparison
+
+PR #14 is merged at main cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c.
+User Windows0.14alpha.1 full256x256/32 passed65,536 reference pixels,
+12,940,344 steps in1484.024 ms,255 retries;43 cache entries,12,940,557 hits,
+43 misses,no invalidations/evictions. This is one interpreted render.
+New optional --compare-mandelbrot gates with26 per-instruction cases, then
+compares full-image pixels plus CPU/RAM/flags/queues/stop at serial-drain/halt
+checkpoints and exact step/retry counts. Single cold render each; capture/draining
+included,setup/reference/files/compilation excluded. Existing interpreter image
+render and REPL unchanged. Two tests added (157 total pending hosted CI).
+Original code, no new external sources or dependencies. Main stays runtime-only.
+Next: validate both hosts, export66 files and prepare separate runtime PR.

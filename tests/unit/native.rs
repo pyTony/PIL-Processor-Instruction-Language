@@ -64,3 +64,22 @@ fn verifier_rejects_malformed_equal_traces_and_extra_records() {
     assert!(verify_traces(&bytes,&extra).unwrap_err().contains("interpreter record missing"));
     assert!(verify_traces(&extra,&bytes).unwrap_err().contains("generated record missing"));
 }
+
+#[test]
+fn full_image_backend_compares_pixels_and_serial_boundary_state(){
+    let dir=std::env::temp_dir().join(format!("pil-mandel-proof-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let report=compare_mandelbrot_at(&dir,32,8).unwrap();
+    assert!(report.contains("1024 pixels match interpreter and independent Q12 reference"),"{report}");
+    assert!(report.contains("4 serial-drain/halt checkpoints"),"{report}");
+    assert!(report.contains("3 TX backpressure retries in each engine"));
+    assert_eq!(fs::read(dir.join("generated.checkpoints")).unwrap(),fs::read(dir.join("interpreter.checkpoints")).unwrap());
+    fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn checkpoint_diagnostics_name_mandelbrot_and_changed_state(){
+    let mut bytes=Vec::new();super::super::trace::record(&mut bytes,0,[3,0x120,0,0,0],&[0;8],0x202,0,0x120,&[1,2],&[],&[65]);
+    let mut changed=bytes.clone();changed[24]^=1;
+    let error=verify_named_traces(&bytes,&changed,&["mandelbrot"],"checkpoint").unwrap_err();
+    assert!(error.contains("(mandelbrot), checkpoint 1"));assert!(error.contains("EAX"));
+    assert!(emit_mandelbrot(3,32).is_err());assert!(emit_mandelbrot(256,65).is_err());
+}

@@ -1,5 +1,14 @@
 # Changes
 
+## 0.14.0-alpha.2
+
+- Compare full-size Mandelbrot generated Rust and cached PIL interpreter.
+- Gate comparison with the existing 26-case per-instruction verifier.
+- Check every pixel, full state at serial drain/halt boundaries and step/retry counts.
+- Add -Compare / --compare to render helpers; retain byte guards and black_box.
+- Report single-run timing scope and preserve pixel/state/source artifacts.
+
+
 ## 0.14.0-alpha.1
 
 - Add Q12 guest Mandelbrot, reference checking, serial draining and BMP/PGM output.

@@ -1,3 +1,17 @@
+# Full-image compiled comparison —0.14.0-alpha.2 development
+
+PR #14 is merged at main cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c.
+User Windows0.14alpha.1 full256x256/32 passed65,536 reference pixels,
+12,940,344 steps in1484.024 ms,255 retries;43 cache entries,12,940,557 hits,
+43 misses,no invalidations/evictions. This is one interpreted render.
+New optional --compare-mandelbrot gates with26 per-instruction cases, then
+compares full-image pixels plus CPU/RAM/flags/queues/stop at serial-drain/halt
+checkpoints and exact step/retry counts. Single cold render each; capture/draining
+included,setup/reference/files/compilation excluded. Existing interpreter image
+render and REPL unchanged. Two tests added (157 total pending hosted CI).
+Original code, no new external sources or dependencies. Main stays runtime-only.
+Next: validate both hosts, export66 files and prepare separate runtime PR.
+
 # Mandelbrot verified — runtime PR #14
 
 https://github.com/pyTony/pil_proof/pull/14 awaits user review. Core source
