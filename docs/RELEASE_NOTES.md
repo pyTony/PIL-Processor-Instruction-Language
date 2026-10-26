@@ -1,3 +1,11 @@
+# PIL 0.10.0-alpha.2
+
+- Verifier failures identify case, step, instruction EIP and the differing CPU,
+  stop metadata, RAM or serial field.
+- Truncated or malformed traces fail verification; both trace files are retained
+  on a mismatch under the reported artifacts directory.
+- The decoder and execution engines have the same guest instruction coverage.
+
 # PIL 0.10.0-alpha.1
 
 First alpha candidate of the PIL host execution proof. See FEATURE_MATRIX.md
