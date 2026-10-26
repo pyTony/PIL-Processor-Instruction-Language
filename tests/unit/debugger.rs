@@ -234,3 +234,61 @@ fn numeric_stress_verifies_every_fresh_run_and_rejects_invalid_counts() {
         assert!(d.command(command).is_err(),"{command}");assert_eq!(d.cpu,c);
     }
 }
+
+#[test]
+fn cached_and_uncached_execution_match_at_every_instruction() {
+    let images=vec![super::super::guest::selftest_bytes().unwrap(),super::super::guest::hello_bytes().unwrap(),super::super::guest::factorial_bytes().unwrap(),super::super::guest::loop_bytes(257).unwrap()];
+    for bytes in images {
+        let mut cached=Debugger::new("counter").unwrap();let mut plain=Debugger::new("counter").unwrap();
+        cached.load_image(&bytes,"comparison").unwrap();plain.load_image(&bytes,"comparison").unwrap();plain.cache.set_enabled(false);
+        cached.serial.inject_rx(&[65]).unwrap();plain.serial.inject_rx(&[65]).unwrap();let mut halted=false;
+        for _ in 0..1000 {
+            let a=cached.step();let b=plain.step();assert_eq!(a,b);assert_eq!(cached.cpu,plain.cpu);assert_eq!(cached.ram,plain.ram);assert_eq!(cached.serial,plain.serial);assert_eq!(cached.tx_events,plain.tx_events);
+            if matches!(a,Stop::Halt(_)){halted=true;break;}assert_eq!(a,Stop::Advanced);
+        }
+        assert!(halted);assert!(cached.cache.stats().misses>0);assert_eq!(plain.cache.stats(),super::super::cache::Stats::default());
+    }
+}
+#[test]
+fn guest_store_invalidates_its_previously_cached_instruction() {
+    // First MOV AL,1 is cached. A guest store replaces its immediate with 2,
+    // then a taken JE returns to execute that instruction again.
+    let bytes=[0xb0,1,0x66,0xbb,1,0,0,0,0xb0,2,0x88,0x07,0x38,0xc0,0x74,0xf0];
+    let mut d=Debugger::new("counter").unwrap();d.load_image(&bytes,"self-modifying").unwrap();
+    assert_eq!(d.step(),Stop::Advanced);assert_eq!(d.cpu.regs[0]&255,1);
+    assert!(matches!(d.run(5).unwrap().1,Stop::Budget(0x100)));
+    assert_eq!(d.step(),Stop::Advanced);assert_eq!(d.cpu.regs[0]&255,2);assert_eq!(d.cache.stats().invalidations,1);
+}
+#[test]
+fn cached_store_recomputes_addresses_and_rechecks_ram_protection() {
+    let mut d=Debugger::new("counter").unwrap();d.load_image(&[0x89,0x07,0xf4],"store").unwrap();d.cpu.regs[0]=0x1234;d.cpu.regs[3]=0x400;
+    assert_eq!(d.step(),Stop::Advanced);assert_eq!(d.ram.load(0x500,super::super::memory::MemWidth::Word),Ok(0x1234));
+    d.cpu.eip=0x100;d.cpu.regs[3]=0x500;d.ram.protect(0x600,2).unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();
+    assert_eq!(d.step(),Stop::Fault(ExecError::MemoryAccess{eip:0x100,address:0x600,bytes:2,write:true}));
+    assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);assert_eq!(d.cache.stats().hits,1);
+}
+#[test]
+fn cache_controls_and_reset_load_keep_the_requested_mode() {
+    let mut d=Debugger::new("loop").unwrap();d.run(20).unwrap();assert!(d.cache.stats().hits>0);
+    let stats=d.cache.stats();assert!(d.command("cache nonsense").is_err());assert_eq!(d.cache.stats(),stats);
+    d.command("reset").unwrap();assert_eq!(d.cache.stats(),super::super::cache::Stats::default());assert!(d.cache.enabled());
+    d.command("cache off").unwrap();d.run(20).unwrap();assert_eq!(d.cache.stats(),super::super::cache::Stats::default());
+    d.command("demo hello").unwrap();assert!(!d.cache.enabled());d.command("cache on").unwrap();d.step();
+    assert!(d.command("cache stats").unwrap().0.contains("misses=1"));d.command("cache clear").unwrap();assert!(d.command("cache").unwrap().0.contains("entries=0/256"));
+}
+#[test]
+fn patched_cached_opcode_reports_error_without_cpu_or_ram_mutation() {
+    let mut d=Debugger::new("hello").unwrap();d.step();d.cpu.eip=0x100;d.command("poke 0x100 90").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();
+    assert!(matches!(d.step(),Stop::Decode{eip:0x100,..}));assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);assert_eq!(d.cache.stats().invalidations,1);
+}
+#[test]
+fn benchmark_labels_and_counts_both_interpreter_modes() {
+    let cached=benchmark_mode(16,2,true).unwrap();assert!(cached.contains("cache=on (cold per sample); last_sample_hits=45 misses=7 invalidations=0"));
+    let plain=benchmark_mode(16,2,false).unwrap();assert!(plain.contains("cache=off (cold per sample); last_sample_hits=0 misses=0 invalidations=0"));
+    let mut d=Debugger::new("hello").unwrap();d.command("cache off").unwrap();assert!(d.command("bench 2 1").unwrap().0.contains("cache=off"));
+}
+#[test]
+fn full_65536_iteration_loop_passes_with_cache_reuse_and_batched_runs() {
+    let mut d=Debugger::new("loop").unwrap();assert_eq!(d.run_large(250000).unwrap(),(196611,Stop::Halt(0x11a)));assert!(d.command("check").is_ok());
+    assert_eq!(d.cache.stats(),super::super::cache::Stats{hits:196605,misses:7,invalidations:0,evictions:0});
+}

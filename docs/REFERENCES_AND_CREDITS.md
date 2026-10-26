@@ -221,3 +221,8 @@ MOV, ADD, SUB, CMP and Jcc semantics. Expected factorials are ordinary integer
 mathematics, independently cross-checked by Python math.factorial in the dev
 builder. Timing uses Rust standard-library Instant, not a hardware-cycle model.
 No new third-party code/data imported or external dependencies added.
+
+Instruction cache (v0.9): original project implementation using Rust's standard
+BTreeMap and Rc. No external implementation or library was imported. Encoded
+byte/segment-context validation follows this monitor's existing fetch rules.
+No new instruction semantics or reference materials are introduced.

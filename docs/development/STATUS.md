@@ -1,3 +1,21 @@
+# v0.9 cached interpreter development
+
+Engine remains PIL token interpreter. Generated Rust is separate. New cache.rs
+stores up to 256 shared decoded/PIL descriptions, matches full Image/segment
+context and re-fetches/checks every encoded byte on reuse. No RAM writer hooks
+are needed; poke/guest writes invalidate on next use. Errors never cached.
+Registers/flags/addresses/permissions are live at each instruction. Cache mode
+persists on reset/load; entries/stats clear. Whole-cache flush at capacity.
+REPL cache stats/on/off/clear; bench follows mode; shell --bench --uncached and
+PowerShell -Uncached compare. Every sample starts cold; warmup is separate.
+116 tests supplied; host CI pending. Main is a 45-file runtime-only export.
+User v0.8 phone baseline: release 10000 iterations / 5 samples, median
+340.420 ms, 88135 ins/s on android/aarch64. Full debug loop and stress passed.
+See revision history JSON for all timings. No phone cache result yet. Preserve
+all dev tooling/history here; never merge dev into main.
+
+## Earlier notes
+
 # v0.8 host verification complete
 
 Runtime-only PR #5: https://github.com/pyTony/pil_proof/pull/5

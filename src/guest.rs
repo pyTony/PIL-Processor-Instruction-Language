@@ -33,7 +33,7 @@ pub enum Operation {
 }
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
-#[derive(Clone,Debug)]
+#[derive(Clone,Debug,PartialEq,Eq)]
 pub struct Image {pub end:u32,pub segments:[SegmentCache;6]}
 impl Image {
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
@@ -45,6 +45,12 @@ impl Image {
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
         Ok((Self{end:ENTRY+bytes.len() as u32,segments},ram))
+    }
+    pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
+        if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
+        let mut reader=Reader{image:self,ram,start:eip,pos:eip};let mut bytes=[0u8;15];
+        for byte in &mut bytes[..length as usize] {*byte=reader.byte()?;}
+        Ok(bytes)
     }
     pub fn decode(&self,ram:&Ram,eip:u32)->Result<Decoded,GuestError> {
         let mut r=Reader{image:self,ram,start:eip,pos:eip};

@@ -1,3 +1,14 @@
+# PIL 0.9.0
+
+- Cache decoded binary instructions and their compiled PIL descriptions.
+- Revalidate bytes and segment context before reuse, including guest code writes.
+- Add cache stats/on/off/clear commands and uncached benchmark comparisons.
+- Preserve precise stops, current memory permissions and runtime register values.
+- Keep execution in the token interpreter; generated Rust remains a separate API.
+
+Cached samples start with an empty cache. No simulated cycle model or JIT is
+introduced. See DEBUGGER.md for timing scope and cache controls.
+
 # PIL 0.8.0
 
 - Add real guest programs computing 1!..12! and a 65,536-iteration integer loop.

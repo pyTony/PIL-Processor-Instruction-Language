@@ -34,3 +34,7 @@ The factorial and counted-loop programs and timing commands are original
 project work using the same documented instructions. Factorial results use
 integer arithmetic; host timings use the Rust standard library. No new
 third-party implementation or dataset is bundled.
+
+The bounded decoder/PIL cache is original project code using Rust's standard
+library. It introduces no new external dependency, instruction semantics or
+third-party source material.

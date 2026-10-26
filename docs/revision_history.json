@@ -297,7 +297,7 @@
       "rust_verification": {
         "tests_supplied": 101,
         "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40331078455",
-        "phone_numeric": "not yet reported",
+        "phone_numeric": "user-confirmed PASS: factorial table, 100 stress runs and 65536 loop",
         "source_commit": "2ff2bcb89bbc03ac46870413a6dabfb7cd5d90b9",
         "tests_passed": 101,
         "tests_failed": 0,
@@ -310,7 +310,51 @@
       },
       "runtime_files": 44,
       "timing_scope": "host wall time; includes decoding/PIL compilation/interpreter; not guest cycles",
-      "provenance": "original fixture/code; existing instruction references; Python math.factorial independent reference"
+      "provenance": "original fixture/code; existing instruction references; Python math.factorial independent reference",
+      "phone_baseline": {
+        "host": "android/aarch64",
+        "version": "0.8.0",
+        "engine": "uncached PIL token interpreter",
+        "factorial_debug_ms": 42.891,
+        "stress_runs": 100,
+        "stress_results_verified": 1200,
+        "stress_ms": 3317.416,
+        "loop_iterations": 65536,
+        "loop_completed_instructions": 196611,
+        "loop_debug_ms": 22430.539,
+        "release_iterations": 10000,
+        "release_instructions_per_sample": 30003,
+        "release_samples_ms": [
+          340.564,
+          340.618,
+          340.42,
+          340.299,
+          340.141
+        ],
+        "release_median_ms": 340.42,
+        "release_instructions_per_second": 88135,
+        "measured_samples": 5,
+        "excluded_warmups": 1
+      }
+    },
+    {
+      "version": "0.9.0",
+      "date": "2026-10-26",
+      "status": "development; host CI pending",
+      "features": [
+        "bounded decoded-instruction/PIL cache",
+        "per-hit encoded-byte and image/segment validation",
+        "immutable shared programs with dynamic CPU/memory execution",
+        "cache stats/on/off/clear and uncached benchmark mode"
+      ],
+      "rust_verification": {
+        "tests_supplied": 116,
+        "host_ci": "pending",
+        "phone_cache": "not yet reported"
+      },
+      "runtime_files": 45,
+      "engine": "PIL token interpreter; no JIT or native generated execution",
+      "provenance": "original cache design; Rust std BTreeMap/Rc; no new external materials"
     }
   ]
 }

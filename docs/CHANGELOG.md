@@ -1,5 +1,13 @@
 # Changes
 
+## 0.9.0
+
+- Cache decoded instructions/PIL with bounded storage and shared immutable programs.
+- Revalidate encoded bytes and full image/segment context before every hit.
+- Add cache controls/stats and uncached benchmark mode; remain a token interpreter.
+- Add 15 regression tests (116 total), including cached/uncached step comparisons,
+  guest code modification, runtime permission checks and the full 65,536 loop.
+
 ## 0.8.0
 
 - Add guest factorial table and counted loop, with exact output/state checks.

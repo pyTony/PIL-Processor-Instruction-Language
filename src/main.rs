@@ -1,5 +1,5 @@
 //! PIL proof: text -> validated typed tokens -> register/flag interpreter.
-//! No external crates or x86 binary decoder; RAM and supplied segment contexts.
+//! Token interpreter, small 386 decoder and Rust-source emitter; no external crates.
 use std::collections::HashMap;
 mod flow;
 mod memory;
@@ -8,6 +8,7 @@ use memory::{Ram, MemWidth};
 mod serial;
 mod debugger;
 mod guest;
+mod cache;
 use flow::{ExecError, FlowContext};
 
 type R<T> = Result<T, String>;
@@ -480,10 +481,14 @@ fn main() -> R<()> {
     }
     if args.get(1).map(String::as_str)==Some("--numeric-test") {return debugger::numeric_test();}
     if args.get(1).map(String::as_str)==Some("--bench") {
-        if args.len()>4{return Err("usage: pil-proof --bench [iterations] [samples]".into());}
-        let n=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{1000};
-        let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{3};
-        println!("{}",debugger::benchmark(n,samples)?);return Ok(());
+        let mut counts=Vec::new();let mut cached=true;
+        for arg in &args[2..] {
+            if arg=="--uncached" && cached {cached=false;}else{counts.push(arg);}
+        }
+        if counts.len()>2{return Err("usage: pil-proof --bench [iterations] [samples] [--uncached]".into());}
+        let n=if let Some(x)=counts.first(){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{1000};
+        let samples=if let Some(x)=counts.get(1){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{3};
+        println!("{}",debugger::benchmark_mode(n,samples,cached)?);return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--stress") {
         if args.len()>3{return Err("usage: pil-proof --stress [passes]".into());}

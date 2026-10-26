@@ -147,3 +147,26 @@ helpers, isolated 44-file runtime builds/scripts/generated Rust, and unpacked
 native archive numeric transcripts passed on both platforms. Timing values are
 host-dependent measurements, not pass thresholds. Runtime-only PR #5 targets
 main from delivery/v0.8.0. Phone numerical results remain unreported.
+
+## v0.9.0 — cached PIL interpreter
+
+User asked to continue optimization and confirm the execution engine. The engine
+is the PIL token interpreter; Rust-source emission is separate. Add a bounded
+decoder/PIL cache with shared immutable descriptions, per-hit byte validation,
+full image/segment-context matching and non-cached failure paths. Add cache
+controls/stats, uncached benchmark mode, and 15 tests (116 dev tests total).
+Cached-vs-uncached instruction states, self-modifying code, live addresses and
+RAM protection, fetch context and 65,536-iteration execution are covered.
+
+User-confirmed Termux v0.8 baseline (android/aarch64):
+- Factorials: 336 instructions, PASS, debug elapsed 42.891 ms (7834 ins/s).
+- Stress: 100 fresh runs, 1200 results, 33600 instructions, PASS, 3317.416 ms.
+- Default loop: 65536 iterations, 196611 instructions, PASS including registers
+  and flags; debug 22430.539 ms (8765 ins/s).
+- Release benchmark: 10000 iterations, 30003 instructions/sample, five measured
+  samples and one excluded warmup. Times [340.564, 340.618, 340.420, 340.299,
+  340.141] ms; median 340.420 ms; 88135 ins/s. Decode/PIL compilation included;
+  image setup/checking/output excluded. Rust build time was outside samples.
+
+Cached host verification pending; no phone cache performance claim yet. Main
+will receive a 45-file runtime-only export; dev retains all history and tests.
