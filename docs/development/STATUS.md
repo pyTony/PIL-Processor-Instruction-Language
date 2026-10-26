@@ -1,3 +1,13 @@
+# User phone expanded ISA verified — 0.11.0-alpha.1
+
+User Termux android/aarch64 run sh tools/compare.sh 10000 5 passed all14
+cases and matched2,460,193 bytes. ALU8/16/32 each31 steps; read-only TEST
+succeeded and NEG faulted before retirement. Generated median0.690346 ms,
+43,460,815 guest instructions/s; cached interpreter7.091 ms,4,231,275 ins/s.
+Observed10.27x; generated compilation10.230 s excluded. Five samples plus one
+excluded warmup. User PC comparison remains unreported. This is a fixed-image
+proof, not native REPL/JIT or 386 cycles.
+
 # Instruction expansion verified — PR #9
 
 Runtime-only PR https://github.com/pyTony/pil_proof/pull/9 is ready for review.

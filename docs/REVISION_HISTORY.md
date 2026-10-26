@@ -277,3 +277,17 @@ on Ubuntu7.50 s and Windows16.08 s. Fourteen traces matched2,460,193 bytes.
 Python oracle1,184,058 arithmetic/logical +1,030 conditional cases passed.
 Standalone58-file runtime and unpacked native deliveries passed. Runtime-only
 PR #9 awaits user review; phone verification of this revision remains pending.
+
+## 0.11.0-alpha.1 — user-confirmed phone verification
+
+User console evidence, Termux android/aarch64, sh tools/compare.sh 10000 5:
+all14 cases matched2,460,193 trace bytes, including ALU8/16/32 (31 steps
+each), read-only TEST success and NEG fault before retirement.
+Generated samples [0.690346,0.779307,0.688231,0.690385,0.689346] ms;
+median0.690346 ms,43,460,815 guest instructions/s. Interpreter samples
+[7.083,7.077,7.091,7.117,7.095] ms; median7.091 ms,4,231,275 ins/s.
+30,003 instructions/sample, five measured samples plus one excluded warmup;
+cache29997 hits/7 misses/0 invalidations. Observed ratio10.27x; generated
+compilation10.230 s excluded. No controlled cross-version performance claim.
+Direct x86-64 baseline unavailable on this aarch64 phone, as expected.
+No implementation changes or new tests in this evidence update.
