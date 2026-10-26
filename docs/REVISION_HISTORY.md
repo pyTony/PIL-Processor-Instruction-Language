@@ -406,3 +406,7 @@ before the listing follow-up was ready. Listing gets separate0.13.0-alpha.3.
 Code source0e2d8d495f84c27830dda4ae0cf31579247e9afd passed148 tests on Ubuntu
 8.32 s/Windows18.29 s in CI40374526560;23 cases matched3,044,833 bytes.
 Only version/docs metadata changes after this test run; execution source unchanged.
+
+Runtime-only alpha.3 PR #13 ready:head6b193b23c11946855b87d4bf6221ddde74fe5a6c,
+exported from dev d57ca83e80ec1ce247478a59be9616aa1610546a on main after
+merged typed-dump PR #12. No automatic merge or tag/release publication.

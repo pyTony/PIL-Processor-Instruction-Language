@@ -919,7 +919,7 @@
     {
       "version": "0.13.0-alpha.3",
       "date": "2026-10-26",
-      "status": "host-verified listing code; runtime follow-up after PR #12 merge",
+      "status": "host-verified; runtime-only PR #13 awaits review",
       "features": [
         "readable instruction bytes/registers/immediates/memory/branch targets",
         "bounded list COUNT / list ADDRESS COUNT",
@@ -940,7 +940,13 @@
         "note": "post-CI version/docs metadata only; execution source unchanged"
       },
       "runtime_files": 62,
-      "provenance": "original display formatting from decoded metadata; no new external references"
+      "provenance": "original display formatting from decoded metadata; no new external references",
+      "delivery": {
+        "pr": "https://github.com/pyTony/pil_proof/pull/13",
+        "head_commit": "6b193b23c11946855b87d4bf6221ddde74fe5a6c",
+        "source_commit": "d57ca83e80ec1ce247478a59be9616aa1610546a",
+        "base_main": "7efaf780d0041b9c6c56260810f87940a4b4d175"
+      }
     }
   ]
 }

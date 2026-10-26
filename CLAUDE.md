@@ -1,3 +1,12 @@
+# Readable listing runtime PR #13 ready
+
+https://github.com/pyTony/pil_proof/pull/13 contains the alpha.3 listing follow-up.
+Delivery head6b193b23c11946855b87d4bf6221ddde74fe5a6c based on main7efaf780d0041b9c6c56260810f87940a4b4d175;
+source dev d57ca83e80ec1ce247478a59be9616aa1610546a. Execution code matches
+CI-tested0e2d8d495f84c27830dda4ae0cf31579247e9afd (148 tests,23 matching
+cases); version/docs metadata updated separately. PR #12 already merged
+memory dumps. No user alpha.3 listing result yet; no release/tag published.
+
 # Readable listings verified — alpha.3 follow-up
 
 User merged typed-dump PR #12 before the listing addition; main7efaf780d0041b9c6c56260810f87940a4b4d175
