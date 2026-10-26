@@ -1,3 +1,19 @@
+# Branch policy correction — runtime-only main
+
+Keep development on dev. Never merge dev directly into main. Main contains
+only portable run/build source, embedded ISA descriptions, compile/debug
+scripts, sample program and user-facing documentation. Tests, oracles, CI,
+export/package tools, history/design notes and this handoff remain on dev.
+
+Export with python3 tools/export_runtime.py EMPTY_DEST --source-ref DEV_SHA.
+CI adds --verify to compile/run the isolated export, exercise platform scripts
+and compile generated Rust. Propose the exported tree on a delivery branch
+based on main. Runtime source drops cfg(test) path modules requiring dev files.
+Native archives also carry user docs/credits only. PR #2 (dev -> main) is
+superseded by a runtime-only delivery PR. Preserve all development history here.
+
+## Previous status (branch promotion policy above supersedes older notes)
+
 # Current continuation status — v0.7 development
 
 Develop on dev; main is the reviewed user delivery branch. The user approves

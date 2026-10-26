@@ -235,7 +235,14 @@
         "native_zip_creation": "passed on both hosts",
         "ci_run": "https://github.com/pyTony/pil_proof/actions/runs/40318741977"
       },
-      "source_manifest": "docs/SHA256SUMS"
+      "source_manifest": "docs/SHA256SUMS",
+      "delivery_policy": {
+        "development_branch": "dev",
+        "main_contents": "runtime build/run source and applicable user documentation only",
+        "promotion": "strict exported tree on delivery branch based on main; never merge dev",
+        "development_files": "retained on dev",
+        "export_validation": "standalone build/debug/serial/generated Rust checks in CI"
+      }
     }
   ]
 }

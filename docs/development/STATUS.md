@@ -1,3 +1,13 @@
+# Branch layout policy
+
+Development stays on dev; main receives a generated runtime-only tree through
+a delivery branch/PR. Never merge dev into main. Run tools/export_runtime.py
+with an empty output directory; --verify checks the isolated build, launchers,
+serial transcript and generated Rust. User documentation templates live in
+delivery/source/. Development logs, tests, CI and tooling stay on dev.
+
+## Feature verification
+
 # Development status
 
 Development branch: dev. Delivery branch: main. Promote through reviewed PRs.

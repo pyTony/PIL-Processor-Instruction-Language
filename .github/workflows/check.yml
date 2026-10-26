@@ -1,9 +1,9 @@
 name: Check
 on:
   push:
-    branches: [dev, main]
+    branches: [dev]
   pull_request:
-    branches: [main, dev]
+    branches: [dev]
 permissions:
   contents: read
 jobs:
@@ -25,6 +25,7 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: ./tools/debug.ps1 -Check
+      - run: python tools/export_runtime.py target/runtime-source --verify
       - run: cargo build --release --locked
       - run: python tools/package.py
       - uses: actions/upload-artifact@v4

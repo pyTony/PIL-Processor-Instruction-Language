@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory() as temp:
     image=Path(temp)/'selftest.bin'
     subprocess.run([str(binary),'--write-selftest',str(image)],check=True)
     files={binary:binary.name,image:'programs/selftest.bin'}
-    for src,dst in [('delivery/README.md','README.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('docs/DEBUGGER.md','DEBUGGER.md'),('docs/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('docs/REVISION_HISTORY.md','REVISION_HISTORY.md'),('docs/SHA256SUMS','SOURCE_SHA256SUMS'),('programs/selftest.lst','programs/selftest.lst')]:
+    for src,dst in [('delivery/README.md','README.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('delivery/source/DEBUGGER.md','DEBUGGER.md'),('delivery/source/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('delivery/source/RELEASE_NOTES.md','RELEASE_NOTES.md'),('programs/selftest.lst','programs/selftest.lst')]:
         files[root/src]=dst
     with zipfile.ZipFile(dist/(name+'.zip'),'w',zipfile.ZIP_DEFLATED) as archive:
         manifest=[]

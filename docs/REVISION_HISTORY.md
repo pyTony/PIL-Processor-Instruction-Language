@@ -89,3 +89,12 @@ Build/debug scripts and native package creation passed in CI run 40318741977.
 Final packaging additionally validates the unpacked launcher and serial console.
 Termux v0.7 and interactive manual checks remain unreported. No local Rust
 compiler exists in the authoring environment.
+
+### v0.7 delivery policy correction
+
+User clarified that development must remain on dev and main must contain only
+run/build inputs and applicable user documentation. Replace direct dev-to-main
+PR #2 with a strict runtime export based on main. Preserve the complete dev
+tree, tests, revision/provenance logs, CI and handoff. Add standalone exported
+source verification on both host platforms and remove development history from
+native user archives. No CPU/decoder semantics changed by this correction.

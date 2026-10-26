@@ -1,3 +1,12 @@
+# Runtime delivery policy
+
+Development stays on dev. Main receives a strict run/build-only export via a
+separate delivery branch; never merge the dev tree into main. The applicable
+user documentation is maintained in delivery/source/. CI validates the isolated
+export in addition to development tests. Full history and planning remain here.
+
+## Feature roadmap and historical notes
+
 # Roadmap — v0.7 development
 
 - Baseline v0.6 passed all 65 Rust tests on Termux (9.47 s).

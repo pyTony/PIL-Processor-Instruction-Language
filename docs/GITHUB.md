@@ -1,3 +1,17 @@
+# Current branch workflow
+
+- dev: full development source, tests, oracles, CI, export/package tools and logs.
+- main: runtime source, embedded ISA, build/debug helpers, sample image and user docs.
+- Run python3 tools/export_runtime.py EMPTY_DEST --source-ref DEV_COMMIT to prepare
+  a delivery. CI uses --verify to prove the exported source is self-contained.
+- Commit the exact exported tree on a delivery branch based on main, then open
+  its PR. Never merge dev directly into main. Browser approval is followed by
+  git switch main; git pull --ff-only origin main on the user's phone.
+- Keep the full provenance/revision logs and CLAUDE.md on dev. Main carries only
+  its release-specific credits/notes, delivery source revision and checksums.
+
+## Earlier setup/patch notes (historical)
+
 # Repository status
 
 The private repository https://github.com/pyTony/pil_proof now exists. The user

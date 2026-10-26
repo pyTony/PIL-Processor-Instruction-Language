@@ -1,11 +1,18 @@
-# PIL PC emulator prototype
+# PIL development branch
 
-A processor instruction language, Rust interpreter and Rust-source generator,
-with an interactive debugger and a small executable 386 test program.
-The eventual target is a TTGO ESP32 PC emulator with VGA, PS/2, SD and WLAN.
-This version is a host prototype; it does not boot DOS or Windows.
+This is the full development tree. The [main branch](https://github.com/pyTony/pil_proof/tree/main)
+is a separate runtime-only delivery: portable build/run source, embedded PIL
+descriptions, scripts, the sample guest program and user documentation.
 
-## Build and debug
+Development tests, Python oracles, CI, packaging/export tools, design notes,
+revision/provenance logs and Claude handoff stay here on dev. Do not merge dev
+into main. Export the user tree with tools/export_runtime.py and propose that
+projection in a delivery PR based on main. The exporter strips dev-only test
+module declarations and checks the user documentation links. CI verifies that
+the export builds and runs by itself on Linux and Windows.
+
+## Development build and debugger
+
 
 In Termux or Linux, with Rust installed:
 
@@ -57,9 +64,9 @@ ESP32. Termux builds produce the phone's own binary. Releases remain prototypes.
 
 ## Project branches and documentation
 
-`main` is the delivery branch. `dev` contains current development; changes are
-tested there and proposed to `main` through a PR. Pull `main` after approving
-a release PR. [Development status](docs/development/STATUS.md) records the
+`dev` keeps the complete development tree. A runtime-only export is proposed
+to `main` through a separate delivery branch/PR. Pull `main` after approving
+that delivery PR; do not merge dev directly into main. [Development status](docs/development/STATUS.md) records the
 verified baseline and current work separately.
 
 - [Debugger guide and instruction profile](docs/DEBUGGER.md)
