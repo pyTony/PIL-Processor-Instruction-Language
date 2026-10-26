@@ -464,7 +464,8 @@ The actual guest executes IMUL, SAR/SHL, arithmetic and relative branches. It
 streams one byte per pixel through mock port 0xe9; the host drains full TX queues
 and checks every byte against a separate mathematical reference before saving
 images. No guest framebuffer larger than the existing 4-KiB RAM is needed. BMP
-is 24-bit uncompressed grayscale; PGM stores raw escape-iteration values as an
+is 24-bit uncompressed grayscale (interior black, escaped values255-value
+for visibility); PGM stores raw escape-iteration values as an
 intensity visualization, not calibrated luminance.
 
 Coordinates are Q12 over [-2,1) x [-1.5,1.5), starting z=0. Each iteration checks

@@ -28,5 +28,5 @@ if __name__=='__main__':
     assert bmp[26:30]==b'\x01\x00\x18\x00' and int.from_bytes(bmp[10:14],'little')==54
     for row in range(size):
         for col in range(size):
-            at=54+(size-1-row)*stride+col*3;value=want[row*size+col];assert bmp[at:at+3]==bytes([value]*3)
+            at=54+(size-1-row)*stride+col*3;raw=want[row*size+col];value=255-raw if raw else 0;assert bmp[at:at+3]==bytes([value]*3)
     print(f'PASS: independent Python verified {size}x{size} PGM and BMP; SHA256={hashlib.sha256(actual).hexdigest()}')

@@ -61,7 +61,8 @@ pub fn render_files(size:u32,iterations:u32)->Result<String,String>{
     let directory=std::env::current_dir().map_err(|e|e.to_string())?.join(root).join("mandelbrot").join(format!("{size}x{size}-i{iterations}"));
     fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
     let mut pgm=format!("P5\n# fixed-point escape iterations, not calibrated luminance\n{size} {size}\n255\n").into_bytes();pgm.extend_from_slice(&result.pixels);
-    for (name,bytes) in [("mandelbrot.pgm",pgm),("mandelbrot.bmp",bitmap(size,&result.pixels)?),("guest.bin",guest_bytes(size,iterations)?)]{fs::write(directory.join(name),bytes).map_err(|e|e.to_string())?;}
+    let display:Vec<u8>=result.pixels.iter().map(|&value|if value==0{0}else{255-value}).collect();
+    for (name,bytes) in [("mandelbrot.pgm",pgm),("mandelbrot.bmp",bitmap(size,&display)?),("guest.bin",guest_bytes(size,iterations)?)]{fs::write(directory.join(name),bytes).map_err(|e|e.to_string())?;}
     let report=format!("PASS: {size}x{size} Mandelbrot, {iterations} iterations max; {} serial pixels match independent Q12 reference.\n{} completed guest instructions; elapsed={:.3} ms; {} TX backpressure retries.\n{}\nEngine=PIL-token-interpreter; host time includes serial draining, excludes setup/reference checking/file output; not 386 cycles.\nImage: {}\nRaw image: {}\nGuest binary: {}",result.pixels.len(),result.steps,result.seconds*1000.0,result.blocked,result.cache,directory.join("mandelbrot.bmp").display(),directory.join("mandelbrot.pgm").display(),directory.join("guest.bin").display());
     fs::write(directory.join("report.txt"),&report).map_err(|e|e.to_string())?;Ok(report)
 }
