@@ -1296,7 +1296,7 @@
     {
       "version": "0.15.0-alpha.3",
       "date": "2026-10-26",
-      "status": "host-verified; runtime delivery being prepared",
+      "status": "host-verified; runtime-only PR #18 awaits user review",
       "features": [
         "16-to16 MOVSX/MOVZX register/memory",
         "extensions demo and checker",
@@ -1343,6 +1343,12 @@
           "rom_executed": false
         },
         "plan": "docs/development/EXTERNAL_TEST_SUITES.md"
+      },
+      "runtime_delivery": {
+        "pull_request": "https://github.com/pyTony/pil_proof/pull/18",
+        "head": "a1babcdbee46d9c99a9e4ae7e62c2866478f211c",
+        "source_commit": "6b152b91e9d74e3bf3fc5c537351b4b6776ac9ec",
+        "base_main": "ecfdb9a673af6d833d4000814a3299f5ed0986bb"
       }
     }
   ]

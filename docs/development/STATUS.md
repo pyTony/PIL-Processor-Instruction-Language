@@ -1,3 +1,16 @@
+# Runtime PR #18 ready —0.15alpha.3
+
+https://github.com/pyTony/pil_proof/pull/18; runtime head
+a1babcdbee46d9c99a9e4ae7e62c2866478f211c,source dev
+6b152b91e9d74e3bf3fc5c537351b4b6776ac9ec,base main
+ecfdb9a673af6d833d4000814a3299f5ed0986bb.165 tests/39 trace cases passed
+Windows/LinuxCI40408105698. Same-width conversions and15-step checked
+extensions demo;72-file runtime-only export. After user merges/pulls:
+demo extensions;list64;run1000;check;regs;mem16 0x180 1 hex.
+External suites researched/licences pinned; plan ondev,none executed/imported.
+User review pending; no tag/release. Next work: small pinned SingleStepTests
+CPU adapter,then staged stack/control flow toward ROM-level testing.
+
 # Same-width support/demo verified; external-suite plan recorded
 
 Core036ff225fcd30a16079fa48e1387fd29891d8a34 passed CI40408105698:

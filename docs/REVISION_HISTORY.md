@@ -608,3 +608,7 @@ MIT software/public-domain data forSST andGPLv3-or-later forbarotto. No external
 vectors/code/ROM imported or executed. First external CPU adapter must preserve
 original state/addresses and compare each backend to hardware; testROM islater.
 Prepare separate0.15alpha.3 runtime PR from main; keep test/plan/history ondev.
+
+Runtime-only PR #18: https://github.com/pyTony/pil_proof/pull/18;
+heada1babcdbee46d9c99a9e4ae7e62c2866478f211c,source6b152b91e9d74e3bf3fc5c537351b4b6776ac9ec.
+User review pending. Tests and external-suite plan remain ondev.
