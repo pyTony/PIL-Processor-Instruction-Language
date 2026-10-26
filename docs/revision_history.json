@@ -1505,7 +1505,7 @@
       },
       "logical_host_oracle_development": {
         "date": "2026-10-27",
-        "status": "implemented;hosted execution pending",
+        "status": "verified on hosted Windows/Linux",
         "operations": [
           "AND",
           "OR",
@@ -1538,6 +1538,25 @@
           "tests_passed": 1,
           "filtered_out": 166,
           "classification": "user-reported correctness;not timing"
+        },
+        "verification": {
+          "run": 40419168682,
+          "source": "342375e3a732dfe59f4b799358bf743d51cdd496",
+          "hardware_cases_per_host": 85176,
+          "tests_passed_per_host": 168,
+          "linux_cpu": {
+            "vendor": "AuthenticAMD",
+            "cpuid1_eax": "00b00f21"
+          },
+          "windows_cpu": {
+            "vendor": "AuthenticAMD",
+            "cpuid1_eax": "00a00f11"
+          },
+          "existing_trace_cases": 39,
+          "full_mandelbrot": "256x256 comparison passed on both hosts",
+          "runtime_packages": "isolated source and unpacked delivery passed",
+          "runtime_export_files": 72,
+          "arm": "not executed for this increment"
         }
       }
     }

@@ -143,7 +143,7 @@ a small Python calculation. No DUT semantics were changed to obtain the pass.
 Runtime export remains72 files with unchanged contents apart from source
 provenance/checksums. This development work needs no runtime delivery PR.
 
-## Logical expansion (hosted execution pending)
+## Logical expansion verified —27 October2026
 
 The new default has39 variants and85,176 hardware cases,plus16 known-answer
 harness checks. AND/OR/XOR/TEST use register forms20/21,08/09,30/31,84/85.
@@ -172,3 +172,12 @@ IF. Claiming all flags undefined cannot hide a wrong defined result.
 User Windows baseline atd23ab45 passed52,728 cases,one selected test with166
 filtered out,on AuthenticAMD EAX00a20f10/ECXfed8320b,rustc1.99.1,fingerprint
 0bc8895949b33008. This is user-reported correctness evidence,not throughput.
+
+[CI40419168682](https://github.com/pyTony/pil_proof/actions/runs/40419168682)
+passed for source342375e3a732dfe59f4b799358bf743d51cdd496. Both hosts passed
+168 tests and85,176 hardware cases against the interpreter and generated Rust.
+Linux reported AuthenticAMD EAX00b00f21; Windows reported AuthenticAMD
+EAX00a00f11. All16 native harness checks,39 existing backend trace cases,
+full256x256 Mandelbrot and isolated runtime/package checks passed. No ARM run
+is claimed. The72-file runtime export is unchanged except source provenance
+and its checksum; no delivery PR or Cargo version bump is needed.

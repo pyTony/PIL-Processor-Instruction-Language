@@ -689,10 +689,13 @@ Adds AND/OR/XOR/TEST8/16/32 to the development-only CPU oracle. Independent
 flag policies partition every bit into defined,preserved,undefined. LogicalAF
 is excluded from native value equality; concrete zero and AF diagnostic marker
 are checked separately as PIL policy. TEST preserves the full nativeRAX.
-One portable mask/corruption regression added:168 tests expected onx86-64,
-85,176 hardware cases/39 encoding variants/16 known-answer harness checks.
-Record schema2 is28 little-endianu32 words (112 bytes),with independent masks.
-Hosted execution pending; runtime unchanged and no new instruction support claim.
+CI40419168682 passed on Windows/Linux:168 tests and85,176 hardware cases
+per host,39 encoding variants and16 known-answer harness checks. Source
+342375e3a732dfe59f4b799358bf743d51cdd496. LinuxAMD CPUID1 EAX00b00f21;
+WindowsAMD EAX00a00f11. Existing39 backend trace cases,full256x256 Mandelbrot
+and isolated runtime/package checks passed. Record schema2 is28 little-endian
+u32 words (112 bytes),with independent masks. No ARM execution claimed.
+Runtime unchanged; no new guest instruction support claim.
 
 User reported preceding sourced23ab45 passing52,728 hardware cases on native
 Windows/x86_64 AuthenticAMD CPUID1 EAX00a20f10 (ECXfed8320b),rustc1.99.1.

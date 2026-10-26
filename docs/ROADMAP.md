@@ -18,8 +18,9 @@ First slices: independent case/oracle infrastructure; named multiple register
 effects and ordered memory accesses; basic stack; near calls/returns; rotates/
 bit operations; implicit wide multiplication/division. Baseline165 tests/39
 original trace cases before the new host oracle. The [host CPU oracle](development/HOST_CPU_ORACLE.md)
-now passes52,728 hardware cases over ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT
-and167 tests per Windows/Linux host. The pinned
+now passes85,176 hardware cases over ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT/
+AND/OR/XOR/TEST and168 tests per Windows/Linux host,with independent
+defined/preserved/undefined flag masks. The pinned
 SingleStepTests adapter remains planned. Older
 roadmap sections below are retained as history.
 
