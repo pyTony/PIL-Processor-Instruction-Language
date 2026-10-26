@@ -548,10 +548,11 @@ fn emit_rust_functions(p:&Program)->String {
 }
 fn main() -> R<()> {
     let args: Vec<_> = std::env::args().collect();
-    if args.get(1).map(String::as_str)==Some("--mandelbrot") {
-        if args.len()>4{return Err("usage: pil-proof --mandelbrot [size 2..256 power of two] [iterations 1..64]".into());}
+    if matches!(args.get(1).map(String::as_str),Some("--mandelbrot"|"--compare-mandelbrot")) {
+        if args.len()>4{return Err("usage: pil-proof --mandelbrot|--compare-mandelbrot [size 2..256 power of two] [iterations 1..64]".into());}
         let parse=|i:usize,default:u32|->R<u32>{if let Some(x)=args.get(i){u32::try_from(number(x.as_str())?).map_err(|_|"parameter out of range".into())}else{Ok(default)}};
-        println!("{}",mandelbrot::render_files(parse(2,256)?,parse(3,32)?)?);return Ok(());
+        let (size,iterations)=(parse(2,256)?,parse(3,32)?);
+        println!("{}",if args[1]=="--compare-mandelbrot"{native::compare_mandelbrot(size,iterations)?}else{mandelbrot::render_files(size,iterations)?});return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--verify-backends") {
         if args.len()!=2{return Err("usage: pil-proof --verify-backends".into());}

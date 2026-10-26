@@ -205,8 +205,9 @@ instruction listings are in programs/. Native archives include those binaries
 under programs/ and can run the same debugger commands and --bench/--stress
 options directly, without compiling.
 
-A 256×256 Mandelbrot renderer is a later workload: signed fixed-point multiply,
-shifts, framebuffer storage and image output are not implemented by this monitor.
+The Mandelbrot guest uses signed fixed-point multiply and shifts, streams
+pixels through serial, and saves a 256×256 image on the host. It needs no guest
+framebuffer or VGA emulation. See the image workload section below.
 
 
 ## Interpreter cache and timing comparisons
@@ -259,7 +260,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.14.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.14.0-alpha.2. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -453,9 +454,8 @@ are 0. Values are bounded to fit the guest's signed 32-bit products.
 
 Timing measures the cached token interpreter including serial-drain handling;
 it excludes setup, reference checking and file output. It is not a 386 cycle
-rate or compiled-backend image benchmark. The compiled proof checks a tiny
-2x2 Mandelbrot guest instruction by instruction; full-size image execution is
-currently interpreted. No VGA, firmware or OS boot is implied.
+rate. The normal renderer uses the interpreter; the optional comparison below
+also runs the full image as generated Rust. No VGA, firmware or OS boot is implied.
 
 Small interactive example (64 output bytes, no queue draining needed):
 
@@ -470,3 +470,31 @@ serial tx
 This demo is 8x8 at 16 iterations. Manual `load` of a larger generated guest can
 pause when TX is full; use `serial tx` to drain then continue, or use the image
 helper to handle draining automatically.
+
+## Compare the full Mandelbrot image with generated Rust
+
+Windows: `./tools/mandelbrot.ps1 -Compare`.
+Termux/Linux/WSL: `sh tools/mandelbrot.sh --compare 256 32`.
+Or run the built executable with `--compare-mandelbrot [SIZE] [ITERATIONS]`.
+This requires a local `rustc`; normal image rendering still needs only the
+built executable. Size/iteration bounds are the same as the image renderer.
+
+The command first runs the existing 26-case instruction-by-instruction verifier.
+It then compiles the selected complete guest image from validated PIL into Rust
+and runs both engines. Every pixel must match the independent Q12 reference;
+CPU registers, flags, undefined flags, EIP, RAM, serial queues and stop status
+must also match at every TX-full drain boundary and at halt. The full image is
+checked at those boundaries, not traced after every instruction. Both engines
+must complete the same instruction count and backpressure retry count.
+
+The report compares one cold render per engine. Timing includes byte guards,
+serial draining and checkpoint capture; setup, rustc compilation, child process
+startup, reference checking and files are excluded. This is an observed ratio,
+not a median benchmark or original 386 timing. The generated runner retains
+black_box at every step. The interactive debugger remains token-interpreted.
+
+Artifacts are saved under CARGO_TARGET_DIR (default target)/backend-comparison/
+run-*/: the verification traces in verification/, and emitted source, executable,
+both raw pixel streams, state checkpoints and report.txt in mandelbrot/.
+The compare command produces comparison artifacts; use the normal render command
+without Compare to save/view BMP and PGM images.

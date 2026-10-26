@@ -103,14 +103,18 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
     init.push_str(&format!("State{{regs:{:?},flags:{},undefined:0,eip:0x100,ram,rx:VecDeque::from({:?}),tx:VecDeque::from({:?})}}",case.regs,case.flags,case.rx,case.tx));
     Ok(format!("mod {name} {{use super::*; const CS:SegmentCache={:?};\n{code}\npub fn initial()->State{{{init}}}\n#[inline(never)] pub fn step(s:&mut State)->[u32;5]{{match s.eip{{{dispatch}_=>[7,s.eip,0,0,0]}}}}\n}}\n",case.image.segments[SegmentRegister::Cs.index()]))
 }
-pub fn emit_suite(iterations:u32,samples:u32)->Result<String,String> {
-    validate(iterations,samples)?;let tests=cases()?;
+fn runner_source()->String {
     let mut source=String::from("// Generated from validated PIL; fixed-image native Rust proof, not a JIT.\n#![allow(dead_code,unused_variables,unused_mut,unused_imports)]\nuse std::collections::VecDeque;\n");
     source.push_str("mod flow {\n");source.push_str(include_str!("flow.rs"));source.push_str("\n}\nuse flow::{ExecError,FlowContext};\n");
     source.push_str("mod memory {\n");source.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
     source.push_str("mod address {\n");source.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*,SegmentAccess::*};\n");
     source.push_str("mod trace {\n");source.push_str(include_str!("trace.rs"));source.push_str("\n}\n");
     source.push_str(RUNNER);
+    source
+}
+pub fn emit_suite(iterations:u32,samples:u32)->Result<String,String> {
+    validate(iterations,samples)?;let tests=cases()?;
+    let mut source=runner_source();
     for (id,test) in tests.iter().enumerate(){source.push_str(&emit_case(test,&format!("c{id}"))?);}
     source.push_str(&emit_case(&case("timed_loop",guest::loop_bytes(iterations)?)?,"timed_loop")?);
     source.push_str("fn main(){let mut args=std::env::args().skip(1);let path=args.next().expect(\"trace output path required\");let mode=args.next().unwrap_or_else(||\"all\".into());if mode!=\"bench\"{let mut trace_bytes=Vec::new();\n");
@@ -156,8 +160,11 @@ fn trace_record<'a>(bytes:&'a [u8],at:&mut usize)->Result<Option<TraceRecord<'a>
     Ok(Some(TraceRecord{header,sections}))
 }
 pub fn verify_traces(expected:&[u8],actual:&[u8])->Result<(),String> {
+    let tests=cases()?;let names:Vec<_>=tests.iter().map(|c|c.name).collect();
+    verify_named_traces(expected,actual,&names,"step")
+}
+fn verify_named_traces(expected:&[u8],actual:&[u8],names:&[&str],unit:&str)->Result<(),String> {
     const FIELDS:[&str;17]=["case","stop.kind","stop.eip","stop.detail0","stop.detail1","stop.detail2","EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI","EFLAGS","undefined_flags","EIP"];
-    let case_names=cases()?;
     let (mut left,mut right,mut record,mut step)=(0,0,0,0);
     let mut previous=None;let mut start_eip=guest::ENTRY;
     loop {
@@ -172,8 +179,9 @@ pub fn verify_traces(expected:&[u8],actual:&[u8])->Result<(),String> {
         let id=a.header[0];
         if previous!=Some(id){step=0;start_eip=guest::ENTRY;}
         step+=1;
-        let name=case_names.get(id as usize).map(|c|c.name).unwrap_or("unknown");
-        let context=format!("backend trace case {id} ({name}), step {step}, record {record}, instruction EIP={start_eip:08x}");
+        let name=names.get(id as usize).copied().unwrap_or("unknown");
+        if unit=="checkpoint"{start_eip=a.header[16];}
+        let context=format!("backend trace case {id} ({name}), {unit} {step}, record {record}, instruction EIP={start_eip:08x}");
         for (index,field) in FIELDS.iter().enumerate(){
             if a.header[index]!=b.header[index]{return Err(format!("{context}: {field}: interpreter={:08x}, generated={:08x}",a.header[index],b.header[index]));}
         }
@@ -260,4 +268,72 @@ pub fn cpu_benchmark(iterations:u32,samples:u32)->Result<String,String> {
     }
     #[cfg(not(target_arch="x86_64"))]
     {Ok(format!("PC_NATIVE unavailable on {}; x86_64 host required. The generated Rust runner still compiles for this host.",std::env::consts::ARCH))}
+}
+
+fn emit_mandelbrot(size:u32,iterations:u32)->Result<String,String>{
+    super::mandelbrot::validate(size,iterations)?;
+    let mut source=runner_source();
+    source.push_str(&emit_case(&case("mandelbrot",super::mandelbrot::guest_bytes(size,iterations)?)?,"image")?);
+    source.push_str(&format!("const PIXELS:usize={};const BUDGET:u64={};\n",size*size,u64::from(size)*u64::from(size)*(u64::from(iterations)*26+40)));
+    source.push_str(r#"
+fn main(){
+ let directory=std::path::PathBuf::from(std::env::args().nth(1).expect("artifact directory"));
+ let mut state=image::initial();let mut pixels=Vec::new();let mut checkpoints=Vec::new();
+ let(mut steps,mut blocked)=(0u64,0u32);let start=std::time::Instant::now();
+ loop{
+  assert!(steps<=BUDGET,"instruction budget exhausted");
+  let status=image::step(std::hint::black_box(&mut state));
+  match status[0]{
+   0=>steps+=1,
+   1|3=>{
+    let rx:Vec<_>=state.rx.iter().copied().collect();let tx:Vec<_>=state.tx.iter().copied().collect();
+    trace::record(&mut checkpoints,0,status,&state.regs,state.flags,state.undefined,state.eip,state.ram.bytes(),&rx,&tx);
+    assert!(!state.tx.is_empty(),"empty TX checkpoint");pixels.extend(state.tx.drain(..));
+    if status[0]==1{break;}blocked+=1;
+   },
+   _=>panic!("unexpected Mandelbrot stop: {status:?}"),
+  }
+  assert!(pixels.len()+state.tx.len()<=PIXELS,"too many pixels");
+ }
+ let ns=start.elapsed().as_nanos();assert_eq!(pixels.len(),PIXELS);
+ std::fs::write(directory.join("generated.pixels"),pixels).unwrap();
+ std::fs::write(directory.join("generated.checkpoints"),checkpoints).unwrap();
+ println!("RENDER_RESULT {ns} {steps} {blocked}");
+}
+"#);Ok(source)
+}
+fn compare_mandelbrot_at(directory:&Path,size:u32,iterations:u32)->Result<String,String>{
+    let source=emit_mandelbrot(size,iterations)?;
+    fs::create_dir_all(directory).map_err(|e|e.to_string())?;
+    let path=directory.join("mandelbrot.rs");fs::write(&path,source).map_err(|e|e.to_string())?;
+    let executable=directory.join(if cfg!(windows){"mandelbrot.exe"}else{"mandelbrot"});
+    let start=Instant::now();
+    let built=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).arg("--edition=2021").arg("-O").arg(&path).arg("-o").arg(&executable).output().map_err(|e|format!("cannot run rustc: {e}"))?;
+    let compile_secs=start.elapsed().as_secs_f64();
+    if !built.status.success(){return Err(format!("generated image build failed: {}",String::from_utf8_lossy(&built.stderr)));}
+    let output=Command::new(&executable).arg(directory).output().map_err(|e|e.to_string())?;
+    if !output.status.success(){return Err(format!("generated image failed: {}",String::from_utf8_lossy(&output.stderr)));}
+    let stdout=String::from_utf8(output.stdout).map_err(|e|e.to_string())?;
+    let numbers:Vec<u64>=stdout.trim().strip_prefix("RENDER_RESULT ").ok_or("missing render timing")?.split_whitespace().map(str::parse).collect::<Result<_,_>>().map_err(|e|format!("invalid render timing: {e}"))?;
+    if numbers.len()!=3{return Err("invalid render result fields".into());}
+    let interpreter=super::debugger::render_mandelbrot_checked(size,iterations,true)?;
+    fs::write(directory.join("interpreter.pixels"),&interpreter.pixels).map_err(|e|e.to_string())?;
+    fs::write(directory.join("interpreter.checkpoints"),&interpreter.checkpoints).map_err(|e|e.to_string())?;
+    let actual=fs::read(directory.join("generated.pixels")).map_err(|e|e.to_string())?;
+    let checkpoints=fs::read(directory.join("generated.checkpoints")).map_err(|e|e.to_string())?;
+    if actual!=interpreter.pixels{return Err(format!("generated Mandelbrot pixels differ; artifacts: {}",directory.display()));}
+    // Interpreter already checked all pixels against the independent Q12 reference.
+    verify_named_traces(&interpreter.checkpoints,&checkpoints,&["mandelbrot"],"checkpoint").map_err(|e|format!("{e}; artifacts: {}",directory.display()))?;
+    if numbers[1]!=interpreter.steps || numbers[2]!=u64::from(interpreter.blocked){return Err("Mandelbrot instruction/retry count mismatch".into());}
+    let native_seconds=numbers[0]as f64/1e9;
+    let ratio=if numbers[0]==0{0.0}else{interpreter.seconds/native_seconds};
+    let report=format!("PASS: {size}x{size} Mandelbrot, {iterations} iterations; {} pixels match interpreter and independent Q12 reference.\nCPU/RAM/flags/RX/TX/stop match at {} serial-drain/halt checkpoints ({} bytes).\n{} guest instructions; {} TX backpressure retries in each engine.\nGenerated Rust={:.3} ms; cached interpreter={:.3} ms; observed ratio={ratio:.2}x.\nSingle cold render per engine; includes serial draining and checkpoint capture; excludes setup/reference checking/files/process startup. Not a median benchmark or 386 cycles.\nGenerated build={compile_secs:.3} s excluded; rustc -O, fixed-image byte guards and black_box per step. No JIT; debugger remains token-interpreted.\nArtifacts: {}",actual.len(),interpreter.blocked+1,checkpoints.len(),interpreter.steps,interpreter.blocked,native_seconds*1000.0,interpreter.seconds*1000.0,directory.display());
+    fs::write(directory.join("report.txt"),&report).map_err(|e|e.to_string())?;Ok(report)
+}
+pub fn compare_mandelbrot(size:u32,iterations:u32)->Result<String,String>{
+    super::mandelbrot::validate(size,iterations)?;
+    let directory=artifact_directory()?;
+    // Keep the existing per-instruction correctness gate before rendering.
+    let gate=verify_at(&directory.join("verification"))?;
+    Ok(format!("{gate}\n{}",compare_mandelbrot_at(&directory.join("mandelbrot"),size,iterations)?))
 }
