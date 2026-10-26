@@ -308,15 +308,15 @@ its original ADD/SUB algorithm even though IMUL is now available.
 
 ## Mandelbrot image workload
 
-Build and render the original 256x256 fixed-point guest on Windows:
+Render the original 256x256 fixed-point guest using the packaged binary:
 
 ```powershell
-.\tools\mandelbrot.ps1
+.\pil-proof.exe --mandelbrot 256 32
 Invoke-Item .\target\mandelbrot\256x256-i32\mandelbrot.bmp
 ```
 
-Termux/Linux/WSL: `sh tools/mandelbrot.sh 256 32`. The helpers build release
-and run `--mandelbrot SIZE ITERATIONS`. Use powers of two 2..256 and 1..64
+Linux: `./pil-proof --mandelbrot 256 32`. Rendering needs no Rust compiler.
+The binary accepts `--mandelbrot SIZE ITERATIONS`. Use powers of two 2..256 and 1..64
 iterations; default 256/32. Smaller example: `--mandelbrot 64 16`. Output stays
 under CARGO_TARGET_DIR (default target)/mandelbrot/SIZExSIZE-iITERATIONS/:
 mandelbrot.bmp, mandelbrot.pgm, guest.bin and report.txt. Custom output roots
