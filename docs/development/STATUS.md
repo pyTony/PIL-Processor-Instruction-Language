@@ -1,3 +1,17 @@
+# Alpha verification complete — PR #7
+
+Runtime-only alpha candidate: https://github.com/pyTony/pil_proof/pull/7
+Core dev source ca195663533ad41a6f50952442bf6a38d1a92447, CI run40341288842:
+120 tests on Ubuntu (8.20 s) / Windows (14.03 s); verifier matched 2,046,769
+trace bytes across9 cases. Verification-only mode and isolated/unpacked native
+comparison passed. Compiled Rust vs cached interpreter 10000/5 samples:
+Ubuntu0.380 vs3.077 ms; Windows0.421 vs4.664 ms. Direct x86-64 CPU arithmetic
+baseline0.003391/0.003100 ms is a different scope, not 386 MHz. All timings
+exclude generated compilation (1.818 /3.346 s) and process startup.
+User phone generated/native and PC results remain unreported. Alpha candidate
+PR includes feature matrix/shared Windows-WSL build targets. No release/tag
+published. Keep development on dev and runtime-only projection on main.
+
 # v0.10.0-alpha.1 development
 
 User authorized generated-Rust comparison and alpha feature matrix; alpha is a

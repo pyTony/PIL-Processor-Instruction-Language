@@ -444,7 +444,7 @@
     {
       "version": "0.10.0-alpha.1",
       "date": "2026-10-26",
-      "status": "alpha candidate; host CI pending",
+      "status": "host-verified alpha candidate; runtime-only PR #7",
       "features": [
         "offline compiled Rust guest runner from validated PIL",
         "nine-case exact CPU/RAM/serial traces",
@@ -454,13 +454,43 @@
       ],
       "rust_verification": {
         "tests_supplied": 120,
-        "host_ci": "pending",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40341288842",
         "phone_native": "not yet reported",
-        "pc_user_run": "planned by user"
+        "pc_user_run": "planned by user",
+        "source_commit": "ca195663533ad41a6f50952442bf6a38d1a92447",
+        "tests_passed": 120,
+        "tests_failed": 0,
+        "ubuntu_seconds": 8.2,
+        "windows_seconds": 14.03,
+        "verifier_cases": 9,
+        "matched_trace_bytes": 2046769,
+        "verification_only_command": "passed",
+        "runtime_export": "50-file build/generated comparison passed",
+        "native_archive": "unpacked verifier/comparison/CPU baseline passed"
       },
       "runtime_files": 50,
       "release_publication": "candidate PR only; no tag/release published",
-      "provenance": "original code; prior Intel semantics; Cargo Book and Microsoft WSL operational docs"
+      "provenance": "original code; prior Intel semantics; Cargo Book and Microsoft WSL operational docs",
+      "host_comparison": {
+        "iterations": 10000,
+        "samples": 5,
+        "excluded_warmups": 1,
+        "ubuntu": {
+          "interpreter_ms": 3.077,
+          "generated_rust_ms": 0.38,
+          "observed_rust_gain": 8.1,
+          "cpu_loop_ms": 0.003391,
+          "native_compile_seconds": 1.818
+        },
+        "windows": {
+          "interpreter_ms": 4.664,
+          "generated_rust_ms": 0.421,
+          "observed_rust_gain": 11.09,
+          "cpu_loop_ms": 0.0031,
+          "native_compile_seconds": 3.346
+        },
+        "scope": "generated fixed-image guarded dispatch; direct CPU is a different 64-bit arithmetic microbenchmark scope"
+      }
     }
   ]
 }

@@ -209,3 +209,21 @@ User additionally requested direct PC-native comparison and a verifier. Add
 byte-exact traces match. Add --cpu-bench on x86-64 using a bounded, checked
 32-bit-register ADD/SUB/JNZ loop in 64-bit mode. Other hosts report unavailable
 for this x86-specific baseline. No original 386 MHz claim is made.
+
+Alpha source dev ca195663533ad41a6f50952442bf6a38d1a92447 verified:
+https://github.com/pyTony/pil_proof/actions/runs/40341288842
+120 tests passed on Ubuntu (8.20 s) and Windows (14.03 s). Independent verifier
+matched 2,046,769 trace bytes over nine cases; comparisons were gated on that
+match. Verification-only command passed. Isolated 50-file runtime source and
+unpacked alpha native deliveries passed including compiled backend and CPU
+baseline. No tag or GitHub release has been published; alpha PR #7 is ready.
+
+Release comparison, 10000 iterations / five samples, CI hosts:
+- Ubuntu cached interpreter median3.077 ms; generated Rust0.380 ms (~8.10x);
+  direct CPU ADD/SUB/JNZ median0.003391 ms. Native compile1.818 s excluded.
+- Windows cached interpreter4.664 ms; generated Rust0.421 ms (~11.09x);
+  direct CPU median0.003100 ms. Native compile3.346 s excluded.
+PC_NATIVE is the equivalent arithmetic microbenchmark in 64-bit mode, excludes
+PIL/virtual RAM/guards and is not the 16-bit image. Do not equate it with 386
+cycles or compare its scope to a complete PC emulator. Phone native and user PC
+measurements remain unreported. Full sample outputs are in the CI job logs.
