@@ -1,10 +1,21 @@
+# Signed multiplication verified — runtime PR #10
+
+https://github.com/pyTony/pil_proof/pull/10 is ready for review. Core dev
+c1a91bcaa82a555e2b7ec3d4682729d6619ff93a passed CI run40367901727:
+134 tests, Ubuntu10.65 s / Windows18.35 s. Eighteen full-state cases matched
+2,535,361 trace bytes. Standalone59-file source, emitted Rust, launchers and
+unpacked native deliveries passed. Python65,680 IMUL cases passed in addition
+to1,184,058 arithmetic/logical +1,030 conditional cases. Runtime delivery head
+7cada78793347cc676a288cafd7b33608ac5c431 based on main37848d2753fa8a7724caf2208dd27959bf0b8c63.
+No phone or user PC run yet for0.12. No tag/release published. Next: shifts
+and a fixed-point image workload; keep development on dev and main runtime-only.
+
 # Signed multiplication development — 0.12.0-alpha.1
 
 Generic sext and modular mul tokens added; imul.pil uses double-width products,
 truncation and sign restoration to compute CF/OF. PF/AF/ZF/SF undefined.
 Decoder adds0F AF,69/6B for16/32 bits, memory sources and signed immediates;
-no implicit AX/EDX:EAX form or byte multiply. Six new tests (134 total pending
-CI);18 verifier cases;59 runtime files. Generic boundary tests through64 bits
+no implicit AX/EDX:EAX form or byte multiply. Six new tests (134 total; host CI passed (see above));18 verifier cases;59 runtime files. Generic boundary tests through64 bits
 compare emitted Rust with interpreter and independent expectations. Python
 oracle65,680 signed IMUL cases in addition to existing arithmetic/conditions.
 Fixture initialization patches RAM before applying read-only protection in both

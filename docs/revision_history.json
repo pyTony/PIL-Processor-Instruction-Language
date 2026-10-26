@@ -652,7 +652,7 @@
     {
       "version": "0.12.0-alpha.1",
       "date": "2026-10-26",
-      "status": "development; hosted verification pending",
+      "status": "host-verified; runtime-only PR #10 awaits user review",
       "features": [
         "generic sext/mul tokens",
         "truncated signed IMUL16/32",
@@ -661,7 +661,18 @@
       ],
       "rust_verification": {
         "tests_supplied": 134,
-        "status": "pending hosted CI"
+        "tests_passed": 134,
+        "tests_failed": 0,
+        "ubuntu_seconds": 10.65,
+        "windows_seconds": 18.35,
+        "source_commit": "c1a91bcaa82a555e2b7ec3d4682729d6619ff93a",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40367901727",
+        "verifier_cases": 18,
+        "matched_trace_bytes": 2535361,
+        "runtime_export": "59-file isolated checks passed",
+        "native_archive": "unpacked verification passed",
+        "phone": "not yet reported",
+        "pc_user_run": "not yet reported"
       },
       "python_verification": {
         "signed_imul_cases": 65680

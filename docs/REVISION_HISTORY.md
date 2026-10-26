@@ -299,3 +299,9 @@ added (134 total pending hosted CI),18 compiled/interpreted cases,59 runtime
 files. Independent Python65,680 signed products checked. Boundary primitive
 tests cover widths1/8/16/32/63/64 and generated Rust. Credits updated for Intel
 IMUL reference; no source imports. PC commands included in user docs.
+
+Verification completed at c1a91bcaa82a555e2b7ec3d4682729d6619ff93a:
+https://github.com/pyTony/pil_proof/actions/runs/40367901727 — 134 tests
+passed on Ubuntu10.65 s and Windows18.35 s. Eighteen full-state cases matched
+2,535,361 bytes. Standalone59-file source and unpacked native checks passed.
+Runtime-only PR #10 awaits user review. Phone/PC user verification pending.
