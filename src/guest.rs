@@ -85,20 +85,42 @@ impl Image {
                 let name=format!("set{}",CONDITIONS[(second&15) as usize]);
                 (name.clone(),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
             }
-            0x00|0x01|0x10|0x11|0x18|0x19|0x20|0x21|0x28|0x29|0x38|0x39|0x88|0x89|0x8a|0x8b=>{
-                if opcode&1==0 {w=8;}
-                let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
-                let name=match opcode&0xfe {0x00=>"add",0x10=>"adc",0x18=>"sbb",0x20=>"and",0x28=>"sub",0x38=>"cmp",_=>"mov"};
-                let reverse=opcode==0x8a||opcode==0x8b;
-                let text=if m>>6==3 {
-                    (dst,src)=if reverse{(reg,rm)}else{(rm,reg)};
-                    if name=="mov" {format!("read v src {w}\nwrite dst v\npreserve_flags all\nretire")}else{instantiate(description(name).map_err(GuestError::Decode)?,w)}
-                } else {
+            0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
+            0x40..=0x4f=>{
+                dst=view((opcode&7) as usize,w);src=dst;
+                let name=if opcode<0x48{"inc"}else{"dec"};
+                (name.to_ascii_uppercase(),compile(&instantiate(description(name).map_err(GuestError::Decode)?,w),w))
+            }
+            // AL/AX/EAX immediate arithmetic and TEST.
+            0x04|0x05|0x0c|0x0d|0x14|0x15|0x1c|0x1d|0x24|0x25|0x2c|0x2d|0x34|0x35|0x3c|0x3d|0xa8|0xa9=>{
+                if opcode&1==0{w=8;}dst=view(0,w);src=dst;
+                let name=if opcode>=0xa8{"test"}else{alu_name((opcode>>3)&7)};
+                let value=r.unsigned(w)?;
+                let text=operand_text(name,w,false,false,Some(value))?;
+                (format!("{} immediate",name.to_ascii_uppercase()),compile(&text,w))
+            }
+            0x00..=0x03|0x08..=0x0b|0x10..=0x13|0x18..=0x1b|0x20..=0x23|0x28..=0x2b|0x30..=0x33|0x38..=0x3b|0x84|0x85|0x88..=0x8b|0x80|0x81|0x83|0xf6|0xf7|0xfe|0xff=>{
+                if opcode&1==0{w=8;}
+                let m=r.byte()?;let extension=(m>>3)&7;
+                let reg=view(extension as usize,w);let rm=view((m&7) as usize,w);
+                let group1=matches!(opcode,0x80|0x81|0x83);
+                let group3=matches!(opcode,0xf6|0xf7);
+                let group45=matches!(opcode,0xfe|0xff);
+                let name=if group1{alu_name(extension)}else if group3 {
+                    match extension{0=>"test",2=>"not",3=>"neg",_=>return Err(GuestError::Decode("unsupported group 3 extension".into()))}
+                }else if group45 {
+                    match extension{0=>"inc",1=>"dec",_=>return Err(GuestError::Decode("unsupported group 4/5 extension".into()))}
+                }else if opcode>=0x88{"mov"}else if opcode>=0x84{"test"}else{alu_name((opcode>>3)&7)};
+                let reverse=!group1&&!group3&&!group45&&opcode!=0x84&&opcode!=0x85&&opcode&2!=0;
+                let memory=m>>6!=3;
+                if memory {
                     let effective=r.effective(m,addr32)?;
-                    address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=reg;src=reg;
-                    let memory_name=match (name,reverse) {("mov",true)=>"load_ram",("mov",false)=>"store_ram",("add",false)=>"add_ram",_=>return Err(GuestError::Decode(format!("memory form of {name} outside profile")))};
-                    instantiate(description(memory_name).map_err(GuestError::Decode)?,w)
-                };
+                    address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                    dst=reg;src=reg;
+                }else{(dst,src)=if reverse{(reg,rm)}else{(rm,reg)};}
+                let immediate=if opcode==0x83{Some((r.byte()? as i8 as i32 as u32)&super::mask(w) as u32)}
+                    else if group1||(group3&&extension==0){Some(r.unsigned(w)?)}else{None};
+                let text=operand_text(name,w,memory,reverse,immediate)?;
                 (name.to_ascii_uppercase(),compile(&text,w))
             }
             0xe4|0xe6=>{
@@ -112,6 +134,23 @@ impl Image {
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
     }
+}
+fn alu_name(group:u8)->&'static str { ["add","or","adc","sbb","and","sub","xor","cmp"][group as usize] }
+// Bind operand locations before validating tokens; flag semantics remain in PIL.
+fn operand_text(name:&str,w:u8,memory:bool,reverse:bool,immediate:Option<u32>)->Result<String,GuestError> {
+    if name=="mov" {
+        return Ok(if memory {instantiate(description(if reverse{"load_ram"}else{"store_ram"}).map_err(GuestError::Decode)?,w)}
+            else{format!("read v src {w}\nwrite dst v\npreserve_flags all\nretire")});
+    }
+    let mut text=description(name).map_err(GuestError::Decode)?;
+    if memory {
+        if reverse {text=text.replace("read b src $W","read_address addr\nload b addr $W");}
+        else {text=text.replace("read a dst $W","read_address addr\nload a addr $W")
+                .replace("read b dst $W","read_address addr\nload b addr $W")
+                .replace("write dst r","store addr r");}
+    }
+    if let Some(value)=immediate {text=text.replace("read b src $W",&format!("const b $W {value}"));}
+    Ok(instantiate(text,w))
 }
 fn view(register:usize,width:u8)->View {
     if width==8 && register>=4 {View{register:register-4,low:8,width}}else{View{register,low:0,width}}

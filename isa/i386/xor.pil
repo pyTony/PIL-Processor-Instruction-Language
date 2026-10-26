@@ -1,0 +1,17 @@
+# XOR: AF is undefined, not preserved. The runtime uses concrete zero
+# plus an undefined-status bit; this is not a claim about a specific 386.
+read a dst $W
+read b src $W
+xor r a b
+const clear 1 0
+bit sf r $SIGN
+zero zf r
+parity pf r
+write dst r
+flag CF clear
+flag OF clear
+undef_flag AF
+flag SF sf
+flag ZF zf
+flag PF pf
+retire

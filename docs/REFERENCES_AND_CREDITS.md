@@ -50,3 +50,20 @@ The direct x86-64 baseline uses original register-only inline assembly.
 [Rust Reference](https://doc.rust-lang.org/reference/inline-assembly.html) and
 [Microsoft KB896458](https://learn.microsoft.com/en-us/troubleshoot/windows-client/application-management/x64-windows-not-support-16-bit-programs)
 were consulted for inline-assembly constraints and Windows 16-bit limitations.
+
+## 0.11 instruction expansion references (consulted 2026-10-26)
+
+Intel 80386 Programmer's Reference Manual, chapter17 opcode definitions and
+AppendixA group tables; MIT/Ardent Tool mirrors, used for encodings and flags:
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386.pdf
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/OR.htm
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/TEST.htm
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/NOT.htm
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/DEC.htm
+- https://www.ardent-tool.com/CPU/docs/Intel/386/manuals/prref386/INC.htm
+- https://www.ardent-tool.com/CPU/docs/Intel/386/manuals/prref386/NEG.htm
+
+Reference-only use; no manual text, source code or data tables imported.
+Descriptions, operand binding, fixtures and tests are original project code.
+The old INC listing has an FF /6 dword typo; AppendixA group5 identifies
+/0 as INC at both widths. /6 PUSH remains unsupported.

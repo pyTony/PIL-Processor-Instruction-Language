@@ -384,6 +384,14 @@ const CONDITIONS_NAMES: [&str;16] = ["o","no","b","ae","e","ne","be","a","s","ns
 fn description(name: &str) -> R<String> {
     let plain=match name {
         "add" => Some(ADD), "sub" => Some(SUB), "cmp" => Some(CMP),
+        "or" => Some(include_str!("../isa/i386/or.pil")),
+        "xor" => Some(include_str!("../isa/i386/xor.pil")),
+        "test" => Some(include_str!("../isa/i386/test.pil")),
+        "not" => Some(include_str!("../isa/i386/not.pil")),
+        "neg" => Some(include_str!("../isa/i386/neg.pil")),
+        "inc" => Some(include_str!("../isa/i386/inc.pil")),
+        "dec" => Some(include_str!("../isa/i386/dec.pil")),
+        "nop" => Some(include_str!("../isa/i386/nop.pil")),
         "adc" => Some(ADC), "sbb" => Some(SBB), "and" => Some(AND_DESC),
         "write_if_z" => Some(WRITE_IF_Z), "load_ram"=>Some(LOAD_RAM),
         "store_ram"=>Some(STORE_RAM), "add_ram"=>Some(ADD_RAM), _ => None,
@@ -399,7 +407,7 @@ fn description(name: &str) -> R<String> {
             return Ok(format!("{}\n{}",CONDITIONS,JCC.replace("$CONDITION", &format!("cond_{condition}"))));
         }
     }
-    Err("unknown description: use add/sub/cmp/adc/sbb/and, set<condition>, j<condition>, or write_if_z".into())
+    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
     text.as_ref().replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
