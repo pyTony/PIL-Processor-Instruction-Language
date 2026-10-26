@@ -1,59 +1,64 @@
-# PIL PC emulator prototype
+# PIL 386 debugger
 
-A 386 CPU description language, Rust token interpreter and Rust-source backend.
-The eventual target is a PC emulator on TTGO ESP32 with VGA, PS/2, SD and WLAN.
-This is an early CPU/debugger prototype; it does not boot an OS or load x86 binaries.
+A Rust interpreter for processor instruction descriptions, with a small 386
+binary monitor and interactive debugger. This prototype runs its included guest
+program; it does not yet boot DOS or Windows.
 
 ## Build and run
 
-```sh
-cargo test
-cargo run -- --repl
-python3 tools/verify_descriptions.py
-python3 tools/verify_flow.py
-```
+Install Rust, then run these commands from this directory.
 
-Version 0.4 passed 28 Rust tests on the user's Termux phone. Version 0.5 adds
-serial mocks and the REPL, with 46 Rust tests awaiting compilation/verification.
-The authoring environment has no Rust compiler. See [continuation notes](CLAUDE.md).
-
-Try `help`, `list`, `step`, `run`, `regs`, `flags`, and `break 0x102` in the REPL.
-For serial: `demo echo`, `run`, `serial rx 41`, `run`, `serial tx`.
-
-## Source layout
-
-| Directory | Contents |
-|---|---|
-| src/ | Interpreter, code generator, flow model, mock serial and debugger |
-| isa/i386/ | Instruction/condition descriptions |
-| tests/unit/ | CPU, transport and debugger unit tests |
-| tools/ | Independent Python description/flow checks |
-| docs/ | Design, language, debugger, roadmap, provenance and history |
-
-- [Debugger guide](docs/DEBUGGER.md)
-- [Language](docs/LANGUAGE.md)
-- [Roadmap](docs/ROADMAP.md)
-- [References and credits](docs/REFERENCES_AND_CREDITS.md)
-- [Revision history](docs/REVISION_HISTORY.md)
-- [First GitHub push](docs/GITHUB.md)
-
-Continue in `~/pil_proof`; updates are guarded in-place patches.
-No third-party emulator source or disk images are bundled. A distribution
-licence for the project's own code has not yet been selected.
-
-## Working v0.6 patch
-
-Adds flat little-endian RAM load/store/RMW effects, full-range bounds and
-read-only checks, deferred store commit, fault context, and a debugger memory
-demo. The patch is based on upstream commit cfd4143512497c8afd28df9ef6739a96fc62b9f0.
+Termux / Linux:
 
 ```sh
-cargo test --locked
-python3 tools/verify_memory.py
-cargo run -- --repl
+sh tools/build.sh
+sh tools/debug.sh
 ```
 
-Try `demo memory`, `step`, `mem 0x10 4`, `step`, `regs`. There are 65 Rust tests
-supplied; the authoring environment has no Rust toolchain, so the new build
-awaits verification. The independent Python memory oracle checks 560 cases.
-The RAM faults are emulator errors, not architectural x86 page faults.
+Windows PowerShell:
+
+```powershell
+./tools/build.ps1
+./tools/debug.ps1
+```
+
+The build writes the executable and `target/programs/selftest.bin`. The debug
+script loads that program at CS:0100. Type one command per line:
+
+```
+list
+step
+serial rx 41
+run 1000
+check
+regs
+serial tx
+```
+
+Expected: `PASS`, `DX=600D`, and guest output `serial output: 41 | A`.
+`serial rx` supplies guest input; ordinary debugger commands are separate.
+For an automatic check, run `sh tools/debug.sh --check` or on Windows
+`./tools/debug.ps1 -Check`.
+
+## Other uses
+
+- `sh tools/build.sh --release` builds an optimized executable.
+- `sh tools/debug.sh PATH` opens another raw binary within the supported profile.
+- `cargo run --locked -- --repl` opens the built-in predecoded counter demo.
+- `cargo run --locked -- --selftest` runs the included program automatically.
+- `cargo run --locked -- --emit-rust 32 add_ram` emits a Rust module from an
+  embedded instruction description. Operand widths are 8, 16 or 32.
+
+[Debugger commands and supported instructions](docs/DEBUGGER.md) explain the
+monitor environment and limitations. See [release notes](docs/RELEASE_NOTES.md)
+and [references and credits](docs/REFERENCES_AND_CREDITS.md).
+`DELIVERY.json` identifies the source revision; `SHA256SUMS` covers this tree.
+
+This branch contains the portable build/run source, descriptions embedded in
+the binary, helper scripts, sample program and user documentation. Development
+is maintained on [dev](https://github.com/pyTony/pil_proof/tree/dev).
+
+No external Cargo dependencies are required. Host builds use Rust's standard
+library. A Termux build runs on the phone; Linux/Windows desktop executables
+are not Android or ESP32 binaries. No BIOS, OS image or third-party emulator
+source is bundled. A project-wide licence has not yet been selected.

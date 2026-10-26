@@ -1,0 +1,8 @@
+{
+  "version": "0.7.0",
+  "source_commit": "0cb33f73a629af01315f3562a3d0be46b58d4fba",
+  "source_branch": "dev",
+  "layout": "runtime-source",
+  "build": "sh tools/build.sh",
+  "debug": "sh tools/debug.sh"
+}
