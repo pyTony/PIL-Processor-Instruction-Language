@@ -1,0 +1,20 @@
+# Truncated signed IMUL: CF/OF tell whether the exact signed product fits.
+require_width 16_or_32
+read a dst $W
+read b src $W
+sext aw a $DOUBLE
+sext bw b $DOUBLE
+mul wide aw bw
+trunc r wide $W
+sext restored r $DOUBLE
+xor lost wide restored
+zero fits lost
+not overflow fits
+write dst r
+flag CF overflow
+flag OF overflow
+undef_flag PF
+undef_flag AF
+undef_flag ZF
+undef_flag SF
+retire

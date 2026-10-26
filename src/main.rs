@@ -24,7 +24,9 @@ fn value(bits: u64, width: u8) -> Value { Value { bits: bits & mask(width), widt
 #[derive(Clone, Copy, Debug)]
 enum Binding { Dst, Src }
 #[derive(Clone, Copy, Debug)]
-enum Binary { Add, Sub, Xor, And, Or }
+enum Shift { Left, Right, Arithmetic }
+#[derive(Clone, Copy, Debug)]
+enum Binary { Add, Sub, Mul, Xor, And, Or }
 #[derive(Clone, Copy, Debug)]
 enum Flag { CF, PF, AF, ZF, SF, OF }
 impl Flag {
@@ -56,8 +58,12 @@ enum Token {
     WriteIf(usize, usize),
     Const(usize, Value),
     Extend(usize, usize, u8),
+    SignExtend(usize, usize, u8),
     Truncate(usize, usize, u8),
     Binary(usize, Binary, usize, usize),
+    Shift(usize, Shift, usize, usize),
+    Less(usize, usize, usize),
+    FlagIf(Flag, usize, usize, usize),
     Not(usize, usize),
     Bit(usize, usize, u8),
     Zero(usize, usize),
@@ -128,6 +134,23 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if flags_seen&m!=0 {return Err("duplicate flag classification".into());}
                     flags_seen|=m; Token::UndefFlag(f)
                 }
+                ["flag_if", name, input, defined, active] => {
+                    let f=parse_flag(name)?;let m=1u32<<f.bit();
+                    if flags_seen&m!=0{return Err("duplicate flag classification".into());}
+                    let a=slot(&names,input)?;let d=slot(&names,defined)?;let c=slot(&names,active)?;
+                    if [a,d,c].iter().any(|&n|widths[n]!=1){return Err("flag_if requires three bv<1> inputs".into());}
+                    flags_seen|=m;Token::FlagIf(f,a,d,c)
+                }
+                [op @ ("shl"|"lshr"|"ashr"),out,input,count]=>{
+                    let a=slot(&names,input)?;let b=slot(&names,count)?;let w=widths[a];
+                    let kind=match *op{"shl"=>Shift::Left,"lshr"=>Shift::Right,_=>Shift::Arithmetic};
+                    Token::Shift(define(&mut names,&mut widths,out,w)?,kind,a,b)
+                }
+                ["ult",out,left,right]=>{
+                    let a=slot(&names,left)?;let b=slot(&names,right)?;
+                    if widths[a]!=widths[b]{return Err("ult width mismatch".into());}
+                    Token::Less(define(&mut names,&mut widths,out,1)?,a,b)
+                }
                 ["select", out, predicate, yes, no] => {
                     let c=slot(&names,predicate)?; let a=slot(&names,yes)?; let b=slot(&names,no)?;
                     if widths[c]!=1 {return Err("select predicate needs bv<1>".into());}
@@ -190,22 +213,22 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     let f = parse_flag(name)?;
                     Token::ReadFlag(define(&mut names, &mut widths, out, 1)?,f)
                 }
-                ["zext", out, input, w] | ["trunc", out, input, w] => {
+                ["zext", out, input, w] | ["sext", out, input, w] | ["trunc", out, input, w] => {
                     let a = slot(&names, input)?; let w = width(w)?;
-                    let extend = fields[0] == "zext";
+                    let extend = fields[0] != "trunc";
                     if (extend && w < widths[a]) || (!extend && w > widths[a]) {
                         return Err("invalid conversion direction".into());
                     }
                     let o = define(&mut names, &mut widths, out, w)?;
-                    if extend { Token::Extend(o,a,w) } else { Token::Truncate(o,a,w) }
+                    if fields[0]=="sext" {Token::SignExtend(o,a,w)} else if extend { Token::Extend(o,a,w) } else { Token::Truncate(o,a,w) }
                 }
-                [op @ ("add" | "sub" | "xor" | "and" | "or"), out, left, right] => {
+                [op @ ("add" | "sub" | "mul" | "xor" | "and" | "or"), out, left, right] => {
                     let a = slot(&names,left)?; let b = slot(&names,right)?;
                     if widths[a] != widths[b] { return Err("binary width mismatch".into()); }
                     let w = widths[a];
                     let o = define(&mut names, &mut widths, out, w)?;
                     let op = match *op { "add" => Binary::Add, "sub" => Binary::Sub,
-                        "xor" => Binary::Xor, "or" => Binary::Or, _ => Binary::And };
+                        "mul" => Binary::Mul, "xor" => Binary::Xor, "or" => Binary::Or, _ => Binary::And };
                     Token::Binary(o,op,a,b)
                 }
                 ["not", out, input] => {
@@ -337,13 +360,31 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::ReadFlag(o,f) => values[o] = value(((cpu.eflags >> f.bit()) & 1) as u64,1),
             Token::Const(o,x) => values[o] = x,
             Token::Extend(o,a,w) | Token::Truncate(o,a,w) => values[o] = value(values[a].bits,w),
+            Token::SignExtend(o,a,w) => {
+                let x=values[a];let bits=if x.bits&(1u64<<(x.width-1))!=0{x.bits|!mask(x.width)}else{x.bits};
+                values[o]=value(bits,w);
+            }
             Token::Binary(o,op,a,b) => {
                 let x = values[a]; let y = values[b];
                 let n = match op { Binary::Add => x.bits.wrapping_add(y.bits),
                     Binary::Sub => x.bits.wrapping_sub(y.bits),
+                    Binary::Mul => x.bits.wrapping_mul(y.bits),
                     Binary::Xor => x.bits ^ y.bits, Binary::And => x.bits & y.bits, Binary::Or => x.bits | y.bits };
                 values[o] = value(n,x.width);
             }
+            Token::Shift(o,kind,a,b)=>{
+                let x=values[a];let c=values[b].bits;
+                let n=match kind {
+                    Shift::Left=>if c>=u64::from(x.width){0}else{x.bits<<c},
+                    Shift::Right=>if c>=u64::from(x.width){0}else{x.bits>>c},
+                    Shift::Arithmetic=>{let signed=((x.bits<<(64-x.width)) as i64)>>(64-x.width);(signed>>c.min(u64::from(x.width-1))) as u64},
+                };values[o]=value(n,x.width);
+            }
+            Token::Less(o,a,b)=>values[o]=value(u64::from(values[a].bits<values[b].bits),1),
+            Token::FlagIf(f,a,d,c)=>if values[c].bits!=0{
+                let m=1u32<<f.bit();pending_flags&=!m;
+                if values[d].bits!=0{pending_flags|=(values[a].bits as u32)<<f.bit();pending_undefined&=!m;}else{pending_undefined|=m;}
+            },
             Token::Not(o,a) => values[o] = value(!values[a].bits,values[a].width),
             Token::Bit(o,a,i) => values[o] = value((values[a].bits >> i) & 1,1),
             Token::Zero(o,a) => values[o] = value(u64::from(values[a].bits == 0),1),
@@ -392,6 +433,10 @@ fn description(name: &str) -> R<String> {
         "inc" => Some(include_str!("../isa/i386/inc.pil")),
         "dec" => Some(include_str!("../isa/i386/dec.pil")),
         "nop" => Some(include_str!("../isa/i386/nop.pil")),
+        "imul" => Some(include_str!("../isa/i386/imul.pil")),
+        "shl"|"sal" => Some(include_str!("../isa/i386/shl.pil")),
+        "shr" => Some(include_str!("../isa/i386/shr.pil")),
+        "sar" => Some(include_str!("../isa/i386/sar.pil")),
         "adc" => Some(ADC), "sbb" => Some(SBB), "and" => Some(AND_DESC),
         "write_if_z" => Some(WRITE_IF_Z), "load_ram"=>Some(LOAD_RAM),
         "store_ram"=>Some(STORE_RAM), "add_ram"=>Some(ADD_RAM), _ => None,
@@ -407,10 +452,10 @@ fn description(name: &str) -> R<String> {
             return Ok(format!("{}\n{}",CONDITIONS,JCC.replace("$CONDITION", &format!("cond_{condition}"))));
         }
     }
-    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop, set<condition>, j<condition>, or write_if_z".into())
+    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/shl/sal/shr/sar, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
-    text.as_ref().replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
+    text.as_ref().replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
 }
 fn emit_rust(p: &Program) -> String {
     let mut out=String::from("// Generated from validated PIL tokens.\n");
@@ -460,12 +505,23 @@ fn emit_rust_functions(p:&Program)->String {
             Token::ReadFlag(o,f) => format!("let v{o}: u64 = ((*flags >> {}) & 1) as u64;",f.bit()),
             Token::Extend(o,a,w) | Token::Truncate(o,a,w) =>
                 format!("let v{o}: u64 = v{a} & {}u64;",mask(w)),
+            Token::SignExtend(o,a,w) => format!("let v{o}: u64 = (if v{a} & {}u64 != 0 {{v{a} | !{}u64}} else {{v{a}}}) & {}u64;",1u64<<(p.widths[a]-1),mask(p.widths[a]),mask(w)),
             Token::Binary(o,op,a,b) => {
                 let expr = match op { Binary::Add => format!("v{a}.wrapping_add(v{b})"),
                     Binary::Sub => format!("v{a}.wrapping_sub(v{b})"),
+                    Binary::Mul => format!("v{a}.wrapping_mul(v{b})"),
                     Binary::Xor => format!("v{a} ^ v{b}"), Binary::And => format!("v{a} & v{b}"), Binary::Or => format!("v{a} | v{b}") };
                 format!("let v{o}: u64 = ({expr}) & {}u64;",mask(p.widths[o]))
             }
+            Token::Shift(o,kind,a,b)=>{
+                let w=p.widths[a];let expr=match kind {
+                    Shift::Left=>format!("if v{b}>={w}u64 {{0}}else{{v{a}<<v{b}}}"),
+                    Shift::Right=>format!("if v{b}>={w}u64 {{0}}else{{v{a}>>v{b}}}"),
+                    Shift::Arithmetic=>format!("((((v{a}<<{}) as i64)>>{})>>v{b}.min({}u64)) as u64",64-w,64-w,w-1),
+                };format!("let v{o}: u64 = ({expr}) & {}u64;",mask(w))
+            }
+            Token::Less(o,a,b)=>format!("let v{o}: u64 = u64::from(v{a}<v{b});"),
+            Token::FlagIf(f,a,d,c)=>format!("if v{c}!=0 {{pending_flags &= !{m}u32; if v{d}!=0 {{pending_flags |= (v{a} as u32)<<{bit};pending_undefined &= !{m}u32;}}else{{pending_undefined |= {m}u32;}}}}",m=1u32<<f.bit(),bit=f.bit()),
             Token::Not(o,a) => format!("let v{o}: u64 = (!v{a}) & {}u64;",mask(p.widths[o])),
             Token::Bit(o,a,i) => format!("let v{o}: u64 = (v{a} >> {i}) & 1;"),
             Token::Zero(o,a) => format!("let v{o}: u64 = u64::from(v{a} == 0);"),

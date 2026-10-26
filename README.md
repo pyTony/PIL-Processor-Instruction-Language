@@ -1,5 +1,63 @@
 # PIL 386 debugger
 
+## Documentation
+
+| Read this | What it covers |
+|---|---|
+| [Debugger guide](docs/DEBUGGER.md) | Start the debugger, commands, demos, memory and serial; supported encodings |
+| [Feature matrix](docs/FEATURE_MATRIX.md) | Implemented, partial and planned emulator features |
+| [Release notes](docs/RELEASE_NOTES.md) | Changes in this delivery and earlier versions |
+| [References and credits](docs/REFERENCES_AND_CREDITS.md) | Reference manuals, attribution and third-party material status |
+
+## Built-in demos
+
+| Command | Purpose |
+|---|---|
+| `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
+| `demo hello` | Binary Hello-world output through mock serial |
+| `demo factorials` | Binary 1!..12! table; `time 1000` then `check`; 12!=479001600 |
+| `demo loop` | Binary 65,536-iteration counted loop; `time 250000` then `check` |
+| `demo counter` | Small predecoded subtract-and-branch example |
+| `demo echo` | Predecoded one-byte serial echo; waits for RX input |
+| `demo memory` | Predecoded RAM store/load and protection example |
+
+## Start the debugger
+
+After a release build, start it directly in PowerShell:
+
+```powershell
+.\target\release\pil-proof.exe --repl
+```
+
+If you built with `$env:CARGO_TARGET_DIR = "target/windows"`, use
+`.\target\windows\release\pil-proof.exe --repl` instead. Linux/Termux:
+`./target/release/pil-proof --repl`. For a debug build, replace `release` with
+`debug`. These commands start the existing binary without rebuilding.
+
+At the `pil>` prompt, enter one command per line:
+
+```text
+demo hello
+run 1000
+serial tx
+demo factorials
+time 1000
+check
+help
+quit
+```
+
+`run` without a budget executes at most 100 instructions. Factorials needs 336
+from a fresh start; `budget exhausted` means it paused. Use `run 1000` to finish
+from the current position, then `check`. `list` shows up to 16 instructions.
+
+
+Build and open the debugger together with `.\tools\debug.ps1` on Windows or
+`sh tools/debug.sh` on Linux/Termux. These helpers load the diagnostic selftest;
+enter `serial rx 41`, `run 1000`, then `check` to exercise it. Full command
+reference: [Debugger guide](docs/DEBUGGER.md).
+
+
 A Rust interpreter for processor instruction descriptions, with a small 386
 binary monitor and interactive debugger. This prototype runs its included guest
 program; it does not yet boot DOS or Windows.
@@ -200,7 +258,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.11.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.13.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -216,7 +274,7 @@ The ordinary debugger remains the cached PIL interpreter.
 
 Before reporting speed, it compares complete instruction-by-instruction traces:
 registers, EFLAGS, undefined flags, EIP, RAM contents and serial RX/TX queues.
-Fourteen cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
+Twenty-three cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
 read-only store and branch-limit faults, a changed-code stop, empty RX and full
 TX. Stop kinds/metadata are compared; descriptive strings are not trace fields.
 Any mismatch fails the command rather than reporting a passing benchmark.
@@ -239,7 +297,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the fourteen-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the 23-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -259,6 +317,49 @@ OR/XOR/TEST clear CF/OF, classify AF undefined and update SF/ZF/PF. TEST and
 CMP do not write their operands; they can read protected RAM. NOT and NOP
 preserve flags and undefined metadata. INC/DEC preserve CF and its metadata.
 NEG computes zero minus its operand. New ALU forms use the same staged RAM
-retirement and segment checks as existing instructions. MUL/DIV, shifts, stack
+retirement and segment checks as existing instructions. Implicit-product MUL/IMUL, DIV, stack
 operations, CALL/RET and general device I/O are still outside this profile.
 The verifier adds ALU8/16/32 fixtures plus read-only TEST and NEG fault cases.
+
+## Signed multiplication (0.12 alpha)
+
+- 0F AF /r: IMUL r16/r32,r/m16/r/m32.
+- 69 /r: IMUL r16/r32,r/m16/r/m32,imm16/imm32.
+- 6B /r: IMUL r16/r32,r/m16/r/m32,sign-extended imm8.
+
+The low operand-width product is written to the destination register. CF and
+OF report whether the exact signed product fits that width. PF/AF/ZF/SF are
+undefined (concrete zero plus undefined markers). Memory operands are sources;
+read-only RAM is allowed. Faults preserve registers and flags. Implicit AX or
+DX:AX/EDX:EAX forms F6/F7 /5 remain unsupported; no 8-bit IMUL form is added.
+The compiled verifier adds 16/32-bit signed products and source-fault cases.
+
+On Windows 11 PowerShell, after merging and pulling main:
+
+```powershell
+$env:CARGO_TARGET_DIR = "target/windows"
+./tools/compare.ps1 -Iterations 10000 -Samples 5
+```
+
+This verifies all 23 cases, then measures compiled Rust and cached interpreter.
+An x86-64 PC also reports the direct CPU arithmetic baseline. That baseline
+still times ADD/SUB/JNZ; it is not an IMUL benchmark or an emulated 386 clock rate.
+For WSL sharing the folder, use `export CARGO_TARGET_DIR=target/wsl` and
+`sh tools/compare.sh 10000 5` in the WSL shell.
+
+## Shifts (0.13 alpha)
+
+SHL (SAL alias), SHR and SAR support byte/word/dword register or memory operands.
+D0/D1 /4,/5,/7 use count1; D2/D3 use CL; C0/C1 use imm8. Counts are masked
+with31 at every width. Rotates, /6, SHLD and SHRD remain unsupported.
+
+A masked zero count preserves the operand, all flags and undefined markers.
+Nonzero counts update SF/ZF/PF, leave AF undefined, and define OF only for count1.
+CF is the last bit shifted out; SHL/SHR classify it undefined when count>=width.
+SAR sign-fills, rounds negative values downward and keeps CF defined. Undefined
+values follow the existing concrete-zero-plus-marker policy. This follows the
+Intel SDM flag classification where it clarifies the older386 manual listing.
+
+Memory forms use the existing read-modify-write permission checks even when the
+masked count is zero. A failed read or write preserves CPU state and RAM.
+The verifier includes shifts at all widths and protected zero/nonzero stores.
