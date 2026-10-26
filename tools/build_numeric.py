@@ -3,11 +3,12 @@
 from pathlib import Path
 import math,sys
 ROOT=Path(__file__).resolve().parents[1]
+REG_NAMES=['EAX','ECX','EDX','EBX','ESP','EBP','ESI','EDI']
 class Image:
     def __init__(self):self.code=bytearray();self.listing=[];self.labels={};self.fixups=[]
     def emit(self,text,assembly):
         data=bytes.fromhex(text);self.listing.append((len(self.code),data,assembly));self.code.extend(data)
-    def mov(self,register,value):self.emit('66 '+bytes([0xb8+register]).hex()+' '+value.to_bytes(4,'little').hex(' '),f'MOV r{register},0x{value:x}')
+    def mov(self,register,value):self.emit('66 '+bytes([0xb8+register]).hex()+' '+value.to_bytes(4,'little').hex(' '),f'MOV {REG_NAMES[register]},0x{value:x}')
     def label(self,name):self.labels[name]=len(self.code)
     def jne(self,label):self.fixups.append((len(self.code)+1,label));self.emit('75 00',f'JNE {label}')
     def finish(self):

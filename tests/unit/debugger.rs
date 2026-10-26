@@ -324,3 +324,22 @@ fn typed_dump_rejects_invalid_ranges_and_does_not_mutate_debugger(){
     assert!(d.command("mem8 255 1").is_ok());assert!(d.command("mem16 254 1").is_ok());assert!(d.command("mem32 252 1").is_ok());
     assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);assert_eq!(d.serial.snapshot(),queues);assert_eq!(d.cache.stats(),cache);
 }
+
+#[test]
+fn factorial_listing_has_bytes_operands_targets_and_current_ip_without_execution(){
+    let mut d=Debugger::new("factorials").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();let cache=d.cache.stats();
+    let default=d.command("list").unwrap().0;assert_eq!(default.lines().count(),16);
+    let out=d.command("list 64").unwrap().0;assert_eq!(out.lines().count(),18);assert!(out.starts_with("* 00000100  66 be 01 00 00 00"));
+    for text in ["MOV ESI,0x00000001","ADD EAX,EDX","JNE 0x00000130","JNE 0x00000124","MOV dword DS:[DI],EAX","HLT (monitor stop)"]{assert!(out.contains(text),"{text} missing: {out}");}
+    assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);assert_eq!(d.cache.stats(),cache);
+    d.run(1000).unwrap();let out=d.command("list 0x100 64").unwrap().0;assert!(out.lines().last().unwrap().starts_with("* 00000146"));assert_eq!(d.command("list 64").unwrap().0.lines().count(),1);
+}
+#[test]
+fn listing_validates_limits_and_uses_live_bytes_for_binary_and_predecoded_demos(){
+    let mut d=Debugger::new("hello").unwrap();d.command("poke 0x101 5a").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();
+    let out=d.command("list 1").unwrap().0;assert!(out.contains("b0 5a"));assert!(out.contains("MOV AL,0x5a"));
+    for command in ["list 0","list 257","list 0x100000000 1","list 0 1","list 0x100 0","list 0x100 16 extra"] {assert!(d.command(command).is_err(),"{command}");}
+    assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);
+    d.command("poke 0x100 62").unwrap();let cpu=d.cpu.clone();let out=d.command("list 4").unwrap().0;assert_eq!(out.lines().count(),1);assert!(out.contains("Decode"));assert_eq!(d.cpu,cpu);
+    d.command("demo counter").unwrap();assert_eq!(d.command("list 1").unwrap().0.lines().count(),1);assert!(d.command("list 0x100 4").is_ok());
+}

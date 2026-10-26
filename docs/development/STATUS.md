@@ -1,3 +1,14 @@
+# Readable instruction listings added to pending dump delivery
+
+User found factorial listing uninformative. Decoder labels now contain actual
+registers,immediates,memory sizes/segments/EA expressions and branch targets.
+list shows bytes and * atEIP; list [COUNT] and list ADDRESS COUNT accept1..256.
+Default16; stop atHLT/end/error. Predecoded examples show only existing labels.
+Formatting is derived from decoded operands,not a separate decoder. Four tests
+added (148 total pending CI). Numeric fixture generator now names actual
+registers instead of r0 etc.; guest bytes unchanged. Append to pending PR #12
+if still open,or make a new runtime-only follow-up if user already merged it.
+
 # Typed dumps verified — runtime PR #12
 
 https://github.com/pyTony/pil_proof/pull/12 awaits user review. Dev code

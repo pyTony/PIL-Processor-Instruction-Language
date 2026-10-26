@@ -59,7 +59,7 @@ quit
 
 `run` without a budget executes at most 100 instructions. Factorials needs 336
 from a fresh start; `budget exhausted` means it paused. Use `run 1000` to finish
-from the current position, then `check`. `list` shows up to 16 instructions.
+from the current position, then `check`. `list` defaults to 16 instructions; `list 64` shows the full factorial program.
 
 
 Build and open the debugger together with `.\tools\debug.ps1` on Windows or
@@ -412,3 +412,32 @@ Omitting the count displays 16 bytes (16/8/4 values). Counts must be 1..256
 values; the entire byte range must fit RAM. Invalid requests produce an error
 without partial output or changes to CPU, RAM, serial queues or cache state.
 The existing `mem ADDRESS [BYTE_COUNT]` command keeps its previous output.
+
+
+## Instruction listings
+
+```text
+demo factorials
+list 64
+list 0x100 64
+```
+
+Binary listings show the code offset, encoded bytes and decoded operands. `*`
+marks the current EIP. Register names follow operand width (AL/AH, AX or EAX).
+Memory operands include size, segment and effective-address expression; branch
+operands show the computed target. For example, the factorial loop includes
+`ADD EAX,EDX`, `SUB ECX,EBX`, `JNE 0x00000130` and
+`MOV dword DS:[DI],EAX`.
+
+`list` defaults to 16 instructions from current EIP. `list COUNT` accepts 1..256;
+`list ADDRESS COUNT` starts at the specified code offset, useful after execution.
+The full factorial program has 18 instructions, including HLT. Listing stops at
+HLT, the end of the loaded image or a decode error. It reads current bytes, so
+edits made with `poke` are reflected. It does not execute or change CPU/RAM/cache.
+Choose instruction boundaries when supplying an address. Predecoded demos show
+harness labels, without invented instruction bytes.
+
+Factorials uses repeated addition: EDX holds the previous factorial, ECX counts
+the additions for the current n in ESI, EAX accumulates the result, and DI selects
+the output slot starting at linear RAM 0x500. This demo intentionally retains
+its original ADD/SUB algorithm even though IMUL is now available.

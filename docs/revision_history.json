@@ -893,13 +893,17 @@
     {
       "version": "0.13.0-alpha.2",
       "date": "2026-10-26",
-      "status": "host-verified; runtime PR #12 awaits review",
+      "status": "readable listing follow-up under validation",
       "features": [
         "mem8/mem16/mem32 typed dumps",
         "printable ASCII and unsigned decimal",
-        "full-range validation without mutation"
+        "full-range validation without mutation",
+        "readable instruction bytes,operands and branch targets",
+        "bounded list COUNT / list ADDRESS COUNT"
       ],
-      "rust_verification": {
+      "runtime_files": 62,
+      "provenance": "original debugger code; no new external materials/dependencies",
+      "rust_verification_before_listing": {
         "tests_supplied": 144,
         "tests_passed": 144,
         "tests_failed": 0,
@@ -913,8 +917,10 @@
         "native_archive": "unpacked verification passed",
         "user_dump_commands": "not yet reported"
       },
-      "runtime_files": 62,
-      "provenance": "original debugger code; no new external materials/dependencies"
+      "rust_verification": {
+        "tests_supplied": 148,
+        "status": "pending hosted CI for readable listings"
+      }
     }
   ]
 }

@@ -2,6 +2,10 @@
 
 ## 0.13.0-alpha.2
 
+- Show instruction operands, encoded bytes, branch targets and current EIP in list.
+- Add list COUNT / list ADDRESS COUNT; make original numeric fixture listings readable.
+- Add four listing regression tests (148 total including typed dumps).
+
 - Add mem8/mem16/mem32 dumps, printable ASCII and optional unsigned decimal.
 - Validate full ranges/counts before output; preserve legacy mem format.
 - Add four debugger regression tests (144 total).

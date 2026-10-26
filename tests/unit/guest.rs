@@ -168,3 +168,34 @@ fn rotate_extensions_and_truncated_shift_operands_stay_diagnostics(){
     for bytes in [vec![0xc1,0xe0],vec![0xc0,0x66],vec![0xd1,0xc0],vec![0xd3,0xf0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
     assert_eq!(description("shl").unwrap(),description("sal").unwrap());
 }
+
+#[test]
+fn decoded_labels_show_registers_memory_sizes_segments_and_sib(){
+    for (bytes,expected) in [
+        (vec![0xb4,0x7f],"MOV AH,0x7f"),
+        (vec![0xbb,1,2],"MOV BX,0x0201"),
+        (vec![0x66,0xb8,1,0,0,0],"MOV EAX,0x00000001"),
+        (vec![0x66,0x01,0xd0],"ADD EAX,EDX"),
+        (vec![0x66,0x89,0x05],"MOV dword DS:[DI],EAX"),
+        (vec![0x89,0x46,0xff],"MOV word SS:[BP-0x1],AX"),
+        (vec![0x64,0x66,0x8b,0x07],"MOV EAX,dword FS:[BX]"),
+        (vec![0x67,0x66,0x89,0x44,0xb3,0xfc],"MOV dword DS:[EBX+ESI*4-0x4],EAX"),
+        (vec![0x67,0x8b,0x04,0xad,0x34,0x12,0,0],"MOV AX,word DS:[EBP*4+0x1234]"),
+        (vec![0x89,0x06,0x34,0x12],"MOV word DS:[0x1234],AX"),
+    ]{assert_eq!(decode(&bytes).unwrap().label,expected);}
+}
+#[test]
+fn decoded_labels_cover_branches_unary_shifts_and_multiply(){
+    for (bytes,expected) in [
+        (vec![0x75,0xfe],"JNE 0x00000100"),
+        (vec![0x0f,0x92,0xc4],"SETB AH"),
+        (vec![0x83,0xc0,0xff],"ADD AX,0xffff"),
+        (vec![0xf7,0x1f],"NEG word DS:[BX]"),
+        (vec![0xd3,0xf8],"SAR AX,CL"),
+        (vec![0xc1,0x27,8],"SHL word DS:[BX],0x08"),
+        (vec![0x0f,0xaf,0xc1],"IMUL AX,CX"),
+        (vec![0x66,0x6b,0x07,0xff],"IMUL EAX,dword DS:[BX],0xffffffff"),
+        (vec![0x40],"INC AX"),
+        (vec![0x90],"NOP"),
+    ]{assert_eq!(decode(&bytes).unwrap().label,expected);}
+}

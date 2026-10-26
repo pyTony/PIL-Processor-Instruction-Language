@@ -391,3 +391,12 @@ https://github.com/pyTony/pil_proof/actions/runs/40373417827 —144 passed,
 Ubuntu12.39 s/Windows16.80 s. Existing23 cases/3,044,833 trace bytes match.
 Standalone62-file source and unpacked native delivery checks passed. Runtime
 PR #12 awaits review; typed dump user verification unreported.
+
+## Readable disassembly in pending typed-dump delivery
+
+User reported factorial list too terse. Add decoded registers/immediates/memory
+operands/branch targets and encoded bytes,current EIP marker,bounded count/start
+arguments. Fix generated numeric .lst files to name EAX etc.without changing
+code bytes. Four tests added (148 total pending CI) for operand labels,targets,
+full factorial listing,limits/live edits and preservation. No external code or
+materials introduced; formatting uses the existing decoded operand metadata.
