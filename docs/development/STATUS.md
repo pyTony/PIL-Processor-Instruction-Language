@@ -1,3 +1,13 @@
+# User PC full comparison verified — 0.11.0-alpha.1
+
+Windows/x86_64 user run10000/5 matched14 cases/2,460,193 bytes. Generated
+median0.293500 ms,102,224,872 ins/s; interpreter4.080 ms,7,353,496 ins/s;
+13.90x; compilation2.294 s excluded. Direct CPU arithmetic passed,0.002200 ms
+median/0.220 ns per iteration; narrower scope, not guest386 cycles. Earlier
+standalone10000/3 interpreter median3.216 ms/9,330,161 ins/s is a separate run.
+Both phone and PC0.11 comparisons now confirmed.0.12 user verification remains
+pending. No new tests or implementation changes.
+
 # Signed multiplication verified — runtime PR #10
 
 https://github.com/pyTony/pil_proof/pull/10 is ready for review. Core dev

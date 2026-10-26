@@ -315,3 +315,19 @@ Cache2997 hits,7 misses,0 invalidations. Cached interpreter only; no compiled
 Rust or direct CPU measurement supplied yet. Different iteration/sample counts
 from phone results; no controlled cross-device ratio inferred. User console
 output is evidence; this documentation update changes no implementation.
+
+## User Windows PC full comparison — 0.11.0-alpha.1
+
+User PowerShell evidence, windows/x86_64 release,10000 iterations/30003
+instructions per sample,5 samples plus1 excluded warmup. All14 cases matched
+2,460,193 bytes. Generated samples [0.2936,0.2935,0.2934,0.2935,0.369] ms;
+median0.293500 ms,102,224,872 guest instructions/s. Cached interpreter samples
+[4.080,4.163,4.086,4.069,4.072] ms; median4.080 ms,7,353,496 ins/s.
+Observed13.90x; compile2.294 s excluded. Cache29997 hits/7 misses/0 invalidations.
+Direct CPU ADD/SUB/JNZ passed EAX10000/ECX0; samples [0.0022,0.0022,0.0021,
+0.0021,0.0022] ms,median0.002200 ms,0.220 ns/iteration. This narrower64-bit
+mode register loop excludes decoder/PIL/guards and includes call/timer overhead;
+not execution of the16-bit image or a386 clock estimate.
+Separate preceding standalone interpreter run10000/3: [3.225,3.216,3.172] ms,
+median3.216 ms,9,330,161 ins/s; retain separately from comparison samples.
+No implementation changes in this evidence update.0.12 user runs remain pending.

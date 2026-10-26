@@ -668,6 +668,73 @@
         "cache_misses": 7,
         "cache_invalidations": 0,
         "scope": "cached token interpreter only; generated backend and direct CPU not measured"
+      },
+      "pc_comparison": {
+        "reported_by": "user",
+        "date": "2026-10-26",
+        "host": "windows/x86_64",
+        "profile": "release",
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "measured_samples": 5,
+        "excluded_warmups": 1,
+        "verifier_cases": 14,
+        "matched_trace_bytes": 2460193,
+        "generated_samples_ms": [
+          0.2936,
+          0.2935,
+          0.2934,
+          0.2935,
+          0.369
+        ],
+        "generated_median_ns": 293500,
+        "generated_ins_per_second": 102224872,
+        "interpreter_samples_ms": [
+          4.08,
+          4.163,
+          4.086,
+          4.069,
+          4.072
+        ],
+        "interpreter_median_ms": 4.08,
+        "interpreter_ins_per_second": 7353496,
+        "cache_hits": 29997,
+        "cache_misses": 7,
+        "cache_invalidations": 0,
+        "observed_ratio": 13.9,
+        "generated_compile_seconds_excluded": 2.294,
+        "pc_native": {
+          "checked": true,
+          "eax": 10000,
+          "ecx": 0,
+          "samples_ms": [
+            0.0022,
+            0.0022,
+            0.0021,
+            0.0021,
+            0.0022
+          ],
+          "median_ms": 0.0022,
+          "ns_per_iteration": 0.22,
+          "scope": "equivalent 32-bit-register ADD/SUB/JNZ in 64-bit mode; no decoder/PIL/guards; includes call/timer overhead"
+        },
+        "scope": "fixed-image guarded generated Rust; not JIT or 386 cycles"
+      },
+      "pc_additional_interpreter_benchmark": {
+        "reported_by": "user",
+        "host": "windows/x86_64",
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "measured_samples": 3,
+        "excluded_warmups": 1,
+        "samples_ms": [
+          3.225,
+          3.216,
+          3.172
+        ],
+        "median_ms": 3.216,
+        "guest_instructions_per_second": 9330161,
+        "scope": "separate standalone run; not the interpreter samples from backend comparison"
       }
     },
     {
