@@ -5,7 +5,8 @@
 - Add total shifts/ult/flag_if PIL operations, interpreter and generated Rust.
 - Add SHL/SAL, SHR, SAR register/memory/count forms at8/16/32 bits.
 - Add six tests (140 total), independent shift oracle and23-case verifier.
-- Put direct post-build debugger usage at the top of README.
+- Put direct post-build debugger usage and a linked docs index at the top of README.
+- List all seven demos consistently, including factorials/loop, in README and guide.
 
 ## 0.12.0-alpha.1
 

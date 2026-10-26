@@ -1,5 +1,18 @@
 # Debugger guide
 
+## Built-in demos
+
+| Command | Purpose |
+|---|---|
+| `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
+| `demo hello` | Binary Hello-world output through mock serial |
+| `demo factorials` | Binary1!..12! table; `time 1000` then `check`;12!=479001600 |
+| `demo loop` | Binary65,536-iteration counted loop; `time 250000` then `check` |
+| `demo counter` | Small predecoded subtract-and-branch example |
+| `demo echo` | Predecoded one-byte serial echo; waits for RX input |
+| `demo memory` | Predecoded RAM store/load and protection example |
+
+
 Start with `sh tools/debug.sh` (Termux/Linux) or `./tools/debug.ps1` (Windows).
 The script builds and loads the supplied selftest binary. `demo selftest` loads
 the same program without a file. `load PATH` opens another raw binary.
@@ -31,7 +44,7 @@ bytes; draining them does not invalidate `check`. Control bytes are escaped.
 | Command | Purpose |
 |---|---|
 | help | List commands |
-| demo selftest / counter / echo / memory | Load a built-in program or predecoded example |
+| demo NAME | Load selftest, hello, factorials, loop, counter, echo or memory (see table above) |
 | load PATH | Load a raw binary, 1..3840 bytes; paths contain no spaces in the REPL |
 | list | Decode up to 16 instructions from EIP, or list a predecoded example |
 | step / s | Execute one instruction, ignoring its breakpoint |

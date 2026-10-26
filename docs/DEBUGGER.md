@@ -1,5 +1,18 @@
 # Executable test program and monitor profile — v0.7
 
+## Built-in demos
+
+| Command | Purpose |
+|---|---|
+| `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
+| `demo hello` | Binary Hello-world output through mock serial |
+| `demo factorials` | Binary1!..12! table; `time 1000` then `check`;12!=479001600 |
+| `demo loop` | Binary65,536-iteration counted loop; `time 250000` then `check` |
+| `demo counter` | Small predecoded subtract-and-branch example |
+| `demo echo` | Predecoded one-byte serial echo; waits for RX input |
+| `demo memory` | Predecoded RAM store/load and protection example |
+
+
 Use `sh tools/debug.sh` (Termux/Linux) or `./tools/debug.ps1` (Windows) to
 build and load programs/selftest.bin. To choose another raw binary, supply its
 path to the script. The CLI equivalent is `pil-proof --repl --load PATH`.
@@ -135,7 +148,7 @@ debugger commands. Nothing touches a real serial port, WLAN or SD card yet.
 | Command | Behavior |
 |---|---|
 | help | Show commands |
-| demo counter / demo echo | Load/reset a built-in predecoded demo |
+| demo NAME | Load selftest, hello, factorials, loop, counter, echo or memory (see table above) |
 | list | List loaded instructions and current EIP |
 | step / s | Execute one instruction or report a wait/fault/stop |
 | run [N] / continue [N] / c [N] | Run up to N completed steps; default 100, maximum 10,000 |

@@ -9,6 +9,18 @@
 | [References and credits](REFERENCES_AND_CREDITS.md) | Reference manuals, attribution and third-party material status |
 
 
+## Built-in demos
+
+| Command | Purpose |
+|---|---|
+| `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
+| `demo hello` | Binary Hello-world output through mock serial |
+| `demo factorials` | Binary1!..12! table; `time 1000` then `check`;12!=479001600 |
+| `demo loop` | Binary65,536-iteration counted loop; `time 250000` then `check` |
+| `demo counter` | Small predecoded subtract-and-branch example |
+| `demo echo` | Predecoded one-byte serial echo; waits for RX input |
+| `demo memory` | Predecoded RAM store/load and protection example |
+
 Unpack this whole directory. No Rust or Python is needed for these native
 binaries. Run the binary built for your operating system and CPU.
 
@@ -194,7 +206,7 @@ The ordinary debugger remains the cached PIL interpreter.
 
 Before reporting speed, it compares complete instruction-by-instruction traces:
 registers, EFLAGS, undefined flags, EIP, RAM contents and serial RX/TX queues.
-Nine cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
+Twenty-three cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
 read-only store and branch-limit faults, a changed-code stop, empty RX and full
 TX. Stop kinds/metadata are compared; descriptive strings are not trace fields.
 Any mismatch fails the command rather than reporting a passing benchmark.
@@ -217,7 +229,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the nine-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the 23-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.

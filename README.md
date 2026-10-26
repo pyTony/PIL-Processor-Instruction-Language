@@ -19,6 +19,18 @@
 | [Claude continuation notes](CLAUDE.md) | Verified state and handoff for continued development |
 | [Tiny386 adapter plan](docs/platform/tiny386-adapter.md) | Planned hardware-emulation boundary and reuse considerations |
 
+## Built-in demos
+
+| Command | Purpose |
+|---|---|
+| `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
+| `demo hello` | Binary Hello-world output through mock serial |
+| `demo factorials` | Binary1!..12! table; `time 1000` then `check`;12!=479001600 |
+| `demo loop` | Binary65,536-iteration counted loop; `time 250000` then `check` |
+| `demo counter` | Small predecoded subtract-and-branch example |
+| `demo echo` | Predecoded one-byte serial echo; waits for RX input |
+| `demo memory` | Predecoded RAM store/load and protection example |
+
 ## Start the debugger
 
 After a release build, start it directly in PowerShell:
@@ -38,6 +50,9 @@ At the `pil>` prompt, enter one command per line:
 demo hello
 run 1000
 serial tx
+demo factorials
+time 1000
+check
 help
 quit
 ```
