@@ -1,5 +1,13 @@
 # Changes
 
+## 0.10.0-alpha.1
+
+- Generate and compile fixed-image Rust guest runners using shared PIL emission.
+- Add nine-case byte-for-byte instruction traces including faults and serial waits.
+- Compare generated Rust and cached interpreter with separate compilation timing.
+- Add alpha feature matrix, comparison helpers and shared Windows/WSL setup.
+- Add four tests (120 dev tests), retaining all prior emitted-code comparisons.
+
 ## 0.9.0
 
 - Cache decoded instructions/PIL with bounded storage and shared immutable programs.

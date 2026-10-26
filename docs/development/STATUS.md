@@ -1,3 +1,21 @@
+# v0.10.0-alpha.1 development
+
+User authorized generated-Rust comparison and alpha feature matrix; alpha is a
+candidate PR, not a published GitHub release/tag. New native.rs composes
+fixed-image Rust runners from emit_rust_functions (shared with --emit-rust),
+compiles with rustc -O and compares exact full-state instruction traces via
+trace.rs. Nine cases: selftest/hello/factorials/loop17, store/branch faults,
+changed-code stop and RX-wait/TX-full. Timed native loop guards code and uses
+black_box per step; no JIT or native REPL. Compare helpers build release.
+120 dev tests pending CI; runtime export50 files. Native proof needs local
+rustc. Normal packaged debugger does not. User phone cached baseline now
+6.988 ms / 4293668 ins/s vs uncached351.526 ms /85351 ins/s (~50.3x).
+Phone native result unreported; user will also benchmark PC. Shared source
+Windows/WSL uses separate CARGO_TARGET_DIR (target/windows vs target/wsl).
+Feature matrix belongs in runtime docs; all tests/history remain on dev.
+
+## Previous notes
+
 # v0.9 cached interpreter verified on hosts
 
 Runtime-only PR #6: https://github.com/pyTony/pil_proof/pull/6

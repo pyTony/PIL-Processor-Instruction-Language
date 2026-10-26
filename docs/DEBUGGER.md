@@ -334,3 +334,20 @@ Both modes still interpret PIL. Cached timing includes byte validation, lookup,
 cache-miss decoding/compilation and token dispatch; uncached mode decodes and
 compiles on every visit. Compare the same iteration/sample counts, host and
 build profile. These are host wall-time results, not 386 clock cycles.
+
+
+## Verifier and direct PC baseline
+
+`pil-proof --verify-backends` runs the nine-case compiled-Rust/interpreter
+trace verifier without timing samples. `--compare-backends` must pass that
+verifier before it starts either backend's measured comparison. A mismatch or
+compiler error returns a nonzero exit status.
+
+On an x86-64 PC the comparison also reports `PC_NATIVE`: an ADD/SUB/JNZ loop
+executed directly by the processor in 64-bit mode, using 32-bit registers. It
+checks the accumulator and final count. Run it alone with `--cpu-bench 10000 5`.
+This excludes the decoder, PIL, code guards and virtual RAM; function-call and
+timer overhead remain included. It is an arithmetic microbenchmark, not native
+execution of the 16-bit monitor image or an original-386 cycle estimate.
+On non-x86-64 hosts the x86-specific baseline is explicitly unavailable; the
+compiled Rust backend still builds for the local host.

@@ -183,3 +183,29 @@ Release 10000-iteration / 5-sample loop comparisons (30003 instructions/sample):
 Each sample starts cold; cached final sample: 29997 hits, 7 misses, no byte/context
 invalidations. These are CI host results, not phone measurements or simulated
 386 cycles. Runtime-only PR #6 targets main from delivery/v0.9.0.
+
+## v0.10.0-alpha.1 — compiled guest proof and alpha candidate
+
+User authorized the generated-Rust comparison, then an alpha with a feature
+matrix. Add an offline fixed-image runner composed from the existing validated
+PIL emitter. Nine cases compare full CPU/RAM/serial traces after every guest
+instruction; loop timings separate compilation and startup from execution.
+Generated code guards bytes and uses black_box per instruction. Interactive
+debugger remains token-interpreted. Add feature matrix and shared Windows/WSL
+source directory instructions. Four dev tests added (120 total).
+
+User v0.9 Termux release results (10000 iterations, 30003 instructions/sample,
+5 measured samples and 1 excluded warmup, android/aarch64):
+- Uncached [351.561,351.858,351.526,351.396,351.307] ms; median351.526 ms,
+  85351 ins/s.
+- Cached [7.492,6.994,6.955,6.988,6.981] ms; median6.988 ms,
+  4293668 ins/s; 29997 hits, 7 misses, no invalidations. About 50.3x gain.
+No phone generated-backend result yet. User will also test the PC.
+Alpha is a candidate PR, not a published GitHub release/tag. Runtime-only main
+projection is 50 files; all development logs/tests/tools stay on dev.
+
+User additionally requested direct PC-native comparison and a verifier. Add
+--verify-backends as a verification-only command; timing starts only after
+byte-exact traces match. Add --cpu-bench on x86-64 using a bounded, checked
+32-bit-register ADD/SUB/JNZ loop in 64-bit mode. Other hosts report unavailable
+for this x86-specific baseline. No original 386 MHz claim is made.

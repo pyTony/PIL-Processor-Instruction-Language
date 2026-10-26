@@ -7,10 +7,10 @@ ROOT=Path(__file__).resolve().parents[1]
 # through a broad repository copy. These patterns are intentionally narrow.
 PATTERNS=('src/*.rs','isa/i386/*.pil','programs/selftest.hex','programs/selftest.lst','programs/hello.hex','programs/hello.lst','programs/factorials.hex','programs/factorials.lst','programs/loop.hex','programs/loop.lst',
           'Cargo.toml','Cargo.lock','.gitattributes','tools/build.sh','tools/build.ps1',
-          'tools/debug.sh','tools/debug.ps1','tools/bench.sh','tools/bench.ps1')
+          'tools/debug.sh','tools/debug.ps1','tools/bench.sh','tools/bench.ps1','tools/compare.sh','tools/compare.ps1')
 DOCUMENTS={'README.md':'README.md','DEBUGGER.md':'docs/DEBUGGER.md',
            'REFERENCES_AND_CREDITS.md':'docs/REFERENCES_AND_CREDITS.md',
-           'RELEASE_NOTES.md':'docs/RELEASE_NOTES.md'}
+           'RELEASE_NOTES.md':'docs/RELEASE_NOTES.md','FEATURE_MATRIX.md':'docs/FEATURE_MATRIX.md'}
 TEST_MODULE=re.compile(r'(?m)^#\[cfg\(test\)\]\n#\[path[^\n]*\]\nmod \w+;\n?')
 
 def export(destination,source_ref):
@@ -60,7 +60,8 @@ def verify(destination):
     generated=subprocess.check_output([str(exe),'--emit-rust','32','add_ram'],cwd=destination,env=env)
     source=destination/'target/generated.rs';source.write_bytes(generated)
     subprocess.run([os.environ.get('RUSTC','rustc'),'--edition=2021','--crate-type','lib',str(source),'--out-dir',str(destination/'target')],cwd=destination,env=env,check=True,capture_output=True)
-    print('Standalone runtime build, launchers, serial transcript and generated Rust passed')
+    subprocess.run([str(exe),'--compare-backends','16','2'],cwd=destination,env=env,check=True)
+    print('Standalone runtime build, launchers, serial transcript and compiled backend comparison passed')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('destination',type=Path)

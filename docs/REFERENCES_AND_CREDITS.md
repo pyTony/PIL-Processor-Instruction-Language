@@ -226,3 +226,23 @@ Instruction cache (v0.9): original project implementation using Rust's standard
 BTreeMap and Rc. No external implementation or library was imported. Encoded
 byte/segment-context validation follows this monitor's existing fetch rules.
 No new instruction semantics or reference materials are introduced.
+
+Alpha compiled guest runner: original project code composed from the existing
+validated PIL emitter and monitor fixture definitions. The shared trace format
+uses exact bytes, not a third-party emulator oracle. The compiler and emitted
+runner use Rust's standard library; no new Cargo crate or external source was
+imported. Existing Intel instruction references still apply.
+
+Additional operational documentation consulted on 26 October 2026:
+- Rust project, Cargo Book, Build Cache: https://doc.rust-lang.org/cargo/reference/build-cache.html
+  (CARGO_TARGET_DIR and profile-specific artifacts).
+- Microsoft Learn, Working across file systems: https://learn.microsoft.com/en-us/windows/wsl/filesystems
+  (shared Windows/WSL paths and cross-filesystem performance).
+No text or source from these pages is bundled; user instructions are paraphrased.
+
+Direct PC baseline: original bounded register-only ADD/SUB/JNZ loop using
+Rust inline asm on x86-64. Rust Reference inline assembly documentation
+(https://doc.rust-lang.org/reference/inline-assembly.html) informs operand and
+clobber handling. Microsoft KB896458 documents lack of native 16-bit support
+on Windows x64; the baseline therefore uses equivalent arithmetic in 64-bit
+mode, rather than executing the monitor image directly. No source imported.

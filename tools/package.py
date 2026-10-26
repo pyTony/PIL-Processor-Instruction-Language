@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory() as temp:
         path=Path(temp)/(example+'.bin')
         subprocess.run([str(binary),'--write-'+example,str(path)],check=True)
         files[path]='programs/'+example+'.bin'
-    for src,dst in [('delivery/README.md','README.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('delivery/source/DEBUGGER.md','DEBUGGER.md'),('delivery/source/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('delivery/source/RELEASE_NOTES.md','RELEASE_NOTES.md'),('programs/selftest.lst','programs/selftest.lst'),('programs/hello.lst','programs/hello.lst'),('programs/factorials.lst','programs/factorials.lst'),('programs/loop.lst','programs/loop.lst')]:
+    for src,dst in [('delivery/README.md','README.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('delivery/source/DEBUGGER.md','DEBUGGER.md'),('delivery/source/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('delivery/source/RELEASE_NOTES.md','RELEASE_NOTES.md'),('delivery/source/FEATURE_MATRIX.md','FEATURE_MATRIX.md'),('programs/selftest.lst','programs/selftest.lst'),('programs/hello.lst','programs/hello.lst'),('programs/factorials.lst','programs/factorials.lst'),('programs/loop.lst','programs/loop.lst')]:
         files[root/src]=dst
     with zipfile.ZipFile(dist/(name+'.zip'),'w',zipfile.ZIP_DEFLATED) as archive:
         manifest=[]
@@ -35,6 +35,7 @@ with tempfile.TemporaryDirectory() as temp:
     exe.chmod(0o755) # Python extractall does not restore ZIP Unix permissions.
     subprocess.run([str(exe),'--selftest'],cwd=delivery,check=True)
     subprocess.run([str(exe),'--numeric-test'],cwd=delivery,check=True)
+    subprocess.run([str(exe),'--compare-backends','16','2'],cwd=delivery,check=True)
     commands='serial rx 41\nrun 1000\ncheck\nserial tx\nload programs/hello.bin\nrun 1000\nserial tx\nload programs/factorials.bin\ntime 1000\ncheck\nbench 16 2\ncache stats\ncache off\nbench 16 2\ncache on\nstress 2\nquit\n'
     launch=['pwsh','-NoProfile','-File','debug.ps1'] if os.name=='nt' else ['sh','debug.sh']
     result=subprocess.run(launch,cwd=delivery,input=commands,text=True,capture_output=True,check=True)

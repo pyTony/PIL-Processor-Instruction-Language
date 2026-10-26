@@ -350,7 +350,7 @@
       "rust_verification": {
         "tests_supplied": 116,
         "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40336149129",
-        "phone_cache": "not yet reported",
+        "phone_cache": "user-confirmed PASS: cached and uncached release benchmark",
         "source_commit": "bf9e681065cf26f976954ea9a5a997604d4d7582",
         "tests_passed": 116,
         "tests_failed": 0,
@@ -411,7 +411,56 @@
           "uncached_ins_per_second": 138896
         },
         "phone_cached": "not yet reported"
+      },
+      "phone_benchmark": {
+        "host": "android/aarch64",
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "measured_samples": 5,
+        "excluded_warmups": 1,
+        "uncached_ms": [
+          351.561,
+          351.858,
+          351.526,
+          351.396,
+          351.307
+        ],
+        "uncached_median_ms": 351.526,
+        "uncached_ins_per_second": 85351,
+        "cached_ms": [
+          7.492,
+          6.994,
+          6.955,
+          6.988,
+          6.981
+        ],
+        "cached_median_ms": 6.988,
+        "cached_ins_per_second": 4293668,
+        "cached_hits": 29997,
+        "cached_misses": 7,
+        "cached_invalidations": 0
       }
+    },
+    {
+      "version": "0.10.0-alpha.1",
+      "date": "2026-10-26",
+      "status": "alpha candidate; host CI pending",
+      "features": [
+        "offline compiled Rust guest runner from validated PIL",
+        "nine-case exact CPU/RAM/serial traces",
+        "native vs cached-interpreter loop comparison",
+        "alpha feature matrix and shared Windows/WSL setup",
+        "native x86_64 register-loop PC baseline"
+      ],
+      "rust_verification": {
+        "tests_supplied": 120,
+        "host_ci": "pending",
+        "phone_native": "not yet reported",
+        "pc_user_run": "planned by user"
+      },
+      "runtime_files": 50,
+      "release_publication": "candidate PR only; no tag/release published",
+      "provenance": "original code; prior Intel semantics; Cargo Book and Microsoft WSL operational docs"
     }
   ]
 }

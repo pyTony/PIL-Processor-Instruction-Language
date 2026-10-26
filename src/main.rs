@@ -9,6 +9,8 @@ mod serial;
 mod debugger;
 mod guest;
 mod cache;
+mod native;
+mod trace;
 use flow::{ExecError, FlowContext};
 
 type R<T> = Result<T, String>;
@@ -412,6 +414,12 @@ fn emit_rust(p: &Program) -> String {
     out.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());
     out.push_str("\n}\n");
     out=out.lines().map(|line|line.strip_prefix("//!").map(|s|format!("//{s}")).unwrap_or_else(||line.to_owned())).collect::<Vec<_>>().join("\n");
+    out.push_str(&emit_rust_functions(p));out
+}
+// Shared support types can be supplied by a compiled guest runner instead of
+// duplicated in each generated instruction module.
+fn emit_rust_functions(p:&Program)->String {
+    let mut out=String::new();
     out.push_str(&format!(
         "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
@@ -474,6 +482,23 @@ fn emit_rust(p: &Program) -> String {
 }
 fn main() -> R<()> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str)==Some("--verify-backends") {
+        if args.len()!=2{return Err("usage: pil-proof --verify-backends".into());}
+        println!("{}",native::verify()?);return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--cpu-bench") {
+        if args.len()>4{return Err("usage: pil-proof --cpu-bench [iterations] [samples]".into());}
+        let n=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{10000};
+        let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{5};
+        println!("{}",native::cpu_benchmark(n,samples)?);return Ok(());
+    }
+    if matches!(args.get(1).map(String::as_str),Some("--compare-backends"|"--emit-suite-rust")) {
+        if args.len()>4{return Err("usage: pil-proof --compare-backends|--emit-suite-rust [iterations] [samples]".into());}
+        let n=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{10000};
+        let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{5};
+        if args[1]=="--emit-suite-rust"{print!("{}",native::emit_suite(n,samples)?);}else{println!("{}",native::compare(n,samples)?);}
+        return Ok(());
+    }
     if args.get(1).map(String::as_str)==Some("--write-factorials") || args.get(1).map(String::as_str)==Some("--write-loop") {
         let path=args.get(2).ok_or("usage: pil-proof --write-factorials|--write-loop PATH")?;
         let bytes=if args[1]=="--write-factorials"{guest::factorial_bytes()?}else{guest::loop_bytes(guest::LOOP_ITERATIONS)?};

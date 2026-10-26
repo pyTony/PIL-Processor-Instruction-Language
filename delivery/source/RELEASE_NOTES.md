@@ -1,3 +1,21 @@
+# PIL 0.10.0-alpha.1
+
+First alpha candidate of the PIL host execution proof. See FEATURE_MATRIX.md
+for implemented subsets and planned work; this release does not boot a PC OS.
+
+- Add an offline compiled Rust guest runner generated from the same validated PIL.
+- Compare complete instruction traces across nine success/fault/wait cases.
+- Gate timings with --verify-backends, then compare generated Rust/interpreter.
+- Add a direct x86-64 PC arithmetic baseline via --cpu-bench.
+- Add source/native artifact output and Linux/Windows comparison helper scripts.
+- Document shared Windows/WSL source folders with separate build directories.
+- Preserve the cached interpreter as the interactive debugger engine.
+
+Native comparison requires rustc. Normal packaged debugger use does not.
+Compilation and process startup are excluded from native sample timings; guards
+and black_box per step are included. Native speed on the phone is not yet known.
+No JIT, arbitrary compiled binary execution, OS boot or ESP32 firmware is added.
+
 # PIL 0.9.0
 
 - Cache decoded binary instructions and their compiled PIL descriptions.
