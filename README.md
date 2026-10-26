@@ -200,7 +200,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.10.0-alpha.2. This is an alpha of the host execution proof, not an OS
+areas in 0.11.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -216,7 +216,7 @@ The ordinary debugger remains the cached PIL interpreter.
 
 Before reporting speed, it compares complete instruction-by-instruction traces:
 registers, EFLAGS, undefined flags, EIP, RAM contents and serial RX/TX queues.
-Nine cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
+Fourteen cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
 read-only store and branch-limit faults, a changed-code stop, empty RX and full
 TX. Stop kinds/metadata are compared; descriptive strings are not trace fields.
 Any mismatch fails the command rather than reporting a passing benchmark.
@@ -239,7 +239,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the nine-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the fourteen-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -252,3 +252,13 @@ timer overhead remain included. It is an arithmetic microbenchmark, not native
 execution of the 16-bit monitor image or an original-386 cycle estimate.
 On non-x86-64 hosts the x86-specific baseline is explicitly unavailable; the
 compiled Rust backend still builds for the local host.
+
+## Expanded arithmetic profile (0.11 alpha)
+
+OR/XOR/TEST clear CF/OF, classify AF undefined and update SF/ZF/PF. TEST and
+CMP do not write their operands; they can read protected RAM. NOT and NOP
+preserve flags and undefined metadata. INC/DEC preserve CF and its metadata.
+NEG computes zero minus its operand. New ALU forms use the same staged RAM
+retirement and segment checks as existing instructions. MUL/DIV, shifts, stack
+operations, CALL/RET and general device I/O are still outside this profile.
+The verifier adds ALU8/16/32 fixtures plus read-only TEST and NEG fault cases.

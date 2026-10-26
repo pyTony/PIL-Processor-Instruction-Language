@@ -1,3 +1,12 @@
+# PIL 0.11.0-alpha.1
+
+- Add OR, XOR, TEST, NOT, NEG, INC, DEC and NOP descriptions and binary decoding.
+- Support both register/memory directions for all eight binary ALU operations.
+- Add accumulator immediates and 80/81/83 immediate groups with sign extension.
+- Add unary memory/register and TEST immediate forms at 8/16/32 bits.
+- Expand compiled/interpreted verification to fourteen full-state cases.
+- Preserve precise flag metadata and fault-before-retirement behavior.
+
 # PIL 0.10.0-alpha.2
 
 - Verifier failures identify case, step, instruction EIP and the differing CPU,

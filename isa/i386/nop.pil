@@ -1,0 +1,3 @@
+# NOP advances EIP without changing registers or flags.
+preserve_flags all
+retire

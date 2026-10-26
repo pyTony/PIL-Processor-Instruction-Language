@@ -73,8 +73,13 @@ Supported encodings:
 
 - B0..BF MOV immediate to register, including high-byte register views.
 - 88..8B MOV register/register or register/memory, with 8/16/32-bit data.
-- 00/01 ADD register/register or memory destination.
-- 10/11 ADC, 18/19 SBB, 20/21 AND, 28/29 SUB, 38/39 CMP: register/register.
+- 00..03 ADD, 08..0B OR, 10..13 ADC, 18..1B SBB, 20..23 AND,
+  28..2B SUB, 30..33 XOR, 38..3B CMP: both register/memory directions.
+- Accumulator-immediate forms 04/05 through 3C/3D for those eight ALU operations.
+- 80/81/83 immediate ALU groups; 83 sign-extends its byte to operand width.
+- 84/85 TEST r/m,register; A8/A9 accumulator TEST; F6/F7 /0 TEST immediate.
+- F6/F7 /2 NOT and /3 NEG; FE/FF /0 INC and /1 DEC (register or memory).
+- 40..47 INC and 48..4F DEC word/dword registers; 90 NOP.
 - 70..7F short Jcc; 0F 90..9F SETcc with register destination and /0.
 - 66 operand size, 67 address size, all six segment overrides.
 - 16-bit ModR/M, 32-bit ModR/M/SIB, disp8 sign extension and disp16/32.
@@ -232,7 +237,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.10.0-alpha.2. This is an alpha of the host execution proof, not an OS
+areas in 0.11.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -248,7 +253,7 @@ The ordinary debugger remains the cached PIL interpreter.
 
 Before reporting speed, it compares complete instruction-by-instruction traces:
 registers, EFLAGS, undefined flags, EIP, RAM contents and serial RX/TX queues.
-Nine cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
+Fourteen cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
 read-only store and branch-limit faults, a changed-code stop, empty RX and full
 TX. Stop kinds/metadata are compared; descriptive strings are not trace fields.
 Any mismatch fails the command rather than reporting a passing benchmark.
@@ -306,7 +311,7 @@ and [Microsoft WSL filesystems](https://learn.microsoft.com/en-us/windows/wsl/fi
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the nine-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the fourteen-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -326,3 +331,13 @@ linear byte addresses; RX/TX indices are queue positions. A terminal halt,
 fault or wait attempt also has a trace record. Truncated and malformed traces
 fail verification. Both interpreter.trace and generated.trace are retained
 under the reported artifacts path on a mismatch. No timings run after failure.
+
+## Expanded arithmetic profile (0.11 alpha)
+
+OR/XOR/TEST clear CF/OF, classify AF undefined and update SF/ZF/PF. TEST and
+CMP do not write their operands; they can read protected RAM. NOT and NOP
+preserve flags and undefined metadata. INC/DEC preserve CF and its metadata.
+NEG computes zero minus its operand. New ALU forms use the same staged RAM
+retirement and segment checks as existing instructions. MUL/DIV, shifts, stack
+operations, CALL/RET and general device I/O are still outside this profile.
+The verifier adds ALU8/16/32 fixtures plus read-only TEST and NEG fault cases.
