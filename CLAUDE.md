@@ -1,3 +1,16 @@
+# User Windows alpha.3 verified —recorded27 October2026
+
+Runtime PR #18 is confirmed merged.
+User supplied Windows/x86_64 release comparison10000/5:all39 cases matched
+4,494,466 trace bytes. Generated median0.5976 ms (50,205,823 guest ins/s),
+interpreter4.723 ms (6,352,530 ins/s),7.90x; generated compilation4.271 s
+excluded. Cache29997 hits/7 misses/0 invalidations. Direct CPU baseline passed,
+0.0022 ms/0.220 ns per iteration,narrower scope; not386 cycles.
+Interactive extensions listing bytes/operands confirmed;15 completed instructions,
+haltEIP12d,checkPASS. EAX/ECX=FFFFFF80,EDX=FFFFFFFF,EBX=80,ESP/EBP/EDI=FF80,
+ESI=85. Debug build2.06 s/release2.27 s separately reported. No execution changes.
+External hardware suites remain researched/planned,not yet imported or executed.
+
 # Runtime PR #18 ready —0.15alpha.3
 
 https://github.com/pyTony/pil_proof/pull/18; runtime head

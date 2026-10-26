@@ -1296,7 +1296,7 @@
     {
       "version": "0.15.0-alpha.3",
       "date": "2026-10-26",
-      "status": "host-verified; runtime-only PR #18 awaits user review",
+      "status": "host-verified and user Windows alpha.3 backend/demo verified",
       "features": [
         "16-to16 MOVSX/MOVZX register/memory",
         "extensions demo and checker",
@@ -1349,6 +1349,68 @@
         "head": "a1babcdbee46d9c99a9e4ae7e62c2866478f211c",
         "source_commit": "6b152b91e9d74e3bf3fc5c537351b4b6776ac9ec",
         "base_main": "ecfdb9a673af6d833d4000814a3299f5ed0986bb"
+      },
+      "user_windows_confirmation": {
+        "recorded_date": "2026-10-27",
+        "host": "windows/x86_64",
+        "profile": "release",
+        "debug_build_seconds": 2.06,
+        "release_build_seconds": 2.27,
+        "verified_cases": 39,
+        "matched_trace_bytes": 4494466,
+        "iterations": 10000,
+        "samples": 5,
+        "excluded_warmups": 1,
+        "completed_instructions_per_sample": 30003,
+        "generated_samples_ms": [
+          0.495,
+          0.6368,
+          0.5969,
+          0.5976,
+          0.6281
+        ],
+        "generated_median_ms": 0.5976,
+        "generated_instructions_per_second": 50205823,
+        "interpreter_samples_ms": [
+          5.476,
+          6.153,
+          4.295,
+          4.723,
+          3.737
+        ],
+        "interpreter_median_ms": 4.723,
+        "interpreter_instructions_per_second": 6352530,
+        "observed_ratio": 7.9,
+        "generated_compile_seconds": 4.271,
+        "cache_hits": 29997,
+        "cache_misses": 7,
+        "cache_invalidations": 0,
+        "direct_cpu_samples_ms": [
+          0.0022,
+          0.0022,
+          0.0022,
+          0.0021,
+          0.0022
+        ],
+        "direct_cpu_median_ms": 0.0022,
+        "direct_cpu_ns_per_iteration": 0.22,
+        "scope": "same-host guarded generated Rust vs cached interpreter loop; compilation excluded; direct CPU is a narrower arithmetic baseline; not386 cycles",
+        "debugger_extensions": {
+          "listing": "all16 rows including HLT,bytes/operands/current marker confirmed",
+          "completed_steps": 15,
+          "halt_eip": "0000012d",
+          "check": "PASS",
+          "registers": {
+            "EAX": "ffffff80",
+            "ECX": "ffffff80",
+            "EDX": "ffffffff",
+            "EBX": "00000080",
+            "ESP": "0000ff80",
+            "EBP": "0000ff80",
+            "ESI": "00000085",
+            "EDI": "0000ff80"
+          }
+        }
       }
     }
   ]
