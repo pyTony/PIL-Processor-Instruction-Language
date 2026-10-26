@@ -227,3 +227,95 @@ Both modes still interpret PIL. Cached timing includes byte validation, lookup,
 cache-miss decoding/compilation and token dispatch; uncached mode decodes and
 compiles on every visit. Compare the same iteration/sample counts, host and
 build profile. These are host wall-time results, not 386 clock cycles.
+
+
+## Alpha: compiled Rust backend proof
+
+See [feature matrix](FEATURE_MATRIX.md) for the supported, partial and planned
+areas in 0.10.0-alpha.1. This is an alpha of the host execution proof, not an OS
+boot release or ESP32 firmware.
+
+From a source checkout, build in release mode and compare the engines:
+
+```sh
+sh tools/compare.sh 10000 5
+```
+
+Windows PowerShell: `./tools/compare.ps1 -Iterations 10000 -Samples 5`.
+The command emits Rust from the validated PIL of fixed guest images, compiles
+it with rustc -O, and runs it as a separate executable. Rustc must be installed.
+The ordinary debugger remains the cached PIL interpreter.
+
+Before reporting speed, it compares complete instruction-by-instruction traces:
+registers, EFLAGS, undefined flags, EIP, RAM contents and serial RX/TX queues.
+Nine cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
+read-only store and branch-limit faults, a changed-code stop, empty RX and full
+TX. Stop kinds/metadata are compared; descriptive strings are not trace fields.
+Any mismatch fails the command rather than reporting a passing benchmark.
+
+Both engines then time the same counted-loop image with the same iteration
+count and sample count, fresh state per sample and one excluded warmup. The
+cached interpreter samples start cold. Generated code includes fixed-image byte
+guards, native dispatch and black_box per step to keep rustc from folding away
+the known loop. Generation/compilation/process startup, trace recording, result
+checking and output are outside native sample intervals. Compilation time is
+reported separately. Do not compare a debug interpreter to release native code;
+the compare helpers build the interpreter in release mode.
+
+Artifacts stay under target/backend-comparison or CARGO_TARGET_DIR: emitted
+Rust, native executable and the two matching binary traces. `--emit-suite-rust
+10000 5` emits the standalone suite source without compiling. Compiled execution
+is currently for fixed guarded images; changes to their code stop that runner.
+It is not a JIT, a general binary translator, or a selectable native REPL engine.
+
+
+## Sharing a source folder between Windows 11 and WSL
+
+A folder such as C:\Users\name\pil_proof is accessible in WSL as
+/mnt/c/Users/name/pil_proof. Give Windows and WSL different build targets.
+
+PowerShell, in the project folder:
+
+```powershell
+$env:CARGO_TARGET_DIR = "target/windows"
+./tools/build.ps1
+./tools/compare.ps1 -Iterations 10000 -Samples 5
+```
+
+WSL, in the same source folder:
+
+```sh
+export CARGO_TARGET_DIR=target/wsl
+sh tools/build.sh
+sh tools/compare.sh 10000 5
+```
+
+These settings last for the current terminal session. Use each environment's
+Rust toolchain and scripts. Source and Cargo.lock are shared; Windows .exe and
+Linux executables remain in separate build directories. Run Git operations in
+one environment at a time. The repository uses LF line endings for scripts.
+
+WSL builds on /mnt/c can be slower than builds within the Linux filesystem.
+For primarily WSL work, a separate checkout under ~/pil_proof is an option;
+keep it synchronized through GitHub. Compilation/file I/O times are separate
+from the benchmark's inner guest-execution timer.
+
+References: [Cargo build directories](https://doc.rust-lang.org/cargo/reference/build-cache.html)
+and [Microsoft WSL filesystems](https://learn.microsoft.com/en-us/windows/wsl/filesystems).
+
+
+## Verifier and direct PC baseline
+
+`pil-proof --verify-backends` runs the nine-case compiled-Rust/interpreter
+trace verifier without timing samples. `--compare-backends` must pass that
+verifier before it starts either backend's measured comparison. A mismatch or
+compiler error returns a nonzero exit status.
+
+On an x86-64 PC the comparison also reports `PC_NATIVE`: an ADD/SUB/JNZ loop
+executed directly by the processor in 64-bit mode, using 32-bit registers. It
+checks the accumulator and final count. Run it alone with `--cpu-bench 10000 5`.
+This excludes the decoder, PIL, code guards and virtual RAM; function-call and
+timer overhead remain included. It is an arithmetic microbenchmark, not native
+execution of the 16-bit monitor image or an original-386 cycle estimate.
+On non-x86-64 hosts the x86-specific baseline is explicitly unavailable; the
+compiled Rust backend still builds for the local host.

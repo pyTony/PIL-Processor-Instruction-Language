@@ -446,7 +446,8 @@ fn parse_count(text:&str)->Result<u32,String> {
     u32::try_from(number(text)?).map_err(|_|"count must fit 32 bits".into())
 }
 pub fn benchmark(iterations:u32,samples:u32)->Result<String,String> {benchmark_mode(iterations,samples,true)}
-pub fn benchmark_mode(iterations:u32,samples:u32,cached:bool)->Result<String,String> {
+pub fn benchmark_mode(iterations:u32,samples:u32,cached:bool)->Result<String,String> {benchmark_details(iterations,samples,cached).map(|x|x.0)}
+pub fn benchmark_details(iterations:u32,samples:u32,cached:bool)->Result<(String,f64),String> {
     let bytes=super::guest::loop_bytes(iterations)?;
     if !(1..=9).contains(&samples){return Err("benchmark samples must be 1..9".into());}
     let steps=3*iterations as usize+3;let mut timings=Vec::new();let mut stats=super::cache::Stats::default();
@@ -461,7 +462,7 @@ pub fn benchmark_mode(iterations:u32,samples:u32,cached:bool)->Result<String,Str
     timings.sort_by(|a,b|a.partial_cmp(b).unwrap());let mid=timings.len()/2;
     let median=if timings.len()%2==0{(timings[mid-1]+timings[mid])/2.0}else{timings[mid]};
     let rate=if median==0.0{0.0}else{steps as f64/median};
-    Ok(format!("PASS: counted-loop benchmark; {iterations} iterations; {steps} completed instructions/sample\nsamples_ms=[{values}]; median={:.3} ms; {rate:.0} guest instructions/s\n{samples} measured samples, 1 excluded warmup; fresh CPU/RAM per sample.\nEngine=PIL-token-interpreter cache={} (cold per sample); last_sample_hits={} misses={} invalidations={}.\nHost wall time includes fetch validation, misses/compilation and interpreter dispatch; excludes image setup, checking and console output. Not 386 cycles. version={} host={}/{} profile={}",median*1000.0,if cached{"on"}else{"off"},stats.hits,stats.misses,stats.invalidations,env!("CARGO_PKG_VERSION"),std::env::consts::OS,std::env::consts::ARCH,if cfg!(debug_assertions){"debug"}else{"release"}))
+    Ok((format!("PASS: counted-loop benchmark; {iterations} iterations; {steps} completed instructions/sample\nsamples_ms=[{values}]; median={:.3} ms; {rate:.0} guest instructions/s\n{samples} measured samples, 1 excluded warmup; fresh CPU/RAM per sample.\nEngine=PIL-token-interpreter cache={} (cold per sample); last_sample_hits={} misses={} invalidations={}.\nHost wall time includes fetch validation, misses/compilation and interpreter dispatch; excludes image setup, checking and console output. Not 386 cycles. version={} host={}/{} profile={}",median*1000.0,if cached{"on"}else{"off"},stats.hits,stats.misses,stats.invalidations,env!("CARGO_PKG_VERSION"),std::env::consts::OS,std::env::consts::ARCH,if cfg!(debug_assertions){"debug"}else{"release"}),median))
 }
 pub fn factorial_stress(passes:u32)->Result<String,String> {
     if !(1..=1000).contains(&passes){return Err("stress passes must be 1..1000".into());}
@@ -477,4 +478,31 @@ pub fn numeric_test()->Result<(),String> {
     let mut d=Debugger::new("factorials")?;let (steps,stop)=d.run(1000)?;
     if steps!=336 || !matches!(stop,Stop::Halt(_)){return Err("factorial execution mismatch".into());}
     println!("{}",d.check_factorials()?);println!("{}",benchmark(16,2)?);println!("{}",factorial_stress(2)?);Ok(())
+}
+
+// Exact architectural/transport trace used to check emitted Rust execution.
+pub fn backend_trace(cases:&[super::native::Case])->Result<Vec<u8>,String> {
+    let mut out=Vec::new();
+    for (id,case) in cases.iter().enumerate() {
+        let mut d=Debugger::new("counter")?;d.load_image(&case.bytes,case.name)?;d.image=Some(case.image.clone());
+        d.cpu.regs=case.regs;d.cpu.eflags=case.flags;
+        if let Some((at,len))=case.protect {d.ram.protect(at,len).map_err(|e|format!("{e:?}"))?;}
+        if let Some((at,bytes))=&case.patch {d.ram.write_bytes(*at,bytes).map_err(|e|format!("{e:?}"))?;}
+        d.serial.inject_rx(&case.rx).map_err(|e|format!("{e:?}"))?;
+        for b in &case.tx {d.serial.try_write(*b).map_err(|e|format!("{e:?}"))?;}
+        let mut stopped=false;
+        for _ in 0..1000 {
+            let stop=d.step();let status=match stop {
+                Stop::Advanced=>[0,0,0,0,0],Stop::Halt(ip)=>[1,ip,0,0,0],
+                Stop::WaitingRx(ip)=>[2,ip,0,0,0],Stop::TxBlocked(ip)=>[3,ip,0,0,0],
+                Stop::Fault(e)=>super::trace::fault(d.cpu.eip,e),
+                Stop::Decode{eip,..}=>[7,eip,0,0,0],_=>return Err("unexpected verification stop".into()),
+            };
+            let (rx,tx)=d.serial.snapshot();
+            super::trace::record(&mut out,id as u32,status,&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx);
+            if status[0]!=0 {stopped=true;break;}
+        }
+        if !stopped{return Err(format!("trace budget exhausted for {}",case.name));}
+    }
+    Ok(out)
 }

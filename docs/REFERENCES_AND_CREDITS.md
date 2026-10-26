@@ -38,3 +38,15 @@ third-party implementation or dataset is bundled.
 The bounded decoder/PIL cache is original project code using Rust's standard
 library. It introduces no new external dependency, instruction semantics or
 third-party source material.
+
+The alpha compiled guest runner and binary trace format are original project
+work generated from the same PIL definitions. Rustc and the standard library
+provide compilation and timing. Operational references for the shared checkout:
+[Cargo Book](https://doc.rust-lang.org/cargo/reference/build-cache.html) and
+[Microsoft WSL filesystems](https://learn.microsoft.com/en-us/windows/wsl/filesystems).
+No third-party source or documentation text is imported.
+
+The direct x86-64 baseline uses original register-only inline assembly.
+[Rust Reference](https://doc.rust-lang.org/reference/inline-assembly.html) and
+[Microsoft KB896458](https://learn.microsoft.com/en-us/troubleshoot/windows-client/application-management/x64-windows-not-support-16-bit-programs)
+were consulted for inline-assembly constraints and Windows 16-bit limitations.

@@ -1,6 +1,6 @@
 {
-  "version": "0.9.0",
-  "source_commit": "bf9e681065cf26f976954ea9a5a997604d4d7582",
+  "version": "0.10.0-alpha.1",
+  "source_commit": "ca195663533ad41a6f50952442bf6a38d1a92447",
   "source_branch": "dev",
   "layout": "runtime-source",
   "build": "sh tools/build.sh",

@@ -34,6 +34,7 @@ impl MockSerial {
     }
     // Host/test side: collect guest-transmitted bytes, including binary zero.
     pub fn take_tx(&mut self) -> Vec<u8> { self.tx.drain(..).collect() }
+    pub fn snapshot(&self)->(Vec<u8>,Vec<u8>) {(self.rx.iter().copied().collect(),self.tx.iter().copied().collect())}
     pub fn lengths(&self) -> (usize, usize) { (self.rx.len(), self.tx.len()) }
     pub fn capacities(&self) -> (usize, usize) { (self.rx_capacity, self.tx_capacity) }
     pub fn clear(&mut self) { self.rx.clear(); self.tx.clear(); }
