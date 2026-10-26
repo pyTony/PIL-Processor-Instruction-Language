@@ -98,3 +98,11 @@ PR #2 with a strict runtime export based on main. Preserve the complete dev
 tree, tests, revision/provenance logs, CI and handoff. Add standalone exported
 source verification on both host platforms and remove development history from
 native user archives. No CPU/decoder semantics changed by this correction.
+
+Runtime split verified at dev 0cb33f73a629af01315f3562a3d0be46b58d4fba:
+https://github.com/pyTony/pil_proof/actions/runs/40320291757
+Both hosts passed the 92 dev tests (Ubuntu 4.90 s, Windows 7.57 s), the isolated
+36-file runtime build/launch/serial/generated-Rust checks, and unpacked native
+ZIP checks. Runtime cargo test reports zero tests because tests stay on dev.
+PR #2 closed; runtime-only PR #3 targets main from delivery/v0.7.0, commit
+fd97dca67d25a4d1e4f59ffdc9bbf53baabdb94b. Main remains unchanged until approval.

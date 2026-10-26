@@ -1,3 +1,18 @@
+# Runtime-only delivery verified
+
+PR #3: https://github.com/pyTony/pil_proof/pull/3
+Head delivery/v0.7.0 (fd97dca67d25a4d1e4f59ffdc9bbf53baabdb94b), exported
+from dev 0cb33f73a629af01315f3562a3d0be46b58d4fba. Direct dev-to-main PR #2
+is closed. Main awaits user approval of the delivery-only tree.
+
+https://github.com/pyTony/pil_proof/actions/runs/40320291757
+passed on Ubuntu and Windows: 92 development tests, isolated 36-file runtime
+build/scripts/serial/generated Rust, and unpacked native deliveries. Runtime
+cargo test intentionally has zero tests; development tests remain here on dev.
+Phone v0.7 verification is still unreported.
+
+## Branch policy and prior verification
+
 # Branch layout policy
 
 Development stays on dev; main receives a generated runtime-only tree through

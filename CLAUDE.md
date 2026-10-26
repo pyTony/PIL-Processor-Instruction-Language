@@ -1,3 +1,11 @@
+# Current PR status
+
+PR #2 is closed. PR #3 (delivery/v0.7.0 -> main) is the runtime-only delivery,
+not a merge of dev. Its 36-file tree is exported from dev 0cb33f73 and verified
+on Ubuntu/Windows in CI run 40320291757. The full 92 dev tests, isolated user
+build/debug/serial/generated-Rust checks and unpacked ZIP checks passed.
+Keep all future development on dev; refresh main only through runtime exports.
+
 # Branch policy correction — runtime-only main
 
 Keep development on dev. Never merge dev directly into main. Main contains

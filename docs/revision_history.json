@@ -241,7 +241,15 @@
         "main_contents": "runtime build/run source and applicable user documentation only",
         "promotion": "strict exported tree on delivery branch based on main; never merge dev",
         "development_files": "retained on dev",
-        "export_validation": "standalone build/debug/serial/generated Rust checks in CI"
+        "export_validation": "standalone build/debug/serial/generated Rust checks in CI",
+        "superseded_pr": 2,
+        "runtime_pr": 3,
+        "runtime_commit": "fd97dca67d25a4d1e4f59ffdc9bbf53baabdb94b",
+        "exported_from_dev": "0cb33f73a629af01315f3562a3d0be46b58d4fba",
+        "runtime_files": 36,
+        "verification": "https://github.com/pyTony/pil_proof/actions/runs/40320291757",
+        "results": "92 dev tests and isolated runtime build/scripts/serial/generated Rust passed on Ubuntu/Windows; native archives verified unpacked",
+        "runtime_test_count": 0
       }
     }
   ]
