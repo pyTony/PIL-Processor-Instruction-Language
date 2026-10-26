@@ -9,6 +9,7 @@ use super::serial::{MockSerial, SerialTransport};
 
 const MAX_RUN: usize = 10_000;
 const DEFAULT_RUN: usize = 100;
+const MAX_TIMED:usize=1_000_000;
 const REGS: [&str;8] = ["eax","ecx","edx","ebx","esp","ebp","esi","edi"];
 
 #[derive(Clone, Debug)]
@@ -60,6 +61,8 @@ impl Debugger {
         d.load_demo(demo)?; Ok(d)
     }
     fn load_demo(&mut self, name: &str) -> Result<(),String> {
+        if name=="factorials" {return self.load_image(&super::guest::factorial_bytes()?,"factorials");}
+        if name=="loop" {return self.load_image(&super::guest::loop_bytes(super::guest::LOOP_ITERATIONS)?,"loop");}
         if name=="hello" {return self.load_image(&super::guest::hello_bytes()?,"hello");}
         if name=="selftest" {return self.load_image(&super::guest::selftest_bytes()?,"selftest");}
         // Construct first; a failed selection must not destroy the current state.
@@ -92,7 +95,7 @@ impl Debugger {
                 }
                 code.insert(0x304,Instruction{label:"HARNESS_HALT",action:Action::HarnessHalt});
             }
-            _ => return Err("demo must be counter, echo, memory, selftest or hello".into()),
+            _ => return Err("demo must be counter, echo, memory, selftest, hello, factorials or loop".into()),
         }
         self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
@@ -175,6 +178,25 @@ impl Debugger {
         }
         Ok((budget,Stop::Budget(self.cpu.eip)))
     }
+    fn run_large(&mut self,budget:usize)->Result<(usize,Stop),String> {
+        if budget==0 || budget>MAX_TIMED{return Err(format!("timed budget must be 1..{MAX_TIMED}"));}
+        let mut done=0;
+        loop {
+            let (n,stop)=self.run((budget-done).min(MAX_RUN))?;done+=n;
+            match stop {
+                Stop::Budget(_) if done<budget=>{},
+                other=>return Ok((done,other)),
+            }
+        }
+    }
+    fn timed_run(&mut self,budget:usize)->Result<String,String> {
+        // Validate before taking/altering any debugger continuation state.
+        if budget==0 || budget>MAX_TIMED{return Err(format!("timed budget must be 1..{MAX_TIMED}"));}
+        let start=std::time::Instant::now();let (n,stop)=self.run_large(budget)?;let elapsed=start.elapsed();
+        let rate=if n==0 || elapsed.as_nanos()==0 {"rate unavailable (no completed steps or clock interval)".into()}
+            else {format!("{:.0} guest instructions/s; {:.1} ns/instruction",n as f64/elapsed.as_secs_f64(),elapsed.as_secs_f64()*1e9/n as f64)};
+        Ok(format!("{n} completed steps; {}\nelapsed={:.3} ms; {rate}\nHost wall time includes decoder, PIL compilation and interpreter dispatch; not 386 cycles.",Self::stop_text(&stop),elapsed.as_secs_f64()*1000.0))
+    }
     fn flags(&self)->String {
         let mut text=format!("EFLAGS={:08x} undefined={:08x}",self.cpu.eflags,self.cpu.undefined_flags);
         for (name,bit) in [("CF",0),("PF",2),("AF",4),("ZF",6),("SF",7),("OF",11)] {
@@ -214,6 +236,37 @@ impl Debugger {
         if self.tx_events!=[0x41] {return Err("selftest expects exactly TX=41; queue RX=41 before running".into());}
         Ok(())
     }
+    fn has_image(&self,bytes:&[u8])->bool {
+        self.image.as_ref().map_or(false,|i|i.end==super::guest::ENTRY+bytes.len() as u32)
+            && self.initial_ram.bytes().get(super::guest::ENTRY as usize..super::guest::ENTRY as usize+bytes.len())==Some(bytes)
+    }
+    fn check_factorials(&self)->Result<String,String> {
+        if !self.has_image(&super::guest::factorial_bytes()?){return Err("factorial check requires the supplied image".into());}
+        if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)){return Err("factorial program has not halted".into());}
+        for (i,expected) in super::guest::FACTORIALS.iter().enumerate() {
+            if self.ram.load(0x500+(i as u32)*4,super::memory::MemWidth::Dword)!=Ok(*expected){return Err(format!("factorial {} result mismatch",i+1));}
+        }
+        if self.cpu.regs[0]!=479001600 || self.cpu.regs[6]!=13 || self.cpu.regs[1]!=0 || self.cpu.eflags&0x8d5!=0x44{return Err("factorial final registers mismatch".into());}
+        Ok("PASS: factorials 1!..12!; 12 RAM results verified; 12!=479001600".into())
+    }
+    fn check_loop(&self,iterations:u32)->Result<(),String> {
+        if !self.has_image(&super::guest::loop_bytes(iterations)?) {return Err("loop check requires the supplied counted-loop image".into());}
+        if !matches!(self.step_preview(),Some(super::guest::Operation::Halt)) || self.cpu.regs[0]!=iterations || self.cpu.regs[1]!=0 || self.cpu.eflags&0x8d5!=0x44 {
+            return Err("loop result/flags mismatch or program has not halted".into());
+        }
+        Ok(())
+    }
+    fn check_current(&mut self)->Result<String,String> {
+        if self.has_image(&super::guest::factorial_bytes()?){return self.check_factorials();}
+        // The loop image's only variable field is its initial ECX immediate.
+        if let Some(data)=self.initial_ram.bytes().get((super::guest::ENTRY+2) as usize..(super::guest::ENTRY+6) as usize) {
+            let iterations=u32::from_le_bytes(data.try_into().unwrap());
+            if let Ok(bytes)=super::guest::loop_bytes(iterations) {
+                if self.has_image(&bytes){self.check_loop(iterations)?;return Ok(format!("PASS: counted loop {iterations} iterations; EAX={iterations}, ECX=0 and flags verified"));}
+            }
+        }
+        self.check_selftest()?;Ok("PASS: selftest DX=600D, RAM signatures and mock TX=41".into())
+    }
     fn step_preview(&self)->Option<super::guest::Operation> {
         self.image.as_ref()?.decode(&self.ram,self.cpu.eip).ok().map(|d|d.operation)
     }
@@ -223,7 +276,8 @@ impl Debugger {
         let response=match words.as_slice() {
             []=>String::new(),
             ["help"]=>concat!(
-                "help | demo counter|echo|memory|selftest|hello | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
+                "help | demo counter|echo|memory|selftest|hello|factorials|loop | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
+                "time [steps 1..1000000] | bench [iterations 1..100000] [samples 1..9] | stress [passes 1..1000]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
                 "break <address> | delete <address> | breaks | reset | quit\n",
                 "serial status | serial rx <hex bytes...> | serial tx | serial clear\n",
@@ -233,7 +287,7 @@ impl Debugger {
             ["quit"]|["exit"]=>return Ok(("bye".into(),true)),
             ["demo",name]=>{self.load_demo(name)?;format!("loaded {} at EIP={:08x}",self.demo,self.cpu.eip)}
             ["load",path]=>{let bytes=std::fs::read(path).map_err(|e|e.to_string())?;self.load_image(&bytes,path)?;format!("loaded {} guest bytes at EIP=00000100",bytes.len())}
-            ["check"]=>{self.check_selftest()?;"PASS: selftest DX=600D, RAM signatures and mock TX=41".into()}
+            ["check"]=>self.check_current()?,
             ["list"] if self.image.is_some()=>{
                 let image=self.image.as_ref().unwrap();let mut ip=self.cpu.eip;let mut lines=Vec::new();
                 for _ in 0..16 {
@@ -259,6 +313,13 @@ impl Debugger {
                 if n==0 || n>MAX_RUN as u64 {return Err(format!("run budget must be 1..{MAX_RUN}"));}
                 let (n,stop)=self.run(n as usize)?;format!("{n} completed steps; {}",Self::stop_text(&stop))
             }
+            ["time"]=>self.timed_run(MAX_RUN)?,
+            ["time",budget]=>{let n=number(budget)?;if n==0||n>MAX_TIMED as u64{return Err(format!("timed budget must be 1..{MAX_TIMED}"));}self.timed_run(n as usize)?},
+            ["bench"]=>benchmark(1000,3)?,
+            ["bench",iterations]=>benchmark(parse_count(iterations)?,3)?,
+            ["bench",iterations,samples]=>benchmark(parse_count(iterations)?,parse_count(samples)?)?,
+            ["stress"]=>factorial_stress(25)?,
+            ["stress",passes]=>factorial_stress(parse_count(passes)?)?,
             ["mem",addr]|["mem",addr,_]=>{
                 let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
                 let count=if words.len()==3 {number(words[2])?}else{16};
@@ -372,4 +433,40 @@ pub fn selftest()->Result<(),String> {
     let (steps,stop)=d.run(MAX_RUN)?;
     if !matches!(stop,Stop::Halt(_)){return Err(format!("selftest stopped: {}",Debugger::stop_text(&stop)));}
     d.check_selftest()?;println!("PASS: selftest, {steps} completed steps; DX=600D; RAM signatures; mock TX=41");Ok(())
+}
+
+fn parse_count(text:&str)->Result<u32,String> {
+    u32::try_from(number(text)?).map_err(|_|"count must fit 32 bits".into())
+}
+pub fn benchmark(iterations:u32,samples:u32)->Result<String,String> {
+    let bytes=super::guest::loop_bytes(iterations)?;
+    if !(1..=9).contains(&samples){return Err("benchmark samples must be 1..9".into());}
+    let steps=3*iterations as usize+3;let mut timings=Vec::new();
+    for sample in 0..=samples {
+        let mut d=Debugger::new("counter")?;d.load_image(&bytes,"benchmark")?;
+        let start=std::time::Instant::now();let (done,stop)=d.run_large(steps+1)?;let elapsed=start.elapsed();
+        if done!=steps || !matches!(stop,Stop::Halt(_)){return Err(format!("benchmark execution stopped: {}",Debugger::stop_text(&stop)));}
+        d.check_loop(iterations)?;
+        if sample!=0 {timings.push(elapsed.as_secs_f64());}
+    }
+    let values=timings.iter().map(|s|format!("{:.3}",s*1000.0)).collect::<Vec<_>>().join(", ");
+    timings.sort_by(|a,b|a.partial_cmp(b).unwrap());let mid=timings.len()/2;
+    let median=if timings.len()%2==0{(timings[mid-1]+timings[mid])/2.0}else{timings[mid]};
+    let rate=if median==0.0{0.0}else{steps as f64/median};
+    Ok(format!("PASS: counted-loop benchmark; {iterations} iterations; {steps} completed instructions/sample\nsamples_ms=[{values}]; median={:.3} ms; {rate:.0} guest instructions/s\n{samples} measured samples, 1 excluded warmup; fresh CPU/RAM per sample.\nHost wall time includes decoder, PIL compilation and interpreter dispatch; excludes image setup, result checking and console output. Not 386 cycles. version={} host={}/{} profile={}",median*1000.0,env!("CARGO_PKG_VERSION"),std::env::consts::OS,std::env::consts::ARCH,if cfg!(debug_assertions){"debug"}else{"release"}))
+}
+pub fn factorial_stress(passes:u32)->Result<String,String> {
+    if !(1..=1000).contains(&passes){return Err("stress passes must be 1..1000".into());}
+    let start=std::time::Instant::now();let mut completed=0;
+    for _ in 0..passes {
+        let mut d=Debugger::new("factorials")?;let (steps,stop)=d.run(1000)?;
+        if steps!=336 || !matches!(stop,Stop::Halt(_)){return Err("factorial stress execution mismatch".into());}
+        d.check_factorials()?;completed+=steps;
+    }
+    Ok(format!("PASS: factorial stress; {passes} fresh runs; {} results verified; {completed} completed instructions\nelapsed={:.3} ms including setup and result verification; host wall time, not 386 cycles",12*passes,start.elapsed().as_secs_f64()*1000.0))
+}
+pub fn numeric_test()->Result<(),String> {
+    let mut d=Debugger::new("factorials")?;let (steps,stop)=d.run(1000)?;
+    if steps!=336 || !matches!(stop,Stop::Halt(_)){return Err("factorial execution mismatch".into());}
+    println!("{}",d.check_factorials()?);println!("{}",benchmark(16,2)?);println!("{}",factorial_stress(2)?);Ok(())
 }

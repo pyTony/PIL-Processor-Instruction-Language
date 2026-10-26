@@ -1,0 +1,7 @@
+0100  66 b9 00 00 01 00        MOV r1,0x10000
+0106  66 b8 00 00 00 00        MOV r0,0x0
+010c  66 bb 01 00 00 00        MOV r3,0x1
+0112  66 01 d8                 ADD EAX,EBX
+0115  66 29 d9                 SUB ECX,EBX
+0118  75 f8                    JNE count
+011a  f4                       HLT ; expected EAX=65536 and ECX=0
