@@ -1,3 +1,47 @@
+# Current continuation status — v0.6 working patch
+
+Repository: https://github.com/pyTony/pil_proof (private), main; inspected base
+commit cfd4143512497c8afd28df9ef6739a96fc62b9f0. The user completed the first
+push. Work remains in ~/pil_proof and updates remain patches.
+
+v0.5 is verified on the phone: 46 tests passed in 4.27 s; REPL starts. The
+user observed echo waiting, RX injection and two steps, but did not show the
+final serial tx response. Older verification records are preserved below.
+
+The v0.6 patch adds src/memory.rs, load_ram/store_ram/add_ram descriptions,
+read_address/load/store tokens, execute_memory and generated
+execute_with_memory, RAM fault metadata, and mem/poke/protect debugger commands.
+Memory is flat, little endian, unaligned, with 8/16/32-bit data and 32-bit
+addresses. At most one staged store and no loads after it are permitted.
+All RAM/store checks precede mutation; a later branch fault cancels the staged
+store and CPU effects. This is NOT a model for rollback of MMIO/device effects.
+MemoryAccess is an emulator bounds/protection error, NOT x86 #PF; there are
+no page tables, CR2 updates, segment translation or instruction fetch yet.
+
+User-confirmed Termux result on 26 October 2026: 65 Rust tests passed,
+0 failed, 0 ignored, 0 measured, 0 filtered out, in 9.47 s.
+The authoring environment has no Rust compiler; Rust verification is from
+the user's phone.
+Run cargo test --locked, python3 tools/verify_memory.py, and the existing
+Python oracles. Generated Rust embeds flow.rs and the non-test portion of
+memory.rs. A generated-memory test compares 560 cases, including cancelled
+stores and protection/bounds errors. Legacy arithmetic/flow tests remain.
+
+Smoke test: cargo run -- --repl; demo memory; step; mem 0x10 4; step; regs.
+Expected memory: 78 56 34 12; EAX after second step: 12345678.
+After reset; protect 0x10 4; run, expect a RAM write fault at EIP=0x300
+without changing CPU/RAM. New RAM is 256 bytes per debugger demo; reset restores
+initial RAM and removes debugger protection. This is not a binary loader.
+
+Priorities: add explicit effective-address/segment context
+and controlled fetch/decode. Maintain source/attribution/revision logs. Do not
+copy repository-backed source into an additional artifact store; use the Git
+project and patches. No third-party emulator code has been imported. No own
+project licence has yet been selected. Do not invent one or publish a remote
+change without a task requiring it.
+
+## Previous continuation notes (historical)
+
 # PIL PC emulator — continuation guide
 
 Updated 26 October 2026. Read this before changing the project.

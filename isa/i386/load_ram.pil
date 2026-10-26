@@ -1,0 +1,6 @@
+# Flat RAM load; address is supplied after future effective-address calculation.
+read_address addr
+load value addr $W
+write dst value
+preserve_flags all
+retire

@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Write};
 use super::{compile, description, execute_flow, instantiate, number, Cpu, Program, View};
 use super::flow::{ExecError, FlowContext};
+use super::memory::Ram;
+use super::execute_memory;
 use super::serial::{MockSerial, SerialTransport};
 
 const MAX_RUN: usize = 10_000;
@@ -12,6 +14,7 @@ const REGS: [&str;8] = ["eax","ecx","edx","ebx","esp","ebp","esi","edi"];
 #[derive(Clone, Debug)]
 enum Action {
     Cpu { program: Program, dst: View, src: View, context: FlowContext },
+    CpuMemory {program:Program,dst:View,src:View,context:FlowContext,address:u32},
     MockRx { next: u32 },
     MockTx { next: u32 },
     HarnessHalt,
@@ -34,6 +37,8 @@ enum Stop {
 struct Debugger {
     cpu: Cpu,
     initial: Cpu,
+    ram:Ram,
+    initial_ram:Ram,
     instructions: BTreeMap<u32, Instruction>,
     breakpoints: BTreeSet<u32>,
     stopped_at_break: Option<u32>,
@@ -45,6 +50,7 @@ impl Debugger {
     fn new(demo: &str) -> Result<Self,String> {
         let mut d=Self {
             cpu: Cpu::default(), initial: Cpu::default(),
+            ram:Ram::new(256),initial_ram:Ram::new(256),
             instructions: BTreeMap::new(), breakpoints: BTreeSet::new(),
             stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),
         };
@@ -71,14 +77,25 @@ impl Debugger {
                 code.insert(0x201,Instruction{label:"MOCK_TX AL",action:Action::MockTx{next:0x202}});
                 code.insert(0x202,Instruction{label:"HARNESS_HALT",action:Action::HarnessHalt});
             }
-            _ => return Err("demo must be counter or echo".into()),
+            "memory"=>{
+                cpu.eip=0x300;cpu.regs[1]=0x1234_5678;
+                let dst=View{register:0,low:0,width:32};let src=View{register:1,low:0,width:32};
+                for (ip,next,name,label) in [(0x300,0x302,"store_ram","STORE_RAM [0x10],ECX"),(0x302,0x304,"load_ram","LOAD_RAM EAX,[0x10]")] {
+                    code.insert(ip,Instruction{label,action:Action::CpuMemory{
+                        program:compile(&instantiate(description(name)?,32),32)?,dst,src,address:0x10,
+                        context:FlowContext{next_eip:next,displacement:0,displacement_bits:32,code_limit:u32::MAX}}});
+                }
+                code.insert(0x304,Instruction{label:"HARNESS_HALT",action:Action::HarnessHalt});
+            }
+            _ => return Err("demo must be counter, echo or memory".into()),
         }
         self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
+        self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
         self.breakpoints.clear();self.stopped_at_break=None;self.serial.clear();self.demo=name.into();
         Ok(())
     }
     fn reset(&mut self) {
-        self.cpu=self.initial.clone();self.serial.clear();self.stopped_at_break=None;
+        self.cpu=self.initial.clone();self.ram=self.initial_ram.clone();self.serial.clear();self.stopped_at_break=None;
         // Keep breakpoints while resetting the currently loaded demo.
     }
     fn step(&mut self) -> Stop {
@@ -88,6 +105,9 @@ impl Debugger {
         };
         match &instruction.action {
             Action::Cpu{program,dst,src,context} => match execute_flow(program,&mut self.cpu,*dst,*src,*context) {
+                Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e),
+            },
+            Action::CpuMemory{program,dst,src,context,address}=>match execute_memory(program,&mut self.cpu,*dst,*src,*context,&mut self.ram,*address) {
                 Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e),
             },
             Action::MockRx{next} => {
@@ -135,6 +155,7 @@ impl Debugger {
             Stop::Halt(ip)=>format!("harness halted at EIP={ip:08x}"),
             Stop::MissingInstruction(ip)=>format!("no predecoded instruction at EIP={ip:08x}"),
             Stop::Fault(ExecError::GeneralProtection{eip,error_code})=>format!("#GP({error_code}) at EIP={eip:08x}; instruction not committed"),
+            Stop::Fault(ExecError::MemoryAccess{eip,address,bytes,write})=>format!("RAM {} fault: address={address:08x} bytes={bytes} at EIP={eip:08x}; instruction not committed",if *write {"write"}else{"read"}),
             Stop::Fault(e)=>format!("execution error: {e:?}"),
         }
     }
@@ -143,10 +164,11 @@ impl Debugger {
         let response=match words.as_slice() {
             []=>String::new(),
             ["help"]=>concat!(
-                "help | demo counter|echo | list | step | run [1..10000] | continue [budget]\n",
+                "help | demo counter|echo|memory | list | step | run [1..10000] | continue [budget]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
                 "break <address> | delete <address> | breaks | reset | quit\n",
                 "serial status | serial rx <hex bytes...> | serial tx | serial clear\n",
+                "mem <address> [count] | poke <address> <hex bytes...> | protect <address> <count>\n",
                 "MOCK_RX/TX and HARNESS_HALT are harness operations, not x86 I/O instructions.").into(),
             ["quit"]|["exit"]=>return Ok(("bye".into(),true)),
             ["demo",name]=>{self.load_demo(name)?;format!("loaded {} at EIP={:08x}",self.demo,self.cpu.eip)}
@@ -165,6 +187,29 @@ impl Debugger {
                 let n=number(budget)?;
                 if n==0 || n>MAX_RUN as u64 {return Err(format!("run budget must be 1..{MAX_RUN}"));}
                 let (n,stop)=self.run(n as usize)?;format!("{n} completed steps; {}",Self::stop_text(&stop))
+            }
+            ["mem",addr]|["mem",addr,_]=>{
+                let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
+                let count=if words.len()==3 {number(words[2])?}else{16};
+                if count==0 || count>256 {return Err("memory count must be 1..256".into());}
+                let start=usize::try_from(address).map_err(|_|"address out of range")?;
+                let end=start.checked_add(count as usize).ok_or("address out of range")?;
+                let data=self.ram.bytes().get(start..end).ok_or("RAM range out of bounds")?;
+                format!("{address:08x}: {}",data.iter().map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" "))
+            }
+            ["poke",addr,bytes @ ..]=>{
+                if bytes.is_empty() || bytes.len()>256 {return Err("supply 1..256 hex bytes".into());}
+                let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
+                let data:Result<Vec<u8>,String>=bytes.iter().map(|text|u8::from_str_radix(text.strip_prefix("0x").unwrap_or(text),16).map_err(|_|"each token must be a hex byte".into())).collect();
+                let data=data?;self.ram.write_bytes(address,&data).map_err(|f|format!("RAM write rejected: {f:?}"))?;
+                format!("wrote {} bytes at {address:08x}",data.len())
+            }
+            ["protect",addr,count]=>{
+                let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
+                let count=number(count)?;
+                if count==0 || count>self.ram.bytes().len() as u64 {return Err("invalid protected range length".into());}
+                self.ram.protect(address,count as usize).map_err(|f|format!("RAM protection rejected: {f:?}"))?;
+                format!("protected {count} bytes at {address:08x}; reset restores demo RAM")
             }
             ["regs"]=>{
                 let mut lines=REGS.iter().enumerate().map(|(i,name)|format!("{}={:08x}",name.to_ascii_uppercase(),self.cpu.regs[i])).collect::<Vec<_>>();
@@ -193,7 +238,7 @@ impl Debugger {
             }
             ["breaks"]=>if self.breakpoints.is_empty() {"no breakpoints".into()}
                 else {self.breakpoints.iter().map(|ip|format!("{ip:08x}")).collect::<Vec<_>>().join(" ")},
-            ["reset"]=>{self.reset();format!("reset {} to EIP={:08x}; serial queues cleared; breakpoints retained",self.demo,self.cpu.eip)}
+            ["reset"]=>{self.reset();format!("reset {} to EIP={:08x}; RAM/serial reset; breakpoints retained",self.demo,self.cpu.eip)}
             ["serial","status"]=>{
                 let (rx,tx)=self.serial.lengths();let (rc,tc)=self.serial.capacities();
                 format!("RX={rx}/{rc} ready={} TX={tx}/{tc}",self.serial.rx_ready())

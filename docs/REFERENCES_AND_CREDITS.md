@@ -172,3 +172,17 @@ for this project; no third-party source was imported. Existing materials and
 licence findings remain above. Paths were reorganized into src/, isa/i386/,
 tests/unit/, tools/ and docs/. See root CLAUDE.md for continuation context.
 User confirmed v0.4: 28 passed, 0 failed, 4.30 s. v0.5 Rust tests are pending.
+
+## v0.6 memory provenance
+
+The RAM implementation, token effects, debugger commands and tests were authored
+for this project. No third-party source or data was imported. Existing Intel
+ADD/status-flag references apply to add_ram's arithmetic, while the restricted
+RAM transaction/protection contract is a project design, not an extracted x86
+MMU specification. Do not cite these flat RAM tests as validation of page-table,
+segmentation, MMIO or hardware exception behaviour.
+
+Upstream baseline inspected: pyTony/pil_proof, commit
+cfd4143512497c8afd28df9ef6739a96fc62b9f0 (26 October 2026).
+GitHub: https://github.com/pyTony/pil_proof
+The complete materialized source tree was checked against its Git blob hashes.

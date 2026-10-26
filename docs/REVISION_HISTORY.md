@@ -58,3 +58,18 @@ Version 0.5 supplies 46 Rust tests (28 existing + 18 serial/debugger tests).
 The new Rust has not been compiled in this authoring environment. Python
 arithmetic/flow checks passed after relocation. Tests are now under tests/unit/.
 This patch adds no Git remote and imports no third-party source.
+
+## v0.6.0 — 26 October 2026
+
+Baseline: GitHub main commit cfd4143512497c8afd28df9ef6739a96fc62b9f0.
+User-confirmed v0.5 result: 46 passed, 0 failed, 4.27 s; REPL starts and the echo
+wait/injection/execution sequence was observed. Final TX drain was not shown.
+
+v0.6 adds flat RAM load/store/RMW, deferred single-store commit and diagnostic
+access faults, memory debugger commands and 19 tests (65 total). New Rust has
+not been compiled or executed in the authoring environment. Source checksums
+and independent Python checks are separate from a Rust test result.
+
+User-confirmed Termux verification, 26 October 2026: 65 passed, 0 failed,
+0 ignored, 0 measured, 0 filtered out; finished in 9.47 s. This confirms
+the Rust suite on the phone; the manual memory REPL smoke test is not yet reported.

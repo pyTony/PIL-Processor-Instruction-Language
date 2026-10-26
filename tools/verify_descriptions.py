@@ -32,7 +32,20 @@ class FlowFault(Exception):
         super().__init__("#GP(0)")
 
 
-def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, current_eip=0):
+class MemoryFault(Exception):
+    def __init__(self,eip,address,bytes,write):
+        self.eip,self.address,self.bytes,self.write=eip,address,bytes,write
+        super().__init__("flat RAM access fault")
+
+
+def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, current_eip=0, ram=None, address=0, readonly=()):
+    pending_store=None
+    uses_memory=any(t[0] in ("read_address","load","store") for t in code)
+    if uses_memory and ram is None:
+        raise ValueError("RAM context required")
+    def check_memory(addr,size,write):
+        if addr<0 or addr+size>len(ram) or addr+size>2**32 or (write and any(addr<end and addr+size>start for start,end in readonly)):
+            raise MemoryFault(current_eip,addr,size,write)
     uses_flow=any(t[0] in ("read_ip","read_disp","branch_if") for t in code)
     if uses_flow and flow is None:
         raise ValueError("flow context required")
@@ -49,10 +62,24 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
         op = t[0]
         if op == "retire":
             assert classified == ARITHMETIC_MASK
+            if pending_store is not None:
+                addr,data=pending_store
+                check_memory(addr,len(data),True)
+                ram[addr:addr+len(data)]=data
             result=(destination, flags, undefined)
             return result if flow is None else result+(pending_eip,)
         if op == "require_width":
             assert width in (16,32) if t[1]=="16_or_32" else int(t[1])==width
+        elif op == "read_address":
+            values[t[1]]=(address,32)
+        elif op == "load":
+            addr,aw=values[t[2]];w=int(t[3]);assert aw==32 and w in (8,16,32)
+            check_memory(addr,w//8,False)
+            values[t[1]]=(int.from_bytes(ram[addr:addr+w//8],"little"),w)
+        elif op == "store":
+            addr,aw=values[t[1]];n,w=values[t[2]];assert aw==32 and w in (8,16,32)
+            check_memory(addr,w//8,True)
+            pending_store=(addr,n.to_bytes(w//8,"little"))
         elif op == "read_ip":
             w=int(t[3]);n=flow["next"] if t[2]=="next" else current_eip
             values[t[1]]=(n & ((1<<w)-1),w)

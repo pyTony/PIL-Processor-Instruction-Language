@@ -150,3 +150,36 @@ later; the next feature is a serial mock and interactive REPL debugger.
 PIL files now live in isa/i386/. The language tokens are unchanged. The host
 REPL and serial mock are described in DEBUGGER.md. MOCK_RX/TX and
 HARNESS_HALT are debugger harness actions, not new x86 instructions.
+
+## v0.6: flat RAM effects
+
+New tokens: `read_address out` returns the caller-supplied 32-bit flat address;
+`load out address WIDTH` reads 8/16/32-bit little-endian data;
+`store address value` stages one 8/16/32-bit RAM write. Address values must be
+bv<32>; load widths and stored-value widths are checked independently of
+address width. Unaligned accesses are supported. There may be multiple loads,
+but at most one store per description, and no loads after a staged store.
+
+`load_ram`, `store_ram` and `add_ram` are predecoded semantic helpers, not
+binary instruction decoding or new x86 opcodes. Call interpreter
+execute_memory or generated execute_with_memory with a mutable Ram and an
+already calculated flat address. Existing arithmetic/flow APIs still work
+for descriptions without memory and reject missing RAM context otherwise.
+
+The RAM store is fully bounds/protection checked before mutation and is
+published at retirement before the infallible CPU-state commit. A later branch
+fault cancels it. Faults retain the instruction's original EIP and CPU flags,
+registers and diagnostic markers. Reads occur in token order; stores are staged.
+This is a restricted RAM-only model, not a universal rollback mechanism for
+MMIO, I/O reads, multiple stores, page-table effects or REP instructions.
+
+MemoryAccess errors report source EIP, address, byte count and read/write.
+They are emulator RAM bounds/protection results, NOT architectural x86 #PF;
+there is no paging/CR2 update or guest exception-handler delivery yet.
+Protection here is a host-defined read-only RAM interval. Full segmentation,
+page permission ordering, memory-mapped devices and instruction fetch remain
+separate future work. RAM faults do not set arithmetic flags.
+
+Generated Rust embeds the same RAM implementation while the description
+interpreter and independent Python oracle exercise token semantics separately.
+The supplied 65 Rust tests remain unexecuted in this authoring environment.

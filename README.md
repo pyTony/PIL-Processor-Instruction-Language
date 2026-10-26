@@ -40,3 +40,20 @@ For serial: `demo echo`, `run`, `serial rx 41`, `run`, `serial tx`.
 Continue in `~/pil_proof`; updates are guarded in-place patches.
 No third-party emulator source or disk images are bundled. A distribution
 licence for the project's own code has not yet been selected.
+
+## Working v0.6 patch
+
+Adds flat little-endian RAM load/store/RMW effects, full-range bounds and
+read-only checks, deferred store commit, fault context, and a debugger memory
+demo. The patch is based on upstream commit cfd4143512497c8afd28df9ef6739a96fc62b9f0.
+
+```sh
+cargo test --locked
+python3 tools/verify_memory.py
+cargo run -- --repl
+```
+
+Try `demo memory`, `step`, `mem 0x10 4`, `step`, `regs`. There are 65 Rust tests
+supplied; the authoring environment has no Rust toolchain, so the new build
+awaits verification. The independent Python memory oracle checks 560 cases.
+The RAM faults are emulator errors, not architectural x86 page faults.

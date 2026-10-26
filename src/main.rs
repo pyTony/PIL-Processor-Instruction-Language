@@ -2,6 +2,8 @@
 //! No dependencies, no x86 decoder, memory or system instructions yet.
 use std::collections::HashMap;
 mod flow;
+mod memory;
+use memory::{Ram, MemWidth};
 mod serial;
 mod debugger;
 use flow::{ExecError, FlowContext};
@@ -37,6 +39,9 @@ fn parse_flag(name: &str) -> R<Flag> {
 enum Token {
     Read(usize, Binding, u8),
     ReadFlag(usize, Flag),
+    ReadAddress(usize),
+    Load(usize, usize, MemWidth),
+    Store(usize, usize, MemWidth),
     ReadIp(usize, bool, u8),
     ReadDisp(usize, u8),
     BranchIf(usize, usize),
@@ -57,7 +62,7 @@ enum Token {
     Retire,
 }
 #[derive(Clone, Debug)]
-struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, uses_flow: bool, uses_displacement: bool }
+struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool }
 
 fn number(s: &str) -> R<u64> {
     if let Some(hex) = s.strip_prefix("0x") {
@@ -84,6 +89,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let mut retired = false;
     let mut wrote = false;
     let mut branched = false;
+    let mut stored = false;
     let mut flags_seen = 0u32;
     for (line_no, raw) in source.lines().enumerate() {
         let line = raw.split('#').next().unwrap_or("").trim();
@@ -130,6 +136,21 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if widths[c]!=1 {return Err("write_if predicate needs bv<1>".into());}
                     if wrote {return Err("multiple destination writes".into());}
                     wrote=true; Token::WriteIf(a,c)
+                }
+                ["read_address", out] => Token::ReadAddress(define(&mut names,&mut widths,out,32)?),
+                ["load", out, address, bits] => {
+                    if stored {return Err("loads after a staged store are not supported".into());}
+                    let a=slot(&names,address)?;
+                    if widths[a]!=32 {return Err("memory address must be bv<32>".into());}
+                    let w=width(bits)?;let mem=MemWidth::from_bits(w).ok_or("memory width must be 8,16,32")?;
+                    Token::Load(define(&mut names,&mut widths,out,w)?,a,mem)
+                }
+                ["store", address, input] => {
+                    let a=slot(&names,address)?;let v=slot(&names,input)?;
+                    if widths[a]!=32 {return Err("memory address must be bv<32>".into());}
+                    let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be 8,16,32")?;
+                    if stored {return Err("only one staged RAM store is supported".into());}
+                    stored=true;Token::Store(a,v,mem)
                 }
                 ["read_ip", out, which, w] => {
                     let next=match *which {"next"=>true,"current"=>false,_=>return Err("read_ip needs current or next".into())};
@@ -220,7 +241,8 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if flags_seen != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
     let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
-    Ok(Program { tokens, widths, operand_width, uses_flow, uses_displacement })
+    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)));
+    Ok(Program { tokens, widths, operand_width, uses_flow, uses_displacement, uses_memory })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -243,14 +265,27 @@ impl Cpu {
 }
 fn execute(p: &Program, cpu: &mut Cpu, dst: View, src: View) -> R<()> {
     if p.uses_flow {return Err("flow context required: use execute_flow".into());}
+    if p.uses_memory {return Err("RAM context required: use execute_memory".into());}
     let context=FlowContext{next_eip:cpu.eip,displacement:0,displacement_bits:32,code_limit:u32::MAX};
     execute_flow(p,cpu,dst,src,context).map_err(|e|format!("{e:?}"))
 }
 fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->Result<(),ExecError> {
+    if p.uses_memory {return Err(ExecError::InvalidContext);}
+    execute_state(p,cpu,dst,src,context,None,0)
+}
+fn execute_memory(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError> {
+    execute_state(p,cpu,dst,src,context,Some(ram),address)
+}
+fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
+    ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
+}
+fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32)->Result<(),ExecError> {
+    if p.uses_memory && ram.is_none() {return Err(ExecError::InvalidContext);}
     dst.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
     src.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
     context.validate(p.operand_width,p.uses_displacement)?;
     let mut pending_eip=context.next_eip;
+    let mut pending_store:Option<(u32,MemWidth,u32)>=None;
     let mut values: Vec<Value> = p.widths.iter().map(|&w| value(0,w)).collect();
     let mut pending_dst = None;
     let mut pending_flags = cpu.eflags;
@@ -259,6 +294,18 @@ fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->
         match *t {
             Token::Read(o,b,w) => { let v = match b { Binding::Dst => dst, Binding::Src => src };
                 values[o] = value(cpu.read(v).bits,w); }
+            Token::ReadAddress(o)=>values[o]=value(address as u64,32),
+            Token::Load(o,a,w)=>{
+                let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
+                let v=m.load(values[a].bits as u32,w).map_err(|f|access_error(cpu.eip,f))?;
+                values[o]=value(v as u64,w.bits());
+            }
+            Token::Store(a,v,w)=>{
+                let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
+                let addr=values[a].bits as u32;
+                m.check_write(addr,w).map_err(|f|access_error(cpu.eip,f))?;
+                pending_store=Some((addr,w,values[v].bits as u32));
+            }
             Token::ReadIp(o,next,w) => values[o]=value((if next {context.next_eip} else {cpu.eip}) as u64,w),
             Token::ReadDisp(o,w) => values[o]=value(context.displacement as u32 as u64,w),
             Token::BranchIf(a,c) => {
@@ -294,6 +341,9 @@ fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->
                 pending_undefined &= !m;
                 pending_flags = (pending_flags & !m) | ((values[a].bits as u32) << f.bit()); }
             Token::Retire => {
+                if let Some((addr,w,v))=pending_store {
+                    ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|access_error(cpu.eip,f))?;
+                }
                 if let Some(x) = pending_dst { cpu.write(dst,x); }
                 cpu.eflags = pending_flags;
                 cpu.undefined_flags = pending_undefined;
@@ -313,6 +363,9 @@ const SBB: &str = include_str!("../isa/i386/sbb.pil");
 const AND_DESC: &str = include_str!("../isa/i386/and.pil");
 const CONDITIONS: &str = include_str!("../isa/i386/conditions.pil");
 const SETCC: &str = include_str!("../isa/i386/setcc.pil");
+const LOAD_RAM: &str = include_str!("../isa/i386/load_ram.pil");
+const STORE_RAM: &str = include_str!("../isa/i386/store_ram.pil");
+const ADD_RAM: &str = include_str!("../isa/i386/add_ram.pil");
 const JCC: &str = include_str!("../isa/i386/jcc.pil");
 const WRITE_IF_Z: &str = include_str!("../isa/i386/write_if_z.pil");
 const CONDITIONS_NAMES: [&str;16] = ["o","no","b","ae","e","ne","be","a","s","ns","p","np","l","ge","le","g"];
@@ -320,7 +373,8 @@ fn description(name: &str) -> R<String> {
     let plain=match name {
         "add" => Some(ADD), "sub" => Some(SUB), "cmp" => Some(CMP),
         "adc" => Some(ADC), "sbb" => Some(SBB), "and" => Some(AND_DESC),
-        "write_if_z" => Some(WRITE_IF_Z), _ => None,
+        "write_if_z" => Some(WRITE_IF_Z), "load_ram"=>Some(LOAD_RAM),
+        "store_ram"=>Some(STORE_RAM), "add_ram"=>Some(ADD_RAM), _ => None,
     };
     if let Some(text)=plain {return Ok(text.to_owned());}
     if let Some(condition)=name.strip_prefix("set") {
@@ -343,23 +397,29 @@ fn emit_rust(p: &Program) -> String {
     out.push_str(include_str!("flow.rs"));
     // The included module has an inner documentation comment; in the emitted
     // standalone body it must be an ordinary comment.
-    out=out.replace("//! Context supplied", "// Context supplied");
+    out.push_str("\n");out.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());
+    out=out.lines().map(|line|line.strip_prefix("//!").map(|s|format!("//{s}")).unwrap_or_else(||line.to_owned())).collect::<Vec<_>>().join("\n");
     out.push_str(&format!(
-        "\npub fn execute_with_flow(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext) -> Result<(), ExecError> {{\n\
+        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + w as u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
+         if {} && ram.is_none() {{ return Err(ExecError::InvalidContext); }}\n\
+         let mut pending_store: Option<(u32,MemWidth,u32)> = None;\n\
          let mut pending_eip = context.next_eip;\n\
          let mut pending_flags = *flags;\n\
          let mut pending_undefined = *undefined;\n\
          let mut pending_dst: Option<u64> = None;\n",
-        p.operand_width,p.uses_displacement));
+        p.operand_width,p.uses_displacement,p.uses_memory));
     for t in &p.tokens {
         let line = match *t {
             Token::Read(o,b,w) => {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
+            Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
+            Token::Load(o,a,w)=>format!("let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(v{a} as u32,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;"),
+            Token::Store(a,v,w)=>format!("ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(v{a} as u32,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; pending_store=Some((v{a} as u32,MemWidth::{w:?},v{v} as u32));"),
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
             Token::ReadDisp(o,w) => format!("let v{o}: u64 = (context.displacement as u32 as u64) & {}u64;",mask(w)),
             Token::BranchIf(a,c) => format!("if v{c} != 0 {{ if v{a} as u32 > context.code_limit {{ return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}}); }} pending_eip = v{a} as u32; }}"),
@@ -384,13 +444,17 @@ fn emit_rust(p: &Program) -> String {
             Token::Write(a) => format!("pending_dst = Some(v{a});"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nOk(())",mask(p.operand_width)),
+                "if let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nOk(())",mask(p.operand_width)),
         };
         out.push_str(&line); out.push('\n');
     }
     out.push_str("}\n");
+    out.push_str("pub fn execute_with_flow(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext)->Result<(),ExecError>{\n");
+    if p.uses_memory {out.push_str("Err(ExecError::InvalidContext)\n}\n");}
+    else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0)\n}\n");}
+    out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address)\n}\n");
     out.push_str("pub fn execute_with_metadata(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,dst:(usize,u8),src:(usize,u8))->Result<(), &'static str> {\n");
-    if p.uses_flow {out.push_str("Err(\"flow context required: use execute_with_flow\")\n");}
+    if p.uses_flow || p.uses_memory {out.push_str("Err(\"flow context required: use execute_with_flow\")\n");}
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
     out.push_str("}\n// Compatibility helper: discards diagnostic undefined-flag metadata.\npub fn execute(regs: &mut [u32;8], flags: &mut u32, dst: (usize,u8), src: (usize,u8)) -> Result<(), &'static str> {\nlet mut undefined = 0; execute_with_metadata(regs,flags,&mut undefined,dst,src)\n}\n"); out
 }
@@ -427,3 +491,7 @@ fn main() -> R<()> {
 #[cfg(test)]
 #[path = "../tests/unit/cpu.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/memory_cpu.rs"]
+mod memory_tests;
