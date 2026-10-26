@@ -199,3 +199,23 @@ fn decoded_labels_cover_branches_unary_shifts_and_multiply(){
         (vec![0x90],"NOP"),
     ]{assert_eq!(decode(&bytes).unwrap().label,expected);}
 }
+
+#[test]
+fn relative_jump_and_all_near_conditions_decode_at_both_widths(){
+    for w in [16,32]{for cc in 0..16{
+        let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.extend([0x0f,0x80+cc]);bytes.extend(vec![0xff;(w/8) as usize]);
+        let d=decode(&bytes).unwrap();assert_eq!(d.length,bytes.len() as u32);
+        if let Operation::Pil{flow,..}=d.operation{assert_eq!(flow.displacement,-1);assert_eq!(flow.displacement_bits,w);}else{panic!("PIL");}
+    }}
+    for(bytes,target)in [(vec![0xeb,0xfe],ENTRY),(vec![0xe9,0xfd,0xff],ENTRY),(vec![0x66,0xe9,0xfa,0xff,0xff,0xff],ENTRY)]{assert_eq!(decode(&bytes).unwrap().label,format!("JMP 0x{target:08x}"));}
+    for bytes in [vec![0xe9,0],vec![0x0f,0x84,0],vec![0x66,0xe9,1,2,3]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))));}
+}
+#[test]
+fn near_branch_targets_preserve_flags_and_fault_before_retirement(){
+    use super::super::Cpu;
+    for(bytes,flags,target)in [(vec![0xe9,0,0],0xad7,ENTRY+3),(vec![0x0f,0x84,2,0],0x202,ENTRY+4),(vec![0x0f,0x84,2,0],0x242,ENTRY+6)]{
+        let mut c=Cpu::default();c.eip=ENTRY;c.eflags=flags;c.undefined_flags=0x10;execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(c.eip,target);assert_eq!(c.eflags,flags);assert_eq!(c.undefined_flags,0x10);
+    }
+    let(mut image,ram)=Image::load(&[0xe9,0xff,0x7f]).unwrap();image.segments[1].limit=ENTRY+2;
+    let d=image.decode(&ram,ENTRY).unwrap();let mut c=Cpu::default();c.eip=ENTRY;let old=c.clone();if let Operation::Pil{program,dst,src,flow,..}=d.operation{assert!(super::super::execute_flow(&program,&mut c,dst,src,flow).is_err());}else{panic!("PIL");}assert_eq!(c,old);
+}

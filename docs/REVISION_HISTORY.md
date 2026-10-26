@@ -410,3 +410,18 @@ Only version/docs metadata changes after this test run; execution source unchang
 Runtime-only alpha.3 PR #13 ready:head6b193b23c11946855b87d4bf6221ddde74fe5a6c,
 exported from dev d57ca83e80ec1ce247478a59be9616aa1610546a on main after
 merged typed-dump PR #12. No automatic merge or tag/release publication.
+
+## 0.14.0-alpha.1 — guest Mandelbrot images
+
+Q12 guest streams image pixels,host drains/checks/saves BMP/PGM. Add nearJcc
+and relativeJMP. Seven tests supplied (155 total) pending hosted CI.26 full-state
+compiled cases include tiny2x2 image and near-branch faults. Full256/32 renders
+plus independent Python pixel/BMP oracle added to both host workflows. Runtime
+66 files; references/credits updated,no imported code.
+
+User WSL alpha.3 run on shared/mnt/c checkout passed23 cases/3,044,833 bytes.
+Generated median0.345313 ms,86,886,390 ins/s; interpreter2.612 ms,11,484,806
+ins/s;7.57x. Compilation3.077 s excluded; direct CPU baseline passed,median
+0.002174 ms/0.217 ns per iteration.10000/5 with1 excluded warmup. Cache29997
+hits/7 misses/0 invalidations. Separate target/wsl recommended for shared builds.
+No controlled Windows-vs-WSL ratio inferred.

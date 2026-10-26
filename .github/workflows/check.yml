@@ -46,8 +46,16 @@ jobs:
         shell: pwsh
         run: ./tools/compare.ps1 -Iterations 10000 -Samples 5
       - run: cargo run --release --locked -- --verify-backends
+      - if: runner.os == 'Linux'
+        run: sh tools/mandelbrot.sh 256 32
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/mandelbrot.ps1 -Size 256 -Iterations 32
+      - run: python tools/verify_mandelbrot.py target/mandelbrot/256x256-i32/mandelbrot.pgm 256 32
       - run: python tools/package.py
       - uses: actions/upload-artifact@v4
         with:
           name: pil-proof-${{ matrix.os }}
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            target/mandelbrot/256x256-i32/*

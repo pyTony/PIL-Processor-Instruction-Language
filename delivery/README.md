@@ -16,6 +16,7 @@
 | `demo selftest` | Binary diagnostic; queue `serial rx 41`, then `run 1000` and `check` |
 | `demo hello` | Binary Hello-world output through mock serial |
 | `demo factorials` | Binary 1!..12! table; `time 1000` then `check`; 12!=479001600 |
+| `demo mandelbrot` | Small 8x8 fixed-point image; `time 1000000` then `check`; serial pixel bytes |
 | `demo loop` | Binary 65,536-iteration counted loop; `time 250000` then `check` |
 | `demo counter` | Small predecoded subtract-and-branch example |
 | `demo echo` | Predecoded one-byte serial echo; waits for RX input |
@@ -211,7 +212,7 @@ The ordinary debugger remains the cached PIL interpreter.
 
 Before reporting speed, it compares complete instruction-by-instruction traces:
 registers, EFLAGS, undefined flags, EIP, RAM contents and serial RX/TX queues.
-Twenty-three cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
+Twenty-six cases cover the diagnostic selftest, Hello-world, factorials, a short loop,
 read-only store and branch-limit faults, a changed-code stop, empty RX and full
 TX. Stop kinds/metadata are compared; descriptive strings are not trace fields.
 Any mismatch fails the command rather than reporting a passing benchmark.
@@ -234,7 +235,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 23-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the 26-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -303,3 +304,52 @@ Factorials uses repeated addition: EDX holds the previous factorial, ECX counts
 the additions for the current n in ESI, EAX accumulates the result, and DI selects
 the output slot starting at linear RAM 0x500. This demo intentionally retains
 its original ADD/SUB algorithm even though IMUL is now available.
+
+
+## Mandelbrot image workload
+
+Build and render the original 256x256 fixed-point guest on Windows:
+
+```powershell
+.\tools\mandelbrot.ps1
+Invoke-Item .\target\mandelbrot\256x256-i32\mandelbrot.bmp
+```
+
+Termux/Linux/WSL: `sh tools/mandelbrot.sh 256 32`. The helpers build release
+and run `--mandelbrot SIZE ITERATIONS`. Use powers of two 2..256 and 1..64
+iterations; default 256/32. Smaller example: `--mandelbrot 64 16`. Output stays
+under CARGO_TARGET_DIR (default target)/mandelbrot/SIZExSIZE-iITERATIONS/:
+mandelbrot.bmp, mandelbrot.pgm, guest.bin and report.txt. Custom output roots
+require adjusting the image path in the open command above.
+
+The actual guest executes IMUL, SAR/SHL, arithmetic and relative branches. It
+streams one byte per pixel through mock port 0xe9; the host drains full TX queues
+and checks every byte against a separate mathematical reference before saving
+images. No guest framebuffer larger than the existing 4-KiB RAM is needed. BMP
+is 24-bit uncompressed grayscale; PGM stores raw escape-iteration values as an
+intensity visualization, not calibrated luminance.
+
+Coordinates are Q12 over [-2,1) x [-1.5,1.5), starting z=0. Each iteration checks
+x*x+y*y>4 in Q24, then computes the next x/y with arithmetic shifts (floor
+rounding). Escaped pixels use 4*iteration; points not escaping within the limit
+are 0. Values are bounded to fit the guest's signed 32-bit products.
+
+Timing measures the cached token interpreter including serial-drain handling;
+it excludes setup, reference checking and file output. It is not a 386 cycle
+rate or compiled-backend image benchmark. The compiled proof checks a tiny
+2x2 Mandelbrot guest instruction by instruction; full-size image execution is
+currently interpreted. No VGA, firmware or OS boot is implied.
+
+Small interactive example (64 output bytes, no queue draining needed):
+
+```text
+demo mandelbrot
+list 64
+time 1000000
+check
+serial tx
+```
+
+This demo is 8x8 at 16 iterations. Manual `load` of a larger generated guest can
+pause when TX is full; use `serial tx` to drain then continue, or use the image
+helper to handle draining automatically.

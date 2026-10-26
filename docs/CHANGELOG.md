@@ -1,5 +1,11 @@
 # Changes
 
+## 0.14.0-alpha.1
+
+- Add Q12 guest Mandelbrot, reference checking, serial draining and BMP/PGM output.
+- Add near Jcc/relative JMP and small interactive image demo.
+- Add seven tests (155 total),26 compiled trace cases and independent image oracle.
+
 ## 0.13.0-alpha.3
 
 - Show instruction operands, encoded bytes, branch targets and current EIP in list.

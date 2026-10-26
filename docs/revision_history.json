@@ -946,7 +946,69 @@
         "head_commit": "6b193b23c11946855b87d4bf6221ddde74fe5a6c",
         "source_commit": "d57ca83e80ec1ce247478a59be9616aa1610546a",
         "base_main": "7efaf780d0041b9c6c56260810f87940a4b4d175"
+      },
+      "wsl_user_comparison": {
+        "reported_by": "user",
+        "host": "linux/x86_64 under WSL",
+        "checkout": "/mnt/c/Users/admin/pil_proof",
+        "profile": "release",
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "measured_samples": 5,
+        "excluded_warmups": 1,
+        "verifier_cases": 23,
+        "matched_trace_bytes": 3044833,
+        "generated_samples_ms": [
+          0.276255,
+          0.345644,
+          0.345313,
+          0.3488,
+          0.276285
+        ],
+        "generated_median_ns": 345313,
+        "generated_ins_per_second": 86886390,
+        "interpreter_samples_ms": [
+          2.666,
+          2.694,
+          2.596,
+          2.605,
+          2.612
+        ],
+        "interpreter_median_ms": 2.612,
+        "interpreter_ins_per_second": 11484806,
+        "observed_ratio": 7.57,
+        "compile_seconds_excluded": 3.077,
+        "cache_hits": 29997,
+        "cache_misses": 7,
+        "cache_invalidations": 0,
+        "native_cpu_samples_ms": [
+          0.002244,
+          0.002174,
+          0.002174,
+          0.002174,
+          0.002174
+        ],
+        "native_cpu_median_ms": 0.002174,
+        "scope": "loop arithmetic; no controlled OS performance comparison"
       }
+    },
+    {
+      "version": "0.14.0-alpha.1",
+      "date": "2026-10-26",
+      "status": "development; hosted verification pending",
+      "features": [
+        "Q12 guest Mandelbrot through256x256",
+        "serial TX draining and exact mathematical raster checking",
+        "BMP/PGM output and release helper scripts",
+        "near Jcc/relative JMP",
+        "26-case compiled trace proof"
+      ],
+      "rust_verification": {
+        "tests_supplied": 155,
+        "status": "pending hosted CI"
+      },
+      "runtime_files": 66,
+      "provenance": "Intel branch manuals,Netpbm PGM,Microsoft BMP reference only; original code"
     }
   ]
 }

@@ -343,3 +343,8 @@ fn listing_validates_limits_and_uses_live_bytes_for_binary_and_predecoded_demos(
     d.command("poke 0x100 62").unwrap();let cpu=d.cpu.clone();let out=d.command("list 4").unwrap().0;assert_eq!(out.lines().count(),1);assert!(out.contains("Decode"));assert_eq!(d.cpu,cpu);
     d.command("demo counter").unwrap();assert_eq!(d.command("list 1").unwrap().0.lines().count(),1);assert!(d.command("list 0x100 4").is_ok());
 }
+
+#[test]
+fn mandelbrot_debugger_demo_checks_pixels_after_tx_is_drained(){
+    let mut d=Debugger::new("mandelbrot").unwrap();assert!(d.command("check").is_err());let(_,stop)=d.run_large(1000000).unwrap();assert!(matches!(stop,Stop::Halt(_)));assert_eq!(d.serial.take_tx().len(),64);assert!(d.command("check").unwrap().0.contains("all 64 serial pixels"));
+}

@@ -292,3 +292,16 @@ operations, decoder bindings and regression fixtures. No new dependencies.
 
 Original implementation and tests; no new external reference materials,
 third-party code or dependencies. ASCII rendering is byte-based (0x20..0x7e).
+
+## 0.14 Mandelbrot/control-flow/image references (consulted2026-10-26)
+
+- Intel80386 PRM Jcc: https://pdos.csail.mit.edu/6.828/2018/readings/i386/Jcc.htm
+- Intel80386 PRM JMP: https://pdos.csail.mit.edu/6.828/2018/readings/i386/JMP.htm
+- Netpbm PGM specification: https://netpbm.sourceforge.net/doc/pgm.html
+- Microsoft bitmap storage: https://learn.microsoft.com/en-us/windows/win32/gdi/bitmap-storage
+
+Used for relative-branch encodings and image container layout only. Original
+assembler, guest algorithm, mathematical references, image writers and tests;
+no external source code/assets imported. Thanks to the documentation authors
+and maintainers. Escape-iteration PGM is an intensity visualization, not a
+calibrated luminance image. No new dependencies or firmware reuse.

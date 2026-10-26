@@ -1,3 +1,16 @@
+# Mandelbrot workload development —0.14.0-alpha.1
+
+Original dynamically assembled Q12 guest renders powers-of-two2..256 with1..64
+iterations. Default CLI256/32,debugger demo8/16. Serial mock streams pixels;
+host drains TX on backpressure,checks every pixel against math reference before
+writing BMP/PGM/guest.bin/report under target/mandelbrot. No larger guestRAM
+or VGA. Runtime full image stays token-interpreted; tiny2x2 case joins compiled
+proof (26 cases). NearJcc0F80..8F,relative JMP EB/E9 use PIL flow. Seven tests
+added (155 total pending CI). Full256/32 release render and independent Python
+PGM/BMP oracle added to CI on both hosts. Runtime66 files. CLI render validates
+bounds before artifacts and limits instructions. Next: image performance/native
+backend and additional device/machine-state support,without implying OS boot.
+
 # Readable listing runtime PR #13 ready
 
 https://github.com/pyTony/pil_proof/pull/13 contains the alpha.3 listing follow-up.

@@ -67,6 +67,9 @@ pub fn cases()->Result<Vec<Case>,String> {
     }
     for count in [0,1]{let mut test=case(if count==0{"shift_readonly_zero"}else{"shift_readonly_one"},vec![0xc1,0x27,count,0xf4])?;
         test.regs[3]=0x400;test.protect=Some((0x500,4));tests.push(test);}
+    tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
+    let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
+    let mut jump=case("jump_fault",vec![0xe9,0xff,0x7f])?;jump.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(jump);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {
