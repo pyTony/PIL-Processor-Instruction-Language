@@ -82,6 +82,10 @@ binary monitor, executable selftest, serial console echo, build/debug scripts
 and native delivery packaging. User requested dev as the development branch,
 main for applicable user deliveries, and browser approval followed by pull.
 
-92 Rust tests supplied (27 new), including 153 segmented generated/interpreted
-cases. Rust execution is pending hosted CI; no local Rust compiler exists.
-Termux v0.7 and Windows launcher manual checks remain unreported.
+92 Rust tests (27 new), including 153 segmented generated/interpreted cases.
+Core commit 56f194fd031bed263b1b9f5ce5dc9b09f7abdb28 passed on hosted Ubuntu
+(5.88 s) and Windows (11.42 s). Selftest passed 63 executed steps on both.
+Build/debug scripts and native package creation passed in CI run 40318741977.
+Final packaging additionally validates the unpacked launcher and serial console.
+Termux v0.7 and interactive manual checks remain unreported. No local Rust
+compiler exists in the authoring environment.

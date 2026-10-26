@@ -25,8 +25,11 @@ draining the queue. Check uses output history, so serial tx does not spoil it.
 Selftest requires DX=600D, four RAM signatures and TX=41. DX=DEAD means failure.
 
 92 Rust tests supplied, including 153 segmented generated/interpreted cases.
-No local Rust toolchain; hosted Ubuntu/Windows CI is pending. Do not equate
-host CI with a new Termux run. Native ZIPs are host-specific, not Android/ESP32.
+Core commit 56f194fd passed 92 tests on hosted Ubuntu (5.88 s) and Windows
+(11.42 s); selftest passed 63 steps on both. Build/debug scripts and native ZIP
+creation passed. Final packaging validation also checks the unpacked launcher
+and serial transcript. No local Rust toolchain. Do not equate host CI with a
+new Termux run. Native ZIPs are host-specific, not Android/ESP32.
 See docs/development/STATUS.md and docs/DEBUGGER.md for current limitations.
 No third-party code imported; keep provenance and revision logs/checksums.
 

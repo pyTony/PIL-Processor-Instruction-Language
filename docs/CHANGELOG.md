@@ -8,7 +8,8 @@
 - Echo successful guest serial output in the debugger without draining it.
 - Add compile/debug helpers for Termux/Linux and Windows and native ZIP packaging.
 - Use dev for development and main for reviewed deliveries; add host CI.
-- Supply 92 Rust tests, including 153 segmented generated/interpreted cases.
+- Pass 92 Rust tests on hosted Ubuntu/Windows, including 153 segmented comparisons.
+- Pass the executable selftest in 63 steps and host build/debug/package checks.
 
 ## 0.6.0
 
