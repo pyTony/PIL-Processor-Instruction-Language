@@ -305,3 +305,13 @@ https://github.com/pyTony/pil_proof/actions/runs/40367901727 — 134 tests
 passed on Ubuntu10.65 s and Windows18.35 s. Eighteen full-state cases matched
 2,535,361 bytes. Standalone59-file source and unpacked native checks passed.
 Runtime-only PR #10 awaits user review. Phone/PC user verification pending.
+
+## First user Windows PC benchmark — 0.11.0-alpha.1
+
+Windows/x86_64 release, tools/bench.ps1 defaults:1,000 iterations,3,003 guest
+instructions/sample,three measured samples plus one excluded warmup. Samples
+[0.518,0.438,0.410] ms; median0.438 ms,6,853,035 guest instructions/s.
+Cache2997 hits,7 misses,0 invalidations. Cached interpreter only; no compiled
+Rust or direct CPU measurement supplied yet. Different iteration/sample counts
+from phone results; no controlled cross-device ratio inferred. User console
+output is evidence; this documentation update changes no implementation.

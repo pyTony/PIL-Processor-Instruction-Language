@@ -1,3 +1,11 @@
+# First Windows user interpreter run recorded
+
+User v0.11.0-alpha.1 Windows/x86_64 release bench defaults passed:1000/3,
+median0.438 ms,6,853,035 ins/s;2997 cache hits/7 misses/0 invalidations.
+Full PC generated/native comparison still unreported. Phone used10000/5;
+keep sample scopes separate. Current0.12 implementation remains host-tested
+only. No implementation change in this evidence update.
+
 # Signed multiplication verified — runtime PR #10
 
 https://github.com/pyTony/pil_proof/pull/10 is ready for review. Core dev
