@@ -107,3 +107,32 @@ The SerialTransport trait is the intended seam for future UART or WLAN
 transports. This implementation uses std/VecDeque and the debugger uses host
 stdio. Embedded compilation still requires separating the core and replacing
 host facilities with bounded storage and board I/O.
+
+## v0.6 memory bring-up
+
+The host debugger now has 256 bytes of flat RAM and a predecoded memory demo:
+
+```text
+demo memory
+list
+mem 0x10 4
+step
+mem 0x10 4
+step
+regs
+reset
+protect 0x10 4
+run
+```
+
+The first step stores ECX=0x12345678 at 0x10; memory should show 78 56 34 12.
+The second step loads that value into EAX. The demo stops at 0x304. After reset,
+protecting that range makes the first store stop with a RAM write fault at
+EIP=0x300; neither CPU nor RAM is committed. This is not x86 #PF delivery.
+
+`mem ADDRESS [COUNT]` displays 1..256 bytes (default 16). `poke ADDRESS HEX...`
+parses and checks the whole 1..256-byte chunk before writing. `protect ADDRESS
+COUNT` marks an in-bounds interval read-only. Reset restores the demo's initial
+RAM and removes debugger-added protection; loading another demo also resets RAM.
+The old counter and echo demos continue to work. No instruction bytes are
+fetched from this RAM yet.

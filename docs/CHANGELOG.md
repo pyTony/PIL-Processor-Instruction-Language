@@ -1,5 +1,17 @@
 # Changes
 
+## 0.6.0
+
+- Add flat RAM with little-endian 8/16/32-bit reads, stores and read-only ranges.
+- Add PIL read_address/load/store and load_ram/store_ram/add_ram descriptions.
+- Defer the single supported RAM store until retirement; preserve CPU/RAM on faults.
+- Add structured emulator MemoryAccess errors, distinct from x86 #PF.
+- Add debugger memory demo and mem/poke/protect commands.
+- Add 19 Rust tests (65 total), including 560 generated/interpreted memory cases.
+- Add independent Python memory oracle; update source/verification history.
+- New Rust build is not yet run in the authoring environment.
+
+
 ## 0.5.0
 
 - Add bounded RX/TX mock serial with nonblocking reads/writes and atomic injection.

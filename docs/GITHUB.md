@@ -1,3 +1,17 @@
+# Repository status
+
+The private repository https://github.com/pyTony/pil_proof now exists. The user
+pushed main and configured origin/main tracking. The inspected baseline for
+v0.6 is cfd4143512497c8afd28df9ef6739a96fc62b9f0.
+
+For this patch, apply from the existing project using git apply --check, then
+git apply. Run cargo test --locked and the Python verification tools before
+committing. The new source/lockfile package version is 0.6.0. No remote branch
+is modified automatically. A project-wide distribution licence is still not
+selected; attribution/provenance remains in REFERENCES_AND_CREDITS.md.
+
+## Historical first-push instructions
+
 # Preparing the first GitHub push
 
 The patch prepares a source tree; it does not create a repository, choose

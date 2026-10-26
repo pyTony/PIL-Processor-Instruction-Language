@@ -1,0 +1,6 @@
+# Flat RAM store; permission/range checks occur before commit.
+read_address addr
+read value src $W
+store addr value
+preserve_flags all
+retire

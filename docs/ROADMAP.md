@@ -1,3 +1,18 @@
+# Roadmap update — v0.6
+
+- v0.5 is user-verified: 46 Rust tests passed in 4.27 s; REPL startup succeeded.
+- Echo waiting, RX injection and two executed steps were observed by the user;
+  the final TX-drain response was not shown. Do not assume additional manual checks.
+- Current: flat RAM token effects, safe single-store retirement, bounds/protection
+  faults and memory inspection. New Rust tests are pending execution.
+- Next: explicit effective-address/segment context and controlled instruction
+  fetch/decode, while maintaining precise errors. Add general checkpoints for
+  multi-store/string/device instructions rather than extending RAM rollback to MMIO.
+- GitHub repository now exists privately at pyTony/pil_proof on main. Continue
+  supplying patches inside ~/pil_proof; no more version folders in home.
+
+## Earlier roadmap detail
+
 # Working roadmap — PC emulator
 
 ## Verified baseline: v0.4 execution patch

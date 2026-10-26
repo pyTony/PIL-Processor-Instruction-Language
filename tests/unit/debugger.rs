@@ -104,3 +104,28 @@ fn invalid_demo_selection_retains_program_and_breakpoints() {
     assert_eq!(d.demo,"counter");assert!(d.breakpoints.contains(&0x100));
     d.load_demo("echo").unwrap();assert_eq!(d.cpu.eip,0x200);assert!(d.breakpoints.is_empty());
 }
+
+#[test]
+fn memory_demo_commits_store_then_loads_value() {
+    let mut d=Debugger::new("memory").unwrap();
+    assert_eq!(d.run(10).unwrap(),(2,Stop::Halt(0x304)));
+    assert_eq!(d.cpu.regs[0],0x12345678);
+    assert_eq!(d.command("mem 0x10 4").unwrap().0,"00000010: 78 56 34 12");
+}
+#[test]
+fn debugger_poke_is_atomic_and_reset_restores_ram_permissions() {
+    let mut d=Debugger::new("memory").unwrap();d.command("poke 0x10 aa bb cc dd").unwrap();
+    d.command("protect 0x12 1").unwrap();let before=d.ram.clone();
+    assert!(d.command("poke 0x10 00 00 00 00").is_err());assert_eq!(d.ram,before);
+    assert!(d.command("poke 0x10 41 zz").is_err());assert_eq!(d.ram,before);
+    assert!(d.command("mem 0xff 2").is_err());assert!(d.command("mem 0 257").is_err());
+    d.reset();assert!(d.command("poke 0x10 01 02 03 04").is_ok());
+    assert_eq!(d.command("mem 0x10 4").unwrap().0,"00000010: 01 02 03 04");
+}
+#[test]
+fn protected_memory_demo_faults_at_store_without_changing_state() {
+    let mut d=Debugger::new("memory").unwrap();d.command("protect 0x10 4").unwrap();
+    let cpu=d.cpu.clone();let ram=d.ram.clone();
+    assert_eq!(d.step(),Stop::Fault(ExecError::MemoryAccess{eip:0x300,address:0x10,bytes:4,write:true}));
+    assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);
+}
