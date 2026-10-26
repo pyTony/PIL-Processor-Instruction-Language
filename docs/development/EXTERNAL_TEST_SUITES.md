@@ -84,3 +84,11 @@ complements rather than replaces the hardware-derived oracle.
 
 Credits: Daniel Balsom/GloriousCow and SingleStepTests contributors; barotto and
 test386.asm contributors; PCjs/IBMulator ancestry as documented by that project.
+
+## Related plans
+
+[386 completion](ISA_COMPLETION_PLAN.md) orders the CPU/effect/system work.
+[Modern CPU/x86-64 verification](X86_64_VERIFICATION_PLAN.md) adds a parallel
+oracle for defined overlapping behavior and later true64-bit operations.
+It cannot replace the386-specific hardware lane. [OS targets](OS_COMPATIBILITY_TARGETS.md)
+describe later machine milestones,not suite passes or current boot support.

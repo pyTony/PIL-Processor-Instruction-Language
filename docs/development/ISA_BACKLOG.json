@@ -1,0 +1,771 @@
+{
+  "schema_version": 1,
+  "updated": "2026-10-27",
+  "baseline": {
+    "version": "0.15.0-alpha.3",
+    "dev_commit": "f3540ac77dd3b93439fe2d025fd8d1d24f8db4a1",
+    "rust_tests": 165,
+    "backend_cases": 39,
+    "external_suite_runs": 0,
+    "native_instruction_oracle": "planned;PC_NATIVE is a narrow timing baseline"
+  },
+  "coverage_unit": "Planning family/form,not complete opcode coverage or an implementation percentage",
+  "scope": "Documented80386 integer/system ISA;undocumented extensions and80387 are separate tiers;no implicit486+ additions",
+  "phase_order": [
+    "P0",
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5",
+    "P6",
+    "P7",
+    "P8",
+    "P9",
+    "U",
+    "F"
+  ],
+  "parallel_track": "X86_64_VERIFICATION_PLAN.md:N0/N1 start before full386 completion",
+  "condition_families": {
+    "Jcc": [
+      "O",
+      "NO",
+      "B",
+      "AE",
+      "E",
+      "NE",
+      "BE",
+      "A",
+      "S",
+      "NS",
+      "P",
+      "NP",
+      "L",
+      "GE",
+      "LE",
+      "G"
+    ],
+    "SETcc": "Same16 canonical predicates; mnemonic aliases map to these"
+  },
+  "items": [
+    {
+      "id": "move",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "MOV"
+      ],
+      "status": "partial",
+      "remaining": "C6/C7 immediate destinations and A0..A3 moffs; segment/special forms separate",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "alu",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "ADD",
+        "ADC",
+        "SUB",
+        "SBB",
+        "CMP",
+        "AND",
+        "OR",
+        "XOR",
+        "TEST"
+      ],
+      "status": "partial",
+      "remaining": "Audit widths,directions,groups,immediates,prefixes and modes",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "unary",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "INC",
+        "DEC",
+        "NEG",
+        "NOT",
+        "NOP"
+      ],
+      "status": "partial",
+      "remaining": "Complete encodings and preserved CF; separate legacy INC/DEC from REX",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "conversions",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "MOVSX",
+        "MOVZX",
+        "CBW",
+        "CWDE",
+        "CWD",
+        "CDQ"
+      ],
+      "status": "partial",
+      "remaining": "Existing forms incl same-width copies; external and encoding audit",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "lea",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "LEA"
+      ],
+      "status": "partial",
+      "remaining": "All16/32 addressing/alias forms; separate undefined SIB variants",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "exchange",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "XCHG"
+      ],
+      "status": "planned",
+      "remaining": "Register/register,memory and accumulator forms; implicit locking inP6",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "carry_flags",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "CLC",
+        "STC",
+        "CMC"
+      ],
+      "status": "planned",
+      "remaining": "CF effects and preservation of every other output",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "byte_flags",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "LAHF",
+        "SAHF"
+      ],
+      "status": "planned",
+      "remaining": "AH bit layout,fixed bits and partial flag writes",
+      "modern_user_mode_oracle": "feature_gated",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "direction_flag",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "CLD",
+        "STD"
+      ],
+      "status": "planned",
+      "remaining": "Explicit DF state before strings and native ABI restoration",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "setcc",
+      "phase": "P1",
+      "mnemonics_or_area": [
+        "SETcc"
+      ],
+      "status": "partial",
+      "remaining": "Add memory destinations and encoding audit to all16 predicates",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "push_pop",
+      "phase": "P2",
+      "mnemonics_or_area": [
+        "PUSH",
+        "POP"
+      ],
+      "status": "planned",
+      "remaining": "Register/immediate/memory; independent stack size and SP/ESP aliases",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "stack_flags",
+      "phase": "P2",
+      "mnemonics_or_area": [
+        "PUSHF",
+        "PUSHFD",
+        "POPF",
+        "POPFD"
+      ],
+      "status": "planned",
+      "remaining": "Real mode first; reserved/privileged flag rules later",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "near_calls",
+      "phase": "P2",
+      "mnemonics_or_area": [
+        "CALL",
+        "RET"
+      ],
+      "status": "planned",
+      "remaining": "Near relative/indirect calls,returns,immediate cleanup and faults",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "indirect_jump",
+      "phase": "P2",
+      "mnemonics_or_area": [
+        "JMP"
+      ],
+      "status": "partial",
+      "remaining": "Relative implemented; near indirect here,far transfers inP6/P7",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "conditional_jump",
+      "phase": "P2",
+      "mnemonics_or_area": [
+        "Jcc"
+      ],
+      "status": "partial",
+      "remaining": "All16 predicates exist; mode/default-size/prefix/target fault audit",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "loops",
+      "phase": "P2",
+      "mnemonics_or_area": [
+        "LOOP",
+        "LOOPE",
+        "LOOPZ",
+        "LOOPNE",
+        "LOOPNZ",
+        "JCXZ",
+        "JECXZ"
+      ],
+      "status": "planned",
+      "remaining": "Address-sized counter,ZF,zero/wrap,preserved flags and targets",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "stack_all",
+      "phase": "P3",
+      "mnemonics_or_area": [
+        "PUSHA",
+        "PUSHAD",
+        "POPA",
+        "POPAD"
+      ],
+      "status": "planned",
+      "remaining": "Original SP snapshot,ordered accesses,386-specific POPAD behavior",
+      "modern_user_mode_oracle": "legacy_only",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "frames",
+      "phase": "P3",
+      "mnemonics_or_area": [
+        "ENTER",
+        "LEAVE"
+      ],
+      "status": "planned",
+      "remaining": "Nesting0 first,then complete nesting/size/fault boundaries",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "rotates",
+      "phase": "P3",
+      "mnemonics_or_area": [
+        "ROL",
+        "ROR",
+        "RCL",
+        "RCR"
+      ],
+      "status": "planned",
+      "remaining": "Count boundaries,carry input and CF/OF definedness",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "shifts",
+      "phase": "P3",
+      "mnemonics_or_area": [
+        "SHL",
+        "SAL",
+        "SHR",
+        "SAR"
+      ],
+      "status": "partial",
+      "remaining": "Existing forms; audit counts,zero-count memory and all encodings",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "double_shifts",
+      "phase": "P3",
+      "mnemonics_or_area": [
+        "SHLD",
+        "SHRD"
+      ],
+      "status": "planned",
+      "remaining": "16/32 immediate/CL forms and undefined-count policy",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "bit_ops",
+      "phase": "P3",
+      "mnemonics_or_area": [
+        "BT",
+        "BTS",
+        "BTR",
+        "BTC"
+      ],
+      "status": "planned",
+      "remaining": "Signed memory indices,immediates,CF and other flag classification",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "bit_scan",
+      "phase": "P3",
+      "mnemonics_or_area": [
+        "BSF",
+        "BSR"
+      ],
+      "status": "planned",
+      "remaining": "Zero/nonzero inputs,ZF and undefined destination metadata",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "multiply",
+      "phase": "P4",
+      "mnemonics_or_area": [
+        "MUL",
+        "IMUL"
+      ],
+      "status": "partial",
+      "remaining": "Add implicit AL/AX/EAX products and high/low destinations",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "divide",
+      "phase": "P4",
+      "mnemonics_or_area": [
+        "DIV",
+        "IDIV"
+      ],
+      "status": "planned",
+      "remaining": "Wide dividend,quotient,remainder,zero/overflow and precise#DE",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "xlat",
+      "phase": "P4",
+      "mnemonics_or_area": [
+        "XLAT",
+        "XLATB"
+      ],
+      "status": "planned",
+      "remaining": "Original AL,table base,address size,segment and byte access",
+      "modern_user_mode_oracle": "overlap",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "decimal_adjust",
+      "phase": "P4",
+      "mnemonics_or_area": [
+        "AAA",
+        "AAS",
+        "DAA",
+        "DAS"
+      ],
+      "status": "planned",
+      "remaining": "386 defined results and explicit undefined metadata",
+      "modern_user_mode_oracle": "legacy_only",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "ascii_adjust",
+      "phase": "P4",
+      "mnemonics_or_area": [
+        "AAD",
+        "AAM"
+      ],
+      "status": "planned",
+      "remaining": "Immediate bases incl0,implicit registers and#DE",
+      "modern_user_mode_oracle": "legacy_only",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "string_memory",
+      "phase": "P5",
+      "mnemonics_or_area": [
+        "MOVS",
+        "MOVSB",
+        "MOVSW",
+        "MOVSD",
+        "STOS",
+        "STOSB",
+        "STOSW",
+        "STOSD",
+        "LODS",
+        "LODSB",
+        "LODSW",
+        "LODSD"
+      ],
+      "status": "planned",
+      "remaining": "Single element,DF,pointer sizes,source override and ES rules",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "string_compare",
+      "phase": "P5",
+      "mnemonics_or_area": [
+        "CMPS",
+        "CMPSB",
+        "CMPSW",
+        "CMPSD",
+        "SCAS",
+        "SCASB",
+        "SCASW",
+        "SCASD"
+      ],
+      "status": "planned",
+      "remaining": "Ordered reads,flags,DF and pointer effects",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "repeat",
+      "phase": "P5",
+      "mnemonics_or_area": [
+        "REP",
+        "REPE",
+        "REPZ",
+        "REPNE",
+        "REPNZ"
+      ],
+      "status": "planned",
+      "remaining": "Element progress,count0,ZF stop and interrupt/fault restart",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "port_io",
+      "phase": "P6",
+      "mnemonics_or_area": [
+        "IN",
+        "OUT"
+      ],
+      "status": "partial",
+      "remaining": "Beyond mock AL/portE9:DX/immediate,8/16/32,bus and permissions",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "string_io",
+      "phase": "P6",
+      "mnemonics_or_area": [
+        "INS",
+        "INSB",
+        "INSW",
+        "INSD",
+        "OUTS",
+        "OUTSB",
+        "OUTSW",
+        "OUTSD"
+      ],
+      "status": "planned",
+      "remaining": "I/O permissions,REP/DF and irreversible device ordering",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "segments",
+      "phase": "P6",
+      "mnemonics_or_area": [
+        "MOV_segment",
+        "PUSH_segment",
+        "POP_segment"
+      ],
+      "status": "planned",
+      "remaining": "Real cache loads,hidden state,SS shadow; protected validation later",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "far_pointer",
+      "phase": "P6",
+      "mnemonics_or_area": [
+        "LDS",
+        "LES",
+        "LSS",
+        "LFS",
+        "LGS"
+      ],
+      "status": "planned",
+      "remaining": "16:16/16:32 reads,multiple register/segment effects",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "far_control",
+      "phase": "P6",
+      "mnemonics_or_area": [
+        "CALL_far",
+        "JMP_far",
+        "RET_far",
+        "RETF"
+      ],
+      "status": "planned",
+      "remaining": "Real far transfers first,gates/privilege changes later",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "bounds",
+      "phase": "P6",
+      "mnemonics_or_area": [
+        "BOUND"
+      ],
+      "status": "planned",
+      "remaining": "Signed bounds,ordered reads and#BR",
+      "modern_user_mode_oracle": "legacy_only",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "lock",
+      "phase": "P6",
+      "mnemonics_or_area": [
+        "LOCK"
+      ],
+      "status": "planned",
+      "remaining": "Legal memory RMW,implicit XCHG locking and invalid prefixes",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "descriptor_tables",
+      "phase": "P7",
+      "mnemonics_or_area": [
+        "LGDT",
+        "LIDT",
+        "SGDT",
+        "SIDT"
+      ],
+      "status": "planned",
+      "remaining": "Table state,widths,permissions and accesses",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "selector_state",
+      "phase": "P7",
+      "mnemonics_or_area": [
+        "LLDT",
+        "LTR",
+        "SLDT",
+        "STR"
+      ],
+      "status": "planned",
+      "remaining": "LDT/TR caches,busy bits,validation and fault ordering",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "selector_queries",
+      "phase": "P7",
+      "mnemonics_or_area": [
+        "LAR",
+        "LSL",
+        "VERR",
+        "VERW",
+        "ARPL"
+      ],
+      "status": "planned",
+      "remaining": "Visibility/privilege,ZF and conditional writes",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "machine_status",
+      "phase": "P7",
+      "mnemonics_or_area": [
+        "LMSW",
+        "SMSW",
+        "CLTS"
+      ],
+      "status": "planned",
+      "remaining": "386 machine-status bits,privilege and transitions",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "control_registers",
+      "phase": "P7",
+      "mnemonics_or_area": [
+        "MOV_CR"
+      ],
+      "status": "planned",
+      "remaining": "386 CR0/CR2/CR3 and reserved forms; no silent later features",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "interrupt_flags",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "CLI",
+        "STI"
+      ],
+      "status": "planned",
+      "remaining": "CPL/IOPL/V86 checks and interrupt inhibition",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "interrupts",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "INT",
+        "INT3",
+        "INTO",
+        "IRET",
+        "IRETD"
+      ],
+      "status": "planned",
+      "remaining": "Frames,return IP,error codes,nested faults,#DF/shutdown",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "halt",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "HLT"
+      ],
+      "status": "partial",
+      "remaining": "Architectural halt/wakeup/privilege separate from monitor stop",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "debug_registers",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "MOV_DR"
+      ],
+      "status": "planned",
+      "remaining": "386 debug state,breakpoint/trap timing and aliases",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "test_registers",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "MOV_TR"
+      ],
+      "status": "planned",
+      "remaining": "386 test-register interface and model-specific validation",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "coprocessor_interface",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "WAIT",
+        "FWAIT",
+        "ESC"
+      ],
+      "status": "planned",
+      "remaining": "CPU-side coprocessor controls/traps/dispatch; math separate",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "paging",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "paging_and_exception_state"
+      ],
+      "status": "planned",
+      "remaining": "386 walk,CR2,error codes,A/D bits,permission/fault order",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "task_switch",
+      "phase": "P8",
+      "mnemonics_or_area": [
+        "task_and_gate_transfers"
+      ],
+      "status": "planned",
+      "remaining": "TSS,gates,busy/backlinks and partially completed transfers",
+      "modern_user_mode_oracle": "privileged_or_os",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "decode_audit",
+      "phase": "P9",
+      "mnemonics_or_area": [
+        "prefix_and_encoding_audit"
+      ],
+      "status": "planned",
+      "remaining": "All forms,widths,aliases,groups,prefixes,lengths and model rules",
+      "modern_user_mode_oracle": "mode_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "machine_rom",
+      "phase": "P9",
+      "mnemonics_or_area": [
+        "reset_ROM_A20_bus"
+      ],
+      "status": "planned",
+      "remaining": "Hidden reset CS,ROM aliases,bus/A20,POST/UART and ROM tests",
+      "modern_user_mode_oracle": "legacy_or_system",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "undocumented",
+      "phase": "U",
+      "mnemonics_or_area": [
+        "LOADALL",
+        "ICEBP",
+        "SALC_and_other_undocumented_forms"
+      ],
+      "status": "optional",
+      "remaining": "Separate compatibility tier with pinned model/hardware evidence",
+      "modern_user_mode_oracle": "model_specific",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    },
+    {
+      "id": "x87",
+      "phase": "F",
+      "mnemonics_or_area": [
+        "80387_instruction_set"
+      ],
+      "status": "optional",
+      "remaining": "Separate80-bit coprocessor,rounding,exceptions and oracle plan",
+      "modern_user_mode_oracle": "separate_profile",
+      "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
+    }
+  ]
+}

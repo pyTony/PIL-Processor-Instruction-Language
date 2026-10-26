@@ -11,6 +11,10 @@ Main is a runtime-only export and intentionally runs zero development tests.
 | [Feature matrix](delivery/source/FEATURE_MATRIX.md) | Implemented, partial and planned features in the user delivery |
 | [Release notes](delivery/source/RELEASE_NOTES.md) | User-facing changes by delivery version |
 | [Language reference](docs/LANGUAGE.md) | PIL tokens, widths, flag metadata, memory effects and Rust emission |
+| [386 completion TODO](docs/development/ISA_COMPLETION_PLAN.md) | Remaining instruction forms,dependencies and acceptance gates |
+| [x86-64 verification plan](docs/development/X86_64_VERIFICATION_PLAN.md) | Shared lessons,modern CPU oracle and true64-bit subset |
+| [ISA backlog](docs/development/ISA_BACKLOG.json) | Machine-readable family/form TODO inventory |
+| [OS compatibility targets](docs/development/OS_COMPATIBILITY_TARGETS.md) | Windows editions,minimums and future machine milestones |
 | [External test suites](docs/development/EXTERNAL_TEST_SUITES.md) | Pinned suites, licence findings and CPU/ROM adapter plan |
 | [Development status](docs/development/STATUS.md) | Current work, verified results and remaining limits |
 | [Roadmap](docs/ROADMAP.md) | Emulator milestones, TTGO devices and portability goals |

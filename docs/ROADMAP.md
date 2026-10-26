@@ -5,6 +5,21 @@ separate delivery branch; never merge the dev tree into main. The applicable
 user documentation is maintained in delivery/source/. CI validates the isolated
 export in addition to development tests. Full history and planning remain here.
 
+## Current plan —27 October2026
+
+The active TODO is the [386 completion plan](development/ISA_COMPLETION_PLAN.md),
+with [family/form backlog](development/ISA_BACKLOG.json). The parallel
+[x86-64 verification plan](development/X86_64_VERIFICATION_PLAN.md) starts a
+modern-PC instruction oracle early,then an explicit64-bit profile. The
+[OS targets](development/OS_COMPATIBILITY_TARGETS.md) distinguish Windows3.1x
+editions and optional Windows95/NT3.51 goals from current CPU coverage.
+
+First slices: independent case/oracle infrastructure; named multiple register
+effects and ordered memory accesses; basic stack; near calls/returns; rotates/
+bit operations; implicit wide multiplication/division. Baseline165 tests/39
+original trace cases; neither external oracle is implemented yet. Older
+roadmap sections below are retained as history.
+
 ## Independent validation next
 
 See [external test suites](development/EXTERNAL_TEST_SUITES.md). First build a

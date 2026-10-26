@@ -743,7 +743,7 @@
         "halt_eip": "0x146",
         "elapsed_ms": 0.979,
         "guest_instructions_per_second": 343172,
-        "ns_per_instruction": 2914.0,
+        "ns_per_instruction": 2914,
         "cache_entries": 18,
         "cache_hits": 319,
         "cache_misses": 18,
@@ -827,7 +827,7 @@
         "tests_passed": 140,
         "tests_failed": 0,
         "ubuntu_seconds": 12.43,
-        "windows_seconds": 22.0,
+        "windows_seconds": 22,
         "source_commit": "1a35fa53fcddd5a89e86813699736e5cc3c68832",
         "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40371543845",
         "verifier_cases": 23,
@@ -1411,6 +1411,18 @@
             "EDI": "0000ff80"
           }
         }
+      },
+      "planning_follow_up": {
+        "date": "2026-10-27",
+        "instruction_plan": "docs/development/ISA_COMPLETION_PLAN.md",
+        "machine_backlog": "docs/development/ISA_BACKLOG.json",
+        "backlog_family_form_rows": 55,
+        "native_64_plan": "docs/development/X86_64_VERIFICATION_PLAN.md",
+        "os_targets": "docs/development/OS_COMPATIBILITY_TARGETS.md",
+        "phases": "386P0-P9 plusU/F;parallel nativeN0-N6",
+        "first_implementation": "ABI-safe host ADD/SUB/ADC/SBB/CMP8/16/32 oracle,independent masks and both backends;separate pinned386 adapter",
+        "verification": "documentation,55-row JSON,relative links and hashes checked;no new runtime/hardware passes",
+        "references": "Intel386/SDM,AMD APM listing,Microsoft x64/ABI,psABI project,archived Microsoft OS requirements with edition/retrieval caveats"
       }
     }
   ]

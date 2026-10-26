@@ -1,3 +1,23 @@
+# 386 completion and modern CPU/x86-64 TODO plan —27 October2026
+
+ISA_COMPLETION_PLAN.md orders P0..P9 for documented386 integer/system work,
+with separate undocumented/80387 tiers. ISA_BACKLOG.json tracks55 family/form
+planning items,not an opcode completion percentage. Baseline remains0.15alpha.3,
+165 tests/39 original backend cases. External/native oracle passes remain zero.
+X86_64_VERIFICATION_PLAN.md defines N0..N6: start a modern-PC oracle for existing
+8/16/32 ADD/SUB/ADC/SBB/CMP now,then explicit64-bit state/REX/write policies,
+wide values through128,memory and managed-stack/control tests. Keep shared PIL
+semantics but separate mode-specific rules and independent flag masks.
+In parallel build the pinned SingleStepTests one-step adapter. Named multiple
+register effects and ordered memory/commit points precede stack/CALL/RET.
+OS_COMPATIBILITY_TARGETS.md records the user's Windows milestones with edition
+qualifiers: WfW3.11 is the3MB row (2MB without networking),Windows95 has a386DX/
+4MB minimum,NT3.51 Workstation target12MB versus Server16MB. These are future
+machine goals,not current boot support or guaranteed TTGO memory feasibility.
+Plans linked from README/roadmap/external-suite notes; references and history
+updated. Documentation-only; no runtime changes or new CPU verification claimed.
+Keep this work ondev; no runtime delivery PR or Cargo version bump is needed.
+
 # User Windows alpha.3 verified —recorded27 October2026
 
 Runtime PR #18 is confirmed merged.

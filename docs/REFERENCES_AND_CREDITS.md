@@ -377,3 +377,28 @@ https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ce
 No third-party tests, code or ROMs imported/executed. Thanks to Daniel Balsom,
 SingleStepTests contributors and barotto for making these validation resources
 available,and to Tony for suggesting them. Detailed integration work stays ondev.
+
+## Instruction completion,64-bit verification and OS planning —27 October2026
+
+Original development plans/TODO inventory; no implementation or hardware passes
+added. References consulted:
+- Intel386 instruction index and encoding chapter,Harvard mirror:
+  https://read.seas.harvard.edu/~kohler/class/aosref/i386/c17.htm
+  https://read.seas.harvard.edu/~kohler/class/aosref/i386/s17_02.htm
+- Intel SDM portal,revision093 advertised at review:
+  https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html
+- Intel Volume1,253665-060US,September2016,register/operand environment:
+  https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-1-manual.pdf
+- AMD APM Volume3 listing24594 revision3.38 (listing only):
+  https://docs.amd.com/v/u/en-US/24594_3.38_APM_Vol3_PUB
+- Microsoft x64 instruction and WindowsABI references:
+  https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/x64-instructions
+  https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170
+- x86-64 psABI project located; specification to pin/review at harness implementation:
+  https://gitlab.com/x86-psABIs/x86-64-ABI
+- Microsoft archived KB126746 (WfW),KB138349 (Windows95),KB182751 (Windows98),
+  KB126690 (NT4); exact archive URLs and NT3.51 vendor-announcement evidence/
+  retrieval caveats in docs/development/OS_COMPATIBILITY_TARGETS.md.
+
+No manual prose,OS media,implementation or test vectors imported. Modern-CPU
+evidence is explicitly distinct from386-specific behavior and machine boot tests.
