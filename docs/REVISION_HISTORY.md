@@ -242,3 +242,9 @@ Alpha.2 improves verifier diagnostics and retention; adds two regression tests
 (122 total pending hosted CI). Tests inject field changes on the second
 instruction and malformed/truncated/extra records. No external code/materials
 were used for this change; trace format and implementation are project originals.
+
+Alpha.2 hosted verification at cdb5fc396617071a134fc65ce67807cf56dc68f3:
+https://github.com/pyTony/pil_proof/actions/runs/40360385843 — 122 passed on
+Ubuntu in8.35 s and Windows in12.67 s. Nine cases/2,046,769 trace bytes,
+verification-only invocation, isolated runtime and unpacked native checks passed.
+Runtime-only PR #8 awaits user review; no GitHub release/tag published.

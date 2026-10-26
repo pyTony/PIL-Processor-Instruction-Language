@@ -1,3 +1,12 @@
+# Alpha.2 verification complete — runtime PR #8
+
+https://github.com/pyTony/pil_proof/pull/8 awaits user review. Core dev source
+cdb5fc396617071a134fc65ce67807cf56dc68f3 passed CI run40360385843:
+122 tests on Ubuntu (8.35 s) and Windows (12.67 s). Nine cases matched
+2,046,769 trace bytes; verification-only command, isolated 50-file runtime,
+generated Rust and unpacked native deliveries passed. PR delivery head
+f09ec201a353b7ee5c9d7bcf18b281ddbbfc74fc. No release/tag published.
+
 # Verifier diagnostics — 0.10.0-alpha.2 development
 
 Alpha.1 runtime PR #7 was merged as dc9e3f3351aca235aea2d20da48f88a966e328cc.
@@ -7,7 +16,7 @@ Observed cache ratio51.67x. Generated-Rust phone and user PC runs remain pending
 
 Alpha.2 adds first-divergence case/step/instruction EIP/field diagnostics,
 bounded trace parsing (including equal malformed inputs), and saves both
-trace files before comparison. Two regression tests added,122 total pending CI.
+trace files before comparison. Two regression tests added,122 total; host CI passed (see verification above).
 No new guest instructions. Develop on dev; export runtime-only delivery to main.
 
 # Alpha verification complete — PR #7

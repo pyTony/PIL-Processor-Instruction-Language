@@ -523,7 +523,7 @@
     {
       "version": "0.10.0-alpha.2",
       "date": "2026-10-26",
-      "status": "development; hosted Rust verification pending",
+      "status": "host-verified; runtime-only PR #8 awaits user review",
       "features": [
         "first divergence case/step/EIP/field diagnostics",
         "bounded trace parsing rejects malformed equal inputs",
@@ -531,7 +531,16 @@
       ],
       "rust_verification": {
         "tests_supplied": 122,
-        "status": "pending hosted CI"
+        "tests_passed": 122,
+        "tests_failed": 0,
+        "ubuntu_seconds": 8.35,
+        "windows_seconds": 12.67,
+        "source_commit": "cdb5fc396617071a134fc65ce67807cf56dc68f3",
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40360385843",
+        "verifier_cases": 9,
+        "matched_trace_bytes": 2046769,
+        "runtime_export": "50-file isolated build/launchers/generated backend passed",
+        "native_archive": "unpacked checks passed"
       },
       "provenance": "original code; no new external reference materials"
     }
