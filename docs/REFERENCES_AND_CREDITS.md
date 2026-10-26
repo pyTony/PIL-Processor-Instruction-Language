@@ -252,3 +252,20 @@ mode, rather than executing the monitor image directly. No source imported.
 Original trace parser, state-field diagnostics and regression tests. No new
 external references, copied code or third-party dependencies. Phone timing
 evidence is the user's supplied alpha.1 Termux console output.
+
+## 0.11 instruction expansion references (consulted 2026-10-26)
+
+Intel 80386 Programmer's Reference Manual, chapter17 opcode definitions and
+AppendixA group tables; MIT/Ardent Tool mirrors, used for encodings and flags:
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386.pdf
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/OR.htm
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/TEST.htm
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/NOT.htm
+- https://pdos.csail.mit.edu/6.828/2018/readings/i386/DEC.htm
+- https://www.ardent-tool.com/CPU/docs/Intel/386/manuals/prref386/INC.htm
+- https://www.ardent-tool.com/CPU/docs/Intel/386/manuals/prref386/NEG.htm
+
+Reference-only use; no manual text, source code or data tables imported.
+Descriptions, operand binding, fixtures and tests are original project code.
+The old INC listing has an FF /6 dword typo; AppendixA group5 identifies
+/0 as INC at both widths. /6 PUSH remains unsupported.

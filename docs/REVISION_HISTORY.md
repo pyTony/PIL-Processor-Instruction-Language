@@ -262,3 +262,11 @@ Generated compilation5.201 s is excluded from timing samples.
 The direct x86-64 CPU loop is unavailable on this aarch64 phone as expected;
 the generated runner compiled and ran natively for aarch64. User PC results
 remain pending. No new tests or implementation changes in this evidence update.
+
+## 0.11.0-alpha.1 — instruction expansion
+
+Eight additional mnemonics, expanded binary ALU directions, immediate groups
+and accumulator operands. Six new Rust semantic/decoder tests (128 total)
+pending hosted execution; fourteen compiled/interpreted verification cases.
+Python independent logic oracle extended to OR/XOR/TEST. Runtime58 files.
+Reference-only use of Intel 80386 manual recorded; no third-party code imported.

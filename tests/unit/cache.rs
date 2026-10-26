@@ -14,7 +14,7 @@ fn changed_bytes_redecode_immediates_lengths_and_unsupported_opcodes() {
     let old=c.fetch(&image,&ram,ENTRY).unwrap();
     ram.write_bytes(ENTRY,&[0xb0,2]).unwrap();let new=c.fetch(&image,&ram,ENTRY).unwrap();
     assert!(!Rc::ptr_eq(&old,&new));assert_eq!(new.length,2);assert_eq!(c.stats().invalidations,1);
-    ram.write_bytes(ENTRY,&[0x90]).unwrap();assert!(matches!(c.fetch(&image,&ram,ENTRY),Err(GuestError::Decode(_))));
+    ram.write_bytes(ENTRY,&[0x62]).unwrap();assert!(matches!(c.fetch(&image,&ram,ENTRY),Err(GuestError::Decode(_))));
     assert!(!c.entries.contains_key(&ENTRY));assert_eq!(c.stats().invalidations,2);
 }
 #[test]
@@ -61,7 +61,7 @@ fn disabling_and_clearing_reset_entries_and_counters() {
 }
 #[test]
 fn failed_decodes_are_not_stored_or_reused() {
-    let (image,ram)=Image::load(&[0x90]).unwrap();let mut c=DecodeCache::default();
+    let (image,ram)=Image::load(&[0x62]).unwrap();let mut c=DecodeCache::default();
     for _ in 0..2 {assert!(c.fetch(&image,&ram,ENTRY).is_err());}
     assert!(c.entries.is_empty());assert_eq!(c.stats().misses,2);assert_eq!(c.stats().hits,0);
 }

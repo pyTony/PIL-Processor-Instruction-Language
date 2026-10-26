@@ -19,6 +19,26 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0x90]));tests.push(changed);
     tests.push(case("rx_wait",vec![0xe4,0xe9,0xf4])?);
     let mut blocked=case("tx_blocked",vec![0xe6,0xe9,0xf4])?;blocked.regs[0]=65;blocked.tx=vec![42;256];tests.push(blocked);
+    // Cover each ALU group, memory direction, immediate sign extension and unary
+    // form at every operand width in the compiled/interpreted full-state proof.
+    for w in [8,16,32] {
+        let mut bytes=Vec::new();
+        let mut ins=|opcode:u8,tail:&[u8]|{if w==32{bytes.push(0x66);}bytes.push(opcode);bytes.extend_from_slice(tail);};
+        for group in 0..8 {for direction in 0..2 {ins(group*8+if w==8{0}else{1}+2*direction,&[0x07]);}}
+        for group in 0..8 {
+            let opcode=if w==8{0x80}else{0x83};ins(opcode,&[0x07|(group<<3),0xff]);
+        }
+        ins(if w==8{0x84}else{0x85},&[0x07]);
+        for extension in [2,3]{ins(if w==8{0xf6}else{0xf7},&[0x07|(extension<<3)]);}
+        for extension in [0,1]{ins(if w==8{0xfe}else{0xff},&[0x07|(extension<<3)]);}
+        ins(if w==8{0xf6}else{0xf7},&{let mut t=vec![0x07];t.extend(vec![0xff;(w/8) as usize]);t});
+        ins(0x90,&[]);
+        bytes.push(0xf4);
+        let mut test=case(match w{8=>"alu8",16=>"alu16",_=>"alu32"},bytes)?;
+        test.regs[0]=0x8000ffff;test.regs[3]=0x400;test.flags=0x203;tests.push(test);
+    }
+    let mut test=case("readonly_test",vec![0xf7,0x07,0xff,0xff,0xf4])?;test.regs[3]=0x400;test.protect=Some((0x500,4));tests.push(test);
+    let mut test=case("readonly_neg",vec![0xf7,0x1f,0xf4])?;test.regs[3]=0x400;test.protect=Some((0x500,4));tests.push(test);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {
@@ -106,7 +126,7 @@ fn trace_record<'a>(bytes:&'a [u8],at:&mut usize)->Result<Option<TraceRecord<'a>
 }
 pub fn verify_traces(expected:&[u8],actual:&[u8])->Result<(),String> {
     const FIELDS:[&str;17]=["case","stop.kind","stop.eip","stop.detail0","stop.detail1","stop.detail2","EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI","EFLAGS","undefined_flags","EIP"];
-    const CASES:[&str;9]=["selftest","hello","factorials","loop17","readonly_store","branch_fault","code_guard","rx_wait","tx_blocked"];
+    let case_names=cases()?;
     let (mut left,mut right,mut record,mut step)=(0,0,0,0);
     let mut previous=None;let mut start_eip=guest::ENTRY;
     loop {
@@ -121,7 +141,7 @@ pub fn verify_traces(expected:&[u8],actual:&[u8])->Result<(),String> {
         let id=a.header[0];
         if previous!=Some(id){step=0;start_eip=guest::ENTRY;}
         step+=1;
-        let name=CASES.get(id as usize).copied().unwrap_or("unknown");
+        let name=case_names.get(id as usize).map(|c|c.name).unwrap_or("unknown");
         let context=format!("backend trace case {id} ({name}), step {step}, record {record}, instruction EIP={start_eip:08x}");
         for (index,field) in FIELDS.iter().enumerate(){
             if a.header[index]!=b.header[index]{return Err(format!("{context}: {field}: interpreter={:08x}, generated={:08x}",a.header[index],b.header[index]));}
@@ -134,7 +154,7 @@ pub fn verify_traces(expected:&[u8],actual:&[u8])->Result<(),String> {
         previous=Some(id);start_eip=a.header[16];
     }
 }
-struct Proof {stdout:String,bytes:usize,compile_secs:f64,executable:PathBuf,trace_path:PathBuf}
+struct Proof {stdout:String,count:usize,bytes:usize,compile_secs:f64,executable:PathBuf,trace_path:PathBuf}
 fn proof_at(directory:&Path,iterations:u32,samples:u32)->Result<Proof,String> {
     validate(iterations,samples)?;let tests=cases()?;let source=emit_suite(iterations,samples)?;
     fs::create_dir_all(directory).map_err(|e|e.to_string())?;
@@ -151,11 +171,11 @@ fn proof_at(directory:&Path,iterations:u32,samples:u32)->Result<Proof,String> {
     // Preserve both sides even on mismatch so the failure is reproducible.
     fs::write(directory.join("interpreter.trace"),&expected).map_err(|e|e.to_string())?;
     verify_traces(&expected,&actual).map_err(|e|format!("{e}\nArtifacts: {}",directory.display()))?;
-    Ok(Proof{stdout,bytes:expected.len(),compile_secs:compile_time.as_secs_f64(),executable,trace_path})
+    Ok(Proof{stdout,count:tests.len(),bytes:expected.len(),compile_secs:compile_time.as_secs_f64(),executable,trace_path})
 }
 pub fn verify_at(directory:&Path)->Result<String,String> {
     let proof=proof_at(directory,16,2)?;
-    Ok(format!("PASS: verifier matched CPU/RAM/serial and stop metadata byte-for-byte after every instruction across 9 cases ({} trace bytes).\n{}No benchmark was run. Generated build={:.3} s. Artifacts: {}",proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
+    Ok(format!("PASS: verifier matched CPU/RAM/serial and stop metadata byte-for-byte after every instruction across {} cases ({} trace bytes).\n{}No benchmark was run. Generated build={:.3} s. Artifacts: {}",proof.count,proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
 }
 pub fn compare_at(directory:&Path,iterations:u32,samples:u32)->Result<String,String> {
     let proof=proof_at(directory,iterations,samples)?;
@@ -167,7 +187,7 @@ pub fn compare_at(directory:&Path,iterations:u32,samples:u32)->Result<String,Str
     let native_ms=median_ns as f64/1e6;let native_ips=if median_ns==0{0.0}else{(3*iterations+3) as f64*1e9/median_ns as f64};
     let ratio=if median_ns==0{0.0}else{median/(median_ns as f64/1e9)};
     let cpu=cpu_benchmark(iterations,samples)?;
-    Ok(format!("PASS: generated Rust matches interpreter byte-for-byte after every instruction across 9 cases ({} trace bytes).\n{}\n{timed}\n{interpreter}\nGenerated Rust median={native_ms:.3} ms; {native_ips:.0} guest instructions/s; observed ratio={ratio:.2}x vs cached interpreter.\nGenerated build={:.3} s (excluded from samples); rustc -O, fixed-image guarded dispatch, black_box per step. No JIT; debugger remains token-interpreted.\n{cpu}\nArtifacts: {}",proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
+    Ok(format!("PASS: generated Rust matches interpreter byte-for-byte after every instruction across {} cases ({} trace bytes).\n{}\n{timed}\n{interpreter}\nGenerated Rust median={native_ms:.3} ms; {native_ips:.0} guest instructions/s; observed ratio={ratio:.2}x vs cached interpreter.\nGenerated build={:.3} s (excluded from samples); rustc -O, fixed-image guarded dispatch, black_box per step. No JIT; debugger remains token-interpreted.\n{cpu}\nArtifacts: {}",proof.count,proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
 }
 fn artifact_directory()->Result<PathBuf,String> {
     let root=PathBuf::from(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(||"target".into()));

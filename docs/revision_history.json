@@ -580,6 +580,23 @@
         "pc_native": "unavailable on aarch64; x86_64 required",
         "scope": "offline fixed-image guarded dispatch; not JIT or 386 cycles"
       }
+    },
+    {
+      "version": "0.11.0-alpha.1",
+      "date": "2026-10-26",
+      "status": "development; host verification pending",
+      "features": [
+        "OR XOR TEST NOT NEG INC DEC NOP",
+        "ALU register/memory both directions",
+        "accumulator and 80/81/83 immediates",
+        "14-case compiled/interpreted proof"
+      ],
+      "rust_verification": {
+        "tests_supplied": 128,
+        "status": "pending hosted CI"
+      },
+      "runtime_files": 58,
+      "provenance": "Intel 80386 manual opcode chapters and Appendix A; reference only; original code"
     }
   ]
 }

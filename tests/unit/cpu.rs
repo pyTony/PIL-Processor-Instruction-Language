@@ -506,3 +506,20 @@ for c in include_bytes!("expected.bin").chunks_exact(32) {
     assert!(result.status.success(),"{}",String::from_utf8_lossy(&result.stderr));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn exhaustive_byte_unary_flags_and_carry_preservation(){
+    for op in ["inc","dec","neg","not"] {
+        let p=compile(&instantiate(description(op).unwrap(),8),8).unwrap();
+        for a in 0..=255u32 {for cf in [0,1] {
+            let c=run(&p,a,0,0x202|cf);let result=match op{"inc"=>(a+1)&255,"dec"=>a.wrapping_sub(1)&255,"neg"=>0u32.wrapping_sub(a)&255,_=>a^255};
+            assert_eq!(c.regs[0],result);
+            let expected=if op=="not"{0x202|cf}else{
+                let carry=if op=="neg"{u32::from(a!=0)}else{cf};
+                let af=match op{"inc"=>a&15==15,"dec"=>a&15==0,_=>a&15!=0};
+                let overflow=if op=="inc"{a==127}else{a==128};
+                0x202|carry|(u32::from((result as u8).count_ones()%2==0)<<2)|(u32::from(af)<<4)|(u32::from(result==0)<<6)|(result&128)|(u32::from(overflow)<<11)
+            };assert_eq!(c.eflags,expected,"{op} {a} CF={cf}");
+        }}
+    }
+}

@@ -1,0 +1,6 @@
+# NOT preserves all flags and undefined metadata.
+read a dst $W
+not r a
+write dst r
+preserve_flags all
+retire

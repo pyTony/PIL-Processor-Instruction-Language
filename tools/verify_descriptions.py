@@ -2,7 +2,7 @@
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parents[1] / "isa" / "i386"
-OPS = ("add", "sub", "cmp", "adc", "sbb", "and")
+OPS = ("add", "sub", "cmp", "adc", "sbb", "and", "or", "xor", "test")
 CONDITIONS = ("o","no","b","ae","e","ne","be","a","s","ns","p","np","l","ge","le","g")
 FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "OF": 11}
 ARITHMETIC_MASK = 0x8D5
@@ -182,22 +182,23 @@ def oracle(op, a, b, width, initial):
     x, y = a & mask, b & mask
     carry = (initial & 1) if op in ("adc", "sbb") else 0
     subtract = op in ("sub", "cmp", "sbb")
-    total = (x & y) if op=="and" else (x - y - carry if subtract else x + y + carry)
+    logical = op in ("and", "or", "xor", "test")
+    total = ((x | y) if op=="or" else (x ^ y) if op=="xor" else (x & y)) if logical else (x - y - carry if subtract else x + y + carry)
     result = total & mask
     def signed(n):
         return n - (1 << width) if n & (1 << (width - 1)) else n
     signed_total = signed(x) - signed(y) - carry if subtract else signed(x) + signed(y) + carry
-    cf = False if op=="and" else (x < y + carry if subtract else total > mask)
+    cf = False if logical else (x < y + carry if subtract else total > mask)
     af = (x & 15) < (y & 15) + carry if subtract else (x & 15) + (y & 15) + carry > 15
-    of = op!="and" and not -(1 << (width - 1)) <= signed_total < (1 << (width - 1))
-    if op=="and":
+    of = not logical and not -(1 << (width - 1)) <= signed_total < (1 << (width - 1))
+    if logical:
         af=False
     flags = (int(cf) | (int((result & 255).bit_count() % 2 == 0) << 2)
              | (int(af) << 4) | (int(result == 0) << 6)
              | (((result >> (width - 1)) & 1) << 7) | (int(of) << 11))
-    return (a if op == "cmp" else (a & ~mask) | result,
+    return (a if op in ("cmp", "test") else (a & ~mask) | result,
             (initial & ~ARITHMETIC_MASK) | flags,
-            16 if op=="and" else 0)
+            16 if logical else 0)
 
 
 if __name__ == "__main__":

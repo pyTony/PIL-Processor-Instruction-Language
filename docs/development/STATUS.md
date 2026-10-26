@@ -1,3 +1,13 @@
+# Expanded instruction profile — 0.11.0-alpha.1 development
+
+OR/XOR/TEST/NOT/NEG/INC/DEC/NOP added in PIL and monitor decoder. Binary
+ALU supports register/memory both directions, accumulator immediates and
+80/81/83 groups. F6/F7 /0 TEST,/2 NOT,/3 NEG; FE/FF /0 INC,/1 DEC;
+40..4F INC/DEC;90 NOP. Unsupported-opcode tests now use62 instead of90.
+Operand locations are bound into PIL before validation; no duplicated CPU flags.
+Six new tests,128 total pending CI; compiled proof14 cases (ALU8/16/32,
+readonly TEST/NEG added). Runtime export58 files. No stack/multiply/shifts yet.
+
 # User phone compiled backend verified — alpha.2
 
 User ran sh tools/compare.sh 10000 5 on Termux android/aarch64.

@@ -1,5 +1,11 @@
 # Changes
 
+## 0.11.0-alpha.1
+
+- Expand binary ALU directions/immediates and eight instruction descriptions.
+- Add six semantic/decoder tests, fourteen-case compiled verifier and logical oracles.
+- Update exact supported encodings and references; no PC boot or device changes.
+
 ## 0.10.0-alpha.2
 
 - Identify first verifier divergence by case, step, instruction EIP and state field.

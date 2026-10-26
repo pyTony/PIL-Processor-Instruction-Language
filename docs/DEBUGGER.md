@@ -338,7 +338,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the nine-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the fourteen-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -358,3 +358,13 @@ linear byte addresses; RX/TX indices are queue positions. A terminal halt,
 fault or wait attempt also has a trace record. Truncated and malformed traces
 fail verification. Both interpreter.trace and generated.trace are retained
 under the reported artifacts path on a mismatch. No timings run after failure.
+
+## Expanded arithmetic profile (0.11 alpha)
+
+OR/XOR/TEST clear CF/OF, classify AF undefined and update SF/ZF/PF. TEST and
+CMP do not write their operands; they can read protected RAM. NOT and NOP
+preserve flags and undefined metadata. INC/DEC preserve CF and its metadata.
+NEG computes zero minus its operand. New ALU forms use the same staged RAM
+retirement and segment checks as existing instructions. MUL/DIV, shifts, stack
+operations, CALL/RET and general device I/O are still outside this profile.
+The verifier adds ALU8/16/32 fixtures plus read-only TEST and NEG fault cases.
