@@ -1,3 +1,13 @@
+# Runtime PR #17 ready — diagnostic follow-up
+
+https://github.com/pyTony/pil_proof/pull/17 delivers0.15.0-alpha.2.
+Runtime head9c40f41cec5971c740573734ad72d456691bbc91,source dev
+0ced9f0e9263162f7ffe4259be9f2020d4f8c93a,base main
+33377e984e4e7d54b99cf6db2f1e9c57b238b35c (merged ISA PR16).
+164 tests/34 trace cases and runtime/native/full-image checks passed both hosts
+in CI40405704118. Runtime72 files; tests remain ondev. User reviews/merges.
+No new phone0.15 result; no tag/release. Next ISA work: staged stack/call/return.
+
 # 0.15.0-alpha.2 diagnostic follow-up verified
 
 Core patch54149d44cba6079d4ccf4f1b1716ac2f4511821a passed CI40405704118:

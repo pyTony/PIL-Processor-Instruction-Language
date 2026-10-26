@@ -1220,7 +1220,7 @@
     {
       "version": "0.15.0-alpha.2",
       "date": "2026-10-26",
-      "status": "host-verified; separate runtime delivery being prepared",
+      "status": "host-verified; runtime-only PR #17 awaits user review",
       "features": [
         "accurate unsupported-program check diagnostic",
         "all8 demo regression coverage",
@@ -1255,7 +1255,13 @@
         "version_metadata": "0.15alpha.2 after core patch; execution logic unchanged"
       },
       "runtime_files": 72,
-      "provenance": "User-supplied Claude runtime review; original diagnostic/test changes, no new external material"
+      "provenance": "User-supplied Claude runtime review; original diagnostic/test changes, no new external material",
+      "runtime_delivery": {
+        "pull_request": "https://github.com/pyTony/pil_proof/pull/17",
+        "head": "9c40f41cec5971c740573734ad72d456691bbc91",
+        "source_commit": "0ced9f0e9263162f7ffe4259be9f2020d4f8c93a",
+        "base_main": "33377e984e4e7d54b99cf6db2f1e9c57b238b35c"
+      }
     }
   ]
 }

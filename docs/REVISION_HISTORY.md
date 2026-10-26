@@ -556,3 +556,7 @@ clarified,not a full clippy/rustfmt rewrite. Runtime README explicitly says
 cargo test0 is intentional; automated tests/CI live ondev. Claude's runtime
 review passed8 demos; no-tests conclusion does not describe development branch.
 No new external sources/code/dependencies. No release/tag; no phonealpha.2 result yet.
+
+Runtime-only PR #17: https://github.com/pyTony/pil_proof/pull/17;
+head9c40f41cec5971c740573734ad72d456691bbc91,source0ced9f0e9263162f7ffe4259be9f2020d4f8c93a.
+User review pending. Tests/history remain ondev; main retains runtime-only policy.
