@@ -1,0 +1,7 @@
+# Effective offset only: no load, segment translation or permission check.
+require_width 16_or_32
+read_address addr
+trunc r addr $W
+write dst r
+preserve_flags all
+retire

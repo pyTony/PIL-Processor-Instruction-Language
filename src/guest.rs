@@ -87,6 +87,18 @@ impl Image {
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
                     let name=format!("j{}",CONDITIONS[(second&15) as usize]);
                     (format!("{} 0x{:08x}",name.to_ascii_uppercase(),r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
+                }else if matches!(second,0xb6|0xb7|0xbe|0xbf){
+                    let source_width=if second&1==0{8}else{16};
+                    if source_width>=w{return Err(GuestError::Decode("MOVSX/MOVZX profile requires a wider destination".into()));}
+                    let m=r.byte()?;dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,source_width);
+                    let name=if second&8==0{"movzx"}else{"movsx"};
+                    let mut text=description(&format!("{name}{source_width}")).map_err(GuestError::Decode)?;
+                    let source_label=if m>>6!=3{
+                        let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                        let label=operand_name(src,address);src=dst;
+                        text=text.replace(&format!("read a src {source_width}"),&format!("read_address addr\nload a addr {source_width}"));label
+                    }else{register_name(src).into()};
+                    (format!("{} {},{}",name.to_ascii_uppercase(),register_name(dst),source_label),compile(&instantiate(text,w),w))
                 }else if second==0xaf {
                     let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
                     dst=reg;src=rm;
@@ -101,6 +113,21 @@ impl Image {
                 let name=format!("set{}",CONDITIONS[(second&15) as usize]);
                 (format!("{} {}",name.to_ascii_uppercase(),register_name(dst)),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
                 }
+            }
+            0x8d=>{
+                let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode("LEA requires an address expression, not a register source".into()));}
+                dst=view(((m>>3)&7)as usize,w);src=dst;
+                address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
+                let operand=operand_name(dst,address);let expression=&operand[operand.find('[').expect("effective address")..];
+                (format!("LEA {},{expression}",register_name(dst)),compile(&instantiate(description("lea").map_err(GuestError::Decode)?,w),w))
+            }
+            0x98=>{
+                let source_width=w/2;dst=view(0,w);src=view(0,source_width);
+                (if w==16{"CBW"}else{"CWDE"}.into(),compile(&instantiate(description(&format!("movsx{source_width}")).map_err(GuestError::Decode)?,w),w))
+            }
+            0x99=>{
+                dst=view(2,w);src=view(0,w);
+                (if w==16{"CWD"}else{"CDQ"}.into(),compile(&instantiate(description("cwd").map_err(GuestError::Decode)?,w),w))
             }
             0x69|0x6b=>{
                 let m=r.byte()?;dst=view(((m>>3)&7) as usize,w);src=view((m&7) as usize,w);
