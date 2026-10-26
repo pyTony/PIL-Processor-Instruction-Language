@@ -340,7 +340,7 @@
     {
       "version": "0.9.0",
       "date": "2026-10-26",
-      "status": "development; host CI pending",
+      "status": "host-verified; runtime-only delivery PR #6",
       "features": [
         "bounded decoded-instruction/PIL cache",
         "per-hit encoded-byte and image/segment validation",
@@ -349,12 +349,69 @@
       ],
       "rust_verification": {
         "tests_supplied": 116,
-        "host_ci": "pending",
-        "phone_cache": "not yet reported"
+        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40336149129",
+        "phone_cache": "not yet reported",
+        "source_commit": "bf9e681065cf26f976954ea9a5a997604d4d7582",
+        "tests_passed": 116,
+        "tests_failed": 0,
+        "ubuntu_seconds": 5.24,
+        "windows_seconds": 10.81,
+        "runtime_export": "45-file build/scripts/generated Rust passed, both interpreter cache modes",
+        "native_packages": "unpacked transcripts passed in both modes"
       },
       "runtime_files": 45,
       "engine": "PIL token interpreter; no JIT or native generated execution",
-      "provenance": "original cache design; Rust std BTreeMap/Rc; no new external materials"
+      "provenance": "original cache design; Rust std BTreeMap/Rc; no new external materials",
+      "host_benchmark": {
+        "iterations": 10000,
+        "instructions_per_sample": 30003,
+        "samples": 5,
+        "warmups_excluded": 1,
+        "cache_start": "empty each sample",
+        "cached_hits_last_sample": 29997,
+        "cached_misses_last_sample": 7,
+        "ubuntu": {
+          "cached_ms": [
+            2.862,
+            2.836,
+            2.812,
+            2.805,
+            2.802
+          ],
+          "cached_median_ms": 2.812,
+          "cached_ins_per_second": 10670355,
+          "uncached_ms": [
+            157.096,
+            156.98,
+            182.444,
+            164.189,
+            154.66
+          ],
+          "uncached_median_ms": 157.096,
+          "uncached_ins_per_second": 190985
+        },
+        "windows": {
+          "cached_ms": [
+            3.973,
+            4.086,
+            4.32,
+            4.019,
+            3.933
+          ],
+          "cached_median_ms": 4.019,
+          "cached_ins_per_second": 7465290,
+          "uncached_ms": [
+            234.724,
+            215.113,
+            216.011,
+            242.55,
+            214.09
+          ],
+          "uncached_median_ms": 216.011,
+          "uncached_ins_per_second": 138896
+        },
+        "phone_cached": "not yet reported"
+      }
     }
   ]
 }

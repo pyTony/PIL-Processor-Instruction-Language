@@ -170,3 +170,16 @@ User-confirmed Termux v0.8 baseline (android/aarch64):
 
 Cached host verification pending; no phone cache performance claim yet. Main
 will receive a 45-file runtime-only export; dev retains all history and tests.
+
+v0.9 host verification at dev bf9e681065cf26f976954ea9a5a997604d4d7582:
+https://github.com/pyTony/pil_proof/actions/runs/40336149129
+116 tests passed on Ubuntu (5.24 s) and Windows (10.81 s). Standalone 45-file
+runtime, generated Rust, both cache modes and unpacked native deliveries passed.
+Release 10000-iteration / 5-sample loop comparisons (30003 instructions/sample):
+- Ubuntu cached median 2.812 ms (10670355 ins/s), uncached 157.096 ms
+  (190985 ins/s), approximately 55.9x throughput.
+- Windows cached median 4.019 ms (7465290 ins/s), uncached 216.011 ms
+  (138896 ins/s), approximately 53.7x throughput.
+Each sample starts cold; cached final sample: 29997 hits, 7 misses, no byte/context
+invalidations. These are CI host results, not phone measurements or simulated
+386 cycles. Runtime-only PR #6 targets main from delivery/v0.9.0.

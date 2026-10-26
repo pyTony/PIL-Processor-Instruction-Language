@@ -1,3 +1,17 @@
+# v0.9 cached interpreter verified on hosts
+
+Runtime-only PR #6: https://github.com/pyTony/pil_proof/pull/6
+Source dev bf9e681065cf26f976954ea9a5a997604d4d7582, CI run 40336149129:
+116 tests passed on Ubuntu (5.24 s) and Windows (10.81 s), isolated 45-file
+runtime, generated Rust and unpacked native deliveries in both cache modes.
+Release loop 10000 iterations/5 samples: Ubuntu 2.812 ms cached vs 157.096 ms
+uncached; Windows 4.019 ms vs 216.011 ms. About 54-56x on CI hosts; do not
+extrapolate phone speed. Last cached sample 29997 hits, 7 misses, no invalidations.
+Phone cache result is unreported; old v0.8 phone median was 340.420 ms / 88135
+ins/s. Engine remains token interpreter. Future decoder mode/translation state
+must participate in the image/cache identity and hit fetch checks. No MMIO,
+paging or native/JIT execution model is introduced by this cache.
+
 # v0.9 cached interpreter development
 
 Engine remains PIL token interpreter. Generated Rust is separate. New cache.rs
