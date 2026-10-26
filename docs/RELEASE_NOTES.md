@@ -1,3 +1,10 @@
+# PIL 0.13.0-alpha.3
+
+- Show encoded bytes, registers/immediates, memory operands and branch targets.
+- Add bounded list COUNT / list ADDRESS COUNT; mark current EIP.
+- Make original numeric fixture listings use real register names.
+- Preserve live-byte decoding and read-only inspection behavior.
+
 # PIL 0.13.0-alpha.2
 
 - Add mem8/mem16/mem32 typed debugger dumps with printable ASCII.
