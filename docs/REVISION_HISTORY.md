@@ -654,7 +654,10 @@ PIL comparisons; guest and long-mode encodings are separately recorded.
 Six known-answer stub checks; original cases only,not external386 vectors.
 Artifacts:target/host-cpu-oracle/run-*/ includingdata,source,CPU/toolchain/source
 provenance and first-field failures. Helper python tools/verify_host_cpu.py.
-Two tests added:167 onx86-64 expected,166 plus1 ignored onARM. Hosted CI pending.
+CI40415384652 passed on Linux/Intel and Windows/AMD:167 tests per host,
+20,280 native CPU cases per host checked against both PIL backends. Source
+24d28740c8d63a0ce393cec05b56320b7833b5c4. ARM hardware test remains ignored;
+no ARM run is claimed for this increment.
 Source includes only a cfg(test) module; runtime export remains72 files.
 Node24 action updates:checkoutv5,upload-artifactv6. User-linked old run40377893902
 failed9632f84 due E0271 inMandelbrot argument closure; fixed historically. Its

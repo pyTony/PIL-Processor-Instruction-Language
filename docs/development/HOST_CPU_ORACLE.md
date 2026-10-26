@@ -82,5 +82,16 @@ https://doc.rust-lang.org/core/arch/x86_64/fn.__cpuid.html
 
 Instruction/flag references and ABI work are listed in the
 [x86-64 plan](X86_64_VERIFICATION_PLAN.md). No external tests or implementation
-code imported. Next:inspect hardware results on both hosts,then extend admitted
-operations and add the separate pinned386 hardware-vector adapter.
+code imported. Next:extend admitted operations and add the separate pinned386
+hardware-vector adapter.
+
+## Verified development result —27 October2026
+
+[CI40415384652](https://github.com/pyTony/pil_proof/actions/runs/40415384652)
+passed for source24d28740c8d63a0ce393cec05b56320b7833b5c4. Both hosts passed
+167 tests and20,280 hardware cases against both PIL backends,including the
+six native harness checks. Ubuntu reported GenuineIntel; Windows reported
+AuthenticAMD. Existing39-case backend verification,full256x256 Mandelbrot
+comparison and isolated runtime/package checks also passed on both hosts.
+The checkoutv5/upload-artifactv6 Node24 actions completed successfully.
+This is hosted CI evidence; no local ARM execution is claimed.

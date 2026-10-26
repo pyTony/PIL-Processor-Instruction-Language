@@ -1426,7 +1426,7 @@
       },
       "host_oracle_development": {
         "date": "2026-10-27",
-        "status": "implemented;hosted CI pending",
+        "status": "verified on hosted Linux/Intel and Windows/AMD",
         "scope": "ADD/SUB/ADC/SBB/CMP8/16/32,CF0/1;independent native flags/registers vs bothPIL backends",
         "tests_supplied_x86_64": 167,
         "other_targets": "166 plus1 hardware test ignored",
@@ -1438,6 +1438,20 @@
           "commit": "9632f842ca22be891b1bb16a3bb5e8d3b008e625",
           "cause": "E0271 Mandelbrot argument closure,already fixed",
           "node_warning": "not the Rust failure cause"
+        },
+        "verification": {
+          "run": 40415384652,
+          "source": "24d28740c8d63a0ce393cec05b56320b7833b5c4",
+          "tests_passed_per_host": 167,
+          "hardware_cases_per_host": 20280,
+          "backends": [
+            "PIL token interpreter",
+            "generated Rust"
+          ],
+          "existing_backend_cases": 39,
+          "full_mandelbrot": "256x256 comparison passed on both hosts",
+          "runtime_packages": "isolated exports and unpacked delivery checks passed",
+          "arm": "not executed for this increment"
         }
       }
     }
