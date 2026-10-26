@@ -291,3 +291,11 @@ cache29997 hits/7 misses/0 invalidations. Observed ratio10.27x; generated
 compilation10.230 s excluded. No controlled cross-version performance claim.
 Direct x86-64 baseline unavailable on this aarch64 phone, as expected.
 No implementation changes or new tests in this evidence update.
+
+## 0.12.0-alpha.1 — truncated signed multiplication
+
+Generic sext/mul plus IMUL16/32 register/memory/immediate decoding. Six tests
+added (134 total pending hosted CI),18 compiled/interpreted cases,59 runtime
+files. Independent Python65,680 signed products checked. Boundary primitive
+tests cover widths1/8/16/32/63/64 and generated Rust. Credits updated for Intel
+IMUL reference; no source imports. PC commands included in user docs.

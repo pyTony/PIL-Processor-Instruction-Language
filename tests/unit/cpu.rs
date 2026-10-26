@@ -523,3 +523,38 @@ fn exhaustive_byte_unary_flags_and_carry_preservation(){
         }}
     }
 }
+
+#[test]
+fn imul_signed_edges_and_deterministic_products(){
+    for w in [16,32] {
+        let p=compile(&instantiate(description("imul").unwrap(),w),w).unwrap();let sign=1i64<<(w-1);let m=mask(w) as u32;
+        let values=[-sign,-sign+1,-65536,-129,-1,0,1,127,255,32767,sign-1];
+        let mut pairs=Vec::new();for a in values{for b in values{pairs.push((a,b));}}
+        let mut seed=0x12345678u32;for _ in 0..500 {seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);let a=seed;seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);pairs.push((a as i64,seed as i64));}
+        for (a,b) in pairs {
+            let (a,b)=(a as u32&m,b as u32&m);let signed=|x:u32|if x as i64&sign!=0{x as i64-2*sign}else{x as i64};let product=signed(a)*signed(b);let overflow=product < -sign || product>=sign;
+            let c=run(&p,0xabcd0000&!m|a,b,0xffffffff);
+            assert_eq!(c.regs[0],(0xabcd0000&!m)|((product as u32)&m));assert_eq!(c.regs[1],b);
+            assert_eq!(c.eflags,(0xffffffff&!0x8d5)|if overflow{0x801}else{0});assert_eq!(c.undefined_flags,0xd4);
+        }
+    }
+}
+#[test]
+fn signed_extension_and_modular_multiply_work_at_generic_width_limits(){
+    use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
+    let dir=std::env::temp_dir().join(format!("pil-wide-mul-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));fs::create_dir(&dir).unwrap();
+    let mut source=String::from("#![allow(dead_code,unused_mut,unused_variables)]\n");let mut checks=String::new();let mut id=0;
+    for w in [1,8,16,32,63,64] {for n in [mask(w)>>1,1u64<<(w-1),mask(w)] {
+        let text=format!("const a {w} {n}\nsext wide a 64\nconst three 64 3\nmul product wide three\ntrunc r product 8\nbit sign wide 63\nbit top product 63\nwrite dst r\nflag CF sign\nflag OF top\npreserve_flags remaining\nretire");
+        let p=compile(&text,8).unwrap();let extended=if n&(1u64<<(w-1))!=0{n|!mask(w)}else{n};let product=extended.wrapping_mul(3);let flags=((extended>>63) as u32)|(((product>>63) as u32)<<11);
+        let c=run(&p,0,0,0);assert_eq!(c.regs[0],product as u8 as u32);assert_eq!(c.eflags,flags);
+        source.push_str(&format!("mod p{id} {{ {} }}\n",emit_rust(&p)));checks.push_str(&format!("{{let mut regs=[0u32;8];let mut f=0;p{id}::execute(&mut regs,&mut f,(0,0),(1,0)).unwrap();assert_eq!(regs[0],{}u32);assert_eq!(f,{flags}u32);}}\n",product as u8));id+=1;
+    }}
+    source.push_str(&format!("fn main(){{{checks}}}"));let path=dir.join("proof.rs");fs::write(&path,source).unwrap();let exe=dir.join(if cfg!(windows){"proof.exe"}else{"proof"});
+    let out=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).arg("--edition=2021").arg(&path).arg("-o").arg(&exe).output().unwrap();assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));assert!(Command::new(&exe).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn multiply_validation_rejects_invalid_widths_and_conversion_directions(){
+    for text in ["const a 16 1\nsext b a 8\npreserve_flags all\nretire","const a 8 1\nconst b 16 1\nmul c a b\npreserve_flags all\nretire","const a 64 1\nsext b a 65\npreserve_flags all\nretire"] {assert!(compile(text,8).is_err());}
+    assert!(compile(&instantiate(description("imul").unwrap(),8),8).is_err());
+}

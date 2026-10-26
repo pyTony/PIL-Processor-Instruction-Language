@@ -26,8 +26,9 @@ composition in the prototype, not a general include directive.
 | read_flag out CF | Read incoming CF, PF, AF, ZF, SF or OF as bv<1> |
 | const out WIDTH NUMBER | Define an unsigned decimal or hexadecimal constant |
 | zext out input WIDTH | Zero-extend |
+| sext out input WIDTH | Sign-extend a bit vector to an equal or wider width |
 | trunc out input WIDTH | Truncate |
-| add/sub/xor/and/or out left right | Modular arithmetic or bitwise operation |
+| add/sub/mul/xor/and/or out left right | Modular arithmetic or bitwise operation |
 | not out input | Bitwise complement at the input width |
 | bit out input INDEX | Extract a bv<1> |
 | zero out input | bv<1> result of testing for zero |
@@ -210,3 +211,12 @@ are checked. Invalid loaded SS caches are InvalidContext caller errors. The
 caller must already have checked descriptor loads, presence and privilege;
 there are no GDT/LDT loads, #NP delivery, CR2/page tables, or mode transitions.
 All stores still commit only at retirement, including after translation.
+
+## Signed IMUL description
+
+Generic mul is modular multiplication at the common input width (1..64).
+sext interprets the input high bit as sign and fills added high bits with it.
+Neither operation directly changes flags. imul.pil widens two16/32-bit values
+to32/64 bits, multiplies, truncates and compares the exact product with the
+sign-extended low result. CF/OF indicate lost sign information; other arithmetic
+flags are declared undefined. $DOUBLE expands to twice the operand width.

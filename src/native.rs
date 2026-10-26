@@ -39,6 +39,22 @@ pub fn cases()->Result<Vec<Case>,String> {
     }
     let mut test=case("readonly_test",vec![0xf7,0x07,0xff,0xff,0xf4])?;test.regs[3]=0x400;test.protect=Some((0x500,4));tests.push(test);
     let mut test=case("readonly_neg",vec![0xf7,0x1f,0xf4])?;test.regs[3]=0x400;test.protect=Some((0x500,4));tests.push(test);
+    for w in [16,32] {
+        let mut bytes=Vec::new();
+        for instruction in [vec![0x0f,0xaf,0xc1],vec![0x0f,0xaf,0xc0],vec![0x6b,0xd1,0x80],
+            {let mut x=vec![0x69,0xc2];x.extend(vec![0xff;(w/8) as usize]);x},
+            vec![0x0f,0xaf,0x07],vec![0x6b,0x0f,0xfe],
+            {let mut x=vec![0x69,0x17,2];x.extend(vec![0;(w/8-1) as usize]);x}] {
+            if w==32{bytes.push(0x66);}bytes.extend(instruction);
+        }
+        bytes.push(0xf4);
+        let mut test=case(if w==16{"imul16"}else{"imul32"},bytes)?;
+        test.regs[0]=if w==16{0xabcd8000}else{0x80000000};test.regs[1]=0xffffffff;test.regs[3]=0x400;
+        test.patch=Some((0x500,vec![0xfe,0xff,0xff,0xff]));test.protect=Some((0x500,4));tests.push(test);
+        let mut bytes=vec![0x0f,0xaf,0x07,0xf4];if w==32{bytes.insert(0,0x66);}
+        let mut fault=case(if w==16{"imul_fault16"}else{"imul_fault32"},bytes)?;
+        fault.regs[0]=123;fault.regs[3]=0xffff;tests.push(fault);
+    }
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {
@@ -67,8 +83,8 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
         dispatch.push_str("},\n");ip+=decoded.length;
     }
     let mut init=format!("let mut ram=Ram::new({});ram.write_bytes(0x100,&{:?}).unwrap();\n",guest::RAM_BYTES,case.bytes);
-    if let Some((at,len))=case.protect {init.push_str(&format!("ram.protect({at},{len}).unwrap();\n"));}
     if let Some((at,bytes))=&case.patch {init.push_str(&format!("ram.write_bytes({at},&{bytes:?}).unwrap();\n"));}
+    if let Some((at,len))=case.protect {init.push_str(&format!("ram.protect({at},{len}).unwrap();\n"));}
     init.push_str(&format!("State{{regs:{:?},flags:{},undefined:0,eip:0x100,ram,rx:VecDeque::from({:?}),tx:VecDeque::from({:?})}}",case.regs,case.flags,case.rx,case.tx));
     Ok(format!("mod {name} {{use super::*; const CS:SegmentCache={:?};\n{code}\npub fn initial()->State{{{init}}}\n#[inline(never)] pub fn step(s:&mut State)->[u32;5]{{match s.eip{{{dispatch}_=>[7,s.eip,0,0,0]}}}}\n}}\n",case.image.segments[SegmentRegister::Cs.index()]))
 }

@@ -269,3 +269,11 @@ Reference-only use; no manual text, source code or data tables imported.
 Descriptions, operand binding, fixtures and tests are original project code.
 The old INC listing has an FF /6 dword typo; AppendixA group5 identifies
 /0 as INC at both widths. /6 PUSH remains unsupported.
+
+## 0.12 signed multiplication reference (consulted 2026-10-26)
+
+Intel 80386 Programmer's Reference Manual, chapter17 IMUL entry:
+https://pdos.csail.mit.edu/6.828/2018/readings/i386/IMUL.htm
+Used for0F AF,69/6B encodings, signed fit and flag classification. Reference
+only; no text/code imported. Generic sext/mul implementation, IMUL description,
+fixtures and tests are project originals. Thanks to Intel and the MIT mirror.

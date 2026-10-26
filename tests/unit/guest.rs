@@ -106,3 +106,36 @@ fn new_decode_forms_are_bounded_and_reserved_extensions_stay_unsupported(){
     for bytes in [vec![0x81,0xc0,1],vec![0x83,0x86,0],vec![0xf7,0xc0,1],vec![0xff,0xd0],vec![0xf6,0xc8],vec![0xfe,0xd0],vec![0x82,0xc0,1]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
     for prefix in [vec![],vec![0x66]] {for opcode in 0x40..=0x4f {let mut bytes=prefix.clone();bytes.push(opcode);assert!(decode(&bytes).is_ok());}}
 }
+
+#[test]
+fn imul_binary_operands_aliases_and_signed_immediates(){
+    use super::super::Cpu;
+    for (bytes,a,b,result,overflow) in [
+        (vec![0x0f,0xaf,0xc1],0xfffe,3,0xfffa,false),
+        (vec![0x0f,0xaf,0xc0],0x8000,0,0,true),
+        (vec![0x66,0x0f,0xaf,0xc1],0x80000000,0xffffffff,0x80000000,true),
+        (vec![0x6b,0xc1,0xfe],123,3,0xfffa,false),
+        (vec![0x69,0xc1,0,0x80],123,1,0x8000,false),
+        (vec![0x66,0x6b,0xc1,0x80],123,0x01000000,0x80000000,false),
+        (vec![0x66,0x69,0xc1,0xff,0xff,0xff,0xff],123,0x80000000,0x80000000,true),
+    ]{
+        let mut c=Cpu::default();c.eip=ENTRY;c.eflags=0xad7;c.regs[0]=a;c.regs[1]=b;
+        execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(c.regs[0],result,"{bytes:02x?}");assert_eq!(c.eflags,0x202|if overflow{0x801}else{0});assert_eq!(c.undefined_flags,0xd4);
+    }
+}
+#[test]
+fn imul_memory_source_is_readonly_and_faults_preserve_cpu(){
+    use super::super::Cpu;
+    for bytes in [vec![0x0f,0xaf,0x07],vec![0x6b,0x07,0xfe],vec![0x69,0x07,0xfe,0xff]] {
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=0xfffe;c.regs[3]=0x400;
+        let ram=execute_one(&bytes,&mut c,3,true).unwrap();assert_eq!(c.regs[0],0xfffa);assert_eq!(ram.load(0x500,MemWidth::Word).unwrap(),3);
+    }
+    let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=0x8000;c.regs[3]=0xffff;let before=c.clone();
+    assert!(execute_one(&[0x0f,0xaf,0x07],&mut c,0,false).is_err());assert_eq!(c,before);
+}
+#[test]
+fn imul_fetch_lengths_and_unimplemented_implicit_forms_are_diagnostics(){
+    for bytes in [vec![0x0f,0xaf],vec![0x69,0xc0,1],vec![0x66,0x6b,0x86,0],vec![0xf6,0xe8],vec![0xf7,0xe8]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    let (mut image,ram)=Image::load(&[0x69,0xc0,1,0]).unwrap();image.segments[1].limit=ENTRY+2;
+    assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
+}

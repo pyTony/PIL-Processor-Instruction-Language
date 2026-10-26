@@ -1,5 +1,12 @@
 # Changes
 
+## 0.12.0-alpha.1
+
+- Add generic sext/mul tokens, interpreter and Rust emission.
+- Add truncated signed IMUL16/32 register, memory and immediate encodings.
+- Add six tests (134 total), independent signed oracle and 18-case verifier.
+- Initialize verifier data before applying read-only protection.
+
 ## 0.11.0-alpha.1
 
 - Expand binary ALU directions/immediates and eight instruction descriptions.

@@ -648,6 +648,26 @@
         "pc_native": "unavailable on aarch64; x86_64 required",
         "scope": "offline fixed-image guarded dispatch; not JIT or 386 cycles"
       }
+    },
+    {
+      "version": "0.12.0-alpha.1",
+      "date": "2026-10-26",
+      "status": "development; hosted verification pending",
+      "features": [
+        "generic sext/mul tokens",
+        "truncated signed IMUL16/32",
+        "register/memory and69/6B immediate operands",
+        "18-case full-state compiled proof"
+      ],
+      "rust_verification": {
+        "tests_supplied": 134,
+        "status": "pending hosted CI"
+      },
+      "python_verification": {
+        "signed_imul_cases": 65680
+      },
+      "runtime_files": 59,
+      "provenance": "Intel 80386 IMUL entry, reference only; original code"
     }
   ]
 }

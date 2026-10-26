@@ -1,3 +1,16 @@
+# Signed multiplication development — 0.12.0-alpha.1
+
+Generic sext and modular mul tokens added; imul.pil uses double-width products,
+truncation and sign restoration to compute CF/OF. PF/AF/ZF/SF undefined.
+Decoder adds0F AF,69/6B for16/32 bits, memory sources and signed immediates;
+no implicit AX/EDX:EAX form or byte multiply. Six new tests (134 total pending
+CI);18 verifier cases;59 runtime files. Generic boundary tests through64 bits
+compare emitted Rust with interpreter and independent expectations. Python
+oracle65,680 signed IMUL cases in addition to existing arithmetic/conditions.
+Fixture initialization patches RAM before applying read-only protection in both
+runners. Windows PC comparison uses target/windows; WSL target/wsl.
+Next: shifts for fixed-point Mandelbrot; then an actual image workload.
+
 # User phone expanded ISA verified — 0.11.0-alpha.1
 
 User Termux android/aarch64 run sh tools/compare.sh 10000 5 passed all14

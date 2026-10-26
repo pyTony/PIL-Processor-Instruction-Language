@@ -338,7 +338,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the fourteen-case compiled-Rust/interpreter
+`pil-proof --verify-backends` runs the eighteen-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -365,6 +365,32 @@ OR/XOR/TEST clear CF/OF, classify AF undefined and update SF/ZF/PF. TEST and
 CMP do not write their operands; they can read protected RAM. NOT and NOP
 preserve flags and undefined metadata. INC/DEC preserve CF and its metadata.
 NEG computes zero minus its operand. New ALU forms use the same staged RAM
-retirement and segment checks as existing instructions. MUL/DIV, shifts, stack
+retirement and segment checks as existing instructions. Implicit-product MUL/IMUL, DIV, shifts, stack
 operations, CALL/RET and general device I/O are still outside this profile.
 The verifier adds ALU8/16/32 fixtures plus read-only TEST and NEG fault cases.
+
+## Signed multiplication (0.12 alpha)
+
+- 0F AF /r: IMUL r16/r32,r/m16/r/m32.
+- 69 /r: IMUL r16/r32,r/m16/r/m32,imm16/imm32.
+- 6B /r: IMUL r16/r32,r/m16/r/m32,sign-extended imm8.
+
+The low operand-width product is written to the destination register. CF and
+OF report whether the exact signed product fits that width. PF/AF/ZF/SF are
+undefined (concrete zero plus undefined markers). Memory operands are sources;
+read-only RAM is allowed. Faults preserve registers and flags. Implicit AX or
+DX:AX/EDX:EAX forms F6/F7 /5 remain unsupported; no 8-bit IMUL form is added.
+The compiled verifier adds 16/32-bit signed products and source-fault cases.
+
+On Windows 11 PowerShell, after merging and pulling main:
+
+```powershell
+$env:CARGO_TARGET_DIR = "target/windows"
+./tools/compare.ps1 -Iterations 10000 -Samples 5
+```
+
+This verifies all 18 cases, then measures compiled Rust and cached interpreter.
+An x86-64 PC also reports the direct CPU arithmetic baseline. That baseline
+still times ADD/SUB/JNZ; it is not an IMUL benchmark or an emulated 386 clock rate.
+For WSL sharing the folder, use `export CARGO_TARGET_DIR=target/wsl` and
+`sh tools/compare.sh 10000 5` in the WSL shell.

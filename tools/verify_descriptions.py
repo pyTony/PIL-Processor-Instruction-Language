@@ -19,7 +19,7 @@ def tokens(op, width):
         text = (BASE / "conditions.pil").read_text()+"\n"+(BASE / "setcc.pil").read_text().replace("$CONDITION", "cond_"+condition)
     else:
         text = (BASE / (op + ".pil")).read_text()
-    for name, value in (("$EXT", width + 1), ("$SIGN", width - 1), ("$W", width)):
+    for name, value in (("$DOUBLE", width * 2), ("$EXT", width + 1), ("$SIGN", width - 1), ("$W", width)):
         text = text.replace(name, str(value))
     return [line.split("#", 1)[0].split() for line in text.splitlines()
             if line.split("#", 1)[0].strip()]
@@ -140,12 +140,14 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
             n, w = values[t[2]]
             assert w == width
             destination = (a & ~((1 << width) - 1)) | n
-        elif op in ("zext", "trunc"):
+        elif op in ("zext", "sext", "trunc"):
             n, old_width = values[t[2]]
             w = int(t[3])
-            assert (w >= old_width) if op == "zext" else (w <= old_width)
+            assert (w >= old_width) if op != "trunc" else (w <= old_width)
+            if op == "sext" and n & (1 << (old_width-1)):
+                n -= 1 << old_width
             values[t[1]] = (n & ((1 << w) - 1), w)
-        elif op in ("add", "sub", "xor", "and", "or"):
+        elif op in ("add", "sub", "mul", "xor", "and", "or"):
             x, w = values[t[2]]
             y, other_width = values[t[3]]
             assert w == other_width
@@ -153,6 +155,8 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
                 n = x + y
             elif op == "sub":
                 n = x - y
+            elif op == "mul":
+                n = x * y
             elif op == "xor":
                 n = x ^ y
             elif op == "or":
@@ -221,6 +225,18 @@ if __name__ == "__main__":
                 a = 0xABCDFFFF
                 assert interpret(code, a, 1, width, 0x203) == oracle(op, a, 1, width, 0x203)
         print(op.upper(), "description verified")
+    imul_count=0
+    for width in (16,32):
+        code=tokens("imul",width);mask=(1<<width)-1;sign=1<<(width-1)
+        values=list(range(-128,128)) if width==16 else [-sign,-sign+1,-65536,-32768,-129,-1,0,1,127,32767,65536,sign-1]
+        for x in values:
+            for y in values:
+                a,b=x&mask,y&mask;product=x*y;overflow=not -sign<=product<sign
+                got=interpret(code,a,b,width,0xffffffff,0x8d5)
+                want=(product&mask,(0xffffffff&~0x8d5)|(0x801 if overflow else 0),0xd4)
+                assert got==want,(width,x,y,got,want)
+                imul_count+=1
+    print(f"{imul_count:,} independent signed IMUL cases passed.")
     arithmetic_count=count
     def condition_flags(bits):
         return 0x202 | sum(((bits >> i)&1) << bit for i,bit in enumerate((0,2,4,6,7,11)))

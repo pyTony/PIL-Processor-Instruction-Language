@@ -1,3 +1,12 @@
+# PIL 0.12.0-alpha.1
+
+- Add generic signed extension and modular multiplication PIL operations.
+- Add signed IMUL16/32, 0F AF plus 69/6B immediate forms and memory sources.
+- Define CF/OF overflow and undefined PF/AF/ZF/SF in the description.
+- Expand compiled/interpreted verification to eighteen full-state cases.
+- Test generic operation widths through64 bits and signed product edge cases.
+- Document Windows PC comparison and separate Windows/WSL target directories.
+
 # PIL 0.11.0-alpha.1
 
 - Add OR, XOR, TEST, NOT, NEG, INC, DEC and NOP descriptions and binary decoding.
