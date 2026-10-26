@@ -31,10 +31,21 @@ SingleStepTests vectors. This is not an exhaustive input-space claim.
 
 Curated literal instruction bytes execute in an out-of-line Rust function's
 assembly block. CMP AL,CL varies input arithmetic flags; BT seeds CF.
-PUSHFQ/POP snapshots actual flags before and after
-the target,without compiler instructions between them. Snapshots supply actual inputs independently of diagnostic metadata. INC/DEC
+PUSHFQ/POP snapshots actual flags before and after the target,without compiler
+instructions between them. Snapshots supply actual inputs independently of
+diagnostic metadata. INC/DEC
 preserve CF; NOT preserves all flags; NEG and the binary arithmetic forms
 define all six outputs. Unary cases include known and undefined CF metadata.
+
+| Operation | Written arithmetic flags | Preserved arithmetic flags | Metadata policy |
+|---|---|---|---|
+| ADD/SUB/ADC/SBB/CMP/NEG | CF/PF/AF/ZF/SF/OF | None | Clear all six undefined markers |
+| INC/DEC | PF/AF/ZF/SF/OF | CF | Preserve incoming CF marker; clear the other five |
+| NOT | None | CF/PF/AF/ZF/SF/OF | Preserve every marker |
+
+Undefined metadata is a PIL diagnostic policy checked from this independent
+specification; the hardware supplies concrete flag values,not metadata.
+
 No privileged/reserved flag values are loaded and DF is never changed. Balanced
 stack operations retain Rust's default assembly stack/memory/flag clobbers;
 volatile registers are explicit so the compiler handles the platform ABI.
@@ -98,7 +109,7 @@ comparison and isolated runtime/package checks also passed on both hosts.
 The checkoutv5/upload-artifactv6 Node24 actions completed successfully.
 This is hosted CI evidence; no local ARM execution is claimed.
 
-## Unary expansion (hosted execution pending)
+## Unary expansion verified —27 October2026
 
 The new default has27 variants and52,728 cases. Unary forms use FE/FF /0
 (INC),FE/FF /1 (DEC),F6/F7 /3 (NEG),F6/F7 /2 (NOT); long-mode single-byte
@@ -111,3 +122,17 @@ the existing104-byte layout. Prior20,280-case results below remain historical.
 User reported the preceding source48556af passing20,280 cases under WSL on
 AuthenticAMD (CPUID1 EAX00a20f10),rustc1.99.1,with fingerprint8b8c01e8fdeff584.
 The helper ran one test with166 filtered out; artifacts used target/wsl.
+
+[CI40417668829](https://github.com/pyTony/pil_proof/actions/runs/40417668829)
+passed for sourcef6ff393221cb9c771b12556fe76c05336f3559d4 on both Windows/Linux
+AuthenticAMD hosts (CPUID1 EAX00a00f11). Each passed167 tests and52,728 native
+cases against both backends. Existing39 trace cases,full256x256 Mandelbrot
+comparisons and isolated source/package tests passed. Tests were enhanced,
+not added,so the test count stays167. No ARM execution is claimed.
+
+The first new DEC8 harness answer incorrectly included PF for7F (seven set
+bits); run40417508356 rejected it. The expected written flags were corrected
+from814 to810. All12 harness constants were also checked independently with
+a small Python calculation. No DUT semantics were changed to obtain the pass.
+Runtime export remains72 files with unchanged contents apart from source
+provenance/checksums. This development work needs no runtime delivery PR.

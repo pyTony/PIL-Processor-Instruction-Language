@@ -671,7 +671,10 @@ CMP AL,CL varies incoming arithmetic flags before BT selects CF0/1. INC/DEC
 must preserve CF value and metadata; NOT must preserve all flags/metadata.
 Unary cases start both with known and undefined CF metadata. Independent
 written masks,12 native known answers and decoded operand bindings are used.
-Expected52,728 cases/27 variants,167 tests; hosted execution pending.
+CI40417668829 passed on Windows/Linux AMD hosts:52,728 native cases/27
+variants against both backends;167 tests per host. Sourcef6ff393221cb9c771b12556fe76c05336f3559d4.
+The initial DEC8 known-answer fixture used the wrong parity bit for7F;
+corrected from814 to810 before acceptance. This was a harness fixture error.
 Runtime semantics/version/export are unchanged; tooling stays ondev.
 
 User WSL evidence for preceding source48556af:20,280 hardware cases passed

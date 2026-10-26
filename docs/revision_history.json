@@ -1456,7 +1456,7 @@
       },
       "unary_host_oracle_development": {
         "date": "2026-10-27",
-        "status": "implemented; hosted execution pending",
+        "status": "verified on hosted Windows/Linux AMD",
         "instructions": [
           "INC",
           "DEC",
@@ -1483,6 +1483,24 @@
           "tests_passed": 1,
           "tests_filtered_out": 166,
           "classification": "user-reported correctness; not timing"
+        },
+        "verification": {
+          "run": 40417668829,
+          "source": "f6ff393221cb9c771b12556fe76c05336f3559d4",
+          "hardware_cases_per_host": 52728,
+          "tests_passed_per_host": 167,
+          "vendor": "AuthenticAMD",
+          "cpuid1_eax": "00a00f11",
+          "existing_trace_cases": 39,
+          "full_mandelbrot": "256x256 comparison passed on both hosts",
+          "runtime_packages": "isolated source and unpacked delivery passed",
+          "runtime_export_files": 72,
+          "arm": "not executed for this increment"
+        },
+        "fixture_correction": {
+          "rejected_run": 40417508356,
+          "error": "DEC8 80-1=7F has odd low-byte parity; corrected expected written flags from814 to810",
+          "runtime_semantics_changed": false
         }
       }
     }
