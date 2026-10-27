@@ -319,3 +319,29 @@ The fixed-image generated runner retains its byte guards;self-modifying-code
 fallback and interrupt delivery remain separate work. `--emit-rust` accepts
 call,ret,movs,stos,lods,rep_movs,rep_stos,rep_lods with default word stack/address
 profiles;the decoder binds the actual profiles and source segment.
+
+## Real-mode flags and counter branches (0.26 implementation)
+
+`read_flags out` snapshots bv32 EFLAGS; `require_real_mode` requires supplied
+machine state with real_mode=true and VM clear, otherwise InvalidContext before
+commit. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
+retirement when true. It cannot precede an early retire guard. Shadows are
+separate SS/STI state, included in full traces; partial REP and faults retain
+both, and full PIL, monitor-I/O and DOS-bridge retirements advance both.
+
+FA/FB implement real-mode CLI/STI. IF becomes defined while other flags/markers
+stay unchanged. STI requests delay only if incoming IF was clear, so consecutive
+STI does not extend it. This is bookkeeping, not interrupt/exception/NMI delivery
+or protected/V86 privilege modeling. These modes are explicitly rejected.
+
+9C/9D implement real-mode PUSHF/POPF and 66 PUSHFD/POPFD. SS size controls stack
+offset and operand size controls slot bytes. PUSH images include documented
+386 bits0,2,4,6..14 and fixed bit1; RF/VM and reserved bits are excluded. POP
+restores mask0x7fd5 and defines those bits; RF/VM and internal reserved bits /
+markers stay unchanged. POP does not create STI delay. Stack failures preserve
+all pending CPU/RAM/machine effects; legacy shutdown/double-fault delivery is
+not modeled and existing normalized stack errors remain.
+
+E3 JCXZ/JECXZ reads CX/ECX according to address size (67). Operand size (66)
+controls target wrapping; signed displacement is always8 bits. Counter,flags
+and markers are preserved. Only taken branches validate target against CS.limit.

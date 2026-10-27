@@ -1,0 +1,8 @@
+require_real_mode
+read_flag old IF
+not enable_delay old
+interrupt_shadow_if enable_delay
+const set 1 1
+flag IF set
+preserve_flags all
+retire

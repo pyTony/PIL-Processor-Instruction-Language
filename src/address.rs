@@ -119,9 +119,9 @@ impl AddressContext {
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct SegmentState {
     pub segments:[SegmentCache;6],pub selectors:[u16;6],
-    pub real_mode:bool,pub ss_shadow:u8,
+    pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,
 }
 impl SegmentState {
-    pub fn retired(&mut self){self.ss_shadow=self.ss_shadow.saturating_sub(1);}
+    pub fn retired(&mut self){self.ss_shadow=self.ss_shadow.saturating_sub(1);self.sti_shadow=self.sti_shadow.saturating_sub(1);}
 }
 

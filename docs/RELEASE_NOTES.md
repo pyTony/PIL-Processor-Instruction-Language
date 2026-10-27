@@ -1,3 +1,14 @@
+# PIL 0.26.0-alpha.1
+
+- Add real-mode CLI/STI and PUSHF/POPF16/32 with 386 visible/write masks.
+- Track STI delay separately from SS; include it in full machine traces and
+  retire it across PIL, monitor I/O and DOS calls while retaining REP progress.
+- Add JCXZ/JECXZ: address-size count, operand-size target, signed rel8.
+- Preserve state on stack/target faults; reject protected/V86 flag contexts.
+- Windows/Linux CI40527735310:252 tests and96 backend cases (6,026,172 trace bytes),
+  existing340,920 native overlap cases,full Mandelbrot and101-file package checks.
+- No new ARM/hardware-oracle run; no interrupt delivery or stack shutdown model.
+
 # PIL 0.25.0-alpha.1
 
 - Add near relative/register/memory CALL and RET with optional immediate byte cleanup.
