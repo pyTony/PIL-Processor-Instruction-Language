@@ -1,0 +1,12 @@
+# Read through old SS and update SP using the old stack-address width.
+require_width 16_or_32
+read_gpr old_sp 4 $S
+zext offset old_sp 32
+load data offset $W
+trunc selector data 16
+write_segment $SEG selector
+const step $S $BYTES
+add new_sp old_sp step
+write_gpr 4 new_sp
+preserve_flags all
+retire

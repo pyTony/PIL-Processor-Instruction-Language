@@ -47,6 +47,7 @@ struct Debugger {
     serial: MockSerial,
     demo: String,
     image:Option<super::guest::Image>,
+    initial_image:Option<super::guest::Image>,
     tx_events:Vec<u8>,
     cache:super::cache::DecodeCache,
 }
@@ -57,7 +58,7 @@ impl Debugger {
             cpu: Cpu::default(), initial: Cpu::default(),
             ram:Ram::new(256),initial_ram:Ram::new(256),
             instructions: BTreeMap::new(), breakpoints: BTreeSet::new(),
-            stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),image:None,tx_events:Vec::new(),cache:super::cache::DecodeCache::default(),
+            stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),image:None,initial_image:None,tx_events:Vec::new(),cache:super::cache::DecodeCache::default(),
         };
         d.load_demo(demo)?; Ok(d)
     }
@@ -100,7 +101,7 @@ impl Debugger {
             }
             _ => return Err("demo must be counter, echo, memory, selftest, hello, factorials, loop, mandelbrot or extensions".into()),
         }
-        self.cache.clear();self.image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
+        self.cache.clear();self.image=None;self.initial_image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
         self.breakpoints.clear();self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();
         Ok(())
@@ -109,7 +110,7 @@ impl Debugger {
         let (image,ram)=super::guest::Image::load(bytes)?;
         let mut cpu=Cpu::default();cpu.eip=super::guest::ENTRY;cpu.eflags=0x202;
         self.initial=cpu.clone();self.cpu=cpu;self.initial_ram=ram.clone();self.ram=ram;
-        self.cache.clear();self.image=Some(image);self.instructions.clear();self.breakpoints.clear();
+        self.cache.clear();self.initial_image=Some(image.clone());self.image=Some(image);self.instructions.clear();self.breakpoints.clear();
         self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();Ok(())
     }
     fn step_image(&mut self)->Stop {
@@ -120,25 +121,25 @@ impl Debugger {
         };
         match &decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
-                let result=match address {
-                    Some(a)=>super::execute_segmented(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*a),
-                    None=>execute_flow(program,&mut self.cpu,*dst,*src,*flow),
-                };
+                let mut machine=self.image.as_ref().unwrap().segment_state();
+                let result=super::execute_machine(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*address,&mut machine);
+                if result.is_ok(){self.image.as_mut().unwrap().set_segment_state(machine);}
                 match result{Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e)}
             }
             Operation::Input{next}=>{
                 let byte=match self.serial.try_read(){Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
-                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip = *next;Stop::Advanced
+                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Operation::Output{next}=>{
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err(){return Stop::TxBlocked(self.cpu.eip);}
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Operation::Halt=>Stop::Halt(self.cpu.eip),
         }
     }
     fn reset(&mut self) {
         self.cache.clear();
+        self.image=self.initial_image.clone();
         self.cpu=self.initial.clone();self.ram=self.initial_ram.clone();self.serial.clear();self.tx_events.clear();self.stopped_at_break=None;
         // Keep breakpoints while resetting the currently loaded demo.
     }
@@ -158,13 +159,13 @@ impl Debugger {
             Action::MockRx{next} => {
                 let byte=match self.serial.try_read() {Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
                 self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);
-                self.cpu.eip = *next;Stop::Advanced
+                self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Action::MockTx{next} => {
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err() {
                     return Stop::TxBlocked(self.cpu.eip);
                 }
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Action::HarnessHalt=>Stop::Halt(self.cpu.eip),
         }
@@ -565,7 +566,7 @@ pub fn backend_trace(cases:&[super::native::Case])->Result<Vec<u8>,String> {
                 Stop::Decode{eip,..}=>[7,eip,0,0,0],_=>return Err("unexpected verification stop".into()),
             };
             let (rx,tx)=d.serial.snapshot();
-            super::trace::record(&mut out,id as u32,status,&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx);
+            super::trace::record_machine(&mut out,id as u32,status,&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx,&d.image.as_ref().unwrap().segment_state());
             if status[0]!=0 {stopped=true;break;}
         }
         if !stopped{return Err(format!("trace budget exhausted for {}",case.name));}
@@ -586,7 +587,7 @@ pub fn render_mandelbrot_checked(size:u32,iterations:u32,capture:bool)->Result<s
         let stop=d.step();
         if capture && matches!(stop,Stop::TxBlocked(_)|Stop::Halt(_)){
             let (rx,tx)=d.serial.snapshot();let kind=if matches!(stop,Stop::Halt(_)){1}else{3};
-            super::trace::record(&mut checkpoints,0,[kind,d.cpu.eip,0,0,0],&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx);
+            super::trace::record_machine(&mut checkpoints,0,[kind,d.cpu.eip,0,0,0],&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx,&d.image.as_ref().unwrap().segment_state());
         }
         match stop{
             Stop::Advanced=>steps+=1,

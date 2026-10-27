@@ -1,3 +1,17 @@
+# PIL 0.23.0-alpha.1
+
+- Add shared PIL selector snapshots and staged real-mode segment-cache loads.
+- Add MOV8C/8E register/word-memory and POP ES/SS/DS/FS/GS; POP uses old SS state.
+- Record SS inhibition state across successful retirements,including DOS bridges;
+  no external interrupt/NMI/debug delivery or protected segment loads is claimed.
+- Compiled runners use runtime caches/selectors and choose the current SS-size variant.
+- Full traces include segment state;debugger reset restores the initial image context.
+- Reject MOVr32,Sreg pending legacy undefined-upper-half policy.
+- Windows/Linux CI40498283191 passed231 tests,62 backend cases (5,336,578 bytes),
+  existing340,920 native overlap cases,full Mandelbrot and91-file package checks.
+- Actual FreeDOS image:segment MOV/POP blockers gone;JEMFBHLP and MOVEXBDA usage
+  paths print and exit0. These are not driver/device execution successes.
+
 # PIL 0.22.0-alpha.1
 
 - Add snapshot GPR reads and ordered staged GPR writes to PIL and both backends.
