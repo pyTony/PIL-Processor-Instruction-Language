@@ -241,3 +241,11 @@ DOS AH=30 behavior was checked against the
 [FreeDOS handler at d6791add](https://github.com/FDOS/kernel/blob/d6791add2043c9d7b584d840a8ffaf8829fd2bdc/kernel/inthndlr.c).
 The project's original shim declares compatibility version 6.22 in PSP:0040;
 it does not execute a FreeDOS kernel. No handler source or manual text is bundled.
+
+## Memory PUSH (0.31)
+
+The [Intel 386 PUSH reference](https://pdos.csail.mit.edu/6.828/2018/readings/i386/PUSH.htm)
+was consulted for FF /6 word/dword forms, independent operand and stack sizes,
+flag preservation and source/stack faults. Implementation and test fixtures are
+original project code. SS:SP underflow uses the existing bounded stack-fault
+profile; legacy shutdown/exception delivery is still outside this prototype.

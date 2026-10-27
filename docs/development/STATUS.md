@@ -1,3 +1,20 @@
+# Memory PUSH increment — 27 October 2026
+
+User requested memory PUSH following the v0.30 FreeDOS report. Version 0.31
+adds FF /6 m16/m32 via existing read_address/load/store_segment/write_gpr PIL
+effects. Source EA sees old ESP; stack writes always use SS after decrement.
+No new backend-specific semantics. Six expected-state tests and eleven compiled
+backend cases added: 303 tests and 160 cases total. Local Windows tests passed;
+hosted checks pending. No new ARM or legacy real-mode hardware vectors.
+
+Actual local FD14LITE.img at 100000 steps: all sixteen FreeCom variants advanced
+from FF 74 14 to FF 1E 1F 02 (far CALL /3), twelve bytes later. PUSH retirements
+rose 796 -> 812. Imported 151/156, exited six; first missing-encoding counts
+remain 16 FF, 2 0FBB, 1 0F01, 1 60, 1 9A. Do not interpret unchanged FF group
+counts as an unchanged stop. The disk image stays external to the repo.
+Keep full development on dev; strict runtime export/main delivery PR separately.
+User authorizes project uploads; user reviews/merges deliveries.
+
 # Memory POP, MSW and DOS version increment — 27 October 2026
 
 Based on dev 28bf3088 (RETF) and the user's v0.29 corpus summary.

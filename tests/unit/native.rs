@@ -3,7 +3,7 @@ use super::*;
 fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
     let dir=std::env::temp_dir().join(format!("pil-native-proof-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     let report=compare_at(&dir,16,2).unwrap();
-    assert!(report.contains("byte-for-byte after every execution step across 149 cases"));
+    assert!(report.contains("byte-for-byte after every execution step across 160 cases"));
     assert!(report.contains("GENERATED verify readonly_store: steps=0 stop=6"));
     assert!(report.contains("GENERATED verify branch_fault: steps=0 stop=4"));
     assert!(report.contains("GENERATED verify code_guard: steps=0 stop=7"));
@@ -34,6 +34,8 @@ fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
     for name in ["popmem16_ss16","popmem16_ss32","popmem32_ss16","popmem32_ss32","popmem_fs16","popmem_fs32"]{assert!(report.contains(&format!("GENERATED verify {name}: steps=1 stop=1")),"{report}");}
     for name in ["smsw_zero","smsw_supplied","smsw_protected"]{assert!(report.contains(&format!("GENERATED verify {name}: steps=2 stop=1")),"{report}");}
     for (name,steps,stop) in [("smsw_memory",3,1),("popmem_readonly",0,6),("popmem_ss_fault",0,5),("smsw_readonly",0,6),("smsw_boundary",0,4)]{assert!(report.contains(&format!("GENERATED verify {name}: steps={steps} stop={stop}")),"{report}");}
+    for name in ["pushmem16_ss16","pushmem16_ss32","pushmem32_ss16","pushmem32_ss32","pushmem_fs16","pushmem_fs32","pushmem_readonly_source","pushmem_overlap"]{assert!(report.contains(&format!("GENERATED verify {name}: steps=1 stop=1")),"{report}");}
+    for(name,stop)in [("pushmem_readonly_stack",6),("pushmem_ss_fault",5),("pushmem_source_gp",4)]{assert!(report.contains(&format!("GENERATED verify {name}: steps=0 stop={stop}")),"{report}");}
     assert!(report.contains("Generated Rust median="));
     let expected=fs::read(dir.join("interpreter.trace")).unwrap();let actual=fs::read(dir.join("generated.trace")).unwrap();assert_eq!(expected,actual);
     fs::remove_dir_all(dir).unwrap();

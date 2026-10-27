@@ -187,7 +187,7 @@
         "POP"
       ],
       "status": "partial",
-      "remaining": "Register/segment and memory8F/0 POP supported; post-increment ESP destination,independent widths and transactional faults covered. Family-specific16-bit SP wrap with ESP-based EA is rejected;hardware/mode/prefix audit remains.",
+      "remaining": "Register/segment and memory PUSH FF/6 plus memory POP8F/0 supported; post-increment ESP destination,independent widths and transactional faults covered. Family-specific16-bit SP wrap with ESP-based EA is rejected;hardware/mode/prefix audit remains.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -770,7 +770,7 @@
   ],
   "implementation_followup": {
     "version": "0.28.0-alpha.1",
-    "status": "Comparison strings,ZF repeats,entry-flag recovery and memory SETcc verified Windows/Linux CI40562311100; memory PUSH/POP and machine-status work remain.",
+    "status": "Comparison strings,ZF repeats,entry-flag recovery and memory SETcc verified Windows/Linux CI40562311100; memory PUSH/POP and word SMSW are implemented; remaining system forms stay separate.",
     "verified_native_cases_before_direction_followup": 340920,
     "verified_trace_cases_before_direction_followup": 49,
     "expected_trace_cases_with_direction_followup": 50,

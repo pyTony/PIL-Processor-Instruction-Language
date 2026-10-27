@@ -657,6 +657,7 @@ fn description(name: &str) -> R<String> {
         "stos" => Some(include_str!("../isa/i386/stos.pil")),
         "lods" => Some(include_str!("../isa/i386/lods.pil")),
         "push" => Some(include_str!("../isa/i386/push.pil")),
+        "push_memory" => Some(include_str!("../isa/i386/push_memory.pil")),
         "pop" => Some(include_str!("../isa/i386/pop.pil")),
         "pop_memory" => Some(include_str!("../isa/i386/pop_memory.pil")),
         "smsw" => Some(include_str!("../isa/i386/smsw.pil")),
@@ -990,3 +991,7 @@ mod retf_tests;
 #[cfg(test)]
 #[path = "../tests/unit/pop_msw.rs"]
 mod pop_msw_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/push_memory.rs"]
+mod push_memory_tests;

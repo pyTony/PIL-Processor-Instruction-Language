@@ -167,6 +167,21 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("popmem_ss_fault",vec![0x8f,7,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("smsw_readonly",vec![0x0f,1,0x26,0,8,0xf4])?;t.protect=Some((0x900,2));tests.push(t);
     tests.push(case("smsw_boundary",vec![0x0f,1,0x26,0xff,0xff,0xf4])?);
+    for w in [16,32]{for big in [false,true]{
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0xff,0x34,0x24,0xf4]);
+        let mut t=case(match(w,big){(16,false)=>"pushmem16_ss16",(16,true)=>"pushmem16_ss32",(32,false)=>"pushmem32_ss16",_=>"pushmem32_ss32"},bytes)?;
+        t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};
+        t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
+    }}
+    for w in [16,32]{
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x64,0xff,0x36,0,4,0xf4]);
+        let mut t=case(if w==16{"pushmem_fs16"}else{"pushmem_fs32"},bytes)?;t.regs[4]=0x800;t.patch=Some((0x700,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
+    }
+    let mut t=case("pushmem_readonly_source",vec![0xff,0x37,0xf4])?;t.regs[3]=0x400;t.regs[4]=0x800;t.patch=Some((0x500,vec![0xef,0xbe]));t.protect=Some((0x500,2));tests.push(t);
+    let mut t=case("pushmem_readonly_stack",vec![0xff,0x37,0xf4])?;t.regs[3]=0x400;t.regs[4]=0x800;t.protect=Some((0x9fe,2));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("pushmem_ss_fault",vec![0xff,0x37,0xf4])?;t.regs[3]=0x400;t.regs[4]=1;tests.push(t);
+    let mut t=case("pushmem_source_gp",vec![0xff,0x37,0xf4])?;t.regs[3]=0xffff;t.regs[4]=0x800;tests.push(t);
+    let mut t=case("pushmem_overlap",vec![0xff,0x37,0xf4])?;t.regs[3]=0x8ff;t.regs[4]=0x800;t.patch=Some((0x9ff,vec![0xef,0xbe]));tests.push(t);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
     let mut jump=case("jump_fault",vec![0xe9,0xff,0x7f])?;jump.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(jump);
