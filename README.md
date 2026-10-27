@@ -265,7 +265,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.16.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.17.0-alpha.2. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -348,7 +348,7 @@ $env:CARGO_TARGET_DIR = "target/windows"
 ./tools/compare.ps1 -Iterations 10000 -Samples 5
 ```
 
-This verifies all 45 cases, then measures compiled Rust and cached interpreter.
+This verifies all 48 cases, then measures compiled Rust and cached interpreter.
 An x86-64 PC also reports the direct CPU arithmetic baseline. That baseline
 still times ADD/SUB/JNZ; it is not an IMUL benchmark or an emulated 386 clock rate.
 For WSL sharing the folder, use `export CARGO_TARGET_DIR=target/wsl` and
@@ -576,9 +576,33 @@ PF/AF/ZF/SF and their metadata are preserved. Undefined OF uses PIL's concrete
 zero policy; it is not required to match an unspecified hardware value.
 
 CLC(F8) and STC(F9) clear/set CF and its undefined marker; all registers,other
-flags and other metadata remain unchanged. CMC,RCL/RCR and SHLD/SHRD remain
+flags and other metadata remain unchanged. RCL/RCR and SHLD/SHRD remain
 unimplemented. ROL/ROR memory destinations perform the same RMW permission
 checks as shifts even for zero counts; faults preserve CPU/RAM state.
 
 These instructions execute through descriptions and the existing generic PIL
 operations in both backends. No new interpreter-only CPU semantics were added.
+
+## Register exchange (0.17 alpha)
+
+XCHG8/16/32 register forms86/87 and AX/EAX accumulator forms91..97 are
+supported;90 remains NOP (equivalent self-exchange in the386 profile). Both
+operands are read before retirement,so AL/AH and identical-register aliases
+work. Upper bits,flags and undefined markers are preserved. Memory XCHG and
+LOCK remain outside this profile pending a bus-atomic memory interface.
+
+PIL now permits one staged write to each named binding,dst and src,including
+conditional source writes. All reads see incoming state. Active overlapping
+writes must agree on their shared bits;otherwise InvalidBinding is returned
+before any RAM,register,flag,marker or EIP commit. Source binding widths
+remain independently validated. This is a two-binding foundation,not arbitrary
+implicit-register writes or ordered multi-store support.
+
+## Complement carry (0.17 alpha.2)
+
+CMC (F5) complements CF using the shared PIL description; registers, RAM and
+all other flags and diagnostic markers are preserved. Operand/address-size
+prefixes do not change its operation. LOCK is rejected by this decoder profile.
+Like ADC/SBB, CMC consumes the concrete incoming CF even when its diagnostic
+marker is set, then clears that marker on the defined CF write. This follows
+the concrete-value policy; symbolic uncertainty is not propagated.

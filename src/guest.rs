@@ -163,9 +163,20 @@ impl Image {
                 let text=operand_text(name,w,memory,false,immediate)?;
                 (format!("{} {},{}",name.to_ascii_uppercase(),operand_name(dst,address),immediate.map(|v|format!("0x{v:02x}")).unwrap_or_else(||"CL".into())),compile(&text,w))
             }
-            0xf8|0xf9=>{
-                let name=if opcode==0xf8{"clc"}else{"stc"};
+            0xf5|0xf8|0xf9=>{
+                let name=match opcode{0xf5=>"cmc",0xf8=>"clc",_=>"stc"};
                 (name.to_ascii_uppercase(),compile(&instantiate(description(name).map_err(GuestError::Decode)?,w),w))
+            }
+            0x86|0x87=>{
+                if opcode==0x86{w=8;}
+                let m=r.byte()?;
+                if m>>6!=3{return Err(GuestError::Decode("memory XCHG requires bus-atomic support; register forms only".into()));}
+                dst=view((m&7)as usize,w);src=view(((m>>3)&7)as usize,w);
+                (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
+            }
+            0x91..=0x97=>{
+                dst=view(0,w);src=view((opcode&7)as usize,w);
+                (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
             }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
             0x40..=0x4f=>{

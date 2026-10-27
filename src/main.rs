@@ -57,6 +57,8 @@ enum Token {
     UndefFlag(Flag),
     Select(usize, usize, usize, usize),
     WriteIf(usize, usize),
+    WriteSource(usize),
+    WriteSourceIf(usize,usize),
     Const(usize, Value),
     Extend(usize, usize, u8),
     SignExtend(usize, usize, u8),
@@ -100,6 +102,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let mut tokens = Vec::new();
     let mut retired = false;
     let mut wrote = false;
+    let mut wrote_src = false;
     let mut branched = false;
     let mut stored = false;
     let mut flags_seen = 0u32;
@@ -159,6 +162,17 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if widths[a]!=widths[b] {return Err("select arm width mismatch".into());}
                     let w=widths[a];
                     Token::Select(define(&mut names,&mut widths,out,w)?,c,a,b)
+                }
+                ["write", "src", input] | ["write_if", "src", input, _] => {
+                    let a=slot(&names,input)?;let w=widths[a];
+                    if ![8,16,32].contains(&w){return Err("source write width must be 8,16,32".into());}
+                    if source_width.is_some_and(|old|old!=w){return Err("inconsistent source binding widths".into());}
+                    source_width=Some(w);
+                    if wrote_src{return Err("multiple source writes".into());}wrote_src=true;
+                    if fields[0]=="write_if"{let c=slot(&names,fields[3])?;
+                        if widths[c]!=1{return Err("write_if predicate needs bv<1>".into());}
+                        Token::WriteSourceIf(a,c)
+                    }else{Token::WriteSource(a)}
                 }
                 ["write_if", "dst", input, predicate] => {
                     let a=slot(&names,input)?; let c=slot(&names,predicate)?;
@@ -329,6 +343,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_store:Option<(u32,MemWidth,u32)>=None;
     let mut values: Vec<Value> = p.widths.iter().map(|&w| value(0,w)).collect();
     let mut pending_dst = None;
+    let mut pending_src = None;
     let mut pending_flags = cpu.eflags;
     let mut pending_undefined = cpu.undefined_flags;
     for t in &p.tokens {
@@ -399,14 +414,23 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::Zero(o,a) => values[o] = value(u64::from(values[a].bits == 0),1),
             Token::Parity(o,a) => values[o] = value(u64::from((values[a].bits as u8).count_ones() % 2 == 0),1),
             Token::Write(a) => pending_dst = Some(values[a]),
+            Token::WriteSource(a)=>pending_src=Some(values[a]),
+            Token::WriteSourceIf(a,c)=>if values[c].bits!=0{pending_src=Some(values[a]);},
             Token::Flag(f,a) => { let m = 1u32 << f.bit();
                 pending_undefined &= !m;
                 pending_flags = (pending_flags & !m) | ((values[a].bits as u32) << f.bit()); }
             Token::Retire => {
+                if let(Some(a),Some(b))=(pending_dst,pending_src){
+                    let overlap=(mask(dst.width)<<dst.low)&(mask(src.width)<<src.low);
+                    if dst.register==src.register&&((a.bits<<dst.low)^(b.bits<<src.low))&overlap!=0{
+                        return Err(ExecError::InvalidBinding);
+                    }
+                }
                 if let Some((addr,w,v))=pending_store {
                     ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|access_error(cpu.eip,f))?;
                 }
                 if let Some(x) = pending_dst { cpu.write(dst,x); }
+                if let Some(x) = pending_src { cpu.write(src,x); }
                 cpu.eflags = pending_flags;
                 cpu.undefined_flags = pending_undefined;
                 cpu.eip = pending_eip;
@@ -457,6 +481,8 @@ fn description(name: &str) -> R<String> {
         "ror" => Some(include_str!("../isa/i386/ror.pil")),
         "clc" => Some(include_str!("../isa/i386/clc.pil")),
         "stc" => Some(include_str!("../isa/i386/stc.pil")),
+        "cmc" => Some(include_str!("../isa/i386/cmc.pil")),
+        "xchg" => Some(include_str!("../isa/i386/xchg.pil")),
         "adc" => Some(ADC), "sbb" => Some(SBB), "and" => Some(AND_DESC),
         "write_if_z" => Some(WRITE_IF_Z), "load_ram"=>Some(LOAD_RAM),
         "store_ram"=>Some(STORE_RAM), "add_ram"=>Some(ADD_RAM), _ => None,
@@ -472,7 +498,7 @@ fn description(name: &str) -> R<String> {
             return Ok(format!("{}\n{}",CONDITIONS,JCC.replace("$CONDITION", &format!("cond_{condition}"))));
         }
     }
-    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc, set<condition>, j<condition>, or write_if_z".into())
+    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc/cmc/xchg, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
     text.as_ref().replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
@@ -503,7 +529,8 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_eip = context.next_eip;\n\
          let mut pending_flags = *flags;\n\
          let mut pending_undefined = *undefined;\n\
-         let mut pending_dst: Option<u64> = None;\n",
+         let mut pending_dst: Option<u64> = None;\n\
+         let mut pending_src: Option<u64> = None;\n",
         p.operand_width,p.source_width,p.uses_displacement,p.uses_memory));
     for t in &p.tokens {
         let line = match *t {
@@ -547,9 +574,11 @@ fn emit_rust_functions(p:&Program)->String {
             Token::Zero(o,a) => format!("let v{o}: u64 = u64::from(v{a} == 0);"),
             Token::Parity(o,a) => format!("let v{o}: u64 = u64::from((v{a} as u8).count_ones() % 2 == 0);"),
             Token::Write(a) => format!("pending_dst = Some(v{a});"),
+            Token::WriteSource(a)=>format!("pending_src = Some(v{a});"),
+            Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nOk(())",mask(p.operand_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nif let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
@@ -652,6 +681,7 @@ fn main() -> R<()> {
         cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
     Ok(())
 }
+
 
 
 
