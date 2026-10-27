@@ -657,3 +657,11 @@ The isolated `dosprobe PATH [steps]` accepts FAT16 `.img`/`.ima` and `.zip`
 containers too. It probes executable candidates and one ZIP package level,
 removing byte-identical container copies. CLI `--dos-list INPUT` inspects;
 `--dos-extract INPUT NEW_DIRECTORY` extracts. See [container guide](CONTAINERS.md).
+
+## Memory PUSH (FF /6)
+
+Word/dword memory PUSH supports 16/32 address sizes and ModRM/SIB forms.
+The source uses incoming registers (including ESP), with ordinary default or
+overridden segments. SS stack width is independent of both prefixes. Flags
+are preserved; access faults preserve CPU, memory and retirement markers.
+Other FF extensions, including far CALL /3, have separate support limits.

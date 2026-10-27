@@ -90,14 +90,14 @@ impl Image {
         };
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;
+        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
             if opcode==0xff&&extension==2{call_indirect=Some(m);opcode=0xe8;}
             else if opcode==0x8f || extension==6{
                 if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
                 if m>>6!=3{
-                    if opcode==0x8f{memory_pop=Some(m);}else{return Err(GuestError::Decode("memory PUSH remains unsupported".into()));}
+                    if opcode==0x8f{memory_pop=Some(m);}else{memory_push=Some(m);}
                 }else{opcode=(if opcode==0x8f{0x58}else{0x50})|(m&7);}
             }else{r.pos-=1;}
         }
@@ -109,6 +109,13 @@ impl Image {
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0xff if memory_push.is_some()=>{
+                let m=memory_push.unwrap();
+                let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let text=description("push_memory").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("PUSH {}",operand_name(dst,address)),compile(&instantiate(text,w),w))
+            }
             0x8f=>{
                 let m=memory_pop.ok_or_else(||GuestError::Decode("invalid memory POP".into()))?;
                 let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});

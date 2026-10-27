@@ -227,3 +227,14 @@ The implementation was checked against the
 [FreeDOS AH30 handler](https://github.com/FDOS/kernel/blob/d6791add2043c9d7b584d840a8ffaf8829fd2bdc/kernel/inthndlr.c)
 for input AL,PSP version and serial fields. The implementation is original;
 no kernel code is copied and the shim does not claim to be FreeDOS.
+
+### Measured memory-PUSH progress (0.31)
+
+The actual FD14LITE.img was probed locally on Windows with 100000 steps.
+All sixteen FreeCom variants advanced from `FF 74 14` (memory PUSH /6) to
+`FF 1E 1F 02` (far CALL /3), twelve bytes later. Imports remain 151/156
+and exits remain six. The grouped `opcode ff` total is therefore unchanged;
+compare per-program stop details, bytes and CS:IP to measure this progress.
+The disk image and third-party programs are not bundled in the repository.
+
+Measured image SHA256: `f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36`.
