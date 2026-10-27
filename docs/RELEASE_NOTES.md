@@ -1,3 +1,11 @@
+# PIL 0.17.0-alpha.2
+
+- Add CMC (F5) through shared PIL semantics and binary decoding.
+- Preserve untouched state; document concrete incoming-CF metadata policy.
+- Add prefix/fetch-fault, generated-Rust and native CPU oracle coverage.
+- Windows/Linux CI40443065185 passed184 tests and332,728 native CPU cases per host;
+  all48 backend cases and full256x256 Mandelbrot comparisons passed.
+
 # PIL 0.17.0-alpha.1
 
 - Add register XCHG8/16/32 and accumulator exchange forms.

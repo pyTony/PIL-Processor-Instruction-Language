@@ -265,7 +265,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.17.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.17.0-alpha.2. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -576,7 +576,7 @@ PF/AF/ZF/SF and their metadata are preserved. Undefined OF uses PIL's concrete
 zero policy; it is not required to match an unspecified hardware value.
 
 CLC(F8) and STC(F9) clear/set CF and its undefined marker; all registers,other
-flags and other metadata remain unchanged. CMC,RCL/RCR and SHLD/SHRD remain
+flags and other metadata remain unchanged. RCL/RCR and SHLD/SHRD remain
 unimplemented. ROL/ROR memory destinations perform the same RMW permission
 checks as shifts even for zero counts; faults preserve CPU/RAM state.
 
@@ -597,3 +597,12 @@ writes must agree on their shared bits;otherwise InvalidBinding is returned
 before any RAM,register,flag,marker or EIP commit. Source binding widths
 remain independently validated. This is a two-binding foundation,not arbitrary
 implicit-register writes or ordered multi-store support.
+
+## Complement carry (0.17 alpha.2)
+
+CMC (F5) complements CF using the shared PIL description; registers, RAM and
+all other flags and diagnostic markers are preserved. Operand/address-size
+prefixes do not change its operation. LOCK is rejected by this decoder profile.
+Like ADC/SBB, CMC consumes the concrete incoming CF even when its diagnostic
+marker is set, then clears that marker on the defined CF write. This follows
+the concrete-value policy; symbolic uncertainty is not propagated.
