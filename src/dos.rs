@@ -139,14 +139,14 @@ fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
 }
 pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut output=Vec::new();let mut instructions=BTreeMap::new();
+    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut output=Vec::new();let mut instructions=BTreeMap::new();
     let mut cache=super::cache::DecodeCache::default();
     let stop=loop{
-        if completed==budget{break Stop::Budget;}
+        if execution_steps==budget{break Stop::Budget;}
         if let Ok(encoded)=bytes_at(&p,2){if encoded[0]==0xcd{
             let vector=encoded[1];let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
             match service(&mut p,vector,&mut output){
-                Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.ss_shadow=p.image.ss_shadow.saturating_sub(1);completed+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
+                Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.ss_shadow=p.image.ss_shadow.saturating_sub(1);completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{break Stop::Exit(code);}continue;},
                 Err(message)=>break Stop::Service(message),
             }
@@ -155,6 +155,7 @@ pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
             Ok(d)=>d,Err(GuestError::Execution(e))=>break Stop::Fault(format!("{e:?}")),
             Err(GuestError::Decode(detail))=>break if detail.starts_with("fetch outside loaded image"){Stop::Boundary(detail)}else{Stop::MissingEncoding{key:opcode_key(&site_bytes(&p)),detail}},
         };
+        let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
                 let mut machine=p.image.segment_state();let result=super::execute_machine(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine);
@@ -164,7 +165,12 @@ pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),
         };
         if let Err(e)=result{break Stop::Fault(format!("{e:?}"));}
-        completed+=1;pil_steps+=1;*instructions.entry(decoded.label.split_whitespace().next().unwrap_or("?").to_string()).or_insert(0)+=1;
+        execution_steps+=1;pil_steps+=1;
+        let repeated=matches!(&decoded.operation,Operation::Pil{program,..}if program.partial);
+        let partial=repeated&&p.cpu.eip==old_ip;
+        if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1;}
+        if !partial{completed+=1;let key=if repeated{decoded.label.clone()}else{decoded.label.split_whitespace().next().unwrap_or("?").to_string()};*instructions.entry(key).or_insert(0)+=1;}
+
     };
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
     let file_offset=linear.and_then(|a|a.checked_sub(p.module_base)).filter(|n|(*n as usize)<p.module_bytes).map(|n|n as usize+p.header_bytes);
@@ -214,8 +220,8 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     writeln!(report,"\nSUMMARY imported={imported}/{} exited={exited}; first missing-encoding blockers (program count):",total).unwrap();
     if blockers.is_empty(){report.push_str("none encountered on executed paths\n");}
     for(k,n)in ranked(&blockers){writeln!(report,"{n} {k}").unwrap();}
-    report.push_str("Reached instruction mix (executed count; DOS bridges listed separately):\n");
+    report.push_str("Reached instruction mix (retired instructions; REP elements and DOS bridges listed separately):\n");
     for(k,n)in ranked(&mix).into_iter().take(20){writeln!(report,"{n} {k}").unwrap();}
-    report.push_str("Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.\n");
+    report.push_str("Budget counts execution steps (including REP elements);completed counts fully retired instructions.\nStops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.\n");
     Ok(report)
 }

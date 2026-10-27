@@ -97,6 +97,21 @@ pub fn cases()->Result<Vec<Case>,String> {
     let t=case("moffs_addr32",vec![0x67,0xc7,0x05,0,8,0,0,0x34,0x12,0x67,0xa1,0,8,0,0,0xf4])?;tests.push(t);
     let mut t=case("mov_imm_readonly",vec![0xc7,0x06,0,8,0x34,0x12,0xf4])?;t.protect=Some((0x900,2));tests.push(t);
     let t=case("moffs_boundary",vec![0xa1,0xff,0xff,0xf4])?;tests.push(t);
+    for big in [false,true]{for w in [16,32]{
+        let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.push(0xe8);bytes.push(1);bytes.extend(vec![0;(w/8-1)as usize]);bytes.push(0xf4);if w==32{bytes.push(0x66);}bytes.extend([0xb8,0x34,0x12]);if w==32{bytes.extend([0x78,0x56]);bytes.push(0x66);}bytes.push(0xc3);
+        let mut t=case(match(big,w){(false,16)=>"calls16_16",(false,_)=>"calls16_32",(true,16)=>"calls32_16",_=>"calls32_32"},bytes)?;t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.flags=0xed7;tests.push(t);
+    }}
+    let mut t=case("call_register",vec![0xff,0xd0,0xf4,0x90,0x90,0x41,0xc3])?;t.regs[0]=0x105;t.regs[4]=0x800;tests.push(t);
+    let mut t=case("call_memory",vec![0xff,0x16,0,8,0xf4,0x41,0xc3])?;t.regs[4]=0x800;t.patch=Some((0x900,vec![5,1]));tests.push(t);
+    let mut t=case("call_readonly",vec![0xe8,0,0,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
+    let mut t=case("ret_target_fault",vec![0xc3,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,3]));t.image.segments[1].limit=0x200;tests.push(t);
+    for w in [8,16,32]{for addr32 in [false,true]{
+        let mut bytes=Vec::new();for op in [0xa4u8,0xaa,0xac]{if addr32{bytes.extend([0x66,0xb9,2,0,0,0]);}else{bytes.extend([0xb9,2,0]);}if w==32{bytes.push(0x66);}if addr32{bytes.push(0x67);}bytes.extend([0xf3,op|u8::from(w!=8)]);}bytes.push(0xf4);
+        let mut t=case(match(w,addr32){(8,false)=>"strings8_16",(8,true)=>"strings8_32",(16,false)=>"strings16_16",(16,true)=>"strings16_32",(32,false)=>"strings32_16",_=>"strings32_32"},bytes)?;t.regs[0]=0x12345678;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,(0..64u8).collect()));t.flags=0xad7;tests.push(t);
+    }}
+    let mut t=case("rep_backward",vec![0xf3,0xa5,0xf4])?;t.regs[1]=3;t.regs[6]=0x810;t.regs[7]=0xa10;t.flags=0xed7;t.patch=Some((0x900,(0..64u8).collect()));tests.push(t);
+    let mut t=case("rep_partial_fault",vec![0xf3,0xa4,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![10,20,30]));t.protect=Some((0xa01,1));t.image.ss_shadow=1;tests.push(t);
+    let mut t=case("rep_zero",vec![0xf3,0xa4,0xf4])?;t.regs[1]=0xabcd0000;t.image.segments[0].access=super::address::SegmentAccess::Unusable;t.image.segments[3].access=super::address::SegmentAccess::Unusable;tests.push(t);
     let mut t=case("direction_controls",vec![0xfd,0xfd,0x66,0xfc,0x67,0xfd,0x2e,0xfc,0xf4])?;t.flags=0xed7;t.regs=[0x12345678;8];tests.push(t);
     let mut t=case("byte_flags",vec![0x9f,0xb4,0xd5,0x9e,0x9f,0xb4,0x2a,0x66,0x9e,0x67,0x9f,0xf4])?;t.flags=0xad7;t.regs[0]=0x12345678;tests.push(t);
     for w in [8,16,32]{
@@ -286,7 +301,7 @@ fn proof_at(directory:&Path,iterations:u32,samples:u32)->Result<Proof,String> {
 }
 pub fn verify_at(directory:&Path)->Result<String,String> {
     let proof=proof_at(directory,16,2)?;
-    Ok(format!("PASS: verifier matched CPU/RAM/serial and stop metadata byte-for-byte after every instruction across {} cases ({} trace bytes).\n{}No benchmark was run. Generated build={:.3} s. Artifacts: {}",proof.count,proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
+    Ok(format!("PASS: verifier matched CPU/RAM/serial and stop metadata byte-for-byte after every execution step across {} cases ({} trace bytes).\n{}No benchmark was run. Generated build={:.3} s. Artifacts: {}",proof.count,proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
 }
 pub fn compare_at(directory:&Path,iterations:u32,samples:u32)->Result<String,String> {
     let proof=proof_at(directory,iterations,samples)?;
@@ -298,7 +313,7 @@ pub fn compare_at(directory:&Path,iterations:u32,samples:u32)->Result<String,Str
     let native_ms=median_ns as f64/1e6;let native_ips=if median_ns==0{0.0}else{(3*iterations+3) as f64*1e9/median_ns as f64};
     let ratio=if median_ns==0{0.0}else{median/(median_ns as f64/1e9)};
     let cpu=cpu_benchmark(iterations,samples)?;
-    Ok(format!("PASS: generated Rust matches interpreter byte-for-byte after every instruction across {} cases ({} trace bytes).\n{}\n{timed}\n{interpreter}\nGenerated Rust median={native_ms:.3} ms; {native_ips:.0} guest instructions/s; observed ratio={ratio:.2}x vs cached interpreter.\nGenerated build={:.3} s (excluded from samples); rustc -O, fixed-image guarded dispatch, black_box per step. No JIT; debugger remains token-interpreted.\n{cpu}\nArtifacts: {}",proof.count,proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
+    Ok(format!("PASS: generated Rust matches interpreter byte-for-byte after every execution step across {} cases ({} trace bytes).\n{}\n{timed}\n{interpreter}\nGenerated Rust median={native_ms:.3} ms; {native_ips:.0} guest instructions/s; observed ratio={ratio:.2}x vs cached interpreter.\nGenerated build={:.3} s (excluded from samples); rustc -O, fixed-image guarded dispatch, black_box per step. No JIT; debugger remains token-interpreted.\n{cpu}\nArtifacts: {}",proof.count,proof.bytes,proof.stdout,proof.compile_secs,directory.display()))
 }
 fn artifact_directory()->Result<PathBuf,String> {
     let root=PathBuf::from(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(||"target".into()));

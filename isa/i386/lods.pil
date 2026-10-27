@@ -1,0 +1,13 @@
+read_flag backward DF
+const step $A $BYTES
+const zero $A 0
+sub backwards zero step
+select stride backward backwards step
+read_gpr si 6 $A
+zext source si 32
+load_segment element $SEG source $W
+add new_si si stride
+write_gpr 6 new_si
+write_gpr 0 element
+preserve_flags all
+retire
