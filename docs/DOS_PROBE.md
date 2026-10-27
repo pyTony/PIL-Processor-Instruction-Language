@@ -98,6 +98,15 @@ retires without a data access. A later fault preserves earlier element progress.
 as if all were instructions. Fix a common blocker and rerun the same corpus to
 reveal the next one. Dynamic paths, inputs and loops affect the frequencies.
 
+## Real-mode CS data access
+
+Ordinary COM/MZ CS caches permit data reads and writes, including CS overrides
+used by startup and unpacking code. Segment limits and RAM write protection
+still apply. Modified instruction bytes invalidate the interpreter decode cache
+on reuse. The bounded loaded-image fetch window remains: this does not yet let
+unpacked code execute outside that window. Explicit protected Code caches keep
+their read/write restrictions. Fixed compiled images retain changed-code guards.
+
 ## Loader and service contract
 
 - The probe places a minimal PSP at segment1000h in zero-filled conventional
