@@ -1,3 +1,31 @@
+# DOS executable import/probe — 27 October 2026
+
+0.19alpha.1 adds bounded COM and MZ/ZM EXE import,word relocations,min/max
+allocation checks,minimal PSP,COM/MZ entry state,and a diagnostic interpreter
+runner. --write-dos-hello com|exe PATH creates original fixtures;--dos-probe
+[--steps N] PATH... reports first blockers and reached mix. REPL dosprobe
+runs in isolation. DOS INT21/AH09,AH4C and INT20 are explicit host bridges,
+not CPU INT/IRET or a DOS kernel. CPU gaps,service gaps,faults,boundaries and
+budgets are separate;no unknown-byte skipping/static data scanning/coverage
+percentage. An independent relocated-startup fixture stops on MOV DS,AX8E D8.
+
+Expected200 Rust tests (12 new),existing49 backend cases and340,920 native
+cases unchanged;DOS probing has no generated-Rust execution path yet.
+Independent CLI script plus standalone/export/native-package hello checks added.
+83 runtime files expected. Local Python syntax/export/Markdown checks passed;
+Rust execution and hosted Windows/Linux checks are pending. No new native
+DOS/386 hardware-oracle pass is claimed. No external executables/code imported.
+Sources/limits/commands are in docs/DOS_PROBE.md.
+
+PR21 merged:main3051f190 is0.18alpha.1. User phone Android/aarch64 reported
+49 cases matching4,983,058 bytes includingbyte_flags7steps. Generated0.336038ms
+(89,284,545guest ins/s),cached7.192ms(4,171,696/s),21.40x at10000/5.
+Generated build23.544s excluded;nativeCPU baseline unavailable onARM as expected.
+This is user-reported correctness/timing,not native386 validation orcycle data.
+
+Publish dev and complete CI;prepare a strict runtime PR from currentmain.
+User authorized project source/tests/docs/runtime uploads;user reviews/merges.
+
 # LAHF/SAHF verified — 27 October 2026
 
 Windows/Linux CI40446250754 passed atf2056e697e8d5dff5d5001ffb3f0176e7a8e64ab:

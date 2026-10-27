@@ -1730,6 +1730,27 @@
         "runtime_packages": "81-file standalone source and unpacked native delivery passed on both hosts",
         "arm": "not executed for this increment"
       }
+    },
+    {
+      "version": "0.19.0-alpha.1",
+      "date": "2026-10-27",
+      "status": "implemented;CI pending",
+      "features": [
+        "bounded COM/MZ importer and relocations",
+        "minimal DOS print/exit host shim",
+        "first-blocker corpus ranking and reached mix",
+        "original DOS hello and independent CLI fixtures",
+        "isolated REPL dosprobe"
+      ],
+      "expected_rust_tests": 200,
+      "backend_cases": 49,
+      "runtime_export_files": 83,
+      "limits": [
+        "no full DOS/BIOS or CPU INT/IRET",
+        "interpreter-only DOS probe",
+        "fixed PSP/conventional-memory and code-window limits",
+        "stops at first blocker;not whole-program coverage"
+      ]
     }
   ]
 }

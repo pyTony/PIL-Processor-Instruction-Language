@@ -12,6 +12,7 @@ provides the map to all language, design, verification and planning documents.
 | Read this | What it covers |
 |---|---|
 | [PIL language reference](docs/PIL_REFERENCE.md) | Executable syntax, types, effects and Rust emission |
+| [DOS COM/EXE probe](docs/DOS_PROBE.md) | Load original DOS examples or your programs; report instruction/service blockers |
 | [Debugger guide](docs/DEBUGGER.md) | Start the debugger, commands, demos, memory and serial; supported encodings |
 | [Feature matrix](docs/FEATURE_MATRIX.md) | Implemented, partial and planned emulator features |
 | [Release notes](docs/RELEASE_NOTES.md) | Changes in this delivery and earlier versions |
@@ -269,7 +270,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.18.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.19.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -625,3 +626,13 @@ native x86-64 oracle checks CPUID.80000001H:ECX bit0 before executing them;
 missing feature support is explicitly reported and does not remove guest386
 support. Runtime source includes docs/PIL_REFERENCE.md; native archives include
 PIL_REFERENCE.md. The complete documentation map is linked from their READMEs.
+
+## DOS executable probe (0.19 alpha)
+
+Use `--dos-probe [--steps N] file.com file.exe` for bounded DOS import and
+execution diagnostics. `--write-dos-hello com|exe PATH` creates original hello
+fixtures without overwriting files; `dosprobe PATH [steps]` runs an isolated
+probe from the REPL. This is separate from raw monitor `load` and uses a small
+host DOS-call bridge for print/exit, not a full DOS or CPU interrupt engine.
+
+See the [DOS probe guide](docs/DOS_PROBE.md) for commands, loader limits and report meanings.

@@ -665,3 +665,14 @@ native x86-64 oracle checks CPUID.80000001H:ECX bit0 before executing them;
 missing feature support is explicitly reported and does not remove guest386
 support. Runtime source includes docs/PIL_REFERENCE.md; native archives include
 PIL_REFERENCE.md. The complete documentation map is linked from their READMEs.
+
+## DOS import/probe (0.19 alpha)
+
+`dosprobe PATH [steps]` imports and runs an isolated DOS COM or MZ EXE and
+reports its first blocker and reached instruction mix. The current debugger
+program, CPU and RAM are preserved. CLI `--dos-probe [--steps N] PATH...`
+accepts multiple paths and ranks first missing encodings across the corpus.
+`--write-dos-hello com|exe PATH` creates new original DOS hello fixtures.
+See [DOS probe guide](DOS_PROBE.md). A minimal print/exit shim is separate
+from CPU interrupt execution and DOS/BIOS platform support. Raw `load`
+continues to use the original monitor environment.

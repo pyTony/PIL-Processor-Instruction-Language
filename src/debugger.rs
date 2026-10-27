@@ -337,6 +337,7 @@ impl Debugger {
             ["help"]=>concat!(
                 "help | demo counter|echo|memory|selftest|hello|factorials|loop|mandelbrot|extensions | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
                 "list [count 1..256] | list <address> <count> (bytes, operands, branch targets; * marks EIP)\n",
+                "dosprobe <com|exe path> [steps] (isolated DOS import/run/report; preserves current debugger)\n",
                 "cache [stats|on|off|clear] (binary monitor)\n",
                 "time [steps 1..1000000] | bench [iterations 1..100000] [samples 1..9] | stress [passes 1..1000]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",
@@ -349,6 +350,8 @@ impl Debugger {
             ["quit"]|["exit"]=>return Ok(("bye".into(),true)),
             ["demo",name]=>{self.load_demo(name)?;format!("loaded {} at EIP={:08x}",self.demo,self.cpu.eip)}
             ["load",path]=>{let bytes=std::fs::read(path).map_err(|e|e.to_string())?;self.load_image(&bytes,path)?;format!("loaded {} guest bytes at EIP=00000100",bytes.len())}
+            ["dosprobe",path]=>super::dos::report(&[path.to_string()],10000)?,
+            ["dosprobe",path,budget]=>super::dos::report(&[path.to_string()],usize::try_from(number(budget)?).map_err(|_|"budget out of range")?)?,
             ["check"]=>self.check_current()?,
             ["list"]=>self.listing(self.cpu.eip,16)?,
             ["list",count]=>self.listing(self.cpu.eip,number(count)?)?,

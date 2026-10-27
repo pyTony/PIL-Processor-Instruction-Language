@@ -12,6 +12,7 @@ with links to all references, examples, user guides, verification plans and hist
 - [Original design proposal](docs/design/processor_instruction_language_v01.md): broader architecture and planned features.
 - [Executable instruction descriptions](isa/i386/): the actual PIL definitions.
 - [Debugger guide](docs/DEBUGGER.md): running programs and inspecting execution.
+- [DOS COM/EXE probe](docs/DOS_PROBE.md): import hello-world programs and rank reached instruction gaps.
 
 ## Built-in demos
 
@@ -624,3 +625,13 @@ native x86-64 oracle checks CPUID.80000001H:ECX bit0 before executing them;
 missing feature support is explicitly reported and does not remove guest386
 support. Runtime source includes docs/PIL_REFERENCE.md; native archives include
 PIL_REFERENCE.md. The complete documentation map is linked from their READMEs.
+
+## DOS executable probe (0.19 alpha)
+
+Use `--dos-probe [--steps N] file.com file.exe` for bounded DOS import and
+execution diagnostics. `--write-dos-hello com|exe PATH` creates original hello
+fixtures without overwriting files; `dosprobe PATH [steps]` runs an isolated
+probe from the REPL. This is separate from raw monitor `load` and uses a small
+host DOS-call bridge for print/exit, not a full DOS or CPU interrupt engine.
+
+See the [DOS probe guide](docs/DOS_PROBE.md) for commands, loader limits and report meanings.

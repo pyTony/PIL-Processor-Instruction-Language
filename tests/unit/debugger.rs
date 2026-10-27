@@ -372,3 +372,10 @@ fn extensions_demo_runs_lists_and_checks_new_instruction_forms(){
     let (done,stop)=d.run(1000).unwrap();assert_eq!(done,15);assert!(matches!(stop,Stop::Halt(_)));
     assert!(d.command("check").unwrap().0.starts_with("PASS: extensions"));
 }
+
+#[test]
+fn isolated_dos_probe_preserves_current_debugger_even_on_import_error(){
+    let mut d=Debugger::new("counter").unwrap();let old=d.cpu.clone();let ram=d.ram.clone();let demo=d.demo.clone();
+    let(text,_)=d.command("dosprobe missing-dos-probe-test-file.com 100").unwrap();assert!(text.contains("IMPORT ERROR"));assert_eq!(d.cpu,old);assert_eq!(d.ram,ram);assert_eq!(d.demo,demo);
+    assert!(d.command("dosprobe missing.com 0").is_err());assert_eq!(d.cpu,old);
+}

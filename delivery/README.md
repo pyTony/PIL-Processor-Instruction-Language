@@ -7,6 +7,7 @@ provides the map to all language, design, verification and planning documents.
 | Read this | What it covers |
 |---|---|
 | [PIL language reference](PIL_REFERENCE.md) | Executable syntax, types, effects and Rust emission |
+| [DOS COM/EXE probe](DOS_PROBE.md) | Load original DOS examples or your programs; report instruction/service blockers |
 | [Debugger guide](DEBUGGER.md) | Start the debugger, commands, demos, memory and serial; supported encodings |
 | [Feature matrix](FEATURE_MATRIX.md) | Implemented, partial and planned emulator features |
 | [Release notes](RELEASE_NOTES.md) | Changes in this delivery and earlier versions |
@@ -426,3 +427,13 @@ sources still perform a real word read with normal segment/RAM checks, including
 read-only sources. A same-register instruction is not skipped, so fetch and
 memory checks retain their normal behavior. In16-bit operand size,0F BF F8
 selects DI,AX;0F BF FF selects DI,DI.
+
+## DOS executable probe (0.19 alpha)
+
+Use `--dos-probe [--steps N] file.com file.exe` for bounded DOS import and
+execution diagnostics. `--write-dos-hello com|exe PATH` creates original hello
+fixtures without overwriting files; `dosprobe PATH [steps]` runs an isolated
+probe from the REPL. This is separate from raw monitor `load` and uses a small
+host DOS-call bridge for print/exit, not a full DOS or CPU interrupt engine.
+
+See the [DOS probe guide](DOS_PROBE.md) for commands, loader limits and report meanings.

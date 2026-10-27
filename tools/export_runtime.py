@@ -27,6 +27,7 @@ def export(destination,source_ref):
             files[relative]=data
     for source,target in DOCUMENTS.items():files[target]=(ROOT/'delivery/source'/source).read_bytes()
     files['docs/PIL_REFERENCE.md']=(ROOT/'docs/LANGUAGE.md').read_bytes()
+    files['docs/DOS_PROBE.md']=(ROOT/'docs/DOS_PROBE.md').read_bytes()
     files['.gitignore']=b'/target/\n'
     version=re.search(r'^version = "([^"]+)"',(ROOT/'Cargo.toml').read_text(),re.M)[1]
     files['DELIVERY.json']=(json.dumps({'version':version,'source_commit':source_ref,
@@ -63,6 +64,13 @@ def verify(destination):
     subprocess.run([os.environ.get('RUSTC','rustc'),'--edition=2021','--crate-type','lib',str(source),'--out-dir',str(destination/'target')],cwd=destination,env=env,check=True,capture_output=True)
     subprocess.run([str(exe),'--compare-backends','16','2'],cwd=destination,env=env,check=True)
     subprocess.run([str(exe),'--mandelbrot','8','8'],cwd=destination,env=env,check=True)
+    com=destination/'target/dos-hello.com';mz=destination/'target/dos-hello.exe'
+    for kind,path in [('com',com),('exe',mz)]:
+        subprocess.run([str(exe),'--write-dos-hello',kind,str(path)],cwd=destination,env=env,check=True)
+    dos=subprocess.check_output([str(exe),'--dos-probe',str(com),str(mz)],cwd=destination,env=env,text=True)
+    if 'SUMMARY imported=2/2 exited=2' not in dos or dos.count('OUTPUT (escaped bytes): Hello, DOS!\\r\\n')!=2:
+        raise SystemExit('standalone DOS probe failed:\n'+dos)
+    print('Standalone DOS COM/MZ hello import and execution passed')
     print('Standalone runtime build, launchers, serial transcript and compiled backend comparison passed')
 
 if __name__=='__main__':
