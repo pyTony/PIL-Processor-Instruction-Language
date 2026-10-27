@@ -89,8 +89,12 @@ registers and CS:IP show where execution reached, including after prior writes.
 
 The missing-encoding histogram counts programs blocked by each first opcode,
 not an estimate of every missing instruction in those programs. The reached
-instruction mix counts successful PIL instructions and lists bridged DOS calls
-separately. Unknown encodings are never skipped; code/data bytes are not scanned
+instruction mix counts fully retired instructions and lists bridged DOS calls
+separately. The per-program step budget includes REP element steps (and bridged
+services), so large repeats cannot bypass it. PIL execution counts include each
+element; completed counts include the REP instruction only after full retirement.
+Separate REP element mix entries count committed elements; zero-count REP
+retires without a data access. A later fault preserves earlier element progress. Unknown encodings are never skipped; code/data bytes are not scanned
 as if all were instructions. Fix a common blocker and rerun the same corpus to
 reveal the next one. Dynamic paths, inputs and loops affect the frequencies.
 

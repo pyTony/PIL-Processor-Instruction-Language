@@ -187,7 +187,7 @@
         "POP"
       ],
       "status": "partial",
-      "remaining": "Register/immediate PUSH,register POP and real-mode segment PUSH/POP implemented. Memory stack operands and general per-access addressing remain.",
+      "remaining": "Register/immediate PUSH, register POP and real-mode segment PUSH/POP implemented. Per-access segment effects now exist; memory stack operand decoding remains.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -212,8 +212,8 @@
         "CALL",
         "RET"
       ],
-      "status": "planned",
-      "remaining": "Near relative/indirect calls,returns,immediate cleanup and faults",
+      "status": "partial",
+      "remaining": "Near E8/FF2 CALL and C3/C2 RET implemented and backend-verified; independent operand/SS sizes, target snapshots, cleanup bytes and faults checked. Full mode/prefix/hardware audit remains.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -427,8 +427,8 @@
         "LODSW",
         "LODSD"
       ],
-      "status": "planned",
-      "remaining": "Single element,DF,pointer sizes,source override and ES rules",
+      "status": "partial",
+      "remaining": "MOVS/STOS/LODS8/16/32 with address16/32, DF, source overrides/fixed ES and faults implemented and backend-verified. Full mode/prefix/hardware audit remains.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -460,8 +460,8 @@
         "REPNE",
         "REPNZ"
       ],
-      "status": "planned",
-      "remaining": "Element progress,count0,ZF stop and interrupt/fault restart",
+      "status": "partial",
+      "remaining": "F3 REP MOVS/STOS/LODS has zero-count guard, per-element progress, fault retry and bounded execution budget. ZF repeats, F2, CMPS/SCAS and external interrupt delivery remain.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,12 +769,12 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.24.0-alpha.1",
-    "status": "Additional MOV forms verified Windows/Linux CI40500511068;per-access contexts,CALL/RET and strings remain.",
+    "version": "0.25.0-alpha.1",
+    "status": "Near CALL/RET and REP movement verified Windows/Linux CI40511872914; full mode/prefix/hardware audit and remaining string/interrupt work remain.",
     "verified_native_cases_before_direction_followup": 340920,
     "verified_trace_cases_before_direction_followup": 49,
     "expected_trace_cases_with_direction_followup": 50,
-    "verified_rust_tests": 235,
-    "verified_trace_cases": 67
+    "verified_rust_tests": 243,
+    "verified_trace_cases": 84
   }
 }

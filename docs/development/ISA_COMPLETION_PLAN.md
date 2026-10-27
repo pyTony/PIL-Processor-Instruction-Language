@@ -176,3 +176,15 @@ operations. Address/operand sizes remain independent. CI40500511068 passed235 te
 67 backend cases on Windows/Linux. P1 encoding audit remains partial;segment
 MOV limitations are unchanged. Next establish per-access addressing for stack
 memory/near calls and one-element strings,before restartable REP.
+
+## Near calls and restartable movement (0.25)
+
+Shared per-access segment memory now supports near relative/indirect CALL,
+RET with byte cleanup,and MOVS/STOS/LODS with F3 REP. Each REP element is a
+bounded execution step; earlier elements survive faults and retry resumes at
+the first unfinished element. Address size controls count/pointers, operand
+size controls data and SS size controls stack addressing. CI40511872914 passed243
+tests and84 full-state backend cases on Windows/Linux. These are partial P2/P5
+results,not full family completion. Next use measured first blockers to choose
+among flags,remaining strings,indirect flow and DOS service work; preserve
+independent fault/retirement tests. Interrupt delivery and far transfers remain.

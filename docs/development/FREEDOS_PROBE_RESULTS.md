@@ -146,3 +146,49 @@ Reached instruction mix (executed count; DOS bridges listed separately):
 1 SHR
 Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.
 ```
+
+## Near CALL/RET and REP movement: local Linux CI runtime probe
+
+Linux CI artifact b0ab7c81 probed unchanged FD14LITE.img locally with10,000
+execution steps per program. Stops: {'MissingEncoding': 27, 'Budget': 21, 'Boundary': 19, 'Service': 51, 'Fault': 27, 'Exit': 6}.
+Step budgets include REP elements; completed counts full instruction retirement.
+Previous0.24 results:96 encoding stops,44 service stops,8 faults,3 exits.
+Image SHA256:f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36. No image/programs uploaded to CI or committed.
+No new ARM/new-instruction hardware run; these are first-blocker paths only.
+
+```text
+SUMMARY imported=151/156 exited=6; first missing-encoding blockers (program count):
+16 opcode fb
+8 opcode 9c
+3 opcode e3
+Reached instruction mix (retired instructions; REP elements and DOS bridges listed separately):
+193431 REP MOVSW elements
+116427 REP MOVSB elements
+49996 REP STOSB elements
+597 MOV
+147 PUSH
+105 ADD
+76 JMP
+69 CLD
+63 CMP
+53 CALL
+52 STD
+47 POP
+38 SUB
+34 JNE
+33 JB
+31 TEST
+30 RET
+27 JA
+27 XOR
+24 MOVSB
+Budget counts execution steps (including REP elements);completed counts fully retired instructions.
+Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.
+```
+
+Six termination paths: prior JEMFBHLP/MOVEXBDA usage exits0 and VCHKBOX placeholder
+exit36, plus UMBM exit0, CTMOUSE/PROTOCOL exit0 and CALLVER exit255. These do not
+establish full application functionality. New budget stops remain inside REP;
+boundary examples fetch copied code beyond the imported window. Fault examples
+reach writes through CS, which the current segment model rejects. These are
+separate loader/model limitations exposed by further execution, not decoder gaps.

@@ -1,3 +1,23 @@
+# Near CALL/RET and REP movement verified — 27 October 2026
+
+Windows/Linux CI40511872914 passed on b0ab7c8159ac107895161cb0bfe331e5fef6d728:
+243 tests per host,84 full-state backend cases (5,816,602 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone96-file runtime
+source/native-package checks. These new instructions have independent expected-
+state tests and interpreter/generated-Rust comparisons;no new hardware-oracle or
+ARM run is claimed. The first run passed242 tests and failed only an old test
+that expected CALL AX unsupported;it now checks the invalid far-register form.
+
+Near E8/FF2 CALL and C3/C2 RET use shared per-access segment effects,independent
+operand/SS sizes,pre-write target snapshots and transactional stack faults.
+MOVS/STOS/LODS8/16/32 support both address sizes,DF and source overrides/fixed ES.
+F3 REP commits one element per execution step;zero count avoids data accesses,
+fault retry retains prior progress,and SS shadow retires only at completion.
+DOS budgets include element steps;completed instructions count full retirements.
+No far calls,CMPS/SCAS/F2,external interrupt delivery or compiled changed-code
+fallback is claimed. Memory PUSH/POP and broader mode/prefix audits remain.
+The0.25 follow-up changes only versions/docs/evidence after verification.
+
 # Additional MOV forms verified — 27 October 2026
 
 Windows/Linux CI40500511068 passed ate74c95100ee5fff346b229a2c4cf45643ad25922:
