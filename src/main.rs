@@ -32,17 +32,17 @@ enum Shift { Left, Right, Arithmetic }
 #[derive(Clone, Copy, Debug)]
 enum Binary { Add, Sub, Mul, Xor, And, Or }
 #[derive(Clone, Copy, Debug)]
-enum Flag { CF, PF, AF, ZF, SF, OF }
+enum Flag { CF, PF, AF, ZF, SF, DF, OF }
 impl Flag {
     fn bit(self) -> u8 { match self {
         Self::CF => 0, Self::PF => 2, Self::AF => 4,
-        Self::ZF => 6, Self::SF => 7, Self::OF => 11,
+        Self::ZF => 6, Self::SF => 7, Self::DF => 10, Self::OF => 11,
     }}
 }
 fn parse_flag(name: &str) -> R<Flag> {
     match name {
         "CF" => Ok(Flag::CF), "PF" => Ok(Flag::PF), "AF" => Ok(Flag::AF),
-        "ZF" => Ok(Flag::ZF), "SF" => Ok(Flag::SF), "OF" => Ok(Flag::OF),
+        "ZF" => Ok(Flag::ZF), "SF" => Ok(Flag::SF), "DF" => Ok(Flag::DF), "OF" => Ok(Flag::OF),
         _ => Err(format!("unknown flag: {name}")),
     }
 }
@@ -292,7 +292,8 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
         tokens.push(parsed.map_err(|e| format!("line {}: {e}",line_no+1))?);
     }
     if !retired { return Err("missing retire".into()); }
-    if flags_seen != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
+    // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
+    if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
     let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)));
@@ -483,6 +484,8 @@ fn description(name: &str) -> R<String> {
         "rol" => Some(include_str!("../isa/i386/rol.pil")),
         "ror" => Some(include_str!("../isa/i386/ror.pil")),
         "clc" => Some(include_str!("../isa/i386/clc.pil")),
+        "cld" => Some(include_str!("../isa/i386/cld.pil")),
+        "std" => Some(include_str!("../isa/i386/std.pil")),
         "stc" => Some(include_str!("../isa/i386/stc.pil")),
         "cmc" => Some(include_str!("../isa/i386/cmc.pil")),
         "lahf" => Some(include_str!("../isa/i386/lahf.pil")),
@@ -503,7 +506,7 @@ fn description(name: &str) -> R<String> {
             return Ok(format!("{}\n{}",CONDITIONS,JCC.replace("$CONDITION", &format!("cond_{condition}"))));
         }
     }
-    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc/cmc/lahf/sahf/xchg, set<condition>, j<condition>, or write_if_z".into())
+    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc/cmc/cld/std/lahf/sahf/xchg, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
     text.as_ref().replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
@@ -711,6 +714,7 @@ fn main() -> R<()> {
         cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
     Ok(())
 }
+
 
 
 
