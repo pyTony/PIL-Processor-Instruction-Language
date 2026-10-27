@@ -8,6 +8,7 @@ use memory::{Ram, MemWidth};
 mod serial;
 mod debugger;
 mod guest;
+mod dos;
 mod cache;
 mod native;
 mod trace;
@@ -596,6 +597,23 @@ fn emit_rust_functions(p:&Program)->String {
     out.push_str("}\n// Compatibility helper: discards diagnostic undefined-flag metadata.\npub fn execute(regs: &mut [u32;8], flags: &mut u32, dst: (usize,u8), src: (usize,u8)) -> Result<(), &'static str> {\nlet mut undefined = 0; execute_with_metadata(regs,flags,&mut undefined,dst,src)\n}\n"); out
 }
 fn main() -> R<()> {
+    let dos_args:Vec<_>=std::env::args().collect();
+    if dos_args.get(1).map(String::as_str)==Some("--write-dos-hello"){
+        if dos_args.len()!=4{return Err("usage: pil-proof --write-dos-hello com|exe PATH (new file only)".into());}
+        let bytes=dos::hello(&dos_args[2])?;
+        use std::io::Write;
+        let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
+        f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
+        let mut at=2;let mut budget=10000;
+        if dos_args.get(at).map(String::as_str)==Some("--steps"){
+            let n=dos_args.get(at+1).ok_or("--steps requires a budget")?;
+            budget=usize::try_from(number(n)?).map_err(|_|"budget out of range")?;at+=2;
+        }
+        println!("{}",dos::report(&dos_args[at..],budget)?);return Ok(());
+    }
+
     let args: Vec<_> = std::env::args().collect();
     if matches!(args.get(1).map(String::as_str),Some("--mandelbrot"|"--compare-mandelbrot")) {
         if args.len()>4{return Err("usage: pil-proof --mandelbrot|--compare-mandelbrot [size 2..256 power of two] [iterations 1..64]".into());}

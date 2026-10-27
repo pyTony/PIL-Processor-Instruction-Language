@@ -205,3 +205,16 @@ were consulted for byte layout, unchanged flags and long-mode CPUID gating:
 https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2a-manual.pdf
 https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf
 PIL diagnostic metadata behavior is the project's concrete-state policy.
+
+## DOS executable probe
+
+Original importer, diagnostic runner, tiny COM/MZ hello programs and tests;
+no external DOS executables, emulator code, manuals or RBIL text imported.
+Consulted primary Microsoft MS-DOS header/EXEC source and archived Microsoft
+Programmer's Reference for entry/relocation layout; RBIL for AH09 AL24 behavior:
+https://github.com/microsoft/MS-DOS/blob/main/v4.0/src/DOS/EXEC.ASM
+https://github.com/microsoft/MS-DOS/blob/main/v2.0/source/DOSSYM.ASM
+https://www.pcjs.org/documents/books/mspl13/msdos/dosref33/
+https://delorie.com/djgpp/doc/rbinter/id/73/25.html
+The service bridge is a narrow host shim, not a guest DOS kernel or general
+CPU interrupt implementation. License selection for this project is unchanged.
