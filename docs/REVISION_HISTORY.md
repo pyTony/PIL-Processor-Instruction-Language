@@ -710,7 +710,20 @@ All256 count bytes cross boundary inputs; deterministic random pairs and both
 carry/metadata states remain. Count-zero preserves flags/markers; active shift
 undefined masks depend independently on masked count and width. IMUL compares
 only CF/OF to hardware and checks its other four zero/undefined PIL outputs.
-Expected226,008 hardware cases/50 encoding variants/23 harness checks and169
-Rust tests. Hosted execution pending. No runtime change for this slice.
+CI40422881682 passed on Windows/Linux:226,008 hardware cases/50 variants,
+23 harness checks and169 tests per host. Source811af3596bdd5157cff8c3f3c9769de2b8f91b0a.
+No runtime change in this verified first slice.
 Next candidate: rotate descriptions/decoder/forms with independent oracles.
 Keep new runtime work ondev; prepare a strict delivery PR only after checks.
+
+## 0.16 rotates and carry constants supplied —27 October2026
+
+Adds ROL/ROR8/16/32 register/memory,count1/CL/imm8,and CLC/STC via four PIL
+descriptions. No new interpreter/emitter semantic tokens. Preserve other flags,
+handle masked-zero/full-width turns distinctly,and retain RMW permission faults.
+Six new Rust tests (175 expected),45 full-state backend trace cases,278,576
+independent Python description cases (passed locally). Modern oracle adds
+rotates/all256 counts and carry controls:321,784 cases/58 variants/31 harness
+checks expected. Hosted execution pending. Runtime export76 files.
+RCL/RCR,CMC and double shifts remain planned. Prepare strict runtime delivery
+PR after CI,never merge dev into main. No external386 suite execution claimed.

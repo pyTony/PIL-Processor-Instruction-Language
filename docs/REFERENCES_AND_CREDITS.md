@@ -439,3 +439,16 @@ Original native CL-shift and two-operand IMUL stubs/cases. Architectural masks
 follow the existing Intel386/IntelSDM shift and IMUL references listed above.
 Independent count/mask checks do not consult PIL's undefined metadata. No
 external vectors or source imported; no cycle/timing conformity is claimed.
+
+## 0.16 rotate and carry-constant references —27 October2026
+
+Intel80386 Programmer's Reference Manual,chapter17 rotate entry (MIT mirror),
+and IntelSDM instruction reference/change documentation,used to distinguish
+masked counts from data rotation modulo width and define CF/OF behavior:
+https://pdos.csail.mit.edu/6.828/2018/readings/i386/RCL.htm
+https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf
+https://cdrdv2-public.intel.com/671294/252046-sdm-change-document.pdf
+
+Original paired-shift PIL descriptions and independent bit-at-a-time oracles.
+No manual text,implementation or external vectors imported. RCL/RCR are not
+implemented; the historical rotate page covers the whole instruction family.

@@ -582,3 +582,21 @@ sources still perform a real word read with normal segment/RAM checks, including
 read-only sources. A same-register instruction is not skipped, so fetch and
 memory checks retain their normal behavior. In16-bit operand size,0F BF F8
 selects DI,AX;0F BF FF selects DI,DI.
+
+## Rotates and carry constants (0.16 alpha)
+
+ROL/ROR8/16/32 accept register or memory destinations and count1,CL,imm8.
+Count bytes are masked by31. Data rotates modulo operand width,while flag
+classification uses the masked count:zero preserves all flags and metadata;
+one defines CF/OF;larger counts define CF and mark OF undefined. Full-width
+turns such as ROL AL,8 retain data but still update CF and leave OF undefined.
+PF/AF/ZF/SF and their metadata are preserved. Undefined OF uses PIL's concrete
+zero policy; it is not required to match an unspecified hardware value.
+
+CLC(F8) and STC(F9) clear/set CF and its undefined marker; all registers,other
+flags and other metadata remain unchanged. CMC,RCL/RCR and SHLD/SHRD remain
+unimplemented. ROL/ROR memory destinations perform the same RMW permission
+checks as shifts even for zero counts; faults preserve CPU/RAM state.
+
+These instructions execute through descriptions and the existing generic PIL
+operations in both backends. No new interpreter-only CPU semantics were added.

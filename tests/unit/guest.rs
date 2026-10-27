@@ -164,8 +164,8 @@ fn memory_shift_rmw_checks_zero_counts_and_preserves_fault_state(){
     }
 }
 #[test]
-fn rotate_extensions_and_truncated_shift_operands_stay_diagnostics(){
-    for bytes in [vec![0xc1,0xe0],vec![0xc0,0x66],vec![0xd1,0xc0],vec![0xd3,0xf0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+fn unimplemented_rotate_extensions_and_truncated_operands_stay_diagnostics(){
+    for bytes in [vec![0xc1,0xe0],vec![0xc0,0x66],vec![0xd1,0xd0],vec![0xd3,0xf0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
     assert_eq!(description("shl").unwrap(),description("sal").unwrap());
 }
 
@@ -288,4 +288,45 @@ fn lea_all_operand_address_sizes_wrap_without_segment_or_ram_access(){
 fn extension_and_lea_disassembly_and_invalid_encodings(){
     for(bytes,label)in [(vec![0x66,0x0f,0xbe,0xc4],"MOVSX EAX,AH"),(vec![0x0f,0xb6,0x07],"MOVZX AX,byte DS:[BX]"),(vec![0x66,0x0f,0xbf,0x46,0xff],"MOVSX EAX,word SS:[BP-0x1]"),(vec![0x64,0x67,0x66,0x8d,0x44,0xb3,0xfc],"LEA EAX,[EBX+ESI*4-0x4]"),(vec![0x0f,0xbf,0xf8],"MOVSX DI,AX"),(vec![0x0f,0xbf,0xff],"MOVSX DI,DI"),(vec![0x0f,0xb7,0xff],"MOVZX DI,DI"),(vec![0x98],"CBW"),(vec![0x66,0x98],"CWDE"),(vec![0x99],"CWD"),(vec![0x66,0x99],"CDQ")]{assert_eq!(decode(&bytes).unwrap().label,label);}
     for bytes in [vec![0x0f,0xb6],vec![0x66,0x0f,0xbf,0x86,0],vec![0x8d,0xc0],vec![0x8d,0x06,0]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:?}");}
+}
+
+#[test]
+fn rotate_count_forms_high_bytes_and_cl_aliases(){
+    use super::super::Cpu;
+    for(bytes,a,ecx,register,expected)in [
+        (vec![0xd0,0xc4],0xabcd8155,0,0,0xabcd0355),
+        (vec![0xd0,0xcc],0xabcd8155,0,0,0xabcdc055),
+        (vec![0xd3,0xc1],0,0x12340001,1,0x12340002),
+        (vec![0xd3,0xc9],0,0x12340001,1,0x12348000),
+        (vec![0x66,0xc1,0xc8,8],0x80000001,0,0,0x01800000),
+        (vec![0x66,0xc1,0xc0,0],0x12348001,0,0,0x12348001),
+        (vec![0xc1,0xc0,8],0x12348001,0,0,0x12340180),
+    ]{
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[0]=a;c.regs[1]=ecx;
+        execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(c.regs[register],expected,"{bytes:02x?}");
+    }
+}
+#[test]
+fn rotate_memory_rmw_checks_permissions_even_for_zero_and_full_turns(){
+    use super::super::Cpu;
+    for(bytes,count,expected)in [
+        (vec![0xd1,0x07],1,0x80000103),
+        (vec![0xc0,0x0f,8],0,0x80008081),
+        (vec![0x66,0xc1,0x0f,4],0,0x18000808),
+        (vec![0xd2,0x07],32,0x80008081),
+    ]{
+        let mut c=Cpu::default();c.eip=ENTRY;c.regs[1]=count;c.regs[3]=0x400;c.eflags=0xad7;c.undefined_flags=0x8d5;
+        let before=c.clone();let ram=execute_one(&bytes,&mut c,0x80008081,false).unwrap();assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),expected);
+        let mut fault=before.clone();assert!(execute_one(&bytes,&mut fault,0x80008081,true).is_err());assert_eq!(fault,before);
+    }
+}
+#[test]
+fn carry_controls_decode_with_operand_prefix_and_preserve_untouched_state(){
+    use super::super::Cpu;
+    for(op,carry)in [(0xf8,0),(0xf9,1)]{for prefix in [false,true]{
+        let mut bytes=if prefix{vec![0x66]}else{Vec::new()};bytes.push(op);
+        let mut c=Cpu{regs:[0xabcdef01;8],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};
+        execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(c.regs,[0xabcdef01;8]);
+        assert_eq!((c.eflags,c.undefined_flags,c.eip),((0xad7&!1)|carry,0x8d4,ENTRY+bytes.len()as u32));
+    }}
 }

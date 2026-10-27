@@ -197,3 +197,15 @@ values remain recorded but excluded from hardware equality; separate PIL
 concrete-zero and exact metadata policies still apply. Schema2 is unchanged.
 Modern results cover the admitted common semantics,not386 timing/system
 behavior or undocumented count rules. Runtime instructions remain unchanged.
+
+## Shift/IMUL result and rotate/CF-control increment
+
+CI40422881682 passed226,008 native cases and169 tests per Windows/Linux host
+at811af3596bdd5157cff8c3f3c9769de2b8f91b0a. The subsequent0.16 increment adds
+ROL/ROR CL8/16/32 and CLC/STC,bringing the planned suite to321,784 cases,58
+encoding variants and31 native harness answers (execution pending).
+
+Rotate data uses count modulo width; policy uses count&31. Masked-zero
+preserves all flags;otherwise CF is defined,OF defined only at masked count1
+and undefined at larger counts. PF/AF/ZF/SF are preserved,including markers.
+CLC/STC define CF and preserve every other bit/marker and full nativeRAX.

@@ -1,0 +1,27 @@
+# Mask the 386 count, rotate data modulo width, classify flags by masked count.
+read a dst $W
+read b src $W
+const count_mask $W 31
+and count b count_mask
+const turn_mask $W $SIGN
+and turns count turn_mask
+const width $W $W
+sub complement width turns
+const one $W 1
+const yes 1 1
+zero is_zero count
+not active is_zero
+xor count_minus_one count one
+zero single count_minus_one
+lshr right a turns
+shl left a complement
+or r left right
+bit cf r $SIGN
+shl doubled r one
+bit second doubled $SIGN
+xor of cf second
+write dst r
+flag_if CF cf yes active
+flag_if OF of single active
+preserve_flags remaining
+retire

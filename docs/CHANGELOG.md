@@ -1,3 +1,11 @@
+## 0.16.0-alpha.1
+
+- Add ROL/ROR8/16/32 with count1,CL,imm8 and register/memory destinations.
+- Add CLC/STC; preserve untouched registers,flags and undefined markers.
+- Express all semantics in PIL; retain zero/full-turn flag and precise RMW-fault rules.
+- Expand compiled full-state proof to45 cases.
+- RCL/RCR,CMC and double shifts remain outside this increment.
+
 # Changes
 
 ## 0.15.0-alpha.3

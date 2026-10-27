@@ -24,6 +24,7 @@ jobs:
       - run: python tools/verify_descriptions.py
       - run: python tools/verify_flow.py
       - run: python tools/verify_extensions.py
+      - run: python tools/verify_rotates.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check
       - if: runner.os == 'Windows'

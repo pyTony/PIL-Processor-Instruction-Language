@@ -139,8 +139,8 @@
         "STC",
         "CMC"
       ],
-      "status": "planned",
-      "remaining": "CF effects and preservation of every other output",
+      "status": "partial",
+      "remaining": "CMC and full mode/prefix audit;CLC/STC implemented",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -291,8 +291,8 @@
         "RCL",
         "RCR"
       ],
-      "status": "planned",
-      "remaining": "Count boundaries,carry input and CF/OF definedness",
+      "status": "partial",
+      "remaining": "RCL/RCR and full mode/prefix audit;ROL/ROR8/16/32 implemented",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -767,5 +767,11 @@
       "modern_user_mode_oracle": "separate_profile",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     }
-  ]
+  ],
+  "implementation_followup": {
+    "version": "0.16.0-alpha.1",
+    "status": "ROL/ROR andCLC/STC implemented;hosted checks pending",
+    "planned_native_cases": 321784,
+    "planned_trace_cases": 45
+  }
 }

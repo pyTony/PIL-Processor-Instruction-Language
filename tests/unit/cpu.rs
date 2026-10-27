@@ -619,3 +619,38 @@ fn independent_source_widths_validate_views_before_any_effect(){
     for text in ["read a src 7\npreserve_flags all\nretire","read a src 8\nread b src 16\npreserve_flags all\nretire","read a dst 8\npreserve_flags all\nretire"]{assert!(compile(text,32).is_err(),"{text}");}
     for name in ["movsx16","movzx16"]{assert_eq!(compile(&instantiate(description(name).unwrap(),16),16).unwrap().source_width,16);assert!(compile(&instantiate(description(name).unwrap(),8),8).is_err());}
 }
+
+fn rotate_oracle(op:&str,a:u32,count:u32,w:u8,f:u32,u:u32)->(u32,u32,u32){
+    let n=count&31;if n==0{return(a,f,u);}
+    let m=mask(w)as u32;let sign=1u32<<(w-1);let mut r=a&m;let mut cf=0;
+    // Deliberate one-bit iteration, independent of the PIL's paired shifts.
+    for _ in 0..n{if op=="rol"{cf=u32::from(r&sign!=0);r=(r.wrapping_shl(1)&m)|cf;}
+        else{cf=r&1;r=(r>>1)|(cf<<(w-1));}}
+    let of=if n!=1{0}else if op=="rol"{u32::from(r&sign!=0)^cf}else{((r>>(w-1))^(r>>(w-2)))&1};
+    ((a&!m)|r,(f&!0x801)|cf|(of<<11),(u&!0x801)|if n==1{0}else{0x800})
+}
+#[test]
+fn rotates_match_exhaustive_byte_counts_and_wide_boundaries(){
+    for op in ["rol","ror"]{for w in [8,16,32]{
+        let p=compile(&instantiate(description(op).unwrap(),w),w).unwrap();
+        let values:Vec<u32>=if w==8{(0..256).collect()}else{vec![0,1,3,mask(w)as u32,1u32<<(w-1),(1u32<<(w-1))-1,0xa5a55a5a,(1u32<<(w-1))+1]};
+        for a in values{let a=if w<32{(0xabcd0000&!(mask(w)as u32))|(a&mask(w)as u32)}else{a};
+            for count in 0..=255{for(f,u)in [(0x202,0),(0xad7,0x8d5)]{
+                let mut c=Cpu::default();c.regs[0]=a;c.regs[1]=count;c.eflags=f;c.undefined_flags=u;
+                execute(&p,&mut c,View{register:0,low:0,width:w},View{register:1,low:0,width:w}).unwrap();
+                assert_eq!((c.regs[0],c.eflags,c.undefined_flags),rotate_oracle(op,a,count,w,f,u),"{op}/{w} a={a:x} count={count}");
+            }}
+        }
+    }}
+}
+#[test]
+fn carry_constants_preserve_registers_other_flags_and_metadata(){
+    for(name,carry)in [("clc",0),("stc",1)]{for w in [8,16,32]{
+        let p=compile(&instantiate(description(name).unwrap(),w),w).unwrap();
+        for f in [0,1,0x202,u32::MAX]{for u in [0,ARITH_FLAGS]{
+            let mut c=Cpu{regs:[0x12345678;8],eflags:f,undefined_flags:u,eip:0};
+            execute(&p,&mut c,View{register:0,low:0,width:w},View{register:1,low:0,width:w}).unwrap();
+            assert_eq!(c.regs,[0x12345678;8]);assert_eq!((c.eflags,c.undefined_flags),((f&!1)|carry,u&!1));
+        }}
+    }}
+}

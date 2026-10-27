@@ -265,7 +265,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.15.0-alpha.3. This is an alpha of the host execution proof, not an OS
+areas in 0.16.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -348,7 +348,7 @@ $env:CARGO_TARGET_DIR = "target/windows"
 ./tools/compare.ps1 -Iterations 10000 -Samples 5
 ```
 
-This verifies all 39 cases, then measures compiled Rust and cached interpreter.
+This verifies all 45 cases, then measures compiled Rust and cached interpreter.
 An x86-64 PC also reports the direct CPU arithmetic baseline. That baseline
 still times ADD/SUB/JNZ; it is not an IMUL benchmark or an emulated 386 clock rate.
 For WSL sharing the folder, use `export CARGO_TARGET_DIR=target/wsl` and
@@ -564,3 +564,21 @@ sources still perform a real word read with normal segment/RAM checks, including
 read-only sources. A same-register instruction is not skipped, so fetch and
 memory checks retain their normal behavior. In16-bit operand size,0F BF F8
 selects DI,AX;0F BF FF selects DI,DI.
+
+## Rotates and carry constants (0.16 alpha)
+
+ROL/ROR8/16/32 accept register or memory destinations and count1,CL,imm8.
+Count bytes are masked by31. Data rotates modulo operand width,while flag
+classification uses the masked count:zero preserves all flags and metadata;
+one defines CF/OF;larger counts define CF and mark OF undefined. Full-width
+turns such as ROL AL,8 retain data but still update CF and leave OF undefined.
+PF/AF/ZF/SF and their metadata are preserved. Undefined OF uses PIL's concrete
+zero policy; it is not required to match an unspecified hardware value.
+
+CLC(F8) and STC(F9) clear/set CF and its undefined marker; all registers,other
+flags and other metadata remain unchanged. CMC,RCL/RCR and SHLD/SHRD remain
+unimplemented. ROL/ROR memory destinations perform the same RMW permission
+checks as shifts even for zero counts; faults preserve CPU/RAM state.
+
+These instructions execute through descriptions and the existing generic PIL
+operations in both backends. No new interpreter-only CPU semantics were added.

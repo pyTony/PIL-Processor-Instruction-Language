@@ -166,3 +166,16 @@ https://github.com/barotto/test386.asm/blob/cfd052d1e64d5375dea5a681c1eadeed64ce
 No third-party tests, code or ROMs imported/executed. Thanks to Daniel Balsom,
 SingleStepTests contributors and barotto for making these validation resources
 available,and to Tony for suggesting them. Detailed integration work stays ondev.
+
+## 0.16 rotate and carry-constant references —27 October2026
+
+Intel80386 Programmer's Reference Manual,chapter17 rotate entry (MIT mirror),
+and IntelSDM instruction reference/change documentation,used to distinguish
+masked counts from data rotation modulo width and define CF/OF behavior:
+https://pdos.csail.mit.edu/6.828/2018/readings/i386/RCL.htm
+https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf
+https://cdrdv2-public.intel.com/671294/252046-sdm-change-document.pdf
+
+Original paired-shift PIL descriptions and independent bit-at-a-time oracles.
+No manual text,implementation or external vectors imported. RCL/RCR are not
+implemented; the historical rotate page covers the whole instruction family.
