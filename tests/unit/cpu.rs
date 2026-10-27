@@ -644,13 +644,29 @@ fn rotates_match_exhaustive_byte_counts_and_wide_boundaries(){
     }}
 }
 #[test]
-fn carry_constants_preserve_registers_other_flags_and_metadata(){
-    for(name,carry)in [("clc",0),("stc",1)]{for w in [8,16,32]{
+fn carry_controls_preserve_registers_other_flags_and_metadata(){
+    for name in ["clc","stc","cmc"]{for w in [8,16,32]{
         let p=compile(&instantiate(description(name).unwrap(),w),w).unwrap();
         for f in [0,1,0x202,u32::MAX]{for u in [0,ARITH_FLAGS]{
             let mut c=Cpu{regs:[0x12345678;8],eflags:f,undefined_flags:u,eip:0};
             execute(&p,&mut c,View{register:0,low:0,width:w},View{register:1,low:0,width:w}).unwrap();
-            assert_eq!(c.regs,[0x12345678;8]);assert_eq!((c.eflags,c.undefined_flags),((f&!1)|carry,u&!1));
+            assert_eq!(c.regs,[0x12345678;8]);assert_eq!((c.eflags,c.undefined_flags),(match name{"clc"=>f&!1,"stc"=>f|1,_=>f^1},u&!1));
         }}
     }}
+}
+
+#[test]
+fn generated_cmc_preserves_state_and_matches_concrete_flag_policy(){
+    use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
+    let dir=std::env::temp_dir().join(format!("pil-cmc-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));fs::create_dir_all(&dir).unwrap();
+    let mut source=String::from("#![allow(dead_code,unused_mut,unused_variables)]\n");
+    let mut checks=String::new();
+    for w in [8,16,32]{
+        let p=compile(&instantiate(description("cmc").unwrap(),w),w).unwrap();
+        source.push_str(&format!("mod p{w} {{ {} }}\n",emit_rust(&p)));
+        checks.push_str(&format!("for low_flags in 0..4096u32 {{for initial_u in [0,1,0x8d5,u32::MAX] {{let initial_flags=0xa5a50000|low_flags;let mut regs=[0x12345678;8];let mut flags=initial_flags;let mut u=initial_u;let mut ip=0x100;let flow=p{w}::FlowContext{{next_eip:0x101,displacement:0,displacement_bits:32,code_limit:0x1ff}};p{w}::execute_with_flow(&mut regs,&mut flags,&mut u,&mut ip,(0,0),(1,0),flow).unwrap();assert_eq!(regs,[0x12345678;8]);assert_eq!((flags,u,ip),(initial_flags^1,initial_u&!1,0x101));}}}}\n"));
+    }
+    source.push_str(&format!("fn main(){{{checks}}}"));
+    let path=dir.join("proof.rs");fs::write(&path,source).unwrap();let bin=dir.join(if cfg!(windows){"proof.exe"}else{"proof"});
+    let out=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).args(["--edition=2021","-O"]).arg(path).arg("-o").arg(&bin).output().unwrap();assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));assert!(Command::new(bin).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
 }

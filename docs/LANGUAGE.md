@@ -316,3 +316,11 @@ writes must agree on their shared bits;otherwise InvalidBinding is returned
 before any RAM,register,flag,marker or EIP commit. Source binding widths
 remain independently validated. This is a two-binding foundation,not arbitrary
 implicit-register writes or ordered multi-store support.
+
+## CMC concrete carry policy (0.17 alpha.2)
+
+CMC reads incoming CF, complements its bv<1> value and writes CF. The existing
+read_flag/not/flag tokens provide identical semantics in the interpreter and
+generated Rust. The defined write clears the CF diagnostic marker, including
+when incoming CF was marked undefined; all other markers and flags remain.
+As with ADC/SBB, this executes the concrete state and does not propagate taint.

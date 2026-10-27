@@ -1,3 +1,10 @@
+# PIL 0.17.0-alpha.2
+
+- Add CMC (F5) through shared PIL semantics and binary decoding.
+- Preserve untouched state; document concrete incoming-CF metadata policy.
+- Add prefix/fetch-fault, generated-Rust and native CPU oracle coverage.
+- Rust/native execution for this increment is pending CI.
+
 # PIL 0.17.0-alpha.1
 
 - Add register XCHG8/16/32 and accumulator exchange forms.

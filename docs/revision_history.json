@@ -1627,7 +1627,7 @@
     {
       "version": "0.17.0-alpha.1",
       "date": "2026-10-27",
-      "status": "implementation supplied;hosted execution pending",
+      "status": "Windows/Linux verified; runtime export ready",
       "features": [
         "write src and write_if src staged register effects",
         "snapshot reads and overlapping-write conflict validation",
@@ -1645,7 +1645,42 @@
         "two binding destinations only",
         "one RAM store",
         "no memory XCHG or LOCK"
-      ]
+      ],
+      "verification": {
+        "run": 40427921270,
+        "source": "e09b0c9bd7c47f16ba5c7a5e0c68a84b8acd0ea6",
+        "rust_tests_per_host": 182,
+        "hardware_cases_per_host": 329896,
+        "backend_cases": 48,
+        "trace_bytes": 4928770,
+        "full_mandelbrot": "256x256 passed on both hosts",
+        "runtime_packages": "isolated source and unpacked deliveries passed on both hosts"
+      },
+      "runtime_delivery": {
+        "pr": 20,
+        "head": "075b930fad6a5da475e7f933e2d3b03007f573af",
+        "source": "e09b0c9bd7c47f16ba5c7a5e0c68a84b8acd0ea6",
+        "status": "open; user review pending"
+      }
+    },
+    {
+      "version": "0.17.0-alpha.2",
+      "date": "2026-10-27",
+      "status": "implementation supplied; development upload authorized; CI pending",
+      "features": [
+        "CMC shared PIL description and F5 decoding",
+        "concrete incoming-CF diagnostic policy",
+        "prefix/fetch-fault and generated-Rust regressions",
+        "native CMC oracle extension"
+      ],
+      "expected_rust_tests": 184,
+      "backend_cases": 48,
+      "expected_hardware_cases": 332728,
+      "native_encoding_variants": 62,
+      "native_harness_checks": 36,
+      "python_rotate_carry_cases": 327728,
+      "runtime_export_files": 78,
+      "python_status": "327728 rotate/carry cases passed locally; no Rust/native CMC result"
     }
   ]
 }

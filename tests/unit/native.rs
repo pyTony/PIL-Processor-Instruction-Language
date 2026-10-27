@@ -16,6 +16,7 @@ fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
     for case in ["imul_fault16","imul_fault32"]{assert!(report.contains(&format!("GENERATED verify {case}: steps=0 stop=4")),"{report}");}
     for case in ["shift8","shift16","shift32"]{assert!(report.contains(&format!("GENERATED verify {case}: steps=39 stop=1")),"{report}");}
     for case in ["shift_readonly_zero","shift_readonly_one"]{assert!(report.contains(&format!("GENERATED verify {case}: steps=0 stop=6")),"{report}");}
+    assert!(report.contains("GENERATED verify carry_controls: steps=9 stop=1"));
     assert!(report.contains("GENERATED verify mandelbrot2:"));
     assert!(report.contains("GENERATED verify near_branch_fault: steps=0 stop=4"));
     assert!(report.contains("GENERATED verify jump_fault: steps=0 stop=4"));

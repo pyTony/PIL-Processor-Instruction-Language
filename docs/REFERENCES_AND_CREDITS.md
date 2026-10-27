@@ -461,3 +461,11 @@ register exchange,flag preservation and separate long-mode32-bit write policy.
 No external implementation or vectors imported. Memory XCHG's bus-atomic
 requirements are deliberately deferred; register exchange does not imply a
 LOCK/multiprocessor memory model.
+
+## CMC increment
+
+Original shared PIL description, decoder integration and regression/oracle cases.
+Instruction reference: Intel 80386 Programmer's Reference Manual (1986),
+CMC entry: complement carry; other flags unaffected. No external code, vectors
+or dependencies imported. Incoming diagnostic metadata follows the existing
+PIL concrete-value policy, not a hardware uncertainty-tracking claim.

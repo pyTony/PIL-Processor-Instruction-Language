@@ -230,3 +230,10 @@ low-width exchange,byte/word high-bit preservation and32-bit upper clearing
 on both registers. Expected model records already contain all8 registers.
 All flags/markers are preserved. Generic alias/conditional/late-fault tests
 exercise the two-write PIL contract in both interpreter and emitted Rust.
+
+## CMC expansion (execution pending)
+
+CMC adds one native F5 form, two known answers and2,832 cases: expected
+332,728 cases/62 variants/36 harness checks. The oracle checks preserved
+registers and flags, both incoming carry values and concrete metadata policy.
+No hardware pass is claimed before the new CI run completes.

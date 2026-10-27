@@ -1,0 +1,7 @@
+# CMC complements the incoming concrete CF and preserves every other flag.
+# Like ADC/SBB, read_flag consumes the concrete bit, not symbolic uncertainty.
+read_flag carry CF
+not complemented carry
+flag CF complemented
+preserve_flags remaining
+retire

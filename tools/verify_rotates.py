@@ -42,6 +42,16 @@ def main():
                     a=0x12345678
                     assert interpret(code,a,0,w,flags,undefined)==(a,(flags&~1)|carry,undefined&~1)
                     checked+=1
+    for w in (8,16,32):
+        code=tokens('cmc',w)
+        for low_flags in range(4096):
+            flags=0xa5a50000|low_flags
+            for undefined in (0,1,0x8d5,0xffffffff):
+                a=0x12345678
+                once=interpret(code,a,0,w,flags,undefined)
+                assert once==(a,flags^1,undefined&~1)
+                assert interpret(code,a,0,w,once[1],once[2])==(a,flags,undefined&~1)
+                checked+=1
     print(f'PASS: independent Python checked {checked:,} rotate/CF-control description cases; no Rust or hardware claim.')
 
 

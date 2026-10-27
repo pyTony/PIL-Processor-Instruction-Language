@@ -79,7 +79,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     }
     for count in [0,1]{let mut t=case(if count==0{"rotate_readonly_zero"}else{"rotate_readonly_one"},vec![0xc1,0x07,count,0xf4])?;
         t.regs[3]=0x400;t.protect=Some((0x500,4));tests.push(t);}
-    let mut t=case("carry_controls",vec![0xf9,0x66,0xf8,0xf9,0xf8,0xf4])?;t.flags=0xad7;tests.push(t);
+    let mut t=case("carry_controls",vec![0xf5,0xf5,0xf9,0xf5,0x66,0xf5,0x66,0xf8,0xf5,0xf9,0xf8,0xf4])?;t.flags=0xad7;tests.push(t);
     for w in [8,16,32]{
         let mut bytes=Vec::new();
         for m in if w==8{vec![0xc8,0xe0,0xc0]}else{vec![0xc8,0xc0,0xf8]}{

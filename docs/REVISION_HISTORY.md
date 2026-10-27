@@ -1,3 +1,23 @@
+# CMC increment — 27 October 2026
+
+0.17.0-alpha.2 adds CMC(F5) using read_flag/not/flag in a shared PIL
+file; no backend-specific semantics. Incoming concrete CF is complemented;
+the defined write clears its diagnostic marker, consistent with ADC/SBB.
+All other flags/markers, registers and RAM are preserved. Prefix/readonly,
+fetch-fault and generated-state tests added; native harness gains CMC with
+both carry values and two metadata states (expected 332,728 cases,62 variants,
+36 known answers). 184 Rust tests expected; CI execution pending.
+Python rotate/carry checker now includes49,152 CMC cases plus the previous
+278,576 cases; Rust and native verification are separate.
+
+Previous XCHG source e09b0c9bd7c47f16ba5c7a5e0c68a84b8acd0ea6 passed
+Windows/Linux CI40427921270:182 tests,329,896 native cases/61 variants,
+34 harness checks,48 backend cases/4,928,770 trace bytes,full256x256
+Mandelbrot and standalone77-file runtime/packages on both hosts.
+User explicitly authorized GitHub uploads after the earlier automated
+approval rejection. Publish dev,verify CI,then prepare a strict runtime PR
+from main; do not merge dev into main or merge the delivery PR for the user.
+
 # Revision history
 
 Every delivered revision receives a version, feature/change summary, test

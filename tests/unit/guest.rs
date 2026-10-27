@@ -323,12 +323,33 @@ fn rotate_memory_rmw_checks_permissions_even_for_zero_and_full_turns(){
 #[test]
 fn carry_controls_decode_with_operand_prefix_and_preserve_untouched_state(){
     use super::super::Cpu;
-    for(op,carry)in [(0xf8,0),(0xf9,1)]{for prefix in [false,true]{
+    for(op,carry)in [(0xf8,0),(0xf9,1),(0xf5,0)]{for prefix in [false,true]{
         let mut bytes=if prefix{vec![0x66]}else{Vec::new()};bytes.push(op);
         let mut c=Cpu{regs:[0xabcdef01;8],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};
         execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(c.regs,[0xabcdef01;8]);
         assert_eq!((c.eflags,c.undefined_flags,c.eip),((0xad7&!1)|carry,0x8d4,ENTRY+bytes.len()as u32));
     }}
+}
+
+#[test]
+fn cmc_involution_prefixes_readonly_ram_and_fetch_faults(){
+    use super::super::Cpu;
+    for prefix in [vec![],vec![0x66],vec![0x67],vec![0x64],vec![0x66,0x67]]{
+        let mut bytes=prefix;bytes.push(0xf5);
+        assert_eq!(decode(&bytes).unwrap().label,"CMC");
+        for f in [0x202,0x203,0xffff_fffe,u32::MAX]{for u in [0,1,0x8d5]{
+            let mut c=Cpu{regs:[0x12345678;8],eflags:f,undefined_flags:u,eip:ENTRY};
+            let ram=execute_one(&bytes,&mut c,0x89abcdef,true).unwrap();
+            assert_eq!(c.regs,[0x12345678;8]);
+            assert_eq!((c.eflags,c.undefined_flags,c.eip),(f^1,u&!1,ENTRY+bytes.len()as u32));
+            assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),0x89abcdef);
+            c.eip=ENTRY;execute_one(&bytes,&mut c,0,true).unwrap();
+            assert_eq!((c.eflags,c.undefined_flags),(f,u&!1));
+        }}
+    }
+    for bytes in [vec![0xf0,0xf5],vec![0x66,0x66,0xf5]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))));}
+    let (mut image,ram)=Image::load(&[0x66,0xf5]).unwrap();image.segments[1].limit=ENTRY;
+    assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
 }
 
 #[test]
