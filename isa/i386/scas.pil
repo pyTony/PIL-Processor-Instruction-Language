@@ -1,0 +1,32 @@
+read_flag backward DF
+const step $A $BYTES
+const nil $A 0
+sub backwards nil step
+select stride backward backwards step
+read_gpr di 7 $A
+zext destination di 32
+read_gpr a 0 $W
+load_segment b 0 destination $W
+add new_di di stride
+write_gpr 7 new_di
+zext aw a $EXT
+zext bw b $EXT
+sub wide aw bw
+trunc r wide $W
+bit cf wide $W
+xor ab a b
+xor ar a r
+and overflow ab ar
+bit of overflow $SIGN
+xor abr ab r
+bit af abr 4
+bit sf r $SIGN
+zero zf r
+parity pf r
+flag CF cf
+flag PF pf
+flag AF af
+flag ZF zf
+flag SF sf
+flag OF of
+retire

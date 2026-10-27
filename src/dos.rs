@@ -104,7 +104,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     let mut segments=selectors.map(SegmentCache::real_mode);
     segments[SegmentRegister::Cs.index()].access=SegmentAccess::Code{readable:true};
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{start,end,segments,selectors,real_mode:true,ss_shadow:0,sti_shadow:0},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{start,end,segments,selectors,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
@@ -165,7 +165,7 @@ pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
                 let mut machine=p.image.segment_state();let result=super::execute_machine(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine);
-                if result.is_ok(){p.image.set_segment_state(machine);p.selectors=machine.selectors;}result
+                p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt=>break Stop::Monitor("HLT reached;monitor stop is not DOS process termination".into()),
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),
