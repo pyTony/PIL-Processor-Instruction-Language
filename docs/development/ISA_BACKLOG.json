@@ -187,7 +187,7 @@
         "POP"
       ],
       "status": "partial",
-      "remaining": "Register/immediate PUSH, register POP and real-mode segment PUSH/POP implemented. Per-access segment effects now exist; memory stack operand decoding remains.",
+      "remaining": "Register/segment and memory8F/0 POP supported; post-increment ESP destination,independent widths and transactional faults covered. Family-specific16-bit SP wrap with ESP-based EA is rejected;hardware/mode/prefix audit remains.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -610,8 +610,8 @@
         "SMSW",
         "CLTS"
       ],
-      "status": "planned",
-      "remaining": "386 machine-status bits,privilege and transitions",
+      "status": "partial",
+      "remaining": "SMSW word register/memory forms read explicit traced MSW; PE follows normalized mode. Wide register policy,CR0/LMSW writes and hardware/mode audit remain.",
       "modern_user_mode_oracle": "privileged_or_os",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

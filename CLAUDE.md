@@ -1,3 +1,16 @@
+# Memory POP,MSW and DOS-version increment — hosted checks pending
+
+Based on dev28bf3088 (RETF) and the user's v0.29 corpus summary.
+Adds8F/0 memory POP with post-pop ESP address expressions,explicit MSW/SMSW
+word forms,and DOS AH30 through PSP:0040 with declared6.22 shim profile.
+Local exec startup failed due to the host sandbox path configuration;do not
+claim local tests passed. Expected297 tests and149 backend cases await
+Windows/Linux CI. SP-wrap/ESP addressing is explicitly rejected where Intel
+documents family-specific behavior;SMSWr32/CR0 writes remain separate.
+No full FreeDOS image or new real-mode hardware/ARM execution claimed.
+The user has standing authorization for all project uploads to this repo;
+keep development on dev and runtime deliveries as separate main PRs.
+
 # Standing GitHub authorization — 27 October 2026
 
 User explicitly confirmed: "Kyllä voit laittaa aina repoon" (you may always

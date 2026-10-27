@@ -521,3 +521,14 @@ for operand-size stack slots,CS high-half discard,return ordering and preserved
 flags. PIL/runtime/tests are original project code;no third-party emulator or
 hardware vectors were copied. Modern-host overlap oracles do not independently
 verify legacy real-mode CS/stack behavior. Protected returns remain separate.
+
+## Memory POP,MSW and DOS-version query (0.30)
+
+Consulted Intel80386 POP/SMSW instruction entries linked in PIL_REFERENCE and
+the FreeDOS AH30 handler at d6791add2043c9d7b584d840a8ffaf8829fd2bdc,
+linked in DOS_PROBE. Source/PIL/tests are original project implementations.
+The simulator exposes a declared MSW/DOS compatibility profile;it does not
+infer actual kernel/hardware identity. Intel's documented family-specific SP
+wrap/ESP destination case and SMSWr32 behavior remain outside this profile.
+No new hardware vectors,real-mode hardware test,ARM run or full-image probe
+has been performed for this increment before hosted verification.

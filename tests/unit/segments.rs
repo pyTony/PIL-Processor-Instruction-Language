@@ -65,7 +65,7 @@ fn generated_segment_writes_have_independent_full_state_expectations(){
     let text="read selector src 16\nwrite_segment 2 selector\npreserve_flags all\nretire";let p=compile(text,16).unwrap();let mut source=emit_rust(&p);source.push_str(r#"
 fn main(){for selector in [0,1,0x1234,0xffff]{
  let mut regs=[0xabcdef01;8];regs[0]=0xdead0000|selector;let before=regs;let mut flags=0xed7;let mut undefined=u32::MAX;let mut ip=0x100;let mut ram=Ram::new(4096);
- let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
+ let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
  let flow=FlowContext{next_eip:0x102,displacement:0,displacement_bits:32,code_limit:65535};
  execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine).unwrap();
  assert_eq!(regs,before);assert_eq!((flags,undefined,ip),(0xed7,u32::MAX,0x102));assert_eq!(machine.selectors[2],selector as u16);assert_eq!(machine.segments[2],address::SegmentCache::real_mode(selector as u16));assert_eq!(machine.ss_shadow,1);

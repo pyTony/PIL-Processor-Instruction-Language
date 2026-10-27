@@ -62,7 +62,7 @@ fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
-    let b=[0xb4,0x30,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
+    let b=[0xb4,0x31,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
     let r=run(load(&[0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
     let r=run(load(&[0x90],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));
 }
@@ -101,4 +101,21 @@ fn real_mode_cs_writes_work_but_ram_permissions_and_segment_limits_remain(){
  let mut p=load(&bytes,"readonly.com").unwrap();p.ram.protect(0x10108,1).unwrap();let old=p.cpu.clone();let ram=p.ram.clone();let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Fault(_)));assert_eq!(r.loaded.cpu,old);assert_eq!(r.loaded.ram,ram);
  let mut mz_code=bytes;mz_code[4]=0;let r=run(load(&exe(&mz_code,&[]),"selfmod.exe").unwrap(),30).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[1],1);assert_eq!(r.loaded.ram.load(0x10108,MemWidth::Byte).unwrap(),0x41);
  let bytes=[0x2e,0xc7,0x06,0xff,0xff,1,0];let r=run(load(&bytes,"limit.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Fault(_)));assert_eq!(r.completed,0);
+}
+
+#[test]
+fn dos_version_queries_preserve_upper_registers_flags_and_use_psp_override(){
+ for selector in [0u8,1,2,0x3f,0xff]{for version in [0x1606u32,0x0705]{
+  let mut p=load(&[0xcd,0x21],"version.com").unwrap();assert_eq!(p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).unwrap(),0x1606);p.ram.store(u32::from(PSP)*16+0x40,MemWidth::Word,version).unwrap();p.cpu.regs=[0xabcd3000|u32::from(selector),0x12345678,0x87654321,0xdeadbeef,0xfffe,5,6,7];p.cpu.eflags=0xad7;p.cpu.undefined_flags=u32::MAX;let old=p.cpu.clone();let oldram=p.ram.clone();let mut out=vec![];
+  assert_eq!(service(&mut p,0x21,&mut out).unwrap(),None);let mut want=old;want.regs[0]=0xabcd0000|version;want.regs[1]=0x12340000;want.regs[3]=0xdead0000|if selector==1{0}else{0xff00};assert_eq!(p.cpu,want);assert_eq!(p.ram,oldram);assert!(out.is_empty());
+ }}
+}
+#[test]
+fn dos_version_query_retires_bridge_then_reaches_next_blocker_or_exit(){
+ let r=run(load(&[0xb8,0,0x30,0xcd,0x21,0x62],"version.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 62"));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(2,1,1));assert_eq!(r.loaded.cpu.regs[0],0x1606);
+ let r=run(load(&[0xb8,1,0x30,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21],"version.com").unwrap(),10).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(4,2,2));
+}
+#[test]
+fn dos_version_failed_psp_read_changes_no_registers_or_output(){
+ let mut p=load(&[0xcd,0x21],"version.com").unwrap();p.cpu.regs[0]=0x3000;p.ram=Ram::new(u32::from(PSP)as usize*16+0x41);let old=p.cpu.clone();let oldram=p.ram.clone();let mut out=vec![65];assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old);assert_eq!(p.ram,oldram);assert_eq!(out,vec![65]);
 }
