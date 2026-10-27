@@ -791,3 +791,12 @@ v0.1 proposal as a separate design and repaired its platform-adapter link.
 Documentation only; executable source and instruction support are unchanged.
 Validation: local Markdown destinations and source checksums verified; token/API
 contracts checked directly against src/main.rs and src/flow.rs.
+
+## Documentation overview — 27 October 2026
+
+Added docs/README.md as the single documentation entry point, covering the
+implemented language, original proposal, executable descriptions, runtime guides,
+verification plans, architecture/platform goals, sources and history. Linked it
+from the root README and both language documents. Clarified which documents
+specify current behavior and which record proposals, plans or historical results.
+Documentation only. Local Markdown destinations and source checksums checked.

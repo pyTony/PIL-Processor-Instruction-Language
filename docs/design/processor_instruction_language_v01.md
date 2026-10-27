@@ -1,4 +1,6 @@
 # Processor Instruction Language (PIL) v0.1
+
+[All PIL documentation](../README.md)
 Design proposal — 26 October 2026
 
 This document preserves the proposed architecture and future language. It is

@@ -5,28 +5,13 @@ Main is a runtime-only export and intentionally runs zero development tests.
 
 ## Documentation
 
-| Read this | What it covers |
-|---|---|
-| [Debugger guide](docs/DEBUGGER.md) | Launch commands, debugger commands, demos, memory, serial and instruction profile |
-| [Feature matrix](delivery/source/FEATURE_MATRIX.md) | Implemented, partial and planned features in the user delivery |
-| [Release notes](delivery/source/RELEASE_NOTES.md) | User-facing changes by delivery version |
-| [Language reference](docs/LANGUAGE.md) | PIL tokens, widths, flag metadata, memory effects and Rust emission |
-| [386 completion TODO](docs/development/ISA_COMPLETION_PLAN.md) | Remaining instruction forms,dependencies and acceptance gates |
-| [Host CPU oracle](docs/development/HOST_CPU_ORACLE.md) | Development-only real-PC ALU correctness comparison and artifacts |
-| [x86-64 verification plan](docs/development/X86_64_VERIFICATION_PLAN.md) | Shared lessons,modern CPU oracle and true64-bit subset |
-| [ISA backlog](docs/development/ISA_BACKLOG.json) | Machine-readable family/form TODO inventory |
-| [OS compatibility targets](docs/development/OS_COMPATIBILITY_TARGETS.md) | Windows editions,minimums and future machine milestones |
-| [External test suites](docs/development/EXTERNAL_TEST_SUITES.md) | Pinned suites, licence findings and CPU/ROM adapter plan |
-| [Development status](docs/development/STATUS.md) | Current work, verified results and remaining limits |
-| [Roadmap](docs/ROADMAP.md) | Emulator milestones, TTGO devices and portability goals |
-| [GitHub workflow](docs/GITHUB.md) | Branch, contribution and runtime delivery procedures |
-| [Changelog](docs/CHANGELOG.md) | Development changes by version |
-| [Revision history](docs/REVISION_HISTORY.md) | Verification evidence and user-reported results |
-| [Machine-readable history](docs/revision_history.json) | Structured versions, checks and benchmark measurements |
-| [References and credits](docs/REFERENCES_AND_CREDITS.md) | Consulted materials, attribution and licence findings |
-| [Initial language design](docs/design/processor_instruction_language_v01.md) | Historical design proposal; current behavior is in the language reference |
-| [Claude continuation notes](CLAUDE.md) | Verified state and handoff for continued development |
-| [Tiny386 adapter plan](docs/platform/tiny386-adapter.md) | Planned hardware-emulation boundary and reuse considerations |
+**[Start here: PIL documentation overview](docs/README.md)** — a single guide
+with links to all references, examples, user guides, verification plans and history.
+
+- [Implemented language reference](docs/LANGUAGE.md): executable syntax and semantics.
+- [Original design proposal](docs/design/processor_instruction_language_v01.md): broader architecture and planned features.
+- [Executable instruction descriptions](isa/i386/): the actual PIL definitions.
+- [Debugger guide](docs/DEBUGGER.md): running programs and inspecting execution.
 
 ## Built-in demos
 

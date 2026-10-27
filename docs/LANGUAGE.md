@@ -1,5 +1,7 @@
 # PIL reference — implemented language
 
+[All PIL documentation](README.md)
+
 This is the reference for the executable PIL grammar in the current repository,
 checked against the parser, interpreter and Rust emitter in
 [src/main.rs](https://github.com/pyTony/pil_proof/blob/dev/src/main.rs).
