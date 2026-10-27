@@ -1,0 +1,14 @@
+require_width 16_or_32
+read_gpr old_sp 4 $S
+zext stack_offset old_sp 32
+load_segment target_value 2 stack_offset $W
+zext target32 target_value 32
+const take 1 1
+branch_if target32 take
+const slot_bytes $S $BYTES
+const cleanup $S $CLEANUP
+add popped old_sp slot_bytes
+add new_sp popped cleanup
+write_gpr 4 new_sp
+preserve_flags all
+retire

@@ -1,3 +1,16 @@
+# PIL 0.25.0-alpha.1
+
+- Add near relative/register/memory CALL and RET with optional immediate byte cleanup.
+- Add MOVS/STOS/LODS8/16/32, independent address sizes, DF and segment rules.
+- Add F3 REP with bounded element steps, zero-count guard and fault restart.
+- Share per-access segment memory, guarded retirement and resume effects across
+  the interpreter and generated Rust. Prior REP elements remain committed.
+- DOS step budgets include REP elements; completed counts full instructions.
+- Windows/Linux CI40511872914:243 tests,84 backend cases (5,816,602 bytes),existing
+  340,920 native overlap cases,full Mandelbrot and96-file package checks.
+- No new ARM/new-instruction hardware run. Far calls,CMPS/SCAS/F2,interrupt
+  delivery and memory PUSH/POP remain separate work.
+
 # PIL 0.24.0-alpha.1
 
 - Add A0..A3 direct-offset accumulator MOV and C6/C7 /0 immediate destinations.

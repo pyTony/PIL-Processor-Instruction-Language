@@ -1,0 +1,13 @@
+read_flag backward DF
+const step $A $BYTES
+const zero $A 0
+sub backwards zero step
+select stride backward backwards step
+read_gpr di 7 $A
+read_gpr element 0 $W
+zext destination di 32
+store_segment 0 destination element
+add new_di di stride
+write_gpr 7 new_di
+preserve_flags all
+retire
