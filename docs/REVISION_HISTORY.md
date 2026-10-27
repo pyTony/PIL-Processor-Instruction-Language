@@ -1,3 +1,22 @@
+# Real-mode far CALL increment — 27 October 2026
+
+Version 0.32 adds 9A immediate and FF /3 memory calls via shared PIL effects.
+At most two staged RAM writes are supported, ordered and transactionally
+validated; loads after staging remain rejected. Complete pointer reads precede
+CS/IP pushes. Offset/pointer addressing/SS widths stay independent. The new
+frame is contiguous, with deterministic wide CS zero-padding consistent with
+existing segment PUSH; no split-frame wrap or legacy hardware behavior claim.
+Protected/V86 calls remain rejected; gates/tasks/exception delivery separate.
+
+Local Windows: 312 tests passed, nine new expected-state tests and fifteen
+new backend cases (175 total). Hosted Windows/Linux checks pending.
+Actual local FD14LITE.img, budget100000: all16 FreeCom FF /3 blockers advance
+to DOS AH25; GREP's 9A advances to memory XCHG87. Missing-encoding programs
+21 -> 5: 2 0FBB, 1 0F01, 1 60, 1 87. Imported151/156, exits6.
+No disk-image/program files are uploaded. No new legacy real-mode hardware
+or ARM run is claimed. Keep source/tests on dev and strict runtime PRs on main;
+user authorizes uploads and reviews/merges delivery PRs.
+
 # Memory PUSH verified — 27 October 2026
 
 Version 0.31.0-alpha.1 adds FF /6 m16/m32 through existing shared PIL effects.

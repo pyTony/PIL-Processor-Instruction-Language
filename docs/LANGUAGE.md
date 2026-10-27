@@ -150,10 +150,10 @@ fetch or the fall-through limit. The monitor performs CS fetch checks separately
 |---|---|
 | `read_address out` | Caller-supplied address/offset as `bv<32>` |
 | `load out address WIDTH` | 8/16/32-bit little-endian RAM read; address must be `bv<32>` |
-| `store address input` | Stage one 8/16/32-bit RAM store, width inferred from input |
+| `store address input` | Stage an 8/16/32-bit RAM store (at most two), width inferred from input |
 
 Any of these statements, including `read_address` alone, requires a RAM-capable
-execution API. Multiple loads are allowed, but only one store and no loads
+execution API. Multiple loads are allowed, but at most two stores and no loads
 after that store. Checks occur in token order. A store checks permission before
 being staged and is published at retirement before infallible CPU-state commits.
 Later faults and overlap conflicts cancel the staged store and CPU effects.
@@ -172,7 +172,7 @@ source EIP. Invalid supplied bindings/cache context are caller errors.
 `MemoryAccess` reports EIP, address, byte count and direction for RAM bounds or
 host-defined read-only protection. It is not x86 page-fault delivery: no paging,
 CR2, descriptor loads or exception handlers are implemented. Device/MMIO side
-effects, multiple stores, LOCK and REP checkpoints need a future effect contract;
+effects, more than two stores, LOCK and REP checkpoints need a future effect contract;
 this staging model is not universal transactional rollback.
 
 ## Execution APIs and emitted Rust
@@ -238,8 +238,8 @@ Neither description adds a new semantic token or backend-specific handler.
 as bv16/bv32. `write_gpr INDEX value` stages a low16/full32 write. Reads always
 see incoming state; named writes commit in source order, so a later overlapping
 write overrides the earlier one. Mixing named writes with bound dst/src writes
-is rejected. All memory checks and the single staged RAM store precede register
-commit. This is a RAM-only precise-commit contract, not ordered MMIO/multi-store.
+is rejected. All memory checks and the staged RAM writes precede register
+commit. This is a RAM-only precise-commit contract, not ordered MMIO or arbitrary multi-store.
 
 PUSH/POP register and PUSH imm16/32/sign-extended imm8 use these effects. Stack
 address width comes from SS.big, separately from operand width (66). Address-size
@@ -293,7 +293,7 @@ operations;flags and markers remain intact and stores commit after checks.
 
 `load_segment out SEG offset WIDTH` and `store_segment SEG offset value` use
 explicit loaded caches per access (0..5 =ES,CS,SS,DS,FS,GS). Offsets are bv32;
-widths8/16/32;one staged store is retained. Source reads precede the store and
+widths8/16/32;at most two ordered staged stores are allowed. Source reads precede the store and
 all effects of a faulting element remain uncommitted. Requires machine context.
 Named GPR reads/writes now also admit low8 values for AL string operations.
 
@@ -437,3 +437,19 @@ and selected source segment; `store_segment 2` stages the stack write through
 SS after decrementing the stack-size view of SP/ESP. No new semantic token is
 required. Stores, register effects and retirement markers commit together only
 after validation. A source segment override never redirects the stack store.
+
+### Two-store and far CALL profile (0.32)
+
+A program may stage at most two `store`/`store_segment` effects in total.
+All loads must precede the first store. Each store checks its full destination
+before staging; retirement commits writes in program order only after all
+instruction checks pass. Overlapping stores use the later store's bytes.
+This is bounded ordinary RAM support, not MMIO or bus-atomic behavior.
+
+`call_far` uses existing `require_real_mode`, pointer loads, two SS stores and
+`far_branch`. Memory pointers contain an operand-sized offset plus a 16-bit
+selector, even with a 32-bit operand size. The return frame has two operand-sized
+slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
+slot. SS size is independent. A contiguous full-frame check matches RETF;
+split frames across stack wrap and hardware shutdown/exception delivery remain
+outside this prototype. Protected/V86 calls are rejected before pointer reads.

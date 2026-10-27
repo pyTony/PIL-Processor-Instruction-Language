@@ -1,3 +1,22 @@
+# PIL 0.32.0-alpha.1
+
+- Add real-mode far CALL: immediate 9A and memory FF /3, 16/32 operand sizes,
+  independent 16/32 pointer addressing and SS stack sizes. Read the complete
+  pointer before staging CS and return IP/EIP; keep loaded physical fetch bounds.
+- Allow at most two ordered staged PIL RAM writes. Validate both before any
+  commit; later memory, target or binding faults cancel the entire instruction.
+  Loads after the first staged write remain rejected.
+- Use a bounded contiguous return frame, matching the existing RETF profile.
+  The wide CS slot is deterministically zero-padded, as with segment PUSH.
+  No legacy hardware padding, split-frame wrap or shutdown behavior is claimed.
+- Local Windows: 312 tests passed, including nine new expected-state tests and
+  fifteen new full-state backend cases (175 total). Hosted checks are pending.
+- Actual FD14LITE.img at 100000 steps: all sixteen FreeCom FF /3 blockers reach
+  DOS AH=25; GREP passes 9A and reaches memory XCHG (87). Imports remain 151/156,
+  exits six; first missing-encoding programs fall from 21 to five.
+- Protected/V86 calls, descriptor gates/tasks and exception delivery remain
+  outside this increment. No new ARM or legacy real-mode hardware run claimed.
+
 # PIL 0.31.0-alpha.1
 
 - Add memory PUSH (FF /6) word/dword forms through shared PIL effects.

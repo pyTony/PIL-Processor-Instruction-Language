@@ -182,6 +182,24 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("pushmem_ss_fault",vec![0xff,0x37,0xf4])?;t.regs[3]=0x400;t.regs[4]=1;tests.push(t);
     let mut t=case("pushmem_source_gp",vec![0xff,0x37,0xf4])?;t.regs[3]=0xffff;t.regs[4]=0x800;tests.push(t);
     let mut t=case("pushmem_overlap",vec![0xff,0x37,0xf4])?;t.regs[3]=0x8ff;t.regs[4]=0x800;t.patch=Some((0x9ff,vec![0xef,0xbe]));tests.push(t);
+    for w in [16,32]{for big in [false,true]{for indirect in [false,true]{
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}
+        if indirect{bytes.extend([0xff,0x1e,0,4]);}else{bytes.push(0x9a);bytes.extend(&0x100u32.to_le_bytes()[..(w/8)as usize]);bytes.extend([1,0]);}
+        bytes.push(0xf4);while bytes.len()<16{bytes.push(0x90);}bytes.push(0x41);if w==32{bytes.push(0x66);}bytes.push(0xcb);
+        let name=match(w,big,indirect){(16,false,false)=>"far_imm16_ss16",(16,true,false)=>"far_imm16_ss32",(32,false,false)=>"far_imm32_ss16",(32,true,false)=>"far_imm32_ss32",(16,false,true)=>"far_mem16_ss16",(16,true,true)=>"far_mem16_ss32",(32,false,true)=>"far_mem32_ss16",_=>"far_mem32_ss32"};
+        let mut t=case(name,bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};
+        if indirect{let mut ptr=0x100u32.to_le_bytes()[..(w/8)as usize].to_vec();ptr.extend([1,0]);t.patch=Some((0x500,ptr));}tests.push(t);
+    }}}
+    for w in [16,32]{
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0xff,0x1c,0x24,0xf4]);while bytes.len()<16{bytes.push(0x90);}bytes.push(0x41);if w==32{bytes.push(0x66);}bytes.push(0xcb);
+        let mut t=case(if w==16{"far_esp16"}else{"far_esp32"},bytes)?;t.regs[4]=0x800;
+        let mut ptr=0x100u32.to_le_bytes()[..(w/8)as usize].to_vec();ptr.extend([1,0]);t.patch=Some((0xa00,ptr));tests.push(t);
+    }
+    let mut t=case("far_second_store_fault",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fc,2));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("far_pointer_boundary",vec![0xff,0x1e,0xfd,0xff,0xf4])?;t.regs[4]=0x800;tests.push(t);
+    let mut t=case("far_target_fault",vec![0x66,0x9a,0,0,1,0,1,0,0xf4])?;t.regs[4]=0x800;tests.push(t);
+    let mut t=case("far_mode_reject",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.image.real_mode=false;tests.push(t);
+    let mut t=case("far_outside_window",vec![0x9a,0,0,0xff,0xff,0xf4])?;t.regs[4]=0x800;tests.push(t);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
     let mut jump=case("jump_fault",vec![0xe9,0xff,0x7f])?;jump.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(jump);

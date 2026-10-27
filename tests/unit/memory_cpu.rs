@@ -67,7 +67,7 @@ fn unsupported_memory_effect_shapes_are_rejected() {
     for text in [
         "const a 16 0\nload v a 8\npreserve_flags all\nretire",
         "const a 32 0\nload v a 64\npreserve_flags all\nretire",
-        "const a 32 0\nconst v 8 1\nstore a v\nstore a v\npreserve_flags all\nretire",
+        "const a 32 0\nconst v 8 1\nstore a v\nstore a v\nstore a v\npreserve_flags all\nretire",
         "const a 32 0\nconst v 8 1\nstore a v\nload x a 8\npreserve_flags all\nretire",
         "const a 32 0\nconst v 1 1\nstore a v\npreserve_flags all\nretire",
     ] {assert!(compile(text,32).is_err(),"{text}");}
