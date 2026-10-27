@@ -162,7 +162,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     }}
     for w in [16,32]{let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x64,0x8f,6,0,4,0xf4]);let mut t=case(if w==16{"popmem_fs16"}else{"popmem_fs32"},bytes)?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);}
     for (name,msw,real) in [("smsw_zero",0,true),("smsw_supplied",0xa5a0,true),("smsw_protected",0xa5a0,false)]{let mut t=case(name,vec![0x0f,1,0xe0,0x0f,1,0xe3,0xf4])?;t.image.msw=msw;t.image.real_mode=real;t.regs[0]=0x12345678;t.regs[3]=0xabcdef01;t.flags=0xed7;tests.push(t);}
-    let mut t=case("smsw_memory",vec![0x0f,1,0x26,0,8,0x66,0x0f,1,0x26,2,8,0x67,0x0f,1,0x24,0x73,0,0xf4])?;t.regs[3]=0x400;t.regs[6]=8;t.image.msw=0xa5a0;tests.push(t);
+    let mut t=case("smsw_memory",vec![0x0f,1,0x26,0,8,0x66,0x0f,1,0x26,2,8,0x67,0x0f,1,0x64,0x73,0,0xf4])?;t.regs[3]=0x400;t.regs[6]=8;t.image.msw=0xa5a0;tests.push(t);
     let mut t=case("popmem_readonly",vec![0x67,0x8f,4,0x24,0xf4])?;t.regs[4]=0x800;t.protect=Some((0xa02,2));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("popmem_ss_fault",vec![0x8f,7,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("smsw_readonly",vec![0x0f,1,0x26,0,8,0xf4])?;t.protect=Some((0x900,2));tests.push(t);

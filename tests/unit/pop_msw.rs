@@ -1,6 +1,6 @@
 //! Original expected-state tests for memory POP and machine-status reads.
 use super::*;
-use address::{SegmentAccess,SegmentCache};
+use address::{SegmentAccess};
 fn setup(code:&[u8],big:bool)->(guest::Image,Ram,Cpu){
  let(mut i,_)=guest::Image::load(code).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};
  let mut r=Ram::new(0x22000);r.write_bytes(0x100,code).unwrap();
@@ -53,7 +53,7 @@ fn smsw_word_registers_read_supplied_msw_and_preserve_other_state(){
 }
 #[test]
 fn smsw_memory_always_stores_word_with_address_and_segment_overrides(){
- for b in [vec![0x0f,1,0x26,0,6],vec![0x66,0x0f,1,0x26,0,6],vec![0x67,0x0f,1,0x24,0x73,0xfc],vec![0x64,0x0f,1,0x26,0,4]]{
+ for b in [vec![0x0f,1,0x26,0,6],vec![0x66,0x0f,1,0x26,0,6],vec![0x67,0x0f,1,0x64,0x73,0xfc],vec![0x64,0x0f,1,0x26,0,4]]{
   let(mut i,mut r,mut c)=setup(&b,false);i.msw=0xa5b0;let at=if b[0]==0x67{0x70c}else{0x700};r.store(at,MemWidth::Dword,0xdeadbeef).unwrap();let old=c.clone();step(&mut i,&mut r,&mut c).unwrap();let mut want=old;want.eip+=b.len()as u32;assert_eq!(c,want);assert_eq!(r.load(at,MemWidth::Dword).unwrap(),0xdeada5b0);
  }
 }

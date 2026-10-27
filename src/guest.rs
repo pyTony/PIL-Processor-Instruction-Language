@@ -116,7 +116,7 @@ impl Image {
                 let esp_based=matches!(effective,EffectiveAddress::Bits32{base:Some(Gpr::Esp),..});
                 // Intel documents this wrap case as processor-family-specific.
                 // Reject it until a legacy386 hardware vector fixes the policy.
-                let guard=if stack_bits==16&&esp_based{"less wrapped new_sp old_sp\nnot allowed wrapped\nrequire allowed"}else{""};
+                let guard=if stack_bits==16&&esp_based{"ult wrapped new_sp old_sp\nnot allowed wrapped\nrequire allowed"}else{""};
                 let text=include_str!("../isa/i386/pop_memory.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$HIGH_MASK",if stack_bits==16{"4294901760"}else{"0"}).replace("$WRAP_GUARD",guard);
                 (format!("POP {}",operand_name(dst,address)),compile(&instantiate(text,w),w))
             }
