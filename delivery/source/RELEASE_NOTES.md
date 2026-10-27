@@ -8,7 +8,9 @@
 - Add six expected-state tests and eleven full-state backend cases for mixed
   sizes, ESP/SIB addressing, segment overrides, overlap, read-only sources,
   bounds/protection faults and stack wrapping.
-- Local Windows: 303 Rust tests passed. Hosted Windows/Linux checks are pending.
+- Windows/Linux CI 40587290825: 303 tests per host, 160 full-state
+  backend cases (6,951,410 matching trace bytes), standalone 109-file export,
+  native package and full Mandelbrot checks passed. Local Windows also passed.
 - Actual FD14LITE.img probe at 100000 steps: all sixteen FreeCom memory PUSH
   blockers advanced to FF /3 far CALL, twelve bytes later in each program.
   Summary remains 151/156 imported and six exited. FF totals alone do not

@@ -1,19 +1,24 @@
-# Memory PUSH increment — 27 October 2026
+# Memory PUSH verified — 27 October 2026
 
-User requested memory PUSH following the v0.30 FreeDOS report. Version 0.31
-adds FF /6 m16/m32 via existing read_address/load/store_segment/write_gpr PIL
-effects. Source EA sees old ESP; stack writes always use SS after decrement.
-No new backend-specific semantics. Six expected-state tests and eleven compiled
-backend cases added: 303 tests and 160 cases total. Local Windows tests passed;
-hosted checks pending. No new ARM or legacy real-mode hardware vectors.
+Version 0.31.0-alpha.1 adds FF /6 m16/m32 through existing shared PIL effects.
+Source EA sees old ESP; only the stack write uses SS after decrementing SP/ESP.
+Operand, address and SS widths remain independent; faults commit no effects.
 
-Actual local FD14LITE.img at 100000 steps: all sixteen FreeCom variants advanced
-from FF 74 14 to FF 1E 1F 02 (far CALL /3), twelve bytes later. PUSH retirements
-rose 796 -> 812. Imported 151/156, exited six; first missing-encoding counts
-remain 16 FF, 2 0FBB, 1 0F01, 1 60, 1 9A. Do not interpret unchanged FF group
-counts as an unchanged stop. The disk image stays external to the repo.
-Keep full development on dev; strict runtime export/main delivery PR separately.
-User authorizes project uploads; user reviews/merges deliveries.
+Local Windows: 303 tests passed; 160 full-state backend cases matched
+6,951,410 trace bytes. The standalone 109-file export built and passed launch,
+generated Rust, debugger, DOS hello and ZIP list/probe/extract checks.
+Hosted Windows/Linux CI 40587290825 passed on code commit 5eb100818cc0b244f91dfccb6bf3046ae52bf143.
+No new legacy real-mode hardware vectors or ARM execution are claimed.
+
+Actual local FD14LITE.img, budget 100000: all sixteen FreeCom variants advanced
+from FF 74 14 (PUSH /6) to FF 1E 1F 02 (far CALL /3), twelve bytes later.
+PUSH retirements rose 796 -> 812. Imports remain 151/156 and exits remain six.
+The first unsupported opcode counts remain 16 FF, 2 0FBB, 1 0F01, 1 60, 1 9A.
+Read detailed group extensions and CS:IP; unchanged FF totals hide this progress.
+The disk image and third-party program files stay outside the repository.
+
+Keep development on dev and strict runtime delivery PRs against main. User
+standing authorization covers project uploads; user reviews/merges deliveries.
 
 # Memory POP, MSW and DOS version increment — 27 October 2026
 

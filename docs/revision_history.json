@@ -1860,6 +1860,39 @@
         "hardware": "existing modern-host overlap only; no new real-mode or ARM run",
         "local_execution": "unavailable due to host sandbox path rejection"
       }
+    },
+    {
+      "version": "0.31.0-alpha.1",
+      "date": "2026-10-27",
+      "features": [
+        "Memory PUSH FF /6 with incoming-register source address",
+        "Independent source segment and SS stack store with precise faults"
+      ],
+      "status": "hosted-ci-verified",
+      "verification": {
+        "code_commit": "5eb100818cc0b244f91dfccb6bf3046ae52bf143",
+        "workflow_run": 40587290825,
+        "local_environment": "Windows x86-64",
+        "rust_tests": 303,
+        "full_state_backend_cases": 160,
+        "trace_bytes": 6951410,
+        "runtime_files": 109,
+        "actual_freedos_image": {
+          "sha256": "f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36",
+          "steps_per_program": 100000,
+          "imported": 151,
+          "candidates": 156,
+          "exited": 6,
+          "freecom_programs_advanced": 16,
+          "old_stop": "FF 74 14 memory PUSH /6",
+          "new_stop": "FF 1E 1F 02 far CALL /3",
+          "stop_advance_bytes": 12,
+          "push_retired_before": 796,
+          "push_retired_after": 812
+        },
+        "hardware": "existing modern-host overlap only; no new real-mode or ARM run",
+        "hosted_environment": "GitHub Actions Windows and Linux"
+      }
     }
   ]
 }

@@ -236,3 +236,5 @@ All sixteen FreeCom variants advanced from `FF 74 14` (memory PUSH /6) to
 and exits remain six. The grouped `opcode ff` total is therefore unchanged;
 compare per-program stop details, bytes and CS:IP to measure this progress.
 The disk image and third-party programs are not bundled in the repository.
+
+Measured image SHA256: `f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36`.
