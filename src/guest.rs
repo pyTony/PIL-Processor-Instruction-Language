@@ -48,7 +48,7 @@ pub enum Operation {
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Image {pub end:u32,pub segments:[SegmentCache;6]}
+pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6]}
 impl Image {
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
@@ -58,7 +58,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{end:ENTRY+bytes.len() as u32,segments},ram))
+        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -291,7 +291,7 @@ impl Reader<'_> {
     fn byte(&mut self)->Result<u8,GuestError> {
         if self.pos-self.start>=15 {return Err(GuestError::Decode("instruction exceeds 15 bytes".into()));}
         // Image extent is a monitor safety boundary, not an architectural fault.
-        if self.pos<ENTRY || self.pos>=self.image.end {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
+        if self.pos<self.image.start || self.pos>=self.image.end {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
         let c=MemoryContext{segment:SegmentRegister::Cs,cache:self.image.segments[SegmentRegister::Cs.index()]};
         let linear=c.translate(self.pos,MemWidth::Byte,false,self.start)?;
         let value=self.ram.load(linear,MemWidth::Byte).map_err(|f|GuestError::Execution(ExecError::MemoryAccess{eip:self.start,address:f.address,bytes:1,write:false}))?;
