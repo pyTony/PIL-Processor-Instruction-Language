@@ -345,3 +345,13 @@ not modeled and existing normalized stack errors remain.
 E3 JCXZ/JECXZ reads CX/ECX according to address size (67). Operand size (66)
 controls target wrapping; signed displacement is always8 bits. Counter,flags
 and markers are preserved. Only taken branches validate target against CS.limit.
+
+## LEAVE (0.27 implementation)
+
+C9 copies BP/EBP into SP/ESP according to SS stack-address size,then loads the
+saved BP/EBP according to operand size. Address prefix67 and segment overrides
+do not redirect the stack. The shared PIL snapshot/load/named-write effects
+commit the frame teardown only after a valid read; faults preserve all pending
+register/flag/memory/shadow state. Flags and undefined markers are preserved.
+The generated runner now dispatches alternative SS sizes for named SP writes
+as well as reads,covering LEAVE after a segment load. ENTER remains unsupported.

@@ -604,6 +604,7 @@ fn description(name: &str) -> R<String> {
         "cli" => Some(include_str!("../isa/i386/cli.pil")),
         "sti" => Some(include_str!("../isa/i386/sti.pil")),
         "jcxz" => Some(include_str!("../isa/i386/jcxz.pil")),
+        "leave" => Some(include_str!("../isa/i386/leave.pil")),
         "cld" => Some(include_str!("../isa/i386/cld.pil")),
         "std" => Some(include_str!("../isa/i386/std.pil")),
         "stc" => Some(include_str!("../isa/i386/stc.pil")),
@@ -849,6 +850,7 @@ fn main() -> R<()> {
         cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
     Ok(())
 }
+
 
 
 

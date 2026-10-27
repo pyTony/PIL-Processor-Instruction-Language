@@ -1,3 +1,16 @@
+# PIL 0.27.0-alpha.1
+
+- Add LEAVE16/32 through shared PIL stack load/frame effects; keep SS and
+  operand sizes independent,including stack rebinding after segment loads.
+- Add bounded DOS INT21/AH48 allocate,49 free and4A resize with visible MCB
+  headers,first-fit reuse/coalescing,CF/error results and ownership extent reporting.
+- Separate physical640KiB RAM from initial/current program allocation; keep
+  loaded-code fetch bounds. Precheck all MCB writes before service commit.
+- Windows/Linux CI40536350302:265 tests,103 backend cases (6,089,907 trace bytes),
+  existing340,920 native overlap cases,full Mandelbrot and103-file package checks.
+- No new ARM/hardware-oracle run. ENTER,full DOS kernel,UMB/EXEC/TSR,interrupt
+  delivery and copied-code fetch/real-mode CS-write model work remain separate.
+
 # PIL 0.26.0-alpha.1
 
 - Add real-mode CLI/STI and PUSHF/POPF16/32 with 386 visible/write masks.
