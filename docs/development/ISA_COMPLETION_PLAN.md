@@ -209,3 +209,14 @@ host DOS behavior,not a CPU instruction implementation. CI40536350302:265 tests 
 103 backend cases Windows/Linux. Initial/current allocation is distinct from
 physical RAM; fixed instruction windows and real-mode CS-write limitations
 remain. Use updated first-blocker evidence for further ISA/service/model work.
+
+## Comparison repeats and memory SETcc (0.28)
+
+CMPS/SCAS8/16/32 and F3/F2 ZF repeats now use shared PIL. Entry flags/metadata
+are checkpointed across partial elements and restored on execution faults;
+count/pointer progress stays committed. Full retirement clears checkpoint state.
+All16 SETcc predicates support byte memory destinations with existing segment/
+RAM fault checks. CI40562311100:273 tests,118 backend cases Windows/Linux. P1/P5 remain
+partial pending full mode/prefix/hardware audit and interrupt/I/O repeat work.
+Next memory POP must resolve ESP-based destinations after stack increment;
+SMSW must read explicit machine-status state rather than a guessed constant.

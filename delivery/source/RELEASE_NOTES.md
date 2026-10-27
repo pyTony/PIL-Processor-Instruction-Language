@@ -1,3 +1,16 @@
+# PIL 0.28.0-alpha.1
+
+- Add CMPS/SCAS8/16/32 and F3 REPE/F2 REPNE with new-ZF termination,count-zero
+  guard and bounded element steps. Keep operand/address sizes independent.
+- Add generic entry-flag checkpoint/recovery across partial repeats;faults retain
+  prior count/pointer progress and restore original EFLAGS/undefined metadata.
+- Include checkpoint state in full traces;debugger/DOS paths retain fault updates.
+- Add byte memory destinations to SETcc via existing shared select/store effects.
+- Windows/Linux CI40562311100:273 tests,118 backend cases (6,577,356 trace bytes),
+  existing340,920 native overlap cases,full Mandelbrot and105-file package checks.
+- No new ARM/hardware-oracle run. Memory PUSH/POP,SMSW,interrupt delivery and
+  full prefix/mode/encoding audit remain separate work.
+
 # PIL 0.27.0-alpha.1
 
 - Add LEAVE16/32 through shared PIL stack load/frame effects; keep SS and

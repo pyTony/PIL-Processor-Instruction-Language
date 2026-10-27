@@ -377,3 +377,5 @@ SETcc may now store one byte to ordinary ModRM/SIB memory,using existing PIL
 conditional selection/store effects. A false predicate still stores zero and
 checks permissions. Flags/markers/registers are unchanged; /0 profile restriction
 and existing normalized segment/memory checks remain.
+
+Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf), including entry-EFLAGS recovery for faulting REPE/REPNE CMPS/SCAS; legacy386 REP pseudocode has inverted stop-condition typos,so use its detailed step6 description for ZF termination.

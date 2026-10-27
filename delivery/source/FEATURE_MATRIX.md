@@ -1,4 +1,4 @@
-# PIL 0.27.0-alpha.1 feature matrix
+# PIL 0.28.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -26,9 +26,10 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Register effects | Supported subset | Snapshot reads; ordered named GPR effects or bound writes; one staged segment-cache change and one RAM store |
 | Register views | Supported | 32-bit registers, low 16 bits, AL/AH-style byte views |
 | Calls and returns | Near subset | E8 relative and FF /2 register/memory CALL, C3/C2 RET; independent operand/SS sizes and byte cleanup; no far transfers |
-| Movement strings | Supported subset | MOVS/STOS/LODS8/16/32, address16/32, DF, source overrides and fixed ES; F3 REP with per-element progress/fault retry; no CMPS/SCAS/F2 or interrupt delivery |
+| Comparison strings | Supported subset | CMPS/SCAS8/16/32, REPE/REPNE, DF, independent address sizes, source override/fixed ES and entry-flag fault recovery; no interrupt delivery |
+| Movement strings | Supported subset | MOVS/STOS/LODS8/16/32, address16/32, DF, source overrides and fixed ES; F3 REP with per-element progress/fault retry; F2 movement prefixes and interrupt delivery remain unsupported |
 | Conditional flow | Supported subset | Sixteen predicates, short/near binary Jcc and relative JMP and JCXZ/JECXZ; no indirect/far jumps |
-| SETcc | Supported subset | Register byte destinations in decoder; sixteen conditions |
+| SETcc | Supported subset | Register and ModRM/SIB memory byte destinations; sixteen conditions; /0 profile restriction |
 | Binary decoder | Partial | Documented MOV/arithmetic/Jcc/SETcc/IN/OUT/HLT monitor encodings only |
 | Memory addressing | Supported subset | 16-bit ModR/M, 32-bit ModR/M/SIB, size and segment overrides |
 | RAM and faults | Supported subset | 4-KiB monitor RAM, little-endian unaligned accesses, atomic single-store retirement |
@@ -36,7 +37,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Token interpreter | Supported | Default debugger engine; cached and uncached modes |
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
-| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 103 full-state trace cases and loop timings |
+| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 118 full-state trace cases and loop timings |
 | External hardware-derived suites | Planned | SingleStepTests CPU adapter and later test386.asm ROM; no external vectors/ROM executed yet |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |

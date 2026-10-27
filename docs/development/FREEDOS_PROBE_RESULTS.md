@@ -294,3 +294,51 @@ repeat,memory SETcc/POP and a coherent bounded vector/BIOS-service model.
 FreeDOS handler source audit corrected original PSP:0002 retention and success
 AX=ES for4A before the final verified commit. The current ownership end is
 reported separately. No third-party kernel code is copied into the runtime.
+
+## Comparison strings and memory SETcc: local Linux CI runtime probe
+
+Linux CI artifact d7697f89 probed unchanged FD14LITE.img locally with10,000
+execution steps per program. Stops: {'Service': 75, 'Budget': 22, 'Boundary': 19, 'Fault': 27, 'MissingEncoding': 2, 'Exit': 6}.
+Step budgets include REP elements; completed counts full instruction retirement.
+Previous0.27:20 encoding stops,57 service stops,27 faults,19 boundaries,22 budgets,6 exits.
+Image SHA256:f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36. No image/programs uploaded to CI or committed.
+No new ARM/new-instruction hardware run; these are first-blocker paths only.
+
+```text
+SUMMARY imported=151/156 exited=6; first missing-encoding blockers (program count):
+1 opcode 0f 01
+1 opcode 8f
+Reached instruction mix (retired instructions; REP elements and DOS bridges listed separately):
+193431 REP MOVSW elements
+117029 REP MOVSB elements
+50287 REP STOSB elements
+12963 REP STOSW elements
+1703 JNE
+1479 MOV
+1439 ADD
+1386 CALL
+1352 RET
+1024 REP STOSD elements
+758 JB
+724 ADC
+542 XCHG
+531 CMP
+429 MOVSB
+401 INC
+373 PUSH
+280 SUB
+260 JMP
+235 XOR
+Budget counts execution steps (including REP elements);completed counts fully retired instructions.
+Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.
+```
+
+All16 previous REPE SCASB and both memory SETNE first blockers disappear.
+The only remaining first encoding blockers are SMSW (one) and memory POP (one).
+Service stops rise57->75 because those paths now advance to DOS/BIOS calls;
+leaders are DOS AH30 version query22,AH35 vector query18 and BIOS INT10/AH08
+character read17. The six usage/placeholder/error termination paths are unchanged;
+no complete-application support claim. Budgets22,loaded-code boundaries19 and
+model faults27 remain separate work. Next memory POP needs post-increment ESP
+addressing;machine status and DOS version/vector/BIOS services need explicit
+models rather than guessed success responses.

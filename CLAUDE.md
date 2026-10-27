@@ -1,3 +1,27 @@
+# Comparison strings and memory SETcc verified — 27 October 2026
+
+Windows/Linux CI40562311100 passed on d7697f8994a41096070073d2ea64e7526c554cd0:
+273 tests per host,118 full-state backend cases (6,577,356 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone105-file
+runtime source/native-package checks. Eight new expected-state tests cover
+comparison flags across widths,address sizes,DF,source/ES rules,zero count,
+new-ZF termination,count exhaustion,entry-flag recovery/fault retry,all16 memory
+SETcc conditions,readonly stores and bounded REP budgets. No new hardware-oracle
+or ARM run is claimed.
+
+CMPS/SCAS8/16/32 use shared subtraction flags and pointer effects. REPE/F3 and
+REPNE/F2 evaluate new ZF after each bounded element. Generic checkpoint_flags
+remembers entry EIP/EFLAGS/undefined metadata across partial resumes;execution
+faults restore entry flags while retaining prior pointer/count progress. Full
+retirement clears checkpoint state. It is included in machine traces and the
+interpreter/generated wrappers share the same lifecycle. SETcc memory uses
+existing select/store effects,including zero stores and fault checks.
+
+Memory PUSH/POP needs post-increment ESP effective-address semantics and remains
+separate;SMSW needs explicit machine-status state. Interrupt/exception delivery,
+full prefix/mode audit and copied-code/CS-write model work remain. Version0.28
+follow-up changes only versions/docs/evidence relative to the tested code.
+
 # LEAVE and bounded DOS memory verified — 27 October 2026
 
 Windows/Linux CI40536350302 passed on 4256a139aca4a21b997483a967de25de7860984c:
