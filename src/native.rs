@@ -67,6 +67,19 @@ pub fn cases()->Result<Vec<Case>,String> {
     }
     for count in [0,1]{let mut test=case(if count==0{"shift_readonly_zero"}else{"shift_readonly_one"},vec![0xc1,0x27,count,0xf4])?;
         test.regs[3]=0x400;test.protect=Some((0x500,4));tests.push(test);}
+    for w in [8,16,32]{
+        let mut bytes=Vec::new();
+        for extension in [0,1]{for count in [0,1,7,8,15,16,31,32,255]{
+            if w==32{bytes.push(0x66);}bytes.extend([if w==8{0xc0}else{0xc1},0xc0|(extension<<3),count]);
+        }for memory in [false,true]{for opcode in [if w==8{0xd0}else{0xd1},if w==8{0xd2}else{0xd3}]{
+            if w==32{bytes.push(0x66);}bytes.extend([opcode,(if memory{7}else{0xc0})|(extension<<3)]);
+        }}}
+        bytes.push(0xf4);let mut t=case(match w{8=>"rotate8",16=>"rotate16",_=>"rotate32"},bytes)?;
+        t.regs[0]=0x80008081;t.regs[1]=255;t.regs[3]=0x400;t.flags=0xad7;t.patch=Some((0x500,vec![0x81,0x80,0,0x80]));tests.push(t);
+    }
+    for count in [0,1]{let mut t=case(if count==0{"rotate_readonly_zero"}else{"rotate_readonly_one"},vec![0xc1,0x07,count,0xf4])?;
+        t.regs[3]=0x400;t.protect=Some((0x500,4));tests.push(t);}
+    let mut t=case("carry_controls",vec![0xf9,0x66,0xf8,0xf9,0xf8,0xf4])?;t.flags=0xad7;tests.push(t);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
     let mut jump=case("jump_fault",vec![0xe9,0xff,0x7f])?;jump.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(jump);

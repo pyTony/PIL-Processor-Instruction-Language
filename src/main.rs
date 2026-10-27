@@ -453,6 +453,10 @@ fn description(name: &str) -> R<String> {
         "shl"|"sal" => Some(include_str!("../isa/i386/shl.pil")),
         "shr" => Some(include_str!("../isa/i386/shr.pil")),
         "sar" => Some(include_str!("../isa/i386/sar.pil")),
+        "rol" => Some(include_str!("../isa/i386/rol.pil")),
+        "ror" => Some(include_str!("../isa/i386/ror.pil")),
+        "clc" => Some(include_str!("../isa/i386/clc.pil")),
+        "stc" => Some(include_str!("../isa/i386/stc.pil")),
         "adc" => Some(ADC), "sbb" => Some(SBB), "and" => Some(AND_DESC),
         "write_if_z" => Some(WRITE_IF_Z), "load_ram"=>Some(LOAD_RAM),
         "store_ram"=>Some(STORE_RAM), "add_ram"=>Some(ADD_RAM), _ => None,
@@ -468,7 +472,7 @@ fn description(name: &str) -> R<String> {
             return Ok(format!("{}\n{}",CONDITIONS,JCC.replace("$CONDITION", &format!("cond_{condition}"))));
         }
     }
-    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar, set<condition>, j<condition>, or write_if_z".into())
+    Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
     text.as_ref().replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
@@ -648,6 +652,7 @@ fn main() -> R<()> {
         cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
     Ok(())
 }
+
 
 
 
