@@ -604,6 +604,7 @@ fn description(name: &str) -> R<String> {
         "cli" => Some(include_str!("../isa/i386/cli.pil")),
         "sti" => Some(include_str!("../isa/i386/sti.pil")),
         "jcxz" => Some(include_str!("../isa/i386/jcxz.pil")),
+        "leave" => Some(include_str!("../isa/i386/leave.pil")),
         "cld" => Some(include_str!("../isa/i386/cld.pil")),
         "std" => Some(include_str!("../isa/i386/std.pil")),
         "stc" => Some(include_str!("../isa/i386/stc.pil")),
@@ -897,3 +898,7 @@ mod calls_strings_tests;
 #[cfg(test)]
 #[path = "../tests/unit/control_flags.rs"]
 mod control_flag_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/leave.rs"]
+mod leave_tests;

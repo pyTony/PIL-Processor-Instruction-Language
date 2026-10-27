@@ -102,6 +102,11 @@ impl Image {
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0xc9=>{
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let text=description("leave").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                ("LEAVE".into(),compile(&instantiate(text,w),w))
+            }
             0xe3=>{
                 disp=r.byte()? as i8 as i32;
                 let name=if addr32{"JECXZ"}else{"JCXZ"};

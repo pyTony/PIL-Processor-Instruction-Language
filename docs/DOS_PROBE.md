@@ -162,3 +162,30 @@ inputs. `--dos-list PATH` lists candidates; `--dos-extract PATH NEW_DIRECTORY`
 extracts regular files and one package ZIP level without changing the source.
 See [container guide](CONTAINERS.md) for FreeDOS commands, formats and bounds.
 Container executables are deduplicated by full byte equality before probing.
+
+## Bounded conventional-memory services (0.27 implementation)
+
+INT21/AH48 allocates first-fit BX paragraphs and returns segment AX;AH49 frees
+ES;AH4A resizes ES to BX paragraphs. CF is defined clear on success or set with
+AX7 (corrupted MCB),8 (insufficient memory) or9 (invalid/unowned block). AH48
+and insufficient-growth AH4A return the largest available size in BX. DOS2..6
+resize failure still grows to the maximum contiguous size. Upper register
+halves and other flags/markers are preserved. Free does not zero bytes;
+adjacent free blocks coalesce during allocate/resize,not free. Zero paragraphs
+are represented by an owned zero-data MCB. First-fit only; no UMB/strategy,
+EXEC/TSR,environment allocator,shared processes or device-owned blocks.
+
+The arena spans MCB0FFFh through conventional-memory end A000h. Each MCB uses
+one paragraph with type M/Z,owner PSP (1000h) or0 and data size in paragraphs.
+The loader writes a real initial chain and maintains trusted host metadata.
+Before services,mirrored type/owner/size must match; direct guest chain edits
+are rejected with DOS7 rather than silently overwritten. Names/reserved bytes
+are not interpreted. A4096-block safety limit stops the service diagnostically.
+
+Physical probe RAM is now always640KiB,independent of MZ initial allocation.
+PSP:0002 and allocation_end report the current owned PSP block end; resizing
+updates both. Allocation is DOS bookkeeping,not hardware memory protection:
+freed/unallocated RAM remains addressable in real mode. Loaded instruction
+fetch windows are unchanged,so allocating RAM does not make arbitrary data
+executable. All MCB/PSP writes are prechecked before committing metadata or
+register results; readonly write failures stop the bridge without partial state.

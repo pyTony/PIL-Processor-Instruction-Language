@@ -1,3 +1,11 @@
+# LEAVE and DOS memory arena — hosted verification pending
+
+LEAVE uses shared frame snapshots/stack load/named writes,including mixed
+operand/SS sizes and dynamic SS rebinding. DOS48/49/4A use one bounded first-fit
+MCB arena with visible headers,CF/error codes,resize-failure growth and atomic
+MCB/PSP updates. Physical RAM and allocated PSP extent are now distinct.
+Thirteen independent tests and7 backend cases await Windows/Linux execution.
+
 # Real-mode flags and counter branches verified — 27 October 2026
 
 Windows/Linux CI40527735310 passed on 0e673f4f6db3b368bc37145803e53fca4f28f827:
