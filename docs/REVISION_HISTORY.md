@@ -780,3 +780,14 @@ exchange checker passed131,216 cases locally. Modern hardware suite expected
 and their upper-half policies are checked. Hosted execution pending.
 Runtime export77 files. PR19 was confirmed merged before this increment.
 Prepare a separate0.17 delivery PR after checks;main stays a strict runtime tree.
+
+## PIL reference audit — 27 October 2026
+
+Rewrote docs/LANGUAGE.md against the implemented parser, interpreter and emitter.
+Corrected stale memory/fetch/test-layout claims, source-width inference from
+reads and writes, complete template parameters, token restrictions, flag metadata,
+staged overlap/retirement rules and execution-API differences. Marked the original
+v0.1 proposal as a separate design and repaired its platform-adapter link.
+Documentation only; executable source and instruction support are unchanged.
+Validation: local Markdown destinations and source checksums verified; token/API
+contracts checked directly against src/main.rs and src/flow.rs.

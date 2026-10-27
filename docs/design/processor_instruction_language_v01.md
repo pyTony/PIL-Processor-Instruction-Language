@@ -1,6 +1,11 @@
 # Processor Instruction Language (PIL) v0.1
 Design proposal — 26 October 2026
 
+This document preserves the proposed architecture and future language. It is
+not the executable grammar or a current implementation-status report. See
+[the implemented PIL reference](../LANGUAGE.md) for supported syntax and APIs.
+Statements about the first proof/toolchain below describe the original milestone.
+
 ## Purpose and first target
 
 Describe CPU instructions once, separating pure bit-vector computation from ordered architectural effects. First run the tokenized description in a Rust reference interpreter. Next generate Rust source from the same tokens. Add embedded optimizations and native-code backends later.
@@ -222,7 +227,7 @@ CPU correctness alone does not boot Windows. Supply an AT-compatible platform wi
 
 Device callbacks receive guest physical addresses or port numbers. Never expose raw host pointers in PIL. Machine state serialization includes device and event state. Disk image mounting must preserve explicit geometry/controller assumptions.
 
-Selected Tiny386 devices are now the preferred platform starting point, behind a separate C ABI. See pil_proof/tiny386-adapter.md for the proposed boundary, CPU coupling and checked licence notes. No upstream sources have been imported yet.
+Selected Tiny386 devices are now the preferred platform starting point, behind a separate C ABI. See [the platform adapter plan](../platform/tiny386-adapter.md) for the proposed boundary, CPU coupling and checked licence notes. No upstream sources have been imported yet.
 
 ## 10. ESP32 execution strategy
 
