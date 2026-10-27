@@ -1,3 +1,16 @@
+# Wrapped MZ entry correction from the FreeDOS corpus — 27 October 2026
+
+The0.19 native CI runtime probed all156 unique extracted executables locally:
+138 imported,125 missing encodings,5 service stops,7 faults,1 successful exit
+(VCHKBOX),13 mouse-driver MZ entry rejections and5 expected LE rejections.
+Inspection showed all13 mouse drivers use relativeCS=FFF0,IP=0100. Their
+relocated physical entry is valid;MZCS/SS must wrap as16-bit additions before
+entry/stack validation. Corrected this and the code-window start;added a
+synthetic wrapped-segment hello regression. Expected210 tests now;CI pending.
+The baseline first blockers were1E(30),FD(22),06(18),FB(16),0E/8E/E8/FC(8each),
+8C(4),16/54/C7(1each);these are observed first blockers,not complete ISA usage.
+Baseline was original0.19 code,not a pass of the new container reader.
+
 # FAT16/ZIP container support — 27 October 2026
 
 0.20alpha.1 adds original bounded FAT16 MBR/superfloppy reader and ZIP stored/

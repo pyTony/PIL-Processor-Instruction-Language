@@ -1773,9 +1773,10 @@
         "FAT16 image and ZIP imports",
         "original bounded stored/fixed/dynamic DEFLATE and CRC32",
         "list/extract and direct deduplicated DOS probing",
-        "independent ZIP/FAT CLI interoperability tests"
+        "independent ZIP/FAT CLI interoperability tests",
+        "16-bit wrapped MZ CS/SS relocation and validated physical entry"
       ],
-      "expected_rust_tests": 209,
+      "expected_rust_tests": 210,
       "backend_cases": 49,
       "runtime_export_files": 86,
       "third_party_data_imported_into_repo": false,

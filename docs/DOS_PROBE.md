@@ -104,7 +104,9 @@ reveal the next one. Dynamic paths, inputs and loops affect the frequencies.
 - MZ imports validate page counts, header/module sizes, relocation tables,
   relocation targets, initial entry and stack, min/max allocations and overlays.
   Relocations add the load segment1010h with16-bit wrapping, in table order.
-  CS/SS are relocated; DS/ES point to the PSP. Zero min=max high-load files,
+  CS/SS are relocated with16-bit wrapping; DS/ES point to the PSP.
+  Wrapped relative segments such as FFF0:0100 are accepted when the resulting
+  physical entry lies inside the load module. Zero min=max high-load files,
   overlays and recognized NE/LE/LX/PE/W3/W4 containers are rejected. Trailing
   bytes beyond the declared DOS image are reported and not loaded. Checksum
   validation is not required; the MZ checksum field is ignored.

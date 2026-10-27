@@ -82,13 +82,14 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
             let n=word(&module,target)?.wrapping_add(LOAD);put_word(&mut module,target,n);
         }
         let cs=word(bytes,22)?;let ip=word(bytes,20)?;let ss=word(bytes,14)?;let sp=word(bytes,16)?;
-        let cs_start=usize::from(cs)*16;
-        if cs_start+usize::from(ip)>=module.len(){return Err("MZ initial CS:IP is outside load module".into());}
-        let cs=LOAD.checked_add(cs).ok_or("MZ CS relocation overflow")?;
-        let ss=LOAD.checked_add(ss).ok_or("MZ SS relocation overflow")?;
+        // MZ segment values are relocated as16-bit words. FFF0:0100 commonly
+        // wraps CS to the PSP while still entering the module at LOAD:0000.
+        let cs=LOAD.wrapping_add(cs);let ss=LOAD.wrapping_add(ss);
+        let cs_base=usize::from(cs)*16;let entry=cs_base+usize::from(ip);
+        if entry<module_base as usize||entry>=module_base as usize+module.len(){return Err("MZ initial CS:IP is outside load module".into());}
         if usize::from(ss)*16<usize::from(PSP)*16||usize::from(ss)*16+usize::from(sp)>allocation_end{return Err("MZ initial SS:SP is outside allocated probe block".into());}
         selectors[SegmentRegister::Cs.index()]=cs;selectors[SegmentRegister::Ss.index()]=ss;
-        cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);start=0;end=(module.len()-cs_start).min(65536)as u32;
+        cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);start=(module_base as usize).saturating_sub(cs_base)as u32;end=(module_base as usize+module.len()-cs_base).min(65536)as u32;
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
     let mut ram=Ram::new(allocation_end);
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);

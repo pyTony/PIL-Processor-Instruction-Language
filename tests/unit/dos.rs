@@ -83,3 +83,12 @@ fn corpus_report_ranks_first_blockers_and_keeps_service_failures_separate(){
     for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0x8e,0xd8]),("gap2.com",vec![0x8e,0xd8]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
     let text=report(&paths,100).unwrap();assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 8e"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn mz_negative_relative_segments_wrap_before_entry_and_stack_validation(){
+    let mut bytes=hello("exe").unwrap();put_word(&mut bytes,22,0xfff0);put_word(&mut bytes,20,0x100);put_word(&mut bytes,14,0xfff0);
+    // With CS=DS=PSP, hello's data offset10C still names the original string.
+    let p=load(&bytes,"wrapped.exe").unwrap();assert_eq!(p.selectors[1],PSP);assert_eq!(p.selectors[2],PSP);assert_eq!(p.image.start,0x100);assert_eq!(p.cpu.eip,0x100);
+    let r=run(p,100).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"Hello, DOS!\r\n");
+    put_word(&mut bytes,20,0xff);assert!(load(&bytes,"outside.exe").is_err());
+}
