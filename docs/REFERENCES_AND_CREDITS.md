@@ -218,3 +218,14 @@ https://www.pcjs.org/documents/books/mspl13/msdos/dosref33/
 https://delorie.com/djgpp/doc/rbinter/id/73/25.html
 The service bridge is a narrow host shim, not a guest DOS kernel or general
 CPU interrupt implementation. License selection for this project is unchanged.
+
+## FAT16/ZIP container increment
+
+Original bounded filesystem/archive reader,DEFLATE/CRC implementation and tests;
+no third-party codec source/crates/specification text imported. Consulted:
+https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT (ZIP record layout)
+https://www.rfc-editor.org/rfc/rfc1951.html (raw DEFLATE format)
+https://learn.microsoft.com/windows/win32/fileio/disk-partition-types
+Synthetic vectors are original data compressed with Python's zlib,not copied
+codec code. The user-supplied FreeDOS image was inspected/extracted separately;
+its binaries,package sources and licenses are not added to this repository.
