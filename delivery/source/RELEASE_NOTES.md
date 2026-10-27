@@ -1,3 +1,14 @@
+# PIL 0.24.0-alpha.1
+
+- Add A0..A3 direct-offset accumulator MOV and C6/C7 /0 immediate destinations.
+- Reuse shared PIL memory/register effects;keep operand/address sizes independent.
+- Check high-byte destinations,SIB/SS defaults,segment overrides,limits,readonly
+  memory and truncated encodings without partial state updates.
+- Remove three normal-build warnings reported on Termux.
+- Windows/Linux CI40500511068 passed235 tests and67 backend cases (5,417,290 bytes),
+  existing340,920 native cases,full Mandelbrot and91-file package checks.
+- Memory stack operands,CALL/RET and strings/REP remain separate work.
+
 # PIL 0.23.0-alpha.1
 
 - Add shared PIL selector snapshots and staged real-mode segment-cache loads.

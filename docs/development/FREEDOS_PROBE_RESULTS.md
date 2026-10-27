@@ -106,3 +106,43 @@ Reached mix includes404 MOV,82 PUSH,31 POP. First segment MOV/POP blockers vanis
 SHARE now reaches the same CS-write model limitation as the prior seven faulting
 programs;this is a newly exposed path,not a new unsupported opcode. The source
 image stayed local and is not bundled in GitHub tests or runtime delivery.
+
+## Additional MOV forms: local Linux CI runtime probe
+
+Linux CI artifact e74c9510 probed the unchanged FD14LITE.img locally with10,000
+steps per program.151/156 imports;96 MissingEncoding, 44 Service, 3 Exit, 8 Fault.
+A0/A3/C7 first blockers disappear;reached MOV count rises404->489. Three
+exit paths are unchanged (two usage paths exit0 and the placeholder exits36).
+An original COM fixture used C6 to store127,A0 to load AL,and exited127.
+The source image was not uploaded to CI or committed. No new ARM/hardware run.
+
+```text
+SUMMARY imported=151/156 exited=3; first missing-encoding blockers (program count):
+54 opcode f3
+18 opcode e8
+16 opcode fb
+5 opcode 9c
+3 opcode ac
+Reached instruction mix (executed count; DOS bridges listed separately):
+489 MOV
+82 PUSH
+67 ADD
+56 JMP
+52 STD
+45 CMP
+31 POP
+31 TEST
+27 CLD
+22 JA
+22 XOR
+17 JG
+7 SUB
+5 JNE
+4 DOS INT21/AH09
+4 SHL
+3 DOS INT21/AH4c
+1 JBE
+1 OR
+1 SHR
+Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.
+```

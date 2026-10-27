@@ -1,3 +1,20 @@
+# Additional MOV forms verified — 27 October 2026
+
+Windows/Linux CI40500511068 passed ate74c95100ee5fff346b229a2c4cf45643ad25922:
+235 tests per host,67 full-state backend cases (5,417,290 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone91-file source/
+native-package checks. A0..A3 and C6/C7 use existing PIL load/store/constant/write
+semantics;no instruction-specific backend operations were added. Operand/address
+sizes,high bytes,SS defaults,SIB/overrides,readonly/boundary/fetch faults checked.
+The first run's only failure was a test fixture using a>64KiB offset with a64KiB
+cache;the fixture now supplies a larger cache and separately checks rejection.
+
+Normal-build warnings fixed:remove unused mut;gate legacy segmented wrapper and
+empty-state trace record helper as test-only. No new hardware oracle/ARM run is
+claimed. The0.24 follow-up changes only versions/docs/evidence after verification.
+Next remains independent per-access contexts,near CALL/RET and one-element
+strings before restartable REP. Real-image evidence is recorded separately below.
+
 # Real-mode segment transfers verified — 27 October 2026
 
 Windows/Linux CI40498283191 passed at6b2f7d1ceceb57f73786f01d17b0e40d09cc740b:

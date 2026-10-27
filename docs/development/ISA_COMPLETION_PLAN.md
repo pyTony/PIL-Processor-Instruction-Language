@@ -168,3 +168,11 @@ Windows/Linux CI40498283191 passed231 tests/62 cases. Descriptor-table loads,
 interrupt delivery and MOVr32,Sreg legacy upper-half policy remain unimplemented.
 Memory PUSH/POP still requires independent per-access contexts. Measured FreeDOS
 blockers now favor REP,moffs,CALL and PUSHF;no whole-program coverage claimed.
+
+## Additional MOV forms (0.24)
+
+A0..A3 moffs and C6/C7 /0 register/memory immediate MOV now use existing PIL
+operations. Address/operand sizes remain independent. CI40500511068 passed235 tests/
+67 backend cases on Windows/Linux. P1 encoding audit remains partial;segment
+MOV limitations are unchanged. Next establish per-access addressing for stack
+memory/near calls and one-element strings,before restartable REP.
