@@ -891,3 +891,12 @@ verification plans, architecture/platform goals, sources and history. Linked it
 from the root README and both language documents. Clarified which documents
 specify current behavior and which record proposals, plans or historical results.
 Documentation only. Local Markdown destinations and source checksums checked.
+
+## DOS guide build-profile correction — 27 October 2026
+
+User's Termux log showed build.sh correctly building0.19 in target/debug while
+the supplied commands invoked an older target/release executable. Corrected
+DOS examples to the default debug paths on both platforms and documented
+--release/-Release and CARGO_TARGET_DIR. Executable source is unchanged.
+Validation: commands checked against both build helpers; Markdown/source
+checksum checks passed. No execution-test rerun is needed for this docs-only fix.
