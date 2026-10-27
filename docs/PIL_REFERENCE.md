@@ -45,7 +45,7 @@ from `conditions.pil` and `setcc.pil`/`jcc.pil`; no general `include` directive 
 | `const out WIDTH NUMBER` | Define a fitting unsigned constant, width 1..64 |
 | `read out dst WIDTH` | Snapshot of incoming destination; WIDTH must equal operand width |
 | `read out src WIDTH` | Snapshot of incoming source; infers/validates source width |
-| `read_flag out FLAG` | Incoming concrete CF/PF/AF/ZF/SF/OF as `bv<1>` |
+| `read_flag out FLAG` | Incoming concrete CF/PF/AF/ZF/SF/DF/OF as `bv<1>` |
 | `zext out input WIDTH` | Equal-width copy or zero extension |
 | `sext out input WIDTH` | Equal-width copy or sign extension |
 | `trunc out input WIDTH` | Equal-width copy or narrowing |
@@ -85,8 +85,12 @@ earlier load, fault or calculation. `write_if` only suppresses its register writ
 
 Each CF/PF/AF/ZF/SF/OF must be classified exactly once. Missing or duplicate
 classifications fail compilation. Put `preserve_flags remaining` after explicit
-classifications. Other EFLAGS bits are automatically preserved; the language
-cannot currently modify DF, IF or privileged system flags.
+classifications. DF (bit 10) may additionally be read, defined, preserved or
+marked undefined explicitly; duplicate classifications are rejected. The `all`
+and `remaining` masks still cover the six arithmetic flags only. Unmentioned DF
+and other EFLAGS bits are automatically preserved. IF and privileged system
+flags cannot currently be modified. CLD/STD define DF as zero/one using ordinary
+PIL flag writes and clear only its diagnostic undefined marker.
 
 | `active` | `defined` | `flag_if` behavior |
 |---|---|---|

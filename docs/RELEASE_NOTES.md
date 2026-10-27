@@ -1,3 +1,14 @@
+# PIL 0.21.0-alpha.1
+
+- Add CLD/STD through shared PIL descriptions and explicit DF (EFLAGS bit 10).
+- Preserve all other flags, registers and markers; define DF and clear its marker.
+- Add independent full-state, generated Rust, decoder and ABI-safe hardware tests.
+- Windows/Linux CI40476098533 passed215 tests,50 backend cases (5,008,114 trace bytes),
+  98,304 independent Python direction cases and existing340,920 native overlap cases.
+- Full Mandelbrot, standalone source and native-package checks passed on both hosts.
+- Ignore local images/ in source deliveries; refresh the ISA TODO baseline.
+- No string instructions, stack support or interrupt control added by this slice.
+
 # PIL 0.20.0-alpha.1
 
 - Read FAT16 images and ZIP stored/deflate packages without new runtime dependencies.

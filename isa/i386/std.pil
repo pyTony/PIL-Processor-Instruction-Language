@@ -1,0 +1,5 @@
+# STD defines DF=1; all other flags and undefined markers are preserved.
+const direction 1 1
+flag DF direction
+preserve_flags all
+retire
