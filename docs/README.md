@@ -67,6 +67,7 @@ questions; proposed syntax and plans are not implementation claims.
 | [Roadmap](ROADMAP.md) | Emulator and portability goals, with historical planning notes |
 | [386 instruction completion plan](development/ISA_COMPLETION_PLAN.md) | Ordered instruction-family work, dependencies and acceptance gates |
 | [Machine-readable ISA backlog](development/ISA_BACKLOG.json) | Family/form inventory; not an opcode-completion percentage |
+| [Measured FreeDOS probe results](development/FREEDOS_PROBE_RESULTS.md) | Actual image extraction validation,first blockers and next-work priorities |
 | [Host CPU oracle](development/HOST_CPU_ORACLE.md) | Native CPU comparisons, flag policies, provenance and artifacts |
 | [External test suites](development/EXTERNAL_TEST_SUITES.md) | Pinned suites, licensing and adapter plans; distinguish plans from executed suites |
 | [x86-64 verification plan](development/X86_64_VERIFICATION_PLAN.md) | Modern host verification and future true 64-bit guest support |

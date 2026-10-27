@@ -4,7 +4,9 @@
 - List/extract files and directly probe executable candidates plus one package level.
 - Deduplicate identical container programs;validate CRC,chains,paths and bounded expansion.
 - Add synthetic FAT/ZIP,independent zlib vectors and CLI/package interoperability checks.
-- Hosted execution for this increment is pending CI.
+- Windows/Linux CI40470152015 passed210 tests and CLI/package checks.
+- Actual supplied FreeDOS image extracted byte-identically;151 DOS programs imported.
+- Correct wrapped MZ CS/SS relocation before physical entry/stack validation.
 
 # PIL 0.19.0-alpha.1
 

@@ -1,3 +1,25 @@
+# Containers and actual FreeDOS image verified — 27 October 2026
+
+Windows/Linux CI40470152015 atab63a6ec01b570bf29f5251e89f9f819b4fdba37
+passed210 tests per host,independent FAT16/ZIP interoperability,standalone86-file
+source/native ZIP list/probe/extract,existing49 backend cases(4,983,058 bytes),
+340,920 native CPU cases and full256x256 Mandelbrot comparisons.
+
+Compiled Linux artifact04914f4b read/extracted actualFD14LITE.img:2,147 files,
+all688 original and1,459 package files byte-identical to independent Python.
+Codec/container code is unchanged inab63a6ec. Correctedab63a6ec runtime directly
+probed the actual image:208 occurrences->156 distinct;151 DOS imports,5LE
+rejections;138encoding gaps,5services,7model faults,1successfulVCHKBOX exit.
+Source image unchanged. The image was not uploaded toGitHub;only local runs.
+Detailed measured blockers and next priorities:docs/development/FREEDOS_PROBE_RESULTS.md.
+
+Prepare strict0.20alpha.1 runtime PR. This follow-up only records evidence/docs;
+execution/export/package logic matches testedab63a6ec. No ARM run claimed.
+User's extracted corpus and report are saved separately;do not add third-party
+FreeDOS program/source packages to the git repo. All project uploads authorized;
+user reviews/merges delivery PR. Chat placement in the PC project is unnecessary
+for continuation:keep code/docs/handoff ondev and runtime projection onmain.
+
 # Wrapped MZ entry correction from the FreeDOS corpus — 27 October 2026
 
 The0.19 native CI runtime probed all156 unique extracted executables locally:
