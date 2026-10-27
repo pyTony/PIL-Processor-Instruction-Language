@@ -1,3 +1,15 @@
+# PIL 0.28.0-alpha.2
+
+- Correct ordinary real-mode CS data permissions in monitor and COM/MZ loaders.
+  CS overrides may write data/code; protected Code caches still reject stores.
+- Preserve segment limits, RAM protection and loaded-image fetch boundaries.
+  Cached modified instruction bytes are decoded again before reuse; the fixed
+  compiled-image backend still stops at a changed-code guard.
+- Add COM/MZ self-modifying execution, cached instruction invalidation and wider
+  independent SETcc condition/addressing checks. Local Windows: 277 tests passed;
+  121 interpreter/generated full-state cases matched 6,594,404 trace bytes.
+- This increment does not claim a new full FreeDOS-image or ARM execution run.
+
 # PIL 0.20.0-alpha.1
 
 - Read FAT16 images and ZIP stored/deflate packages without new runtime dependencies.

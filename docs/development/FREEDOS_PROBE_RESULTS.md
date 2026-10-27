@@ -342,3 +342,15 @@ no complete-application support claim. Budgets22,loaded-code boundaries19 and
 model faults27 remain separate work. Next memory POP needs post-increment ESP
 addressing;machine status and DOS version/vector/BIOS services need explicit
 models rather than guessed success responses.
+
+## Real-mode CS permissions follow-up (0.28 alpha.2)
+
+The earlier CS-write GeneralProtection stops were caused by the loaders assigning
+protected Code permissions to ordinary real-mode CS caches. Both monitor and DOS
+loaders now use the ordinary readable/writable real-mode cache for CS. Original
+COM/MZ self-modifying fixtures and explicit cache invalidation tests pass locally;
+protected Code and RAM write faults remain checked in both-backend traces.
+No new actual-image measurement is recorded here: FD14LITE.img could not be
+materialized locally due to network restrictions. Loaded-image fetch boundaries,
+copy/unpack destinations and budgets are still separate follow-up work. Do not
+infer an exit-count or full-application improvement from these fixture results.

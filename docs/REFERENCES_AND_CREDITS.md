@@ -502,3 +502,14 @@ https://learn.microsoft.com/windows/win32/fileio/disk-partition-types
 Synthetic vectors are original data compressed with Python's zlib,not copied
 codec code. The user-supplied FreeDOS image was inspected/extracted separately;
 its binaries,package sources and licenses are not added to this repository.
+
+## Ordinary real-mode CS permission correction (0.28 alpha.2)
+
+The monitor/DOS loaders use the project's normalized real-mode cache for CS
+data accesses as well as other segments. Protected Code cache restrictions
+remain separate. See Intel80386 PRM chapter14, particularly
+[physical address formation and real-mode bounds](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s14_01.htm).
+No third-party emulator implementation was copied. Original COM/MZ execution
+and cache fixtures verify the implementation; this is not new hardware-derived
+real-mode or whole-image evidence. Retained protected-mode hidden caches remain
+outside the ordinary real-mode loader contract.

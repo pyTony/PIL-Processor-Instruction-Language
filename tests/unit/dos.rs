@@ -92,3 +92,13 @@ fn mz_negative_relative_segments_wrap_before_entry_and_stack_validation(){
     let r=run(p,100).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"Hello, DOS!\r\n");
     put_word(&mut bytes,20,0xff);assert!(load(&bytes,"outside.exe").is_err());
 }
+
+#[test]
+fn real_mode_cs_writes_work_but_ram_permissions_and_segment_limits_remain(){
+ // CS:C6 changes a following INC AX into INC CX, then it executes.
+ let bytes=[0x2e,0xc6,0x06,8,1,0x41,0xeb,0,0x40,0xb8,0,0x4c,0xcd,0x21];
+ let r=run(load(&bytes,"selfmod.com").unwrap(),30).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[1],1);assert_eq!(r.loaded.ram.load(0x10108,MemWidth::Byte).unwrap(),0x41);
+ let mut p=load(&bytes,"readonly.com").unwrap();p.ram.protect(0x10108,1).unwrap();let old=p.cpu.clone();let ram=p.ram.clone();let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Fault(_)));assert_eq!(r.loaded.cpu,old);assert_eq!(r.loaded.ram,ram);
+ let mut mz_code=bytes;mz_code[4]=0;let r=run(load(&exe(&mz_code,&[]),"selfmod.exe").unwrap(),30).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[1],1);assert_eq!(r.loaded.ram.load(0x10108,MemWidth::Byte).unwrap(),0x41);
+ let bytes=[0x2e,0xc7,0x06,0xff,0xff,1,0];let r=run(load(&bytes,"limit.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Fault(_)));assert_eq!(r.completed,0);
+}

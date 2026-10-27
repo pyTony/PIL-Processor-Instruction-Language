@@ -1800,6 +1800,24 @@
         "actual_image_not_uploaded_to_ci": true,
         "arm": "not executed for this increment"
       }
+    },
+    {
+      "version": "0.28.0-alpha.2",
+      "date": "2026-10-27",
+      "features": [
+        "Ordinary real-mode CS data permissions",
+        "COM/MZ self-modifying execution and decode-cache invalidation tests",
+        "Expanded independent SETcc condition and addressing checks"
+      ],
+      "status": "locally-verified",
+      "verification": {
+        "environment": "Windows x86-64",
+        "rust_tests": 277,
+        "full_state_backend_cases": 121,
+        "trace_bytes": 6594404,
+        "actual_freedos_image": "not rerun; local download blocked by network",
+        "arm": "not executed"
+      }
     }
   ]
 }

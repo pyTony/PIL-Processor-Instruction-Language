@@ -58,7 +58,8 @@ impl Image {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
         let mut ram=Ram::new(RAM_BYTES);ram.write_bytes(ENTRY,bytes).map_err(|e|format!("{e:?}"))?;
         let mut segments=[SegmentCache::real_mode(0);6];
-        segments[SegmentRegister::Cs.index()].access=SegmentAccess::Code{readable:true};
+        // Ordinary real-mode CS permits data reads and writes too.
+        // Protected-mode callers supply Code caches with their own permissions.
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);

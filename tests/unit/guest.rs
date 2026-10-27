@@ -405,3 +405,22 @@ fn byte_flag_transfers_bind_ah_ignore_size_prefixes_and_check_fetch(){
     }
 }
 
+
+#[test]
+fn setcc_memory_conditions_addressing_and_exact_byte_writes(){
+ use super::super::Cpu;
+ for cc in 0..16u8{for f in [0u32,0x8d5,1,4,0x40,0x80,0x800,0x880,0x81]{
+  let cf=f&1!=0;let pf=f&4!=0;let zf=f&0x40!=0;let sf=f&0x80!=0;let of=f&0x800!=0;
+  let expected=[of,!of,cf,!cf,zf,!zf,cf||zf,!cf&&!zf,sf,!sf,pf,!pf,sf!=of,sf==of,zf||sf!=of,!zf&&sf==of][cc as usize]as u32;
+  for bytes in [vec![0x0f,0x90+cc,0x07],vec![0x66,0x0f,0x90+cc,0x07],vec![0x67,0x0f,0x90+cc,0x04,0x33],vec![0x64,0x0f,0x90+cc,0x06,0,2],vec![0x0f,0x90+cc,0x46,0]]{
+   let mut c=Cpu{regs:[0x12345678,0xabcdef01,0x55555555,0x400,0,0x300,0,0],eflags:f|0x202,undefined_flags:u32::MAX,eip:ENTRY};let mut want=c.clone();want.eip+=bytes.len()as u32;
+   let ram=execute_one(&bytes,&mut c,0xaabbccdd,false).unwrap();assert_eq!(c,want);assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),0xaabbcc00|expected);
+  }
+ }}
+}
+#[test]
+fn setcc_memory_faults_are_transactional_and_do_not_require_a_read(){
+ use super::super::Cpu;
+ for readonly in [false,true]{let bytes=[0x0f,0x95,0x07];let mut c=Cpu{regs:[0x12345678;8],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};c.regs[3]=if readonly{0x400}else{0xffff};let old=c.clone();assert!(execute_one(&bytes,&mut c,99,readonly).is_err());assert_eq!(c,old);}
+ for bytes in [vec![0x0f,0x95,0x06,0],vec![0xf0,0x0f,0x95,7],vec![0x0f,0x95,0x0f]]{assert!(decode(&bytes).is_err());}
+}

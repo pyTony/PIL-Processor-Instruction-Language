@@ -142,6 +142,9 @@ pub fn cases()->Result<Vec<Case>,String> {
         bytes.push(0xf4);let mut t=case(match w{8=>"exchange8",16=>"exchange16",_=>"exchange32"},bytes)?;
         t.regs[0]=0x12345678;t.regs[1]=0xabcdef01;t.regs[7]=0xfedcba98;t.flags=0xad7;tests.push(t);
     }
+    let t=case("cs_real_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;tests.push(t);
+    let mut t=case("cs_protected_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.image.real_mode=false;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true};tests.push(t);
+    let mut t=case("cs_readonly",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.protect=Some((0x800,1));tests.push(t);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
     let mut jump=case("jump_fault",vec![0xe9,0xff,0x7f])?;jump.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(jump);

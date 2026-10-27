@@ -65,3 +65,14 @@ fn failed_decodes_are_not_stored_or_reused() {
     for _ in 0..2 {assert!(c.fetch(&image,&ram,ENTRY).is_err());}
     assert!(c.entries.is_empty());assert_eq!(c.stats().misses,2);assert_eq!(c.stats().hits,0);
 }
+
+#[test]
+fn executed_cs_write_invalidates_an_already_cached_instruction(){
+ use super::super::{Cpu,execute_machine};
+ use super::super::guest::Operation;
+ let (mut image,mut ram)=Image::load(&[0x2e,0xc6,6,6,1,0x41,0x40,0xf4]).unwrap();let mut cache=DecodeCache::default();
+ let old=cache.fetch(&image,&ram,0x106).unwrap();assert_eq!(old.label,"INC AX");
+ let d=cache.fetch(&image,&ram,ENTRY).unwrap();let mut cpu=Cpu{eip:ENTRY,..Cpu::default()};let mut machine=image.segment_state();
+ if let Operation::Pil{program,dst,src,flow,address}=&d.operation{execute_machine(program,&mut cpu,*dst,*src,*flow,&mut ram,*address,&mut machine).unwrap();}else{panic!()}
+ image.set_segment_state(machine);let new=cache.fetch(&image,&ram,0x106).unwrap();assert_eq!(new.label,"INC CX");assert!(!Rc::ptr_eq(&old,&new));assert_eq!(cache.stats().invalidations,1);
+}

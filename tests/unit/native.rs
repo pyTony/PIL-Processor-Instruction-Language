@@ -3,7 +3,7 @@ use super::*;
 fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
     let dir=std::env::temp_dir().join(format!("pil-native-proof-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     let report=compare_at(&dir,16,2).unwrap();
-    assert!(report.contains("byte-for-byte after every execution step across 118 cases"));
+    assert!(report.contains("byte-for-byte after every execution step across 121 cases"));
     assert!(report.contains("GENERATED verify readonly_store: steps=0 stop=6"));
     assert!(report.contains("GENERATED verify branch_fault: steps=0 stop=4"));
     assert!(report.contains("GENERATED verify code_guard: steps=0 stop=7"));
@@ -28,6 +28,7 @@ fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
     for(name,done,stop)in [("extensions_demo",15,1),("same_width_readonly",4,1),("same_width_gp",0,4),("same_width_ss",0,5),("same_width_ram",0,6)]{
         assert!(report.contains(&format!("GENERATED verify {name}: steps={done} stop={stop}")),"{report}");
     }
+    for (name,steps,stop) in [("cs_real_write",1,1),("cs_protected_write",0,4),("cs_readonly",0,6)]{assert!(report.contains(&format!("GENERATED verify {name}: steps={steps} stop={stop}")),"{report}");}
     assert!(report.contains("Generated Rust median="));
     let expected=fs::read(dir.join("interpreter.trace")).unwrap();let actual=fs::read(dir.join("generated.trace")).unwrap();assert_eq!(expected,actual);
     fs::remove_dir_all(dir).unwrap();

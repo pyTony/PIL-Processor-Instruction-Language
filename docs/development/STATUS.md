@@ -1,3 +1,22 @@
+# Real-mode CS writes — 27 October 2026
+
+Based on upstream dev15fb5b12 (0.28 comparison strings and memory SETcc).
+Ordinary monitor and DOS CS caches now retain SegmentCache::real_mode data
+permissions instead of being mislabeled protected Code caches. Generic protected
+Code permission checks are unchanged. Segment limits, RAM write protection and
+loaded-image fetch boundaries remain enforced. The interpreter invalidates
+modified cached instructions on reuse; generated fixed images retain code guards.
+
+Local Windows x86-64:277 Rust tests passed (16.64s),121 full-state backend cases
+matched6,594,404 trace bytes. COM and MZ original fixtures modify a later INC AX
+to INC CX and execute it; a separate cache fixture primes that instruction first.
+Additional SETcc tests cover all16 predicates,mixed flags,BP/SS,FS,SIB,ignored66,
+exact byte writes,readonly and truncated/invalid forms. Existing native hardware
+oracle ran with the suite; it does not independently verify new CS semantics.
+Standalone105-file runtime build, scripts, generated comparison, COM/MZ hello
+and ZIP list/probe/extract checks passed locally. No new ARM run or full FD14LITE.img rerun:local image materialization was blocked
+by network access. Prior corpus measurements remain upstream evidence only.
+
 # Comparison strings and memory SETcc verified — 27 October 2026
 
 Windows/Linux CI40562311100 passed on d7697f8994a41096070073d2ea64e7526c554cd0:
