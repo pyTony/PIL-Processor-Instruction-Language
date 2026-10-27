@@ -4,7 +4,8 @@
 - Add DOS hello fixtures and explicit print/exit host service bridges.
 - Report first CPU encoding versus DOS-service blockers and reached instruction mix.
 - Add isolated REPL probing, malformed-input and independent CLI checks.
-- Execution validation for this increment is pending CI.
+- Windows/Linux CI40460972486 passed200 tests,independent DOS CLI checks,
+  both hello formats from standalone/native packages,and all existing regressions.
 
 # PIL 0.18.0-alpha.1
 

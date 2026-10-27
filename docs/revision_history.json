@@ -1734,7 +1734,7 @@
     {
       "version": "0.19.0-alpha.1",
       "date": "2026-10-27",
-      "status": "implemented;CI pending",
+      "status": "Windows/Linux verified;runtime delivery prepared",
       "features": [
         "bounded COM/MZ importer and relocations",
         "minimal DOS print/exit host shim",
@@ -1750,7 +1750,20 @@
         "interpreter-only DOS probe",
         "fixed PSP/conventional-memory and code-window limits",
         "stops at first blocker;not whole-program coverage"
-      ]
+      ],
+      "verification": {
+        "run": 40460972486,
+        "source": "11dd1caed36b786a447f4ff055be0bc073d8b700",
+        "rust_tests_per_host": 200,
+        "dos_cli": "original COM/MZ hello,relocation/startup gap,bounded loop and overwrite refusal passed",
+        "dos_runtime_packages": "COM/MZ hello passed in standalone83-file source and unpacked native delivery on both hosts",
+        "existing_native_cpu_cases_per_host": 340920,
+        "existing_backend_cases": 49,
+        "existing_trace_bytes": 4983058,
+        "full_mandelbrot": "256x256 comparison passed on both hosts",
+        "limits": "no full DOS/BIOS,CPU INT/IRET or generated-DOS runner claimed",
+        "arm": "not executed for this increment"
+      }
     }
   ]
 }

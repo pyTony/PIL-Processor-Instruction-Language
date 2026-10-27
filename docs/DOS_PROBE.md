@@ -125,3 +125,8 @@ bounds, hello execution, output limits, first-blocker reports, bounded loops,
 and debugger isolation. `python tools/verify_dos_probe.py` additionally authors
 its relocation fixture independently and checks actual CLI output. Runtime export
 and native-package smoke checks run both COM and MZ hello files.
+
+Verified on Windows/Linux CI40460972486 at source11dd1cae:200 tests per host,
+independent DOS CLI fixtures and both COM/MZ hello examples in standalone source
+and unpacked native packages passed. The existing49 backend/native CPU regression
+suite also passed; it does not compare DOS-shim execution with generated Rust.

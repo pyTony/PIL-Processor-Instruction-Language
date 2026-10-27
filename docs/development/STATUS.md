@@ -1,3 +1,23 @@
+# DOS probe verified — 27 October 2026
+
+Windows/Linux CI40460972486 passed at11dd1caed36b786a447f4ff055be0bc073d8b700:
+200 tests per host;independent CLI checks passed COM/MZ hello,relocated startup
+blocker,bounded loop and overwrite refusal. Both standalone83-file source and
+unpacked native delivery ran both original DOS hello examples to Exit0.
+Existing49 backend cases still matched4,983,058 trace bytes;340,920 existing
+native CPU cases passed per host. Full256x256 Mandelbrot comparison passed.
+DOS probe is interpreter-only plus explicit host INT21/09,4C andINT20 bridges;
+these results are not DOS/BIOS boot or general CPU interrupt verification.
+
+InitialCI40460839517 failed only on a byte-literal cast syntax error in a new
+test;fixed before the successful run. Execution code otherwise unchanged.
+This follow-up changes evidence/docs only;tested loader/source matches11dd1cae.
+Prepare separate0.19alpha.1 runtime PR frommain;user reviews/merges.
+The report ranks first observed encoding blockers,not complete missing-ISA
+percentages. Next useful family depends on the user's real COM/EXE corpus;
+MOV segment registers,PUSH/POP,CALL/RET and further DOS services are likely
+startup blockers but must be measured rather than assumed completed.
+
 # DOS executable import/probe — 27 October 2026
 
 0.19alpha.1 adds bounded COM and MZ/ZM EXE import,word relocations,min/max
