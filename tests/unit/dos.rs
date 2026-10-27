@@ -56,9 +56,9 @@ fn windows_new_format_signatures_are_rejected_and_zm_is_accepted(){
 }
 #[test]
 fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
-    // Typical EXE startup blocker: MOV DS,AX after loading AX via a relocation.
-    let mut b=exe(&[0xb8,0,0,0x8e,0xd8,0xf4],&[(1,0)]);put_word(&mut b,16,0x100);
-    let r=run(load(&b,"startup.exe").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 8e"));assert_eq!(r.completed,1);assert_eq!(r.loaded.cpu.eip,3);assert_eq!(r.loaded.cpu.regs[0],u32::from(LOAD));assert_eq!(r.file_offset,Some(35));assert_eq!(&r.stop_bytes[..2],&[0x8e,0xd8]);
+    // Typical startup now loads DS before reaching an intentionally unsupported opcode.
+    let mut b=exe(&[0xb8,0,0,0x8e,0xd8,0x62],&[(1,0)]);put_word(&mut b,16,0x100);
+    let r=run(load(&b,"startup.exe").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 62"));assert_eq!(r.completed,2);assert_eq!(r.loaded.cpu.eip,5);assert_eq!(r.loaded.cpu.regs[0],u32::from(LOAD));assert_eq!(r.file_offset,Some(37));assert_eq!(r.loaded.selectors[3],LOAD);assert_eq!(r.stop_bytes[0],0x62);
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
@@ -80,8 +80,8 @@ fn unterminated_or_oversized_dos_output_is_all_or_none(){
 #[test]
 fn corpus_report_ranks_first_blockers_and_keeps_service_failures_separate(){
     use std::time::{SystemTime,UNIX_EPOCH};let dir=std::env::temp_dir().join(format!("pil-dos-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir_all(&dir).unwrap();let mut paths=Vec::new();
-    for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0x8e,0xd8]),("gap2.com",vec![0x8e,0xd8]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
-    let text=report(&paths,100).unwrap();assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 8e"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
+    for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0x62]),("gap2.com",vec![0x62]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
+    let text=report(&paths,100).unwrap();assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 62"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

@@ -51,6 +51,8 @@ enum Token {
     Read(usize, Binding, u8),
     ReadFlag(usize, Flag),
     ReadAddress(usize),
+    ReadSegment(usize,usize),
+    WriteSegment(usize,usize),
     ReadGpr(usize, usize, u8),
     WriteGpr(usize, usize, u8),
     Load(usize, usize, MemWidth),
@@ -110,6 +112,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let mut wrote_src = false;
     let mut branched = false;
     let mut stored = false;
+    let mut segment_written=false;
     let mut flags_seen = 0u32;
     let mut source_width=None;
     for (line_no, raw) in source.lines().enumerate() {
@@ -185,6 +188,15 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if widths[c]!=1 {return Err("write_if predicate needs bv<1>".into());}
                     if wrote {return Err("multiple destination writes".into());}
                     wrote=true; Token::WriteIf(a,c)
+                }
+                ["read_segment", out, register] => {
+                    let reg=number(register)?;if reg>=6{return Err("segment index must be 0..5".into());}
+                    Token::ReadSegment(define(&mut names,&mut widths,out,16)?,reg as usize)
+                }
+                ["write_segment", register, input] => {
+                    let reg=number(register)?;let a=slot(&names,input)?;
+                    if reg>=6||reg==1||widths[a]!=16||segment_written{return Err("one non-CS segment write of bv16 is required".into());}
+                    segment_written=true;Token::WriteSegment(reg as usize,a)
                 }
                 ["read_gpr", out, register, bits] => {
                     let reg=number(register)? as usize;let w=width(bits)?;
@@ -341,24 +353,29 @@ fn execute(p: &Program, cpu: &mut Cpu, dst: View, src: View) -> R<()> {
 }
 fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->Result<(),ExecError> {
     if p.uses_memory {return Err(ExecError::InvalidContext);}
-    execute_state(p,cpu,dst,src,context,None,0,None)
+    execute_state(p,cpu,dst,src,context,None,0,None,None)
 }
 fn execute_memory(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError> {
-    execute_state(p,cpu,dst,src,context,Some(ram),address,None)
+    execute_state(p,cpu,dst,src,context,Some(ram),address,None,None)
 }
 fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError> {
     let (offset, memory_context)=address.resolve(&cpu.regs)?;
-    execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context))
+    execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None)
+}
+fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
+    let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(&cpu.regs)?;(o,Some(c))}else{(0,None)};
+    execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(machine))
 }
 fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
     ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
 }
-fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>)->Result<(),ExecError> {
+fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>,mut machine:Option<&mut address::SegmentState>)->Result<(),ExecError> {
     if p.uses_memory && ram.is_none() {return Err(ExecError::InvalidContext);}
     dst.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
     src.validate(p.source_width).map_err(|_|ExecError::InvalidBinding)?;
     context.validate(p.operand_width,p.uses_displacement)?;
     let mut pending_eip=context.next_eip;
+    let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_store:Option<(u32,MemWidth,u32)>=None;
     let mut values: Vec<Value> = p.widths.iter().map(|&w| value(0,w)).collect();
     let mut pending_dst = None;
@@ -370,6 +387,12 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
         match *t {
             Token::Read(o,b,w) => { let v = match b { Binding::Dst => dst, Binding::Src => src };
                 values[o] = value(cpu.read(v).bits,w); }
+            Token::ReadSegment(o,reg)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.selectors[reg] as u64,16),
+            Token::WriteSegment(reg,a)=>{
+                let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
+                if !m.real_mode{return Err(ExecError::InvalidContext);}
+                let selector=values[a].bits as u16;pending_segment=Some((reg,selector,address::SegmentCache::real_mode(selector)));
+            }
             Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
             Token::WriteGpr(reg,a,w)=>pending_registers.push((View{register:reg,low:0,width:w},values[a])),
             Token::ReadAddress(o)=>values[o]=value(address as u64,32),
@@ -457,6 +480,9 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 cpu.eflags = pending_flags;
                 cpu.undefined_flags = pending_undefined;
                 cpu.eip = pending_eip;
+                if let Some(m)=machine.as_deref_mut(){
+                    m.retired();if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
+                }
                 return Ok(());
             }
         }
@@ -549,11 +575,12 @@ fn emit_rust(p: &Program) -> String {
 fn emit_rust_functions(p:&Program)->String {
     let mut out=String::new();
     out.push_str(&format!(
-        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>) -> Result<(), ExecError> {{\n\
+        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + {}u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
          if {} && ram.is_none() {{ return Err(ExecError::InvalidContext); }}\n\
+         let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
          let mut pending_store: Option<(u32,MemWidth,u32)> = None;\n\
          let mut pending_eip = context.next_eip;\n\
          let mut pending_flags = *flags;\n\
@@ -568,6 +595,8 @@ fn emit_rust_functions(p:&Program)->String {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
+            Token::ReadSegment(o,reg)=>format!("let v{o}: u64 = machine.as_deref().ok_or(ExecError::InvalidContext)?.selectors[{reg}] as u64;"),
+            Token::WriteSegment(reg,a)=>format!("if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode {{return Err(ExecError::InvalidContext);}} pending_segment=Some(({reg},v{a} as u16,address::SegmentCache::real_mode(v{a} as u16)));"),
             Token::ReadGpr(o,reg,w)=>format!("let v{o}: u64 = (regs[{reg}] as u64) & {}u64;",mask(w)),
             Token::WriteGpr(reg,a,w)=>format!("pending_registers.push(({reg},{w},v{a}));"),
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
@@ -610,16 +639,17 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nif let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nif let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{m.retired();if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
     out.push_str("}\n");
     out.push_str("pub fn execute_with_flow(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext)->Result<(),ExecError>{\n");
     if p.uses_memory {out.push_str("Err(ExecError::InvalidContext)\n}\n");}
-    else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None)\n}\n");}
-    out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None)\n}\n");
-    out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context))\n}\n");
+    else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,None)\n}\n");}
+    out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None,None)\n}\n");
+    out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context),None)\n}\n");
+    out.push_str("pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{\nlet (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(machine))\n}\n");
     out.push_str("pub fn execute_with_metadata(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,dst:(usize,u8),src:(usize,u8))->Result<(), &'static str> {\n");
     if p.uses_flow || p.uses_memory {out.push_str("Err(\"flow context required: use execute_with_flow\")\n");}
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
@@ -770,3 +800,7 @@ mod direction_flag_tests;
 #[cfg(test)]
 #[path = "../tests/unit/stack.rs"]
 mod stack_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/segments.rs"]
+mod segment_tests;

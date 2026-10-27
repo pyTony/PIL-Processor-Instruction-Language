@@ -4,7 +4,7 @@ use address::{SegmentAccess,SegmentRegister};
 fn step(image:&guest::Image,ram:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{
     let d=image.decode(ram,c.eip).unwrap();
     if let guest::Operation::Pil{program,dst,src,flow,address:Some(a)}=d.operation{
-        execute_segmented(&program,c,dst,src,flow,ram,a)
+        execute_machine(&program,c,dst,src,flow,ram,Some(a),&mut image.segment_state())
     }else{panic!("expected stack PIL")}
 }
 fn setup(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){

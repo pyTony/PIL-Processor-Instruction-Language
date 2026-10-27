@@ -48,8 +48,11 @@ pub enum Operation {
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6]}
+pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub real_mode:bool,pub ss_shadow:u8}
 impl Image {
+    pub fn segment_state(&self)->SegmentState{SegmentState{segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow}}
+    pub fn set_segment_state(&mut self,s:SegmentState){self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;}
+
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
         let mut ram=Ram::new(RAM_BYTES);ram.write_bytes(ENTRY,bytes).map_err(|e|format!("{e:?}"))?;
@@ -58,7 +61,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0]},ram))
+        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],real_mode:true,ss_shadow:0},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -78,7 +81,7 @@ impl Image {
             }
         };
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;
+        let mut push_selector=None;let mut pop_selector=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
             if opcode==0x8f || extension==6{
@@ -89,11 +92,34 @@ impl Image {
         }
         if opcode==0x0f{
             let second=r.byte()?;
-            if matches!(second,0xa0|0xa8){push_selector=Some(if second==0xa0{SegmentRegister::Fs}else{SegmentRegister::Gs});opcode=0x06;}
+            if matches!(second,0xa1|0xa9){pop_selector=Some(if second==0xa1{SegmentRegister::Fs}else{SegmentRegister::Gs});opcode=0x07;}
+            else if matches!(second,0xa0|0xa8){push_selector=Some(if second==0xa0{SegmentRegister::Fs}else{SegmentRegister::Gs});opcode=0x06;}
             else{r.pos-=1;}
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0x8c|0x8e=>{
+                let m=r.byte()?;let segment=((m>>3)&7)as usize;
+                if segment>=6 || (opcode==0x8e&&segment==1){return Err(GuestError::Decode("invalid segment MOV encoding".into()));}
+                if opcode==0x8e&&!self.real_mode{return Err(GuestError::Decode("segment loads require real-mode context".into()));}
+                if opcode==0x8c&&wide&&m>>6==3{return Err(GuestError::Decode("386 MOV r32,Sreg upper-half policy is not admitted".into()));}
+                w=16;dst=view((m&7)as usize,w);src=dst;
+                let seg=["ES","CS","SS","DS","FS","GS"][segment];
+                let mut text=if opcode==0x8c{format!("read_segment selector {segment}\nwrite dst selector\npreserve_flags all\nretire")}
+                    else{format!("read selector src 16\nwrite_segment {segment} selector\npreserve_flags all\nretire")};
+                if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                    text=if opcode==0x8c{text.replace("write dst selector","read_address addr\nstore addr selector")}else{text.replace("read selector src 16","read_address addr\nload selector addr 16")};}
+                let operand=operand_name(dst,address);
+                (if opcode==0x8c{format!("MOV {operand},{seg}")}else{format!("MOV {seg},{operand}")},compile(&text,w))
+            }
+            0x07|0x17|0x1f=>{
+                if !self.real_mode{return Err(GuestError::Decode("segment loads require real-mode context".into()));}
+                let segment=pop_selector.unwrap_or(match opcode{0x07=>SegmentRegister::Es,0x17=>SegmentRegister::Ss,_=>SegmentRegister::Ds});
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
+                let text=include_str!("../isa/i386/pop_segment.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$SEG",&segment.index().to_string());
+                (format!("POP {segment:?}").to_ascii_uppercase(),compile(&instantiate(text,w),w))
+            }
             0x50..=0x5f|0x68|0x6a|0x06|0x0e|0x16|0x1e=>{
                 let stack_bits=match self.segments[SegmentRegister::Ss.index()].access {
                     SegmentAccess::Data{big:true,..}=>32,_=>16,
@@ -109,7 +135,8 @@ impl Image {
                     let (v,label)=if opcode==0x68{let v=r.unsigned(w)?;(v,format!("0x{v:x}"))}
                     else if opcode==0x6a{let v=r.byte()? as i8 as i32 as u32 & super::mask(w)as u32;(v,format!("0x{v:x}"))}
                     else {let seg=push_selector.unwrap_or(match opcode{0x06=>SegmentRegister::Es,0x0e=>SegmentRegister::Cs,0x16=>SegmentRegister::Ss,_=>SegmentRegister::Ds});(u32::from(self.selectors[seg.index()]),format!("{seg:?}").to_ascii_uppercase())};
-                    text=text.replace("read data dst $W",&format!("const data $W {v}"));label
+                    if matches!(opcode,0x06|0x0e|0x16|0x1e){let seg=push_selector.unwrap_or(match opcode{0x06=>SegmentRegister::Es,0x0e=>SegmentRegister::Cs,0x16=>SegmentRegister::Ss,_=>SegmentRegister::Ds});text=text.replace("read data dst $W",&format!("read_segment selector {}\nzext data selector $W",seg.index()));}
+                    else{text=text.replace("read data dst $W",&format!("const data $W {v}"));}label
                 };
                 (format!("{} {operand}",name.to_ascii_uppercase()),compile(&instantiate(text,w),w))
             }

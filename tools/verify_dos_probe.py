@@ -22,10 +22,10 @@ with tempfile.TemporaryDirectory(prefix='pil-dos-') as temp:
     # Independently authored MZ with one relocation and conventional startup.
     h=bytearray(32);struct.pack_into('<14H',h,0,0x5a4d,38,1,1,2,0,0xffff,0,0x100,0,0,0,28,0)
     struct.pack_into('<HH',h,28,1,0)
-    gap=directory/'startup.exe';gap.write_bytes(h+bytes.fromhex('b80000 8ed8 f4'))
+    gap=directory/'startup.exe';gap.write_bytes(h+bytes.fromhex('b80000 8ed8 62'))
     text=cli('--dos-probe',gap)
-    assert 'opcode 8e' in text and 'file_offset=Some(35)' in text and 'EAX=00001010' in text,text
-    assert 'completed=1 PIL=1 DOS_calls=0' in text,text
+    assert 'opcode 62' in text and 'file_offset=Some(37)' in text and 'EAX=00001010' in text,text
+    assert 'completed=2 PIL=2 DOS_calls=0' in text,text
     loop=directory/'loop.com';loop.write_bytes(bytes.fromhex('ebfe'))
     text=cli('--dos-probe','--steps','17',loop)
     assert 'STOP Budget' in text and 'completed=17 PIL=17 DOS_calls=0' in text,text

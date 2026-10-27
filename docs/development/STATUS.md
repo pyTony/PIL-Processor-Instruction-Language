@@ -1,3 +1,12 @@
+# Real-mode segment transfers — hosted verification pending
+
+Shared PIL selector reads/staged writes support MOV8C/8E and POP ES/SS/DS/FS/GS.
+Real-mode cache rebuilding,SS-shadow state and runtime addressing are shared
+between interpreter and generated code. Compiled runners select stack variants
+from current SS;full traces include selectors,caches,mode and shadow. No protected
+loads,legacy MOVr32,Sreg upper-half policy or interrupt delivery is claimed.
+Eight new unit tests and six trace cases are awaiting Windows/Linux CI.
+
 # Initial stack forms verified — 27 October 2026
 
 Windows/Linux CI40487360431 passed at9189e64e7d18f9b0b87b55c6b2bba549c00a5236:
