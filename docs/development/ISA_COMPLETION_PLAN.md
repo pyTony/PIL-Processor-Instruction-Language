@@ -199,3 +199,13 @@ Windows/Linux. P2/P8 remain partial:protected/V86 privilege checks,interrupt
 and exception delivery,stack shutdown and full mode/prefix/hardware audit remain.
 Choose next work from the updated actual-image first blockers and loader/model
 limits rather than declaring whole instruction families complete.
+
+## LEAVE and DOS memory (0.27)
+
+LEAVE16/32 covers independent operand/SS sizes and named SP write dispatch after
+SS loads. ENTER remains in P3. A bounded DOS shim now supports48/49/4A via one
+visible MCB chain with error results,first-fit and precise commit checks and original PSP-size retention;this is
+host DOS behavior,not a CPU instruction implementation. CI40536350302:265 tests and
+103 backend cases Windows/Linux. Initial/current allocation is distinct from
+physical RAM; fixed instruction windows and real-mode CS-write limitations
+remain. Use updated first-blocker evidence for further ISA/service/model work.

@@ -277,8 +277,8 @@
         "ENTER",
         "LEAVE"
       ],
-      "status": "planned",
-      "remaining": "Nesting0 first,then complete nesting/size/fault boundaries",
+      "status": "partial",
+      "remaining": "LEAVE16/32 implemented with independent SS/operand sizes,readonly stack reads,fault atomicity and dynamic SS rebinding. ENTER (nesting0 then full nesting),full mode/prefix/hardware audit remain.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,12 +769,12 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.26.0-alpha.1",
-    "status": "Real-mode flags and counter branches verified Windows/Linux CI40527735310; protected/V86 rules and interrupt delivery remain.",
+    "version": "0.27.0-alpha.1",
+    "status": "LEAVE and bounded DOS MCB allocation/free/resize verified Windows/Linux CI40536350302; ENTER,remaining DOS/BIOS services and loader/model work remain.",
     "verified_native_cases_before_direction_followup": 340920,
     "verified_trace_cases_before_direction_followup": 49,
     "expected_trace_cases_with_direction_followup": 50,
-    "verified_rust_tests": 252,
-    "verified_trace_cases": 96
+    "verified_rust_tests": 265,
+    "verified_trace_cases": 103
   }
 }

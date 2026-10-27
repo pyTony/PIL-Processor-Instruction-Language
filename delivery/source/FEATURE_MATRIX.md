@@ -1,4 +1,4 @@
-# PIL 0.26.0-alpha.1 feature matrix
+# PIL 0.27.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -12,9 +12,11 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Multiplication | Supported subset | 0F AF and 69/6B truncated signed IMUL16/32, register/memory sources; no implicit double-width forms |
 | Shifts | Supported subset | SHL/SAL, SHR, SAR8/16/32; count1, CL, imm8; register/memory; no double shifts |
 | Image/archive imports | Bounded read-only subset | FAT16 MBR/superfloppy,ZIP stored/deflate,listing/new-directory extraction and probe deduplication;not FAT12/FAT32/ISO/ZIP64 |
-| DOS executable probe | Bounded diagnostic subset | COM/MZ relocation import, original hello, minimal print/exit host shim and first-blocker corpus reports; not full DOS |
+| DOS executable probe | Bounded diagnostic subset | COM/MZ relocation import, original hello, bounded print/exit/memory host shim and first-blocker corpus reports; not full DOS |
 | Status-byte transfers | Supported subset | LAHF/SAHF with implicit AH; five status bits and fixed byte bits; OF preserved by SAHF |
 | Real-mode control flags | Supported subset | CLI/STI, PUSHF/POPF and PUSHFD/POPFD; distinct traced STI delay; no protected/V86 privilege rules or interrupt delivery |
+| Frame teardown | Supported subset | LEAVE16/32 with independent SS size, precise read faults and dynamic SS rebinding; ENTER remains planned |
+| DOS memory services | Bounded subset | INT21/AH48/49/4A first-fit single-process conventional MCB arena, visible headers, CF/error codes and PSP extent; no UMB/EXEC/TSR or strategy selection |
 | Stack | Supported subset | Register PUSH/POP, immediate PUSH and segment PUSH; independent operand/SS sizes, precise RAM faults; memory stack forms remain planned; real-mode segment POP is supported |
 | Segment transfers | Real-mode subset | MOV8C/8E register/word-memory, POP ES/SS/DS/FS/GS; transactional selector/cache updates and SS-shadow state; no protected loads or MOVr32,Sreg |
 | Direction flag | Supported subset | CLD/STD via shared PIL; DF bit10 defined, all other flags preserved; MOVS/STOS/LODS use DF |
@@ -34,7 +36,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Token interpreter | Supported | Default debugger engine; cached and uncached modes |
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
-| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 96 full-state trace cases and loop timings |
+| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 103 full-state trace cases and loop timings |
 | External hardware-derived suites | Planned | SingleStepTests CPU adapter and later test386.asm ROM; no external vectors/ROM executed yet |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |

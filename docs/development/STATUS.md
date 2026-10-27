@@ -1,11 +1,26 @@
-# LEAVE and DOS memory arena — hosted verification pending
+# LEAVE and bounded DOS memory verified — 27 October 2026
 
-LEAVE uses shared frame snapshots/stack load/named writes,including mixed
-operand/SS sizes and dynamic SS rebinding. DOS48/49/4A use one bounded first-fit
-MCB arena with visible headers,CF/error codes,resize-failure growth and atomic
-MCB updates. Physical RAM,current PSP ownership and original PSP:0002 are distinct.
-Source audit corrected PSP:0002 retention and successful4A AX=ES before final CI.
-Thirteen independent tests and7 backend cases await Windows/Linux execution.
+Windows/Linux CI40536350302 passed on 4256a139aca4a21b997483a967de25de7860984c:
+265 tests per host,103 full-state backend cases (6,089,907 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone103-file
+runtime source/native-package checks. Thirteen new expected-state tests cover
+frame sizes/base/limits/readonly reads and faults,MCB headers,PSP extent,first-fit
+allocation,reuse/coalescing,zero/exact sizes,error results,failed growth and
+all-or-none MCB permission checks. No new hardware-oracle or ARM run claimed.
+
+LEAVE uses shared PIL effects;generated dispatch now considers named SP writes
+when selecting alternative SS sizes,including LEAVE after a real-mode SS load.
+ENTER remains separate. DOS48/49/4A use a bounded single-process first-fit MCB
+arena with visible M/Z,owner/size fields and CF/AX/BX results. Resize failure
+can grow to the maximum contiguous size,as documented for DOS2..6. Free keeps
+bytes and delays coalescing until allocate/resize. Direct chain edits are
+rejected rather than overwritten. Physical640KiB RAM and current PSP allocation
+extent are distinct; instruction fetch windows remain bounded as before.
+The source audit corrected original PSP:0002 retention and successful4A AX=ES
+before the final verification run. These are checked against FreeDOS handler
+commit d6791add2043c9d7b584d840a8ffaf8829fd2bdc,not assumed from field names.
+No UMB,strategy,EXEC/TSR,environment allocator,interrupt delivery or full DOS
+kernel is claimed. Version0.27 follow-up changes only versions/docs/evidence.
 
 # Real-mode flags and counter branches verified — 27 October 2026
 

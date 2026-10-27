@@ -167,7 +167,7 @@ Container executables are deduplicated by full byte equality before probing.
 
 INT21/AH48 allocates first-fit BX paragraphs and returns segment AX;AH49 frees
 ES;AH4A resizes ES to BX paragraphs. CF is defined clear on success or set with
-AX7 (corrupted MCB),8 (insufficient memory) or9 (invalid/unowned block). AH48
+AX7 (corrupted MCB),8 (insufficient memory) or9 (invalid/unowned block). Insufficient-memory AH48
 and insufficient-growth AH4A return the largest available size in BX. DOS2..6
 resize failure still grows to the maximum contiguous size. Upper register
 halves and other flags/markers are preserved. Free does not zero bytes;
@@ -190,3 +190,5 @@ freed/unallocated RAM remains addressable in real mode. Loaded instruction
 fetch windows are unchanged,so allocating RAM does not make arbitrary data
 executable. All MCB writes are prechecked before committing metadata or
 register results; readonly header-write failures stop the bridge without partial state.
+
+Reference audit: [FreeDOS INT21 handler](https://github.com/FDOS/kernel/blob/d6791add2043c9d7b584d840a8ffaf8829fd2bdc/kernel/inthndlr.c), especially4A PSP-size retention and AX=ES; [RBIL48](https://fd.lod.bz/rbil/interrup/dos_kernel/2148.html), [49](https://fd.lod.bz/rbil/interrup/dos_kernel/2149.html), [4A](https://fd.lod.bz/rbil/interrup/dos_kernel/214a.html) for the bounded DOS2..6 service profile.

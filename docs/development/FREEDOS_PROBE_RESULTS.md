@@ -240,3 +240,57 @@ there is no claim of complete DOS applications. The22 budgets,19 loaded-code
 window boundaries and27 model faults remain separate from encoding coverage.
 Next candidates are LEAVE and a bounded DOS-memory/vector-service design,along
 with explicit loader/real-mode segment-model work for copied code and CS writes.
+
+## LEAVE and DOS memory: local Linux CI runtime probe
+
+Linux CI artifact 4256a139 probed unchanged FD14LITE.img locally with10,000
+execution steps per program. Stops: {'MissingEncoding': 20, 'Budget': 22, 'Boundary': 19, 'Service': 57, 'Fault': 27, 'Exit': 6}.
+Step budgets include REP elements; completed counts full instruction retirement.
+Previous0.26:2 encoding stops,75 service stops,27 faults,19 boundaries,22 budgets,6 exits.
+Image SHA256:f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36. No image/programs uploaded to CI or committed.
+No new ARM/new-instruction hardware run; these are first-blocker paths only.
+
+```text
+SUMMARY imported=151/156 exited=6; first missing-encoding blockers (program count):
+16 opcode f3
+2 opcode 0f 95
+1 opcode 0f 01
+1 opcode 8f
+Reached instruction mix (retired instructions; REP elements and DOS bridges listed separately):
+193431 REP MOVSW elements
+117029 REP MOVSB elements
+50287 REP STOSB elements
+12963 REP STOSW elements
+1630 JNE
+1437 ADD
+1371 CALL
+1341 RET
+1339 MOV
+1024 REP STOSD elements
+755 JB
+724 ADC
+534 XCHG
+438 CMP
+429 MOVSB
+338 INC
+327 PUSH
+254 SUB
+252 JMP
+227 XOR
+Budget counts execution steps (including REP elements);completed counts fully retired instructions.
+Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.
+```
+
+The two LEAVE first blockers and all previous AH48/49/4A service blockers are
+gone. Advancing execution exposes16 F3 AE (REPE SCASB),two memory SETNE,one
+SMSW and one memory POP first blockers. The encoding count2->20 is newly
+reached paths,not loss of previous encodings. Service stops fall75->57;leaders
+are now DOS INT21/AH35 vector query18 and BIOS INT10/AH08 character read17.
+The six usage/placeholder/error termination paths are unchanged;there is no
+whole-program support claim. Budgets22,code-window boundaries19 and model
+faults27 remain separate work. Next candidates:CMPS/SCAS with ZF-controlled
+repeat,memory SETcc/POP and a coherent bounded vector/BIOS-service model.
+
+FreeDOS handler source audit corrected original PSP:0002 retention and success
+AX=ES for4A before the final verified commit. The current ownership end is
+reported separately. No third-party kernel code is copied into the runtime.
