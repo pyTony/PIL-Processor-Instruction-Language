@@ -10,7 +10,7 @@ fn loader_creates_mcb_chain_and_ram_is_distinct_from_allocation(){
 }
 #[test]
 fn shrink_alloc_free_and_first_fit_reuse_have_correct_headers(){
- let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);assert!(!cf(&p));assert_eq!(p.allocated_end,0x20000);assert_eq!(p.ram.load(u32::from(PSP)*16+2,MemWidth::Word).unwrap(),0x2000);assert_eq!(p.arena.blocks[1],Block{header:0x2000,size:0x7fff,owner:0});
+ let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);assert!(!cf(&p));assert_eq!(p.allocated_end,0x20000);assert_eq!(p.ram.load(u32::from(PSP)*16+2,MemWidth::Word).unwrap(),0xa000);assert_eq!(p.cpu.regs[0]as u16,PSP);assert_eq!(p.arena.blocks[1],Block{header:0x2000,size:0x7fff,owner:0});
  call(&mut p,0x48,0x20,0);assert!(!cf(&p));assert_eq!(p.cpu.regs[0]as u16,0x2001);assert_eq!(p.arena.blocks[1],Block{header:0x2000,size:0x20,owner:PSP});call(&mut p,0x49,0,0x2001);assert!(!cf(&p));assert_eq!(p.arena.blocks[1].owner,0);call(&mut p,0x48,0x10,0);assert_eq!(p.cpu.regs[0]as u16,0x2001);assert!(p.arena.valid(&p.ram));
 }
 #[test]
@@ -38,8 +38,8 @@ fn zero_size_and_exact_fit_keep_a_valid_terminating_chain(){
  let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0,0);let seg=p.cpu.regs[0]as u16;assert!(!cf(&p));assert_eq!(seg,0x2001);assert_eq!(p.arena.blocks[1].size,0);call(&mut p,0x49,0,seg);call(&mut p,0x48,0x7fff,0);assert!(!cf(&p));assert_eq!(p.arena.blocks.len(),2);assert!(p.arena.valid(&p.ram));
 }
 #[test]
-fn protected_mcb_or_psp_write_stops_service_without_any_commit(){
- for protect_psp in [false,true]{let mut p=fresh();p.ram.protect(if protect_psp{u32::from(PSP)*16+2}else{u32::from(PSP-1)*16},2).unwrap();p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x1000;let oldc=p.cpu.clone();let oldr=p.ram.clone();let olda=p.arena.clone();let end=p.allocated_end;assert!(service(&mut p,0x21,&mut Vec::new()).is_err());assert_eq!(p.cpu,oldc);assert_eq!(p.ram,oldr);assert_eq!(p.arena,olda);assert_eq!(p.allocated_end,end);}
+fn protected_old_or_new_mcb_write_stops_service_without_any_commit(){
+ for protect_new in [false,true]{let mut p=fresh();p.ram.protect(if protect_new{0x20000}else{u32::from(PSP-1)*16},2).unwrap();p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x1000;let oldc=p.cpu.clone();let oldr=p.ram.clone();let olda=p.arena.clone();let end=p.allocated_end;assert!(service(&mut p,0x21,&mut Vec::new()).is_err());assert_eq!(p.cpu,oldc);assert_eq!(p.ram,oldr);assert_eq!(p.arena,olda);assert_eq!(p.allocated_end,end);}
 }
 #[test]
 fn original_guest_calls_reach_resize_allocate_free_and_exit(){

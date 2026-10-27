@@ -183,9 +183,10 @@ are rejected with DOS7 rather than silently overwritten. Names/reserved bytes
 are not interpreted. A4096-block safety limit stops the service diagnostically.
 
 Physical probe RAM is now always640KiB,independent of MZ initial allocation.
-PSP:0002 and allocation_end report the current owned PSP block end; resizing
-updates both. Allocation is DOS bookkeeping,not hardware memory protection:
+PSP:0002 retains the original load-time end,as in the FreeDOS handler;
+allocation_end tracks the current owned PSP block separately. Successful4A
+returns the block segment in AX. Allocation is DOS bookkeeping,not hardware memory protection:
 freed/unallocated RAM remains addressable in real mode. Loaded instruction
 fetch windows are unchanged,so allocating RAM does not make arbitrary data
-executable. All MCB/PSP writes are prechecked before committing metadata or
-register results; readonly write failures stop the bridge without partial state.
+executable. All MCB writes are prechecked before committing metadata or
+register results; readonly header-write failures stop the bridge without partial state.

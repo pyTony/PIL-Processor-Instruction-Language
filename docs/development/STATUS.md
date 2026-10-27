@@ -3,7 +3,8 @@
 LEAVE uses shared frame snapshots/stack load/named writes,including mixed
 operand/SS sizes and dynamic SS rebinding. DOS48/49/4A use one bounded first-fit
 MCB arena with visible headers,CF/error codes,resize-failure growth and atomic
-MCB/PSP updates. Physical RAM and allocated PSP extent are now distinct.
+MCB updates. Physical RAM,current PSP ownership and original PSP:0002 are distinct.
+Source audit corrected PSP:0002 retention and successful4A AX=ES before final CI.
 Thirteen independent tests and7 backend cases await Windows/Linux execution.
 
 # Real-mode flags and counter branches verified — 27 October 2026

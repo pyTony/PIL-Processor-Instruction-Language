@@ -57,6 +57,7 @@ pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
             if let Some(i)=next.owned(segment){
                 let mut available=next.blocks[i].size;
                 if i+1<next.blocks.len()&&next.blocks[i+1].owner==0{let free=next.blocks.remove(i+1);available+=free.size+1;}
+                allocated=Some(segment);
                 let actual=requested.min(available);let header=next.blocks[i].header;next.blocks[i].size=actual;
                 if actual<available{next.blocks.insert(i+1,Block{header:header+1+actual,size:available-actual-1,owner:0});}
                 // DOS2..6 expands to the maximum even on insufficient-memory error.
@@ -67,14 +68,11 @@ pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
     }
     if next.blocks.len()>MAX_BLOCKS{return Err("DOS probe MCB block-count limit reached".into());}
     let headers:Vec<_>=next.headers().into_iter().filter(|(at,bytes)|bytes.iter().enumerate().any(|(n,&b)|p.ram.load(*at+n as u32,MemWidth::Byte)!=Ok(u32::from(b)))).collect();
-    // Keep PSP top-of-program-block and report metadata synchronized if the
-    // original PSP block changes. Real-mode RAM remains addressable after free.
+    // PSP:0002 retains its load-time value, as in the FreeDOS handler.
+    // Report current ownership separately from that original PSP field.
     let program_end=next.owned(PSP).map(|i|(u32::from(PSP)+u32::from(next.blocks[i].size))*16).unwrap_or(u32::from(PSP)*16);
-    let update_psp=program_end!=p.allocated_end;
     for(at,bytes)in &headers{for n in 0..bytes.len(){p.ram.check_write(*at+n as u32,MemWidth::Byte).map_err(|e|format!("DOS MCB write: {e:?}"))?;}}
-    if update_psp{p.ram.check_write(u32::from(PSP)*16+2,MemWidth::Word).map_err(|e|format!("DOS PSP allocation write: {e:?}"))?;}
     for(at,bytes)in headers{p.ram.write_bytes(at,&bytes).map_err(|e|format!("DOS MCB commit: {e:?}"))?;}
-    if update_psp{p.ram.store(u32::from(PSP)*16+2,MemWidth::Word,program_end/16).map_err(|e|format!("DOS PSP commit: {e:?}"))?;}
     p.arena=next;p.allocated_end=program_end;result(p,error,bx,allocated);Ok(())
 }
 #[cfg(test)]
