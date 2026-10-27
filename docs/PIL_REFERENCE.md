@@ -379,3 +379,27 @@ checks permissions. Flags/markers/registers are unchanged; /0 profile restrictio
 and existing normalized segment/memory checks remain.
 
 Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf), including entry-EFLAGS recovery for faulting REPE/REPNE CMPS/SCAS; legacy386 REP pseudocode has inverted stop-condition typos,so use its detailed step6 description for ZF termination.
+
+## Real-mode far return and checked frame spans (0.29)
+
+`check_segment SEG OFFSET BYTES` checks a positive literal byte span through
+an incoming segment cache without reading memory. OFFSET is bv64 to reject
+wraparound before narrowing to a32-bit address. SS violations use the existing
+StackSegment model error; it does not deliver a guest exception frame.
+`far_branch SELECTOR OFFSET` stages a real-mode CS cache/selector and EIP update.
+SELECTOR is bv16,OFFSET bv32; the new ordinary real-mode cache has limitFFFFh.
+The effect rejects protected/V86 contexts and offsets beyond that new limit.
+It cannot mix with another segment update or branch. Changes commit at retire.
+
+Original retf.pil uses these effects plus ordered SS loads and named SP writes.
+CB and CA imm16 accept operand16/32 independently of SS size;the second slot
+has the operand width and only its low16 selector bits are used. Cleanup is an
+unsigned byte count. Both complete slots are range-checked before reading.
+Flags/undefined markers stay intact;all new CPU/CS/SP effects cancel on a fault.
+
+Image fetch bounds are anchored to the initial physical code window,not the
+current logical offsets. CS aliases inside that window work after RETF;copied
+code outside it remains rejected. Fixed generated images dispatch by physical
+instruction address,with live logical next-IP/code limits and byte guards.
+They do not gain dynamic compilation of unknown or changed instruction bytes.
+Reference: [Intel80386 RET semantics](https://pdos.csail.mit.edu/6.828/2018/readings/i386/RET.htm).

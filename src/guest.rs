@@ -48,8 +48,13 @@ pub enum Operation {
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>}
+pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>}
 impl Image {
+    // Keep the imported physical code window fixed when CS changes.
+    pub fn contains_offset(&self,offset:u32)->bool{
+        let at=u64::from(self.segments[1].base)+u64::from(offset);
+        at>=u64::from(self.fetch_base)+u64::from(self.start)&&at<u64::from(self.fetch_base)+u64::from(self.end)
+    }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
     pub fn segment_state(&self)->SegmentState{SegmentState{segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,flag_checkpoint:self.flag_checkpoint}}
     pub fn set_segment_state(&mut self,s:SegmentState){self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;}
@@ -63,7 +68,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -136,6 +141,11 @@ impl Image {
                 };
                 let text=include_str!("../isa/i386/call.pil").replace("$TARGET",&target).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("CALL {label}"),compile(&instantiate(text,w),w))
+            }
+            0xca|0xcb=>{
+                let cleanup=if opcode==0xca{r.unsigned(16)?}else{0};let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let text=include_str!("../isa/i386/retf.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/4).to_string());
+                (if opcode==0xca{format!("RETF 0x{cleanup:04x}")}else{"RETF".into()},compile(&instantiate(text,w),w))
             }
             0xc2|0xc3=>{
                 let cleanup=if opcode==0xc2{r.unsigned(16)?}else{0};let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
@@ -433,7 +443,7 @@ impl Reader<'_> {
     fn byte(&mut self)->Result<u8,GuestError> {
         if self.pos-self.start>=15 {return Err(GuestError::Decode("instruction exceeds 15 bytes".into()));}
         // Image extent is a monitor safety boundary, not an architectural fault.
-        if self.pos<self.image.start || self.pos>=self.image.end {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
+        if !self.image.contains_offset(self.pos) {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
         let c=MemoryContext{segment:SegmentRegister::Cs,cache:self.image.segments[SegmentRegister::Cs.index()]};
         let linear=c.translate(self.pos,MemWidth::Byte,false,self.start)?;
         let value=self.ram.load(linear,MemWidth::Byte).map_err(|f|GuestError::Execution(ExecError::MemoryAccess{eip:self.start,address:f.address,bytes:1,write:false}))?;

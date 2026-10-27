@@ -1,3 +1,14 @@
+# PIL 0.29.0-alpha.1
+
+- Add real-mode CB/CA RETF16/32 with independent SS sizes and byte cleanup.
+- Restore CS selector/cache,IP and SP together;check the complete frame and
+  new code limit before commit. Protected/V86 returns remain unsupported.
+- Anchor imported fetch windows to physical addresses across CS changes.
+  Generated fixed-image dispatch uses physical addresses and live logical IP.
+- Local Windows:285 tests passed;135 full-state backend cases include RETF,
+  CS aliases,branching/data access after return and precise failure states.
+- No new real-mode hardware/ARM/full FreeDOS image run is claimed.
+
 # PIL 0.28.0-alpha.2
 
 - Correct ordinary real-mode CS data permissions in monitor and COM/MZ loaders.

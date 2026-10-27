@@ -1,0 +1,21 @@
+# Real-mode far return: read the complete frame before staging CS/IP/SP.
+require_width 16_or_32
+require_real_mode
+read_gpr old_sp 4 $S
+zext stack_wide old_sp 64
+check_segment 2 stack_wide $FRAME
+zext stack_offset old_sp 32
+load_segment target_value 2 stack_offset $W
+const slot32 32 $BYTES
+add selector_offset stack_offset slot32
+load_segment selector_value 2 selector_offset $W
+trunc selector selector_value 16
+zext target32 target_value 32
+far_branch selector target32
+const frame_bytes $S $FRAME
+const cleanup $S $CLEANUP
+add popped old_sp frame_bytes
+add new_sp popped cleanup
+write_gpr 4 new_sp
+preserve_flags all
+retire
