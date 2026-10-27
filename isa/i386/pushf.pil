@@ -1,0 +1,17 @@
+# Documented 386 FLAGS bits only; reserved bit1 set, RF/VM absent from image.
+require_width 16_or_32
+require_real_mode
+read_flags raw
+const visible 32 32725
+and defined raw visible
+const fixed 32 2
+or packed defined fixed
+trunc data packed $W
+read_gpr old_sp 4 $S
+const step $S $BYTES
+sub new_sp old_sp step
+zext offset new_sp 32
+store_segment 2 offset data
+write_gpr 4 new_sp
+preserve_flags all
+retire

@@ -1,0 +1,5 @@
+require_real_mode
+const clear 1 0
+flag IF clear
+preserve_flags all
+retire

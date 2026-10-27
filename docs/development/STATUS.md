@@ -1,3 +1,10 @@
+# Real-mode flags and JCXZ — hosted verification pending
+
+CLI/STI, PUSHF/POPF16/32 and JCXZ/JECXZ implemented via shared PIL.
+Distinct STI shadow is traced and retired across PIL/REP, monitor I/O and DOS
+bridges. Nine new unit tests and12 backend cases await Windows/Linux execution.
+Protected/V86 privilege checks and interrupt delivery remain outside scope.
+
 # Near CALL/RET and REP movement verified — 27 October 2026
 
 Windows/Linux CI40511872914 passed on b0ab7c8159ac107895161cb0bfe331e5fef6d728:

@@ -48,10 +48,11 @@ pub enum Operation {
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub real_mode:bool,pub ss_shadow:u8}
+pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8}
 impl Image {
-    pub fn segment_state(&self)->SegmentState{SegmentState{segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow}}
-    pub fn set_segment_state(&mut self,s:SegmentState){self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;}
+    pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
+    pub fn segment_state(&self)->SegmentState{SegmentState{segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow}}
+    pub fn set_segment_state(&mut self,s:SegmentState){self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;}
 
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
@@ -61,7 +62,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],real_mode:true,ss_shadow:0},ram))
+        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],real_mode:true,ss_shadow:0,sti_shadow:0},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -101,6 +102,22 @@ impl Image {
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0xe3=>{
+                disp=r.byte()? as i8 as i32;
+                let name=if addr32{"JECXZ"}else{"JCXZ"};
+                let text=include_str!("../isa/i386/jcxz.pil").replace("$A",if addr32{"32"}else{"16"});
+                (format!("{name} 0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w)as u32),compile(&instantiate(text,w),w))
+            }
+            0x9c|0x9d=>{
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let name=if opcode==0x9c{"pushf"}else{"popf"};
+                let text=description(name).map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("{}{}",name.to_ascii_uppercase(),if w==32{"D"}else{""}),compile(&instantiate(text,w),w))
+            }
+            0xfa|0xfb=>{
+                let name=if opcode==0xfa{"cli"}else{"sti"};
+                (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
+            }
             0xe8=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let (target,label)=if let Some(m)=call_indirect{
@@ -341,7 +358,7 @@ impl Image {
             0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
-        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0x0f) {disp_bits=32;}
+        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe3|0x0f) {disp_bits=32;}
         if opcode==0x0f && disp==0 && disp_bits==8 {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})

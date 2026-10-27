@@ -1,6 +1,6 @@
 //! Near calls/returns and string elements: independent values, progress and faults.
 use super::*;
-use address::*;
+use address::SegmentAccess;
 fn setup(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){let (mut image,_)=guest::Image::load(bytes).unwrap();image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};let mut ram=Ram::new(0x21000);ram.write_bytes(0x100,bytes).unwrap();let c=Cpu{regs:[0x12345678,0,0,0,if big{0x800}else{0xabcd0800},0,0x800,0xa00],eflags:0xad7,undefined_flags:u32::MAX,eip:0x100};(image,ram,c)}
 fn step(image:&mut guest::Image,ram:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{let d=image.decode(ram,c.eip).unwrap();if let guest::Operation::Pil{program,dst,src,flow,address}=d.operation{let mut m=image.segment_state();let result=execute_machine(&program,c,dst,src,flow,ram,address,&mut m);if result.is_ok(){image.set_segment_state(m);}result}else{panic!()}}
 #[test]

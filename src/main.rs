@@ -32,16 +32,17 @@ enum Shift { Left, Right, Arithmetic }
 #[derive(Clone, Copy, Debug)]
 enum Binary { Add, Sub, Mul, Xor, And, Or }
 #[derive(Clone, Copy, Debug)]
-enum Flag { CF, PF, AF, ZF, SF, DF, OF }
+enum Flag { CF, PF, AF, ZF, SF, TF, IF, DF, OF, IOPL0, IOPL1, NT }
 impl Flag {
     fn bit(self) -> u8 { match self {
         Self::CF => 0, Self::PF => 2, Self::AF => 4,
-        Self::ZF => 6, Self::SF => 7, Self::DF => 10, Self::OF => 11,
+        Self::ZF => 6, Self::SF => 7, Self::TF => 8, Self::IF => 9, Self::DF => 10, Self::OF => 11, Self::IOPL0 => 12, Self::IOPL1 => 13, Self::NT => 14,
     }}
 }
 fn parse_flag(name: &str) -> R<Flag> {
     match name {
         "CF" => Ok(Flag::CF), "PF" => Ok(Flag::PF), "AF" => Ok(Flag::AF),
+        "TF" => Ok(Flag::TF), "IF" => Ok(Flag::IF), "IOPL0" => Ok(Flag::IOPL0), "IOPL1" => Ok(Flag::IOPL1), "NT" => Ok(Flag::NT),
         "ZF" => Ok(Flag::ZF), "SF" => Ok(Flag::SF), "DF" => Ok(Flag::DF), "OF" => Ok(Flag::OF),
         _ => Err(format!("unknown flag: {name}")),
     }
@@ -50,6 +51,9 @@ fn parse_flag(name: &str) -> R<Flag> {
 enum Token {
     Read(usize, Binding, u8),
     ReadFlag(usize, Flag),
+    ReadFlags(usize),
+    RequireRealMode,
+    InterruptShadowIf(usize),
     ReadAddress(usize),
     LoadSegment(usize,usize,MemWidth,usize),
     StoreSegment(usize,usize,MemWidth,usize),
@@ -117,6 +121,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let mut branched = false;
     let mut stored = false;
     let mut segment_written=false;
+    let mut shadow_written=false;
     let mut flags_seen = 0u32;
     let mut source_width=None;
     for (line_no, raw) in source.lines().enumerate() {
@@ -193,6 +198,13 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if wrote {return Err("multiple destination writes".into());}
                     wrote=true; Token::WriteIf(a,c)
                 }
+                ["read_flags", out] => Token::ReadFlags(define(&mut names,&mut widths,out,32)?),
+                ["require_real_mode"] => Token::RequireRealMode,
+                ["interrupt_shadow_if", input] => {
+                    let c=slot(&names,input)?;
+                    if widths[c]!=1||shadow_written{return Err("one bv1 interrupt shadow effect required".into());}
+                    shadow_written=true;Token::InterruptShadowIf(c)
+                }
                 ["read_segment", out, register] => {
                     let reg=number(register)?;if reg>=6{return Err("segment index must be 0..5".into());}
                     Token::ReadSegment(define(&mut names,&mut widths,out,16)?,reg as usize)
@@ -226,7 +238,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["retire_if", predicate]=>{
                     let c=slot(&names,predicate)?;
-                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
+                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
                     Token::RetireIf(c)
                 }
                 ["resume_if", predicate]=>{
@@ -345,7 +357,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
@@ -402,6 +414,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     context.validate(p.operand_width,p.uses_displacement)?;
     let mut pending_eip=context.next_eip;
     let mut pending_resume=false;
+    let mut pending_interrupt_shadow=false;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_store:Option<(u32,MemWidth,u32)>=None;
     let mut values: Vec<Value> = p.widths.iter().map(|&w| value(0,w)).collect();
@@ -412,6 +425,9 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_undefined = cpu.undefined_flags;
     for t in &p.tokens {
         match *t {
+            Token::ReadFlags(o)=>values[o]=value(cpu.eflags as u64,32),
+            Token::RequireRealMode=>if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);},
+            Token::InterruptShadowIf(c)=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_interrupt_shadow=values[c].bits!=0;},
             Token::Read(o,b,w) => { let v = match b { Binding::Dst => dst, Binding::Src => src };
                 values[o] = value(cpu.read(v).bits,w); }
             Token::LoadSegment(o,a,w,segment)=>{
@@ -522,7 +538,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 cpu.undefined_flags = pending_undefined;
                 cpu.eip = pending_eip;
                 if let Some(m)=machine.as_deref_mut(){
-                    if !pending_resume{m.retired();}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
+                    if !pending_resume{m.retired();}if pending_interrupt_shadow{m.sti_shadow=1;}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
                 }
                 return Ok(());
             }
@@ -583,6 +599,11 @@ fn description(name: &str) -> R<String> {
         "lods" => Some(include_str!("../isa/i386/lods.pil")),
         "push" => Some(include_str!("../isa/i386/push.pil")),
         "pop" => Some(include_str!("../isa/i386/pop.pil")),
+        "pushf" => Some(include_str!("../isa/i386/pushf.pil")),
+        "popf" => Some(include_str!("../isa/i386/popf.pil")),
+        "cli" => Some(include_str!("../isa/i386/cli.pil")),
+        "sti" => Some(include_str!("../isa/i386/sti.pil")),
+        "jcxz" => Some(include_str!("../isa/i386/jcxz.pil")),
         "cld" => Some(include_str!("../isa/i386/cld.pil")),
         "std" => Some(include_str!("../isa/i386/std.pil")),
         "stc" => Some(include_str!("../isa/i386/stc.pil")),
@@ -635,7 +656,7 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
          let mut pending_store: Option<(u32,MemWidth,u32)> = None;\n\
          let mut pending_eip = context.next_eip;\n\
-         let mut pending_resume = false;\n\
+         let mut pending_resume = false;\nlet mut pending_interrupt_shadow = false;\n\
          let mut pending_flags = *flags;\n\
          let mut pending_undefined = *undefined;\n\
          let mut pending_dst: Option<u64> = None;\n\
@@ -644,6 +665,9 @@ fn emit_rust_functions(p:&Program)->String {
         p.operand_width,p.source_width,p.uses_displacement,p.uses_memory));
     for t in &p.tokens {
         let line = match *t {
+            Token::ReadFlags(o)=>format!("let v{o}:u64 = *flags as u64;"),
+            Token::RequireRealMode=>"if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||*flags&0x20000!=0 {return Err(ExecError::InvalidContext);}".into(),
+            Token::InterruptShadowIf(c)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_interrupt_shadow=v{c}!=0;"),
             Token::Read(o,b,w) => {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
@@ -696,7 +720,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nif let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if !pending_resume{{m.retired();}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nif let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
@@ -869,3 +893,7 @@ mod mov_form_tests;
 #[cfg(test)]
 #[path = "../tests/unit/calls_strings.rs"]
 mod calls_strings_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/control_flags.rs"]
+mod control_flag_tests;
