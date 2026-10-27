@@ -1,0 +1,7 @@
+# Register XCHG: both reads are snapshots; both effects retire together.
+read a dst $W
+read b src $W
+write dst b
+write src a
+preserve_flags all
+retire

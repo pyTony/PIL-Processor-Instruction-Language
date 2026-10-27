@@ -1,4 +1,4 @@
-# PIL 0.16.0-alpha.1 feature matrix
+# PIL 0.17.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -12,6 +12,8 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Shifts | Supported subset | SHL/SAL, SHR, SAR8/16/32; count1, CL, imm8; register/memory; no double shifts |
 | Rotates / carry constants | Supported subset | ROL/ROR8/16/32,register/memory,count1/CL/imm8; CLC/STC. RCL/RCR/CMC remain planned |
 | Data conversion / addresses | Supported subset | MOVZX/MOVSX8-to16/32 and16-to16/32 (register/memory, including aliases). CBW/CWDE/CWD/CDQ and LEA16/32 preserve flags |
+| Register exchange | Supported subset | XCHG8/16/32 register forms86/87 and accumulator91..97; snapshots and aliases; memory/LOCK remain planned |
+| Register effects | Supported subset | One staged write per dst/src binding; overlapping active writes must agree; one staged RAM store |
 | Register views | Supported | 32-bit registers, low 16 bits, AL/AH-style byte views |
 | Conditional flow | Supported subset | Sixteen predicates, short/near binary Jcc and relative JMP; no indirect/far jumps |
 | SETcc | Supported subset | Register byte destinations in decoder; sixteen conditions |
@@ -22,7 +24,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Token interpreter | Supported | Default debugger engine; cached and uncached modes |
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
-| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 45 full-state trace cases and loop timings |
+| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 48 full-state trace cases and loop timings |
 | External hardware-derived suites | Planned | SingleStepTests CPU adapter and later test386.asm ROM; no external vectors/ROM executed yet |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |

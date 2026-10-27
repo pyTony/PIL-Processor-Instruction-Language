@@ -1,3 +1,11 @@
+# PIL 0.17.0-alpha.1
+
+- Add register XCHG8/16/32 and accumulator exchange forms.
+- Extend PIL with staged write src and write_if src; reads remain snapshots.
+- Reject conflicting overlapping writes before any memory or CPU commit.
+- Expand compiled full-state proof to48 cases.
+- Memory XCHG/LOCK,multiple implicit registers and multiple RAM stores remain planned.
+
 # PIL 0.16.0-alpha.1
 
 - Add ROL/ROR8/16/32 with count1,CL,imm8 and register/memory destinations.
