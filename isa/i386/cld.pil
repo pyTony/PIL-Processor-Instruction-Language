@@ -1,0 +1,5 @@
+# CLD defines DF=0; all other flags and undefined markers are preserved.
+const direction 1 0
+flag DF direction
+preserve_flags all
+retire

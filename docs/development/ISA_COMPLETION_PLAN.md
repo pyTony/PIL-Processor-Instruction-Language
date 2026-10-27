@@ -1,8 +1,9 @@
 # 80386 instruction completion TODO
 
 Updated 27 October 2026. This is a development plan, not newly implemented CPU
-support. Baseline: v0.15.0-alpha.3, 165 tests and 39 original backend trace
-cases; Windows conversion demo confirmed. External suites remain unexecuted.
+support. Verified baseline: v0.20.0-alpha.1, 210 tests, 49 backend trace
+cases and 340,920 narrow native overlap cases on Windows/Linux. External suites
+remain unexecuted. CLD/STD follow-up verification is pending separately.
 
 See [machine-readable backlog](ISA_BACKLOG.json), [parallel x86-64 plan](X86_64_VERIFICATION_PLAN.md),
 [external-suite integration](EXTERNAL_TEST_SUITES.md), and [OS targets](OS_COMPATIBILITY_TARGETS.md).
@@ -41,9 +42,10 @@ interpreter/emitter agreement nor a modern CPU replaces the legacy oracle.
 - [ ] Define instruction-form metadata: opcode/group, widths and defaults,
   modes, prefixes, implicit bindings, defined/preserved/undefined outputs,
   memory accesses and retirement class.
-- [ ] Extend one destination to named staged register writes. Snapshot register
-  inputs and define alias/overlap ordering explicitly. Add implicit-register
-  inputs rather than hand-writing special cases in the decoder.
+- [ ] Generalize the existing staged destination/source writes to named register
+  effects and implicit-register inputs. Register XCHG and its two-binding snapshot
+  ordering are implemented and host-verified; arbitrary named effects and stack
+  alias/overlap ordering remain to be specified and implemented.
 - [ ] Replace the single supplied-address assumption with per-access address
   expressions. Encode pre/post-update rules, including POP-memory addressing
   based on the updated stack pointer.
@@ -132,3 +134,15 @@ and [encoding format](https://read.seas.harvard.edu/~kohler/class/aosref/i386/s1
 [reference register](../REFERENCES_AND_CREDITS.md). This is an original planning
 inventory, not imported manual prose or vectors. Pin detailed references and
 hardware cases before implementing each instruction's exception/commit rules.
+
+
+## FreeDOS-driven next slices
+
+CLD/STD descriptions, DF state and decoder forms are implemented in the current
+follow-up, with independent Python, generated-code and native-ABI tests. Hosted
+Rust verification is pending. Next complete P0 independent stack-size/address and
+commit rules before admitting PUSH/POP. Segment PUSH/POP also needs visible
+selector state; existing hidden segment caches alone do not supply selectors.
+STI stays in P8 with interrupt shadows and delivery; do not emulate it as a bit
+write. The first-blocker corpus is prioritization evidence, not whole-program
+coverage. Keep CS-write model faults separate from missing instructions.

@@ -1,3 +1,14 @@
+# CLD/STD follow-up — implementation awaiting hosted verification
+
+Added explicit DF to PIL flags, CLD/STD descriptions and FC/FD decoding. Other
+flags, registers and undefined markers are retained; defining DF clears only
+its undefined marker. Python independently passed 98,304 cases locally. Five
+Rust tests add full-state, generated-source, decoder/prefix and x86-64 ABI-safe
+native checks. One new trace case brings the expected backend count to 50.
+Rust is unavailable locally; Windows/Linux CI has not yet confirmed this slice.
+Updated stale ISA baseline to the verified 0.20/210-test result below.
+Ignored local images/ in both dev and runtime exports.
+
 # Containers and actual FreeDOS image verified — 27 October 2026
 
 Windows/Linux CI40470152015 atab63a6ec01b570bf29f5251e89f9f819b4fdba37
@@ -919,3 +930,4 @@ is not implied by that.
 Next: strengthen decoder coverage, general PC machine state and devices; keep
 full paging, descriptor loading, exception delivery, interrupts, A20 and OS boot
 explicitly outside the current implementation. The debug port is not a UART.
+

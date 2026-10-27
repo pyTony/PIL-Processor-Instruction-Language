@@ -1,4 +1,5 @@
 /target/
+/images/
 __pycache__/
 *.py[cod]
 .DS_Store
@@ -7,3 +8,4 @@ __pycache__/
 *~
 /.pil-patch-*/
 /dist/
+

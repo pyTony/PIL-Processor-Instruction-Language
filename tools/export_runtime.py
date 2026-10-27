@@ -29,7 +29,7 @@ def export(destination,source_ref):
     files['docs/PIL_REFERENCE.md']=(ROOT/'docs/LANGUAGE.md').read_bytes()
     files['docs/DOS_PROBE.md']=(ROOT/'docs/DOS_PROBE.md').read_bytes()
     files['docs/CONTAINERS.md']=(ROOT/'docs/CONTAINERS.md').read_bytes()
-    files['.gitignore']=b'/target/\n'
+    files['.gitignore']=b'/target/\n/images/\n'
     version=re.search(r'^version = "([^"]+)"',(ROOT/'Cargo.toml').read_text(),re.M)[1]
     files['DELIVERY.json']=(json.dumps({'version':version,'source_commit':source_ref,
         'source_branch':'dev','layout':'runtime-source','build':'sh tools/build.sh',
@@ -93,3 +93,4 @@ if __name__=='__main__':
     if destination==ROOT or destination in ROOT.parents:raise SystemExit('destination must not contain the dev checkout')
     export(destination,source_ref)
     if args.verify:verify(destination)
+

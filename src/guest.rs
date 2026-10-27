@@ -168,8 +168,8 @@ impl Image {
                 let name=if opcode==0x9f{"lahf"}else{"sahf"};
                 (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
             }
-            0xf5|0xf8|0xf9=>{
-                let name=match opcode{0xf5=>"cmc",0xf8=>"clc",_=>"stc"};
+            0xf5|0xf8|0xf9|0xfc|0xfd=>{
+                let name=match opcode{0xf5=>"cmc",0xf8=>"clc",0xf9=>"stc",0xfc=>"cld",_=>"std"};
                 (name.to_ascii_uppercase(),compile(&instantiate(description(name).map_err(GuestError::Decode)?,w),w))
             }
             0x86|0x87=>{
@@ -320,3 +320,4 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+

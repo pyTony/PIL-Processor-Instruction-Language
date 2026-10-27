@@ -2,12 +2,12 @@
   "schema_version": 1,
   "updated": "2026-10-27",
   "baseline": {
-    "version": "0.15.0-alpha.3",
-    "dev_commit": "f3540ac77dd3b93439fe2d025fd8d1d24f8db4a1",
-    "rust_tests": 165,
-    "backend_cases": 39,
+    "version": "0.20.0-alpha.1",
+    "dev_commit": "ab63a6ec01b570bf29f5251e89f9f819b4fdba37",
+    "rust_tests": 210,
+    "backend_cases": 49,
     "external_suite_runs": 0,
-    "native_instruction_oracle": "planned;PC_NATIVE is a narrow timing baseline"
+    "native_instruction_oracle": "340920 narrow overlap cases passed Windows/Linux; not complete 386 verification"
   },
   "coverage_unit": "Planning family/form,not complete opcode coverage or an implementation percentage",
   "scope": "Documented80386 integer/system ISA;undocumented extensions and80387 are separate tiers;no implicit486+ additions",
@@ -163,8 +163,8 @@
         "CLD",
         "STD"
       ],
-      "status": "planned",
-      "remaining": "Explicit DF state before strings and native ABI restoration",
+      "status": "partial",
+      "remaining": "CLD/STD and explicit DF in PIL implemented; Windows/Linux CI pending. Full mode/prefix audit and string instructions remain separate.",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,9 +769,10 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.17.0-alpha.1",
-    "status": "two bindings and register XCHG supplied;host checks pending",
-    "expected_native_cases": 329896,
-    "expected_trace_cases": 48
+    "version": "0.20.0-alpha.1",
+    "status": "Register XCHG and two staged bindings host-verified; generalized named effects and independent stack addressing remain P0 work. CLD/STD follow-up CI pending.",
+    "verified_native_cases_before_direction_followup": 340920,
+    "verified_trace_cases_before_direction_followup": 49,
+    "expected_trace_cases_with_direction_followup": 50
   }
 }

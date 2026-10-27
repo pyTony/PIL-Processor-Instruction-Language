@@ -4,7 +4,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[1] / "isa" / "i386"
 OPS = ("add", "sub", "cmp", "adc", "sbb", "and", "or", "xor", "test")
 CONDITIONS = ("o","no","b","ae","e","ne","be","a","s","ns","p","np","l","ge","le","g")
-FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "OF": 11}
+FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "DF": 10, "OF": 11}
 ARITHMETIC_MASK = 0x8D5
 
 
@@ -62,7 +62,7 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
     for t in code:
         op = t[0]
         if op == "retire":
-            assert classified == ARITHMETIC_MASK
+            assert classified & ARITHMETIC_MASK == ARITHMETIC_MASK
             if pending_store is not None:
                 addr,data=pending_store
                 check_memory(addr,len(data),True)
@@ -310,3 +310,4 @@ if __name__ == "__main__":
             count+=1
     print(f"{arithmetic_count:,} arithmetic + {count-arithmetic_count:,} conditional cases passed.")
     print("Rust compilation is a separate check.")
+

@@ -3,6 +3,23 @@ fn decode(bytes:&[u8])->Result<Decoded,GuestError>{let (image,ram)=Image::load(b
 #[test]
 fn image_rejects_empty_and_oversized_inputs() {assert!(Image::load(&[]).is_err());assert!(Image::load(&vec![0;3841]).is_err());}
 #[test]
+fn direction_opcodes_and_ignored_size_segment_prefixes(){
+    use super::super::Cpu;
+    for (opcode,name,set) in [(0xfc,"CLD",0),(0xfd,"STD",0x400)]{
+        for prefix in [vec![],vec![0x66],vec![0x67],vec![0x2e],vec![0x66,0x67]]{
+            let mut bytes=prefix;bytes.push(opcode);let d=decode(&bytes).unwrap();
+            assert_eq!(d.length,bytes.len() as u32);
+            assert!(d.label.contains(name));
+            for f in [0,0x400,0xad7,u32::MAX]{
+                let mut c=Cpu{regs:[0x12345678;8],eflags:f,undefined_flags:u32::MAX,eip:ENTRY};
+                let mut want=c.clone();want.eflags=(f&!0x400)|set;want.undefined_flags&=!0x400;want.eip=ENTRY+bytes.len() as u32;
+                execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!(c,want);
+            }
+        }
+    }
+    assert!(decode(&[0xf0,0xfc]).is_err());assert!(decode(&[0xf0,0xfd]).is_err());
+}
+#[test]
 fn decode_immediates_and_high_byte_views() {
     for (bytes,register,low,w,len) in [(vec![0xb4,0x7f],0,8,8,2),(vec![0xbb,1,2],3,0,16,3),(vec![0x66,0xbf,1,2,3,4],7,0,32,6)] {
         let d=decode(&bytes).unwrap();assert_eq!(d.length,len);
@@ -387,3 +404,4 @@ fn byte_flag_transfers_bind_ah_ignore_size_prefixes_and_check_fetch(){
     assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
     }
 }
+

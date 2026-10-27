@@ -80,6 +80,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     for count in [0,1]{let mut t=case(if count==0{"rotate_readonly_zero"}else{"rotate_readonly_one"},vec![0xc1,0x07,count,0xf4])?;
         t.regs[3]=0x400;t.protect=Some((0x500,4));tests.push(t);}
     let mut t=case("carry_controls",vec![0xf5,0xf5,0xf9,0xf5,0x66,0xf5,0x66,0xf8,0xf5,0xf9,0xf8,0xf4])?;t.flags=0xad7;tests.push(t);
+    let mut t=case("direction_controls",vec![0xfd,0xfd,0x66,0xfc,0x67,0xfd,0x2e,0xfc,0xf4])?;t.flags=0xed7;t.regs=[0x12345678;8];tests.push(t);
     let mut t=case("byte_flags",vec![0x9f,0xb4,0xd5,0x9e,0x9f,0xb4,0x2a,0x66,0x9e,0x67,0x9f,0xf4])?;t.flags=0xad7;t.regs[0]=0x12345678;tests.push(t);
     for w in [8,16,32]{
         let mut bytes=Vec::new();
@@ -385,3 +386,4 @@ pub fn compare_mandelbrot(size:u32,iterations:u32)->Result<String,String>{
     let gate=verify_at(&directory.join("verification"))?;
     Ok(format!("{gate}\n{}",compare_mandelbrot_at(&directory.join("mandelbrot"),size,iterations)?))
 }
+
