@@ -428,3 +428,12 @@ privilege transitions are not implemented by this increment.
 References: Intel80386
 [POP](https://pdos.csail.mit.edu/6.828/2018/readings/i386/POP.htm) and
 [SMSW](https://pdos.csail.mit.edu/6.828/2018/readings/i386/SMSW.htm).
+
+### Memory PUSH profile
+
+The `push_memory` description implements FF /6 at 16/32 operand widths.
+`read_address` and `load` read the source using the incoming address registers
+and selected source segment; `store_segment 2` stages the stack write through
+SS after decrementing the stack-size view of SP/ESP. No new semantic token is
+required. Stores, register effects and retirement markers commit together only
+after validation. A source segment override never redirects the stack store.

@@ -657,6 +657,7 @@ fn description(name: &str) -> R<String> {
         "stos" => Some(include_str!("../isa/i386/stos.pil")),
         "lods" => Some(include_str!("../isa/i386/lods.pil")),
         "push" => Some(include_str!("../isa/i386/push.pil")),
+        "push_memory" => Some(include_str!("../isa/i386/push_memory.pil")),
         "pop" => Some(include_str!("../isa/i386/pop.pil")),
         "pop_memory" => Some(include_str!("../isa/i386/pop_memory.pil")),
         "smsw" => Some(include_str!("../isa/i386/smsw.pil")),
@@ -926,6 +927,7 @@ fn main() -> R<()> {
         cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
     Ok(())
 }
+
 
 
 

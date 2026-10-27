@@ -1,3 +1,22 @@
+# PIL 0.31.0-alpha.1
+
+- Add memory PUSH (FF /6) word/dword forms through shared PIL effects.
+  Read the source with incoming registers; then decrement SP/ESP and store
+  through SS. Operand, address and SS sizes are independent.
+- Preserve flags and upper ESP bits on 16-bit stack updates; check full source
+  and destination spans before committing the stack write or register effects.
+- Add six expected-state tests and eleven full-state backend cases for mixed
+  sizes, ESP/SIB addressing, segment overrides, overlap, read-only sources,
+  bounds/protection faults and stack wrapping.
+- Windows/Linux CI 40587290825: 303 tests per host, 160 full-state
+  backend cases (6,951,410 matching trace bytes), standalone 109-file export,
+  native package and full Mandelbrot checks passed. Local Windows also passed.
+- Actual FD14LITE.img probe at 100000 steps: all sixteen FreeCom memory PUSH
+  blockers advanced to FF /3 far CALL, twelve bytes later in each program.
+  Summary remains 151/156 imported and six exited. FF totals alone do not
+  identify the unsupported group extension.
+- No new legacy real-mode hardware or ARM run is claimed.
+
 # PIL 0.30.0-alpha.1
 
 - Add memory POP (8F /0) with independent SS reads and destination addresses

@@ -1,4 +1,4 @@
-# PIL 0.30.0-alpha.1 feature matrix
+# PIL 0.31.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -17,7 +17,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Real-mode control flags | Supported subset | CLI/STI, PUSHF/POPF and PUSHFD/POPFD; distinct traced STI delay; no protected/V86 privilege rules or interrupt delivery |
 | Frame teardown | Supported subset | LEAVE16/32 with independent SS size, precise read faults and dynamic SS rebinding; ENTER remains planned |
 | DOS memory services | Bounded subset | INT21/AH48/49/4A first-fit single-process conventional MCB arena, visible headers, CF/error codes and PSP extent; no UMB/EXEC/TSR or strategy selection |
-| Stack | Supported subset | Register PUSH/POP, immediate PUSH and segment PUSH; independent operand/SS sizes, precise RAM faults; memory POP8F/0 supported; memory PUSH remains planned; real-mode segment POP is supported |
+| Stack | Supported subset | Register PUSH/POP, immediate PUSH and segment PUSH; independent operand/SS sizes, precise RAM faults; memory POP (8F /0) and memory PUSH (FF /6) supported; real-mode segment POP is supported |
 | Machine-status read | Word profile | SMSW0F01/4 reads explicit traced MSW; PE follows normalized mode; word memory/register forms; r32 policy and CR0/LMSW writes remain separate |
 | DOS version query | Bounded shim | INT21/AH30 reads PSP:0040 initialized to6.22; OEM/flag choice,zero serial and preserved high halves/flags; not a running DOS kernel |
 | Segment transfers | Real-mode subset | MOV8C/8E register/word-memory, POP ES/SS/DS/FS/GS; transactional selector/cache updates and SS-shadow state; no protected loads or MOVr32,Sreg |
@@ -40,7 +40,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Token interpreter | Supported | Default debugger engine; cached and uncached modes |
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
-| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 149 full-state trace cases and loop timings |
+| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 160 full-state trace cases and loop timings |
 | External hardware-derived suites | Planned | SingleStepTests CPU adapter and later test386.asm ROM; no external vectors/ROM executed yet |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |

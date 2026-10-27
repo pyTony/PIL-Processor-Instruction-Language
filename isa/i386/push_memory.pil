@@ -1,0 +1,12 @@
+# Read the source with incoming registers before decrementing SS:SP/ESP.
+require_width 16_or_32
+read_address source
+load data source $W
+read_gpr old_sp 4 $S
+const step $S $BYTES
+sub new_sp old_sp step
+zext stack_offset new_sp 32
+store_segment 2 stack_offset data
+write_gpr 4 new_sp
+preserve_flags all
+retire
