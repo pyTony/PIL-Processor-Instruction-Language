@@ -10,17 +10,17 @@ first missing CPU encodings across a collection of programs.
 After `sh tools/build.sh` on Termux/Linux, create the supplied examples:
 
 ```sh
-./target/release/pil-proof --write-dos-hello com target/dos-hello.com
-./target/release/pil-proof --write-dos-hello exe target/dos-hello.exe
-./target/release/pil-proof --dos-probe target/dos-hello.com target/dos-hello.exe
+./target/debug/pil-proof --write-dos-hello com target/dos-hello.com
+./target/debug/pil-proof --write-dos-hello exe target/dos-hello.exe
+./target/debug/pil-proof --dos-probe target/dos-hello.com target/dos-hello.exe
 ```
 
 PowerShell, after `.\tools\build.ps1`:
 
 ```powershell
-.\target\release\pil-proof.exe --write-dos-hello com target/dos-hello.com
-.\target\release\pil-proof.exe --write-dos-hello exe target/dos-hello.exe
-.\target\release\pil-proof.exe --dos-probe target/dos-hello.com target/dos-hello.exe
+.\target\debug\pil-proof.exe --write-dos-hello com target/dos-hello.com
+.\target\debug\pil-proof.exe --write-dos-hello exe target/dos-hello.exe
+.\target\debug\pil-proof.exe --dos-probe target/dos-hello.com target/dos-hello.exe
 ```
 
 Expected: both produce `OUTPUT (escaped bytes): Hello, DOS!\r\n`, stop with
@@ -30,10 +30,27 @@ not the existing monitor-port hello.bin. Creation refuses to overwrite files.
 The EXE deliberately addresses its string relative to the initial PSP DS so it
 can run before segment-register move instructions are implemented.
 
+## Build profile and executable path
+
+The default build helpers create debug binaries: `sh tools/build.sh` builds
+`target/debug/pil-proof`; `.\tools\build.ps1` builds
+`target/debug/pil-proof.exe`. They do not refresh an existing release binary.
+Run the path reported by the build helper, as in the examples above.
+
+For an optimized build, use `sh tools/build.sh --release` or
+`.\tools\build.ps1 -Release`, then replace `debug` with `release` in the
+executable paths. If you configured `CARGO_TARGET_DIR`, use that directory
+instead of `target`.
+
+If a DOS option prints the old `AX=0x8000; ... typed tokens` demonstration,
+you ran an older executable that does not recognize those options. Select the
+newly built debug binary or explicitly rebuild release; no files are generated
+by that old fallback demonstration.
+
 ## Import your programs
 
 ```sh
-./target/release/pil-proof --dos-probe --steps 10000 program.com program.exe
+./target/debug/pil-proof --dos-probe --steps 10000 program.com program.exe
 ```
 
 Use quoted paths for filenames containing spaces. The optional step budget must
