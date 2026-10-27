@@ -246,10 +246,12 @@ address width comes from SS.big, separately from operand width (66). Address-siz
 and segment overrides do not redirect the implicit SS access. PUSH SP/ESP reads
 the original register; POP SP/ESP increments the stack pointer before writing
 the popped operand. A multi-byte access crossing the segment end faults rather
-than wrapping each byte. Initial segment PUSH ES/CS/SS/DS reads explicit visible
+than wrapping each byte. Initial segment PUSH ES/CS/SS/DS/FS/GS reads explicit visible
 selectors supplied by the loader, not inferred hidden-cache bases. Cache identity
 includes those selectors and the SS attributes. Memory operands, segment POP,
-FS/GS forms, CALL/RET and interrupt shadows remain separate follow-up work.
+CALL/RET and interrupt shadows remain separate follow-up work.
 
 The `push`/`pop` example templates use a word stack and EAX/AX destination by
 default with --emit-rust. The decoder substitutes the actual SS size/register.
+
+Register aliases FF /6 and 8F /0 share the same PUSH/POP descriptions.

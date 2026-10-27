@@ -2,10 +2,10 @@
 
 Added snapshot read_gpr and ordered staged write_gpr effects in both backends.
 Register PUSH/POP and immediate PUSH use independent SS stack-size state;
-ES/CS/SS/DS pushes read explicit visible selectors, included in cache identity.
+ES/CS/SS/DS/FS/GS pushes read explicit visible selectors, included in cache identity.
 Tests cover register/size matrices, SP/ESP alias ordering, precision on SS/RAM/
 readonly faults, independent emitted expectations and six new backend cases.
-Memory PUSH/POP, segment POP and FS/GS forms are not implemented in this slice.
+Memory PUSH/POP and segment POP are not implemented in this slice.
 No Rust result is claimed before Windows/Linux CI. The implementation remains
 RAM-only with one store; generalized multi-access/MMIO work remains P0.
 

@@ -69,7 +69,7 @@ impl Image {
     pub fn decode(&self,ram:&Ram,eip:u32)->Result<Decoded,GuestError> {
         let mut r=Reader{image:self,ram,start:eip,pos:eip};
         let mut wide=false;let mut addr32=false;let mut override_segment=None;
-        let opcode=loop {
+        let mut opcode=loop {
             let b=r.byte()?;
             match b {
                 0x66 if !wide=>wide=true,0x67 if !addr32=>addr32=true,
@@ -77,6 +77,21 @@ impl Image {
                 _=>break b,
             }
         };
+        // Normalize alternative register encodings while retaining consumed bytes.
+        let mut push_selector=None;
+        if matches!(opcode,0xff|0x8f){
+            let m=r.byte()?;let extension=(m>>3)&7;
+            if opcode==0x8f || extension==6{
+                if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
+                if m>>6!=3{return Err(GuestError::Decode("memory PUSH/POP needs independent per-access address contexts".into()));}
+                opcode=(if opcode==0x8f{0x58}else{0x50})|(m&7);
+            }else{r.pos-=1;}
+        }
+        if opcode==0x0f{
+            let second=r.byte()?;
+            if matches!(second,0xa0|0xa8){push_selector=Some(if second==0xa0{SegmentRegister::Fs}else{SegmentRegister::Gs});opcode=0x06;}
+            else{r.pos-=1;}
+        }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
             0x50..=0x5f|0x68|0x6a|0x06|0x0e|0x16|0x1e=>{
@@ -93,7 +108,7 @@ impl Image {
                 else {
                     let (v,label)=if opcode==0x68{let v=r.unsigned(w)?;(v,format!("0x{v:x}"))}
                     else if opcode==0x6a{let v=r.byte()? as i8 as i32 as u32 & super::mask(w)as u32;(v,format!("0x{v:x}"))}
-                    else {let seg=match opcode{0x06=>SegmentRegister::Es,0x0e=>SegmentRegister::Cs,0x16=>SegmentRegister::Ss,_=>SegmentRegister::Ds};(u32::from(self.selectors[seg.index()]),format!("{seg:?}").to_ascii_uppercase())};
+                    else {let seg=push_selector.unwrap_or(match opcode{0x06=>SegmentRegister::Es,0x0e=>SegmentRegister::Cs,0x16=>SegmentRegister::Ss,_=>SegmentRegister::Ds});(u32::from(self.selectors[seg.index()]),format!("{seg:?}").to_ascii_uppercase())};
                     text=text.replace("read data dst $W",&format!("const data $W {v}"));label
                 };
                 (format!("{} {operand}",name.to_ascii_uppercase()),compile(&instantiate(text,w),w))

@@ -100,3 +100,13 @@ fn stack_cache_identity_includes_ss_size_and_visible_selectors(){
     image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big:true};cache.fetch(&image,&ram,c.eip).unwrap();assert_eq!(cache.stats().invalidations,2);
     ram.write_bytes(0x100,&[0x66]).unwrap();let old=c.clone();let c=c;assert!(image.decode(&ram,c.eip).is_err());assert_eq!(c,old);
 }
+
+#[test]
+fn alternate_register_encodings_and_fs_gs_push_use_same_pil(){
+    for wide in [false,true]{for (instruction,value) in [(vec![0xff,0xf0],0x12345678u32),(vec![0x0f,0xa0],0xbeef),(vec![0x0f,0xa8],0xcafe)]{
+        let mut bytes=Vec::new();if wide{bytes.push(0x66);}bytes.extend(instruction);if wide{bytes.push(0x66);}bytes.extend([0x8f,0xc3]);
+        let (mut image,mut ram,mut c)=setup(&bytes,false);image.selectors[4]=0xbeef;image.selectors[5]=0xcafe;let esp=c.regs[4];
+        step(&image,&mut ram,&mut c).unwrap();step(&image,&mut ram,&mut c).unwrap();assert_eq!(c.regs[3],value&if wide{u32::MAX}else{65535});assert_eq!(c.regs[4],esp);
+    }}
+    for bytes in [vec![0x8f,0xc8],vec![0xff,0x37],vec![0x8f,0x07],vec![0xf0,0x50],vec![0x66,0x66,0x50]]{let (image,ram,_)=setup(&bytes,false);assert!(image.decode(&ram,0x100).is_err());}
+}
