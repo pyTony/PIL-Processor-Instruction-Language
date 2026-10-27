@@ -1,3 +1,20 @@
+# PIL 0.30.0-alpha.1
+
+- Add memory POP (8F /0) with independent SS reads and destination addresses
+  evaluated after SP/ESP advances. Operand, address and SS sizes are independent;
+  faults commit no SP or store effects. The family-specific 16-bit SP wrap case
+  with an ESP-based address is rejected pending legacy 386 hardware evidence.
+- Add SMSW (0F 01 /4) word register/memory forms and explicit traced MSW state.
+  PE follows normalized mode. Initial ET=1 is a declared profile choice.
+  Wide register forms and CR0/LMSW writes remain separate work.
+- Add DOS INT 21/AH=30 with a declared 6.22 compatibility profile in PSP:0040,
+  OEM FF or non-ROM flags, zero serial and preserved upper register halves/flags.
+  Other unimplemented services still stop.
+- Windows/Linux CI 40582461490: 297 tests and 149 full-state backend cases
+  (6,870,394 matching trace bytes), standalone runtime and package checks.
+  Twelve new expected-state tests and fourteen backend cases cover this change.
+- No new full FreeDOS image, ARM or legacy real-mode hardware run is claimed.
+
 # PIL 0.29.0-alpha.1
 
 - Add real-mode CB/CA RETF16/32 with independent SS sizes and byte cleanup.

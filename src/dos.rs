@@ -7,6 +7,8 @@ use super::memory::{MemWidth,Ram};
 #[path="dos_memory.rs"]
 mod memory_arena;
 use memory_arena::{Arena,memory_service};
+// Declared compatibility version of this bounded host shim, not an OS boot.
+const DOS_COMPAT_VERSION:u16=0x1606; // major6, minor22 decimal
 const PSP:u16=0x1000;
 const LOAD:u16=PSP+0x10;
 const LIMIT:usize=0xa0000;
@@ -97,13 +99,13 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
     let mut ram=Ram::new(LIMIT);
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
-    put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x81]=0x0d;
+    put_word(&mut psp,2,(allocation_end/16)as u16);put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
@@ -125,6 +127,15 @@ fn opcode_key(bytes:&[u8])->String{
 fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
     match(vector,(p.cpu.regs[0]>>8)as u8){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
+        (0x21,0x30)=>{
+            // Read before changing registers so a failed PSP read has no effects.
+            let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
+            let flags=p.cpu.regs[0]as u8==1;
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|version;
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|if flags{0}else{0xff00};
+            p.cpu.regs[1]&=0xffff0000;
+            Ok(None)
+        },
         (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
@@ -185,7 +196,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=String::from("DOS executable probe: concrete PIL interpreter plus minimal host DOS-call shim.\n");
+    let mut report=String::from("DOS executable probe: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 version. Not a running DOS kernel.\n");
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{match super::containers::open(Path::new(path)){

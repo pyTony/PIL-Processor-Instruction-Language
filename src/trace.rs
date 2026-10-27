@@ -20,6 +20,7 @@ pub fn record_machine(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],fla
     }
     state.extend_from_slice(&[u8::from(machine.real_mode),machine.ss_shadow,machine.sti_shadow]);
     state.push(u8::from(machine.flag_checkpoint.is_some()));let (ip,f,u)=machine.flag_checkpoint.unwrap_or((0,0,0));for n in [ip,f,u]{state.extend_from_slice(&n.to_le_bytes());}
+    state.extend_from_slice(&machine.msw.to_le_bytes());
     record_state(out,case,status,regs,flags,undefined,eip,ram,rx,tx,&state);
 }
 fn record_state(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],flags:u32,undefined:u32,eip:u32,ram:&[u8],rx:&[u8],tx:&[u8],state:&[u8]){

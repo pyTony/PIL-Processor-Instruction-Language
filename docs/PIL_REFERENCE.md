@@ -403,3 +403,28 @@ code outside it remains rejected. Fixed generated images dispatch by physical
 instruction address,with live logical next-IP/code limits and byte guards.
 They do not gain dynamic compilation of unknown or changed instruction bytes.
 Reference: [Intel80386 RET semantics](https://pdos.csail.mit.edu/6.828/2018/readings/i386/RET.htm).
+
+## Post-update address expressions and machine status (0.30)
+
+`read_address_after OUT REG VALUE` evaluates the supplied decoded effective
+address with one bv32 GPR replaced by VALUE. Other registers are incoming
+snapshots;the original expression still selects the same segment. It does not
+commit a register change. Memory POP uses the post-pop ESP for its destination
+and explicit SS loads at the incoming SP for its source. The complete
+instruction commits at retire. A failed load,address check or store preserves
+CPU/RAM/segment state. `require PREDICATE` rejects a false bv1 condition with
+InvalidContext;POP uses it to reject the documented processor-family-specific
+16-bit SP wrap case for ESP-based32-bit destination addressing.
+
+`read_msw OUT` reads the explicit bv16 machine-status profile. MSW is retained
+in Image/SegmentState and traces;PE is derived from the normalized real_mode
+state. The monitor/DOS profile initializes the other bits to0010h (ET=1).
+This is explicit profile configuration,not a claim about hardware reset or an
+implemented FPU. SMSW stores exactly a word and preserves flags/markers.
+Operand-size-prefixed register forms are rejected pending legacy upper-half
+policy;66-prefixed memory forms still write a word. CR0 writes,LMSW,UMIP and
+privilege transitions are not implemented by this increment.
+
+References: Intel80386
+[POP](https://pdos.csail.mit.edu/6.828/2018/readings/i386/POP.htm) and
+[SMSW](https://pdos.csail.mit.edu/6.828/2018/readings/i386/SMSW.htm).

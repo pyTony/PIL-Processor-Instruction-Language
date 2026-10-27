@@ -229,3 +229,15 @@ https://learn.microsoft.com/windows/win32/fileio/disk-partition-types
 Synthetic vectors are original data compressed with Python's zlib,not copied
 codec code. The user-supplied FreeDOS image was inspected/extracted separately;
 its binaries,package sources and licenses are not added to this repository.
+
+## Memory POP, SMSW and DOS version profile
+
+The 0.30 increment consults the [Intel 386 POP reference](https://pdos.csail.mit.edu/6.828/2018/readings/i386/POP.htm)
+and [SMSW reference](https://pdos.csail.mit.edu/6.828/2018/readings/i386/SMSW.htm).
+The family-specific SP-wrap/ESP-address case is explicitly rejected. SMSW
+supports word destinations; its ET=1 initial value is a declared machine profile.
+
+DOS AH=30 behavior was checked against the
+[FreeDOS handler at d6791add](https://github.com/FDOS/kernel/blob/d6791add2043c9d7b584d840a8ffaf8829fd2bdc/kernel/inthndlr.c).
+The project's original shim declares compatibility version 6.22 in PSP:0040;
+it does not execute a FreeDOS kernel. No handler source or manual text is bundled.

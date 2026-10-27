@@ -56,6 +56,9 @@ enum Token {
     RequireRealMode,
     InterruptShadowIf(usize),
     ReadAddress(usize),
+    ReadAddressAfter(usize,usize,usize),
+    ReadMsw(usize),
+    Require(usize),
     LoadSegment(usize,usize,MemWidth,usize),
     StoreSegment(usize,usize,MemWidth,usize),
     RetireIf(usize),
@@ -251,6 +254,15 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 ["resume_if", predicate]=>{
                     let c=slot(&names,predicate)?;if widths[c]!=1||branched{return Err("one resume/branch effect with bv1 required".into());}branched=true;Token::ResumeIf(c)
                 }
+                ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
+                ["require", predicate]=>{
+                    let c=slot(&names,predicate)?;if widths[c]!=1{return Err("require needs bv1 predicate".into());}Token::Require(c)
+                }
+                ["read_address_after", out, register, input]=>{
+                    let reg=number(register)?;let a=slot(&names,input)?;
+                    if reg>=8||widths[a]!=32{return Err("read_address_after requires register0..7 and bv32 replacement".into());}
+                    Token::ReadAddressAfter(define(&mut names,&mut widths,out,32)?,reg as usize,a)
+                }
                 ["read_address", out] => Token::ReadAddress(define(&mut names,&mut widths,out,32)?),
                 ["load", out, address, bits] => {
                     if stored {return Err("loads after a staged store are not supported".into());}
@@ -374,9 +386,9 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadMsw(..)|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
-    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
+    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
     let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
     Ok(Program { checkpoint_flags,partial,tokens, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory })
@@ -408,27 +420,27 @@ fn execute(p: &Program, cpu: &mut Cpu, dst: View, src: View) -> R<()> {
 }
 fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->Result<(),ExecError> {
     if p.uses_memory {return Err(ExecError::InvalidContext);}
-    execute_state(p,cpu,dst,src,context,None,0,None,None)
+    execute_state(p,cpu,dst,src,context,None,0,None,None,None)
 }
 fn execute_memory(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError> {
-    execute_state(p,cpu,dst,src,context,Some(ram),address,None,None)
+    execute_state(p,cpu,dst,src,context,Some(ram),address,None,None,None)
 }
 #[cfg(test)]
 fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError> {
     let (offset, memory_context)=address.resolve(&cpu.regs)?;
-    execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None)
+    execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective))
 }
 fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
     let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(&cpu.regs)?;(o,Some(c))}else{(0,None)};
     if p.checkpoint_flags{machine.checkpoint_flags(cpu.eip,cpu.eflags,cpu.undefined_flags);}
-    let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine));
+    let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
     if result.is_err()&&p.checkpoint_flags{if let Some((f,u))=machine.recover_flags(){cpu.eflags=f;cpu.undefined_flags=u;}}
     result
 }
 fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
     ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
 }
-fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>,mut machine:Option<&mut address::SegmentState>)->Result<(),ExecError> {
+fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>,mut machine:Option<&mut address::SegmentState>,effective:Option<address::EffectiveAddress>)->Result<(),ExecError> {
     if p.uses_memory && ram.is_none() {return Err(ExecError::InvalidContext);}
     dst.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
     src.validate(p.source_width).map_err(|_|ExecError::InvalidBinding)?;
@@ -474,6 +486,13 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
             Token::WriteGpr(reg,a,w)=>pending_registers.push((View{register:reg,low:0,width:w},values[a])),
+            Token::ReadMsw(o)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64,16),
+            Token::Require(c)=>if values[c].bits==0{return Err(ExecError::InvalidContext);},
+            Token::ReadAddressAfter(o,reg,a)=>{
+                let mut regs=cpu.regs;regs[reg]=values[a].bits as u32;
+                let ea=effective.ok_or(ExecError::InvalidContext)?;
+                values[o]=value(ea.resolve(&regs,None)?.offset as u64,32);
+            }
             Token::ReadAddress(o)=>values[o]=value(address as u64,32),
             Token::Load(o,a,w)=>{
                 let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
@@ -639,6 +658,8 @@ fn description(name: &str) -> R<String> {
         "lods" => Some(include_str!("../isa/i386/lods.pil")),
         "push" => Some(include_str!("../isa/i386/push.pil")),
         "pop" => Some(include_str!("../isa/i386/pop.pil")),
+        "pop_memory" => Some(include_str!("../isa/i386/pop_memory.pil")),
+        "smsw" => Some(include_str!("../isa/i386/smsw.pil")),
         "pushf" => Some(include_str!("../isa/i386/pushf.pil")),
         "popf" => Some(include_str!("../isa/i386/popf.pil")),
         "cli" => Some(include_str!("../isa/i386/cli.pil")),
@@ -672,7 +693,7 @@ fn description(name: &str) -> R<String> {
     Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc/cmc/cld/std/lahf/sahf/xchg, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
-    text.as_ref().replace("$TARGET","read_disp delta $W\nadd target_value return_offset delta").replace("$CLEANUP","0").replace("$FRAME",&(w/4).to_string()).replace("$SEG","3").replace("$A","16").replace("$S\n","16\n").replace("$S ","16 ").replace("$BYTES",&(w/8).to_string()).replace("$REG","0").replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
+    text.as_ref().replace("$WRAP_GUARD","").replace("$HIGH_MASK","4294901760").replace("$TARGET","read_disp delta $W\nadd target_value return_offset delta").replace("$CLEANUP","0").replace("$FRAME",&(w/4).to_string()).replace("$SEG","3").replace("$A","16").replace("$S\n","16\n").replace("$S ","16 ").replace("$BYTES",&(w/8).to_string()).replace("$REG","0").replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
 }
 fn emit_rust(p: &Program) -> String {
     let mut out=String::from("// Generated from validated PIL tokens.\n");
@@ -691,7 +712,7 @@ fn emit_rust(p: &Program) -> String {
 fn emit_rust_functions(p:&Program)->String {
     let mut out=String::new();
     out.push_str(&format!(
-        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>) -> Result<(), ExecError> {{\n\
+        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>, effective: Option<address::EffectiveAddress>) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + {}u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
@@ -724,6 +745,9 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSegment(reg,a)=>format!("if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode {{return Err(ExecError::InvalidContext);}} pending_segment=Some(({reg},v{a} as u16,address::SegmentCache::real_mode(v{a} as u16)));"),
             Token::ReadGpr(o,reg,w)=>format!("let v{o}: u64 = (regs[{reg}] as u64) & {}u64;",mask(w)),
             Token::WriteGpr(reg,a,w)=>format!("pending_registers.push(({reg},{w},v{a}));"),
+            Token::ReadMsw(o)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64;"),
+            Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
+            Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
             Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;"),
             Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; pending_store=Some((store_addr,MemWidth::{w:?},v{v} as u32));"),
@@ -773,13 +797,13 @@ fn emit_rust_functions(p:&Program)->String {
     out.push_str("}\n");
     out.push_str("pub fn execute_with_flow(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext)->Result<(),ExecError>{\n");
     if p.uses_memory {out.push_str("Err(ExecError::InvalidContext)\n}\n");}
-    else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,None)\n}\n");}
-    out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None,None)\n}\n");
-    out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context),None)\n}\n");
+    else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,None,None)\n}\n");}
+    out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None,None,None)\n}\n");
+    out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective))\n}\n");
     out.push_str(&r#"pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
 let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};
 if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
-let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine));
+let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
 if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
 result
 }
@@ -902,6 +926,7 @@ fn main() -> R<()> {
         cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
     Ok(())
 }
+
 
 
 
