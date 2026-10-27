@@ -117,7 +117,7 @@ impl Image {
                 let segment=pop_selector.unwrap_or(match opcode{0x07=>SegmentRegister::Es,0x17=>SegmentRegister::Ss,_=>SegmentRegister::Ds});
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
-                let text=include_str!("../isa/i386/pop_segment.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$SEG",&segment.index().to_string());
+                let text=include_str!("../isa/i386/pop_segment.pil").replace("$SEG",&segment.index().to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("POP {segment:?}").to_ascii_uppercase(),compile(&instantiate(text,w),w))
             }
             0x50..=0x5f|0x68|0x6a|0x06|0x0e|0x16|0x1e=>{

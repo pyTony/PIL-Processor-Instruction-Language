@@ -128,11 +128,11 @@ impl Debugger {
             }
             Operation::Input{next}=>{
                 let byte=match self.serial.try_read(){Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
-                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip = *next;self.image.as_mut().unwrap().ss_shadow=self.image.as_ref().unwrap().ss_shadow.saturating_sub(1);Stop::Advanced
+                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Operation::Output{next}=>{
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err(){return Stop::TxBlocked(self.cpu.eip);}
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;self.image.as_mut().unwrap().ss_shadow=self.image.as_ref().unwrap().ss_shadow.saturating_sub(1);Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Operation::Halt=>Stop::Halt(self.cpu.eip),
         }
@@ -159,13 +159,13 @@ impl Debugger {
             Action::MockRx{next} => {
                 let byte=match self.serial.try_read() {Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
                 self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);
-                self.cpu.eip = *next;self.image.as_mut().unwrap().ss_shadow=self.image.as_ref().unwrap().ss_shadow.saturating_sub(1);Stop::Advanced
+                self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Action::MockTx{next} => {
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err() {
                     return Stop::TxBlocked(self.cpu.eip);
                 }
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;self.image.as_mut().unwrap().ss_shadow=self.image.as_ref().unwrap().ss_shadow.saturating_sub(1);Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.ss_shadow=image.ss_shadow.saturating_sub(1);}Stop::Advanced
             }
             Action::HarnessHalt=>Stop::Halt(self.cpu.eip),
         }
