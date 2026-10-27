@@ -112,6 +112,15 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("rep_backward",vec![0xf3,0xa5,0xf4])?;t.regs[1]=3;t.regs[6]=0x810;t.regs[7]=0xa10;t.flags=0xed7;t.patch=Some((0x900,(0..64u8).collect()));tests.push(t);
     let mut t=case("rep_partial_fault",vec![0xf3,0xa4,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![10,20,30]));t.protect=Some((0xa01,1));t.image.ss_shadow=1;tests.push(t);
     let mut t=case("rep_zero",vec![0xf3,0xa4,0xf4])?;t.regs[1]=0xabcd0000;t.image.segments[0].access=super::address::SegmentAccess::Unusable;t.image.segments[3].access=super::address::SegmentAccess::Unusable;tests.push(t);
+    for big in [false,true]{for w in [16,32]{
+        let mut bytes=vec![0xfa];if w==32{bytes.push(0x66);}bytes.push(0x9c);bytes.push(0xf9);if w==32{bytes.push(0x66);}bytes.push(0x9d);bytes.extend([0xfb,0xfb,0x90,0xf4]);
+        let mut t=case(match(big,w){(false,16)=>"flagstack16_16",(false,_)=>"flagstack16_32",(true,16)=>"flagstack32_16",_=>"flagstack32_32"},bytes)?;t.regs[4]=0x800;t.flags=0x17dd7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};tests.push(t);
+    }}
+    let mut t=case("pushf_readonly",vec![0x9c,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
+    let mut t=case("popf_limit",vec![0x9d,0xf4])?;t.regs[4]=0xffff;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("control_mode_reject",vec![0xfb,0xf4])?;t.image.real_mode=false;tests.push(t);
+    let mut t=case("sti_rep_fault",vec![0xfa,0xfb,0xf3,0xaa,0xf4])?;t.regs[1]=2;t.regs[7]=0xa00;t.protect=Some((0xa01,1));tests.push(t);
+    for addr32 in [false,true]{for zero in [false,true]{let mut bytes=vec![];if addr32{bytes.push(0x67);}bytes.extend([0xe3,1,0x40,0xf4]);let mut t=case(match(addr32,zero){(false,false)=>"jcxz_nonzero",(false,true)=>"jcxz_zero",(true,false)=>"jecxz_nonzero",_=>"jecxz_zero"},bytes)?;t.regs[1]=if zero{if addr32{0}else{0xabcd0000}}else{1};tests.push(t);}}
     let mut t=case("direction_controls",vec![0xfd,0xfd,0x66,0xfc,0x67,0xfd,0x2e,0xfc,0xf4])?;t.flags=0xed7;t.regs=[0x12345678;8];tests.push(t);
     let mut t=case("byte_flags",vec![0x9f,0xb4,0xd5,0x9e,0x9f,0xb4,0x2a,0x66,0x9e,0x67,0x9f,0xf4])?;t.flags=0xad7;t.regs[0]=0x12345678;tests.push(t);
     for w in [8,16,32]{

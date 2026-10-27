@@ -1,0 +1,12 @@
+# Address size chooses the counter; operand size chooses target wrapping.
+require_width 16_or_32
+read_gpr count 1 $A
+zero take count
+read_ip fallthrough next 32
+trunc base fallthrough $W
+read_disp delta $W
+add wrapped base delta
+zext target wrapped 32
+branch_if target take
+preserve_flags all
+retire
