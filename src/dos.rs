@@ -1,6 +1,6 @@
 //! Bounded DOS executable importer and diagnostic runner, not a DOS/BIOS kernel.
 use std::{collections::BTreeMap,fmt::Write as _,io::Read,path::Path};
-use super::{Cpu,execute_flow,execute_segmented};
+use super::Cpu;
 use super::address::{MemoryContext,SegmentAccess,SegmentCache,SegmentRegister};
 use super::guest::{GuestError,Image,Operation};
 use super::memory::{MemWidth,Ram};
@@ -99,7 +99,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let mut segments=selectors.map(SegmentCache::real_mode);
     segments[SegmentRegister::Cs.index()].access=SegmentAccess::Code{readable:true};
-    Ok(Loaded{format,cpu,ram,image:Image{start,end,segments,selectors},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
+    Ok(Loaded{format,cpu,ram,image:Image{start,end,segments,selectors,real_mode:true,ss_shadow:0},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
@@ -146,7 +146,7 @@ pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
         if let Ok(encoded)=bytes_at(&p,2){if encoded[0]==0xcd{
             let vector=encoded[1];let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
             match service(&mut p,vector,&mut output){
-                Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;completed+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
+                Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.ss_shadow=p.image.ss_shadow.saturating_sub(1);completed+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{break Stop::Exit(code);}continue;},
                 Err(message)=>break Stop::Service(message),
             }
@@ -156,9 +156,9 @@ pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
             Err(GuestError::Decode(detail))=>break if detail.starts_with("fetch outside loaded image"){Stop::Boundary(detail)}else{Stop::MissingEncoding{key:opcode_key(&site_bytes(&p)),detail}},
         };
         let result=match &decoded.operation{
-            Operation::Pil{program,dst,src,flow,address}=>match address{
-                Some(a)=>execute_segmented(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*a),
-                None=>execute_flow(program,&mut p.cpu,*dst,*src,*flow),
+            Operation::Pil{program,dst,src,flow,address}=>{
+                let mut machine=p.image.segment_state();let result=super::execute_machine(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine);
+                if result.is_ok(){p.image.set_segment_state(machine);p.selectors=machine.selectors;}result
             },
             Operation::Halt=>break Stop::Monitor("HLT reached;monitor stop is not DOS process termination".into()),
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),

@@ -87,6 +87,12 @@ pub fn cases()->Result<Vec<Case>,String> {
     }}
     let mut t=case("stack_readonly",vec![0x50,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
     let mut t=case("stack_boundary",vec![0x50,0xf4])?;t.regs[4]=1;tests.push(t);
+    let mut t=case("segment_roundtrip",vec![0xb8,0x40,0,0x8e,0xd8,0x8c,0xdb,0x1e,0x07,0x8c,0xc1,0x0f,0xa0,0x0f,0xa9,0xf4])?;t.regs[4]=0x800;t.flags=0xed7;tests.push(t);
+    let mut t=case("segment_memory",vec![0xb8,0x40,0,0x8e,0xd8,0x8c,0x1e,0,2,0x8e,0x06,0,2,0x26,0x8b,0x16,0,2,0xf4])?;tests.push(t);
+    let mut t=case("segment_ss",vec![0xb8,0x30,0,0x8e,0xd0,0x50,0x1f,0x8c,0xda,0xf4])?;t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true};tests.push(t);
+    let mut t=case("segment_fault",vec![0x17,0xf4])?;t.regs[4]=0xffff;tests.push(t);
+    let mut t=case("segment_pop32",vec![0x66,0x68,0x40,0,0xcd,0xab,0x66,0x1f,0x8c,0xd8,0xf4])?;t.regs[4]=0x800;tests.push(t);
+    let mut t=case("segment_store_readonly",vec![0x8c,0x1e,0,8,0xf4])?;t.protect=Some((0x900,2));tests.push(t);
     let mut t=case("direction_controls",vec![0xfd,0xfd,0x66,0xfc,0x67,0xfd,0x2e,0xfc,0xf4])?;t.flags=0xed7;t.regs=[0x12345678;8];tests.push(t);
     let mut t=case("byte_flags",vec![0x9f,0xb4,0xd5,0x9e,0x9f,0xb4,0x2a,0x66,0x9e,0x67,0x9f,0xf4])?;t.flags=0xad7;t.regs[0]=0x12345678;tests.push(t);
     for w in [8,16,32]{
@@ -136,16 +142,25 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
         let decoded=case.image.decode(&ram,ip).map_err(|e|format!("{} decode: {e:?}",case.name))?;
         let signature=case.image.fetch_signature(&ram,ip,decoded.length).map_err(|e|format!("{e:?}"))?;
         let bytes=&signature[..decoded.length as usize];
-        dispatch.push_str(&format!("{ip}=>{{if let Err(status)=guard(s,{ip},&{bytes:?},CS,{}){{return status;}}\n",case.image.end));
+        dispatch.push_str(&format!("{ip}=>{{if let Err(status)=guard(s,{ip},&{bytes:?},s.machine.segments[1],{}){{return status;}}\n",case.image.end));
         match decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
                 code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&program)));
                 let args=format!("&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),{flow:?}",dst.register,dst.low,src.register,src.low);
-                let call=if let Some(a)=address {format!("i{ip:x}::execute_with_segments({args},&mut s.ram,{a:?})")}else{format!("i{ip:x}::execute_with_flow({args})")};
+                let mut call=format!("i{ip:x}::execute_with_machine({args},&mut s.ram,{address:?},&mut s.machine)");
+                if program.tokens.iter().any(|t|matches!(t,super::Token::ReadGpr(_,4,_))){
+                    let mut alternate=case.image.clone();let old_big=matches!(alternate.segments[2].access,super::address::SegmentAccess::Data{big:true,..});
+                    if let super::address::SegmentAccess::Data{ref mut big,..}=alternate.segments[2].access{*big=!old_big;}
+                    if let Operation::Pil{program:p,dst:d,src:r,flow:f,address:a}=alternate.decode(&ram,ip).map_err(|e|format!("alternate stack decode: {e:?}"))?.operation{
+                        code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&p)));
+                        let alternate_call=format!("alt{ip:x}::execute_with_machine(&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),{f:?},&mut s.ram,{a:?},&mut s.machine)",d.register,d.low,r.register,r.low);
+                        call=format!("if matches!(s.machine.segments[2].access,SegmentAccess::Data{{big:true,..}})=={old_big}{{{call}}}else{{{alternate_call}}}");
+                    }
+                }
                 dispatch.push_str(&format!("match {call} {{Ok(())=>[0,0,0,0,0],Err(e)=>trace::fault(s.eip,e)}}"));
             }
-            Operation::Input{next}=>dispatch.push_str(&format!("if let Some(b)=s.rx.pop_front(){{s.regs[0]=(s.regs[0]&!255)|u32::from(b);s.eip={next};[0,0,0,0,0]}}else{{[2,s.eip,0,0,0]}}")),
-            Operation::Output{next}=>dispatch.push_str(&format!("if s.tx.len()==256{{[3,s.eip,0,0,0]}}else{{s.tx.push_back(s.regs[0] as u8);s.eip={next};[0,0,0,0,0]}}")),
+            Operation::Input{next}=>dispatch.push_str(&format!("if let Some(b)=s.rx.pop_front(){{s.regs[0]=(s.regs[0]&!255)|u32::from(b);s.eip={next};s.machine.retired();[0,0,0,0,0]}}else{{[2,s.eip,0,0,0]}}")),
+            Operation::Output{next}=>dispatch.push_str(&format!("if s.tx.len()==256{{[3,s.eip,0,0,0]}}else{{s.tx.push_back(s.regs[0] as u8);s.eip={next};s.machine.retired();[0,0,0,0,0]}}")),
             Operation::Halt=>dispatch.push_str("[1,s.eip,0,0,0]"),
         }
         dispatch.push_str("},\n");ip+=decoded.length;
@@ -153,7 +168,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
     let mut init=format!("let mut ram=Ram::new({});ram.write_bytes(0x100,&{:?}).unwrap();\n",guest::RAM_BYTES,case.bytes);
     if let Some((at,bytes))=&case.patch {init.push_str(&format!("ram.write_bytes({at},&{bytes:?}).unwrap();\n"));}
     if let Some((at,len))=case.protect {init.push_str(&format!("ram.protect({at},{len}).unwrap();\n"));}
-    init.push_str(&format!("State{{regs:{:?},flags:{},undefined:0,eip:0x100,ram,rx:VecDeque::from({:?}),tx:VecDeque::from({:?})}}",case.regs,case.flags,case.rx,case.tx));
+    init.push_str(&format!("State{{regs:{:?},flags:{},undefined:0,eip:0x100,ram,machine:{:?},rx:VecDeque::from({:?}),tx:VecDeque::from({:?})}}",case.regs,case.flags,case.image.segment_state(),case.rx,case.tx));
     Ok(format!("mod {name} {{use super::*; const CS:SegmentCache={:?};\n{code}\npub fn initial()->State{{{init}}}\n#[inline(never)] pub fn step(s:&mut State)->[u32;5]{{match s.eip{{{dispatch}_=>[7,s.eip,0,0,0]}}}}\n}}\n",case.image.segments[SegmentRegister::Cs.index()]))
 }
 fn runner_source()->String {
@@ -178,7 +193,7 @@ pub fn emit_suite(iterations:u32,samples:u32)->Result<String,String> {
     Ok(source)
 }
 const RUNNER:&str=r#"
-struct State{regs:[u32;8],flags:u32,undefined:u32,eip:u32,ram:Ram,rx:VecDeque<u8>,tx:VecDeque<u8>}
+struct State{regs:[u32;8],flags:u32,undefined:u32,eip:u32,ram:Ram,machine:SegmentState,rx:VecDeque<u8>,tx:VecDeque<u8>}
 fn guard(s:&State,start:u32,bytes:&[u8],cache:SegmentCache,end:u32)->Result<(),[u32;5]>{
  for (index,expected) in bytes.iter().enumerate(){let offset=start+index as u32;
   if offset<0x100 || offset>=end{return Err([7,start,0,0,0]);}
@@ -192,13 +207,13 @@ fn run(mut state:State,step:fn(&mut State)->[u32;5],budget:usize,mut trace:Optio
  for done in 0..budget {
   // Keep the work observable; do not let rustc constant-fold a known guest loop.
   let status=step(std::hint::black_box(&mut state));
-  if let Some((out,id))=trace.as_mut(){let rx:Vec<_>=state.rx.iter().copied().collect();let tx:Vec<_>=state.tx.iter().copied().collect();trace::record(out,*id,status,&state.regs,state.flags,state.undefined,state.eip,state.ram.bytes(),&rx,&tx);}
+  if let Some((out,id))=trace.as_mut(){let rx:Vec<_>=state.rx.iter().copied().collect();let tx:Vec<_>=state.tx.iter().copied().collect();trace::record_machine(out,*id,status,&state.regs,state.flags,state.undefined,state.eip,state.ram.bytes(),&rx,&tx,&state.machine);}
   if status[0]!=0{return (state,done,status);}
  }let ip=state.eip;(state,budget,[10,ip,0,0,0])
 }
 "#;
 // Parse borrowed slices: damaged length fields cannot cause allocations or panics.
-struct TraceRecord<'a> { header:[u32;17], sections:[&'a [u8];3] }
+struct TraceRecord<'a> { header:[u32;17], sections:[&'a [u8];4] }
 fn trace_record<'a>(bytes:&'a [u8],at:&mut usize)->Result<Option<TraceRecord<'a>>,String> {
     if *at==bytes.len(){return Ok(None);}
     fn take<'a>(bytes:&'a [u8],at:&mut usize,len:usize)->Result<&'a [u8],String> {
@@ -208,7 +223,7 @@ fn trace_record<'a>(bytes:&'a [u8],at:&mut usize)->Result<Option<TraceRecord<'a>
     }
     let mut header=[0;17];
     for value in &mut header {*value=u32::from_le_bytes(take(bytes,at,4)?.try_into().unwrap());}
-    let mut sections:[&[u8];3]=[&[];3];
+    let mut sections:[&[u8];4]=[&[];4];
     for section in &mut sections {let len=u32::from_le_bytes(take(bytes,at,4)?.try_into().unwrap()) as usize;*section=take(bytes,at,len)?;}
     Ok(Some(TraceRecord{header,sections}))
 }
@@ -238,7 +253,7 @@ fn verify_named_traces(expected:&[u8],actual:&[u8],names:&[&str],unit:&str)->Res
         for (index,field) in FIELDS.iter().enumerate(){
             if a.header[index]!=b.header[index]{return Err(format!("{context}: {field}: interpreter={:08x}, generated={:08x}",a.header[index],b.header[index]));}
         }
-        for (index,field) in ["RAM","RX","TX"].iter().enumerate(){
+        for (index,field) in ["RAM","RX","TX","segments"].iter().enumerate(){
             let (a,b)=(a.sections[index],b.sections[index]);
             if a.len()!=b.len(){return Err(format!("{context}: {field}.length: interpreter={}, generated={}",a.len(),b.len()));}
             if let Some(offset)=a.iter().zip(b).position(|(a,b)|a!=b){return Err(format!("{context}: {field}[0x{offset:x}]: interpreter={:02x}, generated={:02x}",a[offset],b[offset]));}
@@ -340,7 +355,7 @@ fn main(){
    0=>steps+=1,
    1|3=>{
     let rx:Vec<_>=state.rx.iter().copied().collect();let tx:Vec<_>=state.tx.iter().copied().collect();
-    trace::record(&mut checkpoints,0,status,&state.regs,state.flags,state.undefined,state.eip,state.ram.bytes(),&rx,&tx);
+    trace::record_machine(&mut checkpoints,0,status,&state.regs,state.flags,state.undefined,state.eip,state.ram.bytes(),&rx,&tx,&state.machine);
     assert!(!state.tx.is_empty(),"empty TX checkpoint");pixels.extend(state.tx.drain(..));
     if status[0]==1{break;}blocked+=1;
    },

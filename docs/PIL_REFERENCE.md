@@ -248,10 +248,33 @@ the original register; POP SP/ESP increments the stack pointer before writing
 the popped operand. A multi-byte access crossing the segment end faults rather
 than wrapping each byte. Initial segment PUSH ES/CS/SS/DS/FS/GS reads explicit visible
 selectors supplied by the loader, not inferred hidden-cache bases. Cache identity
-includes those selectors and the SS attributes. Memory operands, segment POP,
-CALL/RET and interrupt shadows remain separate follow-up work.
+includes those selectors and the SS attributes. Memory stack operands and
+CALL/RET remain follow-up work. Real-mode segment POP and SS inhibition state
+are implemented through the mutable segment-state API below; interrupt delivery
+remains separate.
 
 The `push`/`pop` example templates use a word stack and EAX/AX destination by
 default with --emit-rust. The decoder substitutes the actual SS size/register.
 
 Register aliases FF /6 and 8F /0 share the same PUSH/POP descriptions.
+
+## Mutable real-mode segment state
+
+`read_segment out INDEX` snapshots a visible selector (ES,CS,SS,DS,FS,GS =0..5)
+as bv16. `write_segment INDEX value` stages one bv16 non-CS selector load,
+rebuilds its ordinary real-mode cache and commits with GPR/memory effects.
+Use execute_machine / emitted execute_with_machine with SegmentState; contextless
+wrappers reject these tokens. Protected-mode loads are explicitly unsupported.
+MOV8C/8E supports register and word-memory transfers; operand-prefix66 does not
+widen memory accesses. MOV r32,Sreg is rejected pending legacy upper-half policy.
+POP ES/SS/DS/FS/GS reads through old SS using the original stack-address width,
+then commits pointer and segment state together. SS loads set ss_shadow=1;only
+successful following retirement clears it. This records the boundary inhibition
+state;external interrupt/NMI/debug delivery is still not implemented.
+
+Backend trace records now include a fourth, length-prefixed segment-state section
+with selectors,cache attributes,mode and SS shadow. Compiled fixed-image runners
+use runtime caches and choose the stack-size variant at each stack instruction.
+References: Intel386 [MOV](https://pdos.csail.mit.edu/6.828/2012/readings/i386/MOV.htm),
+[POP](https://pdos.csail.mit.edu/6.828/2017/readings/i386/POP.htm),and
+[SS inhibition](https://pdos.csail.mit.edu/6.828/2004/readings/i386/s09_02.htm).
