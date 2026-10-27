@@ -201,3 +201,13 @@ executable. All MCB writes are prechecked before committing metadata or
 register results; readonly header-write failures stop the bridge without partial state.
 
 Reference audit: [FreeDOS INT21 handler](https://github.com/FDOS/kernel/blob/d6791add2043c9d7b584d840a8ffaf8829fd2bdc/kernel/inthndlr.c), especially4A PSP-size retention and AX=ES; [RBIL48](https://fd.lod.bz/rbil/interrup/dos_kernel/2148.html), [49](https://fd.lod.bz/rbil/interrup/dos_kernel/2149.html), [4A](https://fd.lod.bz/rbil/interrup/dos_kernel/214a.html) for the bounded DOS2..6 service profile.
+
+## Real-mode far returns (0.29)
+
+CB and CA imm16 now restore CS:IP and advance SP using shared PIL. Operand16/32
+and SS size are independent;the selector uses the low16 bits of its stack slot.
+A bad complete frame,new IP beyondFFFFh or RAM access fault commits no return
+effects. Flags are preserved. Protected/V86 far returns and far calls/jumps are
+not implemented. Fetch bounds now refer to the initial physical window across
+CS changes;this permits aliases of imported code without permitting execution
+of unpacked/copied code outside the original bounded window.

@@ -1818,6 +1818,26 @@
         "actual_freedos_image": "not rerun; local download blocked by network",
         "arm": "not executed"
       }
+    },
+    {
+      "version": "0.29.0-alpha.1",
+      "date": "2026-10-27",
+      "features": [
+        "Real-mode CB/CA RETF16/32 with transactional CS/IP/SP",
+        "Checked wide stack frame spans",
+        "Fixed physical fetch windows and generated CS alias dispatch"
+      ],
+      "status": "locally-verified",
+      "verification": {
+        "environment": "Windows x86-64",
+        "rust_tests": 285,
+        "full_state_backend_cases": 135,
+        "trace_bytes": 6743574,
+        "hardware": "existing modern-host overlap only; no new real-mode hardware run",
+        "actual_freedos_image": "not rerun locally",
+        "runtime_packages": "106-file standalone runtime and unpacked Windows package passed",
+        "full_mandelbrot": "256x256:65536 pixels,256 full-state checkpoints matched"
+      }
     }
   ]
 }

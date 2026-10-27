@@ -513,3 +513,11 @@ No third-party emulator implementation was copied. Original COM/MZ execution
 and cache fixtures verify the implementation; this is not new hardware-derived
 real-mode or whole-image evidence. Retained protected-mode hidden caches remain
 outside the ordinary real-mode loader contract.
+
+## Real-mode RETF (0.29)
+
+Consulted [Intel80386 RET operation](https://pdos.csail.mit.edu/6.828/2018/readings/i386/RET.htm)
+for operand-size stack slots,CS high-half discard,return ordering and preserved
+flags. PIL/runtime/tests are original project code;no third-party emulator or
+hardware vectors were copied. Modern-host overlap oracles do not independently
+verify legacy real-mode CS/stack behavior. Protected returns remain separate.

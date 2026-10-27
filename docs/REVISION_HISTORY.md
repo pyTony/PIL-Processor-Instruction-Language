@@ -1,3 +1,25 @@
+# RETF real-mode increment — 27 October 2026
+
+Based on dev1195a351 (0.28alpha.2,Windows/Linux CI40570140583).
+Adds CB/CA RETF16/32 via shared PIL far_branch and check_segment effects.
+CS/IP/SP commit together after both slots are checked/read;SS size is
+independent,cleanup unsigned bytes,flags/markers preserved. New CS uses ordinary
+real-mode caches and limitFFFFh. Protected/V86 returns are rejected.
+Image fetch bounds retain their initial physical anchor across CS aliases;
+generated dispatch/next-IP/limits use physical instruction identity and live
+logical flow. Byte guards and bounded imported windows remain enforced.
+
+Local Windows:285 tests passed,135 full-state backend cases (6,743,574 matching trace bytes). Original tests
+cover sizes,selectors,padding,cleanup,wrap,readonly reads,SS/RAM/target faults,
+mode rejection,CS-alias execution and original DOS process exit after RETF.
+Standalone106-file runtime and unpacked Windows native-package checks passed.
+Full256x256 Mandelbrot matched65,536 pixels and256 state checkpoints.
+No new external real-mode hardware vectors/ARM execution/full FreeDOS rerun.
+User 0.28alpha.2 report at100000 steps:151/156 imports,6 exits;31 CB blockers,
+1SMSW group and1memory POP. This is user-reported evidence from the pasted
+summary,not a locally analyzed whole report. RETF may expose further loaded-
+window/service/encoding stops;do not claim31 new successful applications.
+
 # Real-mode CS writes — 27 October 2026
 
 Based on upstream dev15fb5b12 (0.28 comparison strings and memory SETcc).

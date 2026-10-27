@@ -78,6 +78,10 @@ impl SegmentCache {
 pub struct MemoryContext { pub segment: SegmentRegister, pub cache: SegmentCache }
 impl MemoryContext {
     pub fn translate(self, offset: u32, width: MemWidth, write: bool, eip: u32) -> Result<u32, ExecError> {
+        self.translate_span(u64::from(offset),u32::from(width.bytes()),write,eip)
+    }
+    // Widened offsets let multi-slot stack frames reject wrap before any reads.
+    pub fn translate_span(self, offset:u64, bytes:u32, write:bool, eip:u32)->Result<u32,ExecError>{
         // An invalid loaded SS cache is a caller error: loading SS is not yet
         // implemented and would have rejected null/code/read-only descriptors.
         if self.segment == SegmentRegister::Ss && !matches!(self.cache.access, SegmentAccess::Data { writable: true, .. }) {
@@ -91,16 +95,16 @@ impl MemoryContext {
         };
         if !permitted { return Err(gp); }
         // Use a widened end: a multi-byte operand cannot wrap its segment offset.
-        let end = u64::from(offset) + u64::from(width.bytes()) - 1;
+        let end = offset.checked_add(u64::from(bytes).saturating_sub(1)).unwrap_or(u64::MAX);
         let in_bounds = if expand_down {
-            offset > self.cache.limit && end <= if big {u64::from(u32::MAX)} else {0xffff}
+            offset > u64::from(self.cache.limit) && end <= if big {u64::from(u32::MAX)} else {0xffff}
         } else { end <= u64::from(self.cache.limit) };
-        if !in_bounds {
+        if bytes==0 || offset>u64::from(u32::MAX) || !in_bounds {
             return Err(if self.segment == SegmentRegister::Ss {
                 ExecError::StackSegment { eip, error_code: 0 }
             } else { gp });
         }
-        Ok(self.cache.base.wrapping_add(offset))
+        Ok(self.cache.base.wrapping_add(offset as u32))
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

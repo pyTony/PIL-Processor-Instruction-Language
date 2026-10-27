@@ -69,6 +69,8 @@ enum Token {
     ReadIp(usize, bool, u8),
     ReadDisp(usize, u8),
     BranchIf(usize, usize),
+    FarBranch(usize,usize),
+    CheckSegment(usize,usize,u32),
     PreserveFlags(u32),
     UndefFlag(Flag),
     Select(usize, usize, usize, usize),
@@ -243,7 +245,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["retire_if", predicate]=>{
                     let c=slot(&names,predicate)?;
-                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
+                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
                     Token::RetireIf(c)
                 }
                 ["resume_if", predicate]=>{
@@ -273,6 +275,16 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     let w=width(w)?;
                     if w!=operand_width || ![16,32].contains(&w) {return Err("read_disp needs the 16/32-bit operand width".into());}
                     Token::ReadDisp(define(&mut names,&mut widths,out,w)?,w)
+                }
+                ["check_segment", register, offset, bytes]=>{
+                    let reg=number(register)?;let a=slot(&names,offset)?;let n=number(bytes)?;
+                    if reg>=6||widths[a]!=64||n==0||n>u32::MAX as u64{return Err("check_segment requires segment0..5,bv64 offset,positive u32 byte count".into());}
+                    Token::CheckSegment(reg as usize,a,n as u32)
+                }
+                ["far_branch", selector, offset]=>{
+                    let a=slot(&names,selector)?;let b=slot(&names,offset)?;
+                    if widths[a]!=16||widths[b]!=32||branched||segment_written||![16,32].contains(&operand_width){return Err("one far_branch requires bv16 selector,bv32 offset and no other segment/branch effect".into());}
+                    branched=true;segment_written=true;Token::FarBranch(a,b)
                 }
                 ["branch_if", target, predicate] => {
                     let a=slot(&names,target)?;let c=slot(&names,predicate)?;
@@ -362,7 +374,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
@@ -479,6 +491,18 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::ReadIp(o,next,w) => values[o]=value((if next {context.next_eip} else {cpu.eip}) as u64,w),
             Token::ReadDisp(o,w) => values[o]=value(context.displacement as u32 as u64,w),
+            Token::CheckSegment(reg,a,n)=>{
+                let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
+                let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg],cache:m.segments[reg]};
+                c.translate_span(values[a].bits,n,false,cpu.eip)?;
+            }
+            Token::FarBranch(a,b)=>{
+                let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
+                if !m.real_mode||cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
+                let selector=values[a].bits as u16;let cache=address::SegmentCache::real_mode(selector);let target=values[b].bits as u32;
+                if target>cache.limit{return Err(ExecError::GeneralProtection{eip:cpu.eip,error_code:0});}
+                pending_segment=Some((1,selector,cache));pending_eip=target;
+            }
             Token::BranchIf(a,c) => {
                 if values[c].bits!=0 {
                     let target=values[a].bits as u32;
@@ -609,6 +633,7 @@ fn description(name: &str) -> R<String> {
         "clc" => Some(include_str!("../isa/i386/clc.pil")),
         "call" => Some(include_str!("../isa/i386/call.pil")),
         "ret" => Some(include_str!("../isa/i386/ret.pil")),
+        "retf" => Some(include_str!("../isa/i386/retf.pil")),
         "movs" => Some(include_str!("../isa/i386/movs.pil")),
         "stos" => Some(include_str!("../isa/i386/stos.pil")),
         "lods" => Some(include_str!("../isa/i386/lods.pil")),
@@ -647,7 +672,7 @@ fn description(name: &str) -> R<String> {
     Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc/cmc/cld/std/lahf/sahf/xchg, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
-    text.as_ref().replace("$TARGET","read_disp delta $W\nadd target_value return_offset delta").replace("$CLEANUP","0").replace("$SEG","3").replace("$A","16").replace("$S\n","16\n").replace("$S ","16 ").replace("$BYTES",&(w/8).to_string()).replace("$REG","0").replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
+    text.as_ref().replace("$TARGET","read_disp delta $W\nadd target_value return_offset delta").replace("$CLEANUP","0").replace("$FRAME",&(w/4).to_string()).replace("$SEG","3").replace("$A","16").replace("$S\n","16\n").replace("$S ","16 ").replace("$BYTES",&(w/8).to_string()).replace("$REG","0").replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
 }
 fn emit_rust(p: &Program) -> String {
     let mut out=String::from("// Generated from validated PIL tokens.\n");
@@ -704,6 +729,8 @@ fn emit_rust_functions(p:&Program)->String {
             Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; pending_store=Some((store_addr,MemWidth::{w:?},v{v} as u32));"),
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
             Token::ReadDisp(o,w) => format!("let v{o}: u64 = (context.displacement as u32 as u64) & {}u64;",mask(w)),
+            Token::CheckSegment(reg,a,n)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
+            Token::FarBranch(a,b)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if !m.real_mode||*flags&0x20000!=0{{return Err(ExecError::InvalidContext);}}let selector=v{a} as u16;let cache=address::SegmentCache::real_mode(selector);if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;"),
             Token::BranchIf(a,c) => format!("if v{c} != 0 {{ if v{a} as u32 > context.code_limit {{ return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}}); }} pending_eip = v{a} as u32; }}"),
             Token::Const(o,x) => format!("let v{o}: u64 = {}u64;",x.bits),
             Token::PreserveFlags(m) => format!("// Preserve flag mask {m:#x}, including undefined status."),
@@ -931,3 +958,7 @@ mod leave_tests;
 #[cfg(test)]
 #[path = "../tests/unit/compare_strings.rs"]
 mod compare_string_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/retf.rs"]
+mod retf_tests;

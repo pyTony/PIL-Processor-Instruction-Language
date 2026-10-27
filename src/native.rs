@@ -145,6 +145,17 @@ pub fn cases()->Result<Vec<Case>,String> {
     let t=case("cs_real_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;tests.push(t);
     let mut t=case("cs_protected_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.image.real_mode=false;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true};tests.push(t);
     let mut t=case("cs_readonly",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.protect=Some((0x800,1));tests.push(t);
+    for w in [16,32]{for big in [false,true]{for cleanup in [false,true]{
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.push(if cleanup{0xca}else{0xcb});if cleanup{bytes.extend([7,0]);}bytes.extend([0x41,0xf4]);
+        let target=0x100+bytes.len()as u32-2-16;let mut data=if w==16{(target as u16).to_le_bytes().to_vec()}else{target.to_le_bytes().to_vec()};if w==16{data.extend([1,0]);}else{data.extend([1,0,0xcd,0xab]);}
+        let mut t=case(match(w,big,cleanup){(16,false,false)=>"retf16_ss16",(16,false,true)=>"retfi16_ss16",(16,true,false)=>"retf16_ss32",(16,true,true)=>"retfi16_ss32",(32,false,false)=>"retf32_ss16",(32,false,true)=>"retfi32_ss16",(32,true,false)=>"retf32_ss32",_=>"retfi32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,data));tests.push(t);
+    }}}
+    let mut t=case("retf_alias_branch",vec![0xcb,0x74,1,0x40,0xf4])?;t.regs[4]=0x800;t.flags=0x246;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
+    let mut t=case("retf_alias_cs_store",vec![0xcb,0x2e,0xc6,6,0,8,0x42,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
+    let mut t=case("retf_outside_window",vec![0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,2,1,0]));tests.push(t);
+    let mut t=case("retf_target_fault",vec![0x66,0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,0,1,0,1,0,0,0]));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("retf_frame_fault",vec![0xcb,0xf4])?;t.regs[4]=0xffff;tests.push(t);
+    let mut t=case("retf_mode_reject",vec![0xcb,0xf4])?;t.image.real_mode=false;tests.push(t);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
     let mut jump=case("jump_fault",vec![0xe9,0xff,0x7f])?;jump.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(jump);
@@ -183,25 +194,28 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
         let decoded=case.image.decode(&ram,ip).map_err(|e|format!("{} decode: {e:?}",case.name))?;
         let signature=case.image.fetch_signature(&ram,ip,decoded.length).map_err(|e|format!("{e:?}"))?;
         let bytes=&signature[..decoded.length as usize];
-        dispatch.push_str(&format!("{ip}=>{{if let Err(status)=guard(s,{ip},&{bytes:?},s.machine.segments[1],{}){{return status;}}\n",case.image.end));
+        let physical=case.image.segments[1].base.wrapping_add(ip);
+        dispatch.push_str(&format!("{physical}=>{{if let Err(status)=guard(s,s.eip,&{bytes:?},s.machine.segments[1],{}){{return status;}}\n",case.image.end));
         match decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
                 code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&program)));
-                let args=format!("&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),{flow:?}",dst.register,dst.low,src.register,src.low);
+                let dynamic_flow=format!("FlowContext{{next_eip:s.eip+{},code_limit:s.machine.segments[1].limit,..{flow:?}}}",decoded.length);
+                dispatch.push_str(&format!("let flow_context={dynamic_flow};\n"));
+                let args=format!("&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context",dst.register,dst.low,src.register,src.low);
                 let mut call=format!("i{ip:x}::execute_with_machine({args},&mut s.ram,{address:?},&mut s.machine)");
                 if program.tokens.iter().any(|t|matches!(t,super::Token::ReadGpr(_,4,_)|super::Token::WriteGpr(4,_,_))){
                     let mut alternate=case.image.clone();let old_big=matches!(alternate.segments[2].access,super::address::SegmentAccess::Data{big:true,..});
                     if let super::address::SegmentAccess::Data{ref mut big,..}=alternate.segments[2].access{*big=!old_big;}
-                    if let Operation::Pil{program:p,dst:d,src:r,flow:f,address:a}=alternate.decode(&ram,ip).map_err(|e|format!("alternate stack decode: {e:?}"))?.operation{
+                    if let Operation::Pil{program:p,dst:d,src:r,flow:_,address:a}=alternate.decode(&ram,ip).map_err(|e|format!("alternate stack decode: {e:?}"))?.operation{
                         code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&p)));
-                        let alternate_call=format!("alt{ip:x}::execute_with_machine(&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),{f:?},&mut s.ram,{a:?},&mut s.machine)",d.register,d.low,r.register,r.low);
+                        let alternate_call=format!("alt{ip:x}::execute_with_machine(&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context,&mut s.ram,{a:?},&mut s.machine)",d.register,d.low,r.register,r.low);
                         call=format!("if matches!(s.machine.segments[2].access,SegmentAccess::Data{{big:true,..}})=={old_big}{{{call}}}else{{{alternate_call}}}");
                     }
                 }
                 dispatch.push_str(&format!("match {call} {{Ok(())=>[0,0,0,0,0],Err(e)=>trace::fault(s.eip,e)}}"));
             }
-            Operation::Input{next}=>dispatch.push_str(&format!("if let Some(b)=s.rx.pop_front(){{s.regs[0]=(s.regs[0]&!255)|u32::from(b);s.eip={next};s.machine.retired();[0,0,0,0,0]}}else{{[2,s.eip,0,0,0]}}")),
-            Operation::Output{next}=>dispatch.push_str(&format!("if s.tx.len()==256{{[3,s.eip,0,0,0]}}else{{s.tx.push_back(s.regs[0] as u8);s.eip={next};s.machine.retired();[0,0,0,0,0]}}")),
+            Operation::Input{next}=>{let delta=next-ip;dispatch.push_str(&format!("if let Some(b)=s.rx.pop_front(){{s.regs[0]=(s.regs[0]&!255)|u32::from(b);s.eip=s.eip+{delta};s.machine.retired();[0,0,0,0,0]}}else{{[2,s.eip,0,0,0]}}"));},
+            Operation::Output{next}=>{let delta=next-ip;dispatch.push_str(&format!("if s.tx.len()==256{{[3,s.eip,0,0,0]}}else{{s.tx.push_back(s.regs[0] as u8);s.eip=s.eip+{delta};s.machine.retired();[0,0,0,0,0]}}"));},
             Operation::Halt=>dispatch.push_str("[1,s.eip,0,0,0]"),
         }
         dispatch.push_str("},\n");ip+=decoded.length;
@@ -210,7 +224,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
     if let Some((at,bytes))=&case.patch {init.push_str(&format!("ram.write_bytes({at},&{bytes:?}).unwrap();\n"));}
     if let Some((at,len))=case.protect {init.push_str(&format!("ram.protect({at},{len}).unwrap();\n"));}
     init.push_str(&format!("State{{regs:{:?},flags:{},undefined:0,eip:0x100,ram,machine:{:?},rx:VecDeque::from({:?}),tx:VecDeque::from({:?})}}",case.regs,case.flags,case.image.segment_state(),case.rx,case.tx));
-    Ok(format!("mod {name} {{use super::*; const CS:SegmentCache={:?};\n{code}\npub fn initial()->State{{{init}}}\n#[inline(never)] pub fn step(s:&mut State)->[u32;5]{{match s.eip{{{dispatch}_=>[7,s.eip,0,0,0]}}}}\n}}\n",case.image.segments[SegmentRegister::Cs.index()]))
+    Ok(format!("mod {name} {{use super::*; const CS:SegmentCache={:?};\n{code}\npub fn initial()->State{{{init}}}\n#[inline(never)] pub fn step(s:&mut State)->[u32;5]{{match s.machine.segments[1].base.wrapping_add(s.eip){{{dispatch}_=>[7,s.eip,0,0,0]}}}}\n}}\n",case.image.segments[SegmentRegister::Cs.index()]))
 }
 fn runner_source()->String {
     let mut source=String::from("// Generated from validated PIL; fixed-image native Rust proof, not a JIT.\n#![allow(dead_code,unused_variables,unused_mut,unused_imports)]\nuse std::collections::VecDeque;\n");
@@ -237,7 +251,7 @@ const RUNNER:&str=r#"
 struct State{regs:[u32;8],flags:u32,undefined:u32,eip:u32,ram:Ram,machine:SegmentState,rx:VecDeque<u8>,tx:VecDeque<u8>}
 fn guard(s:&State,start:u32,bytes:&[u8],cache:SegmentCache,end:u32)->Result<(),[u32;5]>{
  for (index,expected) in bytes.iter().enumerate(){let offset=start+index as u32;
-  if offset<0x100 || offset>=end{return Err([7,start,0,0,0]);}
+  let physical=u64::from(cache.base)+u64::from(offset);if physical<0x100 || physical>=u64::from(end){return Err([7,start,0,0,0]);}
   let context=MemoryContext{segment:SegmentRegister::Cs,cache};
   let at=context.translate(offset,MemWidth::Byte,false,start).map_err(|e|trace::fault(start,e))?;
   let actual=s.ram.load(at,MemWidth::Byte).map_err(|e|trace::fault(start,ExecError::MemoryAccess{eip:start,address:e.address,bytes:1,write:false}))?;

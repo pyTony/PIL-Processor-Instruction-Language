@@ -290,10 +290,10 @@ impl Debugger {
         if count==0||count>256{return Err("list count must be 1..256 instructions".into());}
         let mut lines=Vec::new();
         if let Some(image)=&self.image{
-            if start<super::guest::ENTRY||start>=image.end{return Err("listing address outside loaded image".into());}
+            if !image.contains_offset(start){return Err("listing address outside loaded image".into());}
             let mut ip=start;
             for _ in 0..count {
-                if ip>=image.end{break;}
+                if !image.contains_offset(ip){break;}
                 match image.decode(&self.ram,ip){
                     Ok(d)=>{
                         let signature=image.fetch_signature(&self.ram,ip,d.length).map_err(|e|format!("{e:?}"))?;
@@ -433,7 +433,7 @@ impl Debugger {
             ["break",addr]=>{
                 let ip=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
                 if let Some(image)=&self.image {
-                    if ip<super::guest::ENTRY || ip>=image.end{return Err("breakpoint outside image".into());}
+                    if !image.contains_offset(ip){return Err("breakpoint outside image".into());}
                 } else if !self.instructions.contains_key(&ip) {return Err("no instruction at breakpoint address".into());}
                 self.breakpoints.insert(ip);format!("breakpoint at {ip:08x}")
             }

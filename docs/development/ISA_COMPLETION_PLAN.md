@@ -220,3 +220,12 @@ RAM fault checks. CI40562311100:273 tests,118 backend cases Windows/Linux. P1/P5
 partial pending full mode/prefix/hardware audit and interrupt/I/O repeat work.
 Next memory POP must resolve ESP-based destinations after stack increment;
 SMSW must read explicit machine-status state rather than a guessed constant.
+
+## Real-mode RETF (0.29)
+
+CB/CA far returns now restore CS/IP/SP through shared PIL,with frame-span checks,
+operand/SS independence and precise model faults. Fixed physical image windows
+and generated physical dispatch support code aliases after CS changes. P6 remains
+partial:far CALL/JMP,protected/V86 returns,interrupt delivery and hardware/mode
+coverage are separate. User0.28alpha.2 corpus summary reached31 CB first blockers;
+next-image exit/failure counts are unknown until that corpus is rerun.

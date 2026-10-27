@@ -3,7 +3,7 @@ use super::*;
 fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
     let dir=std::env::temp_dir().join(format!("pil-native-proof-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     let report=compare_at(&dir,16,2).unwrap();
-    assert!(report.contains("byte-for-byte after every execution step across 121 cases"));
+    assert!(report.contains("byte-for-byte after every execution step across 135 cases"));
     assert!(report.contains("GENERATED verify readonly_store: steps=0 stop=6"));
     assert!(report.contains("GENERATED verify branch_fault: steps=0 stop=4"));
     assert!(report.contains("GENERATED verify code_guard: steps=0 stop=7"));
@@ -29,6 +29,8 @@ fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
         assert!(report.contains(&format!("GENERATED verify {name}: steps={done} stop={stop}")),"{report}");
     }
     for (name,steps,stop) in [("cs_real_write",1,1),("cs_protected_write",0,4),("cs_readonly",0,6)]{assert!(report.contains(&format!("GENERATED verify {name}: steps={steps} stop={stop}")),"{report}");}
+    for name in ["retf16_ss16","retfi16_ss16","retf16_ss32","retfi16_ss32","retf32_ss16","retfi32_ss16","retf32_ss32","retfi32_ss32","retf_alias_branch","retf_alias_cs_store"]{assert!(report.contains(&format!("GENERATED verify {name}: steps=2 stop=1")),"{report}");}
+    for (name,steps,stop) in [("retf_target_fault",0,4),("retf_frame_fault",0,5),("retf_mode_reject",0,9),("retf_outside_window",1,7)]{assert!(report.contains(&format!("GENERATED verify {name}: steps={steps} stop={stop}")),"{report}");}
     assert!(report.contains("Generated Rust median="));
     let expected=fs::read(dir.join("interpreter.trace")).unwrap();let actual=fs::read(dir.join("generated.trace")).unwrap();assert_eq!(expected,actual);
     fs::remove_dir_all(dir).unwrap();
