@@ -163,6 +163,11 @@ impl Image {
                 let text=operand_text(name,w,memory,false,immediate)?;
                 (format!("{} {},{}",name.to_ascii_uppercase(),operand_name(dst,address),immediate.map(|v|format!("0x{v:02x}")).unwrap_or_else(||"CL".into())),compile(&text,w))
             }
+            0x9e|0x9f=>{
+                w=8;dst=view(4,w);src=dst;
+                let name=if opcode==0x9f{"lahf"}else{"sahf"};
+                (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
+            }
             0xf5|0xf8|0xf9=>{
                 let name=match opcode{0xf5=>"cmc",0xf8=>"clc",_=>"stc"};
                 (name.to_ascii_uppercase(),compile(&instantiate(description(name).map_err(GuestError::Decode)?,w),w))

@@ -624,3 +624,18 @@ prefixes do not change its operation. LOCK is rejected by this decoder profile.
 Like ADC/SBB, CMC consumes the concrete incoming CF even when its diagnostic
 marker is set, then clears that marker on the defined CF write. This follows
 the concrete-value policy; symbolic uncertainty is not propagated.
+
+## Status-byte transfers (0.18 alpha)
+
+LAHF (9F) packs SF/ZF/AF/PF/CF into AH bits7/6/4/2/0, forces AH bit1 to1
+and bits3/5 to0, and preserves all flags and metadata. SAHF (9E) defines those
+five flags from AH, ignores AH bits1/3/5, preserves OF and other EFLAGS bits,
+and clears only the five written diagnostic markers. AL and the upper16 bits
+of EAX are preserved; SAHF leaves every register unchanged. Operand/address
+size and segment prefixes do not alter these byte operations. LOCK is rejected.
+
+Both are shared PIL descriptions, not interpreter-only special cases. The
+native x86-64 oracle checks CPUID.80000001H:ECX bit0 before executing them;
+missing feature support is explicitly reported and does not remove guest386
+support. Runtime source includes docs/PIL_REFERENCE.md; native archives include
+PIL_REFERENCE.md. The complete documentation map is linked from their READMEs.
