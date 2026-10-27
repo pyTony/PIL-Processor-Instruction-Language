@@ -288,3 +288,34 @@ when the offset is32 bits. C6/C7 /0 writes an immediate to register or memory,
 including high-byte registers and existing16/32-bit ModRM/SIB forms. Other group
 extensions are rejected. These decode into existing PIL constant/load/store/write
 operations;flags and markers remain intact and stores commit after checks.
+
+## Near procedures and restartable string elements
+
+`load_segment out SEG offset WIDTH` and `store_segment SEG offset value` use
+explicit loaded caches per access (0..5 =ES,CS,SS,DS,FS,GS). Offsets are bv32;
+widths8/16/32;one staged store is retained. Source reads precede the store and
+all effects of a faulting element remain uncommitted. Requires machine context.
+Named GPR reads/writes now also admit low8 values for AL string operations.
+
+Near CALL E8/FF2 and RET C3/C2 use shared descriptions and independent operand/
+SS sizes. Indirect targets snapshot the old register/memory value;RET cleanup
+is an unsigned imm16 byte count. Far/privilege transfers are not admitted.
+
+MOVS/STOS/LODS support8/16/32-bit elements and independent16/32-bit addresses.
+DS (or source override) and fixed ES destination are separate accesses;DF controls
+pointer direction. F3 REP commits one element per execution step. `retire_if bv1`
+provides an effect-free early retirement guard;the compiler rejects earlier
+writes/branches before it. `resume_if bv1` commits partial progress while keeping
+the original EIP;it cannot be combined with another branch/resume effect.
+SS shadow is retained during partial progress and retired only on completion.
+Fault retry uses updated pointers/count without replaying committed elements.
+REP with zero count touches no data memory. F2/CMPS/SCAS/port strings remain out.
+
+Debugger steps and backend checkpoints now include REP element boundaries.
+DOS `--steps` counts bounded execution steps;`completed` counts fully retired
+instructions,while `PIL` includes element steps. Mix reports list REP element
+counts separately. These counts are not whole-program instruction coverage.
+The fixed-image generated runner retains its byte guards;self-modifying-code
+fallback and interrupt delivery remain separate work. `--emit-rust` accepts
+call,ret,movs,stos,lods,rep_movs,rep_stos,rep_lods with default word stack/address
+profiles;the decoder binds the actual profiles and source segment.

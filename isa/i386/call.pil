@@ -1,0 +1,15 @@
+require_width 16_or_32
+read_ip next next 32
+trunc return_offset next $W
+$TARGET
+zext target32 target_value 32
+read_gpr old_sp 4 $S
+const slot_bytes $S $BYTES
+sub new_sp old_sp slot_bytes
+zext stack_offset new_sp 32
+store_segment 2 stack_offset return_offset
+const take 1 1
+branch_if target32 take
+write_gpr 4 new_sp
+preserve_flags all
+retire

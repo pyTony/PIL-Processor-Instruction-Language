@@ -71,20 +71,23 @@ impl Image {
     }
     pub fn decode(&self,ram:&Ram,eip:u32)->Result<Decoded,GuestError> {
         let mut r=Reader{image:self,ram,start:eip,pos:eip};
-        let mut wide=false;let mut addr32=false;let mut override_segment=None;
+        let mut wide=false;let mut addr32=false;let mut override_segment=None;let mut repeat=false;
         let mut opcode=loop {
             let b=r.byte()?;
             match b {
+                0xf3 if !repeat=>repeat=true,
                 0x66 if !wide=>wide=true,0x67 if !addr32=>addr32=true,
                 0x26|0x2e|0x36|0x3e|0x64|0x65 if override_segment.is_none()=>override_segment=Some(match b{0x26=>SegmentRegister::Es,0x2e=>SegmentRegister::Cs,0x36=>SegmentRegister::Ss,0x3e=>SegmentRegister::Ds,0x64=>SegmentRegister::Fs,_=>SegmentRegister::Gs}),
                 _=>break b,
             }
         };
+        if repeat&&!matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad){return Err(GuestError::Decode("REP currently supports MOVS/STOS/LODS only".into()));}
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;let mut pop_selector=None;
+        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
-            if opcode==0x8f || extension==6{
+            if opcode==0xff&&extension==2{call_indirect=Some(m);opcode=0xe8;}
+            else if opcode==0x8f || extension==6{
                 if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
                 if m>>6!=3{return Err(GuestError::Decode("memory PUSH/POP needs independent per-access address contexts".into()));}
                 opcode=(if opcode==0x8f{0x58}else{0x50})|(m&7);
@@ -98,6 +101,33 @@ impl Image {
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0xe8=>{
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let (target,label)=if let Some(m)=call_indirect{
+                    dst=view((m&7)as usize,w);src=dst;
+                    if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});(format!("read_address operand\nload target_value operand {w}"),operand_name(dst,address))}
+                    else{(format!("read target_value dst {w}"),register_name(dst).into())}
+                }else{
+                    disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
+                    (format!("read_disp delta {w}\nadd target_value return_offset delta"),format!("0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w)as u32))
+                };
+                let text=include_str!("../isa/i386/call.pil").replace("$TARGET",&target).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("CALL {label}"),compile(&instantiate(text,w),w))
+            }
+            0xc2|0xc3=>{
+                let cleanup=if opcode==0xc2{r.unsigned(16)?}else{0};let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let text=include_str!("../isa/i386/ret.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (if opcode==0xc2{format!("RET 0x{cleanup:04x}")}else{"RET".into()},compile(&instantiate(text,w),w))
+            }
+            0xa4|0xa5|0xaa|0xab|0xac|0xad=>{
+                if opcode&1==0{w=8;}dst=view(0,w);src=dst;let a=if addr32{32}else{16};
+                let name=match opcode{0xa4|0xa5=>"movs",0xaa|0xab=>"stos",_=>"lods"};
+                let body=match name{"movs"=>include_str!("../isa/i386/movs.pil"),"stos"=>include_str!("../isa/i386/stos.pil"),_=>include_str!("../isa/i386/lods.pil")};
+                let body=body.replace("$SEG",&override_segment.unwrap_or(SegmentRegister::Ds).index().to_string()).replace("$A",&a.to_string()).replace("$BYTES",&(w/8).to_string());
+                let text=if repeat{super::repeat_description(&body,a)}else{body};
+                let mnemonic=format!("{}{}",name.to_ascii_uppercase(),match w{8=>"B",16=>"W",_=>"D"});
+                (if repeat{format!("REP {mnemonic}")}else{mnemonic},compile(&instantiate(text,w),w))
+            }
             0xa0..=0xa3=>{
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;
                 let offset=r.unsigned(if addr32{32}else{16})?;
@@ -311,7 +341,7 @@ impl Image {
             0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
-        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0x0f) {disp_bits=32;}
+        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0x0f) {disp_bits=32;}
         if opcode==0x0f && disp==0 && disp_bits==8 {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})

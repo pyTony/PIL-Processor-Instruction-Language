@@ -1,3 +1,13 @@
+# Near CALL/RET and REP movement strings — hosted verification pending
+
+Shared per-access segment loads/stores,guarded retirement and partial resume
+support near E8/FF2 calls,C3/C2 returns,and MOVS/STOS/LODS with bounded F3 REP.
+Each REP element commits independently;fault retries retain earlier progress.
+Budget/mix counters distinguish retired instructions and REP element steps.
+Eight new independent unit tests and17 new backend cases await hosted execution.
+No interrupt delivery,far calls,CMPS/SCAS/F2 or self-modifying-code fallback is
+claimed. The existing one-store RAM contract applies per element.
+
 # Additional MOV forms verified — 27 October 2026
 
 Windows/Linux CI40500511068 passed ate74c95100ee5fff346b229a2c4cf45643ad25922:
