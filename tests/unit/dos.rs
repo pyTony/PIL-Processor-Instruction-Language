@@ -75,7 +75,7 @@ fn loops_are_budgeted_and_psp_int20_can_be_reached(){
 #[test]
 fn unterminated_or_oversized_dos_output_is_all_or_none(){
     let b=[0xba,0,2,0xb4,9,0xcd,0x21];let r=run(load(&b,"badstring.com").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert!(r.output.is_empty());assert_eq!(r.loaded.cpu.eip,0x105);assert_eq!(r.loaded.cpu.regs[0],0x900);
-    let b=[0xba,0xff,0xff,0xb4,9,0xcd,0x21];let mut p=load(&b,"end.com").unwrap();p.ram.store(u32::from(PSP)*16+0xffff,MemWidth::Byte,b'$'as u32).unwrap();assert_eq!(run(p,100).unwrap().output.len(),0);
+    let b=[0xba,0xff,0xff,0xb4,9,0xcd,0x21];let mut p=load(&b,"end.com").unwrap();p.ram.store(u32::from(PSP)*16+0xffff,MemWidth::Byte,b'$' as u32).unwrap();assert_eq!(run(p,100).unwrap().output.len(),0);
 }
 #[test]
 fn corpus_report_ranks_first_blockers_and_keeps_service_failures_separate(){
