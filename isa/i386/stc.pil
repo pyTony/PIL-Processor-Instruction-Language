@@ -1,0 +1,5 @@
+# STC defines CF and preserves every other flag and marker.
+const carry 1 1
+flag CF carry
+preserve_flags remaining
+retire
