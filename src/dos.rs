@@ -82,13 +82,14 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
             let n=word(&module,target)?.wrapping_add(LOAD);put_word(&mut module,target,n);
         }
         let cs=word(bytes,22)?;let ip=word(bytes,20)?;let ss=word(bytes,14)?;let sp=word(bytes,16)?;
-        let cs_start=usize::from(cs)*16;
-        if cs_start+usize::from(ip)>=module.len(){return Err("MZ initial CS:IP is outside load module".into());}
-        let cs=LOAD.checked_add(cs).ok_or("MZ CS relocation overflow")?;
-        let ss=LOAD.checked_add(ss).ok_or("MZ SS relocation overflow")?;
+        // MZ segment values are relocated as16-bit words. FFF0:0100 commonly
+        // wraps CS to the PSP while still entering the module at LOAD:0000.
+        let cs=LOAD.wrapping_add(cs);let ss=LOAD.wrapping_add(ss);
+        let cs_base=usize::from(cs)*16;let entry=cs_base+usize::from(ip);
+        if entry<module_base as usize||entry>=module_base as usize+module.len(){return Err("MZ initial CS:IP is outside load module".into());}
         if usize::from(ss)*16<usize::from(PSP)*16||usize::from(ss)*16+usize::from(sp)>allocation_end{return Err("MZ initial SS:SP is outside allocated probe block".into());}
         selectors[SegmentRegister::Cs.index()]=cs;selectors[SegmentRegister::Ss.index()]=ss;
-        cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);start=0;end=(module.len()-cs_start).min(65536)as u32;
+        cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);start=(module_base as usize).saturating_sub(cs_base)as u32;end=(module_base as usize+module.len()-cs_base).min(65536)as u32;
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
     let mut ram=Ram::new(allocation_end);
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
@@ -174,10 +175,30 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
     let mut report=String::from("DOS executable probe: concrete PIL interpreter plus minimal host DOS-call shim.\n");
+    let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
+    let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
+    for path in paths{match super::containers::open(Path::new(path)){
+        Ok(Some(archive))=>{
+            let mut candidates=0;let mut added=0;
+            for note in archive.notes{writeln!(report,"CONTAINER NOTE {path}: {note}").unwrap();}
+            for e in archive.files{if !super::containers::executable(&e.path){continue;}candidates+=1;
+                use std::hash::{Hash,Hasher};let mut h=std::collections::hash_map::DefaultHasher::new();e.bytes.hash(&mut h);
+                let bucket=fingerprints.entry(h.finish()).or_default();if bucket.iter().any(|b|b==&e.bytes){continue;}bucket.push(e.bytes.clone());
+                inputs.push((format!("{path}::{}",e.path),Ok(e.bytes)));added+=1;
+                if inputs.len()>256{return Err("more than256 unique container executables;extract and select a smaller corpus".into());}
+            }
+            writeln!(report,"CONTAINER {path}: candidates={candidates} added_unique={added}").unwrap();
+        },
+        Ok(None)=>inputs.push((path.clone(),read_file(Path::new(path)))),
+        Err(e)=>inputs.push((path.clone(),Err(e))),
+    }}
+    if inputs.len()>256{return Err("probe input count exceeds256 after container expansion".into());}
+    let total=inputs.len();
+
     let(mut exited,mut imported)=(0,0);let mut blockers=BTreeMap::new();let mut mix=BTreeMap::new();
-    for path in paths{
+    for(path,bytes)in inputs{
         writeln!(report,"\nFILE {path}").unwrap();
-        let p=match read_file(Path::new(path)).and_then(|b|load(&b,path)){
+        let p=match bytes.and_then(|b|load(&b,&path)){
             Ok(p)=>p,Err(e)=>{writeln!(report,"IMPORT ERROR: {e}").unwrap();continue;}
         };imported+=1;
         writeln!(report,"IMPORT {:?}: module={} bytes header={} relocations={} trailing={} PSP={PSP:04x} allocation_end={:05x}",p.format,p.module_bytes,p.header_bytes,p.relocations,p.trailing_bytes,p.allocated_end).unwrap();
@@ -190,7 +211,7 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
         writeln!(report,"completed={} PIL={} DOS_calls={} EAX={:08x} ESP={:08x}",result.completed,result.pil_steps,result.dos_calls,result.loaded.cpu.regs[0],result.loaded.cpu.regs[4]).unwrap();
         writeln!(report,"OUTPUT (escaped bytes): {}",result.output.iter().map(|b|std::ascii::escape_default(*b).map(char::from).collect::<String>()).collect::<String>()).unwrap();
     }
-    writeln!(report,"\nSUMMARY imported={imported}/{} exited={exited}; first missing-encoding blockers (program count):",paths.len()).unwrap();
+    writeln!(report,"\nSUMMARY imported={imported}/{} exited={exited}; first missing-encoding blockers (program count):",total).unwrap();
     if blockers.is_empty(){report.push_str("none encountered on executed paths\n");}
     for(k,n)in ranked(&blockers){writeln!(report,"{n} {k}").unwrap();}
     report.push_str("Reached instruction mix (executed count; DOS bridges listed separately):\n");
