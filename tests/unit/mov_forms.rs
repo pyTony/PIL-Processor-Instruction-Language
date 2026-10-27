@@ -1,6 +1,6 @@
 //! MOV form decoding uses existing shared memory tokens; untouched state is explicit.
 use super::*;
-fn step(bytes:&[u8],c:&mut Cpu,ram:&mut Ram,mut image:guest::Image)->Result<(),ExecError>{
+fn step(_bytes:&[u8],c:&mut Cpu,ram:&mut Ram,image:guest::Image)->Result<(),ExecError>{
     let d=image.decode(ram,c.eip).unwrap();if let guest::Operation::Pil{program,dst,src,flow,address}=d.operation{execute_machine(&program,c,dst,src,flow,ram,address,&mut image.segment_state())}else{panic!()}
 }
 #[test]
@@ -8,7 +8,10 @@ fn moffs_operand_and_address_sizes_are_independent_and_preserve_state(){
     for w in [8,16,32]{for addr32 in [false,true]{for store in [false,true]{
         let mut bytes=Vec::new();if w==32{bytes.push(0x66);}if addr32{bytes.push(0x67);}bytes.push(if store{0xa2}else{0xa0}|u8::from(w!=8));
         if addr32{bytes.extend(0x10020u32.to_le_bytes());}else{bytes.extend(0x820u16.to_le_bytes());}
-        let (image,_)=guest::Image::load(&bytes).unwrap();let mut ram=Ram::new(0x20000);ram.write_bytes(0x100,&bytes).unwrap();let at=if addr32{0x10120}else{0x920};ram.store(at,MemWidth::Dword,0xfedcba98).unwrap();
+        let (mut image,_)=guest::Image::load(&bytes).unwrap();
+        // A 32-bit offset above64KiB requires a supplied larger loaded cache.
+        if addr32{image.segments[3].limit=0x1ffff;}
+        let mut ram=Ram::new(0x20000);ram.write_bytes(0x100,&bytes).unwrap();let at=if addr32{0x10120}else{0x920};ram.store(at,MemWidth::Dword,0xfedcba98).unwrap();
         let mut c=Cpu{regs:[0x12345678;8],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100};let mut want=c.clone();let before=ram.clone();
         want.eip+=bytes.len()as u32;if !store{want.regs[0]=(want.regs[0]&!(mask(w)as u32))|(0xfedcba98&mask(w)as u32);}
         step(&bytes,&mut c,&mut ram,image).unwrap();assert_eq!(c,want);
@@ -31,7 +34,7 @@ fn immediate_moves_cover_high_bytes_memory_sib_and_bp_default_ss(){
 #[test]
 fn segment_override_and_precise_mov_faults(){
     let bytes=[0x64,0xa0,0x20,0x08];let (image,mut ram)=guest::Image::load(&bytes).unwrap();ram.store(0xb20,MemWidth::Byte,0x9a).unwrap();let mut c=Cpu::default();c.eip=0x100;step(&bytes,&mut c,&mut ram,image).unwrap();assert_eq!(c.regs[0],0x9a);
-    for bytes in [vec![0xa1,0xff,0xff],vec![0xa3,0xff,0xff],vec![0xc7,0x06,0xff,0xff,0x34,0x12],vec![0xa2,0,8]]{
+    for bytes in [vec![0xa1,0xff,0xff],vec![0xa3,0xff,0xff],vec![0xc7,0x06,0xff,0xff,0x34,0x12],vec![0xa2,0,8],vec![0x67,0xa0,0,0,1,0]]{
         let (image,mut ram)=guest::Image::load(&bytes).unwrap();ram.protect(0x900,2).unwrap();let mut c=Cpu{eip:0x100,..Cpu::default()};let old=c.clone();let before=ram.clone();assert!(step(&bytes,&mut c,&mut ram,image).is_err());assert_eq!(c,old);assert_eq!(ram,before);
     }
 }
