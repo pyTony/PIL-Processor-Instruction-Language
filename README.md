@@ -635,3 +635,13 @@ probe from the REPL. This is separate from raw monitor `load` and uses a small
 host DOS-call bridge for print/exit, not a full DOS or CPU interrupt engine.
 
 See the [DOS probe guide](docs/DOS_PROBE.md) for commands, loader limits and report meanings.
+
+## Disk-image and ZIP imports (0.20 alpha)
+
+`--dos-list IMAGE.img|PACKAGE.zip` lists programs. `--dos-probe` can run the
+image/package candidates directly,including one nested package level,with
+byte-identical duplicates removed. `--dos-extract INPUT NEW_DIRECTORY` extracts
+files without overwriting an existing destination or modifying the source.
+FAT16 and ZIP stored/deflate are supported;this is not a booted DOS filesystem.
+
+See [container guide](docs/CONTAINERS.md) for commands and format limits.

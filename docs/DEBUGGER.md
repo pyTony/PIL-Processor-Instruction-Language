@@ -676,3 +676,10 @@ accepts multiple paths and ranks first missing encodings across the corpus.
 See [DOS probe guide](DOS_PROBE.md). A minimal print/exit shim is separate
 from CPU interrupt execution and DOS/BIOS platform support. Raw `load`
 continues to use the original monitor environment.
+
+## Container inputs (0.20 alpha)
+
+The isolated `dosprobe PATH [steps]` accepts FAT16 `.img`/`.ima` and `.zip`
+containers too. It probes executable candidates and one ZIP package level,
+removing byte-identical container copies. CLI `--dos-list INPUT` inspects;
+`--dos-extract INPUT NEW_DIRECTORY` extracts. See [container guide](CONTAINERS.md).

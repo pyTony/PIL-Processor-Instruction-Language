@@ -1,3 +1,33 @@
+# FAT16/ZIP container support — 27 October 2026
+
+0.20alpha.1 adds original bounded FAT16 MBR/superfloppy reader and ZIP stored/
+deflate reader with CRC32 and local/central checks. DEFLATE is original Rust
+from RFC1951;no third-party codec/crate/runtime Python dependency. --dos-list
+INPUT and --dos-extract INPUT NEW_DIRECTORY inspect/extract;--dos-probe and
+REPLdosprobe expand executable candidates plus one ZIP package level and
+remove byte-identical container duplicates. Inputs remain read-only;path,
+chain,CRC,counts/size/depth and new-destination constraints are explicit.
+Supported subset and omitted FAT12/FAT32/ISO/ZIP64/encryption are documented.
+
+Expected209 Rust tests (9 new),existing49 backend/native cases unchanged.
+New independent Python CLI script builds synthetic FAT16 plus streaming ZIPs
+with data descriptors;tests verify source immutability,byte-equal extraction,
+dedupe,overwrite/path rejection. Stored/fixed/dynamic/multiblock DEFLATE vectors
+were independently generated with Pythonzlib.86 runtime-source files expected.
+Local Python syntax/export/links checked;Rust/hosted execution pending CI.
+
+User supplied32MiB FD14LITE.img was separately read/extracted with Python:
+FAT16partitionLBA63;688 original files,65 package ZIPs;208 executable copies,
+156 unique byte streams(58COM,93MZ,5LE). CRCs ofall65 archives passed.
+ImageSHA256f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36.
+FreeDOS data and packages stay outside the git repo;only original synthetic
+fixtures/source are committed. The extracted user bundle is separately saved.
+No native Rust reading of the user's image is claimed before it is tested.
+
+User authorizes all project uploads. Publish dev,complete Windows/Linux CI,
+then strict runtime delivery PR frommain;user reviews/merges. Latest runtime
+main includes0.19 plus the debug/release documentation correction.
+
 # DOS probe verified — 27 October 2026
 
 Windows/Linux CI40460972486 passed at11dd1caed36b786a447f4ff055be0bc073d8b700:

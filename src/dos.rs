@@ -174,10 +174,30 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
     let mut report=String::from("DOS executable probe: concrete PIL interpreter plus minimal host DOS-call shim.\n");
+    let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
+    let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
+    for path in paths{match super::containers::open(Path::new(path)){
+        Ok(Some(archive))=>{
+            let mut candidates=0;let mut added=0;
+            for note in archive.notes{writeln!(report,"CONTAINER NOTE {path}: {note}").unwrap();}
+            for e in archive.files{if !super::containers::executable(&e.path){continue;}candidates+=1;
+                use std::hash::{Hash,Hasher};let mut h=std::collections::hash_map::DefaultHasher::new();e.bytes.hash(&mut h);
+                let bucket=fingerprints.entry(h.finish()).or_default();if bucket.iter().any(|b|b==&e.bytes){continue;}bucket.push(e.bytes.clone());
+                inputs.push((format!("{path}::{}",e.path),Ok(e.bytes)));added+=1;
+                if inputs.len()>256{return Err("more than256 unique container executables;extract and select a smaller corpus".into());}
+            }
+            writeln!(report,"CONTAINER {path}: candidates={candidates} added_unique={added}").unwrap();
+        },
+        Ok(None)=>inputs.push((path.clone(),read_file(Path::new(path)))),
+        Err(e)=>inputs.push((path.clone(),Err(e))),
+    }}
+    if inputs.len()>256{return Err("probe input count exceeds256 after container expansion".into());}
+    let total=inputs.len();
+
     let(mut exited,mut imported)=(0,0);let mut blockers=BTreeMap::new();let mut mix=BTreeMap::new();
-    for path in paths{
+    for(path,bytes)in inputs{
         writeln!(report,"\nFILE {path}").unwrap();
-        let p=match read_file(Path::new(path)).and_then(|b|load(&b,path)){
+        let p=match bytes.and_then(|b|load(&b,&path)){
             Ok(p)=>p,Err(e)=>{writeln!(report,"IMPORT ERROR: {e}").unwrap();continue;}
         };imported+=1;
         writeln!(report,"IMPORT {:?}: module={} bytes header={} relocations={} trailing={} PSP={PSP:04x} allocation_end={:05x}",p.format,p.module_bytes,p.header_bytes,p.relocations,p.trailing_bytes,p.allocated_end).unwrap();
@@ -190,7 +210,7 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
         writeln!(report,"completed={} PIL={} DOS_calls={} EAX={:08x} ESP={:08x}",result.completed,result.pil_steps,result.dos_calls,result.loaded.cpu.regs[0],result.loaded.cpu.regs[4]).unwrap();
         writeln!(report,"OUTPUT (escaped bytes): {}",result.output.iter().map(|b|std::ascii::escape_default(*b).map(char::from).collect::<String>()).collect::<String>()).unwrap();
     }
-    writeln!(report,"\nSUMMARY imported={imported}/{} exited={exited}; first missing-encoding blockers (program count):",paths.len()).unwrap();
+    writeln!(report,"\nSUMMARY imported={imported}/{} exited={exited}; first missing-encoding blockers (program count):",total).unwrap();
     if blockers.is_empty(){report.push_str("none encountered on executed paths\n");}
     for(k,n)in ranked(&blockers){writeln!(report,"{n} {k}").unwrap();}
     report.push_str("Reached instruction mix (executed count; DOS bridges listed separately):\n");

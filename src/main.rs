@@ -9,6 +9,8 @@ mod serial;
 mod debugger;
 mod guest;
 mod dos;
+mod containers;
+mod inflate;
 mod cache;
 mod native;
 mod trace;
@@ -598,6 +600,14 @@ fn emit_rust_functions(p:&Program)->String {
 }
 fn main() -> R<()> {
     let dos_args:Vec<_>=std::env::args().collect();
+    if dos_args.get(1).map(String::as_str)==Some("--dos-list"){
+        if dos_args.len()!=3{return Err("usage: pil-proof --dos-list IMAGE.img|ARCHIVE.zip".into());}
+        println!("{}",containers::listing(std::path::Path::new(&dos_args[2]))?);return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-extract"){
+        if dos_args.len()!=4{return Err("usage: pil-proof --dos-extract IMAGE.img|ARCHIVE.zip NEW_DIRECTORY".into());}
+        println!("{}",containers::extract(std::path::Path::new(&dos_args[2]),std::path::Path::new(&dos_args[3]))?);return Ok(());
+    }
     if dos_args.get(1).map(String::as_str)==Some("--write-dos-hello"){
         if dos_args.len()!=4{return Err("usage: pil-proof --write-dos-hello com|exe PATH (new file only)".into());}
         let bytes=dos::hello(&dos_args[2])?;

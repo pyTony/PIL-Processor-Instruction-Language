@@ -28,6 +28,7 @@ jobs:
       - run: python tools/verify_exchange.py
       - run: python tools/verify_flag_transfer.py
       - run: python tools/verify_dos_probe.py
+      - run: python tools/verify_containers.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check
       - if: runner.os == 'Windows'

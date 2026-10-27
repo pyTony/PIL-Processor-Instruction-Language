@@ -337,7 +337,7 @@ impl Debugger {
             ["help"]=>concat!(
                 "help | demo counter|echo|memory|selftest|hello|factorials|loop|mandelbrot|extensions | load <binary> | check | list | step | run [1..10000] | continue [budget]\n",
                 "list [count 1..256] | list <address> <count> (bytes, operands, branch targets; * marks EIP)\n",
-                "dosprobe <com|exe path> [steps] (isolated DOS import/run/report; preserves current debugger)\n",
+                "dosprobe <com|exe|img|zip path> [steps] (isolated DOS import/run/report; preserves current debugger)\n",
                 "cache [stats|on|off|clear] (binary monitor)\n",
                 "time [steps 1..1000000] | bench [iterations 1..100000] [samples 1..9] | stress [passes 1..1000]\n",
                 "regs | flags | eip | set <register|eip|eflags> <decimal|0xhex>\n",

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export a strict user tree from dev. main is never a merge of the dev tree."""
 from pathlib import Path
-import argparse,hashlib,json,os,re,subprocess,sys
+import argparse,hashlib,json,os,re,subprocess,sys,zipfile
 ROOT=Path(__file__).resolve().parents[1]
 # Explicit run/build inputs only. Tests and development documents cannot leak
 # through a broad repository copy. These patterns are intentionally narrow.
@@ -28,6 +28,7 @@ def export(destination,source_ref):
     for source,target in DOCUMENTS.items():files[target]=(ROOT/'delivery/source'/source).read_bytes()
     files['docs/PIL_REFERENCE.md']=(ROOT/'docs/LANGUAGE.md').read_bytes()
     files['docs/DOS_PROBE.md']=(ROOT/'docs/DOS_PROBE.md').read_bytes()
+    files['docs/CONTAINERS.md']=(ROOT/'docs/CONTAINERS.md').read_bytes()
     files['.gitignore']=b'/target/\n'
     version=re.search(r'^version = "([^"]+)"',(ROOT/'Cargo.toml').read_text(),re.M)[1]
     files['DELIVERY.json']=(json.dumps({'version':version,'source_commit':source_ref,
@@ -70,6 +71,16 @@ def verify(destination):
     dos=subprocess.check_output([str(exe),'--dos-probe',str(com),str(mz)],cwd=destination,env=env,text=True)
     if 'SUMMARY imported=2/2 exited=2' not in dos or dos.count('OUTPUT (escaped bytes): Hello, DOS!\\r\\n')!=2:
         raise SystemExit('standalone DOS probe failed:\n'+dos)
+    archive=destination/'target/dos-programs.zip'
+    with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED)as z:
+        z.write(com,'BIN/HELLO.COM');z.write(mz,'BIN/HELLO.EXE')
+    listed=subprocess.check_output([str(exe),'--dos-list',str(archive)],cwd=destination,env=env,text=True)
+    probed=subprocess.check_output([str(exe),'--dos-probe',str(archive)],cwd=destination,env=env,text=True)
+    extracted=destination/'target/dos-extracted'
+    subprocess.run([str(exe),'--dos-extract',str(archive),str(extracted)],cwd=destination,env=env,check=True)
+    if '2 executable candidates' not in listed or 'SUMMARY imported=2/2 exited=2' not in probed or (extracted/'BIN/HELLO.COM').read_bytes()!=com.read_bytes():
+        raise SystemExit('standalone ZIP list/probe/extract failed')
+    print('Standalone ZIP list/probe/extract passed')
     print('Standalone DOS COM/MZ hello import and execution passed')
     print('Standalone runtime build, launchers, serial transcript and compiled backend comparison passed')
 

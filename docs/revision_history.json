@@ -1764,6 +1764,27 @@
         "limits": "no full DOS/BIOS,CPU INT/IRET or generated-DOS runner claimed",
         "arm": "not executed for this increment"
       }
+    },
+    {
+      "version": "0.20.0-alpha.1",
+      "date": "2026-10-27",
+      "status": "implemented;CI pending",
+      "features": [
+        "FAT16 image and ZIP imports",
+        "original bounded stored/fixed/dynamic DEFLATE and CRC32",
+        "list/extract and direct deduplicated DOS probing",
+        "independent ZIP/FAT CLI interoperability tests"
+      ],
+      "expected_rust_tests": 209,
+      "backend_cases": 49,
+      "runtime_export_files": 86,
+      "third_party_data_imported_into_repo": false,
+      "limits": [
+        "FAT16 only;ASCII short names",
+        "ZIP stored/deflate;no ZIP64/encryption",
+        "single nested ZIP level;bounded resources",
+        "read-only sources;new extraction directory"
+      ]
     }
   ]
 }

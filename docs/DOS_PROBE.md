@@ -147,3 +147,11 @@ Verified on Windows/Linux CI40460972486 at source11dd1cae:200 tests per host,
 independent DOS CLI fixtures and both COM/MZ hello examples in standalone source
 and unpacked native packages passed. The existing49 backend/native CPU regression
 suite also passed; it does not compare DOS-shim execution with generated Rust.
+
+## Disk images and ZIP packages (0.20 alpha)
+
+`--dos-probe` and REPL `dosprobe` also accept FAT16 `.img`/`.ima` and `.zip`
+inputs. `--dos-list PATH` lists candidates; `--dos-extract PATH NEW_DIRECTORY`
+extracts regular files and one package ZIP level without changing the source.
+See [container guide](CONTAINERS.md) for FreeDOS commands, formats and bounds.
+Container executables are deduplicated by full byte equality before probing.
