@@ -186,8 +186,8 @@
         "PUSH",
         "POP"
       ],
-      "status": "planned",
-      "remaining": "Register/immediate/memory; independent stack size and SP/ESP aliases",
+      "status": "partial",
+      "remaining": "Register PUSH/POP and immediate PUSH host-build verified in both backends; memory forms and general per-access contexts remain. Independent SS sizes and SP/ESP aliases implemented.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -503,8 +503,8 @@
         "PUSH_segment",
         "POP_segment"
       ],
-      "status": "planned",
-      "remaining": "Real cache loads,hidden state,SS shadow; protected validation later",
+      "status": "partial",
+      "remaining": "Visible selectors and all six segment PUSH forms implemented; POP/MOV loads,cache changes,SS shadow and protected validation remain.",
       "modern_user_mode_oracle": "legacy_or_system",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,12 +769,12 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.21.0-alpha.1",
-    "status": "CLD/STD verified on Windows/Linux CI40476098533; generalized named effects and independent stack addressing remain P0 work.",
+    "version": "0.22.0-alpha.1",
+    "status": "Snapshot named GPR effects and initial stack forms verified Windows/Linux CI40487360431; generalized per-access memory and segment writes remain.",
     "verified_native_cases_before_direction_followup": 340920,
     "verified_trace_cases_before_direction_followup": 49,
     "expected_trace_cases_with_direction_followup": 50,
-    "verified_rust_tests": 215,
-    "verified_trace_cases": 50
+    "verified_rust_tests": 223,
+    "verified_trace_cases": 56
   }
 }

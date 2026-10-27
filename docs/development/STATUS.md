@@ -1,3 +1,21 @@
+# Initial stack forms verified — 27 October 2026
+
+Windows/Linux CI40487360431 passed at9189e64e7d18f9b0b87b55c6b2bba549c00a5236:
+223 tests per host,56 backend cases (5,133,394 trace bytes),existing340,920 native
+CPU overlap cases and full256x256 Mandelbrot checks. The stack checks include
+independent full-state expectations for generated Rust,operand/SS-size matrices,
+SP/ESP snapshot and POP alias ordering,precise RAM/SS/readonly faults and cache
+identity. Native overlap counts do not include new legacy stack forms;no external
+386 suite or new ARM run is claimed. Standalone90-file source/native package
+checks passed. 0.22 delivery changes version/docs/evidence only after this run.
+
+All general-register PUSH/POP (including FF/6 and8F/0 aliases),PUSH imm16/32/
+sign-extended imm8 and PUSH ES/CS/SS/DS/FS/GS are admitted. Explicit visible
+selectors live alongside caches in Image and are part of decode-cache identity.
+The generic PIL foundation is snapshot read_gpr and ordered staged write_gpr;
+it remains a precise RAM-only single-store model. Memory stack operands,
+segment POP/MOV,CALL/RET,interrupt shadows and per-access contexts remain next.
+
 # Initial stack foundation — hosted verification pending
 
 Added snapshot read_gpr and ordered staged write_gpr effects in both backends.

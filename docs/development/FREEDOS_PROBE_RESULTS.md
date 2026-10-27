@@ -57,3 +57,29 @@ list/probe/extract checks. Existing49 backend cases still match4,983,058 bytes;
 No ARM execution or complete FreeDOS/BIOS compatibility is claimed for0.20.
 The actual uploaded-image run above was local Linux execution of the compiled
 CI artifact;the uploaded image was not sent to GitHub CI.
+
+## Initial stack forms: measured follow-up
+
+The Linux CI runtime at9189e64e was run locally against the same unchanged image
+with10,000 steps per program. It still imports151/156:125 first encoding blockers,
+18 service stops,7 model access faults,and the placeholder VCHKBOX exit36.
+Reached counts now include77 PUSH and2 POP instructions. First blockers:
+
+| Opcode / instruction | Programs |
+|---|---:|
+| 8C / MOV from segment register |36|
+| F3 / repeat prefix |24|
+| 07 / POP ES |18|
+| FB / STI |16|
+| 8E / MOV to segment register |9|
+| E8 / near CALL |9|
+| 1F / POP DS |8|
+| 9C / PUSHF |2|
+| AC / LODSB |2|
+| C7 / MOV immediate to r/m |1|
+
+PUSH blockers have moved forward to segment reads/loads and POP. The unchanged
+number of encoding stops does not mean no progress: these are new first blockers.
+This supports prioritizing transactional segment-selector/cache updates next,
+alongside independent per-access addressing. No complete DOS program or boot
+milestone is claimed. The source image was not uploaded to GitHub CI.

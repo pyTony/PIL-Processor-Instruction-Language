@@ -146,3 +146,14 @@ selector state; existing hidden segment caches alone do not supply selectors.
 STI stays in P8 with interrupt shadows and delivery; do not emulate it as a bit
 write. The first-blocker corpus is prioritization evidence, not whole-program
 coverage. Keep CS-write model faults separate from missing instructions.
+
+## Initial stack implementation (0.22)
+
+Snapshot named GPR inputs and source-ordered named writes now support precise
+register/immediate PUSH,register POP and all segment PUSH forms. Operand and
+SS stack sizes are independent;SP/ESP alias ordering is tested in both backends.
+Explicit visible selectors are stored alongside caches. CI40487360431 passed
+223 tests/56 backend cases on Windows/Linux. This is partial P0/P2 work: memory
+operands require independent access contexts (POP memory uses updated ESP),and
+segment POP/MOV requires transactional selector/cache state and SS shadows.
+The single-store RAM model is not yet a general ordered MMIO/system model.
