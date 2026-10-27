@@ -1,3 +1,11 @@
+# PIL 0.18.0-alpha.1
+
+- Add LAHF/SAHF through shared PIL descriptions and implicit AH bindings.
+- Preserve untouched state and handle status-byte fixed bits and metadata.
+- Extend independent, generated-Rust and CPUID-gated native CPU checks.
+- Include the current PIL reference in runtime sources and native packages.
+- Execution checks for this increment are pending CI.
+
 # PIL 0.17.0-alpha.2
 
 - Add CMC (F5) through shared PIL semantics and binary decoding.

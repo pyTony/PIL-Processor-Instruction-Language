@@ -1,3 +1,30 @@
+# LAHF/SAHF increment — 27 October 2026
+
+0.18.0-alpha.1 implements LAHF9F and SAHF9E with implicit AH bindings and
+ordinary shared PIL tokens. LAHF forces byte bits1/3/5 to1/0/0 and preserves
+flags/markers;SAHF writes five status flags,clears only their markers,and
+preserves OF and registers. Prefix/fetch-fault and all-state emitted tests added.
+Python20,480 independent cases passed locally. Expected188 Rust tests,49
+backend cases,340,920 native cases/64 variants/40 harness checks when the
+host CPUID LAHF/SAHF feature is available. Missing host feature skips and
+reports only those native forms;guest support remains. CI execution pending.
+
+Current reference docs/LANGUAGE.md and documentation map docs/README.md
+were corrected/uploaded before this increment. Runtime export now includes
+PIL_REFERENCE.md under docs;native packages include it at their root.
+81-file runtime source expected. Source/native packages remain isolated.
+
+PR20 merged;main4d6ca2b3 is0.17alpha.2. Prepare a separate0.18 runtime PR
+only after Windows/Linux checks. All project uploads are user-authorized;
+do not merge dev into main. User reviews/merges runtime delivery PRs.
+
+User reported0.17alpha.2 source80162c46 passing332,728 hardware cases on
+Windows/x86_64 AuthenticAMD CPUID1 EAX00a20f10,ECXfed8320b,EDX178bfbff,
+rustc1.99.1. Fingerprint01164feba93c1f9c;selected test1 passed,183 filtered.
+48 backend cases matched4,949,650 bytes. Generated median0.3087ms vs cached
+interpreter3.537ms at10000 iterations/5 samples:11.46x. Generated compilation
+5.686s excluded;correctness/timing evidence is user-reported,not386 cycles.
+
 # CMC verified — 27 October 2026
 
 Windows/Linux CI40443065185 passed at7bdfc1b0b27e87f9a897d9a3c66f86da3d2f3a2a:

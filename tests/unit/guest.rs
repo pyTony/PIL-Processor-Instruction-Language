@@ -369,3 +369,21 @@ fn exchange_register_forms_aliases_accumulator_and_memory_diagnostics(){
     }
     for bytes in [vec![0x87,0x07],vec![0x86,0x07],vec![0xf0,0x87,0xc8],vec![0x87]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
 }
+
+#[test]
+fn byte_flag_transfers_bind_ah_ignore_size_prefixes_and_check_fetch(){
+    use super::super::Cpu;
+    for opcode in [0x9e,0x9f]{for prefix in [vec![],vec![0x66],vec![0x67],vec![0x64],vec![0x66,0x67]]{
+        let mut bytes=prefix;bytes.push(opcode);assert_eq!(decode(&bytes).unwrap().label,if opcode==0x9f{"LAHF"}else{"SAHF"});
+        for byte in 0..256{for f in [0x202,0xad7]{
+            let mut c=Cpu{regs:[0x12340078|(byte<<8),1,2,3,4,5,6,7],eflags:f,undefined_flags:0x8d5,eip:ENTRY};let mut want=c.clone();want.eip+=bytes.len()as u32;
+            if opcode==0x9f{want.regs[0]=(want.regs[0]&!0xff00)|(((f&0xd5)|2)<<8);}
+            else{want.eflags=(f&!0xd5)|(byte&0xd5);want.undefined_flags&=!0xd5;}
+            let ram=execute_one(&bytes,&mut c,0x89abcdef,true).unwrap();assert_eq!(c,want);assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),0x89abcdef);
+        }}
+    }
+    for bytes in [vec![0xf0,opcode],vec![0x66,0x66,opcode]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))));}
+    let(mut image,ram)=Image::load(&[0x66,opcode]).unwrap();image.segments[1].limit=ENTRY;
+    assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
+    }
+}

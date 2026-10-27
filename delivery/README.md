@@ -1,8 +1,12 @@
 # PIL debugger delivery
 ## Documentation
 
+[Complete documentation overview](https://github.com/pyTony/pil_proof/blob/dev/docs/README.md)
+provides the map to all language, design, verification and planning documents.
+
 | Read this | What it covers |
 |---|---|
+| [PIL language reference](PIL_REFERENCE.md) | Executable syntax, types, effects and Rust emission |
 | [Debugger guide](DEBUGGER.md) | Start the debugger, commands, demos, memory and serial; supported encodings |
 | [Feature matrix](FEATURE_MATRIX.md) | Implemented, partial and planned emulator features |
 | [Release notes](RELEASE_NOTES.md) | Changes in this delivery and earlier versions |

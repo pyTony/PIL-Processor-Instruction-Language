@@ -241,3 +241,14 @@ No hardware pass is claimed before the new CI run completes.
 CMC verification: Windows/Linux CI40443065185 at7bdfc1b0 passed332,728
 native cases per host,62 variants and36 known answers; both PIL backends
 matched. No ARM execution or complete386 coverage is claimed.
+
+## LAHF/SAHF native forms (execution pending)
+
+CPUID80000001:ECX bit0 gates native LAHF/SAHF in long mode. When available,
+all256 AH bytes cross four comparison inputs,both incoming carry bits and two
+metadata states for both forms:8,192 new cases. Expected totals340,920 cases,
+64 variants,40 known answers. Without feature support,report their exclusion
+and keep the previous332,728 cases/62 variants/36 checks. Guest386 support
+is not gated by host CPUID. Independent masks preserve every LAHF flag and
+allow SAHF to define only0xD5. LAHF checks the packed AH byte and all64 native
+RAX bits outside AH;SAHF checks all registers remain unchanged.

@@ -1,0 +1,28 @@
+# The decoder binds dst to AH. Only five status bits enter the packed byte.
+require_width 8
+read_flag cf CF
+read_flag pf PF
+read_flag af AF
+read_flag zf ZF
+read_flag sf SF
+zext c cf 8
+zext p pf 8
+zext a af 8
+zext z zf 8
+zext s sf 8
+const two 8 2
+const four 8 4
+const six 8 6
+const seven 8 7
+shl pb p two
+shl ab a four
+shl zb z six
+shl sb s seven
+or cp c pb
+or cpa cp ab
+or cpaz cpa zb
+or packed cpaz sb
+or result packed two
+write dst result
+preserve_flags all
+retire

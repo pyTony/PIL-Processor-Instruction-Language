@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory() as temp:
         path=Path(temp)/(example+'.bin')
         subprocess.run([str(binary),'--write-'+example,str(path)],check=True)
         files[path]='programs/'+example+'.bin'
-    for src,dst in [('delivery/README.md','README.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('delivery/source/DEBUGGER.md','DEBUGGER.md'),('delivery/source/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('delivery/source/RELEASE_NOTES.md','RELEASE_NOTES.md'),('delivery/source/FEATURE_MATRIX.md','FEATURE_MATRIX.md'),('programs/selftest.lst','programs/selftest.lst'),('programs/hello.lst','programs/hello.lst'),('programs/factorials.lst','programs/factorials.lst'),('programs/loop.lst','programs/loop.lst')]:
+    for src,dst in [('delivery/README.md','README.md'),('docs/LANGUAGE.md','PIL_REFERENCE.md'),('delivery/debug.sh','debug.sh'),('delivery/debug.ps1','debug.ps1'),('delivery/source/DEBUGGER.md','DEBUGGER.md'),('delivery/source/REFERENCES_AND_CREDITS.md','REFERENCES_AND_CREDITS.md'),('delivery/source/RELEASE_NOTES.md','RELEASE_NOTES.md'),('delivery/source/FEATURE_MATRIX.md','FEATURE_MATRIX.md'),('programs/selftest.lst','programs/selftest.lst'),('programs/hello.lst','programs/hello.lst'),('programs/factorials.lst','programs/factorials.lst'),('programs/loop.lst','programs/loop.lst')]:
         files[root/src]=dst
     with zipfile.ZipFile(dist/(name+'.zip'),'w',zipfile.ZIP_DEFLATED) as archive:
         manifest=[]

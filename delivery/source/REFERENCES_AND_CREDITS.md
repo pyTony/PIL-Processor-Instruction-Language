@@ -196,3 +196,12 @@ Instruction reference: Intel 80386 Programmer's Reference Manual (1986),
 CMC entry: complement carry; other flags unaffected. No external code, vectors
 or dependencies imported. Incoming diagnostic metadata follows the existing
 PIL concrete-value policy, not a hardware uncertainty-tracking claim.
+
+## LAHF/SAHF increment
+
+Original PIL descriptions, bindings and tests; no imported implementation/data.
+Intel80386 manual LAHF/SAHF entries and Intel64/IA-32 SDM LAHF/SAHF entries
+were consulted for byte layout, unchanged flags and long-mode CPUID gating:
+https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2a-manual.pdf
+https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf
+PIL diagnostic metadata behavior is the project's concrete-state policy.

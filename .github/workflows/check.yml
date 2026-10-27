@@ -26,6 +26,7 @@ jobs:
       - run: python tools/verify_extensions.py
       - run: python tools/verify_rotates.py
       - run: python tools/verify_exchange.py
+      - run: python tools/verify_flag_transfer.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check
       - if: runner.os == 'Windows'

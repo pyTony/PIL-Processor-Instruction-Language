@@ -11,7 +11,7 @@ fn flag_policy(op:usize)->FlagPolicy{
         9..=12=>(ARITH&!0x10,!ARITH,0x10),
         16=>(0x801,!ARITH,0xd4),
         19|20|22=>(1,!1,0),
-        21=>(0,u32::MAX,0),
+        21|23=>(0,u32::MAX,0),24=>(0xd5,!0xd5,0),
         0..=4|7=>(ARITH,!ARITH,0),_=>unreachable!(),
     };FlagPolicy{defined,preserved,undefined}
 }
@@ -49,7 +49,7 @@ fn host_cpu_oracle_rejects_corrupted_results_even_when_marked_undefined(){
 }
 #[test]
 fn host_cpu_logical_masks_ignore_only_hardware_af_and_enforce_pil_policy(){
-    for op in 0..13{let p=flag_policy(op);
+    for op in (0..13).chain([19,20,21,22,23,24]){let p=flag_policy(op);
         assert_eq!(p.defined|p.preserved|p.undefined,u32::MAX);
         assert_eq!((p.defined&p.preserved)|(p.defined&p.undefined)|(p.preserved&p.undefined),0);
     }
@@ -132,9 +132,14 @@ fn hardware(op:usize,w:u8,mut a:u64,mut b:u64,mut d:u64)->Hardware{
         (18,8)=>run!(".byte 0xd2,0xc8"),(18,16)=>run!(".byte 0x66,0xd3,0xc8"),(18,32)=>run!(".byte 0xd3,0xc8"),
         (19,16)=>run!(".byte 0xf8"),(20,16)=>run!(".byte 0xf9"),
         (22,16)=>run!(".byte 0xf5"),
+        (23,8)=>run!(".byte 0x9f"),(24,8)=>run!(".byte 0x9e"),
         (21,8)=>run!(".byte 0x86,0xc8"),(21,16)=>run!(".byte 0x66,0x87,0xc8"),(21,32)=>run!(".byte 0x87,0xc8"),
         _=>unreachable!(),
     }Hardware{a,b,d,g0,g1,input_flags,output_flags}
+}
+fn has_byte_flags()->bool{
+    let max=unsafe{std::arch::x86_64::__cpuid(0x80000000)}.eax;
+    max>=0x80000001 && unsafe{std::arch::x86_64::__cpuid(0x80000001)}.ecx&1!=0
 }
 fn changed_flags(op:usize,w:u8,b:u64)->u32{let p=case_policy(op,w,b as u32);p.defined|p.undefined}
 fn check_hardware(h:&Hardware,op:usize,w:u8,a:u64,b:u64,d:u64)->Result<(),String>{
@@ -145,7 +150,10 @@ fn check_hardware(h:&Hardware,op:usize,w:u8,a:u64,b:u64,d:u64)->Result<(),String
         let m=mask(w);let high=if w==32{0}else{!m};
         if h.a!=((a&high)|(b&m))||h.b!=((b&high)|(a&m)){return Err("native XCHG operand/write-policy mismatch".into());}
     }
-    if matches!(op,4|12|19|20|22){if h.a!=a{return Err("native non-writing instruction changed its operand".into());}}
+    if op==23{
+        let packed=(h.input_flags&0xd5)|2;
+        if h.a!=((a&!0xff00)|(packed<<8)){return Err("native LAHF byte layout or preserved RAX mismatch".into());}
+    }else if matches!(op,4|12|19|20|22|24){if h.a!=a{return Err("native non-writing instruction changed its operand".into());}}
     else if w==32{if h.a>>32!=0{return Err("native32-bit destination did not zero its upper half".into());}}
     else if (h.a^a)&!mask(w)!=0{return Err("native byte/word changed untouched bits".into());}Ok(())
 }
@@ -171,12 +179,16 @@ fn harness_selfcheck()->Result<(),String>{
         (22,16,0x1234,0,0,0x1234,1),(22,16,0x1234,0,1,0x1234,0),
         (21,8,0x12,0x34,1,0x34,0),(21,16,0x1234,0x5678,0,0x5678,0),
         (21,32,0x80000000,0xffffffff,1,0xffffffff,0),
+        (23,8,0,0,0,0,0),(23,8,0,0,1,0,0),
+        (24,8,0xd512,0,0,0x12,0xd5),(24,8,0x2a12,0,1,0x12,0),
     ]{
+        if matches!(op,23|24)&&!has_byte_flags(){continue;}
         let h=hardware(op,w,a,b,carry);check_hardware(&h,op,w,a,b,carry)?;
         if h.a&mask(w)!=result||h.output_flags&u64::from(case_policy(op,w,b as u32).defined)!=flags{return Err(format!("native harness known-answer failure: {h:?}"));}
     }Ok(())
 }
 fn encoded(op:usize,w:u8,native:bool)->Vec<u8>{
+    if matches!(op,23|24){return vec![if op==23{0x9f}else{0x9e}];}
     if matches!(op,19|20|22){return vec![match op{19=>0xf8,20=>0xf9,_=>0xf5}];}
     let mut bytes=Vec::new();
     if (native&&w==16)||(!native&&w==32){bytes.push(0x66);}
@@ -213,9 +225,11 @@ pub fn verify()->Result<(),String>{
 }
 fn verify_at(dir:&std::path::Path)->Result<(),String>{
     let mut json=BufWriter::new(fs::File::create(dir.join("cases.jsonl")).map_err(|e|e.to_string())?);
-    let(mut source,mut dispatch,mut data)=(String::new(),String::new(),Vec::new());let mut count=0u32;
-    for(op,name)in ["add","sub","adc","sbb","cmp","inc","dec","neg","not","and","or","xor","test","shl","shr","sar","imul","rol","ror","clc","stc","xchg","cmc"].iter().enumerate(){for(wi,w)in [8,16,32].into_iter().enumerate(){
+    let(mut source,mut dispatch,mut data)=(String::new(),String::new(),Vec::new());let mut count=0u32;let mut variants=0u32;
+    for(op,name)in ["add","sub","adc","sbb","cmp","inc","dec","neg","not","and","or","xor","test","shl","shr","sar","imul","rol","ror","clc","stc","xchg","cmc","lahf","sahf"].iter().enumerate(){for(wi,w)in [8,16,32].into_iter().enumerate(){
         if (op==16&&w==8)||(matches!(op,19|20|22)&&w!=16){continue;}
+        if matches!(op,23|24)&&(w!=8||!has_byte_flags()){continue;}
+        variants+=1;
         let variant=op*3+wi;let bytes=encoded(op,w,false);let native_bytes=encoded(op,w,true);
         let(image,ram)=super::super::guest::Image::load(&bytes)?;
         let decoded=image.decode(&ram,super::super::guest::ENTRY).map_err(|e|format!("{e:?}"))?;
@@ -232,10 +246,11 @@ fn verify_at(dir:&std::path::Path)->Result<(),String>{
             seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;let a=seed&m;
             seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;pairs.push((a,seed&if matches!(op,13..=15|17|18){255}else{m}));
         }
+        if matches!(op,23|24){pairs.clear();for byte in 0..=255{for low in [0,127,128,255]{pairs.push((byte,low));}}}
         let metadata:&[u32]=if op>=9{&[0,ARITH]}else if op>=5{&[ARITH&!1,ARITH]}else{&[ARITH&!1]};
         for &undefined_in in metadata{for carry in [0,1]{for &(a,b)in &pairs{
             let policy=case_policy(op,w,b);
-            let a=(0x13579bdfu64<<32)|u64::from(initial_low(a,w,false));
+            let a=(0x13579bdfu64<<32)|u64::from(if matches!(op,23|24){0xa5c30000|(a<<8)|a}else{initial_low(a,w,false)});
             let b=(0xfedcba98u64<<32)|u64::from(initial_low(b,w,true));
             let d=(0x0badf00du64<<32)|0x2468ac00|carry;
             let h=hardware(op,w,std::hint::black_box(a),std::hint::black_box(b),d);check_hardware(&h,op,w,a,b,d)?;
@@ -262,7 +277,9 @@ fn verify_at(dir:&std::path::Path)->Result<(),String>{
     if !output.status.success(){return Err(format!("generated result differs from hardware: {}",String::from_utf8_lossy(&output.stderr)));}
     let fingerprint=data.iter().fold(0xcbf29ce484222325u64,|h,b|(h^u64::from(*b)).wrapping_mul(0x100000001b3));
     let toolchain=Command::new(&rustc).arg("--version").output().ok().map(|o|String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_else(||"unavailable".into());
-    let report=format!("PASS: HOST_CPU {count} native CPU cases match interpreter and generated Rust; ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT/AND/OR/XOR/TEST/SHL/SHR/SAR/ROL/ROR8/16/32,XCHG8/16/32,IMUL16/32,CLC/STC/CMC;CF0/1.\nThirty-six known-answer harness checks passed;62 encoding variants; independent defined/preserved/undefined masks (undefined values excluded from hardware comparison); preserved flags/registers/EIP and operation-specific undefined metadata checked.\nNative RAX upper-half policy checked separately; guest16-bit-default and native64-bit-mode encodings are recorded separately. This validates the admitted overlap,not a64-bit guest decoder or386 system/undefined/timing behavior.\n{}\nhost={}/{} version={} source={}\ntoolchain={}\ncase_data_fnv64={fingerprint:016x} (non-cryptographic fingerprint); no timing benchmark.\nArtifacts: {}",host_identity(),std::env::consts::OS,std::env::consts::ARCH,env!("CARGO_PKG_VERSION"),source_revision(),toolchain,dir.display());
+    let harness_checks=if has_byte_flags(){40}else{36};
+    let byte_flags=if has_byte_flags(){"LAHF/SAHF native verification executed"}else{"LAHF/SAHF native verification SKIPPED: host CPUID feature unavailable"};
+    let report=format!("PASS: HOST_CPU {count} native CPU cases match interpreter and generated Rust; ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT/AND/OR/XOR/TEST/SHL/SHR/SAR/ROL/ROR8/16/32,XCHG8/16/32,IMUL16/32,CLC/STC/CMC;LAHF/SAHF when host CPUID permits;CF0/1.\n{harness_checks} known-answer harness checks passed;{variants} encoding variants; independent defined/preserved/undefined masks (undefined values excluded from hardware comparison); preserved flags/registers/EIP and operation-specific undefined metadata checked.\n{byte_flags}. Native RAX upper-half policy checked separately; guest16-bit-default and native64-bit-mode encodings are recorded separately. This validates the admitted overlap,not a64-bit guest decoder or386 system/undefined/timing behavior.\n{}\nhost={}/{} version={} source={}\ntoolchain={}\ncase_data_fnv64={fingerprint:016x} (non-cryptographic fingerprint); no timing benchmark.\nArtifacts: {}",host_identity(),std::env::consts::OS,std::env::consts::ARCH,env!("CARGO_PKG_VERSION"),source_revision(),toolchain,dir.display());
     fs::write(dir.join("report.txt"),&report).map_err(|e|e.to_string())?;println!("{report}");Ok(())
 }
 }

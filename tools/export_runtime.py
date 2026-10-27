@@ -26,6 +26,7 @@ def export(destination,source_ref):
             if path.suffix=='.rs':data=TEST_MODULE.sub('',data.decode()).encode()
             files[relative]=data
     for source,target in DOCUMENTS.items():files[target]=(ROOT/'delivery/source'/source).read_bytes()
+    files['docs/PIL_REFERENCE.md']=(ROOT/'docs/LANGUAGE.md').read_bytes()
     files['.gitignore']=b'/target/\n'
     version=re.search(r'^version = "([^"]+)"',(ROOT/'Cargo.toml').read_text(),re.M)[1]
     files['DELIVERY.json']=(json.dumps({'version':version,'source_commit':source_ref,

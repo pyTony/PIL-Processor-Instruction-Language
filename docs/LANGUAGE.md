@@ -1,6 +1,6 @@
 # PIL reference — implemented language
 
-[All PIL documentation](README.md)
+[All PIL documentation](https://github.com/pyTony/pil_proof/blob/dev/docs/README.md)
 
 This is the reference for the executable PIL grammar in the current repository,
 checked against the parser, interpreter and Rust emitter in
@@ -216,3 +216,14 @@ Instantiated for 8/16/32 bits, this is `xchg.pil`. The x86 decoder supplies
 register aliases and legal encodings. Memory XCHG is not implemented. Other
 instruction-family details and demos are in the debugger guide and feature
 matrix; grammar support alone does not imply complete 386 instruction coverage.
+
+## LAHF and SAHF descriptions (0.18 alpha)
+
+`lahf` and `sahf` require 8-bit bindings. The decoder binds AH for opcodes
+9F/9E, independently of operand/address-size prefixes. LAHF uses read_flag,
+zero extension, shifts and OR to write `SF:ZF:0:AF:0:PF:1:CF` into AH, while
+preserving all flags and markers. SAHF reads AH and defines CF/PF/AF/ZF/SF;
+it clears their markers and preserves OF and all other flags/markers.
+LAHF copies concrete input bits without propagating diagnostic taint to AH.
+SAHF ignores AH bits1/3/5 and does not normalize unrelated supplied EFLAGS bits.
+Neither description adds a new semantic token or backend-specific handler.

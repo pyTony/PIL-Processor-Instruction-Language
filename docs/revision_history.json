@@ -1696,6 +1696,25 @@
         "runtime_packages": "isolated source and unpacked delivery passed on both hosts",
         "arm": "not executed for this increment"
       }
+    },
+    {
+      "version": "0.18.0-alpha.1",
+      "date": "2026-10-27",
+      "status": "implemented;CI pending",
+      "features": [
+        "LAHF/SAHF shared PIL and AH bindings",
+        "status-byte fixed bits and selective metadata writes",
+        "CPUID-gated native byte-flag oracle",
+        "current PIL reference in source/native deliveries"
+      ],
+      "expected_rust_tests": 188,
+      "backend_cases": 49,
+      "python_flag_transfer_cases": 20480,
+      "python_status": "passed locally",
+      "expected_hardware_cases_with_lahf_sahf": 340920,
+      "native_encoding_variants_with_lahf_sahf": 64,
+      "native_harness_checks_with_lahf_sahf": 40,
+      "runtime_export_files": 81
     }
   ]
 }

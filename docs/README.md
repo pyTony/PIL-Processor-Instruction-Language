@@ -36,6 +36,7 @@ questions; proposed syntax and plans are not implementation claims.
 | [ADD](../isa/i386/add.pil) | Widened arithmetic and explicit flag calculations |
 | [ADC](../isa/i386/adc.pil) | Reading incoming carry |
 | [XCHG](../isa/i386/xchg.pil) | Snapshot reads and two staged register writes |
+| [LAHF](../isa/i386/lahf.pil), [SAHF](../isa/i386/sahf.pil) | Packing status flags into AH and partial flag writes |
 | [CMC](../isa/i386/cmc.pil) | Concrete carry input and a defined flag write |
 | [SHL](../isa/i386/shl.pil) | Explicit count masking and conditional flag effects |
 | [Memory ADD](../isa/i386/add_ram.pil) | Load, calculate and stage a store |
