@@ -358,6 +358,7 @@ fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->
 fn execute_memory(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError> {
     execute_state(p,cpu,dst,src,context,Some(ram),address,None,None)
 }
+#[cfg(test)]
 fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError> {
     let (offset, memory_context)=address.resolve(&cpu.regs)?;
     execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None)
@@ -804,3 +805,7 @@ mod stack_tests;
 #[cfg(test)]
 #[path = "../tests/unit/segments.rs"]
 mod segment_transfer_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/mov_forms.rs"]
+mod mov_form_tests;

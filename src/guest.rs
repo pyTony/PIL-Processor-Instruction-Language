@@ -98,6 +98,25 @@ impl Image {
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0xa0..=0xa3=>{
+                if opcode&1==0{w=8;}dst=view(0,w);src=dst;
+                let offset=r.unsigned(if addr32{32}else{16})?;
+                let effective=if addr32{EffectiveAddress::Bits32{base:None,index:None,scale:1,displacement:offset}}else{EffectiveAddress::Bits16{form:Address16::Direct,displacement:offset as u16}};
+                address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                let load=opcode&2==0;let text=instantiate(description(if load{"load_ram"}else{"store_ram"}).map_err(GuestError::Decode)?,w);
+                let operand=operand_name(dst,address);
+                (if load{format!("MOV {},{operand}",register_name(dst))}else{format!("MOV {operand},{}",register_name(src))},compile(&text,w))
+            }
+            0xc6|0xc7=>{
+                if opcode==0xc6{w=8;}
+                let m=r.byte()?;if (m>>3)&7!=0{return Err(GuestError::Decode("MOV immediate requires group extension0".into()));}
+                dst=view((m&7)as usize,w);src=dst;
+                let memory=m>>6!=3;
+                if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});}
+                let immediate=r.unsigned(w)?;
+                let text=if memory{format!("read_address addr\nconst v {w} {immediate}\nstore addr v\npreserve_flags all\nretire")}else{format!("const v {w} {immediate}\nwrite dst v\npreserve_flags all\nretire")};
+                (format!("MOV {},0x{immediate:0digits$x}",operand_name(dst,address),digits=(w/4)as usize),compile(&text,w))
+            }
             0x8c|0x8e=>{
                 let m=r.byte()?;let segment=((m>>3)&7)as usize;
                 if segment>=6 || (opcode==0x8e&&segment==1){return Err(GuestError::Decode("invalid segment MOV encoding".into()));}
