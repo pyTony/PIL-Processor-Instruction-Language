@@ -11,6 +11,7 @@ fn flag_policy(op:usize)->FlagPolicy{
         9..=12=>(ARITH&!0x10,!ARITH,0x10),
         16=>(0x801,!ARITH,0xd4),
         19|20=>(1,!1,0),
+        21=>(0,u32::MAX,0),
         0..=4|7=>(ARITH,!ARITH,0),_=>unreachable!(),
     };FlagPolicy{defined,preserved,undefined}
 }
@@ -130,14 +131,19 @@ fn hardware(op:usize,w:u8,mut a:u64,mut b:u64,mut d:u64)->Hardware{
         (17,8)=>run!(".byte 0xd2,0xc0"),(17,16)=>run!(".byte 0x66,0xd3,0xc0"),(17,32)=>run!(".byte 0xd3,0xc0"),
         (18,8)=>run!(".byte 0xd2,0xc8"),(18,16)=>run!(".byte 0x66,0xd3,0xc8"),(18,32)=>run!(".byte 0xd3,0xc8"),
         (19,16)=>run!(".byte 0xf8"),(20,16)=>run!(".byte 0xf9"),
+        (21,8)=>run!(".byte 0x86,0xc8"),(21,16)=>run!(".byte 0x66,0x87,0xc8"),(21,32)=>run!(".byte 0x87,0xc8"),
         _=>unreachable!(),
     }Hardware{a,b,d,g0,g1,input_flags,output_flags}
 }
 fn changed_flags(op:usize,w:u8,b:u64)->u32{let p=case_policy(op,w,b as u32);p.defined|p.undefined}
 fn check_hardware(h:&Hardware,op:usize,w:u8,a:u64,b:u64,d:u64)->Result<(),String>{
-    if h.b!=b||h.d!=d||h.g0!=GUARD0||h.g1!=GUARD1{return Err(format!("native source/sentinel corruption: {h:?}"));}
+    if (op!=21&&h.b!=b)||h.d!=d||h.g0!=GUARD0||h.g1!=GUARD1{return Err(format!("native source/sentinel corruption: {h:?}"));}
     if h.input_flags&1!=d&1{return Err("native CF seeding failed".into());}
     if (h.input_flags^h.output_flags)&!u64::from(changed_flags(op,w,b))!=0{return Err("native preserved flags changed".into());}
+    if op==21{
+        let m=mask(w);let high=if w==32{0}else{!m};
+        if h.a!=((a&high)|(b&m))||h.b!=((b&high)|(a&m)){return Err("native XCHG operand/write-policy mismatch".into());}
+    }
     if matches!(op,4|12|19|20){if h.a!=a{return Err("native non-writing instruction changed its operand".into());}}
     else if w==32{if h.a>>32!=0{return Err("native32-bit destination did not zero its upper half".into());}}
     else if (h.a^a)&!mask(w)!=0{return Err("native byte/word changed untouched bits".into());}Ok(())
@@ -161,19 +167,21 @@ fn harness_selfcheck()->Result<(),String>{
         (17,8,0x81,8,0,0x81,1),(18,8,0x80,8,0,0x80,1),
         (17,8,0x81,0,0,0x81,0),(17,32,0x80000000,1,1,1,0x801),
         (19,16,0,0,1,0,0),(20,16,0,0,0,0,1),
+        (21,8,0x12,0x34,1,0x34,0),(21,16,0x1234,0x5678,0,0x5678,0),
+        (21,32,0x80000000,0xffffffff,1,0xffffffff,0),
     ]{
         let h=hardware(op,w,a,b,carry);check_hardware(&h,op,w,a,b,carry)?;
         if h.a&mask(w)!=result||h.output_flags&u64::from(case_policy(op,w,b as u32).defined)!=flags{return Err(format!("native harness known-answer failure: {h:?}"));}
     }Ok(())
 }
 fn encoded(op:usize,w:u8,native:bool)->Vec<u8>{
-    if op>=19{return vec![if op==19{0xf8}else{0xf9}];}
+    if matches!(op,19|20){return vec![if op==19{0xf8}else{0xf9}];}
     let mut bytes=Vec::new();
     if (native&&w==16)||(!native&&w==32){bytes.push(0x66);}
     if op==16{bytes.extend([0x0f,0xaf,0xc1]);return bytes;}
     let pair=match op{
         0..=4=>[[0x00,0xc8],[0x28,0xc8],[0x10,0xc8],[0x18,0xc8],[0x38,0xc8]][op],
-        5=>[0xfe,0xc0],6=>[0xfe,0xc8],7=>[0xf6,0xd8],8=>[0xf6,0xd0],9=>[0x20,0xc8],10=>[0x08,0xc8],11=>[0x30,0xc8],12=>[0x84,0xc8],13=>[0xd2,0xe0],14=>[0xd2,0xe8],15=>[0xd2,0xf8],17=>[0xd2,0xc0],18=>[0xd2,0xc8],_=>unreachable!(),
+        5=>[0xfe,0xc0],6=>[0xfe,0xc8],7=>[0xf6,0xd8],8=>[0xf6,0xd0],9=>[0x20,0xc8],10=>[0x08,0xc8],11=>[0x30,0xc8],12=>[0x84,0xc8],13=>[0xd2,0xe0],14=>[0xd2,0xe8],15=>[0xd2,0xf8],17=>[0xd2,0xc0],18=>[0xd2,0xc8],21=>[0x86,0xc8],_=>unreachable!(),
     };
     bytes.extend([pair[0]+u8::from(w!=8),pair[1]]);bytes
 }
@@ -204,8 +212,8 @@ pub fn verify()->Result<(),String>{
 fn verify_at(dir:&std::path::Path)->Result<(),String>{
     let mut json=BufWriter::new(fs::File::create(dir.join("cases.jsonl")).map_err(|e|e.to_string())?);
     let(mut source,mut dispatch,mut data)=(String::new(),String::new(),Vec::new());let mut count=0u32;
-    for(op,name)in ["add","sub","adc","sbb","cmp","inc","dec","neg","not","and","or","xor","test","shl","shr","sar","imul","rol","ror","clc","stc"].iter().enumerate(){for(wi,w)in [8,16,32].into_iter().enumerate(){
-        if (op==16&&w==8)||(op>=19&&w!=16){continue;}
+    for(op,name)in ["add","sub","adc","sbb","cmp","inc","dec","neg","not","and","or","xor","test","shl","shr","sar","imul","rol","ror","clc","stc","xchg"].iter().enumerate(){for(wi,w)in [8,16,32].into_iter().enumerate(){
+        if (op==16&&w==8)||(matches!(op,19|20)&&w!=16){continue;}
         let variant=op*3+wi;let bytes=encoded(op,w,false);let native_bytes=encoded(op,w,true);
         let(image,ram)=super::super::guest::Image::load(&bytes)?;
         let decoded=image.decode(&ram,super::super::guest::ENTRY).map_err(|e|format!("{e:?}"))?;
@@ -230,7 +238,7 @@ fn verify_at(dir:&std::path::Path)->Result<(),String>{
             let d=(0x0badf00du64<<32)|0x2468ac00|carry;
             let h=hardware(op,w,std::hint::black_box(a),std::hint::black_box(b),d);check_hardware(&h,op,w,a,b,d)?;
             let initial=Cpu{regs:[a as u32,b as u32,d as u32,0x22446688,0x11223344,0x55aa55aa,0x12345678,0x87654321],eflags:h.input_flags as u32,undefined_flags:undefined_in,eip:super::super::guest::ENTRY};
-            let mut expected=initial.clone();expected.regs[0]=h.a as u32;expected.eflags=h.output_flags as u32;expected.undefined_flags=(initial.undefined_flags&policy.preserved)|policy.undefined;expected.eip=flow.next_eip;
+            let mut expected=initial.clone();expected.regs[0]=h.a as u32;expected.regs[1]=h.b as u32;expected.eflags=h.output_flags as u32;expected.undefined_flags=(initial.undefined_flags&policy.preserved)|policy.undefined;expected.eip=flow.next_eip;
             writeln!(json,"{{\"id\":{count},\"op\":\"{name}\",\"width\":{w},\"carry\":{carry},\"guest_bytes\":\"{}\",\"native_bytes\":\"{}\",\"regs_in\":{:?},\"flags_in\":{},\"regs_expected\":{:?},\"flags_expected\":{},\"record_schema\":2,\"defined_mask\":{},\"preserved_mask\":{},\"undefined_mask\":{},\"changed_flags_mask\":{},\"undefined_in\":{},\"undefined_expected\":{},\"native_rax_in\":\"{a:016x}\",\"native_rax_out\":\"{:016x}\"}}",hex(&bytes),hex(&native_bytes),initial.regs,initial.eflags,expected.regs,expected.eflags,policy.defined,policy.preserved,policy.undefined,changed_flags(op,w,b),initial.undefined_flags,expected.undefined_flags,h.a).map_err(|e|e.to_string())?;
             let mut actual=initial.clone();super::super::execute_flow(&program,&mut actual,dst,src,flow).map_err(|e|format!("{e:?}"))?;
             if let Some(error)=divergence(&actual,&expected,policy){json.flush().map_err(|e|e.to_string())?;return Err(format!("host CPU case{count} {name}{w} carry{carry}: {error}; initial={initial:?}"));}
@@ -252,7 +260,7 @@ fn verify_at(dir:&std::path::Path)->Result<(),String>{
     if !output.status.success(){return Err(format!("generated result differs from hardware: {}",String::from_utf8_lossy(&output.stderr)));}
     let fingerprint=data.iter().fold(0xcbf29ce484222325u64,|h,b|(h^u64::from(*b)).wrapping_mul(0x100000001b3));
     let toolchain=Command::new(&rustc).arg("--version").output().ok().map(|o|String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_else(||"unavailable".into());
-    let report=format!("PASS: HOST_CPU {count} native CPU cases match interpreter and generated Rust; ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT/AND/OR/XOR/TEST/SHL/SHR/SAR/ROL/ROR8/16/32,IMUL16/32,CLC/STC;CF0/1.\nThirty-one known-answer harness checks passed;58 encoding variants; independent defined/preserved/undefined masks (undefined values excluded from hardware comparison); preserved flags/registers/EIP and operation-specific undefined metadata checked.\nNative RAX upper-half policy checked separately; guest16-bit-default and native64-bit-mode encodings are recorded separately. This validates the admitted overlap,not a64-bit guest decoder or386 system/undefined/timing behavior.\n{}\nhost={}/{} version={} source={}\ntoolchain={}\ncase_data_fnv64={fingerprint:016x} (non-cryptographic fingerprint); no timing benchmark.\nArtifacts: {}",host_identity(),std::env::consts::OS,std::env::consts::ARCH,env!("CARGO_PKG_VERSION"),source_revision(),toolchain,dir.display());
+    let report=format!("PASS: HOST_CPU {count} native CPU cases match interpreter and generated Rust; ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT/AND/OR/XOR/TEST/SHL/SHR/SAR/ROL/ROR8/16/32,XCHG8/16/32,IMUL16/32,CLC/STC;CF0/1.\nThirty-four known-answer harness checks passed;61 encoding variants; independent defined/preserved/undefined masks (undefined values excluded from hardware comparison); preserved flags/registers/EIP and operation-specific undefined metadata checked.\nNative RAX upper-half policy checked separately; guest16-bit-default and native64-bit-mode encodings are recorded separately. This validates the admitted overlap,not a64-bit guest decoder or386 system/undefined/timing behavior.\n{}\nhost={}/{} version={} source={}\ntoolchain={}\ncase_data_fnv64={fingerprint:016x} (non-cryptographic fingerprint); no timing benchmark.\nArtifacts: {}",host_identity(),std::env::consts::OS,std::env::consts::ARCH,env!("CARGO_PKG_VERSION"),source_revision(),toolchain,dir.display());
     fs::write(dir.join("report.txt"),&report).map_err(|e|e.to_string())?;println!("{report}");Ok(())
 }
 }

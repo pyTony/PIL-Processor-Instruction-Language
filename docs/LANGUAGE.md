@@ -43,7 +43,9 @@ composition in the prototype, not a general include directive.
 | parity out input | bv<1> even parity of the low byte |
 | select out predicate yes no | Select one of two equal-width values; predicate must be bv<1> |
 | write dst input | Stage a destination write |
-| write_if dst input predicate | Stage a write only for predicate=1 |
+| write_if dst input predicate | Stage a destination write only for predicate=1 |
+| write src input | Stage a source-binding write; inferred width must agree with source reads |
+| write_if src input predicate | Stage a source-binding write only for predicate=1 |
 | flag CF input | Stage a defined flag value; input must be bv<1> |
 | preserve_flag CF | Explicitly preserve a flag value and its undefined-status bit |
 | preserve_flags all | Preserve all six arithmetic flags |
@@ -58,8 +60,8 @@ Declare preserve_flags remaining after all explicit classifications.
 Other EFLAGS bits are preserved automatically in this subset; privileged
 system-flag changes are not implemented.
 
-Only one destination-write statement is allowed per description, whether
-conditional or unconditional. The predicate does not exempt it from static
+Only one write statement per binding (dst and src) is allowed per description,
+whether conditional or unconditional. The predicate does not exempt it from static
 validation. Reads always observe the incoming state, even after a staged
 write; both interpreter and generated Rust use this rule.
 
@@ -299,3 +301,18 @@ data;flag_if classifies CF/OF by the masked count,preserving other flags and
 metadata. A count masked tozero differs from a full-width turn. CLC/STC use
 a one-bit constant,flag CF and preserve_flags remaining. Neither instruction
 family adds a semantic opcode to the token interpreter or Rust emitter.
+
+## Register exchange (0.17 alpha)
+
+XCHG8/16/32 register forms86/87 and AX/EAX accumulator forms91..97 are
+supported;90 remains NOP (equivalent self-exchange in the386 profile). Both
+operands are read before retirement,so AL/AH and identical-register aliases
+work. Upper bits,flags and undefined markers are preserved. Memory XCHG and
+LOCK remain outside this profile pending a bus-atomic memory interface.
+
+PIL now permits one staged write to each named binding,dst and src,including
+conditional source writes. All reads see incoming state. Active overlapping
+writes must agree on their shared bits;otherwise InvalidBinding is returned
+before any RAM,register,flag,marker or EIP commit. Source binding widths
+remain independently validated. This is a two-binding foundation,not arbitrary
+implicit-register writes or ordered multi-store support.

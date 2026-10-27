@@ -330,3 +330,21 @@ fn carry_controls_decode_with_operand_prefix_and_preserve_untouched_state(){
         assert_eq!((c.eflags,c.undefined_flags,c.eip),((0xad7&!1)|carry,0x8d4,ENTRY+bytes.len()as u32));
     }}
 }
+
+#[test]
+fn exchange_register_forms_aliases_accumulator_and_memory_diagnostics(){
+    use super::super::Cpu;
+    for(bytes,expected0,expected1)in [
+        (vec![0x86,0xc8],0x12345601,0xabcdef78),
+        (vec![0x86,0xe0],0x12347856,0xabcdef01),
+        (vec![0x86,0xc0],0x12345678,0xabcdef01),
+        (vec![0x87,0xc8],0x1234ef01,0xabcd5678),
+        (vec![0x91],0x1234ef01,0xabcd5678),
+        (vec![0x66,0x91],0xabcdef01,0x12345678),
+        (vec![0x90],0x12345678,0xabcdef01),
+    ]{
+        let mut c=Cpu{regs:[0x12345678,0xabcdef01,2,3,4,5,6,7],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};
+        execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!((c.regs[0],c.regs[1]),(expected0,expected1),"{bytes:02x?}");assert_eq!((c.eflags,c.undefined_flags),(0xad7,0x8d5));
+    }
+    for bytes in [vec![0x87,0x07],vec![0x86,0x07],vec![0xf0,0x87,0xc8],vec![0x87]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+}

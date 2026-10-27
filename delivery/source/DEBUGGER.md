@@ -600,3 +600,18 @@ checks as shifts even for zero counts; faults preserve CPU/RAM state.
 
 These instructions execute through descriptions and the existing generic PIL
 operations in both backends. No new interpreter-only CPU semantics were added.
+
+## Register exchange (0.17 alpha)
+
+XCHG8/16/32 register forms86/87 and AX/EAX accumulator forms91..97 are
+supported;90 remains NOP (equivalent self-exchange in the386 profile). Both
+operands are read before retirement,so AL/AH and identical-register aliases
+work. Upper bits,flags and undefined markers are preserved. Memory XCHG and
+LOCK remain outside this profile pending a bus-atomic memory interface.
+
+PIL now permits one staged write to each named binding,dst and src,including
+conditional source writes. All reads see incoming state. Active overlapping
+writes must agree on their shared bits;otherwise InvalidBinding is returned
+before any RAM,register,flag,marker or EIP commit. Source binding widths
+remain independently validated. This is a two-binding foundation,not arbitrary
+implicit-register writes or ordered multi-store support.

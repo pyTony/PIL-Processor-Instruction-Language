@@ -1623,6 +1623,29 @@
         "files": 76,
         "status": "open,mergeable;main unchanged"
       }
+    },
+    {
+      "version": "0.17.0-alpha.1",
+      "date": "2026-10-27",
+      "status": "implementation supplied;hosted execution pending",
+      "features": [
+        "write src and write_if src staged register effects",
+        "snapshot reads and overlapping-write conflict validation",
+        "register XCHG8/16/32 and accumulator forms"
+      ],
+      "expected_rust_tests": 182,
+      "backend_cases": 48,
+      "python_exchange_cases": 131216,
+      "python_status": "passed locally",
+      "expected_hardware_cases": 329896,
+      "native_encoding_variants": 61,
+      "native_harness_checks": 34,
+      "runtime_export_files": 77,
+      "limits": [
+        "two binding destinations only",
+        "one RAM store",
+        "no memory XCHG or LOCK"
+      ]
     }
   ]
 }

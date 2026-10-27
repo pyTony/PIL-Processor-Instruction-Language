@@ -167,6 +167,17 @@ impl Image {
                 let name=if opcode==0xf8{"clc"}else{"stc"};
                 (name.to_ascii_uppercase(),compile(&instantiate(description(name).map_err(GuestError::Decode)?,w),w))
             }
+            0x86|0x87=>{
+                if opcode==0x86{w=8;}
+                let m=r.byte()?;
+                if m>>6!=3{return Err(GuestError::Decode("memory XCHG requires bus-atomic support; register forms only".into()));}
+                dst=view((m&7)as usize,w);src=view(((m>>3)&7)as usize,w);
+                (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
+            }
+            0x91..=0x97=>{
+                dst=view(0,w);src=view((opcode&7)as usize,w);
+                (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
+            }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
             0x40..=0x4f=>{
                 dst=view((opcode&7) as usize,w);src=dst;

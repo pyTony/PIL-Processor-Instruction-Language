@@ -452,3 +452,12 @@ https://cdrdv2-public.intel.com/671294/252046-sdm-change-document.pdf
 Original paired-shift PIL descriptions and independent bit-at-a-time oracles.
 No manual text,implementation or external vectors imported. RCL/RCR are not
 implemented; the historical rotate page covers the whole instruction family.
+
+## 0.17 two-binding effects and register exchange —27 October2026
+
+Original staging/overlap validation and XCHG description. Existing Intel386
+programmer-reference and modern IntelSDM instruction references inform
+register exchange,flag preservation and separate long-mode32-bit write policy.
+No external implementation or vectors imported. Memory XCHG's bus-atomic
+requirements are deliberately deferred; register exchange does not imply a
+LOCK/multiprocessor memory model.

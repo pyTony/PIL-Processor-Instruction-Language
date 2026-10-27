@@ -730,3 +730,18 @@ Delivery head e010681736c87979f3bee77276e1ae27e4fa8f93; base main9653d8f.
 No release/tag or main merge performed. No ARM execution claimed for this increment.
 RCL/RCR,CMC and double shifts remain planned. Runtime PR: https://github.com/pyTony/pil_proof/pull/19
 Keep dev separate from main; user reviews/merges the delivery PR. No external386 suite execution claimed.
+
+## Two bound register effects and XCHG supplied —27 October2026
+
+First P0 slice permits one staged write per dst/src binding,including
+conditional source writes;reads always see incoming state. Active writes that
+overlap must assign identical shared bits,or fail InvalidBinding before RAM
+commit. Existing single-store and precise fault retirement are retained.
+XCHG register86/87 and accumulator91..97 use the shared PIL description.
+Memory XCHG/LOCK and arbitrary implicit-register/multi-store effects stay planned.
+Seven new tests (182 expected),48 full-state backend cases. Independent Python
+exchange checker passed131,216 cases locally. Modern hardware suite expected
+329,896 cases/61 variants/34 harness checks;both exchanged native registers
+and their upper-half policies are checked. Hosted execution pending.
+Runtime export77 files. PR19 was confirmed merged before this increment.
+Prepare a separate0.17 delivery PR after checks;main stays a strict runtime tree.

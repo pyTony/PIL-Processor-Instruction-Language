@@ -221,3 +221,12 @@ cases (4,861,954 trace bytes);full256x256 Mandelbrot and source/package checks
 also passed. Six new Rust tests cover rotations,aliases,CF control and faults.
 No ARM or external386 suite run is claimed. Runtime PR19 exports76 run/build
 files;native tooling and CI remain ondev.
+
+## Register-XCHG/two-binding expansion (execution pending)
+
+XCHG8/16/32 adds3 native forms:329,896 cases/61 variants/34 harness checks.
+Unlike previous forms,it changes both RAX and RCX. The native harness checks
+low-width exchange,byte/word high-bit preservation and32-bit upper clearing
+on both registers. Expected model records already contain all8 registers.
+All flags/markers are preserved. Generic alias/conditional/late-fault tests
+exercise the two-write PIL contract in both interpreter and emitted Rust.

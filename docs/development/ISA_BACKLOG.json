@@ -126,8 +126,8 @@
       "mnemonics_or_area": [
         "XCHG"
       ],
-      "status": "planned",
-      "remaining": "Register/register,memory and accumulator forms; implicit locking inP6",
+      "status": "partial",
+      "remaining": "Memory XCHG,implicit atomic bus locking and full mode/prefix audit;register forms implemented",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,15 +769,9 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.16.0-alpha.1",
-    "status": "verified on Windows/Linux;runtime PR19 open",
-    "planned_native_cases": 321784,
-    "planned_trace_cases": 45,
-    "hardware_cases_per_host": 321784,
-    "tests_passed_per_host": 175,
-    "backend_cases": 45,
-    "ci_run": 40423654988,
-    "source": "21d65da9a430d77ee3ad1e658afbeede907ae041",
-    "runtime_pr": 19
+    "version": "0.17.0-alpha.1",
+    "status": "two bindings and register XCHG supplied;host checks pending",
+    "expected_native_cases": 329896,
+    "expected_trace_cases": 48
   }
 }

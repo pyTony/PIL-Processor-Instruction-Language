@@ -38,7 +38,7 @@ class MemoryFault(Exception):
         super().__init__("flat RAM access fault")
 
 
-def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, current_eip=0, ram=None, address=0, readonly=()):
+def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, current_eip=0, ram=None, address=0, readonly=(), source_output=None):
     pending_store=None
     uses_memory=any(t[0] in ("read_address","load","store") for t in code)
     if uses_memory and ram is None:
@@ -56,6 +56,7 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
     pending_eip=flow["next"] if flow is not None else current_eip
     values = {}
     destination, flags = a, initial
+    source_value = b
     undefined = initial_undefined
     classified = 0
     for t in code:
@@ -66,6 +67,7 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
                 addr,data=pending_store
                 check_memory(addr,len(data),True)
                 ram[addr:addr+len(data)]=data
+            if source_output is not None:source_output[:] = [source_value]
             result=(destination, flags, undefined)
             return result if flow is None else result+(pending_eip,)
         if op == "require_width":
@@ -136,7 +138,8 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
             n,w=values[t[2]]
             assert cw==1 and w==width
             if c:
-                destination=(a & ~((1 << width)-1)) | n
+                if t[1]=="src":source_value=(b & ~((1 << w)-1)) | n
+                else:destination=(a & ~((1 << width)-1)) | n
         elif op == "read":
             w = int(t[3])
             values[t[1]] = ((a if t[2] == "dst" else b) & ((1 << w) - 1), w)
@@ -157,8 +160,10 @@ def interpret(code, a, b, width, initial, initial_undefined=0, flow=None, curren
             flags = (flags & ~(1 << bit)) | (n << bit)
         elif op == "write":
             n, w = values[t[2]]
-            assert w == width
-            destination = (a & ~((1 << width) - 1)) | n
+            if t[1]=="src":source_value=(b & ~((1 << w)-1)) | n
+            else:
+                assert w == width
+                destination = (a & ~((1 << width) - 1)) | n
         elif op in ("zext", "sext", "trunc"):
             n, old_width = values[t[2]]
             w = int(t[3])
