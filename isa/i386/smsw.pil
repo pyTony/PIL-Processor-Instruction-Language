@@ -1,0 +1,6 @@
+# Read the explicit normalized machine status; no CR0 write is modeled.
+require_width 16
+read_msw status
+write dst status
+preserve_flags all
+retire

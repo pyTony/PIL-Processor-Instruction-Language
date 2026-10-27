@@ -211,3 +211,19 @@ effects. Flags are preserved. Protected/V86 far returns and far calls/jumps are
 not implemented. Fetch bounds now refer to the initial physical window across
 CS changes;this permits aliases of imported code without permitting execution
 of unpacked/copied code outside the original bounded window.
+
+## DOS version compatibility profile (0.30)
+
+The bounded host shim now accepts INT21/AH30. Its default declared compatibility
+profile is6.22 (AX=1606h),initialized in the original PSP at offset0040h.
+Guest edits to that word affect subsequent queries. AL=1 on entry selects
+non-ROM version flags (BH=0);all other AL values select OEM FF. BL and CX are
+zero;register high halves,other registers,EFLAGS and undefined markers are
+preserved. A failed PSP read changes no return registers or output. This is
+metadata for the shim,not the version of a booted kernel or a claim of complete
+DOS6.22 functionality. Other unsupported DOS/BIOS services remain blockers.
+
+The implementation was checked against the
+[FreeDOS AH30 handler](https://github.com/FDOS/kernel/blob/d6791add2043c9d7b584d840a8ffaf8829fd2bdc/kernel/inthndlr.c)
+for input AL,PSP version and serial fields. The implementation is original;
+no kernel code is copied and the shim does not claim to be FreeDOS.

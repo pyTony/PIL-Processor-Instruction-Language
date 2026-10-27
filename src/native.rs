@@ -156,6 +156,17 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("retf_target_fault",vec![0x66,0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,0,1,0,1,0,0,0]));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("retf_frame_fault",vec![0xcb,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("retf_mode_reject",vec![0xcb,0xf4])?;t.image.real_mode=false;tests.push(t);
+    for w in [16,32]{for big in [false,true]{
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0x8f,4,0x24,0xf4]);
+        let mut t=case(match(w,big){(16,false)=>"popmem16_ss16",(16,true)=>"popmem16_ss32",(32,false)=>"popmem32_ss16",_=>"popmem32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
+    }}
+    for w in [16,32]{let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x64,0x8f,6,0,4,0xf4]);let mut t=case(if w==16{"popmem_fs16"}else{"popmem_fs32"},bytes)?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);}
+    for (name,msw,real) in [("smsw_zero",0,true),("smsw_supplied",0xa5a0,true),("smsw_protected",0xa5a0,false)]{let mut t=case(name,vec![0x0f,1,0xe0,0x0f,1,0xe3,0xf4])?;t.image.msw=msw;t.image.real_mode=real;t.regs[0]=0x12345678;t.regs[3]=0xabcdef01;t.flags=0xed7;tests.push(t);}
+    let mut t=case("smsw_memory",vec![0x0f,1,0x26,0,8,0x66,0x0f,1,0x26,2,8,0x67,0x0f,1,0x64,0x73,0,0xf4])?;t.regs[3]=0x400;t.regs[6]=8;t.image.msw=0xa5a0;tests.push(t);
+    let mut t=case("popmem_readonly",vec![0x67,0x8f,4,0x24,0xf4])?;t.regs[4]=0x800;t.protect=Some((0xa02,2));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("popmem_ss_fault",vec![0x8f,7,0xf4])?;t.regs[4]=0xffff;tests.push(t);
+    let mut t=case("smsw_readonly",vec![0x0f,1,0x26,0,8,0xf4])?;t.protect=Some((0x900,2));tests.push(t);
+    tests.push(case("smsw_boundary",vec![0x0f,1,0x26,0xff,0xff,0xf4])?);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
     let mut jump=case("jump_fault",vec![0xe9,0xff,0x7f])?;jump.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(jump);

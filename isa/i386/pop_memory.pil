@@ -1,0 +1,18 @@
+# Source is old SS:SP. Only the destination EA sees the post-pop ESP.
+require_width 16_or_32
+read_gpr old_sp 4 $S
+read_gpr old_esp 4 32
+zext stack_offset old_sp 32
+load_segment data 2 stack_offset $W
+const step $S $BYTES
+add new_sp old_sp step
+$WRAP_GUARD
+zext sp32 new_sp 32
+const high_mask 32 $HIGH_MASK
+and high old_esp high_mask
+or new_esp high sp32
+read_address_after destination 4 new_esp
+store destination data
+write_gpr 4 new_sp
+preserve_flags all
+retire
