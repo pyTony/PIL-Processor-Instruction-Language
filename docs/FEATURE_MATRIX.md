@@ -1,4 +1,4 @@
-# PIL 0.28.0-alpha.1 feature matrix
+# PIL 0.28.0-alpha.2 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -33,11 +33,12 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Binary decoder | Partial | Documented MOV/arithmetic/Jcc/SETcc/IN/OUT/HLT monitor encodings only |
 | Memory addressing | Supported subset | 16-bit ModR/M, 32-bit ModR/M/SIB, size and segment overrides |
 | RAM and faults | Supported subset | 4-KiB monitor RAM, little-endian unaligned accesses, atomic single-store retirement |
+| Real-mode CS data access | Supported subset | Ordinary monitor/DOS CS caches allow reads and writes; protected Code caches and RAM/segment limits remain enforced |
 | Segmentation | Partial | Supplied normalized caches, base/limit/permissions and expand-down checks; no descriptor loads |
 | Token interpreter | Supported | Default debugger engine; cached and uncached modes |
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
-| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 118 full-state trace cases and loop timings |
+| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 121 full-state trace cases and loop timings |
 | External hardware-derived suites | Planned | SingleStepTests CPU adapter and later test386.asm ROM; no external vectors/ROM executed yet |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |

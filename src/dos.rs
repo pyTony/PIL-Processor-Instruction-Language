@@ -1,7 +1,7 @@
 //! Bounded DOS executable importer and diagnostic runner, not a DOS/BIOS kernel.
 use std::{collections::BTreeMap,fmt::Write as _,io::Read,path::Path};
 use super::Cpu;
-use super::address::{MemoryContext,SegmentAccess,SegmentCache,SegmentRegister};
+use super::address::{MemoryContext,SegmentCache,SegmentRegister};
 use super::guest::{GuestError,Image,Operation};
 use super::memory::{MemWidth,Ram};
 #[path="dos_memory.rs"]
@@ -101,8 +101,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
-    let mut segments=selectors.map(SegmentCache::real_mode);
-    segments[SegmentRegister::Cs.index()].access=SegmentAccess::Code{readable:true};
+    let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
     Ok(Loaded{arena,format,cpu,ram,image:Image{start,end,segments,selectors,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
 }

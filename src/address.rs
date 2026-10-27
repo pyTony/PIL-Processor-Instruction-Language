@@ -67,6 +67,8 @@ pub struct SegmentCache { pub base: u32, pub limit: u32, pub access: SegmentAcce
 impl SegmentCache {
     // Ordinary real-mode cache after a segment load; does not model transitions
     // from protected mode with retained hidden caches ("unreal mode").
+    // CS uses these ordinary real-mode data-access permissions as well;
+    // Code caches describe protected-mode permissions, not the register name.
     pub fn real_mode(selector: u16) -> Self {
         Self { base: u32::from(selector) << 4, limit: 0xffff,
             access: SegmentAccess::Data { writable: true, expand_down: false, big: false } }
