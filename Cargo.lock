@@ -4,4 +4,4 @@ version = 4
 
 [[package]]
 name = "pil-proof"
-version = "0.31.0-alpha.1"
+version = "0.32.0-alpha.1"

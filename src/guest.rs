@@ -90,10 +90,11 @@ impl Image {
         };
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;
+        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
             if opcode==0xff&&extension==2{call_indirect=Some(m);opcode=0xe8;}
+            else if opcode==0xff&&extension==3{if m>>6==3{return Err(GuestError::Decode("far CALL requires a memory pointer".into()));}far_indirect=Some(m);opcode=0x9a;}
             else if opcode==0x8f || extension==6{
                 if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
                 if m>>6!=3{
@@ -147,6 +148,19 @@ impl Image {
             0xfa|0xfb=>{
                 let name=if opcode==0xfa{"cli"}else{"sti"};
                 (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
+            }
+            0x9a=>{
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let (target,label)=if let Some(m)=far_indirect{
+                    let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                    let seg=effective.resolve(&[0;8],override_segment)?.segment.index();
+                    (format!("read_address operand\nzext operand_wide operand 64\ncheck_segment {seg} operand_wide {}\nload target_value operand {w}\nconst slot 32 {}\nadd selector_at operand slot\nload selector selector_at 16",w/8+2,w/8),operand_name(dst,address))
+                }else{
+                    let offset=r.unsigned(w)?;let selector=r.unsigned(16)?;
+                    (format!("const target_value {w} {offset}\nconst selector 16 {selector}"),format!("{selector:04x}:{offset:08x}"))
+                };
+                let text=description("call_far").map_err(GuestError::Decode)?.replace("$FAR_TARGET",&target).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/4).to_string());
+                (format!("CALL FAR {label}"),compile(&instantiate(text,w),w))
             }
             0xe8=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};

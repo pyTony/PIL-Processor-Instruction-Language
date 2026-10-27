@@ -1,4 +1,4 @@
-# PIL 0.31.0-alpha.1 feature matrix
+# PIL 0.32.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -27,7 +27,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Register exchange | Supported subset | XCHG8/16/32 register forms86/87 and accumulator91..97; snapshots and aliases; memory/LOCK remain planned |
 | Register effects | Supported subset | Snapshot reads; ordered named GPR effects or bound writes; one staged segment-cache change and one RAM store |
 | Register views | Supported | 32-bit registers, low 16 bits, AL/AH-style byte views |
-| Calls and returns | Near plus real-mode far return subset | E8 relative and FF /2 register/memory CALL, C3/C2 RET; independent operand/SS sizes and byte cleanup; CB/CA real-mode RETF16/32 restores CS:IP transactionally; no far CALL/JMP or protected/V86 returns |
+| Calls and returns | Near and real-mode far subset | E8 relative and FF /2 register/memory CALL, C3/C2 RET; independent operand/SS sizes and byte cleanup; CB/CA real-mode RETF16/32 restores CS:IP transactionally; 9A/FF /3 real-mode CALL16/32 with two-slot frames; no far JMP, gates/tasks or protected/V86 transfers |
 | Comparison strings | Supported subset | CMPS/SCAS8/16/32, REPE/REPNE, DF, independent address sizes, source override/fixed ES and entry-flag fault recovery; no interrupt delivery |
 | Movement strings | Supported subset | MOVS/STOS/LODS8/16/32, address16/32, DF, source overrides and fixed ES; F3 REP with per-element progress/fault retry; F2 movement prefixes and interrupt delivery remain unsupported |
 | Conditional flow | Supported subset | Sixteen predicates, short/near binary Jcc and relative JMP and JCXZ/JECXZ; no indirect/far jumps |
@@ -40,7 +40,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Token interpreter | Supported | Default debugger engine; cached and uncached modes |
 | Decode/PIL cache | Supported | Byte/context validation, bounded capacity, statistics; code writes handled on reuse |
 | Rust-source instruction emitter | Supported | Validated PIL emitted as Rust functions; generated/interpreted comparisons |
-| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 160 full-state trace cases and loop timings |
+| Compiled Rust guest backend | Experimental | Offline rustc compilation of fixed guarded images; 175 full-state trace cases and loop timings |
 | External hardware-derived suites | Planned | SingleStepTests CPU adapter and later test386.asm ROM; no external vectors/ROM executed yet |
 | Trace verifier | Supported proof | --verify-backends; exact CPU/RAM/serial/stop comparison gates timing |
 | Direct PC CPU loop | x86-64 hosts | Equivalent ADD/SUB/JNZ arithmetic loop, checked result; no emulator overhead |
