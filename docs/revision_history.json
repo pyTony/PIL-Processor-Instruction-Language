@@ -1700,7 +1700,7 @@
     {
       "version": "0.18.0-alpha.1",
       "date": "2026-10-27",
-      "status": "implemented;CI pending",
+      "status": "Windows/Linux verified;runtime PR prepared",
       "features": [
         "LAHF/SAHF shared PIL and AH bindings",
         "status-byte fixed bits and selective metadata writes",
@@ -1710,11 +1710,26 @@
       "expected_rust_tests": 188,
       "backend_cases": 49,
       "python_flag_transfer_cases": 20480,
-      "python_status": "passed locally",
+      "python_status": "passed locally and on both CI hosts",
       "expected_hardware_cases_with_lahf_sahf": 340920,
       "native_encoding_variants_with_lahf_sahf": 64,
       "native_harness_checks_with_lahf_sahf": 40,
-      "runtime_export_files": 81
+      "runtime_export_files": 81,
+      "verification": {
+        "run": 40446250754,
+        "source": "f2056e697e8d5dff5d5001ffb3f0176e7a8e64ab",
+        "rust_tests_per_host": 188,
+        "hardware_cases_per_host": 340920,
+        "native_encoding_variants": 64,
+        "known_answer_harness_checks": 40,
+        "lahf_sahf_native": "executed on both hosts;not skipped",
+        "python_flag_transfer_cases": 20480,
+        "backend_cases": 49,
+        "trace_bytes": 4983058,
+        "full_mandelbrot": "256x256 passed on both hosts",
+        "runtime_packages": "81-file standalone source and unpacked native delivery passed on both hosts",
+        "arm": "not executed for this increment"
+      }
     }
   ]
 }

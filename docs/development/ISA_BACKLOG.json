@@ -152,7 +152,7 @@
         "SAHF"
       ],
       "status": "partial",
-      "remaining": "LAHF/SAHF implemented;full mode/prefix audit;host checks pending",
+      "remaining": "LAHF/SAHF implemented and Windows/Linux host-verified;full mode/prefix audit remains",
       "modern_user_mode_oracle": "feature_gated",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

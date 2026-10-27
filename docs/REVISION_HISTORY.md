@@ -1,3 +1,19 @@
+# LAHF/SAHF verified — 27 October 2026
+
+Windows/Linux CI40446250754 passed atf2056e697e8d5dff5d5001ffb3f0176e7a8e64ab:
+188 tests and340,920 native CPU cases per host,64 variants,40 known answers.
+LAHF/SAHF hardware forms actually executed on both hosts. All49 backend
+cases matched4,983,058 trace bytes. Python20,480 status-byte cases passed,
+as did existing oracles,full256x256 Mandelbrot and standalone81-file source
+builds/unpacked native packages. No ARM execution claimed for this increment.
+Runtime now includes the current PIL reference and links the full docs overview.
+
+Prepare a separate0.18alpha.1 delivery branch based on main;keep tests,CI and
+history ondev. User reviews/merges. This follow-up only records evidence/docs;
+execution source and export/package logic match testedf2056e69.
+Next instruction candidates remain RCL/RCR (count/CF policy),direction flag
+support and further P0 stack/ordered-effects work;do not claim them implemented.
+
 # LAHF/SAHF increment — 27 October 2026
 
 0.18.0-alpha.1 implements LAHF9F and SAHF9E with implicit AH bindings and

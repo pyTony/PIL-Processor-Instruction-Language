@@ -252,3 +252,8 @@ and keep the previous332,728 cases/62 variants/36 checks. Guest386 support
 is not gated by host CPUID. Independent masks preserve every LAHF flag and
 allow SAHF to define only0xD5. LAHF checks the packed AH byte and all64 native
 RAX bits outside AH;SAHF checks all registers remain unchanged.
+
+LAHF/SAHF verification: Windows/Linux CI40446250754 atf2056e69 passed
+340,920 native cases per host,64 variants and40 known answers. CPUID allowed
+the new forms on both hosts;neither was skipped. Both PIL backends matched.
+No ARM or complete386 verification claim is made.
