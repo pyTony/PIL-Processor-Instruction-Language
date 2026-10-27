@@ -1585,7 +1585,7 @@
     {
       "version": "0.16.0-alpha.1",
       "date": "2026-10-27",
-      "status": "implementation supplied;hosted execution pending",
+      "status": "host-verified;runtime-only PR19 awaiting user review",
       "features": [
         "ROL/ROR8/16/32 count1/CL/imm8 register/memory",
         "CLC/STC",
@@ -1598,7 +1598,31 @@
       "expected_hardware_cases": 321784,
       "native_encoding_variants": 58,
       "native_harness_checks": 31,
-      "runtime_export_files": 76
+      "runtime_export_files": 76,
+      "verification": {
+        "run": 40423654988,
+        "source": "21d65da9a430d77ee3ad1e658afbeede907ae041",
+        "rust_tests_per_host": 175,
+        "hardware_cases_per_host": 321784,
+        "native_encoding_variants": 58,
+        "known_answer_harness_checks": 31,
+        "python_description_cases_per_host": 278576,
+        "backend_cases": 45,
+        "trace_bytes": 4861954,
+        "full_mandelbrot": "256x256 comparison passed on both hosts",
+        "runtime_packages": "isolated source and unpacked delivery passed on both hosts",
+        "arm": "not executed for this increment"
+      },
+      "runtime_delivery": {
+        "pr": 19,
+        "url": "https://github.com/pyTony/pil_proof/pull/19",
+        "head": "e010681736c87979f3bee77276e1ae27e4fa8f93",
+        "base": "9653d8f6738a53320b5ff5c1c6ad966c2a756a11",
+        "source": "21d65da9a430d77ee3ad1e658afbeede907ae041",
+        "branch": "delivery/v0.16.0-alpha.1-rotates",
+        "files": 76,
+        "status": "open,mergeable;main unchanged"
+      }
     }
   ]
 }

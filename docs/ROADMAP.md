@@ -18,9 +18,10 @@ First slices: independent case/oracle infrastructure; named multiple register
 effects and ordered memory accesses; basic stack; near calls/returns; rotates/
 bit operations; implicit wide multiplication/division. Baseline165 tests/39
 original trace cases before the new host oracle. The [host CPU oracle](development/HOST_CPU_ORACLE.md)
-now passes85,176 hardware cases over ADD/SUB/ADC/SBB/CMP/INC/DEC/NEG/NOT/
-AND/OR/XOR/TEST and168 tests per Windows/Linux host,with independent
-defined/preserved/undefined flag masks. The pinned
+now passes321,784 hardware cases over arithmetic/logical/unary operations,
+shifts,IMUL,ROL/ROR and CLC/STC,with175 tests per Windows/Linux host and
+independent defined/preserved/undefined flag masks.0.16 runtime PR19 is ready;
+RCL/RCR,CMC and double shifts remain planned. The pinned
 SingleStepTests adapter remains planned. Older
 roadmap sections below are retained as history.
 

@@ -291,3 +291,11 @@ sources still perform a real word read with normal segment/RAM checks, including
 read-only sources. A same-register instruction is not skipped, so fetch and
 memory checks retain their normal behavior. In16-bit operand size,0F BF F8
 selects DI,AX;0F BF FF selects DI,DI.
+
+## Rotate and carry-constant descriptions (0.16)
+
+ROL/ROR are ordinary PIL descriptions:paired total shifts plus OR compute
+data;flag_if classifies CF/OF by the masked count,preserving other flags and
+metadata. A count masked tozero differs from a full-width turn. CLC/STC use
+a one-bit constant,flag CF and preserve_flags remaining. Neither instruction
+family adds a semantic opcode to the token interpreter or Rust emitter.

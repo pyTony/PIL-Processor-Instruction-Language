@@ -202,10 +202,22 @@ behavior or undocumented count rules. Runtime instructions remain unchanged.
 
 CI40422881682 passed226,008 native cases and169 tests per Windows/Linux host
 at811af3596bdd5157cff8c3f3c9769de2b8f91b0a. The subsequent0.16 increment adds
-ROL/ROR CL8/16/32 and CLC/STC,bringing the planned suite to321,784 cases,58
-encoding variants and31 native harness answers (execution pending).
+ROL/ROR CL8/16/32 and CLC/STC,bringing the verified suite to321,784 cases,58
+encoding variants and31 native harness answers (CI40423654988).
 
 Rotate data uses count modulo width; policy uses count&31. Masked-zero
 preserves all flags;otherwise CF is defined,OF defined only at masked count1
 and undefined at larger counts. PF/AF/ZF/SF are preserved,including markers.
 CLC/STC define CF and preserve every other bit/marker and full nativeRAX.
+
+## 0.16 verified delivery evidence
+
+[CI40423654988](https://github.com/pyTony/pil_proof/actions/runs/40423654988)
+passed175 tests and321,784 hardware cases per Windows/Linux host for source
+21d65da9a430d77ee3ad1e658afbeede907ae041. Both backends matched the admitted
+hardware outputs and independent metadata policy. Independent Python checked
+278,576 rotate/CF-control cases. Existing/new full-state backend coverage is45
+cases (4,861,954 trace bytes);full256x256 Mandelbrot and source/package checks
+also passed. Six new Rust tests cover rotations,aliases,CF control and faults.
+No ARM or external386 suite run is claimed. Runtime PR19 exports76 run/build
+files;native tooling and CI remain ondev.

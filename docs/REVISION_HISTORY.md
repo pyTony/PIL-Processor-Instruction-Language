@@ -721,9 +721,12 @@ Keep new runtime work ondev; prepare a strict delivery PR only after checks.
 Adds ROL/ROR8/16/32 register/memory,count1/CL/imm8,and CLC/STC via four PIL
 descriptions. No new interpreter/emitter semantic tokens. Preserve other flags,
 handle masked-zero/full-width turns distinctly,and retain RMW permission faults.
-Six new Rust tests (175 expected),45 full-state backend trace cases,278,576
-independent Python description cases (passed locally). Modern oracle adds
-rotates/all256 counts and carry controls:321,784 cases/58 variants/31 harness
-checks expected. Hosted execution pending. Runtime export76 files.
-RCL/RCR,CMC and double shifts remain planned. Prepare strict runtime delivery
-PR after CI,never merge dev into main. No external386 suite execution claimed.
+CI40423654988 passed on Windows/Linux at21d65da9a430d77ee3ad1e658afbeede907ae041:
+175 tests,45 full-state backend cases (4,861,954 trace bytes),278,576 independent
+Python description cases and321,784 native CPU cases/58 variants/31 harness
+checks per host. Full256x256 Mandelbrot and isolated runtime/package checks passed.
+Runtime export76 files; PR19 is open and mergeable,awaiting browser review.
+Delivery head e010681736c87979f3bee77276e1ae27e4fa8f93; base main9653d8f.
+No release/tag or main merge performed. No ARM execution claimed for this increment.
+RCL/RCR,CMC and double shifts remain planned. Runtime PR: https://github.com/pyTony/pil_proof/pull/19
+Keep dev separate from main; user reviews/merges the delivery PR. No external386 suite execution claimed.
