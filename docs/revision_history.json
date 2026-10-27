@@ -1893,6 +1893,44 @@
         "hardware": "existing modern-host overlap only; no new real-mode or ARM run",
         "hosted_environment": "GitHub Actions Windows and Linux"
       }
+    },
+    {
+      "version": "0.32.0-alpha.1",
+      "date": "2026-10-27",
+      "features": [
+        "Real-mode immediate 9A and memory FF /3 far CALL",
+        "Two ordered transactional staged RAM writes with existing shared PIL effects",
+        "Independent operand/address/SS widths and complete pointer/frame checks"
+      ],
+      "status": "hosted-ci-verified",
+      "verification": {
+        "code_commit": "fd1441eb12c1c7f496fa3a742a2fa16c2a2ca23f",
+        "workflow_run": 40590192023,
+        "local_environment": "Windows x86-64",
+        "rust_tests": 312,
+        "full_state_backend_cases": 175,
+        "trace_bytes": 7147554,
+        "runtime_files": 110,
+        "actual_freedos_image": {
+          "sha256": "f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36",
+          "steps_per_program": 100000,
+          "imported": 151,
+          "candidates": 156,
+          "exited": 6,
+          "freecom_programs_advanced": 16,
+          "new_freecom_stop": "DOS INT21/AH25",
+          "grep_stop": "memory XCHG opcode87",
+          "first_missing_encoding_programs_before": 21,
+          "first_missing_encoding_programs_after": 5
+        },
+        "limitations": [
+          "Real-mode only; protected/V86 gates/tasks unsupported",
+          "Deterministic wide CS zero padding; no new legacy hardware evidence",
+          "Contiguous stack frame profile; split-frame wrap and shutdown delivery unsupported",
+          "No new ARM run"
+        ],
+        "hosted_environment": "GitHub Actions Windows and Linux"
+      }
     }
   ]
 }

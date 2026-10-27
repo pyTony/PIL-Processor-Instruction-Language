@@ -9,8 +9,10 @@
 - Use a bounded contiguous return frame, matching the existing RETF profile.
   The wide CS slot is deterministically zero-padded, as with segment PUSH.
   No legacy hardware padding, split-frame wrap or shutdown behavior is claimed.
-- Local Windows: 312 tests passed, including nine new expected-state tests and
-  fifteen new full-state backend cases (175 total). Hosted checks are pending.
+- Windows/Linux CI 40590192023: 312 tests per host and 175 full-state
+  cases (7,147,554 matching trace bytes), standalone 110-file runtime, native
+  packages and full Mandelbrot checks passed. Local Windows also passed.
+  Nine new expected-state tests and fifteen backend cases cover this change.
 - Actual FD14LITE.img at 100000 steps: all sixteen FreeCom FF /3 blockers reach
   DOS AH=25; GREP passes 9A and reaches memory XCHG (87). Imports remain 151/156,
   exits six; first missing-encoding programs fall from 21 to five.

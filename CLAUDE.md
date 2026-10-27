@@ -1,21 +1,27 @@
-# Real-mode far CALL increment — 27 October 2026
+# Real-mode far CALL verified — 27 October 2026
 
-Version 0.32 adds 9A immediate and FF /3 memory calls via shared PIL effects.
-At most two staged RAM writes are supported, ordered and transactionally
-validated; loads after staging remain rejected. Complete pointer reads precede
-CS/IP pushes. Offset/pointer addressing/SS widths stay independent. The new
-frame is contiguous, with deterministic wide CS zero-padding consistent with
-existing segment PUSH; no split-frame wrap or legacy hardware behavior claim.
-Protected/V86 calls remain rejected; gates/tasks/exception delivery separate.
+Version 0.32 implements immediate 9A and memory FF /3 at 16/32 operand widths,
+independent pointer addressing and SS sizes. Shared PIL now permits at most two
+ordered staged RAM writes. Loads precede staging; both writes and all branch/
+binding checks precede commit. Pointer aliases and second-slot faults are tested.
 
-Local Windows: 312 tests passed, nine new expected-state tests and fifteen
-new backend cases (175 total). Hosted Windows/Linux checks pending.
-Actual local FD14LITE.img, budget100000: all16 FreeCom FF /3 blockers advance
-to DOS AH25; GREP's 9A advances to memory XCHG87. Missing-encoding programs
-21 -> 5: 2 0FBB, 1 0F01, 1 60, 1 87. Imported151/156, exits6.
-No disk-image/program files are uploaded. No new legacy real-mode hardware
-or ARM run is claimed. Keep source/tests on dev and strict runtime PRs on main;
-user authorizes uploads and reviews/merges delivery PRs.
+Local Windows: 312 tests passed; 175 full-state cases matched 7,147,554 trace
+bytes. Standalone 110-file runtime built and passed debugger, generated-Rust,
+DOS hello and ZIP checks. Hosted Windows/Linux CI 40590192023 passed on code
+commit fd1441eb12c1c7f496fa3a742a2fa16c2a2ca23f, including native packages and full Mandelbrot checks.
+
+Actual FD14LITE.img (SHA256 f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36),
+budget 100000: all 16 FreeCom FF /3 blockers reach DOS AH=25. GREP passes 9A and
+reaches memory XCHG 87. Missing-encoding programs 21 -> 5: 2 0FBB, 1 0F01, 1 60,
+1 87. Imports 151/156, exits 6. No third-party image/program files uploaded.
+
+This is ordinary real-mode support: protected/V86 calls, gates/tasks and
+exception/shutdown delivery remain separate. Wide CS padding is deterministically
+zero, consistent with existing segment PUSH; no new legacy hardware padding
+evidence is claimed. Frames are contiguous as required by the current RETF
+profile; split-frame wrap is rejected. No new legacy real-mode/ARM execution.
+Keep full development on dev and strict runtime/main delivery PRs. User
+authorizes uploads and reviews/merges delivery PRs.
 
 # Memory PUSH verified — 27 October 2026
 
