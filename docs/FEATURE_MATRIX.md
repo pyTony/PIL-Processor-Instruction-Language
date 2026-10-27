@@ -1,4 +1,4 @@
-# PIL 0.21.0-alpha.1 feature matrix
+# PIL 0.22.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -13,6 +13,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Image/archive imports | Bounded read-only subset | FAT16 MBR/superfloppy,ZIP stored/deflate,listing/new-directory extraction and probe deduplication;not FAT12/FAT32/ISO/ZIP64 |
 | DOS executable probe | Bounded diagnostic subset | COM/MZ relocation import, original hello, minimal print/exit host shim and first-blocker corpus reports; not full DOS |
 | Status-byte transfers | Supported subset | LAHF/SAHF with implicit AH; five status bits and fixed byte bits; OF preserved by SAHF |
+| Stack | Supported subset | Register PUSH/POP, immediate PUSH and segment PUSH; independent operand/SS sizes, precise RAM faults; memory forms and segment POP remain planned |
 | Direction flag | Supported subset | CLD/STD via shared PIL; DF bit10 defined, all other flags preserved; string operations remain planned |
 | Rotates / carry constants | Supported subset | ROL/ROR8/16/32,register/memory,count1/CL/imm8; CLC/STC/CMC. RCL/RCR remain planned |
 | Data conversion / addresses | Supported subset | MOVZX/MOVSX8-to16/32 and16-to16/32 (register/memory, including aliases). CBW/CWDE/CWD/CDQ and LEA16/32 preserve flags |

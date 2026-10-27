@@ -1,3 +1,15 @@
+# PIL 0.22.0-alpha.1
+
+- Add snapshot GPR reads and ordered staged GPR writes to PIL and both backends.
+- Add register PUSH/POP (50..5F,FF/6,8F/0),immediate PUSH (68,6A),and all six
+  segment PUSH forms,using explicit visible selectors and SS stack-size state.
+- Preserve flags,handle SP/ESP aliases,and retain CPU/RAM state on access faults.
+- Cache identity includes selectors and SS attributes;implicit stack accesses use SS.
+- Windows/Linux CI40487360431 passed223 tests and56 full-state backend cases,
+  5,133,394 trace bytes,full Mandelbrot and standalone/native-package checks.
+- Existing340,920 native CPU cases remain green;these are not new stack hardware cases.
+- Memory stack forms,segment POP/MOV,CALL/RET and interrupts remain separate work.
+
 # PIL 0.21.0-alpha.1
 
 - Add CLD/STD through shared PIL descriptions and explicit DF (EFLAGS bit 10).

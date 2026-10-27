@@ -51,6 +51,8 @@ enum Token {
     Read(usize, Binding, u8),
     ReadFlag(usize, Flag),
     ReadAddress(usize),
+    ReadGpr(usize, usize, u8),
+    WriteGpr(usize, usize, u8),
     Load(usize, usize, MemWidth),
     Store(usize, usize, MemWidth),
     ReadIp(usize, bool, u8),
@@ -184,6 +186,16 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if wrote {return Err("multiple destination writes".into());}
                     wrote=true; Token::WriteIf(a,c)
                 }
+                ["read_gpr", out, register, bits] => {
+                    let reg=number(register)? as usize;let w=width(bits)?;
+                    if reg>=8 || ![16,32].contains(&w){return Err("read_gpr needs register 0..7 and width16/32".into());}
+                    Token::ReadGpr(define(&mut names,&mut widths,out,w)?,reg,w)
+                }
+                ["write_gpr", register, input] => {
+                    let reg=number(register)? as usize;let a=slot(&names,input)?;let w=widths[a];
+                    if reg>=8 || ![16,32].contains(&w){return Err("write_gpr needs register 0..7 and bv16/32".into());}
+                    Token::WriteGpr(reg,a,w)
+                }
                 ["read_address", out] => Token::ReadAddress(define(&mut names,&mut widths,out,32)?),
                 ["load", out, address, bits] => {
                     if stored {return Err("loads after a staged store are not supported".into());}
@@ -291,6 +303,9 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
         })();
         tokens.push(parsed.map_err(|e| format!("line {}: {e}",line_no+1))?);
     }
+    if tokens.iter().any(|t|matches!(t,Token::WriteGpr(..))) && (wrote||wrote_src) {
+        return Err("named register effects cannot mix with bound writes".into());
+    }
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
@@ -348,12 +363,15 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut values: Vec<Value> = p.widths.iter().map(|&w| value(0,w)).collect();
     let mut pending_dst = None;
     let mut pending_src = None;
+    let mut pending_registers:Vec<(View,Value)>=Vec::new();
     let mut pending_flags = cpu.eflags;
     let mut pending_undefined = cpu.undefined_flags;
     for t in &p.tokens {
         match *t {
             Token::Read(o,b,w) => { let v = match b { Binding::Dst => dst, Binding::Src => src };
                 values[o] = value(cpu.read(v).bits,w); }
+            Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
+            Token::WriteGpr(reg,a,w)=>pending_registers.push((View{register:reg,low:0,width:w},values[a])),
             Token::ReadAddress(o)=>values[o]=value(address as u64,32),
             Token::Load(o,a,w)=>{
                 let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
@@ -435,6 +453,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 }
                 if let Some(x) = pending_dst { cpu.write(dst,x); }
                 if let Some(x) = pending_src { cpu.write(src,x); }
+                for (v,x) in pending_registers {cpu.write(v,x);}
                 cpu.eflags = pending_flags;
                 cpu.undefined_flags = pending_undefined;
                 cpu.eip = pending_eip;
@@ -484,6 +503,8 @@ fn description(name: &str) -> R<String> {
         "rol" => Some(include_str!("../isa/i386/rol.pil")),
         "ror" => Some(include_str!("../isa/i386/ror.pil")),
         "clc" => Some(include_str!("../isa/i386/clc.pil")),
+        "push" => Some(include_str!("../isa/i386/push.pil")),
+        "pop" => Some(include_str!("../isa/i386/pop.pil")),
         "cld" => Some(include_str!("../isa/i386/cld.pil")),
         "std" => Some(include_str!("../isa/i386/std.pil")),
         "stc" => Some(include_str!("../isa/i386/stc.pil")),
@@ -509,7 +530,7 @@ fn description(name: &str) -> R<String> {
     Err("unknown description: use add/sub/cmp/adc/sbb/and/or/xor/test/not/neg/inc/dec/nop/imul/movzx8/movzx16/movsx8/movsx16/lea/cwd/shl/sal/shr/sar/rol/ror/clc/stc/cmc/cld/std/lahf/sahf/xchg, set<condition>, j<condition>, or write_if_z".into())
 }
 fn instantiate(text: impl AsRef<str>, w: u8) -> String {
-    text.as_ref().replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
+    text.as_ref().replace("$S\n","16\n").replace("$S ","16 ").replace("$BYTES",&(w/8).to_string()).replace("$REG","0").replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
 }
 fn emit_rust(p: &Program) -> String {
     let mut out=String::from("// Generated from validated PIL tokens.\n");
@@ -538,7 +559,8 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_flags = *flags;\n\
          let mut pending_undefined = *undefined;\n\
          let mut pending_dst: Option<u64> = None;\n\
-         let mut pending_src: Option<u64> = None;\n",
+         let mut pending_src: Option<u64> = None;\n\
+         let mut pending_registers: Vec<(usize,u8,u64)> = Vec::new();\n",
         p.operand_width,p.source_width,p.uses_displacement,p.uses_memory));
     for t in &p.tokens {
         let line = match *t {
@@ -546,6 +568,8 @@ fn emit_rust_functions(p:&Program)->String {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
+            Token::ReadGpr(o,reg,w)=>format!("let v{o}: u64 = (regs[{reg}] as u64) & {}u64;",mask(w)),
+            Token::WriteGpr(reg,a,w)=>format!("pending_registers.push(({reg},{w},v{a}));"),
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
             Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;"),
             Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; pending_store=Some((store_addr,MemWidth::{w:?},v{v} as u32));"),
@@ -586,7 +610,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nif let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nif let Some((addr,w,v))=pending_store {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
@@ -714,6 +738,7 @@ fn main() -> R<()> {
         cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
     Ok(())
 }
+
 
 
 
