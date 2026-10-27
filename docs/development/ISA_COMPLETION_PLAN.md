@@ -188,3 +188,14 @@ tests and84 full-state backend cases on Windows/Linux. These are partial P2/P5
 results,not full family completion. Next use measured first blockers to choose
 among flags,remaining strings,indirect flow and DOS service work; preserve
 independent fault/retirement tests. Interrupt delivery and far transfers remain.
+
+## Real-mode flags and zero-count branches (0.26)
+
+CLI/STI,PUSHF/POPF16/32 and JCXZ/JECXZ now use shared PIL effects. Distinct STI
+shadow is traced with segment state; it survives partial REP and faults until
+full retirement. Independent tests cover flags masks,stack sizes/faults and
+branch count/target-size separation. CI40527735310:252 tests,96 full-state cases on
+Windows/Linux. P2/P8 remain partial:protected/V86 privilege checks,interrupt
+and exception delivery,stack shutdown and full mode/prefix/hardware audit remain.
+Choose next work from the updated actual-image first blockers and loader/model
+limits rather than declaring whole instruction families complete.

@@ -1,9 +1,21 @@
-# Real-mode flags and JCXZ — hosted verification pending
+# Real-mode flags and counter branches verified — 27 October 2026
 
-CLI/STI, PUSHF/POPF16/32 and JCXZ/JECXZ implemented via shared PIL.
-Distinct STI shadow is traced and retired across PIL/REP, monitor I/O and DOS
-bridges. Nine new unit tests and12 backend cases await Windows/Linux execution.
-Protected/V86 privilege checks and interrupt delivery remain outside scope.
+Windows/Linux CI40527735310 passed on 0e673f4f6db3b368bc37145803e53fca4f28f827:
+252 tests per host,96 full-state backend cases (6,026,172 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone101-file
+runtime source/native-package checks. New expected-state tests check visible
+386 FLAGS bits,reserved/RF/VM handling,independent operand/SS sizes,precise stack
+faults,mode rejection,JCXZ count/target sizes,limits and STI delay through REP
+fault/retry. No new hardware oracle or ARM run is claimed.
+
+FA/FB CLI/STI and9C/9D PUSHF/POPF16/32 are a real-mode subset;protected/V86
+contexts are explicitly rejected. STI delay is separate from SS shadow and
+included in full traces. IF-clear to IF-set creates delay;consecutive STI does
+not extend it. Full PIL/monitor-I/O/DOS-bridge retirement advances shadows;
+partial REP and faults preserve them. No interrupt/exception/NMI delivery or
+legacy stack-shutdown behavior is claimed. JCXZ/JECXZ uses address size for the
+counter and operand size for target wrapping,with flags/count untouched.
+The0.26 follow-up changes only versions/docs/evidence after verification.
 
 # Near CALL/RET and REP movement verified — 27 October 2026
 

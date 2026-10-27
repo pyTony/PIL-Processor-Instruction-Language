@@ -200,8 +200,8 @@
         "POPF",
         "POPFD"
       ],
-      "status": "planned",
-      "remaining": "Real mode first; reserved/privileged flag rules later",
+      "status": "partial",
+      "remaining": "Real-mode PUSHF/PUSHFD and POPF/POPFD implemented with386 visible/write masks and independent operand/SS sizes. Protected/V86 privilege rules,full prefix/mode/hardware audit and legacy shutdown delivery remain.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -235,7 +235,7 @@
         "Jcc"
       ],
       "status": "partial",
-      "remaining": "All16 predicates exist; mode/default-size/prefix/target fault audit",
+      "remaining": "All16 flag predicates plus address-sized JCXZ/JECXZ implemented. Full mode/prefix/encoding and hardware audit remains.",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -633,8 +633,8 @@
         "CLI",
         "STI"
       ],
-      "status": "planned",
-      "remaining": "CPL/IOPL/V86 checks and interrupt inhibition",
+      "status": "partial",
+      "remaining": "Real-mode CLI/STI implemented with traced STI shadow,full-retirement advancement and partial REP/fault retention. Protected/V86 CPL/IOPL rules and external interrupt/NMI delivery remain.",
       "modern_user_mode_oracle": "privileged_or_os",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,12 +769,12 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.25.0-alpha.1",
-    "status": "Near CALL/RET and REP movement verified Windows/Linux CI40511872914; full mode/prefix/hardware audit and remaining string/interrupt work remain.",
+    "version": "0.26.0-alpha.1",
+    "status": "Real-mode flags and counter branches verified Windows/Linux CI40527735310; protected/V86 rules and interrupt delivery remain.",
     "verified_native_cases_before_direction_followup": 340920,
     "verified_trace_cases_before_direction_followup": 49,
     "expected_trace_cases_with_direction_followup": 50,
-    "verified_rust_tests": 243,
-    "verified_trace_cases": 84
+    "verified_rust_tests": 252,
+    "verified_trace_cases": 96
   }
 }

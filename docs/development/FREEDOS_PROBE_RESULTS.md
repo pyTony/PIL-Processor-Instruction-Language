@@ -192,3 +192,51 @@ establish full application functionality. New budget stops remain inside REP;
 boundary examples fetch copied code beyond the imported window. Fault examples
 reach writes through CS, which the current segment model rejects. These are
 separate loader/model limitations exposed by further execution, not decoder gaps.
+
+## Real-mode flags and counter branches: local Linux CI runtime probe
+
+Linux CI artifact 0e673f4f probed unchanged FD14LITE.img locally with10,000
+execution steps per program. Stops: {'Service': 75, 'Budget': 22, 'Boundary': 19, 'Fault': 27, 'MissingEncoding': 2, 'Exit': 6}.
+Step budgets include REP elements; completed counts full instruction retirement.
+Previous0.25:27 encoding stops,51 service stops,27 faults,19 boundaries,21 budgets,6 exits.
+Image SHA256:f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36. No image/programs uploaded to CI or committed.
+No new ARM/new-instruction hardware run; these are first-blocker paths only.
+
+```text
+SUMMARY imported=151/156 exited=6; first missing-encoding blockers (program count):
+2 opcode c9
+Reached instruction mix (retired instructions; REP elements and DOS bridges listed separately):
+193431 REP MOVSW elements
+117029 REP MOVSB elements
+50152 REP STOSB elements
+1487 JNE
+1432 ADD
+1328 CALL
+1304 RET
+1066 MOV
+751 JB
+724 ADC
+507 XCHG
+429 MOVSB
+262 CMP
+227 INC
+221 JMP
+220 SUB
+218 JAE
+186 PUSH
+175 JCXZ
+175 XOR
+Budget counts execution steps (including REP elements);completed counts fully retired instructions.
+Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.
+```
+
+All three previous first decoder blockers (STI/PUSHF/JCXZ) disappear. Two
+programs now stop on C9 LEAVE. Reached CALL/RET rises53/30 to1328/1304.
+Service stops now dominate: INT21/AH4A resize20, INT10/AH08 read-character17,
+INT21/AH35 vector query14, AH30 version6, AH02 output4 and AH49 free4.
+These need coherent host services/machine models, not fake success responses.
+Six termination paths are unchanged (usage/placeholder/error paths included);
+there is no claim of complete DOS applications. The22 budgets,19 loaded-code
+window boundaries and27 model faults remain separate from encoding coverage.
+Next candidates are LEAVE and a bounded DOS-memory/vector-service design,along
+with explicit loader/real-mode segment-model work for copied code and CS writes.
