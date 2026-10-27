@@ -1,3 +1,24 @@
+# Memory POP, MSW and DOS version increment — 27 October 2026
+
+Based on dev 28bf3088 (RETF) and the user's v0.29 corpus summary.
+Adds 8F /0 memory POP with post-pop ESP address evaluation, explicit MSW/SMSW
+word forms, and DOS AH=30 through PSP:0040 with a declared 6.22 shim profile.
+
+Windows/Linux CI 40582461490 verifies code commit
+a0d578c4347fa4f182e4e93c53f12d7405e70580: 297 Rust tests per host,
+149 interpreter/generated full-state cases and 6,870,394 matching trace bytes.
+Standalone runtime export, package and full Mandelbrot checks passed.
+Local execution was unavailable because the host rejected its sandbox path;
+these results come from hosted CI.
+
+SP-wrap/ESP addressing is rejected where behavior is processor-family-specific.
+SMSW r32 and CR0 writes remain separate work. No full FreeDOS image or new
+legacy real-mode hardware/ARM execution is claimed. Existing modern-host native
+overlap checks do not independently verify the newly added forms.
+
+User standing authorization covers project uploads. Keep development on dev
+and runtime deliveries as separate main PRs; merging remains the user's action.
+
 # RETF real-mode increment — 27 October 2026
 
 Based on dev1195a351 (0.28alpha.2,Windows/Linux CI40570140583).

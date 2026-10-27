@@ -1,15 +1,23 @@
-# Memory POP,MSW and DOS-version increment — hosted checks pending
+# Memory POP, MSW and DOS version increment — 27 October 2026
 
-Based on dev28bf3088 (RETF) and the user's v0.29 corpus summary.
-Adds8F/0 memory POP with post-pop ESP address expressions,explicit MSW/SMSW
-word forms,and DOS AH30 through PSP:0040 with declared6.22 shim profile.
-Local exec startup failed due to the host sandbox path configuration;do not
-claim local tests passed. Expected297 tests and149 backend cases await
-Windows/Linux CI. SP-wrap/ESP addressing is explicitly rejected where Intel
-documents family-specific behavior;SMSWr32/CR0 writes remain separate.
-No full FreeDOS image or new real-mode hardware/ARM execution claimed.
-The user has standing authorization for all project uploads to this repo;
-keep development on dev and runtime deliveries as separate main PRs.
+Based on dev 28bf3088 (RETF) and the user's v0.29 corpus summary.
+Adds 8F /0 memory POP with post-pop ESP address evaluation, explicit MSW/SMSW
+word forms, and DOS AH=30 through PSP:0040 with a declared 6.22 shim profile.
+
+Windows/Linux CI 40582461490 verifies code commit
+a0d578c4347fa4f182e4e93c53f12d7405e70580: 297 Rust tests per host,
+149 interpreter/generated full-state cases and 6,870,394 matching trace bytes.
+Standalone runtime export, package and full Mandelbrot checks passed.
+Local execution was unavailable because the host rejected its sandbox path;
+these results come from hosted CI.
+
+SP-wrap/ESP addressing is rejected where behavior is processor-family-specific.
+SMSW r32 and CR0 writes remain separate work. No full FreeDOS image or new
+legacy real-mode hardware/ARM execution is claimed. Existing modern-host native
+overlap checks do not independently verify the newly added forms.
+
+User standing authorization covers project uploads. Keep development on dev
+and runtime deliveries as separate main PRs; merging remains the user's action.
 
 # Standing GitHub authorization — 27 October 2026
 

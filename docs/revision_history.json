@@ -1838,6 +1838,28 @@
         "runtime_packages": "106-file standalone runtime and unpacked Windows package passed",
         "full_mandelbrot": "256x256:65536 pixels,256 full-state checkpoints matched"
       }
+    },
+    {
+      "version": "0.30.0-alpha.1",
+      "date": "2026-10-27",
+      "status": "hosted-ci-verified",
+      "features": [
+        "Memory POP 8F /0 with post-pop destination address evaluation",
+        "SMSW word forms with explicit traced MSW state",
+        "DOS AH=30 with PSP:0040 and declared 6.22 profile"
+      ],
+      "verification": {
+        "code_commit": "a0d578c4347fa4f182e4e93c53f12d7405e70580",
+        "workflow_run": 40582461490,
+        "environment": "GitHub Actions Windows and Linux",
+        "rust_tests_per_host": 297,
+        "full_state_backend_cases": 149,
+        "trace_bytes": 6870394,
+        "runtime_files": 108,
+        "actual_freedos_image": "not rerun",
+        "hardware": "existing modern-host overlap only; no new real-mode or ARM run",
+        "local_execution": "unavailable due to host sandbox path rejection"
+      }
     }
   ]
 }
