@@ -278,3 +278,13 @@ use runtime caches and choose the stack-size variant at each stack instruction.
 References: Intel386 [MOV](https://pdos.csail.mit.edu/6.828/2012/readings/i386/MOV.htm),
 [POP](https://pdos.csail.mit.edu/6.828/2017/readings/i386/POP.htm),and
 [SS inhibition](https://pdos.csail.mit.edu/6.828/2004/readings/i386/s09_02.htm).
+
+## Direct-offset and immediate MOV forms (0.24)
+
+A0/A1 load AL/AX/EAX from a direct offset;A2/A3 store the accumulator. Address
+width (67) controls only encoded offset size,independently of operand width (66).
+DS is the default and segment overrides apply;loaded-cache limits still apply
+when the offset is32 bits. C6/C7 /0 writes an immediate to register or memory,
+including high-byte registers and existing16/32-bit ModRM/SIB forms. Other group
+extensions are rejected. These decode into existing PIL constant/load/store/write
+operations;flags and markers remain intact and stores commit after checks.

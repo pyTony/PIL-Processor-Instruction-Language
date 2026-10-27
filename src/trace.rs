@@ -8,6 +8,7 @@ pub fn fault(eip:u32,error:ExecError)->[u32;5] {
         ExecError::InvalidBinding=>[8,eip,0,0,0],ExecError::InvalidContext=>[9,eip,0,0,0],
     }
 }
+#[cfg(test)]
 pub fn record(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],flags:u32,undefined:u32,eip:u32,ram:&[u8],rx:&[u8],tx:&[u8]) {
     record_state(out,case,status,regs,flags,undefined,eip,ram,rx,tx,&[]);
 }

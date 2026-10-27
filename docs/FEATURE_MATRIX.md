@@ -1,4 +1,4 @@
-# PIL 0.23.0-alpha.1 feature matrix
+# PIL 0.24.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -7,6 +7,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Area | Status | What works / current limit |
 |---|---|---|
 | PIL data widths | Supported | Explicit 1..64-bit intermediate values; 8/16/32-bit guest operands |
+| MOV forms | Supported subset | Register/immediate, ModRM/SIB memory, A0..A3 moffs and C6/C7 /0; independent16/32 address and8/16/32 data sizes; segment-transfer limits apply |
 | Arithmetic and flags | Supported subset | ADD, ADC, SUB, SBB, CMP, AND, OR, XOR, TEST, NOT, NEG, INC, DEC; truncated signed IMUL16/32; flag preservation and undefined markers |
 | Multiplication | Supported subset | 0F AF and 69/6B truncated signed IMUL16/32, register/memory sources; no implicit double-width forms |
 | Shifts | Supported subset | SHL/SAL, SHR, SAR8/16/32; count1, CL, imm8; register/memory; no double shifts |
