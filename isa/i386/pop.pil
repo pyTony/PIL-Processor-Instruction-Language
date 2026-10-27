@@ -1,0 +1,11 @@
+# Increment stack pointer before writing destination (including SP/ESP).
+require_width 16_or_32
+read_gpr old_sp 4 $S
+zext offset old_sp 32
+load data offset $W
+const step $S $BYTES
+add new_sp old_sp step
+write_gpr 4 new_sp
+write_gpr $REG data
+preserve_flags all
+retire
