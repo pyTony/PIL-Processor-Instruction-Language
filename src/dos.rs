@@ -4,6 +4,9 @@ use super::Cpu;
 use super::address::{MemoryContext,SegmentAccess,SegmentCache,SegmentRegister};
 use super::guest::{GuestError,Image,Operation};
 use super::memory::{MemWidth,Ram};
+#[path="dos_memory.rs"]
+mod memory_arena;
+use memory_arena::{Arena,memory_service};
 const PSP:u16=0x1000;
 const LOAD:u16=PSP+0x10;
 const LIMIT:usize=0xa0000;
@@ -14,6 +17,7 @@ const MAX_OUTPUT:usize=16384;
 pub enum Format{Com,Mz}
 #[derive(Clone,Debug)]
 pub struct Loaded{
+    arena:Arena,
     pub format:Format,pub cpu:Cpu,pub ram:Ram,pub image:Image,
     pub selectors:[u16;6],pub relocations:usize,pub module_bytes:usize,
     pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
@@ -91,7 +95,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
         selectors[SegmentRegister::Cs.index()]=cs;selectors[SegmentRegister::Ss.index()]=ss;
         cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);start=(module_base as usize).saturating_sub(cs_base)as u32;end=(module_base as usize+module.len()-cs_base).min(65536)as u32;
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
-    let mut ram=Ram::new(allocation_end);
+    let mut ram=Ram::new(LIMIT);
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
     put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x81]=0x0d;
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
@@ -99,7 +103,8 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let mut segments=selectors.map(SegmentCache::real_mode);
     segments[SegmentRegister::Cs.index()].access=SegmentAccess::Code{readable:true};
-    Ok(Loaded{format,cpu,ram,image:Image{start,end,segments,selectors,real_mode:true,ss_shadow:0,sti_shadow:0},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
+    let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
+    Ok(Loaded{arena,format,cpu,ram,image:Image{start,end,segments,selectors,real_mode:true,ss_shadow:0,sti_shadow:0},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
@@ -122,6 +127,7 @@ fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
     match(vector,(p.cpu.regs[0]>>8)as u8){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
         (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
+        (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
             let offset=p.cpu.regs[2]&0xffff;let mut text=Vec::new();
             let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};

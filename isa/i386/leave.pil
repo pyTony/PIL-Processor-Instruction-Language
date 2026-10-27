@@ -1,0 +1,11 @@
+# SS address size selects SP/BP or ESP/EBP; operand size selects popped BP.
+require_width 16_or_32
+read_gpr frame 5 $S
+zext offset frame 32
+load_segment saved_bp 2 offset $W
+const step $S $BYTES
+add new_sp frame step
+write_gpr 4 new_sp
+write_gpr 5 saved_bp
+preserve_flags all
+retire

@@ -121,6 +121,10 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("control_mode_reject",vec![0xfb,0xf4])?;t.image.real_mode=false;tests.push(t);
     let mut t=case("sti_rep_fault",vec![0xfa,0xfb,0xf3,0xaa,0xf4])?;t.regs[1]=2;t.regs[7]=0xa00;t.protect=Some((0xa01,1));tests.push(t);
     for addr32 in [false,true]{for zero in [false,true]{let mut bytes=vec![];if addr32{bytes.push(0x67);}bytes.extend([0xe3,1,0x40,0xf4]);let mut t=case(match(addr32,zero){(false,false)=>"jcxz_nonzero",(false,true)=>"jcxz_zero",(true,false)=>"jecxz_nonzero",_=>"jecxz_zero"},bytes)?;t.regs[1]=if zero{if addr32{0}else{0xabcd0000}}else{1};tests.push(t);}}
+    for big in [false,true]{for w in [16,32]{let bytes=if w==32{vec![0x66,0xc9,0xf4]}else{vec![0xc9,0xf4]};let mut t=case(match(big,w){(false,16)=>"leave16_16",(false,_)=>"leave16_32",(true,16)=>"leave32_16",_=>"leave32_32"},bytes)?;t.regs[4]=0x400;t.regs[5]=if big{0x800}else{0xabcd0800};t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0x34,0x12,0x78,0x56]));t.flags=0xed7;tests.push(t);}}
+    let mut t=case("leave_fault",vec![0xc9,0xf4])?;t.regs[5]=0xffff;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("leave_readonly",vec![0xc9,0xf4])?;t.regs[5]=0x800;t.patch=Some((0xa00,vec![0x34,0x12]));t.protect=Some((0xa00,2));tests.push(t);
+    let mut t=case("leave_after_ss_load",vec![0xb8,0x30,0,0x8e,0xd0,0xc9,0xf4])?;t.regs[5]=0xabcd0800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true};t.patch=Some((0xb00,vec![0x34,0x12]));tests.push(t);
     let mut t=case("direction_controls",vec![0xfd,0xfd,0x66,0xfc,0x67,0xfd,0x2e,0xfc,0xf4])?;t.flags=0xed7;t.regs=[0x12345678;8];tests.push(t);
     let mut t=case("byte_flags",vec![0x9f,0xb4,0xd5,0x9e,0x9f,0xb4,0x2a,0x66,0x9e,0x67,0x9f,0xf4])?;t.flags=0xad7;t.regs[0]=0x12345678;tests.push(t);
     for w in [8,16,32]{
@@ -176,7 +180,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
                 code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&program)));
                 let args=format!("&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),{flow:?}",dst.register,dst.low,src.register,src.low);
                 let mut call=format!("i{ip:x}::execute_with_machine({args},&mut s.ram,{address:?},&mut s.machine)");
-                if program.tokens.iter().any(|t|matches!(t,super::Token::ReadGpr(_,4,_))){
+                if program.tokens.iter().any(|t|matches!(t,super::Token::ReadGpr(_,4,_)|super::Token::WriteGpr(4,_,_))){
                     let mut alternate=case.image.clone();let old_big=matches!(alternate.segments[2].access,super::address::SegmentAccess::Data{big:true,..});
                     if let super::address::SegmentAccess::Data{ref mut big,..}=alternate.segments[2].access{*big=!old_big;}
                     if let Operation::Pil{program:p,dst:d,src:r,flow:f,address:a}=alternate.decode(&ram,ip).map_err(|e|format!("alternate stack decode: {e:?}"))?.operation{
