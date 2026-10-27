@@ -1,7 +1,7 @@
 //! Real-mode selector/cache changes and precise commits, independent expectations.
 use super::*;
 use address::*;
-fn setup(bytes:&[u8])->(guest::Image,Ram,Cpu){let (image,mut ram)=guest::Image::load(bytes).unwrap();ram=Ram::new(0x21000);ram.write_bytes(0x100,bytes).unwrap();let c=Cpu{regs:[0x12345678;8],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100};(image,ram,c)}
+fn setup(bytes:&[u8])->(guest::Image,Ram,Cpu){let (image,_)=guest::Image::load(bytes).unwrap();let mut ram=Ram::new(0x21000);ram.write_bytes(0x100,bytes).unwrap();let c=Cpu{regs:[0x12345678;8],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100};(image,ram,c)}
 fn step(image:&mut guest::Image,ram:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{
     let d=image.decode(ram,c.eip).unwrap();if let guest::Operation::Pil{program,dst,src,flow,address}=d.operation{
         let mut machine=image.segment_state();let result=execute_machine(&program,c,dst,src,flow,ram,address,&mut machine);if result.is_ok(){image.set_segment_state(machine);}result

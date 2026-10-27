@@ -79,7 +79,9 @@ spaces use the CLI; the REPL uses whitespace-separated arguments. The existing
 | `IMPORT ERROR` | File/header/relocation/allocation checks rejected the input |
 
 A typical relocated EXE startup may load AX successfully and then stop on
-`8E D8` (`MOV DS,AX`), which is not yet implemented. That is a CPU gap; an
+`8E D8` (`MOV DS,AX`), now implemented for real-mode loads. The regression
+fixture continues to an intentionally unsupported `62` opcode at file offset37.
+That is a CPU gap; an
 unimplemented `INT21/AH30` DOS-version query is a separate service gap.
 Raw bytes are shown for context and are not claimed to be a decoded length.
 `file_offset` is the position in the original COM file or MZ load module plus
