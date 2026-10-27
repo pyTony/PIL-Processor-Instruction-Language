@@ -3,7 +3,7 @@
 Updated 27 October 2026. This is a development plan, not newly implemented CPU
 support. Verified baseline: v0.20.0-alpha.1, 210 tests, 49 backend trace
 cases and 340,920 narrow native overlap cases on Windows/Linux. External suites
-remain unexecuted. CLD/STD follow-up verification is pending separately.
+remain unexecuted. CLD/STD follow-up passed215 tests and50 backend cases on both hosts (CI40476098533).
 
 See [machine-readable backlog](ISA_BACKLOG.json), [parallel x86-64 plan](X86_64_VERIFICATION_PLAN.md),
 [external-suite integration](EXTERNAL_TEST_SUITES.md), and [OS targets](OS_COMPATIBILITY_TARGETS.md).
@@ -139,8 +139,8 @@ hardware cases before implementing each instruction's exception/commit rules.
 ## FreeDOS-driven next slices
 
 CLD/STD descriptions, DF state and decoder forms are implemented in the current
-follow-up, with independent Python, generated-code and native-ABI tests. Hosted
-Rust verification is pending. Next complete P0 independent stack-size/address and
+follow-up, with independent Python, generated-code and native-ABI tests. Windows/Linux
+Rust and native DF checks passed (CI40476098533). Next complete P0 independent stack-size/address and
 commit rules before admitting PUSH/POP. Segment PUSH/POP also needs visible
 selector state; existing hidden segment caches alone do not supply selectors.
 STI stays in P8 with interrupt shadows and delivery; do not emulate it as a bit

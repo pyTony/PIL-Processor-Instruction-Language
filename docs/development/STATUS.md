@@ -1,3 +1,15 @@
+# CLD/STD verified — 27 October 2026
+
+Windows/Linux CI40476098533 passed at5ec02f081aa618da0d44e541bb6d73da677428b4:
+215 tests per host,50 backend comparisons (5,008,114 trace bytes),98,304 independent
+Python direction cases and existing340,920 native overlap cases. The separate
+ABI-safe CLD/STD hardware test ran on both hosts. Full256x256 Mandelbrot and
+standalone88-file source/native package checks passed. No new ARM run claimed.
+
+0.21alpha.1 delivery follows this tested implementation; follow-up changes only
+version/documentation/evidence. Stack addressing and ordered effects remain P0
+before PUSH/POP. User reviews/merges runtime PR; project uploads authorized.
+
 # CLD/STD follow-up — implementation awaiting hosted verification
 
 Added explicit DF to PIL flags, CLD/STD descriptions and FC/FD decoding. Other

@@ -1,3 +1,15 @@
+# CLD/STD verified — 27 October 2026
+
+Windows/Linux CI40476098533 passed at5ec02f081aa618da0d44e541bb6d73da677428b4:
+215 tests per host,50 backend comparisons (5,008,114 trace bytes),98,304 independent
+Python direction cases and existing340,920 native overlap cases. The separate
+ABI-safe CLD/STD hardware test ran on both hosts. Full256x256 Mandelbrot and
+standalone88-file source/native package checks passed. No new ARM run claimed.
+
+0.21alpha.1 delivery follows this tested implementation; follow-up changes only
+version/documentation/evidence. Stack addressing and ordered effects remain P0
+before PUSH/POP. User reviews/merges runtime PR; project uploads authorized.
+
 # Containers and actual FreeDOS image verified — 27 October 2026
 
 Windows/Linux CI40470152015 atab63a6ec01b570bf29f5251e89f9f819b4fdba37

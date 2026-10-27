@@ -164,7 +164,7 @@
         "STD"
       ],
       "status": "partial",
-      "remaining": "CLD/STD and explicit DF in PIL implemented; Windows/Linux CI pending. Full mode/prefix audit and string instructions remain separate.",
+      "remaining": "CLD/STD and explicit DF host-verified on Windows/Linux; full mode/prefix audit and string instructions remain separate.",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,10 +769,12 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.20.0-alpha.1",
-    "status": "Register XCHG and two staged bindings host-verified; generalized named effects and independent stack addressing remain P0 work. CLD/STD follow-up CI pending.",
+    "version": "0.21.0-alpha.1",
+    "status": "CLD/STD verified on Windows/Linux CI40476098533; generalized named effects and independent stack addressing remain P0 work.",
     "verified_native_cases_before_direction_followup": 340920,
     "verified_trace_cases_before_direction_followup": 49,
-    "expected_trace_cases_with_direction_followup": 50
+    "expected_trace_cases_with_direction_followup": 50,
+    "verified_rust_tests": 215,
+    "verified_trace_cases": 50
   }
 }
