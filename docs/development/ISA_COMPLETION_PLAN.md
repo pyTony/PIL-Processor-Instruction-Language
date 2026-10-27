@@ -157,3 +157,14 @@ Explicit visible selectors are stored alongside caches. CI40487360431 passed
 operands require independent access contexts (POP memory uses updated ESP),and
 segment POP/MOV requires transactional selector/cache state and SS shadows.
 The single-store RAM model is not yet a general ordered MMIO/system model.
+
+## Real-mode segment follow-up (0.23)
+
+PIL now snapshots selectors and stages a real-mode selector/cache update at
+retirement. MOV8C/8E and POP ES/SS/DS/FS/GS are implemented;SS-shadow state is
+recorded across successful instruction/DOS-bridge retirements. Both backends
+use runtime segment contexts and full traces include caches/selectors/shadow.
+Windows/Linux CI40498283191 passed231 tests/62 cases. Descriptor-table loads,
+interrupt delivery and MOVr32,Sreg legacy upper-half policy remain unimplemented.
+Memory PUSH/POP still requires independent per-access contexts. Measured FreeDOS
+blockers now favor REP,moffs,CALL and PUSHF;no whole-program coverage claimed.

@@ -83,3 +83,26 @@ number of encoding stops does not mean no progress: these are new first blockers
 This supports prioritizing transactional segment-selector/cache updates next,
 alongside independent per-access addressing. No complete DOS program or boot
 milestone is claimed. The source image was not uploaded to GitHub CI.
+
+## Real-mode segment transfers: measured follow-up
+
+Compiled Linux CI artifact at6b2f7d1c was run locally on the unchanged image,
+10,000 steps per program:151/156 imported,116 encoding stops,24 service stops,
+8 model faults,3 exits. JEMFBHLP and MOVEXBDA print usage text and exit0;VCHKBOX
+remains a placeholder exit36. No driver operation or boot is established.
+Reached mix includes404 MOV,82 PUSH,31 POP. First segment MOV/POP blockers vanish:
+
+| First opcode | Programs | Interpretation |
+|---|---:|---|
+| F3 |54| Repeat prefix |
+| E8 |18| Near CALL |
+| A0 |17| MOV AL,moffs8 |
+| FB |16| STI |
+| 9C |5| PUSHF |
+| A3 |3| MOV moffs,AX/EAX |
+| AC |2| LODSB |
+| C7 |1| MOV immediate to r/m |
+
+SHARE now reaches the same CS-write model limitation as the prior seven faulting
+programs;this is a newly exposed path,not a new unsupported opcode. The source
+image stayed local and is not bundled in GitHub tests or runtime delivery.

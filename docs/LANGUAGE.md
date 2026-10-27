@@ -248,8 +248,10 @@ the original register; POP SP/ESP increments the stack pointer before writing
 the popped operand. A multi-byte access crossing the segment end faults rather
 than wrapping each byte. Initial segment PUSH ES/CS/SS/DS/FS/GS reads explicit visible
 selectors supplied by the loader, not inferred hidden-cache bases. Cache identity
-includes those selectors and the SS attributes. Memory operands, segment POP,
-CALL/RET and interrupt shadows remain separate follow-up work.
+includes those selectors and the SS attributes. Memory stack operands and
+CALL/RET remain follow-up work. Real-mode segment POP and SS inhibition state
+are implemented through the mutable segment-state API below; interrupt delivery
+remains separate.
 
 The `push`/`pop` example templates use a word stack and EAX/AX destination by
 default with --emit-rust. The decoder substitutes the actual SS size/register.

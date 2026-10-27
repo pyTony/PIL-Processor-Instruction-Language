@@ -187,7 +187,7 @@
         "POP"
       ],
       "status": "partial",
-      "remaining": "Register PUSH/POP and immediate PUSH host-build verified in both backends; memory forms and general per-access contexts remain. Independent SS sizes and SP/ESP aliases implemented.",
+      "remaining": "Register/immediate PUSH,register POP and real-mode segment PUSH/POP implemented. Memory stack operands and general per-access addressing remain.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -504,7 +504,7 @@
         "POP_segment"
       ],
       "status": "partial",
-      "remaining": "Visible selectors and all six segment PUSH forms implemented; POP/MOV loads,cache changes,SS shadow and protected validation remain.",
+      "remaining": "All segment PUSH and real-mode MOV8C/8E and POP ES/SS/DS/FS/GS verified in both backends. Protected descriptor loads, external interrupt delivery and MOVr32,Sreg legacy upper-half policy remain.",
       "modern_user_mode_oracle": "legacy_or_system",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -769,12 +769,12 @@
     }
   ],
   "implementation_followup": {
-    "version": "0.22.0-alpha.1",
-    "status": "Snapshot named GPR effects and initial stack forms verified Windows/Linux CI40487360431; generalized per-access memory and segment writes remain.",
+    "version": "0.23.0-alpha.1",
+    "status": "Real-mode segment effects and full-state traces verified Windows/Linux CI40498283191; memory stack operands and protected/interrupt behavior remain.",
     "verified_native_cases_before_direction_followup": 340920,
     "verified_trace_cases_before_direction_followup": 49,
     "expected_trace_cases_with_direction_followup": 50,
-    "verified_rust_tests": 223,
-    "verified_trace_cases": 56
+    "verified_rust_tests": 231,
+    "verified_trace_cases": 62
   }
 }

@@ -1,3 +1,26 @@
+# Real-mode segment transfers verified — 27 October 2026
+
+Windows/Linux CI40498283191 passed at6b2f7d1ceceb57f73786f01d17b0e40d09cc740b:
+231 tests per host,62 full-state backend cases (5,336,578 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone91-file source/
+native-package checks. New trace sections compare selectors,caches,mode and SS
+shadow after every instruction. No new segment hardware-oracle/ARM run claimed.
+
+Local execution of the Linux CI artifact on unchangedFD14LITE.img imported151/156:
+116 encoding stops,24 services,8 model faults,3 exits. JEMFBHLP and MOVEXBDA now
+print their usage and exit0;VCHKBOX exits36. This proves usage paths,not drivers.
+Counts:404MOV,82PUSH,31POP;segment MOV/POP first blockers are gone. The newly
+reached SHARE CS-write fault is the same model limitation as the prior7 faults.
+REP54,CALL18,moffs A0(17)/A3(3),STI16,PUSHF5,LODSB2,C7(1) remain first blockers.
+
+PIL read_segment/write_segment and execute_machine share real-mode updates in
+both backends. Segment POP uses old SS/stack width;SS load records boundary
+inhibition until successful following retirement. External interrupt/NMI/debug
+and protected loads remain unsupported;MOVr32,Sreg is rejected pending legacy
+upper-half policy. Memory PUSH/POP and per-access contexts remain next alongside
+moffs/CALL/string priorities. Runtime0.23 is a version/docs-only follow-up to
+the tested implementation;user reviews/merges delivery PR.
+
 # Initial stack forms verified — 27 October 2026
 
 Windows/Linux CI40487360431 passed at9189e64e7d18f9b0b87b55c6b2bba549c00a5236:
