@@ -48,11 +48,11 @@ pub enum Operation {
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8}
+pub struct Image {pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>}
 impl Image {
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
-    pub fn segment_state(&self)->SegmentState{SegmentState{segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow}}
-    pub fn set_segment_state(&mut self,s:SegmentState){self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;}
+    pub fn segment_state(&self)->SegmentState{SegmentState{segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,flag_checkpoint:self.flag_checkpoint}}
+    pub fn set_segment_state(&mut self,s:SegmentState){self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;}
 
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
@@ -62,7 +62,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],real_mode:true,ss_shadow:0,sti_shadow:0},ram))
+        Ok((Self{start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -72,17 +72,17 @@ impl Image {
     }
     pub fn decode(&self,ram:&Ram,eip:u32)->Result<Decoded,GuestError> {
         let mut r=Reader{image:self,ram,start:eip,pos:eip};
-        let mut wide=false;let mut addr32=false;let mut override_segment=None;let mut repeat=false;
+        let mut wide=false;let mut addr32=false;let mut override_segment=None;let mut repeat=None;
         let mut opcode=loop {
             let b=r.byte()?;
             match b {
-                0xf3 if !repeat=>repeat=true,
+                0xf2|0xf3 if repeat.is_none()=>repeat=Some(b),
                 0x66 if !wide=>wide=true,0x67 if !addr32=>addr32=true,
                 0x26|0x2e|0x36|0x3e|0x64|0x65 if override_segment.is_none()=>override_segment=Some(match b{0x26=>SegmentRegister::Es,0x2e=>SegmentRegister::Cs,0x36=>SegmentRegister::Ss,0x3e=>SegmentRegister::Ds,0x64=>SegmentRegister::Fs,_=>SegmentRegister::Gs}),
                 _=>break b,
             }
         };
-        if repeat&&!matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad){return Err(GuestError::Decode("REP currently supports MOVS/STOS/LODS only".into()));}
+        if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         // Normalize alternative register encodings while retaining consumed bytes.
         let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;
         if matches!(opcode,0xff|0x8f){
@@ -146,9 +146,16 @@ impl Image {
                 let name=match opcode{0xa4|0xa5=>"movs",0xaa|0xab=>"stos",_=>"lods"};
                 let body=match name{"movs"=>include_str!("../isa/i386/movs.pil"),"stos"=>include_str!("../isa/i386/stos.pil"),_=>include_str!("../isa/i386/lods.pil")};
                 let body=body.replace("$SEG",&override_segment.unwrap_or(SegmentRegister::Ds).index().to_string()).replace("$A",&a.to_string()).replace("$BYTES",&(w/8).to_string());
-                let text=if repeat{super::repeat_description(&body,a)}else{body};
+                let text=if repeat.is_some(){super::repeat_description(&body,a)}else{body};
                 let mnemonic=format!("{}{}",name.to_ascii_uppercase(),match w{8=>"B",16=>"W",_=>"D"});
-                (if repeat{format!("REP {mnemonic}")}else{mnemonic},compile(&instantiate(text,w),w))
+                (if repeat.is_some(){format!("REP {mnemonic}")}else{mnemonic},compile(&instantiate(text,w),w))
+            }
+            0xa6|0xa7|0xae|0xaf=>{
+                if opcode&1==0{w=8;}dst=view(0,w);src=dst;let a=if addr32{32}else{16};let name=if opcode<0xae{"cmps"}else{"scas"};
+                let body=description(name).map_err(GuestError::Decode)?.replace("$SEG",&override_segment.unwrap_or(SegmentRegister::Ds).index().to_string()).replace("$A",&a.to_string()).replace("$BYTES",&(w/8).to_string());
+                let text=if let Some(prefix)=repeat{super::compare_repeat_description(&body,a,prefix==0xf3)}else{body};
+                let mnemonic=format!("{}{}",name.to_ascii_uppercase(),match w{8=>"B",16=>"W",_=>"D"});
+                (if let Some(prefix)=repeat{format!("{} {mnemonic}",if prefix==0xf3{"REPE"}else{"REPNE"})}else{mnemonic},compile(&instantiate(text,w),w))
             }
             0xa0..=0xa3=>{
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;
@@ -253,10 +260,12 @@ impl Image {
                 }else{
                 if !(0x90..=0x9f).contains(&second) {return Err(GuestError::Decode(format!("unsupported opcode 0f {second:02x}")));}
                 let m=r.byte()?;
-                if m>>6!=3 || (m>>3)&7!=0 {return Err(GuestError::Decode("SETcc profile supports register destination with /0 only".into()));}
+                if (m>>3)&7!=0{return Err(GuestError::Decode("SETcc profile requires /0".into()));}
                 w=8;dst=view((m&7) as usize,w);src=dst;
                 let name=format!("set{}",CONDITIONS[(second&15) as usize]);
-                (format!("{} {}",name.to_ascii_uppercase(),register_name(dst)),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
+                let mut text=description(&name).map_err(GuestError::Decode)?;
+                if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("write dst result","read_address destination\nstore destination result");}
+                (format!("{} {}",name.to_ascii_uppercase(),operand_name(dst,address)),compile(&instantiate(text,w),w))
                 }
             }
             0x8d=>{

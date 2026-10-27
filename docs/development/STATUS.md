@@ -1,3 +1,11 @@
+# Comparison strings and memory SETcc — hosted verification pending
+
+CMPS/SCAS with F3/F2 ZF-controlled repeats and precise entry-flag recovery
+implemented through shared PIL. Memory SETcc uses existing selection/store.
+Eight new expected-state tests and15 backend cases await Windows/Linux CI.
+Memory PUSH/POP needs post-increment ESP effective-address handling and remains
+separate; SMSW needs an explicit machine-status model.
+
 # LEAVE and bounded DOS memory verified — 27 October 2026
 
 Windows/Linux CI40536350302 passed on 4256a139aca4a21b997483a967de25de7860984c:

@@ -355,3 +355,25 @@ commit the frame teardown only after a valid read; faults preserve all pending
 register/flag/memory/shadow state. Flags and undefined markers are preserved.
 The generated runner now dispatches alternative SS sizes for named SP writes
 as well as reads,covering LEAVE after a segment load. ENTER remains unsupported.
+
+## Comparison strings and memory SETcc (0.28 implementation)
+
+CMPS/SCAS8/16/32 use independent address16/32,DF,source segment override for
+CMPS and fixed ES destination. CMP subtraction effects define six arithmetic
+flags; pointers advance only on success. F3 REPE and F2 REPNE test the newly
+computed ZF after each element,not incoming ZF. Count zero avoids data access.
+Each element consumes a budget step;full retirement occurs on count exhaustion
+or failed ZF repeat condition. Movement-string F2 remains rejected.
+
+`checkpoint_flags` is a first-operation generic machine effect. Machine-backed
+execution remembers entry EIP/EFLAGS/undefined metadata across partial resumes.
+Execution faults restore that original flag state,clear the checkpoint and
+retain completed element count/pointer progress. Full retirement clears it.
+The checkpoint is included in traces;debugger and DOS runner retain fault-state
+updates. Normal single-element CMPS/SCAS faults retain incoming state. This
+models memory/execution fault recovery,not interrupt delivery or exception frames.
+
+SETcc may now store one byte to ordinary ModRM/SIB memory,using existing PIL
+conditional selection/store effects. A false predicate still stores zero and
+checks permissions. Flags/markers/registers are unchanged; /0 profile restriction
+and existing normalized segment/memory checks remain.

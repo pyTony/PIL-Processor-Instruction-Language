@@ -123,7 +123,7 @@ impl Debugger {
             Operation::Pil{program,dst,src,flow,address}=>{
                 let mut machine=self.image.as_ref().unwrap().segment_state();
                 let result=super::execute_machine(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*address,&mut machine);
-                if result.is_ok(){self.image.as_mut().unwrap().set_segment_state(machine);}
+                self.image.as_mut().unwrap().set_segment_state(machine);
                 match result{Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e)}
             }
             Operation::Input{next}=>{

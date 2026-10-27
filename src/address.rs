@@ -119,10 +119,12 @@ impl AddressContext {
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct SegmentState {
     pub segments:[SegmentCache;6],pub selectors:[u16;6],
-    pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,
+    pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>,
 }
 impl SegmentState {
-    pub fn retired(&mut self){self.ss_shadow=self.ss_shadow.saturating_sub(1);self.sti_shadow=self.sti_shadow.saturating_sub(1);}
+    pub fn checkpoint_flags(&mut self,eip:u32,flags:u32,undefined:u32){if self.flag_checkpoint.map(|v|v.0)!=Some(eip){self.flag_checkpoint=Some((eip,flags,undefined));}}
+    pub fn recover_flags(&mut self)->Option<(u32,u32)>{self.flag_checkpoint.take().map(|(_,f,u)|(f,u))}
+    pub fn retired(&mut self){self.flag_checkpoint=None;self.ss_shadow=self.ss_shadow.saturating_sub(1);self.sti_shadow=self.sti_shadow.saturating_sub(1);}
 }
 
 #[cfg(test)]

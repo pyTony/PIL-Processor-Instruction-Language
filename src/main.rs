@@ -52,6 +52,7 @@ enum Token {
     Read(usize, Binding, u8),
     ReadFlag(usize, Flag),
     ReadFlags(usize),
+    CheckpointFlags,
     RequireRealMode,
     InterruptShadowIf(usize),
     ReadAddress(usize),
@@ -91,7 +92,7 @@ enum Token {
     Retire,
 }
 #[derive(Clone, Debug)]
-struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, partial: bool }
+struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, partial: bool, checkpoint_flags:bool }
 
 fn number(s: &str) -> R<u64> {
     if let Some(hex) = s.strip_prefix("0x") {
@@ -197,6 +198,10 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if widths[c]!=1 {return Err("write_if predicate needs bv<1>".into());}
                     if wrote {return Err("multiple destination writes".into());}
                     wrote=true; Token::WriteIf(a,c)
+                }
+                ["checkpoint_flags"]=>{
+                    if tokens.iter().any(|t|!matches!(t,Token::PreserveFlags(0))){return Err("checkpoint_flags must precede all operations".into());}
+                    Token::CheckpointFlags
                 }
                 ["read_flags", out] => Token::ReadFlags(define(&mut names,&mut widths,out,32)?),
                 ["require_real_mode"] => Token::RequireRealMode,
@@ -357,11 +362,12 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
-    Ok(Program { partial,tokens, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory })
+    let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
+    Ok(Program { checkpoint_flags,partial,tokens, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -402,7 +408,10 @@ fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowConte
 }
 fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
     let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(&cpu.regs)?;(o,Some(c))}else{(0,None)};
-    execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(machine))
+    if p.checkpoint_flags{machine.checkpoint_flags(cpu.eip,cpu.eflags,cpu.undefined_flags);}
+    let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine));
+    if result.is_err()&&p.checkpoint_flags{if let Some((f,u))=machine.recover_flags(){cpu.eflags=f;cpu.undefined_flags=u;}}
+    result
 }
 fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
     ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
@@ -425,6 +434,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_undefined = cpu.undefined_flags;
     for t in &p.tokens {
         match *t {
+            Token::CheckpointFlags=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;},
             Token::ReadFlags(o)=>values[o]=value(cpu.eflags as u64,32),
             Token::RequireRealMode=>if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);},
             Token::InterruptShadowIf(c)=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_interrupt_shadow=values[c].bits!=0;},
@@ -565,7 +575,12 @@ fn repeat_description(body:&str,a:u8)->String{
     let body=body.replace("$A",&a.to_string());
     format!("read_gpr count 1 {a}\nzero empty count\nretire_if empty\n{}\nconst one {a} 1\nsub remaining count one\nwrite_gpr 1 remaining\nzero done remaining\nnot again done\nresume_if again\npreserve_flags all\nretire",body.strip_suffix("preserve_flags all\nretire\n").unwrap())
 }
+fn compare_repeat_description(body:&str,a:u8,equal:bool)->String{
+    let body=body.replace("$A",&a.to_string());let tail=if equal{"and again more zf"}else{"not different zf\nand again more different"};
+    format!("checkpoint_flags\nread_gpr count 1 {a}\nzero empty count\nretire_if empty\n{}\nconst one {a} 1\nsub remaining count one\nwrite_gpr 1 remaining\nzero done remaining\nnot more done\n{tail}\nresume_if again\nretire",body.strip_suffix("retire\n").unwrap())
+}
 fn description(name: &str) -> R<String> {
+    for (prefix,equal) in [("repe_",true),("repne_",false)]{if let Some(base)=name.strip_prefix(prefix){if matches!(base,"cmps"|"scas"){return Ok(compare_repeat_description(&description(base)?,16,equal));}}}
     if let Some(base)=name.strip_prefix("rep_"){if matches!(base,"movs"|"stos"|"lods"){return Ok(repeat_description(&description(base)?,16));}}
 
     let plain=match name {
@@ -605,6 +620,8 @@ fn description(name: &str) -> R<String> {
         "sti" => Some(include_str!("../isa/i386/sti.pil")),
         "jcxz" => Some(include_str!("../isa/i386/jcxz.pil")),
         "leave" => Some(include_str!("../isa/i386/leave.pil")),
+        "cmps" => Some(include_str!("../isa/i386/cmps.pil")),
+        "scas" => Some(include_str!("../isa/i386/scas.pil")),
         "cld" => Some(include_str!("../isa/i386/cld.pil")),
         "std" => Some(include_str!("../isa/i386/std.pil")),
         "stc" => Some(include_str!("../isa/i386/stc.pil")),
@@ -666,6 +683,7 @@ fn emit_rust_functions(p:&Program)->String {
         p.operand_width,p.source_width,p.uses_displacement,p.uses_memory));
     for t in &p.tokens {
         let line = match *t {
+            Token::CheckpointFlags=>"machine.as_deref().ok_or(ExecError::InvalidContext)?;".into(),
             Token::ReadFlags(o)=>format!("let v{o}:u64 = *flags as u64;"),
             Token::RequireRealMode=>"if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||*flags&0x20000!=0 {return Err(ExecError::InvalidContext);}".into(),
             Token::InterruptShadowIf(c)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_interrupt_shadow=v{c}!=0;"),
@@ -731,7 +749,14 @@ fn emit_rust_functions(p:&Program)->String {
     else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,None)\n}\n");}
     out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None,None)\n}\n");
     out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context),None)\n}\n");
-    out.push_str("pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{\nlet (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(machine))\n}\n");
+    out.push_str(&r#"pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
+let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};
+if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
+let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine));
+if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
+result
+}
+"#.replace("CHECKPOINT",&p.checkpoint_flags.to_string()));
     out.push_str("pub fn execute_with_metadata(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,dst:(usize,u8),src:(usize,u8))->Result<(), &'static str> {\n");
     if p.uses_flow || p.uses_memory {out.push_str("Err(\"flow context required: use execute_with_flow\")\n");}
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
@@ -902,3 +927,7 @@ mod control_flag_tests;
 #[cfg(test)]
 #[path = "../tests/unit/leave.rs"]
 mod leave_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/compare_strings.rs"]
+mod compare_string_tests;
