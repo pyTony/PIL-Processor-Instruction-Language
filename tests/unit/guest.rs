@@ -120,7 +120,7 @@ fn readonly_test_cmp_and_source_reads_succeed_while_rmw_faults_preserve_cpu(){
 }
 #[test]
 fn new_decode_forms_are_bounded_and_reserved_extensions_stay_unsupported(){
-    for bytes in [vec![0x81,0xc0,1],vec![0x83,0x86,0],vec![0xf7,0xc0,1],vec![0xff,0xd0],vec![0xf6,0xc8],vec![0xfe,0xd0],vec![0x82,0xc0,1]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    for bytes in [vec![0x81,0xc0,1],vec![0x83,0x86,0],vec![0xf7,0xc0,1],vec![0xff,0xd8],vec![0xf6,0xc8],vec![0xfe,0xd0],vec![0x82,0xc0,1]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
     for prefix in [vec![],vec![0x66]] {for opcode in 0x40..=0x4f {let mut bytes=prefix.clone();bytes.push(opcode);assert!(decode(&bytes).is_ok());}}
 }
 
