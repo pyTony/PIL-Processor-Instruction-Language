@@ -231,3 +231,25 @@ it clears their markers and preserves OF and all other flags/markers.
 LAHF copies concrete input bits without propagating diagnostic taint to AH.
 SAHF ignores AH bits1/3/5 and does not normalize unrelated supplied EFLAGS bits.
 Neither description adds a new semantic token or backend-specific handler.
+
+## Named general-register effects and initial stack forms
+
+`read_gpr out INDEX WIDTH` reads an incoming GPR (0..7 in EAX..EDI order)
+as bv16/bv32. `write_gpr INDEX value` stages a low16/full32 write. Reads always
+see incoming state; named writes commit in source order, so a later overlapping
+write overrides the earlier one. Mixing named writes with bound dst/src writes
+is rejected. All memory checks and the single staged RAM store precede register
+commit. This is a RAM-only precise-commit contract, not ordered MMIO/multi-store.
+
+PUSH/POP register and PUSH imm16/32/sign-extended imm8 use these effects. Stack
+address width comes from SS.big, separately from operand width (66). Address-size
+and segment overrides do not redirect the implicit SS access. PUSH SP/ESP reads
+the original register; POP SP/ESP increments the stack pointer before writing
+the popped operand. A multi-byte access crossing the segment end faults rather
+than wrapping each byte. Initial segment PUSH ES/CS/SS/DS reads explicit visible
+selectors supplied by the loader, not inferred hidden-cache bases. Cache identity
+includes those selectors and the SS attributes. Memory operands, segment POP,
+FS/GS forms, CALL/RET and interrupt shadows remain separate follow-up work.
+
+The `push`/`pop` example templates use a word stack and EAX/AX destination by
+default with --emit-rust. The decoder substitutes the actual SS size/register.

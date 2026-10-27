@@ -80,6 +80,13 @@ pub fn cases()->Result<Vec<Case>,String> {
     for count in [0,1]{let mut t=case(if count==0{"rotate_readonly_zero"}else{"rotate_readonly_one"},vec![0xc1,0x07,count,0xf4])?;
         t.regs[3]=0x400;t.protect=Some((0x500,4));tests.push(t);}
     let mut t=case("carry_controls",vec![0xf5,0xf5,0xf9,0xf5,0x66,0xf5,0x66,0xf8,0xf5,0xf9,0xf8,0xf4])?;t.flags=0xad7;tests.push(t);
+    for big in [false,true]{for w in [16,32]{
+        let mut bytes=Vec::new();for instruction in [vec![0x54],vec![0x58],vec![0x6a,0x80],vec![0x5b],vec![0x1e],vec![0x5f]]{if w==32{bytes.push(0x66);}bytes.extend(instruction);}bytes.push(0xf4);
+        let mut t=case(match(big,w){(false,16)=>"stack16_16",(false,_)=>"stack16_32",(true,16)=>"stack32_16",_=>"stack32_32"},bytes)?;
+        t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.flags=0xed7;tests.push(t);
+    }}
+    let mut t=case("stack_readonly",vec![0x50,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
+    let mut t=case("stack_boundary",vec![0x50,0xf4])?;t.regs[4]=1;tests.push(t);
     let mut t=case("direction_controls",vec![0xfd,0xfd,0x66,0xfc,0x67,0xfd,0x2e,0xfc,0xf4])?;t.flags=0xed7;t.regs=[0x12345678;8];tests.push(t);
     let mut t=case("byte_flags",vec![0x9f,0xb4,0xd5,0x9e,0x9f,0xb4,0x2a,0x66,0x9e,0x67,0x9f,0xf4])?;t.flags=0xad7;t.regs[0]=0x12345678;tests.push(t);
     for w in [8,16,32]{
