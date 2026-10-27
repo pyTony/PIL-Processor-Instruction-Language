@@ -237,3 +237,7 @@ CMC adds one native F5 form, two known answers and2,832 cases: expected
 332,728 cases/62 variants/36 harness checks. The oracle checks preserved
 registers and flags, both incoming carry values and concrete metadata policy.
 No hardware pass is claimed before the new CI run completes.
+
+CMC verification: Windows/Linux CI40443065185 at7bdfc1b0 passed332,728
+native cases per host,62 variants and36 known answers; both PIL backends
+matched. No ARM execution or complete386 coverage is claimed.

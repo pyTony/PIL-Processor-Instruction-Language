@@ -3,7 +3,8 @@
 - Add CMC (F5) through shared PIL semantics and binary decoding.
 - Preserve untouched state; document concrete incoming-CF metadata policy.
 - Add prefix/fetch-fault, generated-Rust and native CPU oracle coverage.
-- Rust/native execution for this increment is pending CI.
+- Windows/Linux CI40443065185 passed184 tests and332,728 native CPU cases per host;
+  all48 backend cases and full256x256 Mandelbrot comparisons passed.
 
 # PIL 0.17.0-alpha.1
 

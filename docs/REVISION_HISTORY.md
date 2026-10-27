@@ -1,3 +1,18 @@
+# CMC verified — 27 October 2026
+
+Windows/Linux CI40443065185 passed at7bdfc1b0b27e87f9a897d9a3c66f86da3d2f3a2a:
+184 tests and332,728 native CPU cases per host,62 encoding variants,36 known
+answers. All48 backend cases matched4,949,650 trace bytes. Independent Python
+rotate/carry327,728 and exchange131,216 cases passed. Full256x256 Mandelbrot,
+standalone78-file runtime builds and unpacked packages passed on both hosts.
+No ARM execution claimed for this increment. Incoming-CF diagnostic handling
+is a concrete PIL policy,not symbolic uncertainty propagation.
+
+Update existing runtime PR20 with0.17.0-alpha.2 (XCHG plus CMC),retaining a
+strict runtime tree. Tests,CI and history remain ondev; user reviews/merges.
+This follow-up changes evidence/docs only; execution source matches7bdfc1b0.
+User has authorized all project source/tests/docs/runtime uploads to this repo.
+
 # CMC increment — 27 October 2026
 
 0.17.0-alpha.2 adds CMC(F5) using read_flag/not/flag in a shared PIL

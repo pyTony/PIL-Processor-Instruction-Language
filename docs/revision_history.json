@@ -1666,7 +1666,7 @@
     {
       "version": "0.17.0-alpha.2",
       "date": "2026-10-27",
-      "status": "implementation supplied; development upload authorized; CI pending",
+      "status": "Windows/Linux verified;runtime PR20 update prepared",
       "features": [
         "CMC shared PIL description and F5 decoding",
         "concrete incoming-CF diagnostic policy",
@@ -1680,7 +1680,22 @@
       "native_harness_checks": 36,
       "python_rotate_carry_cases": 327728,
       "runtime_export_files": 78,
-      "python_status": "327728 rotate/carry cases passed locally; no Rust/native CMC result"
+      "python_status": "passed locally and on both CI hosts",
+      "verification": {
+        "run": 40443065185,
+        "source": "7bdfc1b0b27e87f9a897d9a3c66f86da3d2f3a2a",
+        "rust_tests_per_host": 184,
+        "hardware_cases_per_host": 332728,
+        "native_encoding_variants": 62,
+        "known_answer_harness_checks": 36,
+        "python_rotate_carry_cases": 327728,
+        "python_exchange_cases": 131216,
+        "backend_cases": 48,
+        "trace_bytes": 4949650,
+        "full_mandelbrot": "256x256 comparison passed on both hosts",
+        "runtime_packages": "isolated source and unpacked delivery passed on both hosts",
+        "arm": "not executed for this increment"
+      }
     }
   ]
 }
