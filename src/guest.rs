@@ -78,17 +78,19 @@ impl Image {
     }
     pub fn decode(&self,ram:&Ram,eip:u32)->Result<Decoded,GuestError> {
         let mut r=Reader{image:self,ram,start:eip,pos:eip};
-        let mut wide=false;let mut addr32=false;let mut override_segment=None;let mut repeat=None;
+        let mut wide=false;let mut addr32=false;let mut override_segment=None;let mut repeat=None;let mut locked=false;
         let mut opcode=loop {
             let b=r.byte()?;
             match b {
                 0xf2|0xf3 if repeat.is_none()=>repeat=Some(b),
+                0xf0 if !locked=>locked=true,
                 0x66 if !wide=>wide=true,0x67 if !addr32=>addr32=true,
                 0x26|0x2e|0x36|0x3e|0x64|0x65 if override_segment.is_none()=>override_segment=Some(match b{0x26=>SegmentRegister::Es,0x2e=>SegmentRegister::Cs,0x36=>SegmentRegister::Ss,0x3e=>SegmentRegister::Ds,0x64=>SegmentRegister::Fs,_=>SegmentRegister::Gs}),
                 _=>break b,
             }
         };
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
+        if locked&&!matches!(opcode,0x86|0x87){return Err(GuestError::Decode("LOCK requires memory XCHG in this profile".into()));}
         // Normalize alternative register encodings while retaining consumed bytes.
         let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;
         if matches!(opcode,0xff|0x8f){
@@ -367,9 +369,15 @@ impl Image {
             0x86|0x87=>{
                 if opcode==0x86{w=8;}
                 let m=r.byte()?;
-                if m>>6!=3{return Err(GuestError::Decode("memory XCHG requires bus-atomic support; register forms only".into()));}
                 dst=view((m&7)as usize,w);src=view(((m>>3)&7)as usize,w);
-                (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
+                let memory=m>>6!=3;
+                if locked&&!memory{return Err(GuestError::Decode("LOCK XCHG requires a memory operand".into()));}
+                let text=if memory{
+                    address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
+                    dst=src;
+                    include_str!("../isa/i386/xchg_ram.pil")
+                }else{description("xchg").map_err(GuestError::Decode)?};
+                (format!("XCHG {},{}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
             }
             0x91..=0x97=>{
                 dst=view(0,w);src=view((opcode&7)as usize,w);
@@ -512,4 +520,5 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
 

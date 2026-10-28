@@ -1,0 +1,9 @@
+# Indivisible ordinary-RAM exchange in the single-executor machine.
+# Snapshot register/address before effects; validate the store before commit.
+read_address addr
+read value src $W
+load old addr $W
+store addr value
+write src old
+preserve_flags all
+retire

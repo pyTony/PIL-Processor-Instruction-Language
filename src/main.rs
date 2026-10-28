@@ -1001,3 +1001,8 @@ mod push_memory_tests;
 #[cfg(test)]
 #[path = "../tests/unit/call_far.rs"]
 mod call_far_tests;
+
+
+#[cfg(test)]
+#[path = "../tests/unit/exchange_memory.rs"]
+mod exchange_memory_tests;

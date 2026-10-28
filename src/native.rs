@@ -14,6 +14,18 @@ fn case(name:&'static str,bytes:Vec<u8>)->Result<Case,String> {
 pub fn cases()->Result<Vec<Case>,String> {
     let mut tests=vec![case("selftest",guest::selftest_bytes()?)?,case("hello",guest::hello_bytes()?)?,case("factorials",guest::factorial_bytes()?)?,case("loop17",guest::loop_bytes(17)?)?];
     tests[0].rx.push(65);
+    for (name,bytes) in [
+        ("xchg_ram8",vec![0x86,7,0xf4]),("xchg_ram16",vec![0x87,7,0xf4]),
+        ("xchg_ram32",vec![0x66,0x87,7,0xf4]),("xchg_ram_locked",vec![0xf0,0x87,7,0xf4]),
+        ("xchg_ram_bh_alias",vec![0x86,0x3f,0xf4]),("xchg_ram_esp",vec![0x66,0x67,0x87,0x24,0x24,0xf4]),
+        ("xchg_ram_fs",vec![0x64,0x87,7,0xf4]),("xchg_ram_ss",vec![0x87,0x46,0,0xf4]),
+        ("xchg_ram_readonly",vec![0x87,7,0xf4]),("xchg_ram_limit",vec![0x66,0x87,7,0xf4]),
+    ] {
+        let mut t=case(name,bytes)?;t.regs[0]=0x12345678;t.regs[3]=0x700;t.regs[4]=0x700;t.regs[5]=0x700;t.flags=0xed7;
+        t.patch=Some((if name=="xchg_ram_fs"{0xa00}else if name=="xchg_ram_ss"||name=="xchg_ram_esp"{0x900}else{0x800},vec![0xef,0xbe,0xad,0xde]));
+        if name=="xchg_ram_readonly"{t.protect=Some((0x801,1));}if name=="xchg_ram_limit"{t.image.segments[3].limit=0x702;}tests.push(t);
+    }
+
     let mut memory=case("readonly_store",vec![0x66,0x89,0x07,0xf4])?;memory.regs[0]=0xdeadbeef;memory.regs[3]=0x400;memory.protect=Some((0x500,4));tests.push(memory);
     let mut branch=case("branch_fault",vec![0x74,0x7f,0xf4])?;branch.flags=0x246;branch.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(branch);
     let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0x62]));tests.push(changed);
@@ -507,4 +519,5 @@ pub fn compare_mandelbrot(size:u32,iterations:u32)->Result<String,String>{
     let gate=verify_at(&directory.join("verification"))?;
     Ok(format!("{gate}\n{}",compare_mandelbrot_at(&directory.join("mandelbrot"),size,iterations)?))
 }
+
 

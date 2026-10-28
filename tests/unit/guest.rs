@@ -384,7 +384,7 @@ fn exchange_register_forms_aliases_accumulator_and_memory_diagnostics(){
         let mut c=Cpu{regs:[0x12345678,0xabcdef01,2,3,4,5,6,7],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};
         execute_one(&bytes,&mut c,0,false).unwrap();assert_eq!((c.regs[0],c.regs[1]),(expected0,expected1),"{bytes:02x?}");assert_eq!((c.eflags,c.undefined_flags),(0xad7,0x8d5));
     }
-    for bytes in [vec![0x87,0x07],vec![0x86,0x07],vec![0xf0,0x87,0xc8],vec![0x87]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    for bytes in [vec![0xf0,0x87,0xc8],vec![0x87]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
 }
 
 #[test]
@@ -424,3 +424,4 @@ fn setcc_memory_faults_are_transactional_and_do_not_require_a_read(){
  for readonly in [false,true]{let bytes=[0x0f,0x95,0x07];let mut c=Cpu{regs:[0x12345678;8],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};c.regs[3]=if readonly{0x400}else{0xffff};let old=c.clone();assert!(execute_one(&bytes,&mut c,99,readonly).is_err());assert_eq!(c,old);}
  for bytes in [vec![0x0f,0x95,0x06,0],vec![0xf0,0x0f,0x95,7],vec![0x0f,0x95,0x0f]]{assert!(decode(&bytes).is_err());}
 }
+

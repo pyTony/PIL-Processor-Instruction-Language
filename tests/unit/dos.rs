@@ -1,4 +1,47 @@
 use super::*;
+#[test]
+fn dos_vectors_round_trip_all_entries_and_preserve_flags_and_upper_bx(){
+ for vector in 0..=255u32{
+  let mut p=load(&[0xcd,0x21],"vectors.com").unwrap();
+  let ds=SegmentRegister::Ds.index();p.image.selectors[ds]=0xfedc;p.selectors[ds]=0xfedc;
+  p.image.segments[ds]=SegmentCache::real_mode(0xfedc);
+  p.cpu.regs[0]=0xabcd2500|vector;p.cpu.regs[2]=0x9876ffff;p.cpu.regs[3]=0x12345678;
+  p.cpu.eflags=0xad7;p.cpu.undefined_flags=u32::MAX;
+  let old=p.cpu.clone();let image=p.image.clone();let mut out=vec![65];
+  assert_eq!(service(&mut p,0x21,&mut out).unwrap(),None);
+  assert_eq!(p.cpu,old);assert_eq!(p.image,image);
+  assert_eq!(p.ram.load(vector*4,MemWidth::Dword).unwrap(),0xfedcffff);
+  p.cpu.regs[0]=0xabcd3500|vector;let mut want=p.cpu.clone();want.regs[3]=0x1234ffff;
+  let ram=p.ram.clone();assert_eq!(service(&mut p,0x21,&mut out).unwrap(),None);
+  assert_eq!(p.cpu,want);assert_eq!(p.ram,ram);assert_eq!(out,vec![65]);
+  let es=SegmentRegister::Es.index();assert_eq!(p.selectors[es],0xfedc);
+  assert_eq!(p.image.selectors[es],0xfedc);assert_eq!(p.image.segments[es],SegmentCache::real_mode(0xfedc));
+ }
+}
+#[test]
+fn dos_vector_faults_leave_cpu_ram_and_segments_unchanged(){
+ for ah in [0x25,0x35]{for length in [1020,1021,1022,1023]{
+  let mut p=load(&[0xcd,0x21],"vectors.com").unwrap();p.cpu.regs[0]=(ah<<8)|255;p.ram=Ram::new(length);
+  let old=p.clone();let mut out=vec![65];assert!(service(&mut p,0x21,&mut out).is_err());
+  assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);assert_eq!(p.image,old.image);assert_eq!(p.selectors,old.selectors);assert_eq!(out,vec![65]);
+ }}
+ for byte in 0..4{
+  let mut p=load(&[0xcd,0x21],"vectors.com").unwrap();p.cpu.regs[0]=0x25ff;p.cpu.regs[2]=0x1234;
+  p.ram.protect(1020+byte,1).unwrap();let old=p.clone();let mut out=vec![];
+  assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);assert_eq!(p.image,old.image);
+ }
+}
+#[test]
+fn dos_vector_bridge_retires_and_reads_guest_ivt_edits(){
+ let mut p=load(&[0xcd,0x21,0x62],"vectors.com").unwrap();p.cpu.regs[0]=0x35ff;
+ p.ram.store(1020,MemWidth::Dword,0x43218765).unwrap();
+ let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{..}));
+ assert_eq!((r.completed,r.pil_steps,r.dos_calls),(1,0,1));assert_eq!(r.loaded.cpu.eip,0x102);
+ assert_eq!(r.loaded.cpu.regs[3],0x8765);assert_eq!(r.loaded.image.selectors[0],0x4321);
+ let mut p=load(&[0xcd,0x21,0xb8,0,0x4c,0xcd,0x21],"vectors.com").unwrap();p.cpu.regs[0]=0x2500;p.cpu.regs[2]=0x5678;
+ let r=run(p,10).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(3,1,2));
+ assert_eq!(r.loaded.ram.load(0,MemWidth::Dword).unwrap(),0x10005678);
+}
 fn exe(module:&[u8],relocs:&[(u16,u16)])->Vec<u8>{
     let hsize=((28+relocs.len()*4+15)/16)*16;let mut h=vec![0;hsize];h[..2].copy_from_slice(b"MZ");let size=hsize+module.len();
     put_word(&mut h,2,(size%512)as u16);put_word(&mut h,4,((size+511)/512)as u16);
@@ -119,3 +162,4 @@ fn dos_version_query_retires_bridge_then_reaches_next_blocker_or_exit(){
 fn dos_version_failed_psp_read_changes_no_registers_or_output(){
  let mut p=load(&[0xcd,0x21],"version.com").unwrap();p.cpu.regs[0]=0x3000;p.ram=Ram::new(u32::from(PSP)as usize*16+0x41);let old=p.cpu.clone();let oldram=p.ram.clone();let mut out=vec![65];assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old);assert_eq!(p.ram,oldram);assert_eq!(out,vec![65]);
 }
+
