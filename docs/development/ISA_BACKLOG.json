@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-10-27",
+  "updated": "2026-10-28",
   "baseline": {
     "version": "0.20.0-alpha.1",
     "dev_commit": "ab63a6ec01b570bf29f5251e89f9f819b4fdba37",
@@ -554,8 +554,8 @@
       "mnemonics_or_area": [
         "LOCK"
       ],
-      "status": "planned",
-      "remaining": "Legal memory RMW,implicit XCHG locking and invalid prefixes",
+      "status": "partial",
+      "remaining": "Explicit memory XCHG LOCK supported in single-executor ordinary RAM;other legal locked RMW,MMIO/concurrent buses and full mode/prefix audit remain",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

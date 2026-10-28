@@ -6,6 +6,16 @@ and development plans. The complete documentation lives on the
 The [main branch](https://github.com/pyTony/pil_proof/tree/main) is a separate
 runtime delivery and contains a smaller set of user documentation.
 
+## Current delivery: 0.33.0-alpha.1
+
+[PR38](https://github.com/pyTony/pil_proof/pull/38) adds DOS AH25/35 vector
+services and ordinary-RAM memory XCHG86/87, including explicit memory LOCK.
+[Windows/Linux CI40621030314](https://github.com/pyTony/pil_proof/actions/runs/40621030314)
+passed319 Rust tests,185 full-state cases (7,224,306 trace bytes), standalone
+build/package checks and full Mandelbrot comparisons. No new full FreeDOS-image,
+ARM or legacy hardware run is claimed. Details: [current status](development/STATUS.md),
+[DOS service contracts](DOS_PROBE.md), [feature matrix](../delivery/source/FEATURE_MATRIX.md).
+
 ## What PIL does
 
 PIL describes an instruction as typed bit-vector calculations and explicit
@@ -35,7 +45,7 @@ questions; proposed syntax and plans are not implementation claims.
 |---|---|
 | [ADD](../isa/i386/add.pil) | Widened arithmetic and explicit flag calculations |
 | [ADC](../isa/i386/adc.pil) | Reading incoming carry |
-| [XCHG](../isa/i386/xchg.pil) | Snapshot reads and two staged register writes |
+| [XCHG](../isa/i386/xchg.pil), [memory XCHG](../isa/i386/xchg_ram.pil) | Register snapshots and transactional RAM/register exchange |
 | [LAHF](../isa/i386/lahf.pil), [SAHF](../isa/i386/sahf.pil) | Packing status flags into AH and partial flag writes |
 | [CMC](../isa/i386/cmc.pil) | Concrete carry input and a defined flag write |
 | [SHL](../isa/i386/shl.pil) | Explicit count masking and conditional flag effects |

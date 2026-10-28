@@ -5,7 +5,21 @@ separate delivery branch; never merge the dev tree into main. The applicable
 user documentation is maintained in delivery/source/. CI validates the isolated
 export in addition to development tests. Full history and planning remain here.
 
-## Current plan —27 October2026
+## Current position —28 October2026
+
+Version0.33 adds AH25/35 RAM interrupt-vector services and ordinary-RAM XCHG.
+Windows/Linux CI40621030314 passed319 tests and185 backend cases, plus full
+Mandelbrot and standalone-package checks. [PR38](https://github.com/pyTony/pil_proof/pull/38)
+is the separate runtime delivery. Existing far CALL/RETF and memory PUSH/POP
+remain part of the supported bounded profile.
+
+Next reported service priority is INT10/AH08 backed by a text screen
+(17 programs in the separate10000-step report). PUSHA and32-bit SMSW remain
+individual instruction blockers. No new whole-image rerun establishes changed
+exit counts yet. CPU interrupt delivery, ROM/kernel handlers, broader LOCK RMW,
+MMIO/concurrent buses and full mode/prefix validation remain separate work.
+
+## Historical plan —27 October2026
 
 The active TODO is the [386 completion plan](development/ISA_COMPLETION_PLAN.md),
 with [family/form backlog](development/ISA_BACKLOG.json). The parallel

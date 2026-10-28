@@ -229,3 +229,18 @@ and generated physical dispatch support code aliases after CS changes. P6 remain
 partial:far CALL/JMP,protected/V86 returns,interrupt delivery and hardware/mode
 coverage are separate. User0.28alpha.2 corpus summary reached31 CB first blockers;
 next-image exit/failure counts are unknown until that corpus is rerun.
+
+## DOS vectors and memory XCHG (0.33)
+
+P1 exchange now includes ordinary-RAM86/87 at8/16/32 bits through shared PIL,
+with incoming address/register snapshots and precise transaction faults.
+P6 LOCK is partial: explicit memory XCHG is admitted; register LOCK, other
+locked RMW instructions, MMIO and concurrent bus masters remain outside the
+profile. AH25/35 is a host DOS bridge over physical RAM IVT entries, not CPU
+interrupt delivery. Zero initial vectors do not supply ROM/kernel handlers.
+
+Windows/Linux CI40621030314 passed319 tests and185 full-state backend cases
+(7,224,306 trace bytes), standalone/native packages and full Mandelbrot checks.
+No new full FreeDOS-image or hardware run. Next reported service target is a
+text screen for INT10/AH08; PUSHA and32-bit SMSW remain instruction blockers.
+Use the current status/feature matrix over older milestone snapshots above.

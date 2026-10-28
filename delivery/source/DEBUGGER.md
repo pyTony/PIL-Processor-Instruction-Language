@@ -678,3 +678,12 @@ CS, IP and SP together. Access/target faults preserve the full pre-call state.
 RETF can return through CS aliases within the original physical image window.
 Protected/V86 calls are rejected. Wide CS padding is zero in this profile; split
 stack frames, gates, tasks and hardware exception/shutdown delivery are separate.
+
+## DOS vector services (0.33)
+
+The DOS probe bridges INT21/AH25 (set AL's vector from DS:DX) and AH35 (get
+AL's vector into ES:BX). Entries use physical RAM at AL*4; AH35 also updates
+ES's real-mode cache. Four-byte checks precede mutation, flags and upper EBX
+are preserved, and failed calls do not retire. Initial vectors are zero;
+setting one does not add CPU interrupt dispatch or kernel/ROM handlers.
+See the DOS probe guide for the bounded service profile.

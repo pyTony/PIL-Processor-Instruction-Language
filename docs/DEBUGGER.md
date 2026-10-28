@@ -632,8 +632,9 @@ operations in both backends. No new interpreter-only CPU semantics were added.
 XCHG8/16/32 register forms86/87 and AX/EAX accumulator forms91..97 are
 supported;90 remains NOP (equivalent self-exchange in the386 profile). Both
 operands are read before retirement,so AL/AH and identical-register aliases
-work. Upper bits,flags and undefined markers are preserved. Memory XCHG and
-LOCK remain outside this profile pending a bus-atomic memory interface.
+work. Upper bits,flags and undefined markers are preserved. Memory XCHG86/87 supports8/16/32-bit ordinary RAM exchanges through shared PIL.
+Explicit LOCK is accepted for memory XCHG only. Transactions are indivisible
+in the single-executor RAM model; MMIO and concurrent bus masters are unmodeled.
 
 PIL now permits one staged write to each named binding,dst and src,including
 conditional source writes. All reads see incoming state. Active overlapping
@@ -683,3 +684,12 @@ The isolated `dosprobe PATH [steps]` accepts FAT16 `.img`/`.ima` and `.zip`
 containers too. It probes executable candidates and one ZIP package level,
 removing byte-identical container copies. CLI `--dos-list INPUT` inspects;
 `--dos-extract INPUT NEW_DIRECTORY` extracts. See [container guide](CONTAINERS.md).
+
+## DOS vector services (0.33)
+
+The DOS probe bridges INT21/AH25 (set AL's vector from DS:DX) and AH35 (get
+AL's vector into ES:BX). Entries use physical RAM at AL*4; AH35 also updates
+ES's real-mode cache. Four-byte checks precede mutation, flags and upper EBX
+are preserved, and failed calls do not retire. Initial vectors are zero;
+setting one does not add CPU interrupt dispatch or kernel/ROM handlers.
+See the DOS probe guide for the bounded service profile.

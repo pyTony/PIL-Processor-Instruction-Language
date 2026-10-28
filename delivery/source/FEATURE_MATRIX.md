@@ -26,7 +26,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Rotates / carry constants | Supported subset | ROL/ROR8/16/32,register/memory,count1/CL/imm8; CLC/STC/CMC. RCL/RCR remain planned |
 | Data conversion / addresses | Supported subset | MOVZX/MOVSX8-to16/32 and16-to16/32 (register/memory, including aliases). CBW/CWDE/CWD/CDQ and LEA16/32 preserve flags |
 | Register exchange | Supported subset | XCHG8/16/32 register and ordinary-RAM forms86/87, accumulator91..97; memory LOCK accepted, precise faults; no MMIO/concurrent bus model |
-| Register effects | Supported subset | Snapshot reads; ordered named GPR effects or bound writes; one staged segment-cache change and one RAM store |
+| Register effects | Supported subset | Snapshot reads; ordered named GPR effects or bound writes; one staged segment-cache change and at most two ordered RAM stores |
 | Register views | Supported | 32-bit registers, low 16 bits, AL/AH-style byte views |
 | Calls and returns | Near and real-mode far subset | E8 relative and FF /2 register/memory CALL, C3/C2 RET; independent operand/SS sizes and byte cleanup; CB/CA real-mode RETF16/32 restores CS:IP transactionally; 9A/FF /3 real-mode CALL16/32 with two-slot frames; no far JMP, gates/tasks or protected/V86 transfers |
 | Comparison strings | Supported subset | CMPS/SCAS8/16/32, REPE/REPNE, DF, independent address sizes, source override/fixed ES and entry-flag fault recovery; no interrupt delivery |
