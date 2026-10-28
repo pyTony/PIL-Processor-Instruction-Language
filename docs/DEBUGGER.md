@@ -665,3 +665,14 @@ The source uses incoming registers (including ESP), with ordinary default or
 overridden segments. SS stack width is independent of both prefixes. Flags
 are preserved; access faults preserve CPU, memory and retirement markers.
 Other FF extensions, including far CALL /3, have separate support limits.
+
+## Real-mode far CALL (9A and FF /3)
+
+Immediate pointers encode an operand-sized offset followed by a 16-bit selector.
+FF /3 accepts memory pointers with ModRM/SIB and independent 16/32 addressing;
+register encodings are rejected. Source overrides select only the pointer read.
+The call stages old CS and next IP/EIP in two operand-sized SS slots, then commits
+CS, IP and SP together. Access/target faults preserve the full pre-call state.
+RETF can return through CS aliases within the original physical image window.
+Protected/V86 calls are rejected. Wide CS padding is zero in this profile; split
+stack frames, gates, tasks and hardware exception/shutdown delivery are separate.

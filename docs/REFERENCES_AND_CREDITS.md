@@ -249,3 +249,12 @@ was consulted for FF /6 word/dword forms, independent operand and stack sizes,
 flag preservation and source/stack faults. Implementation and test fixtures are
 original project code. SS:SP underflow uses the existing bounded stack-fault
 profile; legacy shutdown/exception delivery is still outside this prototype.
+
+## Far CALL (0.32)
+
+The [Intel 386 CALL reference](https://pdos.csail.mit.edu/6.828/2018/readings/i386/CALL.htm)
+was consulted for 9A and FF /3, pointer field sizes, CS/IP return-frame ordering,
+operand-size padding and real-mode transfer. Code and tests are original. The
+bounded contiguous stack frame and deterministic zero padding follow this
+prototype's RETF/segment-PUSH profile; no new legacy hardware validation is
+claimed. Protected/V86 gates, tasks and exception delivery are not implemented.

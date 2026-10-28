@@ -1,0 +1,23 @@
+# Bounded real-mode far CALL; both reads precede the two staged writes.
+require_width 16_or_32
+require_real_mode
+$FAR_TARGET
+zext target32 target_value 32
+read_segment old_cs 1
+zext return_cs old_cs $W
+read_ip next next 32
+trunc return_offset next $W
+read_gpr old_sp 4 $S
+const slot_bytes $S $BYTES
+sub selector_sp old_sp slot_bytes
+sub new_sp selector_sp slot_bytes
+zext stack_wide new_sp 64
+check_segment 2 stack_wide $FRAME
+zext selector_offset selector_sp 32
+zext stack_offset new_sp 32
+store_segment 2 selector_offset return_cs
+store_segment 2 stack_offset return_offset
+far_branch selector target32
+write_gpr 4 new_sp
+preserve_flags all
+retire

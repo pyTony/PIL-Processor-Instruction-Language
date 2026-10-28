@@ -238,3 +238,12 @@ compare per-program stop details, bytes and CS:IP to measure this progress.
 The disk image and third-party programs are not bundled in the repository.
 
 Measured image SHA256: `f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36`.
+
+### Measured far-CALL progress (0.32)
+
+With the same actual image and 100000-step budget, all sixteen FreeCom variants
+pass FF /3 and stop at DOS INT 21/AH=25. GREP passes 9A and stops at memory XCHG
+(`87 0E 7A 11`). Missing-encoding program counts are now two `0F BB`, one
+`0F 01`, one `60`, and one `87` (five total, previously 21). Imports stay
+151/156 and exits stay six. This is first-blocker progress, not completion of
+these programs or a booted DOS kernel.
