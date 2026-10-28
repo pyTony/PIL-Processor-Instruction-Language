@@ -1006,3 +1006,7 @@ mod call_far_tests;
 #[cfg(test)]
 #[path = "../tests/unit/exchange_memory.rs"]
 mod exchange_memory_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/les.rs"]
+mod les_tests;

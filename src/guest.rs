@@ -222,6 +222,16 @@ impl Image {
                 let text=if memory{format!("read_address addr\nconst v {w} {immediate}\nstore addr v\npreserve_flags all\nretire")}else{format!("const v {w} {immediate}\nwrite dst v\npreserve_flags all\nretire")};
                 (format!("MOV {},0x{immediate:0digits$x}",operand_name(dst,address),digits=(w/4)as usize),compile(&text,w))
             }
+            0xc4=>{
+                if !self.real_mode{return Err(GuestError::Decode("LES requires real-mode context".into()));}
+                let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode("LES requires a memory far pointer".into()));}
+                dst=view(((m>>3)&7)as usize,w);src=dst;
+                let effective=r.effective(m,addr32)?;
+                let segment=effective.resolve(&[0;8],override_segment)?.segment.index();
+                address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                let text=include_str!("../isa/i386/les.pil").replace("$SEG",&segment.to_string()).replace("$SPAN",&(w/8+2).to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("LES {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
+            }
             0x8c|0x8e=>{
                 let m=r.byte()?;let segment=((m>>3)&7)as usize;
                 if segment>=6 || (opcode==0x8e&&segment==1){return Err(GuestError::Decode("invalid segment MOV encoding".into()));}

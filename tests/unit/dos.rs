@@ -162,3 +162,40 @@ fn dos_version_query_retires_bridge_then_reaches_next_blocker_or_exit(){
 fn dos_version_failed_psp_read_changes_no_registers_or_output(){
  let mut p=load(&[0xcd,0x21],"version.com").unwrap();p.cpu.regs[0]=0x3000;p.ram=Ram::new(u32::from(PSP)as usize*16+0x41);let old=p.cpu.clone();let oldram=p.ram.clone();let mut out=vec![65];assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old);assert_eq!(p.ram,oldram);assert_eq!(out,vec![65]);
 }
+
+#[test]
+fn dos_character_output_preserves_other_state_and_returns_character(){
+ for byte in 0..=255u32{
+  let mut p=load(&[0xcd,0x21],"putchar.com").unwrap();p.cpu.regs[0]=0xabcd02ff;p.cpu.regs[2]=0x12345600|byte;p.cpu.eflags=0xed7;p.cpu.undefined_flags=u32::MAX;
+  let mut want=p.cpu.clone();want.regs[0]=0xabcd0200|if byte==9{32}else{byte};let ram=p.ram.clone();let image=p.image.clone();let mut out=vec![];
+  service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu,want);assert_eq!(p.ram,ram);assert_eq!(p.image,image);assert_eq!(out,if byte==9{vec![32;8]}else{vec![byte as u8]});
+ }
+}
+#[test]
+fn dos_tabs_use_column_after_text_cr_lf_backspace_and_bell(){
+ for (prior,count) in [(b"".as_slice(),8),(b"a".as_slice(),7),(b"1234567".as_slice(),1),(b"12345678".as_slice(),8),(b"abc\r".as_slice(),8),(b"abc\n".as_slice(),5),(b"abc\x08".as_slice(),6),(b"abc\x07".as_slice(),5),(b"a\t".as_slice(),8)]{
+  let mut p=load(&[0xcd,0x21],"tab.com").unwrap();p.cpu.regs[0]=0x0200;p.cpu.regs[2]=9;let mut out=prior.to_vec();let mut want=out.clone();want.extend(vec![32;count]);service(&mut p,0x21,&mut out).unwrap();assert_eq!(out,want);assert_eq!(p.cpu.regs[0],0x0220);
+ }
+}
+#[test]
+fn dos_character_output_limit_is_all_or_none_including_tab_expansion(){
+ for (length,byte,ok) in [(MAX_OUTPUT-1,b'A',true),(MAX_OUTPUT,b'A',false),(MAX_OUTPUT-1,9,true),(MAX_OUTPUT,9,false)]{
+  let mut p=load(&[0xcd,0x21],"limit.com").unwrap();p.cpu.regs[0]=0x02ff;p.cpu.regs[2]=u32::from(byte);let old=p.cpu.clone();let image=p.image.clone();let ram=p.ram.clone();let mut out=vec![b'x';length];let before=out.clone();
+  assert_eq!(service(&mut p,0x21,&mut out).is_ok(),ok);if ok{assert_eq!(out.len(),MAX_OUTPUT);}else{assert_eq!(out,before);assert_eq!(p.cpu,old);}assert_eq!(p.image,image);assert_eq!(p.ram,ram);
+ }
+ // A tab after CR needs8 bytes even with only one remaining output byte.
+ let mut p=load(&[0xcd,0x21],"limit.com").unwrap();p.cpu.regs[0]=0x0200;p.cpu.regs[2]=9;let mut out=vec![b'x';MAX_OUTPUT-2];out.push(13);let before=out.clone();let old=p.cpu.clone();assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(out,before);assert_eq!(p.cpu,old);
+}
+#[test]
+fn dos_switch_query_returns_fixed_slash_and_rejects_other_subfunctions(){
+ for sub in 0..=255u32{
+  let mut p=load(&[0xcd,0x21],"switch.com").unwrap();p.cpu.regs[0]=0xabcd3700|sub;p.cpu.regs[2]=0x12345678;p.cpu.eflags=0xed7;p.cpu.undefined_flags=u32::MAX;let old=p.cpu.clone();let image=p.image.clone();let ram=p.ram.clone();let mut out=vec![65];
+  let result=service(&mut p,0x21,&mut out);if sub==0{assert!(result.is_ok());let mut want=old;want.regs[2]=0x1234562f;assert_eq!(p.cpu,want);}else{assert!(result.is_err());assert_eq!(p.cpu,old);}assert_eq!(p.ram,ram);assert_eq!(p.image,image);assert_eq!(out,vec![65]);
+ }
+}
+#[test]
+fn dos_switch_and_putchar_bridge_reach_exit_and_account_for_budget(){
+ let bytes=[0xb8,0,0x37,0xcd,0x21,0xb4,2,0xcd,0x21,0xb2,9,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21];
+ let r=run(load(&bytes,"switch.com").unwrap(),20).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"/       ");assert_eq!((r.completed,r.pil_steps,r.dos_calls),(8,4,4));
+ let r=run(load(&bytes,"switch.com").unwrap(),2).unwrap();assert_eq!(r.stop,Stop::Budget);assert_eq!((r.completed,r.pil_steps,r.dos_calls),(2,1,1));assert_eq!(r.loaded.cpu.regs[2]&255,47);
+}
