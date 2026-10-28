@@ -217,7 +217,11 @@ retire
 ```
 
 Instantiated for 8/16/32 bits, this is `xchg.pil`. The x86 decoder supplies
-register aliases and legal encodings. Memory XCHG is not implemented. Other
+register aliases and legal encodings. `xchg_ram.pil` snapshots the address and
+register, loads RAM, stages one store and writes the old RAM value to the
+register. All effects commit together after checks; ordinary RAM transactions
+are indivisible in this single-executor model. No MMIO or concurrent bus
+master is modeled. Explicit LOCK is admitted for memory XCHG only. Other
 instruction-family details and demos are in the debugger guide and feature
 matrix; grammar support alone does not imply complete 386 instruction coverage.
 
@@ -453,3 +457,4 @@ slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
 slot. SS size is independent. A contiguous full-frame check matches RETF;
 split frames across stack wrap and hardware shutdown/exception delivery remain
 outside this prototype. Protected/V86 calls are rejected before pointer reads.
+
