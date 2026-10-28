@@ -457,4 +457,3 @@ slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
 slot. SS size is independent. A contiguous full-frame check matches RETF;
 split frames across stack wrap and hardware shutdown/exception delivery remain
 outside this prototype. Protected/V86 calls are rejected before pointer reads.
-

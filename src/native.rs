@@ -520,4 +520,3 @@ pub fn compare_mandelbrot(size:u32,iterations:u32)->Result<String,String>{
     Ok(format!("{gate}\n{}",compare_mandelbrot_at(&directory.join("mandelbrot"),size,iterations)?))
 }
 
-

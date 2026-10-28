@@ -398,4 +398,3 @@ the supported execution path; the debugger's instruction profile is limited.
 See DEBUGGER.md for exact encodings and limitations.
 
 This prototype does not boot an operating system or provide PC hardware yet.
-

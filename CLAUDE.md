@@ -1426,4 +1426,3 @@ for original ESP32; cross-compiling this host CLI unchanged is not the goal.
 Keep changes incremental. Distinguish user-reported Rust results from local
 Python/package checks. Do not claim Windows or hardware compatibility from
 arithmetic/debugger tests.
-

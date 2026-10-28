@@ -678,4 +678,3 @@ CS, IP and SP together. Access/target faults preserve the full pre-call state.
 RETF can return through CS aliases within the original physical image window.
 Protected/V86 calls are rejected. Wide CS padding is zero in this profile; split
 stack frames, gates, tasks and hardware exception/shutdown delivery are separate.
-

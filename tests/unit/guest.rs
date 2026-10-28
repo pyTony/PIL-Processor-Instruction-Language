@@ -424,4 +424,3 @@ fn setcc_memory_faults_are_transactional_and_do_not_require_a_read(){
  for readonly in [false,true]{let bytes=[0x0f,0x95,0x07];let mut c=Cpu{regs:[0x12345678;8],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};c.regs[3]=if readonly{0x400}else{0xffff};let old=c.clone();assert!(execute_one(&bytes,&mut c,99,readonly).is_err());assert_eq!(c,old);}
  for bytes in [vec![0x0f,0x95,0x06,0],vec![0xf0,0x0f,0x95,7],vec![0x0f,0x95,0x0f]]{assert!(decode(&bytes).is_err());}
 }
-

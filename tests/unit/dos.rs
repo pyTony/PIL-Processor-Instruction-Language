@@ -162,4 +162,3 @@ fn dos_version_query_retires_bridge_then_reaches_next_blocker_or_exit(){
 fn dos_version_failed_psp_read_changes_no_registers_or_output(){
  let mut p=load(&[0xcd,0x21],"version.com").unwrap();p.cpu.regs[0]=0x3000;p.ram=Ram::new(u32::from(PSP)as usize*16+0x41);let old=p.cpu.clone();let oldram=p.ram.clone();let mut out=vec![65];assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old);assert_eq!(p.ram,oldram);assert_eq!(out,vec![65]);
 }
-

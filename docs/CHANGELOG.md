@@ -329,4 +329,3 @@
 ## 0.1.0
 
 Initial ADD proof. User reported all seven Rust tests passing in Termux.
-

@@ -655,4 +655,3 @@ files without overwriting an existing destination or modifying the source.
 FAT16 and ZIP stored/deflate are supported;this is not a booted DOS filesystem.
 
 See [container guide](docs/CONTAINERS.md) for commands and format limits.
-

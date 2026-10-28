@@ -1238,4 +1238,3 @@ Next: strengthen decoder coverage, general PC machine state and devices; keep
 full paging, descriptor loading, exception delivery, interrupts, A20 and OS boot
 explicitly outside the current implementation. The debug port is not a UART.
 
-
