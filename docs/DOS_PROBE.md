@@ -133,10 +133,14 @@ their read/write restrictions. Fixed compiled images retain changed-code guards.
   initial-CS code window. A20 wrap and executable code outside those windows
   are not modeled. Stack/segment/control instructions remain limited to what
   the current instruction profile implements.
-- Unprefixed INT21/AH02/AH09 (output), AH4C (exit), AH30 (version), AH37/AL00
-  (switch query), AH48/49/4A
-  (bounded memory), AH25/35 (set/get vector), and INT20 (CS=PSP exit) are bridged.
-  Output is capped at16KiB and a service checks the whole string before
+- Bridged services include:
+  - **INT 10h:** AH=03h (read cursor position and size), AH=08h (read character and attribute).
+  - **INT 11h:** BIOS equipment list word determination.
+  - **INT 12h:** Conventional memory size query (640 KB).
+  - **INT 1Ah:** AH=00h (read system-clock timer ticks).
+  - **INT 20h:** CS=PSP exit.
+  - **INT 21h:** AH=02h/AH=09h (output), AH=25h/AH=35h (set/get vector), AH=30h (version query), AH=37h/AL=00h (switch query), AH=3Dh (open file failure stub with CF=1, AX=0x0002), AH=3Eh (close file stub with CF=0), AH=48h/49h/4Ah (bounded memory), AH=4Ch (exit).
+  Output is capped at 16KiB and a service checks the whole string before
   publishing output. AH09 returns AL=24h and preserves other modeled state.
 - These calls are an explicitly labeled host shim, not CPU INT/IRET semantics:
   no interrupt frame, IVT dispatch, BIOS, files, keyboard, environment, memory
@@ -289,3 +293,17 @@ load instruction is added. Pointer segment-end wrap is rejected by this profile.
 Report headers print the package version and selected per-program step budget,
 including the default budget when --steps is omitted. Keep the supplied v0.33
 100000-step report as historical user evidence until the new corpus is rerun.
+
+## Unsigned division and BIOS / DOS service shims (0.35)
+
+- Unsigned division `DIV` (`F6 /6`, `F7 /6`) is supported at 8, 16, and 32 bits (with 66h prefix) for both register and memory addressing modes. AX, DX:AX, and EDX:EAX dividends produce quotient and remainder in AL/AH, AX/DX, and EAX/EDX. Zero divisor and quotient overflow are checked via PIL `require`. Arithmetic flags CF, OF, SF, ZF, AF, PF are marked undefined.
+- Foundational BIOS and DOS services added to the shim profile:
+  - **INT 10h (AH=08h):** Read character and attribute at cursor; returns `AH=07h` (standard light gray attribute) and `AL=20h` (blank character).
+  - **INT 10h (AH=03h):** Read cursor position and size; returns `CX=0607h` (standard CGA scanlines) and `DX=0000h` (row 0, column 0).
+  - **INT 11h:** BIOS equipment list word; returns `AX=0025h` (pointing device installed, 80x25 color display, 1 floppy drive).
+  - **INT 12h:** Conventional memory size query; returns `AX=0280h` (640 KB conventional RAM).
+  - **INT 1Ah (AH=00h):** Read system-clock timer ticks; returns `AL=0` (midnight flag clear), `CX=0`, `DX=0` (tick count 0).
+  - **INT 21h (AH=3Dh):** Open existing file; returns bounded failure fallback with `CF=1` and `AX=0x0002` (file not found).
+  - **INT 21h (AH=3Eh):** Close file; returns success stub with `CF=0`.
+- Probe report progress: clean exits increased from 11 to 14, FreeCOM shells advance through initialization loops without crashing on missing equipment/video queries, and memory utilities (such as MEMSTAT) calculate and display formatted decimal output using `DIV`.
+

@@ -1,3 +1,20 @@
+# PIL 0.35.0-alpha.1
+
+## 0.35: Unsigned division (DIV) and foundational BIOS / DOS service shims
+
+### Unsigned Division (DIV F6/F7 /6)
+- Supported at all operand widths (8-bit, 16-bit, and 32-bit with 66h prefix) for both register and memory addressing modes.
+- PIL tokens expanded with binary `div` and `rem` operations.
+- Exact divide-by-zero and quotient-overflow bounds checking.
+- Undefined arithmetic flags (CF, OF, SF, ZF, AF, PF) follow Intel SDM classification.
+
+### Expanded DOS / BIOS probe services
+- **BIOS Video (INT 10h):** Added AH=08h (read character and attribute) and AH=03h (read cursor position and scanlines).
+- **BIOS Equipment & Memory (INT 11h, INT 12h):** Returns standard PC equipment list word with pointing device flag, and 640 KB conventional memory size.
+- **BIOS System Timer (INT 1Ah):** Added AH=00h read timer ticks.
+- **DOS File API (INT 21h):** Added bounded failure fallback for AH=3Dh (Open file, CF=1 / AX=0x0002) and AH=3Eh (Close file, CF=0).
+- Probe report results: clean exits increased from 11 to 14, FreeCOM shells advance through initialization loops, and memory tools (MEMSTAT) successfully compute and display formatted decimal output.
+
 # PIL 0.34.0-alpha.1
 
 - Add bounded DOS INT21/AH02 character output. Preserve flags and registers

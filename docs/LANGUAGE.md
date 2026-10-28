@@ -50,6 +50,8 @@ from `conditions.pil` and `setcc.pil`/`jcc.pil`; no general `include` directive 
 | `sext out input WIDTH` | Equal-width copy or sign extension |
 | `trunc out input WIDTH` | Equal-width copy or narrowing |
 | `add/sub/mul/xor/and/or out left right` | Equal-width operands; result has that width |
+| `div out left right` | Unsigned integer division (`left / right`, yielding 0 if divisor is zero) |
+| `rem out left right` | Unsigned integer remainder (`left % right`, yielding 0 if divisor is zero) |
 | `not out input` | Bitwise complement at input width |
 | `shl/lshr/ashr out input count` | Total shift; count can have any valid bit-vector width |
 | `ult out left right` | Unsigned comparison of equal-width values; `bv<1>` result |

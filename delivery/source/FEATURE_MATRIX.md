@@ -1,4 +1,4 @@
-# PIL 0.34.0-alpha.1 feature matrix
+# PIL 0.35.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -10,9 +10,11 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | MOV forms | Supported subset | Register/immediate, ModRM/SIB memory, A0..A3 moffs and C6/C7 /0; independent16/32 address and8/16/32 data sizes; segment-transfer limits apply |
 | Arithmetic and flags | Supported subset | ADD, ADC, SUB, SBB, CMP, AND, OR, XOR, TEST, NOT, NEG, INC, DEC; truncated signed IMUL16/32; flag preservation and undefined markers |
 | Multiplication | Supported subset | 0F AF and 69/6B truncated signed IMUL16/32, register/memory sources; no implicit double-width forms |
+| Division | Supported subset | F6/F7 /6 unsigned DIV r/m8/16/32 (register and memory); AX, DX:AX and EDX:EAX dividends; AL/AH, AX/DX and EAX/EDX quotient/remainder; zero divisor and quotient overflow checked via PIL require; undefined CF, OF, SF, ZF, AF, PF |
 | Shifts | Supported subset | SHL/SAL, SHR, SAR8/16/32; count1, CL, imm8; register/memory; no double shifts |
 | Image/archive imports | Bounded read-only subset | FAT16 MBR/superfloppy,ZIP stored/deflate,listing/new-directory extraction and probe deduplication;not FAT12/FAT32/ISO/ZIP64 |
 | DOS executable probe | Bounded diagnostic subset | COM/MZ relocation import, original hello, bounded print/exit/memory host shim and first-blocker corpus reports; not full DOS |
+| BIOS / DOS service shims | Bounded diagnostic subset | INT 10h (AH=03h, AH=08h), INT 11h equipment list, INT 12h memory size (640 KB), INT 1Ah (AH=00h), INT 21h (AH=3Dh open file failure stub, AH=3Eh close file stub) |
 | Status-byte transfers | Supported subset | LAHF/SAHF with implicit AH; five status bits and fixed byte bits; OF preserved by SAHF |
 | Real-mode control flags | Supported subset | CLI/STI, PUSHF/POPF and PUSHFD/POPFD; distinct traced STI delay; no protected/V86 privilege rules or interrupt delivery |
 | Frame teardown | Supported subset | LEAVE16/32 with independent SS size, precise read faults and dynamic SS rebinding; ENTER remains planned |
@@ -61,6 +63,24 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Mandelbrot image workload | Supported proof | Q12 guest, serial-streamed pixels, reference checking, BMP/PGM output through256x256; optional full-image generated-Rust comparison with drain/halt state checks |
 | x87 / floating point | Planned | No x87; Mandelbrot uses integer fixed-point |
 | ARM native target / Wine bindings | Planned | Fixed proof runs natively on ARM64; no Wine/ABI library or general translation runtime |
+
+## Instruction Matrix: DIV (Unsigned Division)
+
+`DIV` (`F6 /6`, `F7 /6`) is moved to **Implemented**:
+- `DIV r/m8`: `AX / r/m8` $\rightarrow$ `AL` (quotient), `AH` (remainder).
+- `DIV r/m16`: `DX:AX / r/m16` $\rightarrow$ `AX` (quotient), `DX` (remainder).
+- `DIV r/m32`: `EDX:EAX / r/m32` $\rightarrow$ `EAX` (quotient), `EDX` (remainder).
+- Faults: Zero divisor and quotient overflow checked via PIL `require`.
+- Flags: `CF`, `OF`, `SF`, `ZF`, `AF`, `PF` classified as undefined.
+
+## DOS / BIOS Shim Matrix
+
+- **INT 10h:** `AH=08h` (read char/attr at cursor), `AH=03h` (read cursor position & size).
+- **INT 11h:** BIOS equipment word determination (pointing device / color / floppy flags).
+- **INT 12h:** Conventional memory size query (returns 640 KB).
+- **INT 1Ah:** `AH=00h` (read system-clock timer ticks).
+- **INT 21h:** `AH=3Dh` (open file failure stub with `CF=1`, `AX=0x0002`), `AH=3Eh` (close file stub with `CF=0`).
+
 
 The compiled proof compares registers, EFLAGS, undefined-flag metadata, EIP,
 all RAM bytes and RX/TX queues after every execution step for selftest, Hello-world,
