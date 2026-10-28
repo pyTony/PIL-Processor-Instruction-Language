@@ -15,7 +15,7 @@ integrated. No runtime implementation changes accompany this document.
   `lispy_support/lispy_terminal.py` provides separate program-output/input
   routing and a terminal viewer. `basic_io.py` injects input through a reader;
   `listener_output.py` incrementally filters ANSI for a plain-text view.
-- [z80-cpm, 588c356b](https://github.com/pyTony/z80-cpm/tree/588c356bcf280d00585b26bda0a4c70ba5bdaa4):
+- [z80-cpm, 588c356b](https://github.com/pyTony/z80-cpm/tree/588c356bcf280d00585b26bda0a4c70ba5bdaa4c):
   `debug_gui.pyw` presents disassembly/breakpoints, changed registers, stack,
   memory, guest console and command entry together. Its console adapter and
   bounded execution/yield behavior are directly relevant to a CPU debugger.
