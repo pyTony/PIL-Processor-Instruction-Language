@@ -260,4 +260,3 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     report.push_str("Budget counts execution steps (including REP elements);completed counts fully retired instructions.\nStops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.\n");
     Ok(report)
 }
-
