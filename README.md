@@ -1,5 +1,13 @@
 # PIL development branch
 
+## 0.33: DOS vectors and memory XCHG
+
+DOS INT21/AH25 and AH35 set/get physical RAM vectors with complete-access
+checks and ES selector/cache updates. Initial vectors are zero; installed
+handlers are not dispatched by the CPU. Memory XCHG86/87 exchanges8/16/32-bit
+ordinary RAM and registers through the shared PIL transaction, including
+explicit LOCK memory forms. MMIO and concurrent bus masters remain unmodeled.
+
 Automated tests and CI belong on this dev branch: `cargo test --locked`.
 Main is a runtime-only export and intentionally runs zero development tests.
 
@@ -592,8 +600,10 @@ operations in both backends. No new interpreter-only CPU semantics were added.
 XCHG8/16/32 register forms86/87 and AX/EAX accumulator forms91..97 are
 supported;90 remains NOP (equivalent self-exchange in the386 profile). Both
 operands are read before retirement,so AL/AH and identical-register aliases
-work. Upper bits,flags and undefined markers are preserved. Memory XCHG and
-LOCK remain outside this profile pending a bus-atomic memory interface.
+work. Upper bits,flags and undefined markers are preserved. Memory XCHG86/87 now exchanges ordinary RAM with a register through shared PIL.
+Explicit LOCK is accepted only on memory XCHG; flags and upper bits are preserved.
+The single-executor RAM transaction is indivisible; MMIO, DMA and concurrent bus
+masters are not modeled.
 
 PIL now permits one staged write to each named binding,dst and src,including
 conditional source writes. All reads see incoming state. Active overlapping
@@ -645,3 +655,4 @@ files without overwriting an existing destination or modifying the source.
 FAT16 and ZIP stored/deflate are supported;this is not a booted DOS filesystem.
 
 See [container guide](docs/CONTAINERS.md) for commands and format limits.
+

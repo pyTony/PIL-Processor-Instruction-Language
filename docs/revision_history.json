@@ -1931,6 +1931,29 @@
         ],
         "hosted_environment": "GitHub Actions Windows and Linux"
       }
+    },
+    {
+      "version": "0.33.0-alpha.1",
+      "date": "2026-10-28",
+      "features": [
+        "DOS AH25/35 RAM interrupt-vector services",
+        "Memory XCHG86/87 with explicit memory LOCK in bounded single-executor RAM"
+      ],
+      "status": "linux-verified-windows-checks-pending",
+      "limitations": [
+        "No interrupt delivery or kernel handlers",
+        "No new full FreeDOS image run",
+        "No MMIO or concurrent bus model"
+      ],
+      "rust_verification": {
+        "code_commit": "97bbe894302b6135df28e716af44a377f3a77654",
+        "ci_run": 40621030314,
+        "tests_passed_per_host": 319,
+        "backend_cases": 185,
+        "trace_bytes": 7224306,
+        "linux_full_checks": "passed",
+        "windows_full_checks": "pending"
+      }
     }
   ]
 }

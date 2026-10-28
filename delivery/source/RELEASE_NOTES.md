@@ -1,4 +1,26 @@
-# PIL 0.32.0-alpha.1
+# PIL 0.33.0-alpha.1
+
+- Add DOS INT21/AH25 and AH35 using the physical RAM interrupt-vector table.
+  AH25 stores DS:DX; AH35 returns ES:BX and updates the ES cache. Preserve flags
+  and upper register halves. Check the complete four-byte access before effects.
+  Initial vectors are zero; no kernel handlers or CPU interrupt delivery added.
+- Add ordinary-RAM memory XCHG86/87 at8/16/32 bits through shared PIL tokens.
+  Address and source use incoming registers, including overlapping BX/BH and
+  ESP addressing. Segment/address sizes remain independent. Faults commit no
+  RAM/register/retirement effects. Explicit LOCK is accepted for memory XCHG;
+  register LOCK and other LOCK instructions remain rejected. The transaction
+  is indivisible in the single-executor RAM model; no MMIO/DMA/bus simulation.
+- Add seven expected-state tests and ten interpreter/generated backend cases.
+  Hosted Linux CI40621030314 passed319 Rust tests,185 full-state cases
+  (7,224,306 matching trace bytes), standalone runtime/native-package checks and
+  full256x256 Mandelbrot comparisons. Windows has passed319 tests and is still
+  running remaining checks. No new FreeDOS-image, ARM or legacy hardware run.
+- This increment targets the reported AH35 blockers (26 programs), FreeCom AH25
+  and GREP memory XCHG. No new full FreeDOS-image, ARM or legacy hardware run.
+  The separate v0.32 10000-step report exhausts FreeCom's budget before far CALL;
+  it must not be compared directly with the earlier100000-step measurements.
+
+# PIL 0.33.0-alpha.1
 
 - Add real-mode far CALL: immediate 9A and memory FF /3, 16/32 operand sizes,
   independent 16/32 pointer addressing and SS stack sizes. Read the complete
@@ -377,3 +399,4 @@ the supported execution path; the debugger's instruction profile is limited.
 See DEBUGGER.md for exact encodings and limitations.
 
 This prototype does not boot an operating system or provide PC hardware yet.
+

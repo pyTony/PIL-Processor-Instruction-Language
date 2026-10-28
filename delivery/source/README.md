@@ -1,5 +1,13 @@
 # PIL 386 debugger
 
+## 0.33: DOS vectors and memory XCHG
+
+DOS INT21/AH25 and AH35 set/get physical RAM vectors with complete-access
+checks and ES selector/cache updates. Initial vectors are zero; installed
+handlers are not dispatched by the CPU. Memory XCHG86/87 exchanges8/16/32-bit
+ordinary RAM and registers through the shared PIL transaction, including
+explicit LOCK memory forms. MMIO and concurrent bus masters remain unmodeled.
+
 This is a runtime-only delivery. Automated tests and CI live on the
 [dev branch](https://github.com/pyTony/pil_proof/tree/dev). `cargo test` here
 intentionally runs zero tests; see [automated verification](#automated-verification).
@@ -270,7 +278,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.32.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.33.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -593,8 +601,10 @@ operations in both backends. No new interpreter-only CPU semantics were added.
 XCHG8/16/32 register forms86/87 and AX/EAX accumulator forms91..97 are
 supported;90 remains NOP (equivalent self-exchange in the386 profile). Both
 operands are read before retirement,so AL/AH and identical-register aliases
-work. Upper bits,flags and undefined markers are preserved. Memory XCHG and
-LOCK remain outside this profile pending a bus-atomic memory interface.
+work. Upper bits,flags and undefined markers are preserved. Memory XCHG86/87 now exchanges ordinary RAM with a register through shared PIL.
+Explicit LOCK is accepted only on memory XCHG; flags and upper bits are preserved.
+The single-executor RAM transaction is indivisible; MMIO, DMA and concurrent bus
+masters are not modeled.
 
 PIL now permits one staged write to each named binding,dst and src,including
 conditional source writes. All reads see incoming state. Active overlapping
@@ -646,3 +656,4 @@ files without overwriting an existing destination or modifying the source.
 FAT16 and ZIP stored/deflate are supported;this is not a booted DOS filesystem.
 
 See [container guide](docs/CONTAINERS.md) for commands and format limits.
+
