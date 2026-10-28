@@ -670,3 +670,43 @@ fn generated_cmc_preserves_state_and_matches_concrete_flag_policy(){
     let path=dir.join("proof.rs");fs::write(&path,source).unwrap();let bin=dir.join(if cfg!(windows){"proof.exe"}else{"proof"});
     let out=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).args(["--edition=2021","-O"]).arg(path).arg("-o").arg(&bin).output().unwrap();assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));assert!(Command::new(bin).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn lazy_flags_queue_matches_eager_execution_across_alu_chains_and_jcc(){
+    let ops:Vec<(&str,Program)>=["add","sub","cmp","inc","dec","and","or","xor","test"]
+        .into_iter().map(|n|(n,compile(&instantiate(description(n).unwrap(),8),8).unwrap())).collect();
+    let jccs:Vec<Program>=CONDITIONS_NAMES.iter()
+        .map(|c|compile(&instantiate(description(&format!("j{c}")).unwrap(),16),16).unwrap()).collect();
+    let dst=View{register:0,low:0,width:8};
+    let src=View{register:1,low:0,width:8};
+    let flow_alu=FlowContext{next_eip:0x100,displacement:0,displacement_bits:0,code_limit:0xffff};
+    let flow_jcc=FlowContext{next_eip:0x102,displacement:6,displacement_bits:8,code_limit:0xffff};
+    let vals=[0u32,1,2,0x0f,0x10,0x7f,0x80,0xfe,0xff];
+    for &(_,ref p1) in &ops {
+        for &(_,ref p2) in &ops {
+            for &a in &vals {
+                for &b in &[1u32,0x7f,0x80,0xff] {
+                    let mut eager=Cpu{regs:[a,b,0,0,0,0,0,0],eflags:0x202,undefined_flags:0x8d5,eip:0x100};
+                    let mut queued=eager.clone();
+                    let mut lazy=LazyFlags::None;
+                    execute(p1,&mut eager,dst,src).unwrap();
+                    execute(p2,&mut eager,dst,src).unwrap();
+
+                    execute_state(p1,&mut queued,dst,src,flow_alu,None,0,None,None,None,&mut lazy).unwrap();
+                    execute_state(p2,&mut queued,dst,src,flow_alu,None,0,None,None,None,&mut lazy).unwrap();
+                    for jcc in &jccs {
+                        let mut e_br=eager.clone();
+                        let mut q_br=queued.clone();
+                        let mut q_lazy=lazy;
+                        execute_flow(jcc,&mut e_br,View{register:0,low:0,width:16},View{register:1,low:0,width:16},flow_jcc).unwrap();
+                        execute_state(jcc,&mut q_br,View{register:0,low:0,width:16},View{register:1,low:0,width:16},flow_jcc,None,0,None,None,None,&mut q_lazy).unwrap();
+                        q_lazy.flush(&mut q_br.eflags,&mut q_br.undefined_flags);
+                        assert_eq!(q_br,e_br);
+                    }
+                    lazy.flush(&mut queued.eflags,&mut queued.undefined_flags);
+                    assert_eq!(queued,eager);
+                }
+            }
+        }
+    }
+}
