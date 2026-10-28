@@ -4,9 +4,10 @@ Source: attached freedos-report-33.txt, SHA256
 `cd643067b99c2f26655de04de9a8fa1b8489443546e29c16799c71d5081b689a`.
 This is analysis of the user's run, not a new local execution. The report names
 FD14LITE.img but does not print the executable version, image checksum or step
-budget. Its filename identifies v0.33; exact binary/image identity and budget
-are not independently established. Do not compare different budgets as identical
-runs. No third-party disk image or executables are added to the repository.
+budget. The user subsequently confirmed100000 steps per program. This matches
+the recorded v0.32 run budget; the separate10000-step report remains distinct.
+Its filename identifies v0.33; exact binary/image identity is not independently
+established. No third-party disk image or executables are added to the repository.
 
 ## Observed outcome
 
@@ -20,7 +21,7 @@ runs. No third-party disk image or executables are added to the repository.
 | Missing encoding |13|
 | DOS process exit |6|
 
-No first-stop Budget or Fault appears. Every one of the54 Boundary stops is
+At the user-confirmed100000-step budget, no first-stop Budget or Fault appears. Every one of the54 Boundary stops is
 reported as fetch outside loaded image; the report alone does not establish
 whether copied/unpacked code or an invalid control target caused each stop.
 Imports151/156 and exits6 remain unchanged from the recorded v0.32 results.

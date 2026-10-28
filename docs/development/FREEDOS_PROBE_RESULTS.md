@@ -363,4 +363,5 @@ stops and13 encoding stops are observed. All16 FreeCom variants now reach
 AH37; GREP passes memory XCHG to RCR BX,1 (D1 DB). No AH25/35 first stops
 remain. Main service blockers are AH02(20), INT10/AH08(17), AH37(16).
 LES C4 is the largest instruction blocker(6). This is user-supplied evidence;
-no new local corpus run, binary/image identity or exact budget is established.
+the user confirmed100000 steps per program, matching the earlier v0.32 budget.
+No new local corpus run or independent binary/image identity is established.
