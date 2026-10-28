@@ -72,6 +72,24 @@ impl Image {
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
+        let cs=self.segments[SegmentRegister::Cs.index()];
+        let last_off=u64::from(eip)+u64::from(length)-1;
+        let lin_start=u64::from(cs.base)+u64::from(eip);
+        let lin_end=lin_start+u64::from(length);
+        let img_start=u64::from(self.fetch_base)+u64::from(self.start);
+        let img_end=u64::from(self.fetch_base)+u64::from(self.end);
+        let readable=match cs.access {
+            SegmentAccess::Data{expand_down:false,..}=>true,
+            SegmentAccess::Code{readable}=>readable,
+            _=>false,
+        };
+        if readable && last_off<=u64::from(cs.limit) && lin_start>=img_start && lin_end<=img_end && lin_end<=0x1_0000_0000 {
+            if let Some(slice)=ram.bytes().get(lin_start as usize..lin_end as usize) {
+                let mut bytes=[0u8;15];
+                bytes[..length as usize].copy_from_slice(slice);
+                return Ok(bytes);
+            }
+        }
         let mut reader=Reader{image:self,ram,start:eip,pos:eip};let mut bytes=[0u8;15];
         for byte in &mut bytes[..length as usize] {*byte=reader.byte()?;}
         Ok(bytes)

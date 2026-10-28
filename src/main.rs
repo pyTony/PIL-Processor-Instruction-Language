@@ -98,7 +98,294 @@ enum Token {
     Retire,
 }
 #[derive(Clone, Debug)]
-struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, partial: bool, checkpoint_flags:bool }
+enum PackedOp {
+    Token(Token),
+    ReadDstSrc { a: usize, b: usize, w: u8 },
+    ReadDstConst { a: usize, b: usize, w: u8, c: Value },
+    Conditions16,
+    Jcc16 { cond: u8, w: u8 },
+    RelJmp { w: u8 },
+    AddCore { a: usize, b: usize, r: usize, cf: usize, of: usize, af: usize, sf: usize, zf: usize, pf: usize, w: u8 },
+    SubCore { a: usize, b: usize, r: usize, cf: usize, of: usize, af: usize, sf: usize, zf: usize, pf: usize, w: u8 },
+    LogicCore { clear: usize, sf: usize, zf: usize, pf: usize, r: usize, sign: u8 },
+    Flags6 { cf: usize, pf: usize, af: usize, zf: usize, sf: usize, of: usize },
+    Flags5NoCf { pf: usize, af: usize, zf: usize, sf: usize, of: usize },
+    LogicFlags { clear: usize, sf: usize, zf: usize, pf: usize },
+    ShiftSetup { b: usize, count: usize, width_slot: usize, yes: usize, no: usize, active: usize, single: usize, last: usize, w: u8 },
+    ShiftFlags { cf: usize, cf_defined: usize, of: usize, single: usize, sf: usize, zf: usize, pf: usize, active: usize },
+    ImulCore { a: usize, b: usize, r: usize, overflow: usize, w: u8, dbl: u8 },
+}
+fn is_conditions16_prefix(s: &[Token]) -> bool {
+    matches!(
+        s,
+        [
+            Token::ReadFlag(0, Flag::OF),
+            Token::Not(1, 0),
+            Token::ReadFlag(2, Flag::CF),
+            Token::Not(3, 2),
+            Token::ReadFlag(4, Flag::ZF),
+            Token::Not(5, 4),
+            Token::Binary(6, Binary::Or, 2, 4),
+            Token::Not(7, 6),
+            Token::ReadFlag(8, Flag::SF),
+            Token::Not(9, 8),
+            Token::ReadFlag(10, Flag::PF),
+            Token::Not(11, 10),
+            Token::Binary(12, Binary::Xor, 8, 0),
+            Token::Not(13, 12),
+            Token::Binary(14, Binary::Or, 12, 4),
+            Token::Not(15, 14),
+            ..
+        ]
+    )
+}
+fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
+    let filtered: Vec<Token> = tokens.iter().filter(|t| !matches!(t, Token::PreserveFlags(_))).cloned().collect();
+    let mut out = Vec::with_capacity(filtered.len());
+    let mut i = 0;
+    while i < filtered.len() {
+        let rest = &filtered[i..];
+        if i == 0 && is_conditions16_prefix(rest) {
+            if let [
+                Token::ReadIp(ft, true, 32),
+                Token::Truncate(base, ft2, w),
+                Token::ReadDisp(delta, w2),
+                Token::Binary(wrapped, Binary::Add, base2, delta2),
+                Token::Extend(target, wrapped2, 32),
+                Token::BranchIf(target2, cond),
+                Token::Retire,
+            ] = &rest[16..]
+            {
+                if ft == ft2 && w == w2 && base == base2 && delta == delta2 && wrapped == wrapped2 && target == target2 && *cond < 16 {
+                    out.push(PackedOp::Jcc16 { cond: *cond as u8, w: *w });
+                    out.push(PackedOp::Token(Token::Retire));
+                    break;
+                }
+            }
+            out.push(PackedOp::Conditions16);
+            i += 16;
+            continue;
+        }
+        if let [
+            Token::ReadIp(ft, true, 32),
+            Token::Truncate(base, ft2, w),
+            Token::ReadDisp(delta, w2),
+            Token::Binary(wrapped, Binary::Add, base2, delta2),
+            Token::Extend(target, wrapped2, 32),
+            Token::Const(take, Value { bits: 1, width: 1 }),
+            Token::BranchIf(target2, take2),
+            ..
+        ] = rest
+        {
+            if ft == ft2 && w == w2 && base == base2 && delta == delta2 && wrapped == wrapped2 && target == target2 && take == take2 {
+                out.push(PackedOp::RelJmp { w: *w });
+                i += 7;
+                continue;
+            }
+        }
+        if let [
+            Token::Extend(aw, a, ext),
+            Token::Extend(bw, b, ext2),
+            Token::Binary(wide, Binary::Add, aw2, bw2),
+            Token::Truncate(r, wide2, w),
+            Token::Bit(cf, wide3, w2),
+            Token::Binary(ab, Binary::Xor, a2, b2),
+            Token::Not(nab, ab2),
+            Token::Binary(ar, Binary::Xor, a3, r2),
+            Token::Binary(overflow, Binary::And, nab2, ar2),
+            Token::Bit(of, overflow2, sign),
+            Token::Binary(abr, Binary::Xor, ab3, r3),
+            Token::Bit(af, abr2, 4),
+            Token::Bit(sf, r4, sign2),
+            Token::Zero(zf, r5),
+            Token::Parity(pf, r6),
+            ..
+        ] = rest
+        {
+            if *ext == *w + 1 && ext2 == ext && aw2 == aw && bw2 == bw && wide2 == wide && wide3 == wide
+                && w2 == w && a2 == a && b2 == b && ab2 == ab && a3 == a && r2 == r && nab2 == nab
+                && ar2 == ar && overflow2 == overflow && *sign == *w - 1 && ab3 == ab && r3 == r
+                && abr2 == abr && r4 == r && sign2 == sign && r5 == r && r6 == r
+            {
+                out.push(PackedOp::AddCore { a: *a, b: *b, r: *r, cf: *cf, of: *of, af: *af, sf: *sf, zf: *zf, pf: *pf, w: *w });
+                i += 15;
+                continue;
+            }
+        }
+        if let [
+            Token::Extend(aw, a, ext),
+            Token::Extend(bw, b, ext2),
+            Token::Binary(wide, Binary::Sub, aw2, bw2),
+            Token::Truncate(r, wide2, w),
+            Token::Bit(cf, wide3, w2),
+            Token::Binary(ab, Binary::Xor, a2, b2),
+            Token::Binary(ar, Binary::Xor, a3, r2),
+            Token::Binary(overflow, Binary::And, ab2, ar2),
+            Token::Bit(of, overflow2, sign),
+            Token::Binary(abr, Binary::Xor, ab3, r3),
+            Token::Bit(af, abr2, 4),
+            Token::Bit(sf, r4, sign2),
+            Token::Zero(zf, r5),
+            Token::Parity(pf, r6),
+            ..
+        ] = rest
+        {
+            if *ext == *w + 1 && ext2 == ext && aw2 == aw && bw2 == bw && wide2 == wide && wide3 == wide
+                && w2 == w && a2 == a && b2 == b && a3 == a && r2 == r && ab2 == ab
+                && ar2 == ar && overflow2 == overflow && *sign == *w - 1 && ab3 == ab && r3 == r
+                && abr2 == abr && r4 == r && sign2 == sign && r5 == r && r6 == r
+            {
+                out.push(PackedOp::SubCore { a: *a, b: *b, r: *r, cf: *cf, of: *of, af: *af, sf: *sf, zf: *zf, pf: *pf, w: *w });
+                i += 14;
+                continue;
+            }
+        }
+        if let [
+            Token::SignExtend(aw, a, dbl),
+            Token::SignExtend(bw, b, dbl2),
+            Token::Binary(wide, Binary::Mul, aw2, bw2),
+            Token::Truncate(r, wide2, w),
+            Token::SignExtend(restored, r2, dbl3),
+            Token::Binary(lost, Binary::Xor, wide3, restored2),
+            Token::Zero(fits, lost2),
+            Token::Not(overflow, fits2),
+            Token::Write(r3),
+            Token::Flag(Flag::CF, overflow2),
+            Token::Flag(Flag::OF, overflow3),
+            Token::UndefFlag(Flag::PF),
+            Token::UndefFlag(Flag::AF),
+            Token::UndefFlag(Flag::ZF),
+            Token::UndefFlag(Flag::SF),
+            ..
+        ] = rest
+        {
+            if dbl2 == dbl && aw2 == aw && bw2 == bw && wide2 == wide && r2 == r && dbl3 == dbl
+                && wide3 == wide && restored2 == restored && lost2 == lost && fits2 == fits
+                && r3 == r && overflow2 == overflow && overflow3 == overflow
+            {
+                out.push(PackedOp::ImulCore { a: *a, b: *b, r: *r, overflow: *overflow, w: *w, dbl: *dbl });
+                i += 15;
+                continue;
+            }
+        }
+        if let [
+            Token::Const(cm, Value { bits: 31, width: w }),
+            Token::Binary(count, Binary::And, b, cm2),
+            Token::Const(one, Value { bits: 1, width: w2 }),
+            Token::Const(width_slot, Value { bits: wb, width: w3 }),
+            Token::Const(yes, Value { bits: 1, width: 1 }),
+            Token::Const(no, Value { bits: 0, width: 1 }),
+            Token::Zero(is_zero, count2),
+            Token::Not(active, is_zero2),
+            Token::Binary(cmo, Binary::Xor, count3, one2),
+            Token::Zero(single, cmo2),
+            Token::Binary(last, Binary::Sub, count4, one3),
+            ..
+        ] = rest
+        {
+            if cm2 == cm && w2 == w && w3 == w && *wb == u64::from(*w) && count2 == count
+                && is_zero2 == is_zero && count3 == count && one2 == one && cmo2 == cmo
+                && count4 == count && one3 == one
+            {
+                out.push(PackedOp::ShiftSetup { b: *b, count: *count, width_slot: *width_slot, yes: *yes, no: *no, active: *active, single: *single, last: *last, w: *w });
+                i += 11;
+                continue;
+            }
+        }
+        if let [
+            Token::FlagIf(Flag::CF, cf, cf_defined, active),
+            Token::FlagIf(Flag::OF, of, single, active2),
+            Token::FlagIf(Flag::AF, no, no2, active3),
+            Token::FlagIf(Flag::SF, sf, yes, active4),
+            Token::FlagIf(Flag::ZF, zf, yes2, active5),
+            Token::FlagIf(Flag::PF, pf, yes3, active6),
+            ..
+        ] = rest
+        {
+            if active2 == active && active3 == active && active4 == active && active5 == active && active6 == active
+                && no2 == no && yes2 == yes && yes3 == yes
+            {
+                out.push(PackedOp::ShiftFlags { cf: *cf, cf_defined: *cf_defined, of: *of, single: *single, sf: *sf, zf: *zf, pf: *pf, active: *active });
+                i += 6;
+                continue;
+            }
+        }
+        if let [
+            Token::Const(clear, Value { bits: 0, width: 1 }),
+            Token::Bit(sf, r, sign),
+            Token::Zero(zf, r2),
+            Token::Parity(pf, r3),
+            ..
+        ] = rest
+        {
+            if r2 == r && r3 == r {
+                out.push(PackedOp::LogicCore { clear: *clear, sf: *sf, zf: *zf, pf: *pf, r: *r, sign: *sign });
+                i += 4;
+                continue;
+            }
+        }
+        if let [
+            Token::Flag(Flag::CF, cf),
+            Token::Flag(Flag::PF, pf),
+            Token::Flag(Flag::AF, af),
+            Token::Flag(Flag::ZF, zf),
+            Token::Flag(Flag::SF, sf),
+            Token::Flag(Flag::OF, of),
+            ..
+        ] = rest
+        {
+            out.push(PackedOp::Flags6 { cf: *cf, pf: *pf, af: *af, zf: *zf, sf: *sf, of: *of });
+            i += 6;
+            continue;
+        }
+        if let [
+            Token::Flag(Flag::PF, pf),
+            Token::Flag(Flag::AF, af),
+            Token::Flag(Flag::ZF, zf),
+            Token::Flag(Flag::SF, sf),
+            Token::Flag(Flag::OF, of),
+            ..
+        ] = rest
+        {
+            out.push(PackedOp::Flags5NoCf { pf: *pf, af: *af, zf: *zf, sf: *sf, of: *of });
+            i += 5;
+            continue;
+        }
+        if let [
+            Token::Flag(Flag::CF, clear),
+            Token::Flag(Flag::OF, clear2),
+            Token::UndefFlag(Flag::AF),
+            Token::Flag(Flag::SF, sf),
+            Token::Flag(Flag::ZF, zf),
+            Token::Flag(Flag::PF, pf),
+            ..
+        ] = rest
+        {
+            if clear2 == clear {
+                out.push(PackedOp::LogicFlags { clear: *clear, sf: *sf, zf: *zf, pf: *pf });
+                i += 6;
+                continue;
+            }
+        }
+        if let [Token::Read(a, Binding::Dst, w), Token::Read(b, Binding::Src, w2), ..] = rest {
+            if w2 == w {
+                out.push(PackedOp::ReadDstSrc { a: *a, b: *b, w: *w });
+                i += 2;
+                continue;
+            }
+        }
+        if let [Token::Read(a, Binding::Dst, w), Token::Const(b, c), ..] = rest {
+            out.push(PackedOp::ReadDstConst { a: *a, b: *b, w: *w, c: *c });
+            i += 2;
+            continue;
+        }
+        out.push(PackedOp::Token(rest[0].clone()));
+        i += 1;
+    }
+    out
+}
+#[derive(Clone, Debug)]
+struct Program { tokens: Vec<Token>, packed: Vec<PackedOp>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, partial: bool, checkpoint_flags:bool }
 
 impl Program {
     pub fn token_line(t: &Token) -> String {
@@ -704,7 +991,8 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
     let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
-    Ok(Program { checkpoint_flags,partial,tokens, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory })
+    let packed=pack_tokens(&tokens);
+    Ok(Program { checkpoint_flags,partial,tokens,packed, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -872,14 +1160,194 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_interrupt_shadow=false;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;2]=[None;2];let mut store_index=0;
-    let mut values: Vec<Value> = p.widths.iter().map(|&w| value(0,w)).collect();
+    let mut values = [Value { bits: 0, width: 0 }; 64];
     let mut pending_dst = None;
     let mut pending_src = None;
-    let mut pending_registers:Vec<(View,Value)>=Vec::new();
+    let mut pending_registers = [(View { register: 0, low: 0, width: 0 }, Value { bits: 0, width: 0 }); 4];
+    let mut reg_count = 0usize;
     let mut pending_flags = cpu.eflags;
     let mut pending_undefined = cpu.undefined_flags;
-    for t in &p.tokens {
-        match *t {
+    for op in &p.packed {
+        match *op {
+            PackedOp::ReadDstSrc { a, b, w } => {
+                values[a] = value(cpu.read(dst).bits, w);
+                values[b] = value(cpu.read(src).bits, w);
+            }
+            PackedOp::ReadDstConst { a, b, w, c } => {
+                values[a] = value(cpu.read(dst).bits, w);
+                values[b] = c;
+            }
+            PackedOp::Conditions16 => {
+                let f = cpu.eflags;
+                let of = u64::from((f >> 11) & 1);
+                let cf = u64::from(f & 1);
+                let zf = u64::from((f >> 6) & 1);
+                let sf = u64::from((f >> 7) & 1);
+                let pf = u64::from((f >> 2) & 1);
+                let be = cf | zf;
+                let l = sf ^ of;
+                let le = l | zf;
+                values[0] = Value { bits: of, width: 1 };
+                values[1] = Value { bits: of ^ 1, width: 1 };
+                values[2] = Value { bits: cf, width: 1 };
+                values[3] = Value { bits: cf ^ 1, width: 1 };
+                values[4] = Value { bits: zf, width: 1 };
+                values[5] = Value { bits: zf ^ 1, width: 1 };
+                values[6] = Value { bits: be, width: 1 };
+                values[7] = Value { bits: be ^ 1, width: 1 };
+                values[8] = Value { bits: sf, width: 1 };
+                values[9] = Value { bits: sf ^ 1, width: 1 };
+                values[10] = Value { bits: pf, width: 1 };
+                values[11] = Value { bits: pf ^ 1, width: 1 };
+                values[12] = Value { bits: l, width: 1 };
+                values[13] = Value { bits: l ^ 1, width: 1 };
+                values[14] = Value { bits: le, width: 1 };
+                values[15] = Value { bits: le ^ 1, width: 1 };
+            }
+            PackedOp::Jcc16 { cond, w } => {
+                let f = cpu.eflags;
+                let cf = (f & 1) != 0;
+                let pf = ((f >> 2) & 1) != 0;
+                let zf = ((f >> 6) & 1) != 0;
+                let sf = ((f >> 7) & 1) != 0;
+                let of = ((f >> 11) & 1) != 0;
+                let take = match cond {
+                    0 => of, 1 => !of, 2 => cf, 3 => !cf, 4 => zf, 5 => !zf,
+                    6 => cf || zf, 7 => !(cf || zf), 8 => sf, 9 => !sf, 10 => pf, 11 => !pf,
+                    12 => sf ^ of, 13 => !(sf ^ of), 14 => (sf ^ of) || zf, _ => !((sf ^ of) || zf),
+                };
+                if take {
+                    let target = context.next_eip.wrapping_add(context.displacement as u32) & (mask(w) as u32);
+                    if target > context.code_limit { return Err(ExecError::GeneralProtection { eip: cpu.eip, error_code: 0 }); }
+                    pending_eip = target;
+                }
+            }
+            PackedOp::RelJmp { w } => {
+                let target = context.next_eip.wrapping_add(context.displacement as u32) & (mask(w) as u32);
+                if target > context.code_limit { return Err(ExecError::GeneralProtection { eip: cpu.eip, error_code: 0 }); }
+                pending_eip = target;
+            }
+            PackedOp::AddCore { a, b, r, cf, of, af, sf, zf, pf, w } => {
+                let va = values[a].bits;
+                let vb = values[b].bits;
+                let wide = va + vb;
+                let vr = wide & mask(w);
+                let sign = w - 1;
+                let ab = va ^ vb;
+                values[r] = Value { bits: vr, width: w };
+                values[cf] = Value { bits: (wide >> w) & 1, width: 1 };
+                values[of] = Value { bits: ((!ab & (va ^ vr)) >> sign) & 1, width: 1 };
+                values[af] = Value { bits: ((ab ^ vr) >> 4) & 1, width: 1 };
+                values[sf] = Value { bits: (vr >> sign) & 1, width: 1 };
+                values[zf] = Value { bits: u64::from(vr == 0), width: 1 };
+                values[pf] = Value { bits: u64::from((vr as u8).count_ones() & 1 == 0), width: 1 };
+            }
+            PackedOp::SubCore { a, b, r, cf, of, af, sf, zf, pf, w } => {
+                let va = values[a].bits;
+                let vb = values[b].bits;
+                let wide = va.wrapping_sub(vb) & mask(w + 1);
+                let vr = wide & mask(w);
+                let sign = w - 1;
+                let ab = va ^ vb;
+                values[r] = Value { bits: vr, width: w };
+                values[cf] = Value { bits: (wide >> w) & 1, width: 1 };
+                values[of] = Value { bits: ((ab & (va ^ vr)) >> sign) & 1, width: 1 };
+                values[af] = Value { bits: ((ab ^ vr) >> 4) & 1, width: 1 };
+                values[sf] = Value { bits: (vr >> sign) & 1, width: 1 };
+                values[zf] = Value { bits: u64::from(vr == 0), width: 1 };
+                values[pf] = Value { bits: u64::from((vr as u8).count_ones() & 1 == 0), width: 1 };
+            }
+            PackedOp::LogicCore { clear, sf, zf, pf, r, sign } => {
+                let vr = values[r].bits;
+                values[clear] = Value { bits: 0, width: 1 };
+                values[sf] = Value { bits: (vr >> sign) & 1, width: 1 };
+                values[zf] = Value { bits: u64::from(vr == 0), width: 1 };
+                values[pf] = Value { bits: u64::from((vr as u8).count_ones() & 1 == 0), width: 1 };
+            }
+            PackedOp::Flags6 { cf, pf, af, zf, sf, of } => {
+                pending_undefined &= !ARITH_FLAGS;
+                pending_flags = (pending_flags & !ARITH_FLAGS)
+                    | (values[cf].bits as u32)
+                    | ((values[pf].bits as u32) << 2)
+                    | ((values[af].bits as u32) << 4)
+                    | ((values[zf].bits as u32) << 6)
+                    | ((values[sf].bits as u32) << 7)
+                    | ((values[of].bits as u32) << 11);
+            }
+            PackedOp::Flags5NoCf { pf, af, zf, sf, of } => {
+                const NO_CF: u32 = ARITH_FLAGS & !1;
+                pending_undefined &= !NO_CF;
+                pending_flags = (pending_flags & !NO_CF)
+                    | ((values[pf].bits as u32) << 2)
+                    | ((values[af].bits as u32) << 4)
+                    | ((values[zf].bits as u32) << 6)
+                    | ((values[sf].bits as u32) << 7)
+                    | ((values[of].bits as u32) << 11);
+            }
+            PackedOp::LogicFlags { clear, sf, zf, pf } => {
+                let c = values[clear].bits as u32;
+                const DEF_MASK: u32 = (1 << 0) | (1 << 2) | (1 << 6) | (1 << 7) | (1 << 11);
+                const AF_MASK: u32 = 1 << 4;
+                pending_undefined = (pending_undefined & !DEF_MASK) | AF_MASK;
+                pending_flags = (pending_flags & !(DEF_MASK | AF_MASK))
+                    | c
+                    | ((values[pf].bits as u32) << 2)
+                    | ((values[zf].bits as u32) << 6)
+                    | ((values[sf].bits as u32) << 7)
+                    | (c << 11);
+            }
+            PackedOp::ShiftSetup { b, count, width_slot, yes, no, active, single, last, w } => {
+                let c = values[b].bits & 31;
+                values[count] = Value { bits: c, width: w };
+                values[width_slot] = Value { bits: u64::from(w), width: w };
+                values[yes] = Value { bits: 1, width: 1 };
+                values[no] = Value { bits: 0, width: 1 };
+                values[active] = Value { bits: u64::from(c != 0), width: 1 };
+                values[single] = Value { bits: u64::from(c == 1), width: 1 };
+                values[last] = value(c.wrapping_sub(1), w);
+            }
+            PackedOp::ShiftFlags { cf, cf_defined, of, single, sf, zf, pf, active } => {
+                if values[active].bits != 0 {
+                    const SHIFT_CLEAR: u32 = ARITH_FLAGS;
+                    pending_flags = (pending_flags & !SHIFT_CLEAR)
+                        | ((values[pf].bits as u32) << 2)
+                        | ((values[zf].bits as u32) << 6)
+                        | ((values[sf].bits as u32) << 7);
+                    pending_undefined = (pending_undefined & !((1 << 2) | (1 << 6) | (1 << 7))) | (1 << 4);
+                    if values[cf_defined].bits != 0 {
+                        pending_flags |= values[cf].bits as u32;
+                        pending_undefined &= !1;
+                    } else {
+                        pending_undefined |= 1;
+                    }
+                    if values[single].bits != 0 {
+                        pending_flags |= (values[of].bits as u32) << 11;
+                        pending_undefined &= !(1 << 11);
+                    } else {
+                        pending_undefined |= 1 << 11;
+                    }
+                }
+            }
+            PackedOp::ImulCore { a, b, r, overflow, w, dbl } => {
+                let xa = values[a];
+                let xb = values[b];
+                let sa = if xa.bits & (1u64 << (xa.width - 1)) != 0 { xa.bits | !mask(xa.width) } else { xa.bits };
+                let sb = if xb.bits & (1u64 << (xb.width - 1)) != 0 { xb.bits | !mask(xb.width) } else { xb.bits };
+                let aw = sa & mask(dbl);
+                let bw = sb & mask(dbl);
+                let wide = aw.wrapping_mul(bw) & mask(dbl);
+                let vr = value(wide, w);
+                let restored = (if vr.bits & (1u64 << (w - 1)) != 0 { vr.bits | !mask(w) } else { vr.bits }) & mask(dbl);
+                let ovf = u64::from(wide != restored);
+                values[r] = vr;
+                values[overflow] = Value { bits: ovf, width: 1 };
+                pending_dst = Some(vr);
+                const CF_OF: u32 = (1 << 0) | (1 << 11);
+                const UNDEF_REST: u32 = (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7);
+                pending_undefined = (pending_undefined & !CF_OF) | UNDEF_REST;
+                pending_flags = (pending_flags & !(CF_OF | UNDEF_REST)) | (ovf as u32) | ((ovf as u32) << 11);
+            }
+            PackedOp::Token(ref t) => match *t {
             Token::CheckpointFlags=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;},
             Token::ReadFlags(o)=>values[o]=value(cpu.eflags as u64,32),
             Token::RequireRealMode=>if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);},
@@ -907,7 +1375,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let selector=values[a].bits as u16;pending_segment=Some((reg,selector,address::SegmentCache::real_mode(selector)));
             }
             Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
-            Token::WriteGpr(reg,a,w)=>pending_registers.push((View{register:reg,low:0,width:w},values[a])),
+            Token::WriteGpr(reg,a,w)=>{pending_registers[reg_count]=(View{register:reg,low:0,width:w},values[a]);reg_count+=1;},
             Token::ReadMsw(o)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64,16),
             Token::Require(c)=>if values[c].bits==0{return Err(ExecError::InvalidContext);},
             Token::ReadAddressAfter(o,reg,a)=>{
@@ -1010,7 +1478,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 }
                 if let Some(x) = pending_dst { cpu.write(dst,x); }
                 if let Some(x) = pending_src { cpu.write(src,x); }
-                for (v,x) in pending_registers {cpu.write(v,x);}
+                for &(v,x) in &pending_registers[..reg_count] {cpu.write(v,x);}
                 cpu.eflags = pending_flags;
                 cpu.undefined_flags = pending_undefined;
                 cpu.eip = pending_eip;
@@ -1018,6 +1486,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                     if !pending_resume{m.retired();}if pending_interrupt_shadow{m.sti_shadow=1;}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
                 }
                 return Ok(());
+            }
             }
         }
     }
