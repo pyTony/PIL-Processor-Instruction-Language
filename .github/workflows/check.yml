@@ -15,11 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cargo test --locked -- --show-output
+      - run: cargo run --locked -- --selftest
       - run: python -m unittest discover -s tests/gui -v
       - run: python tools/verify_debug_service.py
       - if: runner.os == 'Windows'
         run: python tools/verify_debug_service.py --window
-      - run: cargo run --locked -- --selftest
       - run: python tools/build_selftest.py --check
       - run: python tools/build_hello.py --check
       - run: python tools/build_numeric.py --check
