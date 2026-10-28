@@ -5,6 +5,12 @@ use std::fmt::Write as _;
 use std::io::Read;
 const MAX_LINE:usize=4096;
 const MAX_QUANTUM:usize=256;
+const MAX_HISTORY:usize=65536;
+fn budget(d:&Debugger,n:usize)->Result<usize,String>{
+ let left=MAX_HISTORY.saturating_sub(d.tx_events.len());
+ if left==0{return Err("service guest-output history limit reached; reset or select a demo".into());}
+ Ok(n.min(left))
+}
 fn quote(text:&str)->String{
  let mut out=String::from("\"");for c in text.chars(){match c{'"'=>out.push_str("\\\""),'\\'=>out.push_str("\\\\"),'\n'=>out.push_str("\\n"),'\r'=>out.push_str("\\r"),'\t'=>out.push_str("\\t"),c if c<' '=>{write!(out,"\\u{:04x}",c as u32).unwrap();},c=>out.push(c)}}out.push('"');out
 }
@@ -26,9 +32,9 @@ fn command(d:&mut Debugger,line:&str,view:&mut u32)->Result<(String,bool,&'stati
  let words:Vec<_>=line.split_whitespace().collect();
  match words.as_slice(){
   ["snapshot"]|[]=>Ok((String::new(),false,"ready")),
-  ["step"]|["s"]=>{let stop=d.step();Ok((Debugger::stop_text(&stop),false,status(&stop)))},
-  ["run"]|["continue"]|["c"]=>{let(n,stop)=d.run(MAX_QUANTUM)?;Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
-  ["run",n]|["continue",n]|["c",n]=>{let n=number(n)?;if n==0||n>MAX_QUANTUM as u64{return Err("service run budget must be1..256".into());}let(n,stop)=d.run(n as usize)?;Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
+  ["step"]|["s"]=>{budget(d,1)?;let stop=d.step();Ok((Debugger::stop_text(&stop),false,status(&stop)))},
+  ["run"]|["continue"]|["c"]=>{let(n,stop)=d.run(budget(d,MAX_QUANTUM)?)?;Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
+  ["run",n]|["continue",n]|["c",n]=>{let n=number(n)?;if n==0||n>MAX_QUANTUM as u64{return Err("service run budget must be1..256".into());}let(n,stop)=d.run(budget(d,n as usize)?)?;Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
   ["view",at]=>{let at=u32::try_from(number(at)?).map_err(|_|"view address must fit32 bits")?;if at as usize>=d.ram.bytes().len(){return Err("view address outside RAM".into());}*view=at;Ok((format!("memory view at {at:08x}"),false,"ready"))},
   ["help"]=>Ok(("step | run [1..256] | snapshot | demo NAME | reset | regs | flags | list | view ADDRESS | mem/mem8/mem16/mem32 | set REG VALUE | break/delete ADDRESS | breaks | serial rx HEX... | serial tx/status/clear | cache | check | quit".into(),false,"ready")),
   [name,..] if matches!(*name,"demo"|"reset"|"regs"|"flags"|"eip"|"set"|"break"|"delete"|"breaks"|"serial"|"cache"|"check"|"list"|"mem"|"mem8"|"mem16"|"mem32"|"quit"|"exit"|"q")=>{let(text,quit)=d.command_mode(line,false)?;if *view as usize>=d.ram.bytes().len(){*view=0;}Ok((text,quit,"ready"))},

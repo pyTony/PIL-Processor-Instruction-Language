@@ -8,6 +8,7 @@ fn service_keeps_guest_bytes_separate_and_preserves_cli_results(){
 fn service_bounds_commands_and_does_not_mutate_on_rejection(){
  let mut d=Debugger::new("counter").unwrap();let old=d.cpu.clone();let mut view=0x100;
  for input in ["run 257","run 0","bench 10000","time 1000000","view 999999","dosprobe a.com","load a.bin"]{assert!(command(&mut d,input,&mut view).is_err());assert_eq!(d.cpu,old);}
+ d.tx_events=vec![0;MAX_HISTORY];assert!(command(&mut d,"run",&mut view).is_err());assert!(command(&mut d,"step",&mut view).is_err());assert_eq!(d.cpu,old);command(&mut d,"reset",&mut view).unwrap();assert!(command(&mut d,"step",&mut view).is_ok());
  let mut out=vec![];serve(&vec![b'x';4097][..],&mut out,None).unwrap();let text=String::from_utf8(out).unwrap();assert_eq!(text.lines().count(),2);assert!(text.contains("\"quit\":true"));
 }
 #[test]

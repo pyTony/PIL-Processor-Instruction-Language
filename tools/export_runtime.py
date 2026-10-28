@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 # Explicit run/build inputs only. Tests and development documents cannot leak
 # through a broad repository copy. These patterns are intentionally narrow.
 PATTERNS=('src/*.rs','isa/i386/*.pil','programs/selftest.hex','programs/selftest.lst','programs/hello.hex','programs/hello.lst','programs/factorials.hex','programs/factorials.lst','programs/loop.hex','programs/loop.lst',
-          'Cargo.toml','Cargo.lock','.gitattributes','tools/build.sh','tools/build.ps1',
+          'Cargo.toml','Cargo.lock','.gitattributes','tools/pil_debugger.py','tools/build.sh','tools/build.ps1',
           'tools/debug.sh','tools/debug.ps1','tools/bench.sh','tools/bench.ps1','tools/compare.sh','tools/compare.ps1','tools/mandelbrot.sh','tools/mandelbrot.ps1')
 DOCUMENTS={'README.md':'README.md','DEBUGGER.md':'docs/DEBUGGER.md',
            'REFERENCES_AND_CREDITS.md':'docs/REFERENCES_AND_CREDITS.md',
@@ -80,6 +80,7 @@ def verify(destination):
     subprocess.run([str(exe),'--dos-extract',str(archive),str(extracted)],cwd=destination,env=env,check=True)
     if '2 executable candidates' not in listed or 'SUMMARY imported=2/2 exited=2' not in probed or (extracted/'BIN/HELLO.COM').read_bytes()!=com.read_bytes():
         raise SystemExit('standalone ZIP list/probe/extract failed')
+    subprocess.run([sys.executable,str(ROOT/'tools/verify_debug_service.py'),'--engine',str(exe),'--frontend',str(destination/'tools/pil_debugger.py')],cwd=destination,env=env,check=True)
     print('Standalone ZIP list/probe/extract passed')
     print('Standalone DOS COM/MZ hello import and execution passed')
     print('Standalone runtime build, launchers, serial transcript and compiled backend comparison passed')
