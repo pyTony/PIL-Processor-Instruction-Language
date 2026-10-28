@@ -43,7 +43,10 @@ fn command(d:&mut Debugger,line:&str,view:&mut u32)->Result<(String,bool,&'stati
 }
 pub fn serve<R:BufRead,W:Write>(mut input:R,mut output:W,path:Option<&str>)->io::Result<()>{
  let mut d=Debugger::new("counter").map_err(io::Error::other)?;
- if let Some(path)=path{let bytes=std::fs::read(path)?;d.load_image(&bytes,path).map_err(io::Error::other)?;}
+ if let Some(path)=path{
+  let mut bytes=Vec::new();std::fs::File::open(path)?.take((super::super::guest::RAM_BYTES-super::super::guest::ENTRY as usize+1)as u64).read_to_end(&mut bytes)?;
+  d.load_image(&bytes,path).map_err(io::Error::other)?;
+ }
  let mut view=if d.ram.bytes().len()>0x100{0x100}else{0};let mut seq=0u64;
  writeln!(output,"{}",reply(&d,seq,true,false,"PIL debugger connected","ready",&[],view))?;output.flush()?;
  loop{

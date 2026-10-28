@@ -85,6 +85,14 @@ with tempfile.TemporaryDirectory() as tmp:
         assert result['status']=='halt' and result['guest_output']==[65]
     finally:client.close()
 
+with tempfile.TemporaryDirectory() as tmp:
+    path=Path(tmp)/'oversized.bin';path.write_bytes(b'\x90'*4096)
+    client=frontend.EngineClient([str(binary)],path)
+    try:
+        event,_,detail=client.events.get(timeout=15)
+        assert event=='error' and 'image must contain' in detail
+    finally:client.close()
+
 result=subprocess.run([str(binary),'--debug-service'],input=b'x'*4097,capture_output=True,timeout=15,check=True)
 lines=[json.loads(line) for line in result.stdout.splitlines()]
 assert len(lines)==2 and not lines[1]['ok'] and lines[1]['quit']

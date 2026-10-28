@@ -338,6 +338,13 @@ def make_app(root, engine, raw_path=None):
                 return
             name = filedialog.askopenfilename(parent=root, title='Open raw monitor binary (not a DOS COM/MZ loader)')
             if name:
+                try:
+                    size = Path(name).stat().st_size
+                    if not 1 <= size <= 3840:
+                        raise ValueError('Raw monitor images must contain1..3840 bytes; use --dos-probe for DOS executables/images')
+                except (OSError, ValueError) as error:
+                    messagebox.showerror('PIL raw image', str(error), parent=root)
+                    return
                 self.start(name)
 
         def render(self, command, message):
