@@ -1,4 +1,47 @@
 use super::*;
+
+#[test]
+fn pil_trace_stops_at_the_same_mode_segment_and_branch_checks_as_execution(){
+    let real="require_real_mode\npreserve_flags all\nretire";
+    let span="const offset 64 65534\ncheck_segment 2 offset 4\npreserve_flags all\nretire";
+    let far="const selector 16 4096\nconst target 32 65536\nfar_branch selector target\npreserve_flags all\nretire";
+    let near="const target 32 256\nconst take 1 1\nbranch_if target take\npreserve_flags all\nretire";
+    let untaken="const target 32 256\nconst take 1 0\nbranch_if target take\npreserve_flags all\nretire";
+    let segment="const selector 16 4096\nwrite_segment 3 selector\npreserve_flags all\nretire";
+    for (source,mode,flags,limit,early) in [
+        (real,Some(false),2,65535,Some(0)),
+        (real,Some(true),0x20002,65535,Some(0)),
+        (real,None,2,65535,Some(0)),
+        (real,Some(true),2,65535,None),
+        (span,Some(true),2,65535,Some(1)),
+        (span,None,2,65535,Some(1)),
+        (far,Some(true),2,65535,Some(2)),
+        (far,Some(false),2,65535,Some(2)),
+        (far,Some(true),0x20002,65535,Some(2)),
+        (near,Some(true),2,255,Some(2)),
+        (near,Some(true),2,256,None),
+        (untaken,Some(true),2,255,None),
+        (segment,Some(false),2,65535,Some(1)),
+        (segment,Some(true),2,65535,None),
+    ]{
+        let p=compile(source,16).unwrap();
+        let mut cpu=Cpu{regs:[0;8],eflags:flags,undefined_flags:0,eip:128};
+        let mut ram=Ram::new(0x20000);
+        let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0,real_mode:mode.unwrap_or(true),ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
+        let view=View{register:0,low:0,width:16};
+        let context=FlowContext{next_eip:130,displacement:0,displacement_bits:8,code_limit:limit};
+        let old_cpu=cpu.clone();let old_ram=ram.clone();let old_machine=machine;
+        let (trace,actual)=p.trace_disassemble(early.unwrap_or(0),&cpu,view,view,context,&ram,0,None,mode.map(|_|&machine),None);
+        assert_eq!(actual,early,"{source}\n{trace}");
+        if let Some(idx)=early{
+            assert!(trace.lines().nth(idx).unwrap().contains("FAULT"),"{trace}");
+            assert!(!trace.lines().nth(idx+1).unwrap().contains(';'),"no effects beyond fault: {trace}");
+        }
+        let result=if mode.is_some(){execute_machine(&p,&mut cpu,view,view,context,&mut ram,None,&mut machine)}else{execute_flow(&p,&mut cpu,view,view,context)};
+        assert_eq!(result.is_err(),early.is_some(),"{source}");
+        if early.is_some(){assert_eq!(cpu,old_cpu);assert_eq!(ram,old_ram);assert_eq!(machine,old_machine);}
+    }
+}
 fn run(p: &Program, a:u32, b:u32, f:u32) -> Cpu {
     let mut c = Cpu{regs:[0;8],eflags:f,undefined_flags:0,eip:0}; c.regs[0]=a; c.regs[1]=b;
     let w=p.operand_width;
@@ -708,5 +751,36 @@ fn lazy_flags_queue_matches_eager_execution_across_alu_chains_and_jcc(){
                 }
             }
         }
+    }
+}
+
+#[test]
+fn optimized_program_keeps_large_value_files_and_ordered_register_effects(){
+    let mut text=String::new();
+    for i in 0..80{text.push_str(&format!("const v{i} 32 {i}\n"));}
+    for i in 0..16{text.push_str(&format!("write_gpr {} v{}\n",i%8,64+i));}
+    text.push_str("preserve_flags all\nretire");
+    let p=compile(&text,32).unwrap();let c=run(&p,0,0,0xad7);
+    assert_eq!(c.regs,[72,73,74,75,76,77,78,79]);assert_eq!(c.eflags,0xad7);
+}
+
+#[test]
+fn packed_program_preserves_custom_flag_sources_and_live_intermediates(){
+    let add=instantiate(description("add").unwrap(),8);
+    let sub=instantiate(description("sub").unwrap(),8);
+    let logic=instantiate(description("and").unwrap(),8);
+    let shift=instantiate(description("shl").unwrap(),8);
+    for text in [
+        add.replace("flag CF cf","flag CF zf"),
+        sub.replace("flag OF of","flag OF sf"),
+        logic.replace("flag CF clear","flag CF sf").replace("flag OF clear","flag OF sf"),
+        add.replace("write dst r","trunc copy wide 8\nwrite dst copy"),
+        shift.replace("shl r a count","shl r a one"),
+    ]{
+        let packed=compile(&text,8).unwrap();let mut literal=packed.clone();
+        literal.packed=literal.tokens.iter().cloned().map(PackedOp::Token).collect();literal.flushes_lazy=true;
+        for a in [0,1,0x7f,0x80,0xff]{for b in [0,1,2,0xff]{
+            assert_eq!(run(&packed,a,b,0xad7),run(&literal,a,b,0xad7),"{text}\na={a:x} b={b:x}");
+        }}
     }
 }

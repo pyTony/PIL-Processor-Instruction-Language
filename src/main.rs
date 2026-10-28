@@ -273,6 +273,22 @@ fn is_conditions16_prefix(s: &[Token]) -> bool {
         ]
     )
 }
+fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
+    let used=|i:&usize|slots.contains(i);
+    !rest.iter().any(|t|match t {
+        Token::Extend(_,a,_)|Token::SignExtend(_,a,_)|Token::Truncate(_,a,_)
+        |Token::Not(_,a)|Token::Bit(_,a,_)|Token::Zero(_,a)|Token::Parity(_,a)
+        |Token::Write(a)|Token::WriteSource(a)|Token::Flag(_,a)|Token::WriteGpr(_,a,_)
+        |Token::WriteSegment(_,a)|Token::InterruptShadowIf(a)|Token::RetireIf(a)
+        |Token::ResumeIf(a)|Token::Require(a)|Token::CheckSegment(_,a,_)
+        |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
+        Token::Binary(_,_,a,b)|Token::Shift(_,_,a,b)|Token::Less(_,a,b)
+        |Token::BranchIf(a,b)|Token::FarBranch(a,b)|Token::Store(a,b,_)
+        |Token::StoreSegment(a,b,_,_)|Token::WriteIf(a,b)|Token::WriteSourceIf(a,b)=>used(a)||used(b),
+        Token::Select(_,a,b,c)|Token::FlagIf(_,a,b,c)=>used(a)||used(b)||used(c),
+        _=>false,
+    })
+}
 fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
     let filtered: Vec<Token> = tokens.iter().filter(|t| !matches!(t, Token::PreserveFlags(_))).cloned().collect();
     let mut out = Vec::with_capacity(filtered.len());
@@ -311,7 +327,8 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
             ..
         ] = rest
         {
-            if ft == ft2 && w == w2 && base == base2 && delta == delta2 && wrapped == wrapped2 && target == target2 && take == take2 {
+            if ft == ft2 && w == w2 && base == base2 && delta == delta2 && wrapped == wrapped2 && target == target2 && take == take2
+                && intermediates_are_dead(&rest[7..],&[*ft,*base,*delta,*wrapped,*target,*take]) {
                 out.push(PackedOp::RelJmp { w: *w });
                 i += 7;
                 continue;
@@ -340,6 +357,7 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
                 && w2 == w && a2 == a && b2 == b && ab2 == ab && a3 == a && r2 == r && nab2 == nab
                 && ar2 == ar && overflow2 == overflow && *sign == *w - 1 && ab3 == ab && r3 == r
                 && abr2 == abr && r4 == r && sign2 == sign && r5 == r && r6 == r
+                && intermediates_are_dead(&rest[15..],&[*aw,*bw,*wide,*ab,*nab,*ar,*overflow,*abr])
             {
                 out.push(PackedOp::AddCore { a: *a, b: *b, r: *r, cf: *cf, of: *of, af: *af, sf: *sf, zf: *zf, pf: *pf, w: *w });
                 i += 15;
@@ -368,6 +386,7 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
                 && w2 == w && a2 == a && b2 == b && a3 == a && r2 == r && ab2 == ab
                 && ar2 == ar && overflow2 == overflow && *sign == *w - 1 && ab3 == ab && r3 == r
                 && abr2 == abr && r4 == r && sign2 == sign && r5 == r && r6 == r
+                && intermediates_are_dead(&rest[14..],&[*aw,*bw,*wide,*ab,*ar,*overflow,*abr])
             {
                 out.push(PackedOp::SubCore { a: *a, b: *b, r: *r, cf: *cf, of: *of, af: *af, sf: *sf, zf: *zf, pf: *pf, w: *w });
                 i += 14;
@@ -396,6 +415,7 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
             if dbl2 == dbl && aw2 == aw && bw2 == bw && wide2 == wide && r2 == r && dbl3 == dbl
                 && wide3 == wide && restored2 == restored && lost2 == lost && fits2 == fits
                 && r3 == r && overflow2 == overflow && overflow3 == overflow
+                && intermediates_are_dead(&rest[15..],&[*aw,*bw,*wide,*restored,*lost,*fits])
             {
                 out.push(PackedOp::ImulCore { a: *a, b: *b, r: *r, overflow: *overflow, w: *w, dbl: *dbl });
                 i += 15;
@@ -420,6 +440,7 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
             if cm2 == cm && w2 == w && w3 == w && *wb == u64::from(*w) && count2 == count
                 && is_zero2 == is_zero && count3 == count && one2 == one && cmo2 == cmo
                 && count4 == count && one3 == one
+                && intermediates_are_dead(&rest[11..],&[*cm,*one,*is_zero,*cmo])
             {
                 out.push(PackedOp::ShiftSetup { b: *b, count: *count, width_slot: *width_slot, yes: *yes, no: *no, active: *active, single: *single, last: *last, w: *w });
                 i += 11;
@@ -438,6 +459,8 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
         {
             if active2 == active && active3 == active && active4 == active && active5 == active && active6 == active
                 && no2 == no && yes2 == yes && yes3 == yes
+                && filtered.iter().any(|t|matches!(t,Token::Const(o,Value{bits:0,width:1}) if o==no))
+                && filtered.iter().any(|t|matches!(t,Token::Const(o,Value{bits:1,width:1}) if o==yes))
             {
                 out.push(PackedOp::ShiftFlags { cf: *cf, cf_defined: *cf_defined, of: *of, single: *single, sf: *sf, zf: *zf, pf: *pf, active: *active });
                 i += 6;
@@ -519,33 +542,40 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
     let n = out.len();
     if n >= 3 && matches!(out[n - 1], PackedOp::Token(Token::Retire)) {
         match (&out[n - 3], &out[n - 2]) {
-            (&PackedOp::SubCore { a, b, r, w, .. }, &PackedOp::Flags6 { .. }) => {
+            (&PackedOp::SubCore { a, b, r, w, cf, pf, af, zf, sf, of }, &PackedOp::Flags6 { cf:fc, pf:fp, af:fa, zf:fz, sf:fs, of:fo })
+                if [cf,pf,af,zf,sf,of]==[fc,fp,fa,fz,fs,fo] => {
                 out[n - 3] = PackedOp::SubLazy { a, b, r, w, write_cf: true };
                 out.remove(n - 2);
             }
-            (&PackedOp::LogicCore { r, sign, .. }, &PackedOp::LogicFlags { .. }) => {
+            (&PackedOp::LogicCore { r, sign, clear, sf, zf, pf }, &PackedOp::LogicFlags { clear:fc, sf:fs, zf:fz, pf:fp })
+                if [clear,sf,zf,pf]==[fc,fs,fz,fp] => {
                 out[n - 3] = PackedOp::LogicLazy { r, w: sign + 1 };
                 out.remove(n - 2);
             }
             _ if n >= 4 && matches!(out[n - 3], PackedOp::Token(Token::Write(_)) | PackedOp::Token(Token::Store(..))) => {
                 match (&out[n - 4], &out[n - 2]) {
-                    (&PackedOp::AddCore { a, b, r, w, .. }, &PackedOp::Flags6 { .. }) => {
+                    (&PackedOp::AddCore { a, b, r, w, cf, pf, af, zf, sf, of }, &PackedOp::Flags6 { cf:fc, pf:fp, af:fa, zf:fz, sf:fs, of:fo })
+                        if [cf,pf,af,zf,sf,of]==[fc,fp,fa,fz,fs,fo] => {
                         out[n - 4] = PackedOp::AddLazy { a, b, r, w, write_cf: true };
                         out.remove(n - 2);
                     }
-                    (&PackedOp::AddCore { a, b, r, w, .. }, &PackedOp::Flags5NoCf { .. }) => {
+                    (&PackedOp::AddCore { a, b, r, w, pf, af, zf, sf, of, .. }, &PackedOp::Flags5NoCf { pf:fp, af:fa, zf:fz, sf:fs, of:fo })
+                        if [pf,af,zf,sf,of]==[fp,fa,fz,fs,fo] => {
                         out[n - 4] = PackedOp::AddLazy { a, b, r, w, write_cf: false };
                         out.remove(n - 2);
                     }
-                    (&PackedOp::SubCore { a, b, r, w, .. }, &PackedOp::Flags6 { .. }) => {
+                    (&PackedOp::SubCore { a, b, r, w, cf, pf, af, zf, sf, of }, &PackedOp::Flags6 { cf:fc, pf:fp, af:fa, zf:fz, sf:fs, of:fo })
+                        if [cf,pf,af,zf,sf,of]==[fc,fp,fa,fz,fs,fo] => {
                         out[n - 4] = PackedOp::SubLazy { a, b, r, w, write_cf: true };
                         out.remove(n - 2);
                     }
-                    (&PackedOp::SubCore { a, b, r, w, .. }, &PackedOp::Flags5NoCf { .. }) => {
+                    (&PackedOp::SubCore { a, b, r, w, pf, af, zf, sf, of, .. }, &PackedOp::Flags5NoCf { pf:fp, af:fa, zf:fz, sf:fs, of:fo })
+                        if [pf,af,zf,sf,of]==[fp,fa,fz,fs,fo] => {
                         out[n - 4] = PackedOp::SubLazy { a, b, r, w, write_cf: false };
                         out.remove(n - 2);
                     }
-                    (&PackedOp::LogicCore { r, sign, .. }, &PackedOp::LogicFlags { .. }) => {
+                    (&PackedOp::LogicCore { r, sign, clear, sf, zf, pf }, &PackedOp::LogicFlags { clear:fc, sf:fs, zf:fz, pf:fp })
+                        if [clear,sf,zf,pf]==[fc,fs,fz,fp] => {
                         out[n - 4] = PackedOp::LogicLazy { r, w: sign + 1 };
                         out.remove(n - 2);
                     }
@@ -558,7 +588,7 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
     out
 }
 #[derive(Clone, Debug)]
-struct Program { tokens: Vec<Token>, packed: Vec<PackedOp>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, has_read_address: bool, flushes_lazy: bool, partial: bool, checkpoint_flags:bool }
+struct Program { tokens: Vec<Token>, packed: Vec<PackedOp>, widths: Vec<u8>, register_effects: usize, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, has_read_address: bool, flushes_lazy: bool, partial: bool, checkpoint_flags:bool }
 
 impl Program {
     pub fn token_line(t: &Token) -> String {
@@ -587,7 +617,7 @@ impl Program {
             Token::ReadDisp(v, w) => format!("v{v} = read_disp {w}"),
             Token::BranchIf(t, c) => format!("branch_if v{t} (when v{c})"),
             Token::FarBranch(t, s) => format!("far_branch v{t}:v{s}"),
-            Token::CheckSegment(s, ty, lim) => format!("check_segment v{s} ty={ty} lim={lim}"),
+            Token::CheckSegment(s, a, n) => format!("check_segment {s} v{a} {n}"),
             Token::PreserveFlags(m) => format!("preserve_flags 0x{m:03x}"),
             Token::UndefFlag(f) => format!("undef_flag {f:?}"),
             Token::Select(v, c, a, b) => format!("v{v} = select v{c} ? v{a} : v{b}"),
@@ -635,6 +665,28 @@ impl Program {
             let mut note = String::new();
             if early_stop.is_none() {
                 match *t {
+                    _ if machine.is_none() && matches!(t,
+                        Token::CheckpointFlags | Token::RequireRealMode | Token::InterruptShadowIf(..)
+                        | Token::LoadSegment(..) | Token::StoreSegment(..) | Token::ReadSegment(..)
+                        | Token::WriteSegment(..) | Token::ReadMsw(..) | Token::CheckSegment(..) | Token::FarBranch(..)) => {
+                        early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
+                    }
+                    Token::RequireRealMode => {
+                        if !machine.unwrap().real_mode || cpu.eflags & 0x20000 != 0 {
+                            early_stop = Some(idx); note = "; FAULT (real mode required)".into();
+                        } else { note = "; real mode ok".into(); }
+                    }
+                    Token::CheckSegment(reg, a, n) => {
+                        let m = machine.unwrap();
+                        let c = address::MemoryContext {
+                            segment: [address::SegmentRegister::Es, address::SegmentRegister::Cs, address::SegmentRegister::Ss, address::SegmentRegister::Ds, address::SegmentRegister::Fs, address::SegmentRegister::Gs][reg],
+                            cache: m.segments[reg],
+                        };
+                        match c.translate_span(values[a].bits, n, false, cpu.eip) {
+                            Ok(_) => note = "; segment span ok".into(),
+                            Err(e) => { early_stop = Some(idx); note = format!("; FAULT ({e:?})"); }
+                        }
+                    }
                     Token::ReadFlags(o) => {
                         values[o] = value(cpu.eflags as u64, 32);
                         note = format!("; v{o} = 0x{:08x}", values[o].bits);
@@ -685,7 +737,9 @@ impl Program {
                         }
                     }
                     Token::WriteSegment(reg, a) => {
-                        note = format!("; stage seg {reg} <- 0x{:04x}", values[a].bits);
+                        if !machine.unwrap().real_mode {
+                            early_stop = Some(idx); note = "; FAULT (real mode required)".into();
+                        } else { note = format!("; stage seg {reg} <- 0x{:04x}", values[a].bits); }
                     }
                     Token::ReadGpr(o, reg, w) => {
                         values[o] = value(cpu.regs[reg] as u64, w);
@@ -708,11 +762,14 @@ impl Program {
                         let mut regs = cpu.regs;
                         regs[reg] = values[a].bits as u32;
                         if let Some(ea) = effective {
-                            if let Ok(res) = ea.resolve(&regs, None) {
-                                values[o] = value(res.offset as u64, 32);
-                                note = format!("; v{o} = 0x{:08x}", values[o].bits);
+                            match ea.resolve(&regs, None) {
+                                Ok(res) => {
+                                    values[o] = value(res.offset as u64, 32);
+                                    note = format!("; v{o} = 0x{:08x}", values[o].bits);
+                                }
+                                Err(e) => { early_stop = Some(idx); note = format!("; FAULT ({e:?})"); }
                             }
-                        }
+                        } else { early_stop = Some(idx); note = "; FAULT (missing effective address)".into(); }
                     }
                     Token::ReadAddress(o) => {
                         values[o] = value(address as u64, 32);
@@ -752,10 +809,18 @@ impl Program {
                         note = format!("; v{o} = 0x{:x} ({:+})", values[o].bits, context.displacement);
                     }
                     Token::BranchIf(a, c) => {
-                        note = if values[c].bits != 0 { format!("; stage EIP <- 0x{:08x} (taken)", values[a].bits) } else { "; branch not taken".into() };
+                        if values[c].bits != 0 && values[a].bits > u64::from(context.code_limit) {
+                            early_stop = Some(idx); note = "; FAULT (branch exceeds code limit)".into();
+                        } else {
+                            note = if values[c].bits != 0 { format!("; stage EIP <- 0x{:08x} (taken)", values[a].bits) } else { "; branch not taken".into() };
+                        }
                     }
                     Token::FarBranch(a, b) => {
-                        note = format!("; stage CS:EIP <- {:04x}:{:08x}", values[a].bits, values[b].bits);
+                        if !machine.unwrap().real_mode || cpu.eflags & 0x20000 != 0 {
+                            early_stop = Some(idx); note = "; FAULT (real mode required)".into();
+                        } else if values[b].bits > u64::from(address::SegmentCache::real_mode(values[a].bits as u16).limit) {
+                            early_stop = Some(idx); note = "; FAULT (far branch exceeds code limit)".into();
+                        } else { note = format!("; stage CS:EIP <- {:04x}:{:08x}", values[a].bits, values[b].bits); }
                     }
                     Token::Select(o, c, a, b) => {
                         values[o] = if values[c].bits != 0 { values[a] } else { values[b] };
@@ -1166,11 +1231,12 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
     let has_read_address=tokens.iter().any(|t|matches!(t,Token::ReadAddress(_)));
     let packed=pack_tokens(&tokens);
+    let register_effects=tokens.iter().filter(|t|matches!(t,Token::WriteGpr(..))).count();
     let flushes_lazy=packed.iter().any(|op|matches!(op,
         PackedOp::Conditions16|PackedOp::Flags6{..}|PackedOp::Flags5NoCf{..}|PackedOp::LogicFlags{..}|PackedOp::ShiftFlags{..}|PackedOp::ImulCore{..}
         |PackedOp::Token(Token::ReadFlags(_)|Token::ReadFlag(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(_))
     ));
-    Ok(Program { checkpoint_flags,partial,tokens,packed, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory, has_read_address, flushes_lazy })
+    Ok(Program { checkpoint_flags,partial,tokens,packed, widths, register_effects, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory, has_read_address, flushes_lazy })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1356,10 +1422,20 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;2]=[None;2];let mut store_index=0;
     let mut probed:Option<ProbedMemoryAccess>=None;
-    let mut values = [Value { bits: 0, width: 0 }; 64];
+    // Keep ordinary instructions on the stack without restricting valid PIL programs.
+    let mut value_stack = [Value { bits: 0, width: 0 }; 64];
+    let mut value_heap;
+    let values:&mut [Value]=if p.widths.len()<=value_stack.len(){&mut value_stack}else{
+        value_heap=vec![Value{bits:0,width:0};p.widths.len()];&mut value_heap
+    };
     let mut pending_dst = None;
     let mut pending_src = None;
-    let mut pending_registers = [(View { register: 0, low: 0, width: 0 }, Value { bits: 0, width: 0 }); 4];
+    let empty_effect=(View { register: 0, low: 0, width: 0 }, Value { bits: 0, width: 0 });
+    let mut register_stack = [empty_effect; 4];
+    let mut register_heap;
+    let pending_registers:&mut [(View,Value)]=if p.register_effects<=register_stack.len(){&mut register_stack}else{
+        register_heap=vec![empty_effect;p.register_effects];&mut register_heap
+    };
     let mut reg_count = 0usize;
     if p.flushes_lazy {
         lazy.flush(&mut cpu.eflags, &mut cpu.undefined_flags);

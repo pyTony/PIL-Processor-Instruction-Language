@@ -453,7 +453,8 @@ impl Debugger {
             if next>=total || early==Some(done){
                 let from=self.cpu.eip;
                 let stop=self.step();
-                return (format!("PIL token {done}/{}: retired instruction; {}; EIP {from:08x} -> {:08x}",total.saturating_sub(1),Self::stop_text(&stop),self.cpu.eip),stop);
+                let outcome=if stop==Stop::Advanced{"retired instruction"}else{"execution stopped"};
+                return (format!("PIL token {done}/{}: {outcome}; {}; EIP {from:08x} -> {:08x}",total.saturating_sub(1),Self::stop_text(&stop),self.cpu.eip),stop);
             }
             self.pil_cursor=Some((self.cpu.eip,next));
             return (format!("PIL step {next}/{total} at EIP={:08x}",self.cpu.eip),Stop::Advanced);

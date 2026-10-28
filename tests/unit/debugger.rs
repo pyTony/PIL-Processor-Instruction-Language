@@ -447,3 +447,19 @@ fn pilstep_traces_individual_tokens_and_retires_at_end(){
     assert_eq!(d.cpu.eip,0x102);
     assert_eq!(d.cpu.regs[0],2);
 }
+
+#[test]
+fn pilstep_fault_stops_at_failed_check_without_reporting_retirement(){
+    let mut d=Debugger::new("counter").unwrap();
+    // Ordinary real-mode far CALL is rejected when the supplied mode is protected.
+    d.load_image(&[0x9a,0,0,0,0,0,0],"faulting far call").unwrap();
+    d.image.as_mut().unwrap().real_mode=false;
+    let before=d.cpu.clone();let ram=d.ram.clone();
+    assert_eq!(d.step_pil().1,Stop::Advanced); // width declaration token
+    assert!(d.current_pil().contains("FAULT (real mode required)"),"{}",d.current_pil());
+    let (message,stop)=d.step_pil();
+    assert_eq!(stop,Stop::Fault(ExecError::InvalidContext));
+    assert!(message.contains("execution stopped"));
+    assert!(!message.contains("retired instruction"));
+    assert_eq!(d.cpu,before);assert_eq!(d.ram,ram);
+}

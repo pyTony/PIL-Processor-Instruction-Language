@@ -232,6 +232,26 @@ fn bios_timer_advances_deterministically_updates_bda_and_rolls_over(){
  assert_eq!((p.cpu.regs[0]&255,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.timer_ticks),(1,0x0018,0x00af,0));
 }
 #[test]
+fn bios_timer_write_fault_preserves_entire_service_state(){
+ for fault in [0x046c,0x046f,0x0470]{
+  let mut p=load(&[0xcd,0x1a],"timer.com").unwrap();
+  p.timer_ticks=123;p.cpu.regs[0]=0xabcd00ff;p.cpu.eflags=0xad7;p.cpu.undefined_flags=u32::MAX;
+  p.ram.store(0x046c,MemWidth::Dword,0xdeadbeef).unwrap();
+  p.ram.store(0x0470,MemWidth::Byte,0x55).unwrap();
+  p.ram.protect(fault,1).unwrap();
+  let old=p.clone();let mut out=vec![65];
+  assert!(service(&mut p,0x1a,&mut out).is_err());
+  assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);assert_eq!(p.image,old.image);
+  assert_eq!(p.timer_ticks,old.timer_ticks);assert_eq!(p.open_handles,old.open_handles);assert_eq!(out,vec![65]);
+ }
+ // A truncated BDA must also fail before touching its still-accessible tick cell.
+ let mut p=load(&[0xcd,0x1a],"timer.com").unwrap();p.timer_ticks=123;
+ p.ram=Ram::new(0x0470);p.ram.store(0x046c,MemWidth::Dword,0xdeadbeef).unwrap();
+ let old=p.clone();let mut out=vec![];
+ assert!(service(&mut p,0x1a,&mut out).is_err());
+ assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);assert_eq!(p.timer_ticks,old.timer_ticks);
+}
+#[test]
 fn dos_open_and_close_validate_paths_modes_and_tracked_psp_handles(){
  let mut p=load(&[0xcd,0x21],"files.com").unwrap();let mut out=vec![];
  let psp_base=u32::from(PSP)*16;

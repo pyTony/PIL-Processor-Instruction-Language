@@ -124,6 +124,50 @@ class FrontendTests(unittest.TestCase):
             ],
         )
 
+    def test_monitor_load_completion_keeps_newer_session_and_cleans_stale_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'entry.bin'
+            path.write_bytes(b'\x90')
+            requested_session = object()
+            session = requested_session
+            loaded, errors = [], []
+            runner = front.AsyncJobRunner()
+
+            def completed(result, error):
+                front.complete_monitor_load(
+                    result, error, is_current=lambda: session is requested_session,
+                    load=lambda *args: loaded.append(args), report_error=errors.append,
+                )
+
+            self.assertTrue(runner.submit(lambda: (str(path), 1), completed))
+            session = object()  # user opened another program before UI delivery
+            deadline = time.monotonic() + 2.0
+            while path.exists() and time.monotonic() < deadline:
+                runner.drain()
+                time.sleep(0.005)
+            self.assertEqual(loaded, [])
+            self.assertEqual(errors, [])
+            self.assertFalse(path.exists())
+
+    def test_monitor_load_delivers_only_current_results_and_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'entry.bin'
+            path.write_bytes(b'\x90')
+            loaded, errors = [], []
+            front.complete_monitor_load(
+                (str(path), 1), None, is_current=lambda: True,
+                load=lambda *args: loaded.append(args), report_error=errors.append,
+            )
+            self.assertEqual(loaded, [(str(path), 1)])
+            self.assertTrue(path.exists())  # engine still needs to open it
+            error = RuntimeError('read failed')
+            for current in [False, True]:
+                front.complete_monitor_load(
+                    None, error, is_current=lambda: current,
+                    load=lambda *args: self.fail('failed read must not start engine'), report_error=errors.append,
+                )
+            self.assertEqual(errors, [error])
+
     def test_memory_cell_formatting_and_highlight_spans(self):
         dump = (
             '00000500: 41 00 80 ff 78 56 34 12 00 00 00 00 00 00 00 00 |A...xV4.........|\n'

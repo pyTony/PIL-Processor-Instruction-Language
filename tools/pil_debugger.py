@@ -63,6 +63,18 @@ class AsyncJobRunner:
         return count
 
 
+def complete_monitor_load(result, error, *, is_current, load, report_error):
+    """Deliver on the UI thread only while the requesting session/browser is live."""
+    if not is_current():
+        if result is not None:
+            Path(result[0]).unlink(missing_ok=True)
+        return
+    if error is not None:
+        report_error(error)
+        return
+    load(*result)
+
+
 def parse_container_listing(stdout: str):
     """Parse `--dos-list` output lines into (entry_path, size_bytes, kind)."""
     entries = []
@@ -740,29 +752,36 @@ def make_app(root, engine, raw_path=None):
                     )
                     return
 
+                requested_client = self.client
+
                 def work():
                     tmp = tempfile.NamedTemporaryFile(suffix='.bin', prefix='pil_ent_', delete=False)
                     tmp.close()
-                    subprocess.run(
-                        [str(self.engine), '--dos-read', str(img_path), sel, tmp.name],
-                        capture_output=True, text=True, check=True, timeout=10,
-                    )
-                    size = Path(tmp.name).stat().st_size
-                    if not 1 <= size <= MAX_MONITOR_BYTES:
+                    try:
+                        subprocess.run(
+                            [str(self.engine), '--dos-read', str(img_path), sel, tmp.name],
+                            capture_output=True, text=True, check=True, timeout=10,
+                        )
+                        size = Path(tmp.name).stat().st_size
+                        if not 1 <= size <= MAX_MONITOR_BYTES:
+                            raise ValueError(f'File contains {size} bytes (monitor max is {MAX_MONITOR_BYTES:,} bytes). Use Run DOS Probe instead.')
+                        return tmp.name, size
+                    except Exception:
                         Path(tmp.name).unlink(missing_ok=True)
-                        raise ValueError(f'File contains {size} bytes (monitor max is {MAX_MONITOR_BYTES:,} bytes). Use Run DOS Probe instead.')
-                    return tmp.name, size
+                        raise
 
-                def on_done(res, error):
-                    if error is not None:
-                        parent = win if win.winfo_exists() else root
-                        messagebox.showerror('Load Error', str(error), parent=parent)
-                        return
-                    tmp_name, size = res
+                def load(tmp_name, size):
                     self.start(tmp_name)
                     self.status.set(f'Loaded {sel} ({size} bytes) from {img_path.name}')
-                    if win.winfo_exists():
-                        win.destroy()
+                    win.destroy()
+
+                def on_done(res, error):
+                    complete_monitor_load(
+                        res, error,
+                        is_current=lambda: not self.closing and self.client is requested_client and bool(win.winfo_exists()),
+                        load=load,
+                        report_error=lambda exc: messagebox.showerror('Load Error', str(exc), parent=win),
+                    )
 
                 if not self.jobs.submit(work, on_done):
                     self.status.set('Another container task is already running…')

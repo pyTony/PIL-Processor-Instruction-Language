@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-29",
+  "review_parent": "f4b516f7a95b077adaece51d84ea0f755b3cd17f",
+  "source_hash_encoding": "UTF-8, LF newlines (Git text contents)",
+  "source_sha256": {
+    "src/debugger.rs": "a5bbb534eb0013e5463a93577bfb94183fc118859191ff9b3615fc045fb48b6d",
+    "src/dos_services.rs": "480b8159ad5f1d6490d9971f7f4752335aae77e6c45a2cba5eceff425c308474",
+    "src/main.rs": "c528de18204c0564a3492253d91774e777879319ebef2234e82ff65ae10333b3",
+    "tests/gui/test_frontend.py": "47e6fc562d1816fa6c864f99b18c52c053b20daae56de221d9836b7affe0eb4e",
+    "tests/unit/cpu.rs": "78cd7f6dd6356ca44ec3c66ad0d0e1b80cfb42b3143c640caa8a0dfc1bd60e78",
+    "tests/unit/debugger.rs": "f23102009e963330b674207e4cbd7b29a9f2a62b081bc319e5af800256d437cd",
+    "tests/unit/dos.rs": "557405b596644c21566c6964ffae1b7601d5b61e42851c23593f112d8842c40d",
+    "tools/pil_debugger.py": "9c478373b516ebee69f93b3bf569f96517481a06badbb27f94246d27b77f25f6"
+  },
+  "host": "windows/x86_64, AuthenticAMD CPUID1 EAX=00a20f10",
+  "rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+  "rust_tests_passed": 350,
+  "frontend_tests_passed": 11,
+  "native_cpu_cases": 340920,
+  "native_encodings": 64,
+  "native_harness_checks": 40,
+  "backend_cases": 207,
+  "backend_trace_bytes": 7407658,
+  "full_mandelbrot": {
+    "pixels": 65536,
+    "checkpoints": 256,
+    "checkpoint_bytes": 1157120,
+    "instructions_per_engine": 12940344,
+    "tx_retries_per_engine": 255
+  },
+  "standalone_runtime_files": 116,
+  "dosbox_result": {
+    "kind": "original self-checking DOS COM emulator comparison",
+    "hardware_or_external_suite": false,
+    "negative_control": false,
+    "tests": 210,
+    "com_bytes": 36340,
+    "initial_hashes": {
+      "com": "e548b4c22f9f02137688a171d66edbc0ceaf143170b88d1f8db63d4469cee3ec",
+      "pil": "c14152cc430b7689427cce96984298c569e17db1d11f06cc39499115666a0e4f",
+      "dosbox": "e248c42984a7c2b6814474914f4161acc6a22eb65553e5a051e106bb86c39874"
+    },
+    "com_sha256": "e548b4c22f9f02137688a171d66edbc0ceaf143170b88d1f8db63d4469cee3ec",
+    "dosbox_sha256": "e248c42984a7c2b6814474914f4161acc6a22eb65553e5a051e106bb86c39874",
+    "pil_sha256": "c14152cc430b7689427cce96984298c569e17db1d11f06cc39499115666a0e4f",
+    "dosbox_cpu": "386",
+    "dosbox_core": "normal",
+    "dosbox_result": {
+      "passed": 210,
+      "failed": 0,
+      "errors": []
+    },
+    "pil_result": {
+      "passed": 210,
+      "failed": 0,
+      "errors": []
+    },
+    "elapsed_seconds": 0.7133524417877197,
+    "errors": [],
+    "excluded": [
+      "divide-error delivery",
+      "undefined flag values",
+      "BIOS/devices",
+      "protected/V86 mode",
+      "cycle timing"
+    ]
+  }
+}
