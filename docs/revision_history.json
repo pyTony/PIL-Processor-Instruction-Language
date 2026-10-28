@@ -1954,6 +1954,33 @@
         "linux_full_checks": "passed",
         "windows_full_checks": "passed"
       }
+    },
+    {
+      "version": "0.34.0-alpha.1",
+      "date": "2026-10-28",
+      "features": [
+        "Bounded AH02 character capture and AX3700 switch-character query",
+        "Real-mode LES16/32 through shared PIL",
+        "Version and step budget in DOS reports"
+      ],
+      "status": "hosted-verified",
+      "limitations": [
+        "No new full corpus or hardware run",
+        "No text-screen/BIOS model",
+        "Other full-pointer loads and protected/V86 contexts remain separate"
+      ],
+      "rust_verification": {
+        "code_commit": "ee8e579a2e371eacb6220c9f198f6f28e886e2d4",
+        "ci_run": 40624671136,
+        "tests_passed_per_host": 328,
+        "backend_cases": 199,
+        "trace_bytes": 7330906,
+        "hosts": [
+          "Windows",
+          "Linux"
+        ],
+        "standalone_native_package_and_full_mandelbrot": "passed"
+      }
     }
   ]
 }

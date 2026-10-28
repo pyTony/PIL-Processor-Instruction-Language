@@ -244,3 +244,13 @@ Windows/Linux CI40621030314 passed319 tests and185 full-state backend cases
 No new full FreeDOS-image or hardware run. Next reported service target is a
 text screen for INT10/AH08; PUSHA and32-bit SMSW remain instruction blockers.
 Use the current status/feature matrix over older milestone snapshots above.
+
+## DOS output/query and LES (0.34)
+
+Real-mode LES now composes existing PIL pointer reads and staged GPR/ES writes.
+The full source span is checked and both fields use incoming address/segment
+state. Other full-pointer loads and protected/V86 descriptor semantics remain.
+AH02 and AX3700 are bounded host DOS contracts. No screen/BIOS or interrupt
+model is introduced. The100000-step v0.33 corpus motivates these targets;
+new corpus measurements await rerun. Windows/Linux CI40624671136 passed328 tests and199 backend cases,
+plus standalone/native packages and full Mandelbrot comparisons.

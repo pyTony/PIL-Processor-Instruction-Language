@@ -133,7 +133,8 @@ their read/write restrictions. Fixed compiled images retain changed-code guards.
   initial-CS code window. A20 wrap and executable code outside those windows
   are not modeled. Stack/segment/control instructions remain limited to what
   the current instruction profile implements.
-- Unprefixed INT21/AH09 (output), AH4C (exit), AH30 (version), AH48/49/4A
+- Unprefixed INT21/AH02/AH09 (output), AH4C (exit), AH30 (version), AH37/AL00
+  (switch query), AH48/49/4A
   (bounded memory), AH25/35 (set/get vector), and INT20 (CS=PSP exit) are bridged.
   Output is capped at16KiB and a service checks the whole string before
   publishing output. AH09 returns AL=24h and preserves other modeled state.
@@ -262,3 +263,29 @@ unimplemented. The existing host shim still intercepts supported INT calls.
 Contracts follow Microsoft MS-DOS Encyclopedia INT21 Set Interrupt Vector
 (AH25) and Get Interrupt Vector (AH35), and Ralf Brown's Interrupt List.
 No third-party implementation copied.
+
+## DOS output, switch query and LES (0.34)
+
+INT21/AH02 reads DL, appends the byte to captured output and returns it in AL.
+A tab expands to spaces up to the next eight-column boundary and returns AL=20h.
+The column is derived from prior captured bytes: CR resets it, LF and BEL
+preserve it, BS decrements toward zero, and tabs advance to the next tab stop.
+Other bytes are captured unchanged and advance the column. Existing AH09 capture
+remains unchanged. The whole AH02 expansion must fit the16KiB cap before output
+or AL changes. Other registers and flags are preserved. Keyboard/break handling,
+redirection and a screen/BIOS device are not implemented.
+
+INT21/AX3700 returns AL=0 and DL='/' for the declared DOS6.22 compatibility
+profile, preserving upper register bits, other registers and flags. AH37/AL01
+and other subfunctions remain explicit unsupported-service stops.
+
+LES C4 accepts real-mode memory16:16/16:32 pointers with independent16/32-bit
+address sizes and ordinary segment overrides. Both fields use incoming address
+registers and source caches, including an ES override; the full pointer must fit
+the source segment and RAM. GPR and ES selector/cache commit together. Flags
+are preserved. No protected/V86 load, descriptor lookup or other full-pointer
+load instruction is added. Pointer segment-end wrap is rejected by this profile.
+
+Report headers print the package version and selected per-program step budget,
+including the default budget when --steps is omitted. Keep the supplied v0.33
+100000-step report as historical user evidence until the new corpus is rerun.

@@ -5,7 +5,16 @@ separate delivery branch; never merge the dev tree into main. The applicable
 user documentation is maintained in delivery/source/. CI validates the isolated
 export in addition to development tests. Full history and planning remain here.
 
-## Current position —28 October2026
+## Current increment —0.34,28 October2026
+
+Implement bounded AH02 output, AX3700 fixed switch query and real-mode LES
+from the user's100000-step v0.33 report. Windows/Linux CI40624671136 passed328 tests and199 backend cases,
+plus standalone/native packages and full Mandelbrot comparisons.
+Next remains a text-screen model for INT10/AH08, RCR for GREP, PUSHA and32-bit
+SMSW. Investigate individual loaded-image boundary stops separately; no new
+whole-image exit count is claimed.
+
+## Previous position —0.33,28 October2026
 
 Version0.33 adds AH25/35 RAM interrupt-vector services and ordinary-RAM XCHG.
 Windows/Linux CI40621030314 passed319 tests and185 backend cases, plus full

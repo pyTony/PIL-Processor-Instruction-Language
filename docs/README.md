@@ -6,7 +6,14 @@ and development plans. The complete documentation lives on the
 The [main branch](https://github.com/pyTony/pil_proof/tree/main) is a separate
 runtime delivery and contains a smaller set of user documentation.
 
-## Current delivery: 0.33.0-alpha.1
+## Current increment: 0.34.0-alpha.1
+
+AH02 character capture, AX3700 switch query and real-mode LES are implemented;
+Windows/Linux CI40624671136 passed328 tests and199 backend cases. Reports now identify version and step budget.
+See [current status](development/STATUS.md) and the
+[feature matrix](../delivery/source/FEATURE_MATRIX.md) for contracts and limits.
+
+## Previous delivery: 0.33.0-alpha.1
 
 [PR38](https://github.com/pyTony/pil_proof/pull/38) adds DOS AH25/35 vector
 services and ordinary-RAM memory XCHG86/87, including explicit memory LOCK.
@@ -49,6 +56,7 @@ questions; proposed syntax and plans are not implementation claims.
 | [LAHF](../isa/i386/lahf.pil), [SAHF](../isa/i386/sahf.pil) | Packing status flags into AH and partial flag writes |
 | [CMC](../isa/i386/cmc.pil) | Concrete carry input and a defined flag write |
 | [SHL](../isa/i386/shl.pil) | Explicit count masking and conditional flag effects |
+| [LES](../isa/i386/les.pil) | Full pointer reads and joint GPR/ES effects |
 | [Memory ADD](../isa/i386/add_ram.pil) | Load, calculate and stage a store |
 | [Conditions](../isa/i386/conditions.pil), [SETcc](../isa/i386/setcc.pil), [Jcc](../isa/i386/jcc.pil) | Composed predicates, conditional results and branches |
 | [Parser, interpreter and Rust emitter](../src/main.rs) | Implemented token validation and both execution paths |

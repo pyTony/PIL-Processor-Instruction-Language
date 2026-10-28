@@ -1,5 +1,18 @@
 # PIL development branch
 
+## 0.34: DOS character output, switch query and LES
+
+The DOS probe now supports bounded AH02 character output (including tab
+expansion) and AX3700's fixed '/' switch-character query. Real-mode LES C4
+loads16/32-bit offsets and ES together through shared PIL with precise pointer
+faults. Reports print the runtime version and per-program step budget.
+BIOS screen reads, CPU interrupt delivery, protected-mode pointer loads and
+execution outside the loaded-image fetch window remain separate work.
+
+[Windows/Linux verification](https://github.com/pyTony/pil_proof/actions/runs/40624671136)
+passed328 Rust tests,199 full-state cases and standalone/package/Mandelbrot checks.
+
+
 ## 0.33: DOS vectors and memory XCHG
 
 DOS INT21/AH25 and AH35 set/get physical RAM vectors with complete-access

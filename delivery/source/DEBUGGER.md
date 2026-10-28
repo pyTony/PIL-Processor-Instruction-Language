@@ -687,3 +687,25 @@ ES's real-mode cache. Four-byte checks precede mutation, flags and upper EBX
 are preserved, and failed calls do not retire. Initial vectors are zero;
 setting one does not add CPU interrupt dispatch or kernel/ROM handlers.
 See the DOS probe guide for the bounded service profile.
+
+## DOS output, switch query and LES (0.34)
+
+INT21/AH02 reads DL, appends the byte to captured output and returns it in AL.
+A tab expands to spaces up to the next eight-column boundary and returns AL=20h.
+The column is derived from prior captured bytes: CR resets it, LF and BEL
+preserve it, BS decrements toward zero, and tabs advance to the next tab stop.
+Other bytes are captured unchanged and advance the column. Existing AH09 capture
+remains unchanged. The whole AH02 expansion must fit the16KiB cap before output
+or AL changes. Other registers and flags are preserved. Keyboard/break handling,
+redirection and a screen/BIOS device are not implemented.
+
+INT21/AX3700 returns AL=0 and DL='/' for the declared DOS6.22 compatibility
+profile, preserving upper register bits, other registers and flags. AH37/AL01
+and other subfunctions remain explicit unsupported-service stops.
+
+LES C4 accepts real-mode memory16:16/16:32 pointers with independent16/32-bit
+address sizes and ordinary segment overrides. Both fields use incoming address
+registers and source caches, including an ES override; the full pointer must fit
+the source segment and RAM. GPR and ES selector/cache commit together. Flags
+are preserved. No protected/V86 load, descriptor lookup or other full-pointer
+load instruction is added. Pointer segment-end wrap is rejected by this profile.

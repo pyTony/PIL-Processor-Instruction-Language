@@ -1,3 +1,25 @@
+# PIL 0.34.0-alpha.1
+
+- Add bounded DOS INT21/AH02 character output. Preserve flags and registers
+  except AL; return the emitted byte, or20h for a tab. Expand tabs to the next
+  eight-column stop derived from captured output. Check the entire expansion
+  against the16KiB cap before changing output or AL. No keyboard/break checks,
+  redirection, text-screen model or BIOS services are added.
+- Add INT21/AX3700 switch-character query: AL=0, DL='/', preserving upper
+  register bits and flags. This fixed DOS6.22 compatibility profile rejects
+  unsupported AH37 subfunctions instead of claiming a mutable DOS setting.
+- Add real-mode LES C4 r16,m16:16 and r32,m16:32 through shared PIL. Address
+  and operand sizes are independent. Check the full pointer span and read both
+  fields through the incoming source segment before committing the GPR and ES
+  selector/cache. Read or segment faults preserve CPU, RAM and machine markers.
+  Protected/V86 loads and LDS/LFS/LGS/LSS remain separate.
+- Report headers now identify the runtime version and per-program step budget.
+  Nine new expected-state tests and14 backend cases. Windows/Linux CI40624671136
+  passed328 Rust tests,199 full-state cases (7,330,906 matching trace bytes),
+  standalone runtime/native packages and full256x256 Mandelbrot comparisons.
+- Targets the user's100000-step v0.33 report: AH02(20), AH37(16), LES(6).
+  No new full FreeDOS-image, ARM or legacy real-mode hardware run is claimed.
+
 # PIL 0.33.0-alpha.1
 
 - Add DOS INT21/AH25 and AH35 using the physical RAM interrupt-vector table.
