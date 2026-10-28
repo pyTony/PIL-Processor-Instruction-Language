@@ -127,6 +127,26 @@ fn opcode_key(bytes:&[u8])->String{
 fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
     match(vector,(p.cpu.regs[0]>>8)as u8){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
+        (0x21,0x02)=>{
+            let byte=p.cpu.regs[2]as u8;
+            // Derive the bounded capture's column, including earlier AH09 text.
+            // LF preserves column; CR resets it. This is not a text-screen device.
+            let count=if byte==9{
+                let mut column=0usize;
+                for &b in out.iter(){match b{b'\r'=>column=0,b'\n'|7=>{},8=>column=column.saturating_sub(1),9=>column+=8-column%8,_=>column+=1}}
+                8-column%8
+            }else{1};
+            if out.len().checked_add(count).is_none_or(|n|n>MAX_OUTPUT){return Err("DOS output limit reached before character output".into());}
+            let value=if byte==9{b' '}else{byte};
+            out.extend(std::iter::repeat(value).take(count));
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+            Ok(None)
+        },
+        (0x21,0x37)=>{
+            if p.cpu.regs[0]as u8!=0{return Err("DOS switch-character shim supports AH37/AL00 query only".into());}
+            p.cpu.regs[0]&=!255;p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(b'/');
+            Ok(None)
+        },
         (0x21,0x25)=>{
             // AL selects a physical IVT entry; DS:DX is a pointer value, not
             // an access to the handler. One dword store checks all four bytes.
@@ -215,7 +235,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=String::from("DOS executable probe: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 version. Not a running DOS kernel.\n");
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 version. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{match super::containers::open(Path::new(path)){
