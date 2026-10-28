@@ -5,6 +5,14 @@ separate delivery branch; never merge the dev tree into main. The applicable
 user documentation is maintained in delivery/source/. CI validates the isolated
 export in addition to development tests. Full history and planning remain here.
 
+## User direction: I/O service and debugger
+
+Route device/service I/O through an explicit service boundary and improve the
+debugger using the user's other projects as design references. See the
+[concrete proposal](development/IO_SERVICE_AND_DEBUGGER_DESIGN.md) and pinned
+lispy3/z80-cpm review. Identify Dine before choosing its integration API.
+This is planned architecture work; v0.34 runtime behavior is unchanged.
+
 ## Current increment —0.34,28 October2026
 
 Implement bounded AH02 output, AX3700 fixed switch query and real-mode LES

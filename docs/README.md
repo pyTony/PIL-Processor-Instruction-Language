@@ -23,6 +23,12 @@ build/package checks and full Mandelbrot comparisons. No new full FreeDOS-image,
 ARM or legacy hardware run is claimed. Details: [current status](development/STATUS.md),
 [DOS service contracts](DOS_PROBE.md), [feature matrix](../delivery/source/FEATURE_MATRIX.md).
 
+## Next architecture work
+
+The [I/O service and debugger proposal](development/IO_SERVICE_AND_DEBUGGER_DESIGN.md)
+records the user's direction and reviewed lispy3/z80-cpm patterns. Dine's
+identity/API is awaiting clarification; integration is not yet implemented.
+
 ## What PIL does
 
 PIL describes an instruction as typed bit-vector calculations and explicit
