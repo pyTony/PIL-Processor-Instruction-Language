@@ -258,3 +258,10 @@ operand-size padding and real-mode transfer. Code and tests are original. The
 bounded contiguous stack frame and deterministic zero padding follow this
 prototype's RETF/segment-PUSH profile; no new legacy hardware validation is
 claimed. Protected/V86 gates, tasks and exception delivery are not implemented.
+
+## DOS vectors and memory XCHG (0.33)
+
+API contracts: Microsoft MS-DOS Encyclopedia INT21/AH25 and AH35; Ralf Brown's
+Interrupt List. XCHG contracts: Intel80386 Programmer's Reference Manual.
+Original implementation and test fixtures; no third-party code imported.
+Single-executor ordinary RAM only; no concurrent bus or hardware proof claim.

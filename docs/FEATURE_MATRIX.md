@@ -1,4 +1,4 @@
-# PIL 0.32.0-alpha.1 feature matrix
+# PIL 0.33.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -16,6 +16,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Status-byte transfers | Supported subset | LAHF/SAHF with implicit AH; five status bits and fixed byte bits; OF preserved by SAHF |
 | Real-mode control flags | Supported subset | CLI/STI, PUSHF/POPF and PUSHFD/POPFD; distinct traced STI delay; no protected/V86 privilege rules or interrupt delivery |
 | Frame teardown | Supported subset | LEAVE16/32 with independent SS size, precise read faults and dynamic SS rebinding; ENTER remains planned |
+| DOS interrupt vectors | Bounded subset | AH25/35 physical RAM IVT, ES cache update, precise access faults; initial zero vectors, no CPU interrupt delivery or ROM/kernel handlers |
 | DOS memory services | Bounded subset | INT21/AH48/49/4A first-fit single-process conventional MCB arena, visible headers, CF/error codes and PSP extent; no UMB/EXEC/TSR or strategy selection |
 | Stack | Supported subset | Register PUSH/POP, immediate PUSH and segment PUSH; independent operand/SS sizes, precise RAM faults; memory POP (8F /0) and memory PUSH (FF /6) supported; real-mode segment POP is supported |
 | Machine-status read | Word profile | SMSW0F01/4 reads explicit traced MSW; PE follows normalized mode; word memory/register forms; r32 policy and CR0/LMSW writes remain separate |
@@ -24,8 +25,8 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Direction flag | Supported subset | CLD/STD via shared PIL; DF bit10 defined, all other flags preserved; MOVS/STOS/LODS use DF |
 | Rotates / carry constants | Supported subset | ROL/ROR8/16/32,register/memory,count1/CL/imm8; CLC/STC/CMC. RCL/RCR remain planned |
 | Data conversion / addresses | Supported subset | MOVZX/MOVSX8-to16/32 and16-to16/32 (register/memory, including aliases). CBW/CWDE/CWD/CDQ and LEA16/32 preserve flags |
-| Register exchange | Supported subset | XCHG8/16/32 register forms86/87 and accumulator91..97; snapshots and aliases; memory/LOCK remain planned |
-| Register effects | Supported subset | Snapshot reads; ordered named GPR effects or bound writes; one staged segment-cache change and one RAM store |
+| Register exchange | Supported subset | XCHG8/16/32 register and ordinary-RAM forms86/87, accumulator91..97; memory LOCK accepted, precise faults; no MMIO/concurrent bus model |
+| Register effects | Supported subset | Snapshot reads; ordered named GPR effects or bound writes; one staged segment-cache change and at most two ordered RAM stores |
 | Register views | Supported | 32-bit registers, low 16 bits, AL/AH-style byte views |
 | Calls and returns | Near and real-mode far subset | E8 relative and FF /2 register/memory CALL, C3/C2 RET; independent operand/SS sizes and byte cleanup; CB/CA real-mode RETF16/32 restores CS:IP transactionally; 9A/FF /3 real-mode CALL16/32 with two-slot frames; no far JMP, gates/tasks or protected/V86 transfers |
 | Comparison strings | Supported subset | CMPS/SCAS8/16/32, REPE/REPNE, DF, independent address sizes, source override/fixed ES and entry-flag fault recovery; no interrupt delivery |

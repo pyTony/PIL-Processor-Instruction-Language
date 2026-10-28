@@ -127,6 +127,25 @@ fn opcode_key(bytes:&[u8])->String{
 fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
     match(vector,(p.cpu.regs[0]>>8)as u8){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
+        (0x21,0x25)=>{
+            // AL selects a physical IVT entry; DS:DX is a pointer value, not
+            // an access to the handler. One dword store checks all four bytes.
+            let address=(p.cpu.regs[0]&255)*4;
+            let pointer=(u32::from(p.image.selectors[SegmentRegister::Ds.index()])<<16)|(p.cpu.regs[2]&0xffff);
+            p.ram.store(address,MemWidth::Dword,pointer).map_err(|e|format!("DOS vector write: {e:?}"))?;
+            Ok(None)
+        },
+        (0x21,0x35)=>{
+            // Read the complete pointer before changing BX or the ES cache.
+            let address=(p.cpu.regs[0]&255)*4;
+            let pointer=p.ram.load(address,MemWidth::Dword).map_err(|e|format!("DOS vector read: {e:?}"))?;
+            let selector=(pointer>>16)as u16;
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|(pointer&0xffff);
+            let es=SegmentRegister::Es.index();
+            p.image.selectors[es]=selector;p.selectors[es]=selector;
+            p.image.segments[es]=SegmentCache::real_mode(selector);
+            Ok(None)
+        },
         (0x21,0x30)=>{
             // Read before changing registers so a failed PSP read has no effects.
             let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;

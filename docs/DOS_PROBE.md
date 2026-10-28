@@ -133,13 +133,13 @@ their read/write restrictions. Fixed compiled images retain changed-code guards.
   initial-CS code window. A20 wrap and executable code outside those windows
   are not modeled. Stack/segment/control instructions remain limited to what
   the current instruction profile implements.
-- Only unprefixed `INT21/AH09` (DS:DX dollar-terminated output),
-  `INT21/AH4C` (exit with AL) and `INT20` (exit with CS=PSP) are bridged.
+- Unprefixed INT21/AH09 (output), AH4C (exit), AH30 (version), AH48/49/4A
+  (bounded memory), AH25/35 (set/get vector), and INT20 (CS=PSP exit) are bridged.
   Output is capped at16KiB and a service checks the whole string before
   publishing output. AH09 returns AL=24h and preserves other modeled state.
 - These calls are an explicitly labeled host shim, not CPU INT/IRET semantics:
   no interrupt frame, IVT dispatch, BIOS, files, keyboard, environment, memory
-  allocation calls, Ctrl-Break handling or full DOS process lifetime exists.
+  allocation strategies, Ctrl-Break handling or full DOS process lifetime exists.
   Captured bytes are displayed escaped; no CP437 screen rendering is implied.
 
 ## Sources and verification
@@ -247,3 +247,18 @@ pass FF /3 and stop at DOS INT 21/AH=25. GREP passes 9A and stops at memory XCHG
 `0F 01`, one `60`, and one `87` (five total, previously 21). Imports stay
 151/156 and exits stay six. This is first-blocker progress, not completion of
 these programs or a booted DOS kernel.
+
+
+## Interrupt-vector services (0.33)
+
+AH25 stores DS:DX at physical AL*4 as little-endian offset then selector.
+AH35 reads that entry into ES:BX and rebuilds the ordinary real-mode ES cache.
+Upper EBX and all flags are preserved. The four-byte RAM access is checked
+before mutation; failed calls do not retire. Handler pointers are not executed
+or dereferenced. Guest IVT writes are visible to AH35. Vectors initially contain
+zero; no DOS/BIOS handlers are supplied and CPU interrupt dispatch remains
+unimplemented. The existing host shim still intercepts supported INT calls.
+
+Contracts follow Microsoft MS-DOS Encyclopedia INT21 Set Interrupt Vector
+(AH25) and Get Interrupt Vector (AH35), and Ralf Brown's Interrupt List.
+No third-party implementation copied.
