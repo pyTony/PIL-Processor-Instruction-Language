@@ -455,13 +455,13 @@ impl Image {
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
     }
 }
-fn register_name(view:View)->&'static str {
+pub(crate) fn register_name(view:View)->&'static str {
     const BYTE:[&str;8]=["AL","CL","DL","BL","AH","CH","DH","BH"];
     const WORD:[&str;8]=["AX","CX","DX","BX","SP","BP","SI","DI"];
     const DWORD:[&str;8]=["EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI"];
     match view.width{8=>BYTE[view.register+if view.low==8{4}else{0}],16=>WORD[view.register],_=>DWORD[view.register]}
 }
-fn operand_name(view:View,address:Option<AddressContext>)->String {
+pub(crate) fn operand_name(view:View,address:Option<AddressContext>)->String {
     let Some(address)=address else{return register_name(view).into();};
     let mut terms=Vec::new();let displacement;
     match address.effective {

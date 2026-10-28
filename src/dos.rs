@@ -27,6 +27,7 @@ pub struct Loaded{
     pub format:Format,pub cpu:Cpu,pub ram:Ram,pub image:Image,
     pub selectors:[u16;6],pub relocations:usize,pub module_bytes:usize,
     pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
+    pub timer_ticks:u32,pub open_handles:u32,
 }
 fn word(bytes:&[u8],at:usize)->Result<u16,String>{
     let b=bytes.get(at..at+2).ok_or("truncated DOS header/relocation word")?;Ok(u16::from_le_bytes([b[0],b[1]]))
@@ -103,13 +104,14 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
     let mut ram=Ram::new(LIMIT);
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
-    put_word(&mut psp,2,(allocation_end/16)as u16);put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;
+    put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x18..0x1d].copy_from_slice(&[0,1,2,3,4]);psp[0x1d..0x2c].fill(0xff);
+    put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
@@ -177,10 +179,17 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 version. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 version; INT1A/AH00 advances deterministic tick counter; INT21/AH3D validates DS:DX and returns file-not-found; INT21/AH3E tracks open PSP handles 0..4. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
-    for path in paths{match super::containers::open(Path::new(path)){
+    for path in paths{
+        if let Some((container,inner))=super::containers::split_container_path(path){
+            match super::containers::read_entry(Path::new(container),inner){
+                Ok(bytes)=>inputs.push((path.clone(),Ok(bytes))),
+                Err(e)=>inputs.push((path.clone(),Err(e))),
+            }continue;
+        }
+        match super::containers::open(Path::new(path)){
         Ok(Some(archive))=>{
             let mut candidates=0;let mut added=0;
             for note in archive.notes{writeln!(report,"CONTAINER NOTE {path}: {note}").unwrap();}

@@ -47,9 +47,11 @@ bytes; draining them does not invalidate `check`. Control bytes are escaped.
 |---|---|
 | help | List commands |
 | demo NAME | Load selftest, hello, factorials, loop, counter, echo, memory or mandelbrot (see table above) |
-| load PATH | Load a raw binary, 1..3840 bytes; paths contain no spaces in the REPL |
+| load PATH | Load a raw binary or `.hex` file, 1..3840 guest bytes; paths contain no spaces in the REPL |
 | list [COUNT] / list ADDRESS COUNT | Show bytes, operands and branch targets; default16, max256; * marks EIP |
+| pil | Show current instruction's PIL token translation, stepped token values, and affected memory cell |
 | step / s | Execute one instruction, ignoring its breakpoint |
+| pilstep / ps | Step one PIL token within the current instruction, retiring on the final token |
 | run [N] / continue [N] / c [N] | Run up to N completed steps; default 100, maximum 10,000 |
 | regs / flags / eip | Inspect state; ? marks undefined flag results |
 | set eax VALUE, etc. | Set a 32-bit general register, eip or eflags |

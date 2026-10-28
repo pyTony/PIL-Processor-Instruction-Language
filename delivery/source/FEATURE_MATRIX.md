@@ -14,7 +14,7 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Shifts | Supported subset | SHL/SAL, SHR, SAR8/16/32; count1, CL, imm8; register/memory; no double shifts |
 | Image/archive imports | Bounded read-only subset | FAT16 MBR/superfloppy,ZIP stored/deflate,listing/new-directory extraction and probe deduplication;not FAT12/FAT32/ISO/ZIP64 |
 | DOS executable probe | Bounded diagnostic subset | COM/MZ relocation import, original hello, bounded print/exit/memory host shim and first-blocker corpus reports; not full DOS |
-| BIOS / DOS service shims | Bounded diagnostic subset | INT 10h (AH=03h, AH=08h), INT 11h equipment list, INT 12h memory size (640 KB), INT 1Ah (AH=00h), INT 21h (AH=3Dh open file failure stub, AH=3Eh close file stub) |
+| BIOS / DOS service shims | Bounded diagnostic subset | INT 10h (AH=03h, AH=08h), INT 11h equipment list, INT 12h memory size (640 KB), INT 1Ah (AH=00h deterministic BDA tick counter), INT 21h (AH=3Dh DS:DX/mode-validated open failure stub, AH=3Eh PSP handle 0..4 close tracker) |
 | Status-byte transfers | Supported subset | LAHF/SAHF with implicit AH; five status bits and fixed byte bits; OF preserved by SAHF |
 | Real-mode control flags | Supported subset | CLI/STI, PUSHF/POPF and PUSHFD/POPFD; distinct traced STI delay; no protected/V86 privilege rules or interrupt delivery |
 | Frame teardown | Supported subset | LEAVE16/32 with independent SS size, precise read faults and dynamic SS rebinding; ENTER remains planned |
@@ -78,8 +78,9 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 - **INT 10h:** `AH=08h` (read char/attr at cursor), `AH=03h` (read cursor position & size).
 - **INT 11h:** BIOS equipment word determination (pointing device / color / floppy flags).
 - **INT 12h:** Conventional memory size query (returns 640 KB).
-- **INT 1Ah:** `AH=00h` (read system-clock timer ticks).
-- **INT 21h:** `AH=3Dh` (open file failure stub with `CF=1`, `AX=0x0002`), `AH=3Eh` (close file stub with `CF=0`).
+- **INT 1Ah:** `AH=00h` (read deterministic advancing system-clock timer ticks synchronized with BDA `0x046C` and midnight rollover `0x0470`).
+- **INT 21h:** `AH=3Dh` (validates access mode `0..=2` and readable ASCIIZ path at `DS:DX` before returning `CF=1`, `AX=0x0002`/`0x0003`), `AH=3Eh` (validates and closes tracked PSP handles `0..=4` once with `CF=0`, or rejects invalid/closed handles with `CF=1`, `AX=0x0006`).
+- **Probe interpretation:** Probe exits under these shims reflect bounded diagnostic completion (e.g., device-open probes cleanly reporting missing drivers), not full DOS filesystem or device-driver execution.
 
 
 The compiled proof compares registers, EFLAGS, undefined-flag metadata, EIP,

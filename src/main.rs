@@ -100,6 +100,317 @@ enum Token {
 #[derive(Clone, Debug)]
 struct Program { tokens: Vec<Token>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, partial: bool, checkpoint_flags:bool }
 
+impl Program {
+    pub fn token_line(t: &Token) -> String {
+        match t {
+            Token::Read(v, b, w) => format!("v{v} = read {b:?} {w}"),
+            Token::ReadFlag(v, f) => format!("v{v} = read_flag {f:?}"),
+            Token::ReadFlags(v) => format!("v{v} = read_flags"),
+            Token::CheckpointFlags => "checkpoint_flags".into(),
+            Token::RequireRealMode => "require_real_mode".into(),
+            Token::InterruptShadowIf(c) => format!("interrupt_shadow_if v{c}"),
+            Token::ReadAddress(v) => format!("v{v} = read_address"),
+            Token::ReadAddressAfter(v, r, a) => format!("v{v} = read_address_after r{r} v{a}"),
+            Token::ReadMsw(v) => format!("v{v} = read_msw"),
+            Token::Require(c) => format!("require v{c}"),
+            Token::LoadSegment(v, a, m, s) => format!("v{v} = load_segment [v{a}] {} (seg {s})", m.bytes() * 8),
+            Token::StoreSegment(a, v, m, s) => format!("store_segment [v{a}] v{v} {} (seg {s})", m.bytes() * 8),
+            Token::RetireIf(c) => format!("retire_if v{c}"),
+            Token::ResumeIf(c) => format!("resume_if v{c}"),
+            Token::ReadSegment(v, s) => format!("v{v} = read_segment {s}"),
+            Token::WriteSegment(s, v) => format!("write_segment {s} v{v}"),
+            Token::ReadGpr(v, r, w) => format!("v{v} = read_gpr r{r} {w}"),
+            Token::WriteGpr(r, v, w) => format!("write_gpr r{r} v{v} {w}"),
+            Token::Load(v, a, m) => format!("v{v} = load [v{a}] {}", m.bytes() * 8),
+            Token::Store(a, v, m) => format!("store [v{a}] v{v} {}", m.bytes() * 8),
+            Token::ReadIp(v, _, w) => format!("v{v} = read_ip {w}"),
+            Token::ReadDisp(v, w) => format!("v{v} = read_disp {w}"),
+            Token::BranchIf(t, c) => format!("branch_if v{t} (when v{c})"),
+            Token::FarBranch(t, s) => format!("far_branch v{t}:v{s}"),
+            Token::CheckSegment(s, ty, lim) => format!("check_segment v{s} ty={ty} lim={lim}"),
+            Token::PreserveFlags(m) => format!("preserve_flags 0x{m:03x}"),
+            Token::UndefFlag(f) => format!("undef_flag {f:?}"),
+            Token::Select(v, c, a, b) => format!("v{v} = select v{c} ? v{a} : v{b}"),
+            Token::WriteIf(v, c) => format!("write_if dst v{v} (when v{c})"),
+            Token::WriteSource(v) => format!("write_source v{v}"),
+            Token::WriteSourceIf(v, c) => format!("write_source_if src v{v} (when v{c})"),
+            Token::Const(v, val) => format!("v{v} = const {} 0x{:x}", val.width, val.bits),
+            Token::Extend(v, a, w) => format!("v{v} = zext v{a} {w}"),
+            Token::SignExtend(v, a, w) => format!("v{v} = sext v{a} {w}"),
+            Token::Truncate(v, a, w) => format!("v{v} = trunc v{a} {w}"),
+            Token::Binary(v, op, a, b) => format!("v{v} = {op:?} v{a}, v{b}"),
+            Token::Shift(v, op, a, b) => format!("v{v} = {op:?} v{a}, v{b}"),
+            Token::Less(v, a, b) => format!("v{v} = ult v{a}, v{b}"),
+            Token::FlagIf(f, a, d, c) => format!("flag_if {f:?} v{a} (def=v{d}, act=v{c})"),
+            Token::Not(v, a) => format!("v{v} = not v{a}"),
+            Token::Bit(v, a, b) => format!("v{v} = bit v{a} {b}"),
+            Token::Zero(v, a) => format!("v{v} = zero v{a}"),
+            Token::Parity(v, a) => format!("v{v} = parity v{a}"),
+            Token::Write(v) => format!("write dst v{v}"),
+            Token::Flag(f, v) => format!("flag {f:?} v{v}"),
+            Token::Retire => "retire".into(),
+        }
+    }
+    pub fn disassemble(&self) -> String {
+        self.tokens.iter().map(Self::token_line).collect::<Vec<_>>().join("\n")
+    }
+    pub fn trace_disassemble(
+        &self,
+        stepped: usize,
+        cpu: &Cpu,
+        dst: View,
+        src: View,
+        context: FlowContext,
+        ram: &Ram,
+        address: u32,
+        memory_context: Option<address::MemoryContext>,
+        machine: Option<&address::SegmentState>,
+        effective: Option<address::EffectiveAddress>,
+    ) -> (String, Option<usize>) {
+        let mut values: Vec<Value> = self.widths.iter().map(|&w| value(0, w)).collect();
+        let mut lines = Vec::new();
+        let mut early_stop = None;
+        for (idx, t) in self.tokens.iter().enumerate() {
+            let s = Self::token_line(t);
+            let mut note = String::new();
+            if early_stop.is_none() {
+                match *t {
+                    Token::ReadFlags(o) => {
+                        values[o] = value(cpu.eflags as u64, 32);
+                        note = format!("; v{o} = 0x{:08x}", values[o].bits);
+                    }
+                    Token::Read(o, b, w) => {
+                        let v = match b { Binding::Dst => dst, Binding::Src => src };
+                        values[o] = value(cpu.read(v).bits, w);
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::LoadSegment(o, a, w, segment) => {
+                        if let Some(m) = machine {
+                            let c = address::MemoryContext {
+                                segment: [address::SegmentRegister::Es, address::SegmentRegister::Cs, address::SegmentRegister::Ss, address::SegmentRegister::Ds, address::SegmentRegister::Fs, address::SegmentRegister::Gs][segment],
+                                cache: m.segments[segment],
+                            };
+                            if let Ok(at) = c.translate(values[a].bits as u32, w, false, cpu.eip) {
+                                if let Ok(v) = ram.load(at, w) {
+                                    values[o] = value(v as u64, w.bits());
+                                    note = format!("; [0x{at:08x}] -> v{o} = 0x{:x} ({v})", values[o].bits);
+                                } else { early_stop = Some(idx); note = format!("; RAM read fault at 0x{at:08x}"); }
+                            } else { early_stop = Some(idx); note = "; segment fault".into(); }
+                        }
+                    }
+                    Token::StoreSegment(a, v, w, segment) => {
+                        if let Some(m) = machine {
+                            let c = address::MemoryContext {
+                                segment: [address::SegmentRegister::Es, address::SegmentRegister::Cs, address::SegmentRegister::Ss, address::SegmentRegister::Ds, address::SegmentRegister::Fs, address::SegmentRegister::Gs][segment],
+                                cache: m.segments[segment],
+                            };
+                            if let Ok(at) = c.translate(values[a].bits as u32, w, true, cpu.eip) {
+                                if ram.check_write(at, w).is_ok() {
+                                    note = format!("; stage [0x{at:08x}] <- 0x{:x} ({}B)", values[v].bits, w.bytes());
+                                } else { early_stop = Some(idx); note = format!("; RAM write fault at 0x{at:08x}"); }
+                            } else { early_stop = Some(idx); note = "; segment fault".into(); }
+                        }
+                    }
+                    Token::RetireIf(c) => {
+                        if values[c].bits != 0 { early_stop = Some(idx); note = "; retire early (cond=1)".into(); }
+                        else { note = "; continue (cond=0)".into(); }
+                    }
+                    Token::ResumeIf(c) => {
+                        note = if values[c].bits != 0 { "; repeat next iteration".into() } else { "; finish repeat".into() };
+                    }
+                    Token::ReadSegment(o, reg) => {
+                        if let Some(m) = machine {
+                            values[o] = value(m.selectors[reg] as u64, 16);
+                            note = format!("; v{o} = 0x{:04x}", values[o].bits);
+                        }
+                    }
+                    Token::WriteSegment(reg, a) => {
+                        note = format!("; stage seg {reg} <- 0x{:04x}", values[a].bits);
+                    }
+                    Token::ReadGpr(o, reg, w) => {
+                        values[o] = value(cpu.regs[reg] as u64, w);
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::WriteGpr(reg, a, _) => {
+                        note = format!("; stage r{reg} <- 0x{:x} ({})", values[a].bits, values[a].bits);
+                    }
+                    Token::ReadMsw(o) => {
+                        if let Some(m) = machine {
+                            values[o] = value(m.machine_status() as u64, 16);
+                            note = format!("; v{o} = 0x{:04x}", values[o].bits);
+                        }
+                    }
+                    Token::Require(c) => {
+                        if values[c].bits == 0 { early_stop = Some(idx); note = "; FAULT (require v=0)".into(); }
+                        else { note = "; require ok".into(); }
+                    }
+                    Token::ReadAddressAfter(o, reg, a) => {
+                        let mut regs = cpu.regs;
+                        regs[reg] = values[a].bits as u32;
+                        if let Some(ea) = effective {
+                            if let Ok(res) = ea.resolve(&regs, None) {
+                                values[o] = value(res.offset as u64, 32);
+                                note = format!("; v{o} = 0x{:08x}", values[o].bits);
+                            }
+                        }
+                    }
+                    Token::ReadAddress(o) => {
+                        values[o] = value(address as u64, 32);
+                        note = format!("; v{o} = 0x{:08x}", values[o].bits);
+                    }
+                    Token::Load(o, a, w) => {
+                        let offset = values[a].bits as u32;
+                        let addr_res = match memory_context {
+                            Some(c) => c.translate(offset, w, false, cpu.eip),
+                            None => Ok(offset),
+                        };
+                        if let Ok(addr) = addr_res {
+                            if let Ok(v) = ram.load(addr, w) {
+                                values[o] = value(v as u64, w.bits());
+                                note = format!("; [0x{addr:08x}] -> v{o} = 0x{:x} ({v})", values[o].bits);
+                            } else { early_stop = Some(idx); note = format!("; RAM read fault at 0x{addr:08x}"); }
+                        } else { early_stop = Some(idx); note = "; segment fault".into(); }
+                    }
+                    Token::Store(a, v, w) => {
+                        let offset = values[a].bits as u32;
+                        let addr_res = match memory_context {
+                            Some(c) => c.translate(offset, w, true, cpu.eip),
+                            None => Ok(offset),
+                        };
+                        if let Ok(addr) = addr_res {
+                            if ram.check_write(addr, w).is_ok() {
+                                note = format!("; stage [0x{addr:08x}] <- 0x{:x} ({}B)", values[v].bits, w.bytes());
+                            } else { early_stop = Some(idx); note = format!("; RAM write fault at 0x{addr:08x}"); }
+                        } else { early_stop = Some(idx); note = "; segment fault".into(); }
+                    }
+                    Token::ReadIp(o, next, w) => {
+                        values[o] = value((if next { context.next_eip } else { cpu.eip }) as u64, w);
+                        note = format!("; v{o} = 0x{:08x}", values[o].bits);
+                    }
+                    Token::ReadDisp(o, w) => {
+                        values[o] = value(context.displacement as u32 as u64, w);
+                        note = format!("; v{o} = 0x{:x} ({:+})", values[o].bits, context.displacement);
+                    }
+                    Token::BranchIf(a, c) => {
+                        note = if values[c].bits != 0 { format!("; stage EIP <- 0x{:08x} (taken)", values[a].bits) } else { "; branch not taken".into() };
+                    }
+                    Token::FarBranch(a, b) => {
+                        note = format!("; stage CS:EIP <- {:04x}:{:08x}", values[a].bits, values[b].bits);
+                    }
+                    Token::Select(o, c, a, b) => {
+                        values[o] = if values[c].bits != 0 { values[a] } else { values[b] };
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::WriteIf(a, c) => {
+                        note = if values[c].bits != 0 { format!("; stage dst <- 0x{:x} ({})", values[a].bits, values[a].bits) } else { "; dst write skipped".into() };
+                    }
+                    Token::ReadFlag(o, f) => {
+                        values[o] = value(((cpu.eflags >> f.bit()) & 1) as u64, 1);
+                        note = format!("; v{o} = {}", values[o].bits);
+                    }
+                    Token::Const(o, x) => {
+                        values[o] = x;
+                        note = format!("; v{o} = 0x{:x} ({})", x.bits, x.bits);
+                    }
+                    Token::Extend(o, a, w) | Token::Truncate(o, a, w) => {
+                        values[o] = value(values[a].bits, w);
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::SignExtend(o, a, w) => {
+                        let x = values[a];
+                        let bits = if x.bits & (1u64 << (x.width - 1)) != 0 { x.bits | !mask(x.width) } else { x.bits };
+                        values[o] = value(bits, w);
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::Binary(o, op, a, b) => {
+                        let x = values[a]; let y = values[b];
+                        let n = match op {
+                            Binary::Add => x.bits.wrapping_add(y.bits),
+                            Binary::Sub => x.bits.wrapping_sub(y.bits),
+                            Binary::Div => if y.bits == 0 { 0 } else { x.bits / y.bits },
+                            Binary::Rem => if y.bits == 0 { 0 } else { x.bits % y.bits },
+                            Binary::Mul => x.bits.wrapping_mul(y.bits),
+                            Binary::Xor => x.bits ^ y.bits,
+                            Binary::And => x.bits & y.bits,
+                            Binary::Or => x.bits | y.bits,
+                        };
+                        values[o] = value(n, x.width);
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::Shift(o, kind, a, b) => {
+                        let x = values[a]; let c = values[b].bits;
+                        let n = match kind {
+                            Shift::Left => if c >= u64::from(x.width) { 0 } else { x.bits << c },
+                            Shift::Right => if c >= u64::from(x.width) { 0 } else { x.bits >> c },
+                            Shift::Arithmetic => {
+                                let signed = ((x.bits << (64 - x.width)) as i64) >> (64 - x.width);
+                                (signed >> c.min(u64::from(x.width - 1))) as u64
+                            }
+                        };
+                        values[o] = value(n, x.width);
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::Less(o, a, b) => {
+                        values[o] = value(u64::from(values[a].bits < values[b].bits), 1);
+                        note = format!("; v{o} = {}", values[o].bits);
+                    }
+                    Token::FlagIf(f, a, d, c) => {
+                        note = if values[c].bits == 0 { format!("; preserve {f:?}") }
+                            else if values[d].bits == 0 { format!("; stage {f:?} <- ?") }
+                            else { format!("; stage {f:?} <- {}", values[a].bits) };
+                    }
+                    Token::Not(o, a) => {
+                        values[o] = value(!values[a].bits, values[a].width);
+                        note = format!("; v{o} = 0x{:x} ({})", values[o].bits, values[o].bits);
+                    }
+                    Token::Bit(o, a, i) => {
+                        values[o] = value((values[a].bits >> i) & 1, 1);
+                        note = format!("; v{o} = {}", values[o].bits);
+                    }
+                    Token::Zero(o, a) => {
+                        values[o] = value(u64::from(values[a].bits == 0), 1);
+                        note = format!("; v{o} = {}", values[o].bits);
+                    }
+                    Token::Parity(o, a) => {
+                        values[o] = value(u64::from((values[a].bits as u8).count_ones() % 2 == 0), 1);
+                        note = format!("; v{o} = {}", values[o].bits);
+                    }
+                    Token::Write(a) => {
+                        note = format!("; stage dst <- 0x{:x} ({})", values[a].bits, values[a].bits);
+                    }
+                    Token::WriteSource(a) => {
+                        note = format!("; stage src <- 0x{:x} ({})", values[a].bits, values[a].bits);
+                    }
+                    Token::WriteSourceIf(a, c) => {
+                        note = if values[c].bits != 0 { format!("; stage src <- 0x{:x} ({})", values[a].bits, values[a].bits) } else { "; src write skipped".into() };
+                    }
+                    Token::Flag(f, a) => {
+                        note = format!("; stage {f:?} <- {}", values[a].bits);
+                    }
+                    Token::UndefFlag(f) => {
+                        note = format!("; stage {f:?} <- ?");
+                    }
+                    Token::PreserveFlags(m) => {
+                        note = format!("; preserve mask 0x{m:03x}");
+                    }
+                    Token::Retire => {
+                        note = "; commit staged effects".into();
+                    }
+                    _ => {}
+                }
+            }
+            if idx < stepped {
+                lines.push(format!("✓ {idx:02}: {s:<32} {note}"));
+            } else if idx == stepped {
+                lines.push(format!("> {idx:02}: {s:<32} {note}"));
+            } else {
+                lines.push(format!("  {idx:02}: {s}"));
+            }
+        }
+        (lines.join("\n"), early_stop)
+    }
+}
+
 fn number(s: &str) -> R<u64> {
     if let Some(hex) = s.strip_prefix("0x") {
         u64::from_str_radix(hex, 16).map_err(|_| format!("bad number: {s}"))
@@ -438,6 +749,115 @@ fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext
     let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
     if result.is_err()&&p.checkpoint_flags{if let Some((f,u))=machine.recover_flags(){cpu.eflags=f;cpu.undefined_flags=u;}}
     result
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProbedMemoryAccess {
+    pub address: u32,
+    pub bytes: u8,
+    pub write: bool,
+    pub is_stack: bool,
+}
+fn merge_probed_access(current:&mut Option<ProbedMemoryAccess>,next:ProbedMemoryAccess){
+    match *current {
+        None => *current = Some(next),
+        Some(prev) => {
+            if prev.address == next.address && prev.bytes == next.bytes {
+                *current = Some(ProbedMemoryAccess { write: prev.write || next.write, is_stack: prev.is_stack && next.is_stack, ..prev });
+            } else if prev.is_stack && !next.is_stack {
+                *current = Some(next);
+            } else if !prev.is_stack && next.is_stack {
+                // Keep explicit data operand over implicit stack frame slot.
+            } else if prev.write == next.write && prev.is_stack == next.is_stack
+                && next.address == prev.address.wrapping_add(u32::from(prev.bytes))
+                && prev.bytes.saturating_add(next.bytes) <= 8
+            {
+                *current = Some(ProbedMemoryAccess { bytes: prev.bytes + next.bytes, ..prev });
+            } else if next.write && !prev.write {
+                *current = Some(next);
+            }
+        }
+    }
+}
+fn probe_machine_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContext,ram:&Ram,mut address:Option<address::AddressContext>,machine:&address::SegmentState)->Option<ProbedMemoryAccess>{
+    if !p.uses_memory{return None;}
+    let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(&cpu.regs).ok()?;(o,Some(c))}else{(0,None)};
+    probe_program_access(p,cpu,dst,src,context,ram,offset,memory,Some(machine),address.map(|a|a.effective))
+}
+fn probe_program_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContext,ram:&Ram,address:u32,memory_context:Option<address::MemoryContext>,machine:Option<&address::SegmentState>,effective:Option<address::EffectiveAddress>)->Option<ProbedMemoryAccess>{
+    if !p.uses_memory{return None;}
+    let has_read_address=p.tokens.iter().any(|t|matches!(t,Token::ReadAddress(_)));
+    let mut values:Vec<Value>=p.widths.iter().map(|&w|value(0,w)).collect();
+    let mut found:Option<ProbedMemoryAccess>=None;
+    for t in &p.tokens {
+        match *t {
+            Token::ReadFlags(o)=>values[o]=value(cpu.eflags as u64,32),
+            Token::Read(o,b,w)=>{let v=match b{Binding::Dst=>dst,Binding::Src=>src};values[o]=value(cpu.read(v).bits,w);}
+            Token::LoadSegment(o,a,w,segment)=>{
+                let m=machine?;
+                let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
+                let at=c.translate(values[a].bits as u32,w,false,cpu.eip).ok()?;
+                let v=ram.load(at,w).unwrap_or(0);
+                values[o]=value(v as u64,w.bits());
+                merge_probed_access(&mut found,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:false,is_stack:segment==2&&!p.checkpoint_flags});
+            }
+            Token::StoreSegment(a,_,w,segment)=>{
+                let m=machine?;
+                let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
+                let at=c.translate(values[a].bits as u32,w,true,cpu.eip).ok()?;
+                merge_probed_access(&mut found,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:true,is_stack:segment==2&&!p.checkpoint_flags});
+            }
+            Token::RetireIf(c)=>if values[c].bits!=0{return found;},
+            Token::ReadSegment(o,reg)=>values[o]=value(machine?.selectors[reg] as u64,16),
+            Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
+            Token::ReadMsw(o)=>values[o]=value(machine?.machine_status() as u64,16),
+            Token::Require(c)=>if values[c].bits==0{return found;},
+            Token::ReadAddressAfter(o,reg,a)=>{
+                let mut regs=cpu.regs;regs[reg]=values[a].bits as u32;
+                values[o]=value(effective?.resolve(&regs,None).ok()?.offset as u64,32);
+            }
+            Token::ReadAddress(o)=>values[o]=value(address as u64,32),
+            Token::Load(o,a,w)=>{
+                let offset=values[a].bits as u32;
+                let addr=match memory_context{Some(c)=>c.translate(offset,w,false,cpu.eip).ok()?,None=>offset};
+                let v=ram.load(addr,w).unwrap_or(0);
+                values[o]=value(v as u64,w.bits());
+                merge_probed_access(&mut found,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:false,is_stack:!has_read_address});
+            }
+            Token::Store(a,_,w)=>{
+                let offset=values[a].bits as u32;
+                let addr=match memory_context{Some(c)=>c.translate(offset,w,true,cpu.eip).ok()?,None=>offset};
+                merge_probed_access(&mut found,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:true,is_stack:!has_read_address});
+            }
+            Token::ReadIp(o,next,w)=>values[o]=value((if next{context.next_eip}else{cpu.eip})as u64,w),
+            Token::ReadDisp(o,w)=>values[o]=value(context.displacement as u32 as u64,w),
+            Token::Select(o,c,a,b)=>values[o]=if values[c].bits!=0{values[a]}else{values[b]},
+            Token::ReadFlag(o,f)=>values[o]=value(((cpu.eflags>>f.bit())&1)as u64,1),
+            Token::Const(o,x)=>values[o]=x,
+            Token::Extend(o,a,w)|Token::Truncate(o,a,w)=>values[o]=value(values[a].bits,w),
+            Token::SignExtend(o,a,w)=>{
+                let x=values[a];let bits=if x.bits&(1u64<<(x.width-1))!=0{x.bits|!mask(x.width)}else{x.bits};
+                values[o]=value(bits,w);
+            }
+            Token::Binary(o,op,a,b)=>{
+                let x=values[a];let y=values[b];
+                let n=match op{Binary::Add=>x.bits.wrapping_add(y.bits),Binary::Sub=>x.bits.wrapping_sub(y.bits),Binary::Div=>if y.bits==0{0}else{x.bits/y.bits},Binary::Rem=>if y.bits==0{0}else{x.bits%y.bits},Binary::Mul=>x.bits.wrapping_mul(y.bits),Binary::Xor=>x.bits^y.bits,Binary::And=>x.bits&y.bits,Binary::Or=>x.bits|y.bits};
+                values[o]=value(n,x.width);
+            }
+            Token::Shift(o,kind,a,b)=>{
+                let x=values[a];let c=values[b].bits;
+                let n=match kind{Shift::Left=>if c>=u64::from(x.width){0}else{x.bits<<c},Shift::Right=>if c>=u64::from(x.width){0}else{x.bits>>c},Shift::Arithmetic=>{let signed=((x.bits<<(64-x.width))as i64)>>(64-x.width);(signed>>c.min(u64::from(x.width-1)))as u64}};
+                values[o]=value(n,x.width);
+            }
+            Token::Less(o,a,b)=>values[o]=value(u64::from(values[a].bits<values[b].bits),1),
+            Token::Not(o,a)=>values[o]=value(!values[a].bits,values[a].width),
+            Token::Bit(o,a,i)=>values[o]=value((values[a].bits>>i)&1,1),
+            Token::Zero(o,a)=>values[o]=value(u64::from(values[a].bits==0),1),
+            Token::Parity(o,a)=>values[o]=value(u64::from((values[a].bits as u8).count_ones()%2==0),1),
+            Token::Retire=>return found,
+            _=>{}
+        }
+    }
+    found
 }
 fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
     ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
@@ -824,8 +1244,20 @@ result
 fn main() -> R<()> {
     let dos_args:Vec<_>=std::env::args().collect();
     if dos_args.get(1).map(String::as_str)==Some("--dos-list"){
-        if dos_args.len()!=3{return Err("usage: pil-proof --dos-list IMAGE.img|ARCHIVE.zip".into());}
-        println!("{}",containers::listing(std::path::Path::new(&dos_args[2]))?);return Ok(());
+        if dos_args.len()<3||dos_args.len()>4{return Err("usage: pil-proof --dos-list [--all] IMAGE.img|ARCHIVE.zip".into());}
+        let(all,path)=if dos_args[2]=="--all"{(true,dos_args.get(3).ok_or("missing image path")?)}else{(false,&dos_args[2])};
+        println!("{}",if all{containers::listing_all(std::path::Path::new(path))?}else{containers::listing(std::path::Path::new(path))?});return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-read"){
+        if dos_args.len()<4||dos_args.len()>5{return Err("usage: pil-proof --dos-read IMAGE.img|ARCHIVE.zip INNER_PATH [DEST]".into());}
+        let bytes=containers::read_entry(std::path::Path::new(&dos_args[2]),&dos_args[3])?;
+        if let Some(dest)=dos_args.get(4){
+            use std::io::Write;
+            let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(dest).map_err(|e|e.to_string())?;
+            f.write_all(&bytes).map_err(|e|e.to_string())?;println!("extracted {} ({} bytes) to {}",dos_args[3],bytes.len(),dest);
+        }else{
+            use std::io::Write;std::io::stdout().write_all(&bytes).map_err(|e|e.to_string())?;
+        }return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-extract"){
         if dos_args.len()!=4{return Err("usage: pil-proof --dos-extract IMAGE.img|ARCHIVE.zip NEW_DIRECTORY".into());}

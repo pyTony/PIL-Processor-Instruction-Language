@@ -379,3 +379,71 @@ fn isolated_dos_probe_preserves_current_debugger_even_on_import_error(){
     let(text,_)=d.command("dosprobe missing-dos-probe-test-file.com 100").unwrap();assert!(text.contains("IMPORT ERROR"));assert_eq!(d.cpu,old);assert_eq!(d.ram,ram);assert_eq!(d.demo,demo);
     assert!(d.command("dosprobe missing.com 0").is_err());assert_eq!(d.cpu,old);
 }
+
+#[test]
+fn bounded_guest_file_loader_accepts_hex_and_rejects_oversized_inputs(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let dir=std::env::temp_dir().join(format!("pil-load-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ok_hex=dir.join("ok.hex");std::fs::write(&ok_hex,"# comment\n0xb0 41 ; inline\nf4\n").unwrap();
+    let mut d=Debugger::new("counter").unwrap();
+    assert!(d.command(&format!("load {}",ok_hex.display())).unwrap().0.contains("loaded 3 guest bytes"));
+    let big_bin=dir.join("big.bin");std::fs::write(&big_bin,vec![0x90;4096]).unwrap();
+    let old_cpu=d.cpu.clone();
+    assert!(d.command(&format!("load {}",big_bin.display())).is_err());
+    assert_eq!(d.cpu,old_cpu);
+    let big_hex=dir.join("big.hex");std::fs::write(&big_hex,"90 ".repeat(4000)).unwrap();
+    assert!(d.command(&format!("load {}",big_hex.display())).is_err());
+    assert_eq!(d.cpu,old_cpu);
+    let huge_hex=dir.join("huge.hex");std::fs::write(&huge_hex,"#".repeat(70000)).unwrap();
+    assert!(d.command(&format!("load {}",huge_hex.display())).is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn memory_effect_tracks_affected_cell_width_bytes_and_characters(){
+    let mut d=Debugger::new("memory").unwrap();
+    let (acc,stage,raw)=d.active_memory_effect().unwrap();
+    assert_eq!((acc.address,acc.bytes,acc.write,stage,raw),(0x10,4,true,"next_write",&[0,0,0,0][..]));
+    assert_eq!(d.step(),Stop::Advanced);
+    let (acc,stage,raw)=d.active_memory_effect().unwrap();
+    assert_eq!((acc.address,acc.bytes,acc.write,stage,raw),(0x10,4,true,"written",&[0x78,0x56,0x34,0x12][..]));
+    let summary=d.format_memory_effect().unwrap();
+    assert!(summary.contains("[0x00000010..0x00000013] (4 bytes, written)"));
+    assert!(summary.contains("Hex=0x12345678  Dec=305419896  Bytes=[78 56 34 12]  Chars (4): |xV4.| ('x' 'V' '4' '\\x12')"));
+    assert_eq!(d.step(),Stop::Advanced);
+    let (acc,stage,raw)=d.active_memory_effect().unwrap();
+    assert_eq!((acc.address,acc.bytes,acc.write,stage,raw),(0x10,4,false,"read",&[0x78,0x56,0x34,0x12][..]));
+    d.load_demo("extensions").unwrap();
+    d.run(1000).unwrap();
+    let ext_summary=d.format_memory_effect().unwrap();
+    assert!(ext_summary.contains("[0x00000180..0x00000181] (2 bytes, read)"));
+    assert!(ext_summary.contains("Hex=0xFF80  Dec=65408 (signed -128)  Bytes=[80 ff]  Chars (2): |..|"));
+    d.load_demo("factorials").unwrap();
+    d.run(1000).unwrap();
+    let fact_summary=d.format_memory_effect().unwrap();
+    assert!(fact_summary.contains("[0x0000052C..0x0000052F] (4 bytes, written)"));
+    assert!(fact_summary.contains("Hex=0x1C8CFC00  Dec=479001600  Bytes=[00 fc 8c 1c]  Chars (4): |....|"));
+}
+
+#[test]
+fn pilstep_traces_individual_tokens_and_retires_at_end(){
+    let mut d=Debugger::new("counter").unwrap();
+    assert!(d.current_pil().contains("PIL (0/"));
+    assert!(d.current_pil().contains("> 00: v0 = read Dst 32"));
+    let (msg1,stop1)=d.step_pil();
+    assert_eq!(stop1,Stop::Advanced);
+    assert!(msg1.contains("PIL step 1/"));
+    assert_eq!(d.cpu.eip,0x100);
+    assert_eq!(d.cpu.regs[0],3); // not yet committed before retire
+    let pil1=d.current_pil();
+    assert!(pil1.contains("✓ 00: v0 = read Dst 32"));
+    assert!(pil1.contains("; v0 = 0x3 (3)"));
+    assert!(pil1.contains("> 01: v1 = read Src 32"));
+    for _ in 0..30 {
+        let (msg,_)=d.step_pil();
+        if msg.contains("retired instruction"){break;}
+    }
+    assert_eq!(d.cpu.eip,0x102);
+    assert_eq!(d.cpu.regs[0],2);
+}

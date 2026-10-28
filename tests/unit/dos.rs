@@ -215,3 +215,48 @@ fn custom_headless_provider_matches_default_dos_run(){
  use crate::host_io::{CaptureOutput,Output};
  let p=load(&hello("com").unwrap(),"hello.com").unwrap();let expected=run(p.clone(),100).unwrap();let mut io=CaptureOutput::new(64);let actual=run_with_output(p,100,&mut io).unwrap();assert_eq!(actual.stop,expected.stop);assert_eq!(actual.loaded.cpu,expected.loaded.cpu);assert_eq!(actual.loaded.ram,expected.loaded.ram);assert_eq!(actual.output,expected.output);assert_eq!(io.bytes(),expected.output);
 }
+#[test]
+fn bios_timer_advances_deterministically_updates_bda_and_rolls_over(){
+ let mut p=load(&[0xcd,0x1a],"timer.com").unwrap();
+ p.cpu.regs=[0xabcd00ff,0x12345678,0x87654321,3,4,5,6,7];p.cpu.eflags=0x203;p.cpu.undefined_flags=1;
+ let mut out=vec![];
+ service(&mut p,0x1a,&mut out).unwrap();
+ assert_eq!((p.cpu.regs[0],p.cpu.regs[1],p.cpu.regs[2]),(0xabcd0000,0x12340000,0x87650000));
+ assert_eq!(p.cpu.eflags&1,0);assert_eq!(p.cpu.undefined_flags&1,0);
+ assert_eq!(p.ram.load(0x046c,MemWidth::Dword).unwrap(),0);assert_eq!(p.timer_ticks,1);
+ service(&mut p,0x1a,&mut out).unwrap();
+ assert_eq!((p.cpu.regs[1],p.cpu.regs[2]),(0x12340000,0x87650001));
+ assert_eq!(p.ram.load(0x046c,MemWidth::Dword).unwrap(),1);assert_eq!(p.timer_ticks,2);
+ p.timer_ticks=0x0018_00af;
+ service(&mut p,0x1a,&mut out).unwrap();
+ assert_eq!((p.cpu.regs[0]&255,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.timer_ticks),(1,0x0018,0x00af,0));
+}
+#[test]
+fn dos_open_and_close_validate_paths_modes_and_tracked_psp_handles(){
+ let mut p=load(&[0xcd,0x21],"files.com").unwrap();let mut out=vec![];
+ let psp_base=u32::from(PSP)*16;
+ for h in 0..5u32{assert_eq!(p.ram.load(psp_base+0x18+h,MemWidth::Byte).unwrap(),h);}
+ // Invalid access mode (>2) returns error 0x000c
+ p.cpu.regs[0]=0xabcd3d03;p.cpu.eflags=0x202;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.eflags&1,p.cpu.regs[0]),(1,0xabcd000c));
+ // Empty ASCIIZ path at DS:0200 returns path-not-found (0x0003)
+ p.ram.store(psp_base+0x200,MemWidth::Byte,0).unwrap();
+ p.cpu.regs[0]=0xabcd3d00;p.cpu.regs[2]=0x200;p.cpu.eflags=0x202;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.eflags&1,p.cpu.regs[0]),(1,0xabcd0003));
+ // Non-empty ASCIIZ path returns file-not-found (0x0002)
+ p.ram.write_bytes(psp_base+0x200,b"EMMXXXX0\0").unwrap();
+ p.cpu.regs[0]=0xabcd3d00;p.cpu.regs[2]=0x200;p.cpu.eflags=0x202;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.eflags&1,p.cpu.regs[0]),(1,0xabcd0002));
+ // Unterminated path near segment end errors without modifying CPU
+ p.cpu.regs[0]=0x3d00;p.cpu.regs[2]=0xffff;p.ram.store(psp_base+0xffff,MemWidth::Byte,b'A' as u32).unwrap();
+ let old=p.cpu.clone();assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old);
+ // Closing open standard handle 0 succeeds once, then fails with invalid handle (0x0006) on repeat or unopened handle
+ p.cpu.regs[0]=0xabcd3e00;p.cpu.regs[3]=0x12340000;p.cpu.eflags=0x203;
+ service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!(p.cpu.eflags&1,0);assert_eq!(p.ram.load(psp_base+0x18,MemWidth::Byte).unwrap(),0xff);
+ service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.eflags&1,p.cpu.regs[0]),(1,0xabcd0006));
+ p.cpu.regs[0]=0xabcd3e00;p.cpu.regs[3]=5;p.cpu.eflags=0x202;
+ service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.eflags&1,p.cpu.regs[0]),(1,0xabcd0006));
+}

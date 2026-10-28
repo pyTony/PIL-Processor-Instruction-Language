@@ -11,9 +11,14 @@
 ### Expanded DOS / BIOS probe services
 - **BIOS Video (INT 10h):** Added AH=08h (read character and attribute) and AH=03h (read cursor position and scanlines).
 - **BIOS Equipment & Memory (INT 11h, INT 12h):** Returns standard PC equipment list word with pointing device flag, and 640 KB conventional memory size.
-- **BIOS System Timer (INT 1Ah):** Added AH=00h read timer ticks.
-- **DOS File API (INT 21h):** Added bounded failure fallback for AH=3Dh (Open file, CF=1 / AX=0x0002) and AH=3Eh (Close file, CF=0).
-- Probe report results: clean exits increased from 11 to 14, FreeCOM shells advance through initialization loops, and memory tools (MEMSTAT) successfully compute and display formatted decimal output.
+- **BIOS System Timer (INT 1Ah):** Added AH=00h deterministic monotonically advancing tick counter synchronized with BDA `0x046C` and midnight rollover `0x0470` (`1,573,040` ticks/day).
+- **DOS File API (INT 21h):** Added bounded path/mode-validated failure shim for AH=3Dh (validates access mode `0..=2` and readable ASCIIZ path at `DS:DX` before returning `CF=1, AX=0x0002`/`0x0003`) and PSP-tracked handle close for AH=3Eh (tracks standard handles `0..=4` in `PSP:0018..002B`, returning `CF=1, AX=0x0006` on invalid or already-closed handles).
+- **Probe report interpretation:** Clean probe exits increased from 11 to 14 under these bounded shim contracts, FreeCOM shells advance past timer/handle initialization loops, and `MEMSTAT` computes and displays formatted decimal output.
+
+### Interactive Debugger & GUI Enhancements
+- **PIL token stepping (`pilstep` / `ps` / `Step PIL F8`):** Step individual PIL tokens within the current guest instruction, inspecting live intermediate values and staged effects before atomic retirement.
+- **Affected memory cell highlighting:** Resolves and highlights the exact memory cell (`1`, `2`, `4`, or `6` bytes) read or written by the instruction in both hex and ASCII columns, displaying width-matched hex, decimal, raw bytes, and character representations.
+- **Container browser & bounded `.hex` loader:** Non-blocking background browsing/probing of `.img`/`.ima`/`.zip` containers and early-bounded `.hex` and `.bin` program loading.
 
 ## 0.34: DOS character output, switch query and LES
 

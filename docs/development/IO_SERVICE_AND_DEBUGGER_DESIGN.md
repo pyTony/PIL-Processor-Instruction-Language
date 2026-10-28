@@ -46,7 +46,8 @@ must retain its MIT notice. No project-wide PIL licence is invented here.
    the same machine instance used by the CLI. Host commands and guest keyboard
    bytes use distinct channels.
 5. **Presentation** renders snapshots and guest-output events. A Tk frontend can
-   follow lispy3/z80-cpm layout and event-routing patterns; CLI and headless
+   follow lispy3/z80-cpm layout and event-routing patterns (see [IDE plan](IDE_PLAN.md)
+   for the full editor/listener/inspector specification); CLI and headless
    execution remain supported. Do not create another CPU or DOS implementation
    in Python merely to provide the interface.
 
