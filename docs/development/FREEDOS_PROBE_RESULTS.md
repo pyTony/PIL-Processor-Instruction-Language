@@ -354,3 +354,13 @@ No new actual-image measurement is recorded here: FD14LITE.img could not be
 materialized locally due to network restrictions. Loaded-image fetch boundaries,
 copy/unpack destinations and budgets are still separate follow-up work. Do not
 infer an exit-count or full-application improvement from these fixture results.
+
+## User report for v0.33 —28 October2026
+
+The attached report is analyzed in [v0.33 results](FREEDOS_V033_REPORT.md).
+151/156 imports and6 exits remain;78 service stops,54 loaded-image boundary
+stops and13 encoding stops are observed. All16 FreeCom variants now reach
+AH37; GREP passes memory XCHG to RCR BX,1 (D1 DB). No AH25/35 first stops
+remain. Main service blockers are AH02(20), INT10/AH08(17), AH37(16).
+LES C4 is the largest instruction blocker(6). This is user-supplied evidence;
+no new local corpus run, binary/image identity or exact budget is established.
