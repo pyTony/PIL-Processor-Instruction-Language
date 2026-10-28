@@ -117,7 +117,7 @@ impl Image {
                 let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let text=description("push_memory").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
-                (format!("PUSH {}",operand_name(dst,address)),compile(&instantiate(text,w),w))
+                (format!("PUSH {}",operand_name(dst,address)),compile(&instantiate(&text,w),w))
             }
             0x8f=>{
                 let m=memory_pop.ok_or_else(||GuestError::Decode("invalid memory POP".into()))?;
@@ -375,7 +375,7 @@ impl Image {
                 let text=if memory{
                     address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
                     dst=src;
-                    include_str!("../isa/i386/xchg_ram.pil")
+                    include_str!("../isa/i386/xchg_ram.pil").to_string()
                 }else{description("xchg").map_err(GuestError::Decode)?};
                 (format!("XCHG {},{}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
             }
