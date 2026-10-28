@@ -189,7 +189,32 @@ fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
                 if out.len()+text.len()>=MAX_OUTPUT{return Err("DOS output limit reached before string terminator".into());}
                 text.push(b);
             }Err("DOS string has no $ terminator before segment end".into())
-        },_=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
+        },
+        (0x10,0x08)=>{
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0720;
+            Ok(None)
+        },
+        (0x11,_)=>{
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0025;
+            Ok(None)
+        },
+        (0x12,_)=>{
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
+            Ok(None)
+        },
+        (0x1a,0x00)=>{
+            p.cpu.regs[0]&=!255;p.cpu.regs[1]&=0xffff0000;p.cpu.regs[2]&=0xffff0000;
+            Ok(None)
+        },
+        (0x21,0x3d)=>{
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0002;
+            Ok(None)
+        },
+        (0x21,0x3e)=>{
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
 }
 pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{

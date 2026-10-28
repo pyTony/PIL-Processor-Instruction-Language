@@ -1,0 +1,1108 @@
+DOS executable probe v0.34.0-alpha.1; step budget=10000 per program: concrete PIL interpreter plus minimal host DOS-call shim.
+SHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 version. Not a running DOS kernel.
+CONTAINER NOTE images/FD14LITE.img: FAT16 volume atLBA63;688 files before package expansion
+CONTAINER images/FD14LITE.img: candidates=208 added_unique=156
+
+FILE images/FD14LITE.img::COMMAND.COM
+IMPORT Mz: module=61106 bytes header=240 relocations=49 trailing=26426 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:88d6 DS=1000 ES=1000 SS:SP=1f13:1000
+STOP Budget; CS:IP=1010:107f; file_offset=Some(4463); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002160
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/ATTRIB.COM
+IMPORT Com: module=5044 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Budget; CS:IP=1000:010a; file_offset=Some(10); bytes=f3 a4 c3 bf 00 01 57 57
+completed=5 PIL=10000 DOS_calls=0 EAX=00000000 ESP=0000fffc
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/DELTREE.COM
+IMPORT Com: module=3339 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 0000136b"); CS:IP=1000:136b; file_offset=None; bytes=
+completed=14 PIL=3352 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/DEVLOAD.COM
+IMPORT Com: module=3224 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 0000169b"); CS:IP=1000:169b; file_offset=None; bytes=
+completed=14 PIL=3237 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/DOSLFN.COM
+IMPORT Com: module=21316 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=71"); CS:IP=1000:2863; file_offset=Some(10083); bytes=cd 21 32 ed 3d 66 87 75
+completed=7 PIL=6 DOS_calls=1 EAX=00007146 ESP=0000fffc
+OUTPUT (escaped bytes): DOSLFN 0.41f (haftmann#software & jmh 4/2022): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/EDIT.EXE
+IMPORT Mz: module=67498 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=3d25:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=22 PIL=10000 DOS_calls=0 EAX=00002cbe ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/FC.EXE
+IMPORT Mz: module=14803 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=16e5:0200
+STOP Boundary("fetch outside loaded image at 0000000b"); CS:IP=16e5:000b; file_offset=None; bytes=
+completed=29 PIL=7386 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/FDAPM.COM
+IMPORT Com: module=7434 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00002ba9"); CS:IP=1000:2ba9; file_offset=None; bytes=
+completed=15 PIL=7448 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/FDIMPLES.EXE
+IMPORT Mz: module=26078 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1fc9:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=0000197d ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/FDISK.EXE
+IMPORT Mz: module=39827 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=282e:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=00001e86 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/FDINST.EXE
+IMPORT Mz: module=39612 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1fbb:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=00001621 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/FORMAT.EXE
+IMPORT Mz: module=42392 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=2b1e:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=000020d7 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/GREP.EXE
+IMPORT Mz: module=86095 bytes header=3584 relocations=784 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=2051:0014 DS=1000 ES=1000 SS:SP=256e:8000
+STOP MissingEncoding { key: "opcode d1", detail: "unsupported shift/rotate extension" }; CS:IP=2051:31a1; file_offset=Some(82865); bytes=d1 db d1 eb d1 eb d1 eb
+completed=109 PIL=1530 DOS_calls=2 EAX=00000000 ESP=000098d4
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/HIMEMX.EXE
+IMPORT Mz: module=6024 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0ef4 DS=1000 ES=1000 SS:SP=1189:0400
+STOP Budget; CS:IP=1010:0929; file_offset=Some(2377); bytes=3c 25 74 0c 50 e8 3e ff
+completed=10000 PIL=9368 DOS_calls=632 EAX=00000220 ESP=000003e4
+OUTPUT (escaped bytes): HimemX 3.38 [11/21/22] (c) 1995 Till Gerken, 2001-2006 tom ehlert\r\nExtended memory host for DOS (coordinates the usage of XMS and HMA)\r\nHimemX is a device driver that is loaded in CONFIG.SYS.\r\nPlease place DEVICE=HIMEMX.EXE [options] before any driver using XMS.\r\n\r\noptions: [/MAX=####] [/METHOD:xxx] [/HMAMIN=n] [/NUMHANDLES=m]\r\n  [/VERBOSE] [/NOABOVE16] [/X] [/X2MAX32] \r\n\r\n  /MAX=#####      limit memory controlled by XMM to #####K.\r\n                  The HMA is not affected by this value, it\'s always included\r\n  /METHOD:xxx     Specifies the method to be used for A20 handling.\r\n                  Possible values for xxx:\r\n   
+
+FILE images/FD14LITE.img::FREEDOS/BIN/CPUID.EXE
+IMPORT Mz: module=3331 bytes header=48 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:03d4 DS=1000 ES=1000 SS:SP=10e1:0400
+STOP Exit(0); CS:IP=1010:03ef; file_offset=Some(1055); bytes=00 00 00 00 00 00 00 00
+completed=357 PIL=333 DOS_calls=24 EAX=00004c00 ESP=00000d20
+OUTPUT (escaped bytes): CPUID not implemented\r\n
+
+FILE images/FD14LITE.img::FREEDOS/BIN/JEMM386.EXE
+IMPORT Mz: module=29221 bytes header=48 relocations=2 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:02be DS=1000 ES=1000 SS:SP=1744:0400
+STOP Exit(1); CS:IP=1010:0324; file_offset=Some(852); bytes=56 57 55 8b ec be de 43
+completed=987 PIL=957 DOS_calls=30 EAX=00004c01 ESP=00005d20
+OUTPUT (escaped bytes): Jemm386 v5.85 [01/09/25]\r\nJemm is not installed. (Enter JEMM386 -? for help)\r\n
+
+FILE images/FD14LITE.img::FREEDOS/BIN/JEMMEX.EXE
+IMPORT Mz: module=32549 bytes header=48 relocations=3 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:036f DS=1000 ES=1000 SS:SP=1813:0400
+STOP Exit(1); CS:IP=1010:03d5; file_offset=Some(1029); bytes=56 57 55 8b ec 8b 0e 24
+completed=1312 PIL=1283 DOS_calls=29 EAX=00004c01 ESP=00006590
+OUTPUT (escaped bytes): JemmEx v5.85 [01/09/25]\r\nJemm is not installed. (Enter JEMMEX -? for help)\r\n
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VCPI.EXE
+IMPORT Mz: module=4136 bytes header=48 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0a79 DS=1000 ES=1000 SS:SP=129c:0800
+STOP MissingEncoding { key: "opcode 60", detail: "unsupported opcode 60 at 00000167" }; CS:IP=1010:0167; file_offset=Some(407); bytes=60 8d 7e 06 8b 76 04 ac
+completed=61 PIL=5248 DOS_calls=2 EAX=00000000 ESP=000025e6
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/SYS.COM
+IMPORT Com: module=11727 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Budget; CS:IP=1000:0115; file_offset=Some(21); bytes=f3 a4 fc 87 f7 83 ee c8
+completed=7 PIL=10000 DOS_calls=0 EAX=00000000 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/LBACACHE.COM
+IMPORT Com: module=11084 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP MissingEncoding { key: "opcode 60", detail: "unsupported opcode 60 at 00001235" }; CS:IP=1000:1235; file_offset=Some(4405); bytes=60 1e fc be 42 11 e8 f9
+completed=32 PIL=30 DOS_calls=2 EAX=00007002 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/TICKLE.COM
+IMPORT Com: module=2009 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00000b73"); CS:IP=1000:0b73; file_offset=None; bytes=
+completed=14 PIL=2022 DOS_calls=0 EAX=00000000 ESP=0000fffc
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/MEM.EXE
+IMPORT Mz: module=14996 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1cea:0200
+STOP Boundary("fetch outside loaded image at 00000006"); CS:IP=1cea:0006; file_offset=None; bytes=
+completed=29 PIL=7484 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/MORE.EXE
+IMPORT Mz: module=6910 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=12a2:0200
+STOP Boundary("fetch outside loaded image at 00000008"); CS:IP=12a2:0008; file_offset=None; bytes=
+completed=29 PIL=3440 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/SHSUCDX.COM
+IMPORT Com: module=8088 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 2f, AH=11"); CS:IP=1000:17e1; file_offset=Some(5857); bytes=cd 2f 5a 81 fb be ba 74
+completed=27 PIL=182 DOS_calls=0 EAX=00001100 ESP=0000fffc
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/SHSURDRV.EXE
+IMPORT Mz: module=24853 bytes header=80 relocations=2 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:1383 DS=1000 ES=1000 SS:SP=1e77:0100
+STOP Service("unimplemented DOS/BIOS service INT 2f, AH=43"); CS:IP=1010:13de; file_offset=Some(5166); bytes=cd 2f 43 74 98 4b 89 1e
+completed=41 PIL=40 DOS_calls=1 EAX=00004310 ESP=0000e770
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/SRDISK.EXE
+IMPORT Mz: module=30762 bytes header=32 relocations=1 trailing=55823 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1d54:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=000015e2 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VASK.COM
+IMPORT Com: module=3159 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00003ad5"); CS:IP=1000:3ad5; file_offset=None; bytes=
+completed=15 PIL=3173 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VCHKBOX.COM
+IMPORT Com: module=225 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Exit(36); CS:IP=1000:010b; file_offset=Some(11); bytes=00 54 68 69 73 20 70 72
+completed=5 PIL=3 DOS_calls=2 EAX=00004c24 ESP=0000fffe
+OUTPUT (escaped bytes): This program is only a placeholder for an executable. Eventually, it will be\r\nreplaced by a functional program that actually does something useful. But, that\r\nwill not be until some time in the future. Hopefully.
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VCHOICE.COM
+IMPORT Com: module=2904 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00000f10"); CS:IP=1000:0f10; file_offset=None; bytes=
+completed=15 PIL=2918 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VCLS.COM
+IMPORT Com: module=1976 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VCURSOR.COM
+IMPORT Com: module=1342 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VDELAY.COM
+IMPORT Com: module=1360 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VDELETE.COM
+IMPORT Com: module=1778 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VEACH.COM
+IMPORT Com: module=3166 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 12 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VECHO.COM
+IMPORT Com: module=2196 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 0000350c"); CS:IP=1000:350c; file_offset=None; bytes=
+completed=15 PIL=2210 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VERRLVL.COM
+IMPORT Com: module=1083 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VFDUTIL.COM
+IMPORT Com: module=2334 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00000d64"); CS:IP=1000:0d64; file_offset=None; bytes=
+completed=15 PIL=2348 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VFONT.COM
+IMPORT Com: module=1970 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VFRAME.COM
+IMPORT Com: module=2492 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 0000369d"); CS:IP=1000:369d; file_offset=None; bytes=
+completed=15 PIL=2506 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VGOTOXY.COM
+IMPORT Com: module=2085 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VINFO.COM
+IMPORT Com: module=3112 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00001154"); CS:IP=1000:1154; file_offset=None; bytes=
+completed=15 PIL=3126 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VINSERT.COM
+IMPORT Com: module=1778 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VLINE.COM
+IMPORT Com: module=2144 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VMATH.COM
+IMPORT Com: module=2411 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00000d56"); CS:IP=1000:0d56; file_offset=None; bytes=
+completed=15 PIL=2425 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VPAUSE.COM
+IMPORT Com: module=2012 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VPROGRES.COM
+IMPORT Com: module=2424 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VREADKEY.COM
+IMPORT Com: module=1386 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VSTR.COM
+IMPORT Com: module=2387 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00003602"); CS:IP=1000:3602; file_offset=None; bytes=
+completed=15 PIL=2401 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VTEST.COM
+IMPORT Com: module=2791 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/VVIEW.COM
+IMPORT Com: module=2672 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00000dfd"); CS:IP=1000:0dfd; file_offset=None; bytes=
+completed=15 PIL=2686 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/XCOPY.EXE
+IMPORT Mz: module=22653 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=2120:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=00001ba9 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::FREEDOS/BIN/ZIP.EXE
+IMPORT ERROR: NE/LE/LX/PE/Windows executables are not DOS MZ inputs for this probe
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-DE.COM
+IMPORT Mz: module=61212 bytes header=240 relocations=49 trailing=31294 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:896c DS=1000 ES=1000 SS:SP=1f19:1000
+STOP Budget; CS:IP=1010:1115; file_offset=Some(4613); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002130
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-ES.COM
+IMPORT Mz: module=61464 bytes header=240 relocations=49 trailing=29581 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:89c8 DS=1000 ES=1000 SS:SP=1f29:1000
+STOP Budget; CS:IP=1010:1172; file_offset=Some(4706); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=000021d0
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-FI.COM
+IMPORT Mz: module=61110 bytes header=240 relocations=49 trailing=26497 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:88f2 DS=1000 ES=1000 SS:SP=1f13:1000
+STOP Budget; CS:IP=1010:109b; file_offset=Some(4491); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002150
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-FR.COM
+IMPORT Mz: module=61398 bytes header=240 relocations=49 trailing=29356 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:8968 DS=1000 ES=1000 SS:SP=1f25:1000
+STOP Budget; CS:IP=1010:1112; file_offset=Some(4610); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=000021f0
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-IT.COM
+IMPORT Mz: module=61392 bytes header=240 relocations=49 trailing=29091 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:8996 DS=1000 ES=1000 SS:SP=1f24:1000
+STOP Budget; CS:IP=1010:113f; file_offset=Some(4655); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=000021b0
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-NL.COM
+IMPORT Mz: module=61198 bytes header=240 relocations=49 trailing=29147 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:88d6 DS=1000 ES=1000 SS:SP=1f18:1000
+STOP Budget; CS:IP=1010:107f; file_offset=Some(4463); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=000021b0
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-PO.COM
+IMPORT Mz: module=61266 bytes header=240 relocations=49 trailing=26951 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:893a DS=1000 ES=1000 SS:SP=1f1d:1000
+STOP Budget; CS:IP=1010:10e4; file_offset=Some(4564); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=000021a0
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-PTR.COM
+IMPORT Mz: module=61332 bytes header=240 relocations=49 trailing=28253 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:897c DS=1000 ES=1000 SS:SP=1f21:1000
+STOP Budget; CS:IP=1010:1125; file_offset=Some(4629); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=000021a0
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-RU.COM
+IMPORT Mz: module=61454 bytes header=240 relocations=49 trailing=30531 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:8934 DS=1000 ES=1000 SS:SP=1f28:1000
+STOP Budget; CS:IP=1010:10dd; file_offset=Some(4557); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002260
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-SE.COM
+IMPORT Mz: module=61116 bytes header=240 relocations=49 trailing=26120 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:88c6 DS=1000 ES=1000 SS:SP=1f13:1000
+STOP Budget; CS:IP=1010:106f; file_offset=Some(4447); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002170
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-SI.COM
+IMPORT Mz: module=61218 bytes header=240 relocations=49 trailing=25469 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:893c DS=1000 ES=1000 SS:SP=1f1a:1000
+STOP Budget; CS:IP=1010:10e6; file_offset=Some(4566); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002170
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-Ser.COM
+IMPORT Mz: module=61226 bytes header=240 relocations=49 trailing=24419 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:894a DS=1000 ES=1000 SS:SP=1f1a:1000
+STOP Budget; CS:IP=1010:10f4; file_offset=Some(4580); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002160
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-TR.COM
+IMPORT Mz: module=61298 bytes header=240 relocations=49 trailing=26972 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:890c DS=1000 ES=1000 SS:SP=1f1f:1000
+STOP Budget; CS:IP=1010:10b6; file_offset=Some(4518); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=000021f0
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-UKR.COM
+IMPORT Mz: module=61162 bytes header=240 relocations=49 trailing=29427 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:88d6 DS=1000 ES=1000 SS:SP=1f16:1000
+STOP Budget; CS:IP=1010:107f; file_offset=Some(4463); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002190
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FREECOM.ZIP.contents/BIN/FREECOM/XSWAP/CMD-YUG.COM
+IMPORT Mz: module=61226 bytes header=240 relocations=49 trailing=24442 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:894e DS=1000 ES=1000 SS:SP=1f1a:1000
+STOP Budget; CS:IP=1010:10f7; file_offset=Some(4583); bytes=eb f4 89 ec 5d 5b c3 53
+completed=9633 PIL=9998 DOS_calls=2 EAX=00000000 ESP=00002160
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/CPUSTAT.EXE
+IMPORT Mz: module=4539 bytes header=48 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0c33 DS=1000 ES=1000 SS:SP=112c:0400
+STOP MissingEncoding { key: "opcode 0f 01", detail: "SMSW r32 upper-half policy is outside the 386 word profile" }; CS:IP=1010:0977; file_offset=Some(2471); bytes=66 0f 01 e0 66 a3 06 00
+completed=37 PIL=36 DOS_calls=1 EAX=00007002 ESP=0000095a
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/EMSSTAT.EXE
+IMPORT Mz: module=3829 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:080c DS=1000 ES=1000 SS:SP=150b:0400
+STOP Exit(0); CS:IP=1010:0858; file_offset=Some(2168); bytes=00 00 00 00 00 00 00 00
+completed=279 PIL=9056 DOS_calls=18 EAX=00004c00 ESP=000053b0
+OUTPUT (escaped bytes): EMM not found\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/JEMFBHLP.EXE
+IMPORT Mz: module=550 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0218 DS=1000 ES=1000 SS:SP=1033:0400
+STOP Exit(0); CS:IP=1010:0226; file_offset=None; bytes=
+completed=7 PIL=5 DOS_calls=2 EAX=00004c00 ESP=00000400
+OUTPUT (escaped bytes): JEMFBHLP is needed for FreeDOS only. It saves some interrupt vectors\r\nthe way MS-DOS does, thus allowing to set Jemm386\'s FASTBOOT option.\r\nIt must be loaded in (FD)CONFIG.SYS before the XMS host. Example:\r\nDEVICE=JEMFBHLP.EXE\r\nDEVICE=HIMEM.EXE [or (Q)HIMEM.SYS]\r\nDEVICE=JEMM386.EXE FASTBOOT\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/JLOAD.EXE
+IMPORT Mz: module=7708 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:1933 DS=1000 ES=1000 SS:SP=1326:0400
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=51"); CS:IP=1010:132f; file_offset=Some(4943); bytes=cd 21 8e c3 26 8b 1e 2c
+completed=14 PIL=14 DOS_calls=0 EAX=00005100 ESP=000003f8
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/MEMSTAT.EXE
+IMPORT Mz: module=2164 bytes header=48 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:047e DS=1000 ES=1000 SS:SP=109c:0400
+STOP MissingEncoding { key: "opcode f7", detail: "unsupported group 3 extension" }; CS:IP=1010:0042; file_offset=Some(114); bytes=66 f7 f7 80 c2 30 80 fa
+completed=493 PIL=461 DOS_calls=32 EAX=00000280 ESP=00000c8a
+OUTPUT (escaped bytes): conventional memory (Int 12h): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/MOVEXBDA.EXE
+IMPORT Mz: module=673 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0293 DS=1000 ES=1000 SS:SP=103b:0400
+STOP Exit(0); CS:IP=1010:02a1; file_offset=None; bytes=
+completed=7 PIL=5 DOS_calls=2 EAX=00004c00 ESP=00000400
+OUTPUT (escaped bytes): MOVEXBDA moves XBDA to low memory. Must be run before UMBs were provided to DOS.\r\nUsage: DEVICE=MOVEXBDA.EXE [/A]\r\nOptional parameter /A will align the XBDA to a kB boundary, which is\r\nrequired by some BIOSes.\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/UMBM.EXE
+IMPORT Mz: module=2136 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0474 DS=1000 ES=1000 SS:SP=1096:0400
+STOP Exit(0); CS:IP=1010:047c; file_offset=Some(1180); bytes=55 4d 42 4d 20 69 73 20
+completed=9 PIL=7 DOS_calls=2 EAX=00004c00 ESP=00000400
+OUTPUT (escaped bytes): UMBM is assumed to be located behind UMBPCI in CONFIG.SYS,\r\nand before the XMS driver. This will allow to load the XMS driver\r\n(and the EMM) into an UMB, thus saving some conventional DOS memory.\r\n\r\nUMBM knows the following options:\r\n  /I=XXXX-YYYY   force region XXXX-YYYY to be included. Example: /I=D000-DBFF.\r\n  /XBDA          move the XBDA to the first UMB\r\nOption /I is not recommended, since UMBM will automatically find regions\r\nactivated by UMBPCI. Option /XBDA may cause troubles if the upper memory\r\ncan\'t be used by DMA. To find out, there\'s no other way than to try.\r\nExample:\r\nDOS=UMB\r\nDEVICE=UMBPCI.SYS\r\nDEVICE=UMBM.EXE\r\nDEVICEHIGH=HIMEMX.EXE\r\nAfter DOS has grabbed the UMBs, UMBM will remove itself from DOS memory.\r\n\r\nUMBM is Public Domain. Japheth.\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/JEMM.ZIP.contents/BIN/XMSSTAT.EXE
+IMPORT Mz: module=2809 bytes header=48 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0590 DS=1000 ES=1000 SS:SP=10c0:0800
+STOP Service("unimplemented DOS/BIOS service INT 2f, AH=43"); CS:IP=1010:0540; file_offset=Some(1392); bytes=cd 2f a8 80 75 0b 68 ba
+completed=34 PIL=34 DOS_calls=0 EAX=00004300 ESP=000012fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/HIMEMX.ZIP.contents/BIN/HimemX2.exe
+IMPORT Mz: module=6024 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0ef4 DS=1000 ES=1000 SS:SP=1189:0400
+STOP Budget; CS:IP=1010:0929; file_offset=Some(2377); bytes=3c 25 74 0c 50 e8 3e ff
+completed=10000 PIL=9368 DOS_calls=632 EAX=00000220 ESP=000003e4
+OUTPUT (escaped bytes): HimemX 3.38 [11/21/22] (c) 1995 Till Gerken, 2001-2006 tom ehlert\r\nExtended memory host for DOS (coordinates the usage of XMS and HMA)\r\nHimemX is a device driver that is loaded in CONFIG.SYS.\r\nPlease place DEVICE=HIMEMX.EXE [options] before any driver using XMS.\r\n\r\noptions: [/MAX=####] [/METHOD:xxx] [/HMAMIN=n] [/NUMHANDLES=m]\r\n  [/VERBOSE] [/NOABOVE16] [/X] [/X2MAX32] \r\n\r\n  /MAX=#####      limit memory controlled by XMM to #####K.\r\n                  The HMA is not affected by this value, it\'s always included\r\n  /METHOD:xxx     Specifies the method to be used for A20 handling.\r\n                  Possible values for xxx:\r\n   
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CHKDSK.ZIP.contents/BIN/CHKDSK.EXE
+IMPORT Mz: module=41746 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=2b57:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=00002139 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/APPEND.ZIP.contents/BIN/APPEND.EXE
+IMPORT Mz: module=3077 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=11520
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1131:0200
+STOP Boundary("fetch outside loaded image at 00000003"); CS:IP=1131:0003; file_offset=None; bytes=
+completed=28 PIL=1521 DOS_calls=0 EAX=00000000 ESP=000001fc
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/ASSIGN.ZIP.contents/BIN/ASSIGN.COM
+IMPORT Com: module=13867 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1000:1ddf; file_offset=Some(7391); bytes=cd 21 b8 00 00 72 09 f6
+completed=171 PIL=304 DOS_calls=1 EAX=00004400 ESP=0000ffe4
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CHOICE.ZIP.contents/BIN/CHOICE.EXE
+IMPORT Mz: module=5187 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=11f6:0200
+STOP Boundary("fetch outside loaded image at 0000000b"); CS:IP=11f6:000b; file_offset=None; bytes=
+completed=29 PIL=2578 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CHOICE.ZIP.contents/BIN/_CHOICE.EXE
+IMPORT Mz: module=4117 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=118a:0200
+STOP Boundary("fetch outside loaded image at 0000000d"); CS:IP=118a:000d; file_offset=None; bytes=
+completed=29 PIL=2043 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/COMP.ZIP.contents/BIN/COMP.COM
+IMPORT Com: module=1764 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=1a"); CS:IP=1000:0105; file_offset=Some(5); bytes=cd 21 b8 00 37 cd 21 88
+completed=2 PIL=2 DOS_calls=0 EAX=00001a00 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE.EXE
+IMPORT Mz: module=5797 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=119b0
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:19ae
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=000019aa
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/COM2EXE.EXE
+IMPORT Mz: module=1314 bytes header=48 relocations=2 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=2051:0080
+STOP Exit(1); CS:IP=1010:00e4; file_offset=Some(276); bytes=f9 e3 08 8b d6 49 ac 3c
+completed=3301 PIL=2835 DOS_calls=466 EAX=00004c01 ESP=00000080
+OUTPUT (escaped bytes): COM2EXE v1.0 Copyright (c) 2000 by Joergen Ibsen / Jibz, Arkady V.Belousov\r\n\r\nSyntax: COM2EXE [/Ssize] inputfile [outputfile]\r\n\r\nOptions:\r\n  /Ssize        - specifies size of uninitialized variables and stack segments\r\n                  allocated after program (minimum 32 bytes; can be hex: $12EF;\r\n                  by default 64K-size of program is assumed)\r\n  inputfile     - source file to process\r\n  outputfile    - target file (may be same as inputfile; if omited then\r\n                  $$$.EXE will be written)\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/COMTEST.COM
+IMPORT Com: module=1130 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP MissingEncoding { key: "opcode 2f", detail: "unsupported opcode 2f at 00000159" }; CS:IP=1000:0159; file_offset=Some(89); bytes=2f aa 80 e9 04 73 ef e8
+completed=35 PIL=33 DOS_calls=2 EAX=00000096 ESP=0000fffa
+OUTPUT (escaped bytes): COMTEST v2.6 (030301) - Utility to detect serial ports\r\nCopyright (c) 2000-2003 by Arkady V.Belousov, licensed under GPL2\r\n\r\nCOM# Addr IRQ# Type                      Attached\r\n---- ---- ---- ------------------------- ---------------------------\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-BR.EXE
+IMPORT Mz: module=5881 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a00
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:19fe
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=000019fa
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-DE.EXE
+IMPORT Mz: module=6140 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11b00
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1afe
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001afa
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-ES.EXE
+IMPORT Mz: module=5961 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a50
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1a4e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001a4a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-FR.EXE
+IMPORT Mz: module=6174 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11b20
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1b1e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001b1a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-HU.EXE
+IMPORT Mz: module=5910 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a20
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1a1e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001a1a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-IT.EXE
+IMPORT Mz: module=5918 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a20
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1a1e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001a1a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-LV.EXE
+IMPORT Mz: module=5941 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a40
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1a3e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001a3a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-NL.EXE
+IMPORT Mz: module=5964 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a50
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1a4e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001a4a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-PL.EXE
+IMPORT Mz: module=5987 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a70
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1a6e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001a6a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-PT.EXE
+IMPORT Mz: module=5874 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a00
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:19fe
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=000019fa
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTM-SK.EXE
+IMPORT Mz: module=5920 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11a20
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1a1e
+STOP Service("unimplemented DOS/BIOS service INT 15, AH=c2"); CS:IP=1000:0eb2; file_offset=Some(3538); bytes=cd 15 72 ee 84 e4 75 ea
+completed=247 PIL=211 DOS_calls=36 EAX=0000c205 ESP=00001a1a
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/CTMDEBUG.EXE
+IMPORT Mz: module=6527 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=11c80
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:1c7e
+STOP Service("unimplemented DOS/BIOS service INT 29, AH=c2"); CS:IP=1000:0fcd; file_offset=Some(3821); bytes=cd 29 58 50 24 0f 04 30
+completed=249 PIL=213 DOS_calls=36 EAX=0000c23c ESP=00001c78
+OUTPUT (escaped bytes): \r\nCuteMouse v2.1 beta4 [FreeDOS]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/MOUSETST.COM
+IMPORT Com: module=1010 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 33, AH=00"); CS:IP=1000:0105; file_offset=Some(5); bytes=cd 33 3d 4d 57 75 0e 81
+completed=2 PIL=2 DOS_calls=0 EAX=00000011 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/CTMOUSE.ZIP.contents/BIN/CTMOUSE/PROTOCOL.COM
+IMPORT Com: module=966 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Exit(0); CS:IP=1000:0139; file_offset=Some(57); bytes=3b fe 72 09 ac 3c 20 76
+completed=22 PIL=20 DOS_calls=2 EAX=00000924 ESP=0000fffe
+OUTPUT (escaped bytes): Syntax: protocol <COM (1-4)> [<bytes in event (3-5)> [<COM LCR value (2-3)>]]\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/DEBUG.ZIP.contents/BIN/DEBUG.COM
+IMPORT Com: module=22324 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1000:5630; file_offset=Some(21808); bytes=cd 21 72 04 88 16 3b 54
+completed=9 PIL=9 DOS_calls=0 EAX=00004400 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/DEBUG.ZIP.contents/BIN/DEBUGX.COM
+IMPORT Com: module=28710 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1000:6d8c; file_offset=Some(27788); bytes=cd 21 72 04 88 16 5d 6a
+completed=9 PIL=9 DOS_calls=0 EAX=00004400 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/DEFRAG.ZIP.contents/BIN/DEFRAG.EXE
+IMPORT Mz: module=53958 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=35c1:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=000028a7 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/DISKCOMP.ZIP.contents/BIN/DISKCOMP.COM
+IMPORT Com: module=6490 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 000039af"); CS:IP=1000:39af; file_offset=None; bytes=
+completed=15 PIL=6504 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/DISKCOPY.ZIP.contents/BIN/DISKCOPY.EXE
+IMPORT Mz: module=41904 bytes header=512 relocations=5 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1b0b:0080
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1010:771d; file_offset=Some(31005); bytes=cd 21 92 25 80 00 5d c3
+completed=166 PIL=3225 DOS_calls=8 EAX=00004400 ESP=0000fff4
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/DISPLAY.ZIP.contents/BIN/DISPLAY.EXE
+IMPORT Mz: module=3625 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1f54:0200
+STOP Boundary("fetch outside loaded image at 00000009"); CS:IP=1f54:0009; file_offset=None; bytes=
+completed=28 PIL=1796 DOS_calls=0 EAX=00000000 ESP=000001fc
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/EDLIN.ZIP.contents/BIN/EDLIN.EXE
+IMPORT Mz: module=31460 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1d65:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=000015c9 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/EDLIN.ZIP.contents/BIN/EDLIN32.EXE
+IMPORT ERROR: NE/LE/LX/PE/Windows executables are not DOS MZ inputs for this probe
+
+FILE images/FD14LITE.img::PACKAGES/BASE/EXE2BIN.ZIP.contents/BIN/EXE2BIN.COM
+IMPORT Com: module=8592 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00003741"); CS:IP=1000:3741; file_offset=None; bytes=
+completed=14 PIL=8605 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FDAPM.ZIP.contents/BIN/IDLEDPMS.COM
+IMPORT Com: module=1022 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=12"); CS:IP=1000:0205; file_offset=Some(261); bytes=cd 10 81 f9 ff ff 59 5b
+completed=13 PIL=12 DOS_calls=1 EAX=00001209 ESP=0000fff6
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FIND.ZIP.contents/BIN/FIND.COM
+IMPORT Com: module=7671 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00003579"); CS:IP=1000:3579; file_offset=None; bytes=
+completed=14 PIL=7684 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/FDXMS286.ZIP.contents/BIN/XMSTEST.EXE
+IMPORT Mz: module=10978 bytes header=512 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=135d:0080
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1010:0ae4; file_offset=Some(3300); bytes=cd 21 92 25 80 00 5d c3
+completed=409 PIL=2938 DOS_calls=8 EAX=00004400 ESP=0000fff4
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/KEYB.ZIP.contents/BIN/KEYB.EXE
+IMPORT Mz: module=11787 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=19720
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=176d:0200
+STOP Boundary("fetch outside loaded image at 00000009"); CS:IP=176d:0009; file_offset=None; bytes=
+completed=29 PIL=5878 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/LABEL.ZIP.contents/BIN/LABEL.EXE
+IMPORT Mz: module=10439 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1582:0200
+STOP Boundary("fetch outside loaded image at 00000009"); CS:IP=1582:0009; file_offset=None; bytes=
+completed=29 PIL=5205 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/LABEL.ZIP.contents/BIN/_LABEL.EXE
+IMPORT Mz: module=6064 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1201:0200
+STOP Boundary("fetch outside loaded image at 00000002"); CS:IP=1201:0002; file_offset=None; bytes=
+completed=29 PIL=3018 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/MIRROR.ZIP.contents/BIN/MIRROR.EXE
+IMPORT Mz: module=9982 bytes header=32 relocations=1 trailing=11589 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=14a0:0200
+STOP Boundary("fetch outside loaded image at 00000008"); CS:IP=14a0:0008; file_offset=None; bytes=
+completed=29 PIL=4976 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/MKEYB.ZIP.contents/BIN/mkeyb.exe
+IMPORT Mz: module=11985 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=14b6:0200
+STOP Boundary("fetch outside loaded image at 0000000b"); CS:IP=14b6:000b; file_offset=None; bytes=
+completed=29 PIL=5977 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/MODE.ZIP.contents/BIN/MODE.COM
+IMPORT Com: module=16244 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Budget; CS:IP=1000:0115; file_offset=Some(21); bytes=f3 a4 fc 87 f7 83 ee c8
+completed=7 PIL=10000 DOS_calls=0 EAX=00000000 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/MORE.ZIP.contents/BIN/_MORE.EXE
+IMPORT Mz: module=5841 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1237:0200
+STOP Boundary("fetch outside loaded image at 0000000b"); CS:IP=1237:000b; file_offset=None; bytes=
+completed=29 PIL=2905 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/MOVE.ZIP.contents/BIN/MOVE.EXE
+IMPORT Mz: module=24534 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=218b:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=00001b9e ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/NLSFUNC.ZIP.contents/BIN/NLSFUNC.EXE
+IMPORT Mz: module=2807 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=12330
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=110a:1280
+STOP Boundary("fetch outside loaded image at 0000000a"); CS:IP=110a:000a; file_offset=None; bytes=
+completed=28 PIL=1387 DOS_calls=0 EAX=00000000 ESP=0000127c
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/PRINT.ZIP.contents/BIN/PRINT.COM
+IMPORT Com: module=1779 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00000c74"); CS:IP=1000:0c74; file_offset=None; bytes=
+completed=15 PIL=1793 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/RECOVER.ZIP.contents/BIN/RECOVER.EXE
+IMPORT Mz: module=61496 bytes header=4096 relocations=956 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1f0b:0080
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1010:224e; file_offset=Some(12878); bytes=cd 21 92 25 80 00 5d cb
+completed=148 PIL=957 DOS_calls=8 EAX=00004400 ESP=00001002
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/REPLACE.ZIP.contents/BIN/REPLACE.EXE
+IMPORT Mz: module=20722 bytes header=512 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1525:0080
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1010:0e64; file_offset=Some(4196); bytes=cd 21 92 25 80 00 5d c3
+completed=429 PIL=516 DOS_calls=8 EAX=00004400 ESP=0000fff4
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/SHARE.ZIP.contents/BIN/SHARE.COM
+IMPORT Com: module=6320 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP MissingEncoding { key: "opcode e0", detail: "unsupported opcode e0 at 00000d82" }; CS:IP=1000:0d82; file_offset=Some(3202); bytes=e0 fa 74 f0 33 c0 89 46
+completed=208 PIL=283 DOS_calls=7 EAX=00000000 ESP=0000fff8
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/SHSUCDX.ZIP.contents/BIN/shcdx86.com
+IMPORT Com: module=8227 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 2f, AH=11"); CS:IP=1000:185c; file_offset=Some(5980); bytes=cd 2f 5a 81 fb be ba 74
+completed=14 PIL=169 DOS_calls=0 EAX=00001100 ESP=0000fffc
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/SORT.ZIP.contents/BIN/SORT.EXE
+IMPORT Mz: module=8377 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=134b:0200
+STOP Boundary("fetch outside loaded image at 00000003"); CS:IP=134b:0003; file_offset=None; bytes=
+completed=29 PIL=4173 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/SWSUBST.ZIP.contents/BIN/SWSUBST.EXE
+IMPORT Mz: module=57320 bytes header=1024 relocations=136 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1e32:0080
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=58"); CS:IP=1010:00ef; file_offset=Some(1263); bytes=cd 21 72 2a b4 67 8b 1e
+completed=107 PIL=661 DOS_calls=7 EAX=00005801 ESP=00000000
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/TREE.ZIP.contents/BIN/TREE.COM
+IMPORT Com: module=9961 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00003e71"); CS:IP=1000:3e71; file_offset=None; bytes=
+completed=14 PIL=9974 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/UNDELETE.ZIP.contents/BIN/UNDELETE.COM
+IMPORT Com: module=14637 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Budget; CS:IP=1000:0115; file_offset=Some(21); bytes=f3 a4 fc 87 f7 83 ee c8
+completed=7 PIL=10000 DOS_calls=0 EAX=00000000 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/UNFORMAT.ZIP.contents/BIN/UNFORMAT.EXE
+IMPORT Mz: module=24640 bytes header=512 relocations=1 trailing=11079 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=160c:0080
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=44"); CS:IP=1010:1c3d; file_offset=Some(7741); bytes=cd 21 92 25 80 00 5d c3
+completed=399 PIL=476 DOS_calls=8 EAX=00004400 ESP=0000fff4
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/GRAPHICS.ZIP.contents/BIN/GRAPH-HP.COM
+IMPORT Com: module=2529 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=31"); CS:IP=1000:0854; file_offset=Some(1876); bytes=cd 21 44 72 69 76 65 72
+completed=40 PIL=36 DOS_calls=4 EAX=00003100 ESP=0000fffe
+OUTPUT (escaped bytes): Driver to make \'shift PrtScr\' key work\r\neven in CGA, EGA, VGA, MCGA graphics\r\nmodes loaded, in HP PCL mode.\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/GRAPHICS.ZIP.contents/BIN/GRAPH-PS.COM
+IMPORT Com: module=2499 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=31"); CS:IP=1000:0856; file_offset=Some(1878); bytes=cd 21 44 72 69 76 65 72
+completed=40 PIL=36 DOS_calls=4 EAX=00003100 ESP=0000fffe
+OUTPUT (escaped bytes): Driver to make \'shift PrtScr\' key work\r\neven in CGA, EGA, VGA, MCGA graphics\r\nmodes loaded, in PostScript mode.\r\n
+
+FILE images/FD14LITE.img::PACKAGES/BASE/GRAPHICS.ZIP.contents/BIN/GRAPHPIN.COM
+IMPORT Com: module=2287 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Boundary("fetch outside loaded image at 00000c4f"); CS:IP=1000:0c4f; file_offset=None; bytes=
+completed=15 PIL=2301 DOS_calls=0 EAX=00000000 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/HTMLHELP.ZIP.contents/BIN/BOOKSHLF.EXE
+IMPORT Mz: module=9712 bytes header=32 relocations=1 trailing=5550 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1473:0200
+STOP Boundary("fetch outside loaded image at 00000007"); CS:IP=1473:0007; file_offset=None; bytes=
+completed=29 PIL=4841 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/BASE/HTMLHELP.ZIP.contents/BIN/HTMLHELP.EXE
+IMPORT Mz: module=55786 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=2b25:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=00001d99 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/NET/FDNPKG.ZIP.contents/BIN/FDNPKG.EXE
+IMPORT Mz: module=22016 bytes header=512 relocations=27 trailing=446968 PSP=1000 allocation_end=1b340
+ENTRY CS:IP=1010:0054 DS=1000 ES=1000 SS:SP=1910:0100
+STOP Budget; CS:IP=1010:053c; file_offset=Some(1852); bytes=f3 aa b4 30 cd 21 a3 94
+completed=32 PIL=10000 DOS_calls=0 EAX=00000000 ESP=0000615e
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/V8POWER.ZIP.contents/BIN/VMODE.COM
+IMPORT Com: module=2294 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/V8POWER.ZIP.contents/BIN/VPCSPKR.COM
+IMPORT Com: module=1450 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/V8POWER.ZIP.contents/BIN/VVER.COM
+IMPORT Com: module=2084 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 10, AH=03"); CS:IP=1000:0132; file_offset=Some(50); bytes=cd 10 51 8b 0e 11 01 28
+completed=19 PIL=18 DOS_calls=1 EAX=00000300 ESP=0000fffa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/PKGTOOLS.ZIP.contents/BIN/PKGINFO.EXE
+IMPORT Mz: module=17010 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1a1b:0200
+STOP Boundary("fetch outside loaded image at 00000010"); CS:IP=1a1b:0010; file_offset=None; bytes=
+completed=29 PIL=8490 DOS_calls=0 EAX=00000000 ESP=000001fa
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/PKGTOOLS.ZIP.contents/BIN/PKGMAKER.EXE
+IMPORT Mz: module=20419 bytes header=32 relocations=1 trailing=0 PSP=1000 allocation_end=3ae50
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1de4:0200
+STOP Budget; CS:IP=1010:0019; file_offset=Some(57); bytes=f3 a5 fc 2e 80 6c 12 10
+completed=11 PIL=10000 DOS_calls=0 EAX=000018f9 ESP=000001fe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/CALLVER.ZIP.contents/BIN/CALLVER.COM
+IMPORT Com: module=1016 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Exit(255); CS:IP=1000:049c; file_offset=Some(924); bytes=3c 30 72 07 3c 39 77 03
+completed=18 PIL=16 DOS_calls=2 EAX=00004cff ESP=0000fffe
+OUTPUT (escaped bytes): Use: CALLVER 6.20 [PROGRAM [ARGUMENTS]]\r\nRun one program (in a new shell, using COMSPEC) with a\r\nfake DOS version number, or globally (only in FreeDOS)\r\nmodify the reported DOS version (CALLVER 0.00 reverts)\r\nCALLVER is public domain.\r\n
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/CWSDPMI.ZIP.contents/BIN/CWSDPMI.EXE
+IMPORT Mz: module=20813 bytes header=512 relocations=25 trailing=0 PSP=1000 allocation_end=1ac60
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=18bd:0080
+STOP Budget; CS:IP=1010:004c; file_offset=Some(588); bytes=f3 aa b4 30 cd 21 a3 0a
+completed=32 PIL=10000 DOS_calls=0 EAX=00000000 ESP=00005e2e
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/CWSDPMI.ZIP.contents/BIN/CWSDPR0.EXE
+IMPORT Mz: module=20007 bytes header=512 relocations=25 trailing=0 PSP=1000 allocation_end=1a930
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=188a:0080
+STOP Budget; CS:IP=1010:004c; file_offset=Some(588); bytes=f3 aa b4 30 cd 21 a3 0a
+completed=32 PIL=10000 DOS_calls=0 EAX=00000000 ESP=00005dde
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/CWSDPMI.ZIP.contents/BIN/CWSDSTR0.EXE
+IMPORT Mz: module=21504 bytes header=512 relocations=27 trailing=0 PSP=1000 allocation_end=1b130
+ENTRY CS:IP=1010:0054 DS=1000 ES=1000 SS:SP=18dc:0100
+STOP Budget; CS:IP=1010:053c; file_offset=Some(1852); bytes=f3 aa b4 30 cd 21 a3 94
+completed=32 PIL=10000 DOS_calls=0 EAX=00000000 ESP=0000622e
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/CWSDPMI.ZIP.contents/BIN/CWSDSTUB.EXE
+IMPORT Mz: module=22016 bytes header=512 relocations=27 trailing=0 PSP=1000 allocation_end=1b340
+ENTRY CS:IP=1010:0054 DS=1000 ES=1000 SS:SP=1910:0100
+STOP Budget; CS:IP=1010:053c; file_offset=Some(1852); bytes=f3 aa b4 30 cd 21 a3 94
+completed=32 PIL=10000 DOS_calls=0 EAX=00000000 ESP=0000615e
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/TOOLS/CWSDPMI.ZIP.contents/BIN/CWSPARAM.EXE
+IMPORT Mz: module=12612 bytes header=512 relocations=3 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=1a89:0080
+STOP Budget; CS:IP=1010:00cd; file_offset=Some(717); bytes=f3 aa b4 00 cd 1a 89 16
+completed=97 PIL=9993 DOS_calls=7 EAX=00000000 ESP=00000000
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/ARCHIVER/UNZIP.ZIP.contents/BIN/UNZIP.EXE
+IMPORT Mz: module=1536 bytes header=512 relocations=0 trailing=195072 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0054 DS=1000 ES=1000 SS:SP=1010:0760
+STOP Service("unimplemented DOS/BIOS service INT 2f, AH=16"); CS:IP=1010:00f2; file_offset=Some(754); bytes=cd 2f 09 c0 75 ed 80 e3
+completed=45 PIL=41 DOS_calls=4 EAX=00001687 ESP=0000075c
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/ARCHIVER/ZIP.ZIP.contents/BIN/ZIP16.EXE
+IMPORT Mz: module=86017 bytes header=32 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0000 DS=1000 ES=1000 SS:SP=41b5:5250
+STOP Budget; CS:IP=1010:0052; file_offset=Some(114); bytes=75 04 ad 11 c0 93 c3 b9
+completed=9541 PIL=10000 DOS_calls=0 EAX=0000009f ESP=0000524c
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/ARCHIVER/ZIP.ZIP.contents/BIN/ZIPCLOAK.EXE
+IMPORT ERROR: NE/LE/LX/PE/Windows executables are not DOS MZ inputs for this probe
+
+FILE images/FD14LITE.img::PACKAGES/ARCHIVER/ZIP.ZIP.contents/BIN/ZIPNOTE.EXE
+IMPORT ERROR: NE/LE/LX/PE/Windows executables are not DOS MZ inputs for this probe
+
+FILE images/FD14LITE.img::PACKAGES/ARCHIVER/ZIP.ZIP.contents/BIN/ZIPSPLIT.EXE
+IMPORT ERROR: NE/LE/LX/PE/Windows executables are not DOS MZ inputs for this probe
+
+FILE images/FD14LITE.img::PACKAGES/DRIVERS/SHSUFDRV.ZIP.contents/BIN/DRVON.COM
+IMPORT Com: module=16 bytes header=0 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1000:0100 DS=1000 ES=1000 SS:SP=1000:fffe
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=5f"); CS:IP=1000:010d; file_offset=Some(13); bytes=cd 21 c3
+completed=4 PIL=4 DOS_calls=0 EAX=00005f07 ESP=0000fffe
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/DRIVERS/SHSUFDRV.ZIP.contents/BIN/SHFDRV86.EXE
+IMPORT Mz: module=3232 bytes header=64 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:0787 DS=1000 ES=1000 SS:SP=1103:00a0
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=52"); CS:IP=1010:0b01; file_offset=Some(2881); bytes=cd 21 89 1e 24 0f 8c 06
+completed=26 PIL=25 DOS_calls=1 EAX=00005206 ESP=0000009c
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/DRIVERS/SHSUFDRV.ZIP.contents/BIN/SHRDRV86.EXE
+IMPORT Mz: module=24775 bytes header=80 relocations=2 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:1334 DS=1000 ES=1000 SS:SP=1e72:0100
+STOP Service("unimplemented DOS/BIOS service INT 2f, AH=43"); CS:IP=1010:1381; file_offset=Some(5073); bytes=cd 2f 43 74 a6 4b 89 1e
+completed=33 PIL=32 DOS_calls=1 EAX=00004310 ESP=0000e720
+OUTPUT (escaped bytes): 
+
+FILE images/FD14LITE.img::PACKAGES/DRIVERS/SHSUFDRV.ZIP.contents/BIN/SHSUFDRV.EXE
+IMPORT Mz: module=3239 bytes header=64 relocations=0 trailing=0 PSP=1000 allocation_end=a0000
+ENTRY CS:IP=1010:078d DS=1000 ES=1000 SS:SP=1104:00a0
+STOP Service("unimplemented DOS/BIOS service INT 21, AH=52"); CS:IP=1010:0b0f; file_offset=Some(2895); bytes=cd 21 89 1e 2b 0f 8c 06
+completed=39 PIL=38 DOS_calls=1 EAX=00005206 ESP=0000009c
+OUTPUT (escaped bytes): 
+
+SUMMARY imported=151/156 exited=11; first missing-encoding blockers (program count):
+2 opcode 60
+1 opcode 0f 01
+1 opcode 2f
+1 opcode d1
+1 opcode e0
+1 opcode f7
+Reached instruction mix (retired instructions; REP elements and DOS bridges listed separately):
+202472 REP MOVSW elements
+117029 REP MOVSB elements
+74722 REP STOSB elements
+51906 INC
+32053 MOV
+28841 CMP
+27354 JMP
+25523 JAE
+12963 REP STOSW elements
+3648 JNE
+3476 JE
+3270 PUSH
+2941 CALL
+2861 POP
+2816 RET
+2291 DOS INT21/AH02
+1889 OR
+1555 LODSB
+1553 ADD
+1024 REP STOSD elements
+Budget counts execution steps (including REP elements);completed counts fully retired instructions.
+Stops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.
+
