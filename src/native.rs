@@ -17,10 +17,10 @@ pub fn cases()->Result<Vec<Case>,String> {
     for (index,(w,a32,prefix)) in [(16,false,None),(16,true,None),(32,false,None),(32,true,None),(16,false,Some(0x26)),(32,false,Some(0x26)),(16,false,Some(0x64)),(32,true,Some(0x64))].into_iter().enumerate(){
         let names=["les16_a16","les16_a32","les32_a16","les32_a32","les16_es","les32_es","les16_fs","les32_fs"];
         let mut bytes=vec![];if w==32{bytes.push(0x66);}if a32{bytes.push(0x67);}if let Some(p)=prefix{bytes.push(p);}bytes.extend([0xc4,0x1f,0xf4]);
-        let mut t=case(names[index],bytes)?;t.regs[3]=0x700;t.regs[7]=0x700;t.flags=0xed7;let mut data=vec![0xef,0xbe];if w==32{data.extend([0xad,0xde]);}data.extend([0xdc,0xfe]);t.patch=Some((if prefix==Some(0x64){0xa00}else{0x800},data));tests.push(t);
+        let mut t=case(names[index],bytes)?;t.regs[3]=0x700;t.regs[7]=0x700;t.flags=0xed7;let mut data=vec![0xef,0xbe];if w==32{data.extend([0xad,0xde]);}data.extend([0xdc,0xfe]);t.patch=Some((if prefix==Some(0x64){0xa00}else if prefix==Some(0x26){0x700}else{0x800},data));tests.push(t);
     }
-    for (name,bytes,at) in [("les_ss",vec![0xc4,0x7e,0,0xf4],0x900),("les_esp_alias",vec![0x66,0x67,0xc4,0x24,0x24,0xf4],0x900),("les_readonly",vec![0xc4,0x3f,0xf4],0x800),("les_limit",vec![0xc4,0x3f,0xf4],0x800),("les_second_read_fault",vec![0xc4,0x3f,0xf4],0xffe),("les_mode_reject",vec![0xc4,0x3f,0xf4],0x800)]{
-        let mut t=case(name,bytes)?;t.regs[3]=if name=="les_second_read_fault"{0xefe}else{0x700};t.regs[4]=0x700;t.regs[5]=0x700;t.flags=0xed7;t.patch=Some((at,if name=="les_second_read_fault"{vec![0xef,0xbe]}else{vec![0xef,0xbe,0xad,0xde,0xdc,0xfe]}));if name=="les_limit"{t.image.segments[3].limit=0x702;}if name=="les_readonly"{t.protect=Some((0x800,4));}if name=="les_mode_reject"{t.image.real_mode=false;}tests.push(t);
+    for (name,bytes,at) in [("les_ss",vec![0xc4,0x7e,0,0xf4],0x900),("les_esp_alias",vec![0x66,0x67,0xc4,0x24,0x24,0xf4],0x900),("les_readonly",vec![0xc4,0x3f,0xf4],0x800),("les_limit",vec![0xc4,0x3f,0xf4],0x800),("les_second_read_fault",vec![0xc4,0x3f,0xf4],0xffe),("les_v86_reject",vec![0xc4,0x3f,0xf4],0x800)]{
+        let mut t=case(name,bytes)?;t.regs[3]=if name=="les_second_read_fault"{0xefe}else{0x700};t.regs[4]=0x700;t.regs[5]=0x700;t.flags=0xed7;t.patch=Some((at,if name=="les_second_read_fault"{vec![0xef,0xbe]}else{vec![0xef,0xbe,0xad,0xde,0xdc,0xfe]}));if name=="les_limit"{t.image.segments[3].limit=0x702;}if name=="les_readonly"{t.protect=Some((0x800,4));}if name=="les_v86_reject"{t.flags|=0x20000;}tests.push(t);
     }
 
     for (name,bytes) in [

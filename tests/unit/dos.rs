@@ -124,7 +124,7 @@ fn unterminated_or_oversized_dos_output_is_all_or_none(){
 fn corpus_report_ranks_first_blockers_and_keeps_service_failures_separate(){
     use std::time::{SystemTime,UNIX_EPOCH};let dir=std::env::temp_dir().join(format!("pil-dos-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir_all(&dir).unwrap();let mut paths=Vec::new();
     for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0x62]),("gap2.com",vec![0x62]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
-    let text=report(&paths,100).unwrap();assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 62"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
+    let text=report(&paths,100).unwrap();assert!(text.contains(&format!("DOS executable probe v{}; step budget=100 per program",env!("CARGO_PKG_VERSION"))));assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 62"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
