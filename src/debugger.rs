@@ -7,6 +7,10 @@ use super::memory::Ram;
 use super::execute_memory;
 use super::serial::{MockSerial, SerialTransport};
 
+#[path="debug_service.rs"]
+mod service;
+pub use service::serve;
+
 const MAX_RUN: usize = 10_000;
 const DEFAULT_RUN: usize = 100;
 const MAX_TIMED:usize=1_000_000;
@@ -330,7 +334,8 @@ impl Debugger {
         }
         Ok(lines.join("\n"))
     }
-    fn command(&mut self,line:&str)->Result<(String,bool),String> {
+    fn command(&mut self,line:&str)->Result<(String,bool),String> {self.command_mode(line,true)}
+    fn command_mode(&mut self,line:&str,show_guest_output:bool)->Result<(String,bool),String> {
         let tx_before=self.tx_events.len();
         let words:Vec<_>=line.split_whitespace().collect();
         let response=match words.as_slice() {
@@ -464,7 +469,7 @@ impl Debugger {
             }
             _=>return Err("unknown command or arguments; type help".into()),
         };
-        let response=if self.tx_events.len()>tx_before {
+        let response=if show_guest_output && self.tx_events.len()>tx_before {
             let bytes=&self.tx_events[tx_before..];
             let hex=bytes.iter().map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ");
             let text=bytes.iter().flat_map(|b|std::ascii::escape_default(*b)).map(char::from).collect::<String>();

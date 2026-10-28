@@ -199,3 +199,19 @@ fn dos_switch_and_putchar_bridge_reach_exit_and_account_for_budget(){
  let r=run(load(&bytes,"switch.com").unwrap(),20).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"/       ");assert_eq!((r.completed,r.pil_steps,r.dos_calls),(8,4,4));
  let r=run(load(&bytes,"switch.com").unwrap(),2).unwrap();assert_eq!(r.stop,Stop::Budget);assert_eq!((r.completed,r.pil_steps,r.dos_calls),(2,1,1));assert_eq!(r.loaded.cpu.regs[2]&255,47);
 }
+
+#[test]
+fn host_output_provider_failures_do_not_retire_or_modify_cpu_or_ram(){
+ use crate::host_io::{CaptureOutput,Output};
+ for character in [false,true]{for disconnected in [false,true]{
+  let bytes=if character{vec![0xb4,2,0xb2,b'A',0xcd,0x21]}else{vec![0xba,7,1,0xb4,9,0xcd,0x21,b'A',b'$',0]};
+  let mut p=load(&bytes,"provider.com").unwrap();p.cpu.regs[0]=if character{0x0200}else{0x0900};p.cpu.regs[2]=if character{65}else{0x107};
+  p.cpu.eip=if character{0x104}else{0x105};let old=p.clone();let mut output=CaptureOutput::new(if disconnected{16}else{0});if disconnected{output.disconnect();}
+  let r=run_with_output(p,20,&mut output).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(0,0,0));assert_eq!(r.loaded.cpu,old.cpu);assert_eq!(r.loaded.ram,old.ram);assert_eq!(r.loaded.image,old.image);assert!(r.output.is_empty());assert!(output.bytes().is_empty());
+ }}
+}
+#[test]
+fn custom_headless_provider_matches_default_dos_run(){
+ use crate::host_io::{CaptureOutput,Output};
+ let p=load(&hello("com").unwrap(),"hello.com").unwrap();let expected=run(p.clone(),100).unwrap();let mut io=CaptureOutput::new(64);let actual=run_with_output(p,100,&mut io).unwrap();assert_eq!(actual.stop,expected.stop);assert_eq!(actual.loaded.cpu,expected.loaded.cpu);assert_eq!(actual.loaded.ram,expected.loaded.ram);assert_eq!(actual.output,expected.output);assert_eq!(io.bytes(),expected.output);
+}

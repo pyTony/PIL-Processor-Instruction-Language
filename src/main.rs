@@ -6,6 +6,7 @@ mod memory;
 mod address;
 use memory::{Ram, MemWidth};
 mod serial;
+mod host_io;
 mod debugger;
 mod guest;
 mod dos;
@@ -897,6 +898,10 @@ fn main() -> R<()> {
     }
     if args.get(1).map(String::as_str)==Some("--selftest") {
         return debugger::selftest();
+    }
+    if args.get(1).map(String::as_str)==Some("--debug-service") {
+        let path=match args.len(){2=>None,4 if args[2]=="--load"=>Some(args[3].as_str()),_=>return Err("usage: pil-proof --debug-service [--load RAW_BINARY]".into())};
+        return debugger::serve(std::io::stdin().lock(),std::io::stdout().lock(),path).map_err(|e|e.to_string());
     }
     if args.get(1).map(String::as_str)==Some("--repl") {
         if args.len()>2 {

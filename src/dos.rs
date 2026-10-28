@@ -14,7 +14,11 @@ const LOAD:u16=PSP+0x10;
 const LIMIT:usize=0xa0000;
 pub const MAX_FILE:usize=1024*1024;
 pub const MAX_STEPS:usize=1_000_000;
-const MAX_OUTPUT:usize=16384;
+#[cfg(test)]
+const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
+#[path="dos_services.rs"]
+mod services;
+use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
 #[derive(Clone,Debug)]
@@ -124,83 +128,21 @@ fn opcode_key(bytes:&[u8])->String{
     let at=bytes.iter().position(|b|!matches!(*b,0x26|0x2e|0x36|0x3e|0x64|0x65|0x66|0x67)).unwrap_or(0);
     match bytes.get(at){Some(0x0f)=>format!("opcode 0f {}",bytes.get(at+1).map(|x|format!("{x:02x}")).unwrap_or_else(||"??".into())),Some(b)=>format!("opcode {b:02x}"),None=>"fetch/truncated encoding".into()}
 }
-fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
-    match(vector,(p.cpu.regs[0]>>8)as u8){
-        (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
-        (0x21,0x02)=>{
-            let byte=p.cpu.regs[2]as u8;
-            // Derive the bounded capture's column, including earlier AH09 text.
-            // LF preserves column; CR resets it. This is not a text-screen device.
-            let count=if byte==9{
-                let mut column=0usize;
-                for &b in out.iter(){match b{b'\r'=>column=0,b'\n'|7=>{},8=>column=column.saturating_sub(1),9=>column+=8-column%8,_=>column+=1}}
-                8-column%8
-            }else{1};
-            if out.len().checked_add(count).is_none_or(|n|n>MAX_OUTPUT){return Err("DOS output limit reached before character output".into());}
-            let value=if byte==9{b' '}else{byte};
-            out.extend(std::iter::repeat(value).take(count));
-            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
-            Ok(None)
-        },
-        (0x21,0x37)=>{
-            if p.cpu.regs[0]as u8!=0{return Err("DOS switch-character shim supports AH37/AL00 query only".into());}
-            p.cpu.regs[0]&=!255;p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(b'/');
-            Ok(None)
-        },
-        (0x21,0x25)=>{
-            // AL selects a physical IVT entry; DS:DX is a pointer value, not
-            // an access to the handler. One dword store checks all four bytes.
-            let address=(p.cpu.regs[0]&255)*4;
-            let pointer=(u32::from(p.image.selectors[SegmentRegister::Ds.index()])<<16)|(p.cpu.regs[2]&0xffff);
-            p.ram.store(address,MemWidth::Dword,pointer).map_err(|e|format!("DOS vector write: {e:?}"))?;
-            Ok(None)
-        },
-        (0x21,0x35)=>{
-            // Read the complete pointer before changing BX or the ES cache.
-            let address=(p.cpu.regs[0]&255)*4;
-            let pointer=p.ram.load(address,MemWidth::Dword).map_err(|e|format!("DOS vector read: {e:?}"))?;
-            let selector=(pointer>>16)as u16;
-            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|(pointer&0xffff);
-            let es=SegmentRegister::Es.index();
-            p.image.selectors[es]=selector;p.selectors[es]=selector;
-            p.image.segments[es]=SegmentCache::real_mode(selector);
-            Ok(None)
-        },
-        (0x21,0x30)=>{
-            // Read before changing registers so a failed PSP read has no effects.
-            let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
-            let flags=p.cpu.regs[0]as u8==1;
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|version;
-            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|if flags{0}else{0xff00};
-            p.cpu.regs[1]&=0xffff0000;
-            Ok(None)
-        },
-        (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
-        (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
-        (0x21,9)=>{
-            let offset=p.cpu.regs[2]&0xffff;let mut text=Vec::new();
-            let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            for n in offset..=0xffff{
-                let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS string access: {e:?}"))?;
-                let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))?as u8;
-                if b==b'$'{
-                    out.extend(text);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);
-                }
-                if out.len()+text.len()>=MAX_OUTPUT{return Err("DOS output limit reached before string terminator".into());}
-                text.push(b);
-            }Err("DOS string has no $ terminator before segment end".into())
-        },_=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
-    }
+
+pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
+    let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let mut probe=run_with_output(p,budget,&mut output)?;
+    probe.output=output.into_bytes();Ok(probe)
 }
-pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
+pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output)->Result<Probe,String>{
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut output=Vec::new();let mut instructions=BTreeMap::new();
+    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();
     let mut cache=super::cache::DecodeCache::default();
     let stop=loop{
         if execution_steps==budget{break Stop::Budget;}
         if let Ok(encoded)=bytes_at(&p,2){if encoded[0]==0xcd{
             let vector=encoded[1];let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
-            match service(&mut p,vector,&mut output){
+            match service(&mut p,vector,output){
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{break Stop::Exit(code);}continue;},
                 Err(message)=>break Stop::Service(message),
@@ -229,7 +171,7 @@ pub fn run(mut p:Loaded,budget:usize)->Result<Probe,String>{
     };
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
     let file_offset=linear.and_then(|a|a.checked_sub(p.module_base)).filter(|n|(*n as usize)<p.module_bytes).map(|n|n as usize+p.header_bytes);
-    Ok(Probe{loaded:p,stop,completed,pil_steps,dos_calls,output,instructions,stop_bytes,file_offset})
+    Ok(Probe{loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})
 }
 fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_>=counts.iter().collect();v.sort_by(|a,b|b.1.cmp(a.1).then(a.0.cmp(b.0)));v}
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
