@@ -6,8 +6,6 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
         (0x21,0x02)=>{
             let byte=p.cpu.regs[2]as u8;
-            // Derive the bounded capture's column, including earlier AH09 text.
-            // LF preserves column; CR resets it. This is not a text-screen device.
             let count=if byte==9{8-out.column()%8}else{1};
             if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
             let value=if byte==9{b' '}else{byte};
@@ -22,15 +20,12 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x21,0x25)=>{
-            // AL selects a physical IVT entry; DS:DX is a pointer value, not
-            // an access to the handler. One dword store checks all four bytes.
             let address=(p.cpu.regs[0]&255)*4;
             let pointer=(u32::from(p.image.selectors[SegmentRegister::Ds.index()])<<16)|(p.cpu.regs[2]&0xffff);
             p.ram.store(address,MemWidth::Dword,pointer).map_err(|e|format!("DOS vector write: {e:?}"))?;
             Ok(None)
         },
         (0x21,0x35)=>{
-            // Read the complete pointer before changing BX or the ES cache.
             let address=(p.cpu.regs[0]&255)*4;
             let pointer=p.ram.load(address,MemWidth::Dword).map_err(|e|format!("DOS vector read: {e:?}"))?;
             let selector=(pointer>>16)as u16;
@@ -41,7 +36,6 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x21,0x30)=>{
-            // Read before changing registers so a failed PSP read has no effects.
             let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
             let flags=p.cpu.regs[0]as u8==1;
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|version;
@@ -63,6 +57,36 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
                 if text.len()>=out.remaining(){return Err("DOS output limit reached before string terminator".into());}
                 text.push(b);
             }Err("DOS string has no $ terminator before segment end".into())
-        },_=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
+        },
+        (0x10,0x08)=>{
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0720;
+            Ok(None)
+        },
+        (0x10,0x03)=>{
+            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|0x0607;
+            p.cpu.regs[2]&=0xffff0000;
+            Ok(None)
+        },
+        (0x11,_)=>{
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0025;
+            Ok(None)
+        },
+        (0x12,_)=>{
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
+            Ok(None)
+        },
+        (0x1a,0x00)=>{
+            p.cpu.regs[0]&=!255;p.cpu.regs[1]&=0xffff0000;p.cpu.regs[2]&=0xffff0000;
+            Ok(None)
+        },
+        (0x21,0x3d)=>{
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0002;
+            Ok(None)
+        },
+        (0x21,0x3e)=>{
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
 }

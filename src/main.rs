@@ -31,7 +31,7 @@ enum Binding { Dst, Src }
 #[derive(Clone, Copy, Debug)]
 enum Shift { Left, Right, Arithmetic }
 #[derive(Clone, Copy, Debug)]
-enum Binary { Add, Sub, Mul, Xor, And, Or }
+enum Binary { Add, Sub, Mul, Div, Rem, Xor, And, Or }
 #[derive(Clone, Copy, Debug)]
 enum Flag { CF, PF, AF, ZF, SF, TF, IF, DF, OF, IOPL0, IOPL1, NT }
 impl Flag {
@@ -339,13 +339,13 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     let o = define(&mut names, &mut widths, out, w)?;
                     if fields[0]=="sext" {Token::SignExtend(o,a,w)} else if extend { Token::Extend(o,a,w) } else { Token::Truncate(o,a,w) }
                 }
-                [op @ ("add" | "sub" | "mul" | "xor" | "and" | "or"), out, left, right] => {
+                [op @ ("add" | "sub" | "mul" | "div" | "rem" | "xor" | "and" | "or"), out, left, right] => {
                     let a = slot(&names,left)?; let b = slot(&names,right)?;
                     if widths[a] != widths[b] { return Err("binary width mismatch".into()); }
                     let w = widths[a];
                     let o = define(&mut names, &mut widths, out, w)?;
                     let op = match *op { "add" => Binary::Add, "sub" => Binary::Sub,
-                        "mul" => Binary::Mul, "xor" => Binary::Xor, "or" => Binary::Or, _ => Binary::And };
+                        "div" => Binary::Div, "rem" => Binary::Rem, "mul" => Binary::Mul, "xor" => Binary::Xor, "or" => Binary::Or, _ => Binary::And };
                     Token::Binary(o,op,a,b)
                 }
                 ["not", out, input] => {
@@ -549,6 +549,8 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let x = values[a]; let y = values[b];
                 let n = match op { Binary::Add => x.bits.wrapping_add(y.bits),
                     Binary::Sub => x.bits.wrapping_sub(y.bits),
+                    Binary::Div => if y.bits == 0 { 0 } else { x.bits / y.bits },
+                    Binary::Rem => if y.bits == 0 { 0 } else { x.bits % y.bits },
                     Binary::Mul => x.bits.wrapping_mul(y.bits),
                     Binary::Xor => x.bits ^ y.bits, Binary::And => x.bits & y.bits, Binary::Or => x.bits | y.bits };
                 values[o] = value(n,x.width);
@@ -772,6 +774,8 @@ fn emit_rust_functions(p:&Program)->String {
             Token::Binary(o,op,a,b) => {
                 let expr = match op { Binary::Add => format!("v{a}.wrapping_add(v{b})"),
                     Binary::Sub => format!("v{a}.wrapping_sub(v{b})"),
+                    Binary::Div => format!("if v{b} == 0 {{ 0 }} else {{ v{a} / v{b} }}"),
+                    Binary::Rem => format!("if v{b} == 0 {{ 0 }} else {{ v{a} % v{b} }}"),
                     Binary::Mul => format!("v{a}.wrapping_mul(v{b})"),
                     Binary::Xor => format!("v{a} ^ v{b}"), Binary::And => format!("v{a} & v{b}"), Binary::Or => format!("v{a} | v{b}") };
                 format!("let v{o}: u64 = ({expr}) & {}u64;",mask(p.widths[o]))

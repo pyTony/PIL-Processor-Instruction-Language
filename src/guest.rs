@@ -414,6 +414,13 @@ impl Image {
                 let group1=matches!(opcode,0x80|0x81|0x83);
                 let group3=matches!(opcode,0xf6|0xf7);
                 let group45=matches!(opcode,0xfe|0xff);
+                if group3 && extension == 6 {
+                    let memory = m >> 6 != 3;
+                    dst = view(0, w);
+                    src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
+                    let text = div_pil(w, memory);
+                    (format!("DIV {}", operand_name(src, address)), compile(&text, w))
+                } else {
                 let name=if group1{alu_name(extension)}else if group3 {
                     match extension{0=>"test",2=>"not",3=>"neg",_=>return Err(GuestError::Decode("unsupported group 3 extension".into()))}
                 }else if group45 {
@@ -433,6 +440,7 @@ impl Image {
                 let right=if let Some(value)=immediate{format!("0x{value:0digits$x}",digits=(w/4) as usize)}else{operand_name(src,if reverse{address}else{None})};
                 let label=if matches!(name,"not"|"neg"|"inc"|"dec"){format!("{} {left}",name.to_ascii_uppercase())}else{format!("{} {left},{right}",name.to_ascii_uppercase())};
                 (label,compile(&text,w))
+                }
             }
             0xe4|0xe6=>{
                 let port=r.byte()?;if port!=0xe9{return Err(GuestError::Decode(format!("unsupported monitor port {port:02x}")));}
@@ -494,6 +502,15 @@ fn operand_text(name:&str,w:u8,memory:bool,reverse:bool,immediate:Option<u32>)->
 }
 fn view(register:usize,width:u8)->View {
     if width==8 && register>=4 {View{register:register-4,low:8,width}}else{View{register,low:0,width}}
+}
+fn div_pil(w: u8, memory: bool) -> String {
+    let read_divisor = if memory { format!("read_address addr\nload divisor addr {w}") } else { format!("read divisor src {w}") };
+    match w {
+        8 => format!("read_gpr ax 0 16\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nzext divisor_16 divisor 16\ndiv q_16 ax divisor_16\nrem r_16 ax divisor_16\ntrunc q_8 q_16 8\ntrunc r_8 r_16 8\nzext q_check q_8 16\nult overflow q_check q_16\nnot no_overflow overflow\nrequire no_overflow\nzext q_wide q_8 16\nzext r_wide r_8 16\nconst shift 16 8\nshl r_high r_wide shift\nor ax_new r_high q_wide\nwrite_gpr 0 ax_new\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
+        16 => format!("read_gpr ax 0 16\nread_gpr dx 2 16\nzext ax_32 ax 32\nzext dx_32 dx 32\nconst shift 32 16\nshl dx_high dx_32 shift\nor dividend dx_high ax_32\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nzext divisor_32 divisor 32\ndiv q_32 dividend divisor_32\nrem r_32 dividend divisor_32\ntrunc q_16 q_32 16\ntrunc r_16 r_32 16\nzext q_check q_16 32\nult overflow q_check q_32\nnot no_overflow overflow\nrequire no_overflow\nwrite_gpr 0 q_16\nwrite_gpr 2 r_16\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
+        32 => format!("read_gpr eax 0 32\nread_gpr edx 2 32\nzext eax_64 eax 64\nzext edx_64 edx 64\nconst shift 64 32\nshl edx_high edx_64 shift\nor dividend edx_high eax_64\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nzext divisor_64 divisor 64\ndiv q_64 dividend divisor_64\nrem r_64 dividend divisor_64\ntrunc q_32 q_64 32\ntrunc r_32 r_64 32\nzext q_check q_32 64\nult overflow q_check q_64\nnot no_overflow overflow\nrequire no_overflow\nwrite_gpr 0 q_32\nwrite_gpr 2 r_32\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
+        _ => unreachable!(),
+    }
 }
 fn gpr(n:u8)->Gpr {[Gpr::Eax,Gpr::Ecx,Gpr::Edx,Gpr::Ebx,Gpr::Esp,Gpr::Ebp,Gpr::Esi,Gpr::Edi][n as usize]}
 struct Reader<'a> {image:&'a Image,ram:&'a Ram,start:u32,pos:u32}
