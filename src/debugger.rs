@@ -4,7 +4,6 @@ use std::io::{self, BufRead, Write};
 use super::{compile, description, execute_flow, instantiate, number, Cpu, Program, View};
 use super::flow::{ExecError, FlowContext};
 use super::memory::Ram;
-use super::execute_memory;
 use super::serial::{MockSerial, SerialTransport};
 
 #[path="debug_service.rs"]
@@ -122,6 +121,12 @@ impl Debugger {
         self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.last_step_access=None;self.last_data_access=None;self.pil_cursor=None;self.demo=name.into();Ok(())
     }
     fn step_image(&mut self)->Stop {
+        let mut lazy=super::LazyFlags::None;
+        let stop=self.step_image_lazy(&mut lazy);
+        lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
+        stop
+    }
+    fn step_image_lazy(&mut self,lazy:&mut super::LazyFlags)->Stop {
         use super::guest::{GuestError,Operation};
         let decoded=match self.cache.fetch(self.image.as_ref().unwrap(),&self.ram,self.cpu.eip) {
             Ok(d)=>d,Err(GuestError::Execution(e))=>return Stop::Fault(e),
@@ -130,11 +135,10 @@ impl Debugger {
         match &decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
                 let mut machine=self.image.as_ref().unwrap().segment_state();
-                let probed=super::probe_machine_access(program,&self.cpu,*dst,*src,*flow,&self.ram,*address,&machine);
-                let result=super::execute_machine(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*address,&mut machine);
+                let result=super::execute_machine_lazy(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*address,&mut machine,lazy);
                 self.image.as_mut().unwrap().set_segment_state(machine);
                 match result{
-                    Ok(())=>{
+                    Ok(probed)=>{
                         self.last_step_access=probed;
                         if let Some(a)=probed{if !a.is_stack{self.last_data_access=Some(a);}}
                         Stop::Advanced
@@ -174,9 +178,8 @@ impl Debugger {
                 Ok(())=>{self.last_step_access=None;Stop::Advanced},Err(e)=>Stop::Fault(e),
             },
             Action::CpuMemory{program,dst,src,context,address}=>{
-                let probed=super::probe_program_access(program,&self.cpu,*dst,*src,*context,&self.ram,*address,None,None,None);
-                match execute_memory(program,&mut self.cpu,*dst,*src,*context,&mut self.ram,*address) {
-                    Ok(())=>{
+                match super::execute_memory_probed(program,&mut self.cpu,*dst,*src,*context,&mut self.ram,*address) {
+                    Ok(probed)=>{
                         self.last_step_access=probed;
                         if let Some(a)=probed{if !a.is_stack{self.last_data_access=Some(a);}}
                         Stop::Advanced
@@ -203,14 +206,27 @@ impl Debugger {
     fn run(&mut self, budget:usize)->Result<(usize,Stop),String> {
         if budget==0 || budget>MAX_RUN {return Err(format!("run budget must be 1..{MAX_RUN}"));}
         let resume=self.stopped_at_break.take().filter(|eip|*eip==self.cpu.eip);
+        let mut lazy=super::LazyFlags::None;
+        let has_image=self.image.is_some();
+        let no_breaks=self.breakpoints.is_empty();
         for done in 0..budget {
-            if self.breakpoints.contains(&self.cpu.eip) && !(done==0 && resume==Some(self.cpu.eip)) {
+            if !no_breaks && self.breakpoints.contains(&self.cpu.eip) && !(done==0 && resume==Some(self.cpu.eip)) {
+                lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
                 self.stopped_at_break=Some(self.cpu.eip);
                 return Ok((done,Stop::Breakpoint(self.cpu.eip)));
             }
-            let stop=self.step();
-            if stop!=Stop::Advanced {return Ok((done,stop));}
+            let stop=if has_image{
+                self.stopped_at_break=None;self.pil_cursor=None;
+                self.step_image_lazy(&mut lazy)
+            }else{
+                self.step()
+            };
+            if stop!=Stop::Advanced {
+                lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
+                return Ok((done,stop));
+            }
         }
+        lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
         Ok((budget,Stop::Budget(self.cpu.eip)))
     }
     fn run_large(&mut self,budget:usize)->Result<(usize,Stop),String> {
@@ -794,10 +810,11 @@ pub fn render_mandelbrot_checked(size:u32,iterations:u32,capture:bool)->Result<s
     let bytes=super::mandelbrot::guest_bytes(size,iterations)?;let mut d=Debugger::new("counter")?;d.load_image(&bytes,"mandelbrot render")?;
     let expected_pixels=(size*size)as usize;let budget=u64::from(size)*u64::from(size)*(u64::from(iterations)*26+40);
     let mut checkpoints=Vec::new();
-    let(mut pixels,mut steps,mut blocked)=(Vec::new(),0u64,0u32);let start=std::time::Instant::now();
+    let(mut pixels,mut steps,mut blocked)=(Vec::new(),0u64,0u32);let mut lazy=super::LazyFlags::None;let start=std::time::Instant::now();
     loop{
         if steps>budget{return Err("Mandelbrot instruction budget exhausted".into());}
-        let stop=d.step();
+        let stop=d.step_image_lazy(&mut lazy);
+        if stop!=Stop::Advanced{lazy.flush(&mut d.cpu.eflags,&mut d.cpu.undefined_flags);}
         if capture && matches!(stop,Stop::TxBlocked(_)|Stop::Halt(_)){
             let (rx,tx)=d.serial.snapshot();let kind=if matches!(stop,Stop::Halt(_)){1}else{3};
             super::trace::record_machine(&mut checkpoints,0,[kind,d.cpu.eip,0,0,0],&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx,&d.image.as_ref().unwrap().segment_state());

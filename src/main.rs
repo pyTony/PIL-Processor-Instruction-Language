@@ -111,9 +111,143 @@ enum PackedOp {
     Flags6 { cf: usize, pf: usize, af: usize, zf: usize, sf: usize, of: usize },
     Flags5NoCf { pf: usize, af: usize, zf: usize, sf: usize, of: usize },
     LogicFlags { clear: usize, sf: usize, zf: usize, pf: usize },
+    AddLazy { a: usize, b: usize, r: usize, w: u8, write_cf: bool },
+    SubLazy { a: usize, b: usize, r: usize, w: u8, write_cf: bool },
+    LogicLazy { r: usize, w: u8 },
     ShiftSetup { b: usize, count: usize, width_slot: usize, yes: usize, no: usize, active: usize, single: usize, last: usize, w: u8 },
     ShiftFlags { cf: usize, cf_defined: usize, of: usize, single: usize, sf: usize, zf: usize, pf: usize, active: usize },
     ImulCore { a: usize, b: usize, r: usize, overflow: usize, w: u8, dbl: u8 },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum LazyFlags {
+    #[default]
+    None,
+    Add { a: u64, b: u64, r: u64, w: u8, write_cf: bool },
+    Sub { a: u64, b: u64, r: u64, w: u8, write_cf: bool },
+    Logic { r: u64, w: u8 },
+}
+impl LazyFlags {
+    #[inline]
+    pub fn flush(&mut self, eflags: &mut u32, undefined_flags: &mut u32) {
+        match *self {
+            Self::None => {}
+            Self::Add { a, b, r, w, write_cf } => {
+                let sign = w - 1;
+                let ab = a ^ b;
+                let of = (((!ab & (a ^ r)) >> sign) & 1) as u32;
+                let af = (((ab ^ r) >> 4) & 1) as u32;
+                let sf = ((r >> sign) & 1) as u32;
+                let zf = u32::from(r == 0);
+                let pf = u32::from((r as u8).count_ones() & 1 == 0);
+                let bits = (pf << 2) | (af << 4) | (zf << 6) | (sf << 7) | (of << 11);
+                if write_cf {
+                    let cf = (((a + b) >> w) & 1) as u32;
+                    *undefined_flags &= !ARITH_FLAGS;
+                    *eflags = (*eflags & !ARITH_FLAGS) | bits | cf;
+                } else {
+                    const NO_CF: u32 = ARITH_FLAGS & !1;
+                    *undefined_flags &= !NO_CF;
+                    *eflags = (*eflags & !NO_CF) | bits;
+                }
+                *self = Self::None;
+            }
+            Self::Sub { a, b, r, w, write_cf } => {
+                let sign = w - 1;
+                let ab = a ^ b;
+                let of = (((ab & (a ^ r)) >> sign) & 1) as u32;
+                let af = (((ab ^ r) >> 4) & 1) as u32;
+                let sf = ((r >> sign) & 1) as u32;
+                let zf = u32::from(r == 0);
+                let pf = u32::from((r as u8).count_ones() & 1 == 0);
+                let bits = (pf << 2) | (af << 4) | (zf << 6) | (sf << 7) | (of << 11);
+                if write_cf {
+                    let cf = u32::from(a < b);
+                    *undefined_flags &= !ARITH_FLAGS;
+                    *eflags = (*eflags & !ARITH_FLAGS) | bits | cf;
+                } else {
+                    const NO_CF: u32 = ARITH_FLAGS & !1;
+                    *undefined_flags &= !NO_CF;
+                    *eflags = (*eflags & !NO_CF) | bits;
+                }
+                *self = Self::None;
+            }
+            Self::Logic { r, w } => {
+                const DEF_MASK: u32 = (1 << 0) | (1 << 2) | (1 << 6) | (1 << 7) | (1 << 11);
+                const AF_MASK: u32 = 1 << 4;
+                let sf = ((r >> (w - 1)) & 1) as u32;
+                let zf = u32::from(r == 0);
+                let pf = u32::from((r as u8).count_ones() & 1 == 0);
+                *undefined_flags = (*undefined_flags & !DEF_MASK) | AF_MASK;
+                *eflags = (*eflags & !(DEF_MASK | AF_MASK)) | (pf << 2) | (zf << 6) | (sf << 7);
+                *self = Self::None;
+            }
+        }
+    }
+    #[inline]
+    pub fn flush_cf_only(&mut self, eflags: &mut u32, undefined_flags: &mut u32) {
+        match *self {
+            Self::Add { a, b, w, write_cf: true, .. } => {
+                let cf = (((a + b) >> w) & 1) as u32;
+                *undefined_flags &= !1;
+                *eflags = (*eflags & !1) | cf;
+            }
+            Self::Sub { a, b, write_cf: true, .. } => {
+                let cf = u32::from(a < b);
+                *undefined_flags &= !1;
+                *eflags = (*eflags & !1) | cf;
+            }
+            Self::Logic { .. } => {
+                *undefined_flags &= !1;
+                *eflags &= !1;
+            }
+            _ => {}
+        }
+        *self = Self::None;
+    }
+    #[inline]
+    pub fn eval_jcc(&mut self, cond: u8, eflags: &mut u32, undefined_flags: &mut u32) -> bool {
+        match (*self, cond) {
+            (Self::Add { r, .. } | Self::Sub { r, .. } | Self::Logic { r, .. }, 4) => return r == 0,
+            (Self::Add { r, .. } | Self::Sub { r, .. } | Self::Logic { r, .. }, 5) => return r != 0,
+            (Self::Add { r, w, .. } | Self::Sub { r, w, .. } | Self::Logic { r, w }, 8) => return ((r >> (w - 1)) & 1) != 0,
+            (Self::Add { r, w, .. } | Self::Sub { r, w, .. } | Self::Logic { r, w }, 9) => return ((r >> (w - 1)) & 1) == 0,
+            (Self::Sub { a, b, write_cf: true, .. }, 2) => return a < b,
+            (Self::Sub { a, b, write_cf: true, .. }, 3) => return a >= b,
+            (Self::Sub { a, b, write_cf: true, .. }, 6) => return a <= b,
+            (Self::Sub { a, b, write_cf: true, .. }, 7) => return a > b,
+            (Self::Sub { a, b, r, w, .. }, 12) => {
+                let sign = w - 1;
+                return ((r >> sign) & 1) != ((((a ^ b) & (a ^ r)) >> sign) & 1);
+            }
+            (Self::Sub { a, b, r, w, .. }, 13) => {
+                let sign = w - 1;
+                return ((r >> sign) & 1) == ((((a ^ b) & (a ^ r)) >> sign) & 1);
+            }
+            (Self::Sub { a, b, r, w, .. }, 14) => {
+                if r == 0 { return true; }
+                let sign = w - 1;
+                return ((r >> sign) & 1) != ((((a ^ b) & (a ^ r)) >> sign) & 1);
+            }
+            (Self::Sub { a, b, r, w, .. }, 15) => {
+                if r == 0 { return false; }
+                let sign = w - 1;
+                return ((r >> sign) & 1) == ((((a ^ b) & (a ^ r)) >> sign) & 1);
+            }
+            _ => {}
+        }
+        self.flush(eflags, undefined_flags);
+        let f = *eflags;
+        let cf = (f & 1) != 0;
+        let pf = ((f >> 2) & 1) != 0;
+        let zf = ((f >> 6) & 1) != 0;
+        let sf = ((f >> 7) & 1) != 0;
+        let of = ((f >> 11) & 1) != 0;
+        match cond {
+            0 => of, 1 => !of, 2 => cf, 3 => !cf, 4 => zf, 5 => !zf,
+            6 => cf || zf, 7 => !(cf || zf), 8 => sf, 9 => !sf, 10 => pf, 11 => !pf,
+            12 => sf ^ of, 13 => !(sf ^ of), 14 => (sf ^ of) || zf, _ => !((sf ^ of) || zf),
+        }
+    }
 }
 fn is_conditions16_prefix(s: &[Token]) -> bool {
     matches!(
@@ -382,10 +516,49 @@ fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
         out.push(PackedOp::Token(rest[0].clone()));
         i += 1;
     }
+    let n = out.len();
+    if n >= 3 && matches!(out[n - 1], PackedOp::Token(Token::Retire)) {
+        match (&out[n - 3], &out[n - 2]) {
+            (&PackedOp::SubCore { a, b, r, w, .. }, &PackedOp::Flags6 { .. }) => {
+                out[n - 3] = PackedOp::SubLazy { a, b, r, w, write_cf: true };
+                out.remove(n - 2);
+            }
+            (&PackedOp::LogicCore { r, sign, .. }, &PackedOp::LogicFlags { .. }) => {
+                out[n - 3] = PackedOp::LogicLazy { r, w: sign + 1 };
+                out.remove(n - 2);
+            }
+            _ if n >= 4 && matches!(out[n - 3], PackedOp::Token(Token::Write(_)) | PackedOp::Token(Token::Store(..))) => {
+                match (&out[n - 4], &out[n - 2]) {
+                    (&PackedOp::AddCore { a, b, r, w, .. }, &PackedOp::Flags6 { .. }) => {
+                        out[n - 4] = PackedOp::AddLazy { a, b, r, w, write_cf: true };
+                        out.remove(n - 2);
+                    }
+                    (&PackedOp::AddCore { a, b, r, w, .. }, &PackedOp::Flags5NoCf { .. }) => {
+                        out[n - 4] = PackedOp::AddLazy { a, b, r, w, write_cf: false };
+                        out.remove(n - 2);
+                    }
+                    (&PackedOp::SubCore { a, b, r, w, .. }, &PackedOp::Flags6 { .. }) => {
+                        out[n - 4] = PackedOp::SubLazy { a, b, r, w, write_cf: true };
+                        out.remove(n - 2);
+                    }
+                    (&PackedOp::SubCore { a, b, r, w, .. }, &PackedOp::Flags5NoCf { .. }) => {
+                        out[n - 4] = PackedOp::SubLazy { a, b, r, w, write_cf: false };
+                        out.remove(n - 2);
+                    }
+                    (&PackedOp::LogicCore { r, sign, .. }, &PackedOp::LogicFlags { .. }) => {
+                        out[n - 4] = PackedOp::LogicLazy { r, w: sign + 1 };
+                        out.remove(n - 2);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
     out
 }
 #[derive(Clone, Debug)]
-struct Program { tokens: Vec<Token>, packed: Vec<PackedOp>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, partial: bool, checkpoint_flags:bool }
+struct Program { tokens: Vec<Token>, packed: Vec<PackedOp>, widths: Vec<u8>, operand_width: u8, source_width: u8, uses_flow: bool, uses_displacement: bool, uses_memory: bool, has_read_address: bool, flushes_lazy: bool, partial: bool, checkpoint_flags:bool }
 
 impl Program {
     pub fn token_line(t: &Token) -> String {
@@ -991,8 +1164,13 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
     let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
+    let has_read_address=tokens.iter().any(|t|matches!(t,Token::ReadAddress(_)));
     let packed=pack_tokens(&tokens);
-    Ok(Program { checkpoint_flags,partial,tokens,packed, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory })
+    let flushes_lazy=packed.iter().any(|op|matches!(op,
+        PackedOp::Conditions16|PackedOp::Flags6{..}|PackedOp::Flags5NoCf{..}|PackedOp::LogicFlags{..}|PackedOp::ShiftFlags{..}|PackedOp::ImulCore{..}
+        |PackedOp::Token(Token::ReadFlags(_)|Token::ReadFlag(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(_))
+    ));
+    Ok(Program { checkpoint_flags,partial,tokens,packed, widths, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory, has_read_address, flushes_lazy })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1021,21 +1199,38 @@ fn execute(p: &Program, cpu: &mut Cpu, dst: View, src: View) -> R<()> {
 }
 fn execute_flow(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext)->Result<(),ExecError> {
     if p.uses_memory {return Err(ExecError::InvalidContext);}
-    execute_state(p,cpu,dst,src,context,None,0,None,None,None)
+    let mut lazy=LazyFlags::None;
+    let res=execute_state(p,cpu,dst,src,context,None,0,None,None,None,&mut lazy).map(|_|());
+    lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);res
 }
+#[cfg(test)]
 fn execute_memory(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError> {
-    execute_state(p,cpu,dst,src,context,Some(ram),address,None,None,None)
+    let mut lazy=LazyFlags::None;
+    let res=execute_state(p,cpu,dst,src,context,Some(ram),address,None,None,None,&mut lazy).map(|_|());
+    lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);res
+}
+fn execute_memory_probed(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:u32)->Result<Option<ProbedMemoryAccess>,ExecError> {
+    let mut lazy=LazyFlags::None;
+    let res=execute_state(p,cpu,dst,src,context,Some(ram),address,None,None,None,&mut lazy);
+    lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);res
 }
 #[cfg(test)]
 fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError> {
     let (offset, memory_context)=address.resolve(&cpu.regs)?;
-    execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective))
+    let mut lazy=LazyFlags::None;
+    let res=execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective),&mut lazy).map(|_|());
+    lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);res
 }
-fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
+fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
+    let mut lazy=LazyFlags::None;
+    let res=execute_machine_lazy(p,cpu,dst,src,context,ram,address,machine,&mut lazy).map(|_|());
+    lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);res
+}
+fn execute_machine_lazy(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState,lazy:&mut LazyFlags)->Result<Option<ProbedMemoryAccess>,ExecError>{
     let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(&cpu.regs)?;(o,Some(c))}else{(0,None)};
-    if p.checkpoint_flags{machine.checkpoint_flags(cpu.eip,cpu.eflags,cpu.undefined_flags);}
-    let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
-    if result.is_err()&&p.checkpoint_flags{if let Some((f,u))=machine.recover_flags(){cpu.eflags=f;cpu.undefined_flags=u;}}
+    if p.checkpoint_flags{lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);machine.checkpoint_flags(cpu.eip,cpu.eflags,cpu.undefined_flags);}
+    let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective),lazy);
+    if result.is_err()&&p.checkpoint_flags{if let Some((f,u))=machine.recover_flags(){cpu.eflags=f;cpu.undefined_flags=u;*lazy=LazyFlags::None;}}
     result
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1150,7 +1345,7 @@ fn probe_program_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContex
 fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
     ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
 }
-fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>,mut machine:Option<&mut address::SegmentState>,effective:Option<address::EffectiveAddress>)->Result<(),ExecError> {
+fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>,mut machine:Option<&mut address::SegmentState>,effective:Option<address::EffectiveAddress>,lazy:&mut LazyFlags)->Result<Option<ProbedMemoryAccess>,ExecError> {
     if p.uses_memory && ram.is_none() {return Err(ExecError::InvalidContext);}
     dst.validate(p.operand_width).map_err(|_|ExecError::InvalidBinding)?;
     src.validate(p.source_width).map_err(|_|ExecError::InvalidBinding)?;
@@ -1160,13 +1355,18 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_interrupt_shadow=false;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;2]=[None;2];let mut store_index=0;
+    let mut probed:Option<ProbedMemoryAccess>=None;
     let mut values = [Value { bits: 0, width: 0 }; 64];
     let mut pending_dst = None;
     let mut pending_src = None;
     let mut pending_registers = [(View { register: 0, low: 0, width: 0 }, Value { bits: 0, width: 0 }); 4];
     let mut reg_count = 0usize;
+    if p.flushes_lazy {
+        lazy.flush(&mut cpu.eflags, &mut cpu.undefined_flags);
+    }
     let mut pending_flags = cpu.eflags;
     let mut pending_undefined = cpu.undefined_flags;
+    let mut pending_lazy = *lazy;
     for op in &p.packed {
         match *op {
             PackedOp::ReadDstSrc { a, b, w } => {
@@ -1205,17 +1405,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 values[15] = Value { bits: le ^ 1, width: 1 };
             }
             PackedOp::Jcc16 { cond, w } => {
-                let f = cpu.eflags;
-                let cf = (f & 1) != 0;
-                let pf = ((f >> 2) & 1) != 0;
-                let zf = ((f >> 6) & 1) != 0;
-                let sf = ((f >> 7) & 1) != 0;
-                let of = ((f >> 11) & 1) != 0;
-                let take = match cond {
-                    0 => of, 1 => !of, 2 => cf, 3 => !cf, 4 => zf, 5 => !zf,
-                    6 => cf || zf, 7 => !(cf || zf), 8 => sf, 9 => !sf, 10 => pf, 11 => !pf,
-                    12 => sf ^ of, 13 => !(sf ^ of), 14 => (sf ^ of) || zf, _ => !((sf ^ of) || zf),
-                };
+                let take = pending_lazy.eval_jcc(cond, &mut pending_flags, &mut pending_undefined);
                 if take {
                     let target = context.next_eip.wrapping_add(context.displacement as u32) & (mask(w) as u32);
                     if target > context.code_limit { return Err(ExecError::GeneralProtection { eip: cpu.eip, error_code: 0 }); }
@@ -1226,6 +1416,30 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let target = context.next_eip.wrapping_add(context.displacement as u32) & (mask(w) as u32);
                 if target > context.code_limit { return Err(ExecError::GeneralProtection { eip: cpu.eip, error_code: 0 }); }
                 pending_eip = target;
+            }
+            PackedOp::AddLazy { a, b, r, w, write_cf } => {
+                let va = values[a].bits;
+                let vb = values[b].bits;
+                let vr = (va + vb) & mask(w);
+                values[r] = Value { bits: vr, width: w };
+                if !write_cf {
+                    pending_lazy.flush_cf_only(&mut pending_flags, &mut pending_undefined);
+                }
+                pending_lazy = LazyFlags::Add { a: va, b: vb, r: vr, w, write_cf };
+            }
+            PackedOp::SubLazy { a, b, r, w, write_cf } => {
+                let va = values[a].bits;
+                let vb = values[b].bits;
+                let vr = va.wrapping_sub(vb) & mask(w);
+                values[r] = Value { bits: vr, width: w };
+                if !write_cf {
+                    pending_lazy.flush_cf_only(&mut pending_flags, &mut pending_undefined);
+                }
+                pending_lazy = LazyFlags::Sub { a: va, b: vb, r: vr, w, write_cf };
+            }
+            PackedOp::LogicLazy { r, w } => {
+                let vr = values[r].bits;
+                pending_lazy = LazyFlags::Logic { r: vr, w };
             }
             PackedOp::AddCore { a, b, r, cf, of, af, sf, zf, pf, w } => {
                 let va = values[a].bits;
@@ -1265,6 +1479,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 values[pf] = Value { bits: u64::from((vr as u8).count_ones() & 1 == 0), width: 1 };
             }
             PackedOp::Flags6 { cf, pf, af, zf, sf, of } => {
+                pending_lazy = LazyFlags::None;
                 pending_undefined &= !ARITH_FLAGS;
                 pending_flags = (pending_flags & !ARITH_FLAGS)
                     | (values[cf].bits as u32)
@@ -1275,6 +1490,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                     | ((values[of].bits as u32) << 11);
             }
             PackedOp::Flags5NoCf { pf, af, zf, sf, of } => {
+                pending_lazy.flush_cf_only(&mut pending_flags, &mut pending_undefined);
                 const NO_CF: u32 = ARITH_FLAGS & !1;
                 pending_undefined &= !NO_CF;
                 pending_flags = (pending_flags & !NO_CF)
@@ -1285,6 +1501,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                     | ((values[of].bits as u32) << 11);
             }
             PackedOp::LogicFlags { clear, sf, zf, pf } => {
+                pending_lazy = LazyFlags::None;
                 let c = values[clear].bits as u32;
                 const DEF_MASK: u32 = (1 << 0) | (1 << 2) | (1 << 6) | (1 << 7) | (1 << 11);
                 const AF_MASK: u32 = 1 << 4;
@@ -1308,6 +1525,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             PackedOp::ShiftFlags { cf, cf_defined, of, single, sf, zf, pf, active } => {
                 if values[active].bits != 0 {
+                    pending_lazy = LazyFlags::None;
                     const SHIFT_CLEAR: u32 = ARITH_FLAGS;
                     pending_flags = (pending_flags & !SHIFT_CLEAR)
                         | ((values[pf].bits as u32) << 2)
@@ -1329,6 +1547,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 }
             }
             PackedOp::ImulCore { a, b, r, overflow, w, dbl } => {
+                pending_lazy = LazyFlags::None;
                 let xa = values[a];
                 let xb = values[b];
                 let sa = if xa.bits & (1u64 << (xa.width - 1)) != 0 { xa.bits | !mask(xa.width) } else { xa.bits };
@@ -1359,14 +1578,16 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
                 let at=c.translate(values[a].bits as u32,w,false,cpu.eip)?;
                 values[o]=value(ram.as_deref().ok_or(ExecError::InvalidContext)?.load(at,w).map_err(|f|access_error(cpu.eip,f))? as u64,w.bits());
+                merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:false,is_stack:segment==2&&!p.checkpoint_flags});
             }
             Token::StoreSegment(a,v,w,segment)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
                 let at=c.translate(values[a].bits as u32,w,true,cpu.eip)?;
                 ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,w).map_err(|f|access_error(cpu.eip,f))?;pending_stores[store_index]=Some((at,w,values[v].bits as u32));store_index+=1;
+                merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:true,is_stack:segment==2&&!p.checkpoint_flags});
             }
-            Token::RetireIf(c)=>if values[c].bits!=0{cpu.eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){m.retired();}return Ok(());},
+            Token::RetireIf(c)=>if values[c].bits!=0{cpu.eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){m.retired();}return Ok(probed);},
             Token::ResumeIf(c)=>if values[c].bits!=0{pending_eip=cpu.eip;pending_resume=true;},
             Token::ReadSegment(o,reg)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.selectors[reg] as u64,16),
             Token::WriteSegment(reg,a)=>{
@@ -1390,6 +1611,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let addr=match memory_context {Some(c)=>c.translate(offset,w,false,cpu.eip)?,None=>offset};
                 let v=m.load(addr,w).map_err(|f|access_error(cpu.eip,f))?;
                 values[o]=value(v as u64,w.bits());
+                merge_probed_access(&mut probed,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:false,is_stack:!p.has_read_address});
             }
             Token::Store(a,v,w)=>{
                 let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
@@ -1397,6 +1619,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let addr=match memory_context {Some(c)=>c.translate(offset,w,true,cpu.eip)?,None=>offset};
                 m.check_write(addr,w).map_err(|f|access_error(cpu.eip,f))?;
                 pending_stores[store_index]=Some((addr,w,values[v].bits as u32));store_index+=1;
+                merge_probed_access(&mut probed,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:true,is_stack:!p.has_read_address});
             }
             Token::ReadIp(o,next,w) => values[o]=value((if next {context.next_eip} else {cpu.eip}) as u64,w),
             Token::ReadDisp(o,w) => values[o]=value(context.displacement as u32 as u64,w),
@@ -1453,6 +1676,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::Less(o,a,b)=>values[o]=value(u64::from(values[a].bits<values[b].bits),1),
             Token::FlagIf(f,a,d,c)=>if values[c].bits!=0{
+                pending_lazy.flush(&mut pending_flags, &mut pending_undefined);
                 let m=1u32<<f.bit();pending_flags&=!m;
                 if values[d].bits!=0{pending_flags|=(values[a].bits as u32)<<f.bit();pending_undefined&=!m;}else{pending_undefined|=m;}
             },
@@ -1463,9 +1687,12 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::Write(a) => pending_dst = Some(values[a]),
             Token::WriteSource(a)=>pending_src=Some(values[a]),
             Token::WriteSourceIf(a,c)=>if values[c].bits!=0{pending_src=Some(values[a]);},
-            Token::Flag(f,a) => { let m = 1u32 << f.bit();
+            Token::Flag(f,a) => {
+                pending_lazy.flush(&mut pending_flags, &mut pending_undefined);
+                let m = 1u32 << f.bit();
                 pending_undefined &= !m;
-                pending_flags = (pending_flags & !m) | ((values[a].bits as u32) << f.bit()); }
+                pending_flags = (pending_flags & !m) | ((values[a].bits as u32) << f.bit());
+            }
             Token::Retire => {
                 if let(Some(a),Some(b))=(pending_dst,pending_src){
                     let overlap=(mask(dst.width)<<dst.low)&(mask(src.width)<<src.low);
@@ -1481,11 +1708,12 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 for &(v,x) in &pending_registers[..reg_count] {cpu.write(v,x);}
                 cpu.eflags = pending_flags;
                 cpu.undefined_flags = pending_undefined;
+                *lazy = pending_lazy;
                 cpu.eip = pending_eip;
                 if let Some(m)=machine.as_deref_mut(){
                     if !pending_resume{m.retired();}if pending_interrupt_shadow{m.sti_shadow=1;}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
                 }
-                return Ok(());
+                return Ok(probed);
             }
             }
         }
