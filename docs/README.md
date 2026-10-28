@@ -26,8 +26,9 @@ ARM or legacy hardware run is claimed. Details: [current status](development/STA
 ## Next architecture work
 
 The [I/O service and debugger proposal](development/IO_SERVICE_AND_DEBUGGER_DESIGN.md)
-records the user's direction and reviewed lispy3/z80-cpm patterns. Dine's
-identity/API is awaiting clarification; integration is not yet implemented.
+records the user's direction: host-backed DOS compatibility services, analogous
+to Wine's Windows API provision, with lispy3/z80-cpm debugger patterns. The
+service extraction and new frontend are not yet implemented.
 
 ## What PIL does
 

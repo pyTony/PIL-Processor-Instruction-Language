@@ -1,11 +1,12 @@
-# Shared I/O service and debugger interface — design proposal
+# DOS compatibility services and debugger interface — design proposal
 
 28 October 2026. User direction: route services through an I/O processing
 service and draw interface ideas from their other projects, including lispy3.
-The meaning/location of “Dine” is awaiting clarification: no repository with
-that name or matching code reference was found in the accessible projects.
-This proposal does not claim that an existing Dine service was inspected or
-integrated. No runtime implementation changes accompany this document.
+The user clarified that DOS I/O should be provided in the way Wine provides
+Windows services: a compatibility layer backed by host services. There is no
+separate Dine project to locate. This is an architectural analogy, not a claim
+that Wine implements DOS services or that its code is being reused.
+No runtime implementation changes accompany this document.
 
 ## Source review
 
@@ -30,14 +31,17 @@ must retain its MIT notice. No project-wide PIL licence is invented here.
 
 1. **CPU/PIL execution** owns CPU, RAM, segments, precise effects and retirement.
    It does not call Tk, print guest characters or depend on a GUI timer.
-2. **Machine services** decode supported DOS/BIOS requests and apply their guest
-   register/memory contracts. Future CPU INT/IRET delivery remains distinct from
-   the current host shim.
+2. **DOS compatibility services** decode supported DOS requests and apply their
+   guest register/memory contracts using host-backed providers. CPU execution
+   remains in PIL because Wine-style API provision does not execute x86 code on
+   an ARM/ESP32 host. Hardware-facing BIOS services need an explicit machine
+   model. Future CPU INT/IRET delivery remains distinct from the current host shim.
 3. **I/O service** owns bounded guest input/output queues and device state.
    Console capture and a text-screen provider are separate interfaces; port I/O
    and serial devices can use the same machine boundary without treating every
-   port as a DOS console operation. An adapter can target Dine once its API is
-   identified; Rust types and transport choices are provisional until then.
+   port as a DOS console operation. A DOS compatibility provider translates
+   supported guest API requests into these host-backed operations. Its Rust
+   interfaces and frontend transport remain implementation decisions.
 4. **Debugger controller** owns run/step/pause, breakpoints and snapshots through
    the same machine instance used by the CLI. Host commands and guest keyboard
    bytes use distinct channels.
@@ -75,8 +79,8 @@ screen buffer. A presentation ANSI filter must never alter the raw guest trace.
 
 ## Implementation order and acceptance
 
-First identify Dine's location, interface and intended state ownership. Then
-extract a narrow service interface around existing capture/input behavior with
+Extract a narrow DOS compatibility-service interface around existing
+capture/input behavior with
 regressions for ordering, capacity, faults and waits; retain existing headless
 DOS probe results. Build the screen provider and BIOS contracts on that layer.
 Expose controller snapshots/events and cooperative execution, then implement
@@ -85,4 +89,6 @@ the optional desktop frontend using the reviewed projects as references.
 Validate identical machine state and raw I/O for headless/CLI/frontend control
 sequences, including partial REP, breakpoints, input wait, pause and disconnect.
 Validate any CPU/backend changes with the existing full-state comparisons.
-Document and test a concrete Dine adapter only after the actual API is known.
+Keep DOS API contracts in the compatibility provider and GUI concerns in the
+frontend. Validate each added DOS/BIOS service against its documented guest
+contract. BIOS and CPU interrupt dispatch remain separate explicit capabilities.
