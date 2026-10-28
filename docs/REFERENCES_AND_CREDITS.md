@@ -265,3 +265,19 @@ API contracts: Microsoft MS-DOS Encyclopedia INT21/AH25 and AH35; Ralf Brown's
 Interrupt List. XCHG contracts: Intel80386 Programmer's Reference Manual.
 Original implementation and test fixtures; no third-party code imported.
 Single-executor ordinary RAM only; no concurrent bus or hardware proof claim.
+
+## DOS output, switch query and LES contracts (0.34)
+
+- [Ralf Brown: AH02](https://delorie.com/djgpp/doc/rbinter/id/65/25.html):
+  DL input and observed AL output, including20h for expanded tabs.
+- [Ralf Brown: AX3700](https://delorie.com/djgpp/doc/rbinter/id/63/27.html):
+  MS-DOS5+ returns AL=0, DL='/'. Mutable switch-character services are separate.
+- [Intel80386 full-pointer load reference](https://www.read.seas.harvard.edu/~kohler/class/aosref/i386/LGS.htm):
+  LES operand widths, preserved flags and full operand segment-end checks.
+- [FreeDOS handler audit](https://github.com/FDOS/kernel/blob/d6791add2043c9d7b584d840a8ffaf8829fd2bdc/kernel/inthndlr.c)
+  was also consulted. The chosen fixed switch character and tab AL result follow
+  the declared MS-DOS compatibility profile; FreeDOS's mutable switch character
+  and AH02 implementation are not claimed as identical behavior.
+
+Code, PIL and fixtures are original. No reference text or third-party code
+imported. Native hardware/whole-image verification is not implied by this audit.

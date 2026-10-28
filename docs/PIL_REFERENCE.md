@@ -457,3 +457,10 @@ slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
 slot. SS size is independent. A contiguous full-frame check matches RETF;
 split frames across stack wrap and hardware shutdown/exception delivery remain
 outside this prototype. Protected/V86 calls are rejected before pointer reads.
+
+## LES composition (0.34)
+
+`les.pil` composes require_real_mode, read_address, widened check_segment,
+two loads, one bound GPR write and write_segment0. No instruction-specific
+interpreter/emitter operation is introduced. The full pointer span is checked
+before reading; any second-field fault prevents both staged register effects.
