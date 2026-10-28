@@ -131,9 +131,11 @@ fn service(p:&mut Loaded,vector:u8,out:&mut Vec<u8>)->Result<Option<u8>,String>{
             let byte=p.cpu.regs[2]as u8;
             // Derive the bounded capture's column, including earlier AH09 text.
             // LF preserves column; CR resets it. This is not a text-screen device.
-            let mut column=0usize;
-            for &b in out.iter(){match b{b'\r'=>column=0,b'\n'|7=>{},8=>column=column.saturating_sub(1),9=>column+=8-column%8,_=>column+=1}}
-            let count=if byte==9{8-column%8}else{1};
+            let count=if byte==9{
+                let mut column=0usize;
+                for &b in out.iter(){match b{b'\r'=>column=0,b'\n'|7=>{},8=>column=column.saturating_sub(1),9=>column+=8-column%8,_=>column+=1}}
+                8-column%8
+            }else{1};
             if out.len().checked_add(count).is_none_or(|n|n>MAX_OUTPUT){return Err("DOS output limit reached before character output".into());}
             let value=if byte==9{b' '}else{byte};
             out.extend(std::iter::repeat(value).take(count));
