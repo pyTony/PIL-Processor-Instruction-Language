@@ -139,11 +139,26 @@ pub fn open(path:&Path)->Result<Option<Archive>,String>{
     parse(&data,ext=="zip").map(Some)
 }
 pub fn executable(path:&str)->bool{let lower=path.to_ascii_lowercase();lower.ends_with(".com")||lower.ends_with(".exe")}
-pub fn listing(path:&Path)->Result<String,String>{
+pub fn split_container_path(path:&str)->Option<(&str,&str)>{
+    let mut parts=path.splitn(2,"::");
+    let container=parts.next()?;let inner=parts.next()?;
+    if inner.is_empty(){return None;}Some((container,inner))
+}
+pub fn read_entry(container:&Path,inner_path:&str)->Result<Vec<u8>,String>{
+    let a=open(container)?.ok_or("use .img/.ima FAT16 image or .zip archive")?;
+    let target=safe_name(inner_path)?;
+    for e in a.files{
+        if e.path.eq_ignore_ascii_case(&target){return Ok(e.bytes);}
+    }
+    Err(format!("file not found in container: {inner_path}"))
+}
+pub fn listing(path:&Path)->Result<String,String>{listing_filtered(path,true)}
+pub fn listing_all(path:&Path)->Result<String,String>{listing_filtered(path,false)}
+fn listing_filtered(path:&Path,exec_only:bool)->Result<String,String>{
     let a=open(path)?.ok_or("use .img/.ima FAT16 image or .zip archive")?;let mut s=String::new();
     for n in &a.notes{writeln!(s,"NOTE {n}").unwrap();}
     writeln!(s,"CONTAINER {}: {} files, {} executable candidates",path.display(),a.files.len(),a.files.iter().filter(|e|executable(&e.path)).count()).unwrap();
-    for e in &a.files{if executable(&e.path){writeln!(s,"{:>9} {}",e.bytes.len(),e.path).unwrap();}}Ok(s)
+    for e in &a.files{if !exec_only||executable(&e.path){writeln!(s,"{:>9} {}",e.bytes.len(),e.path).unwrap();}}Ok(s)
 }
 pub fn extract(path:&Path,destination:&Path)->Result<String,String>{
     let a=open(path)?.ok_or("use .img/.ima FAT16 image or .zip archive")?;

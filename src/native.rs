@@ -246,6 +246,25 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("same_width_gp",vec![0x0f,0xbf,0x07,0xf4])?;t.regs[3]=0xffff;t.regs[0]=0x12345678;tests.push(t);
     let mut t=case("same_width_ss",vec![0x0f,0xbf,0x46,0,0xf4])?;t.regs[5]=0xffff;t.regs[0]=0x12345678;tests.push(t);
     let mut t=case("same_width_ram",vec![0x0f,0xb7,0x07,0xf4])?;t.regs[3]=0xf00;t.regs[0]=0x12345678;tests.push(t);
+    let mut t=case("div8",vec![0xf6,0xf1,0xf6,0xf5,0xf6,0x37,0xf6,0xf0,0xf4])?;
+    t.regs[0]=0x1234fefe;t.regs[1]=0x5678ffff;t.regs[2]=0xdeadbeef;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xff]));t.protect=Some((0x500,1));tests.push(t);
+    let mut t=case("div16",vec![0xf7,0xf1,0xf7,0x37,0xf7,0xf0,0xf4])?;
+    t.regs[0]=0x1234ffff;t.regs[1]=0x5678ffff;t.regs[2]=0xabcdfffe;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xff,0xff]));t.protect=Some((0x500,2));tests.push(t);
+    let mut t=case("div32",vec![0x66,0xf7,0xf1,0x66,0xf7,0x37,0x66,0xf7,0xf0,0xf4])?;
+    t.regs[0]=0xffffffff;t.regs[1]=0xffffffff;t.regs[2]=0xfffffffe;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xff,0xff,0xff,0xff]));t.protect=Some((0x500,4));tests.push(t);
+    let mut t=case("div_zero8",vec![0xf6,0xf1,0xf4])?;
+    t.regs[0]=0x12340005;t.regs[1]=0;t.regs[2]=0xabcdef01;t.flags=0xed7;t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("div_overflow8",vec![0xf6,0xf1,0xf4])?;
+    t.regs[0]=0x12340100;t.regs[1]=1;t.regs[2]=0xabcdef01;t.flags=0xed7;t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("div_overflow16",vec![0xf7,0xf1,0xf4])?;
+    t.regs[0]=0;t.regs[1]=1;t.regs[2]=1;t.flags=0xed7;tests.push(t);
+    let mut t=case("div_overflow32",vec![0x66,0xf7,0xf1,0xf4])?;
+    t.regs[0]=0;t.regs[1]=1;t.regs[2]=1;t.flags=0xed7;tests.push(t);
+    let mut t=case("div_gp_fault",vec![0xf7,0x37,0xf4])?;
+    t.regs[0]=0x12345678;t.regs[2]=0;t.regs[3]=0xffff;tests.push(t);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {

@@ -4,7 +4,6 @@ use std::io::{self, BufRead, Write};
 use super::{compile, description, execute_flow, instantiate, number, Cpu, Program, View};
 use super::flow::{ExecError, FlowContext};
 use super::memory::Ram;
-use super::execute_memory;
 use super::serial::{MockSerial, SerialTransport};
 
 #[path="debug_service.rs"]
@@ -54,6 +53,9 @@ struct Debugger {
     initial_image:Option<super::guest::Image>,
     tx_events:Vec<u8>,
     cache:super::cache::DecodeCache,
+    last_step_access:Option<super::ProbedMemoryAccess>,
+    last_data_access:Option<super::ProbedMemoryAccess>,
+    pil_cursor:Option<(u32,usize)>,
 }
 
 impl Debugger {
@@ -63,6 +65,7 @@ impl Debugger {
             ram:Ram::new(256),initial_ram:Ram::new(256),
             instructions: BTreeMap::new(), breakpoints: BTreeSet::new(),
             stopped_at_break: None, serial: MockSerial::new(256,256), demo: String::new(),image:None,initial_image:None,tx_events:Vec::new(),cache:super::cache::DecodeCache::default(),
+            last_step_access:None,last_data_access:None,pil_cursor:None,
         };
         d.load_demo(demo)?; Ok(d)
     }
@@ -107,7 +110,7 @@ impl Debugger {
         }
         self.cache.clear();self.image=None;self.initial_image=None;self.instructions=code;self.cpu=cpu.clone();self.initial=cpu;
         self.ram=Ram::new(256);self.initial_ram=self.ram.clone();
-        self.breakpoints.clear();self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();
+        self.breakpoints.clear();self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.last_step_access=None;self.last_data_access=None;self.pil_cursor=None;self.demo=name.into();
         Ok(())
     }
     fn load_image(&mut self,bytes:&[u8],name:&str)->Result<(),String> {
@@ -115,9 +118,15 @@ impl Debugger {
         let mut cpu=Cpu::default();cpu.eip=super::guest::ENTRY;cpu.eflags=0x202;
         self.initial=cpu.clone();self.cpu=cpu;self.initial_ram=ram.clone();self.ram=ram;
         self.cache.clear();self.initial_image=Some(image.clone());self.image=Some(image);self.instructions.clear();self.breakpoints.clear();
-        self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.demo=name.into();Ok(())
+        self.stopped_at_break=None;self.serial.clear();self.tx_events.clear();self.last_step_access=None;self.last_data_access=None;self.pil_cursor=None;self.demo=name.into();Ok(())
     }
     fn step_image(&mut self)->Stop {
+        let mut lazy=super::LazyFlags::None;
+        let stop=self.step_image_lazy(&mut lazy);
+        lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
+        stop
+    }
+    fn step_image_lazy(&mut self,lazy:&mut super::LazyFlags)->Stop {
         use super::guest::{GuestError,Operation};
         let decoded=match self.cache.fetch(self.image.as_ref().unwrap(),&self.ram,self.cpu.eip) {
             Ok(d)=>d,Err(GuestError::Execution(e))=>return Stop::Fault(e),
@@ -126,17 +135,26 @@ impl Debugger {
         match &decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
                 let mut machine=self.image.as_ref().unwrap().segment_state();
-                let result=super::execute_machine(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*address,&mut machine);
+                let result=super::execute_machine_lazy(program,&mut self.cpu,*dst,*src,*flow,&mut self.ram,*address,&mut machine,lazy);
                 self.image.as_mut().unwrap().set_segment_state(machine);
-                match result{Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e)}
+                match result{
+                    Ok(probed)=>{
+                        self.last_step_access=probed;
+                        if let Some(a)=probed{if !a.is_stack{self.last_data_access=Some(a);}}
+                        Stop::Advanced
+                    }
+                    Err(e)=>Stop::Fault(e),
+                }
             }
             Operation::Input{next}=>{
                 let byte=match self.serial.try_read(){Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
-                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}Stop::Advanced
+                self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}
+                self.last_step_access=None;Stop::Advanced
             }
             Operation::Output{next}=>{
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err(){return Stop::TxBlocked(self.cpu.eip);}
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}
+                self.last_step_access=None;Stop::Advanced
             }
             Operation::Halt=>Stop::Halt(self.cpu.eip),
         }
@@ -145,31 +163,42 @@ impl Debugger {
         self.cache.clear();
         self.image=self.initial_image.clone();
         self.cpu=self.initial.clone();self.ram=self.initial_ram.clone();self.serial.clear();self.tx_events.clear();self.stopped_at_break=None;
+        self.last_step_access=None;self.last_data_access=None;self.pil_cursor=None;
         // Keep breakpoints while resetting the currently loaded demo.
     }
     fn step(&mut self) -> Stop {
         self.stopped_at_break=None;
+        self.pil_cursor=None;
         if self.image.is_some(){return self.step_image();}
         let instruction=match self.instructions.get(&self.cpu.eip) {
             Some(i)=>i, None=>return Stop::MissingInstruction(self.cpu.eip),
         };
         match &instruction.action {
             Action::Cpu{program,dst,src,context} => match execute_flow(program,&mut self.cpu,*dst,*src,*context) {
-                Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e),
+                Ok(())=>{self.last_step_access=None;Stop::Advanced},Err(e)=>Stop::Fault(e),
             },
-            Action::CpuMemory{program,dst,src,context,address}=>match execute_memory(program,&mut self.cpu,*dst,*src,*context,&mut self.ram,*address) {
-                Ok(())=>Stop::Advanced,Err(e)=>Stop::Fault(e),
-            },
+            Action::CpuMemory{program,dst,src,context,address}=>{
+                match super::execute_memory_probed(program,&mut self.cpu,*dst,*src,*context,&mut self.ram,*address) {
+                    Ok(probed)=>{
+                        self.last_step_access=probed;
+                        if let Some(a)=probed{if !a.is_stack{self.last_data_access=Some(a);}}
+                        Stop::Advanced
+                    }
+                    Err(e)=>Stop::Fault(e),
+                }
+            }
             Action::MockRx{next} => {
                 let byte=match self.serial.try_read() {Some(b)=>b,None=>return Stop::WaitingRx(self.cpu.eip)};
                 self.cpu.regs[0]=(self.cpu.regs[0]&!255)|u32::from(byte);
-                self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}Stop::Advanced
+                self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}
+                self.last_step_access=None;Stop::Advanced
             }
             Action::MockTx{next} => {
                 if self.serial.try_write(self.cpu.regs[0] as u8).is_err() {
                     return Stop::TxBlocked(self.cpu.eip);
                 }
-                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}Stop::Advanced
+                self.tx_events.push(self.cpu.regs[0] as u8);self.cpu.eip = *next;if let Some(image)=self.image.as_mut(){image.retired();}
+                self.last_step_access=None;Stop::Advanced
             }
             Action::HarnessHalt=>Stop::Halt(self.cpu.eip),
         }
@@ -177,14 +206,27 @@ impl Debugger {
     fn run(&mut self, budget:usize)->Result<(usize,Stop),String> {
         if budget==0 || budget>MAX_RUN {return Err(format!("run budget must be 1..{MAX_RUN}"));}
         let resume=self.stopped_at_break.take().filter(|eip|*eip==self.cpu.eip);
+        let mut lazy=super::LazyFlags::None;
+        let has_image=self.image.is_some();
+        let no_breaks=self.breakpoints.is_empty();
         for done in 0..budget {
-            if self.breakpoints.contains(&self.cpu.eip) && !(done==0 && resume==Some(self.cpu.eip)) {
+            if !no_breaks && self.breakpoints.contains(&self.cpu.eip) && !(done==0 && resume==Some(self.cpu.eip)) {
+                lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
                 self.stopped_at_break=Some(self.cpu.eip);
                 return Ok((done,Stop::Breakpoint(self.cpu.eip)));
             }
-            let stop=self.step();
-            if stop!=Stop::Advanced {return Ok((done,stop));}
+            let stop=if has_image{
+                self.stopped_at_break=None;self.pil_cursor=None;
+                self.step_image_lazy(&mut lazy)
+            }else{
+                self.step()
+            };
+            if stop!=Stop::Advanced {
+                lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
+                return Ok((done,stop));
+            }
         }
+        lazy.flush(&mut self.cpu.eflags,&mut self.cpu.undefined_flags);
         Ok((budget,Stop::Budget(self.cpu.eip)))
     }
     fn run_large(&mut self,budget:usize)->Result<(usize,Stop),String> {
@@ -314,6 +356,152 @@ impl Debugger {
         }
         Ok(lines.join("\n"))
     }
+    fn probe_current_instruction(&self)->Option<super::ProbedMemoryAccess>{
+        if let Some(image)=&self.image{
+            let decoded=image.decode(&self.ram,self.cpu.eip).ok()?;
+            match &decoded.operation{
+                super::guest::Operation::Pil{program,dst,src,flow,address}=>{
+                    let machine=image.segment_state();
+                    super::probe_machine_access(program,&self.cpu,*dst,*src,*flow,&self.ram,*address,&machine)
+                }
+                _=>None,
+            }
+        }else{
+            let instruction=self.instructions.get(&self.cpu.eip)?;
+            match &instruction.action{
+                Action::CpuMemory{program,dst,src,context,address}=>{
+                    super::probe_program_access(program,&self.cpu,*dst,*src,*context,&self.ram,*address,None,None,None)
+                }
+                _=>None,
+            }
+        }
+    }
+    pub fn active_memory_effect(&self)->Option<(super::ProbedMemoryAccess,&'static str,&[u8])>{
+        let (access,stage)=if let Some(a)=self.last_step_access.filter(|a|!a.is_stack){
+            (a,if a.write{"written"}else{"read"})
+        }else if let Some(a)=self.probe_current_instruction().filter(|a|!a.is_stack){
+            (a,if a.write{"next_write"}else{"next_read"})
+        }else if let Some(a)=self.last_data_access{
+            (a,if a.write{"written"}else{"read"})
+        }else if let Some(a)=self.last_step_access{
+            (a,if a.write{"written"}else{"read"})
+        }else if let Some(a)=self.probe_current_instruction(){
+            (a,if a.write{"next_write"}else{"next_read"})
+        }else{
+            return None;
+        };
+        let start=usize::try_from(access.address).ok()?;
+        let end=start.checked_add(usize::from(access.bytes))?;
+        let slice=self.ram.bytes().get(start..end)?;
+        Some((access,stage,slice))
+    }
+    pub fn format_memory_effect(&self)->Option<String>{
+        let (access,stage,raw)=self.active_memory_effect()?;
+        let hex_bytes=raw.iter().map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+        let ascii_bar:String=raw.iter().map(|&b|if (0x20..=0x7e).contains(&b){char::from(b)}else{'.'}).collect();
+        let char_lits=raw.iter().map(|&b|if (0x20..=0x7e).contains(&b){format!("'{}'",char::from(b))}else{format!("'\\x{b:02x}'")}).collect::<Vec<_>>().join(" ");
+        let (uval,sval,hex_val)=match raw.len(){
+            1=>{let u=u64::from(raw[0]);let s=i64::from(raw[0] as i8);(u,s,format!("0x{u:02X}"))}
+            2=>{let w=u16::from_le_bytes([raw[0],raw[1]]);(u64::from(w),i64::from(w as i16),format!("0x{w:04X}"))}
+            4=>{let d=u32::from_le_bytes([raw[0],raw[1],raw[2],raw[3]]);(u64::from(d),i64::from(d as i32),format!("0x{d:08X}"))}
+            n=>{
+                let u=raw.iter().enumerate().fold(0u64,|acc,(i,&b)|acc|(u64::from(b)<<(i*8)));
+                (u,u as i64,format!("0x{u:0width$X}",width=n*2))
+            }
+        };
+        let span=if access.bytes<=1{format!("0x{:08X}",access.address)}else{format!("0x{:08X}..0x{:08X}",access.address,access.address.wrapping_add(u32::from(access.bytes)-1))};
+        let unit=if access.bytes==1{"1 byte"}else{&format!("{} bytes",access.bytes)};
+        let stage_label=match stage{"written"=>"written","read"=>"read","next_write"=>"target write","next_read"=>"target read",_=>stage};
+        let dec_str=if sval<0{format!("{uval} (signed {sval})")}else{format!("{uval}")};
+        Some(format!("Memory Cell [{span}] ({unit}, {stage_label}): Hex={hex_val}  Dec={dec_str}  Bytes=[{hex_bytes}]  Chars ({}): |{ascii_bar}| ({char_lits})",raw.len()))
+    }
+    fn current_pil_trace(&self,stepped:usize)->Option<(String,usize,Option<usize>)>{
+        if let Some(image)=&self.image{
+            let d=image.decode(&self.ram,self.cpu.eip).ok()?;
+            match &d.operation{
+                super::guest::Operation::Pil{program,dst,src,flow,address}=>{
+                    let machine=image.segment_state();
+                    let (offset,mem)=if let Some(mut a)=*address{
+                        a.segments=machine.segments;
+                        let (o,c)=a.resolve(&self.cpu.regs).unwrap_or((0,super::address::MemoryContext{segment:super::address::SegmentRegister::Ds,cache:machine.segments[3]}));
+                        (o,Some(c))
+                    }else{(0,None)};
+                    let (trace,early)=program.trace_disassemble(stepped,&self.cpu,*dst,*src,*flow,&self.ram,offset,mem,Some(&machine),address.map(|a|a.effective));
+                    Some((trace,program.tokens.len(),early))
+                }
+                _=>None,
+            }
+        }else{
+            let instruction=self.instructions.get(&self.cpu.eip)?;
+            match &instruction.action{
+                Action::Cpu{program,dst,src,context}=>{
+                    let (trace,early)=program.trace_disassemble(stepped,&self.cpu,*dst,*src,*context,&self.ram,0,None,None,None);
+                    Some((trace,program.tokens.len(),early))
+                }
+                Action::CpuMemory{program,dst,src,context,address}=>{
+                    let (trace,early)=program.trace_disassemble(stepped,&self.cpu,*dst,*src,*context,&self.ram,*address,None,None,None);
+                    Some((trace,program.tokens.len(),early))
+                }
+                _=>None,
+            }
+        }
+    }
+    pub fn step_pil(&mut self)->(String,Stop){
+        let done=self.pil_cursor.filter(|(ip,_)|*ip==self.cpu.eip).map(|(_,n)|n).unwrap_or(0);
+        if let Some((_,total,early))=self.current_pil_trace(done){
+            let next=done+1;
+            if next>=total || early==Some(done){
+                let from=self.cpu.eip;
+                let stop=self.step();
+                let outcome=if stop==Stop::Advanced{"retired instruction"}else{"execution stopped"};
+                return (format!("PIL token {done}/{}: {outcome}; {}; EIP {from:08x} -> {:08x}",total.saturating_sub(1),Self::stop_text(&stop),self.cpu.eip),stop);
+            }
+            self.pil_cursor=Some((self.cpu.eip,next));
+            return (format!("PIL step {next}/{total} at EIP={:08x}",self.cpu.eip),Stop::Advanced);
+        }
+        let from=self.cpu.eip;
+        let stop=self.step();
+        (format!("{}; EIP {from:08x} -> {:08x}",Self::stop_text(&stop),self.cpu.eip),stop)
+    }
+    pub fn current_pil(&self) -> String {
+        let mem_line=self.format_memory_effect().map(|m|format!("\n{m}")).unwrap_or_default();
+        let stepped=self.pil_cursor.filter(|(ip,_)|*ip==self.cpu.eip).map(|(_,n)|n).unwrap_or(0);
+        let trace_body=self.current_pil_trace(stepped).map(|(t,_,_)|t);
+        if let Some(image) = &self.image {
+            match image.decode(&self.ram, self.cpu.eip) {
+                Ok(d) => match &d.operation {
+                    super::guest::Operation::Pil { program, dst, src, flow: _, address } => {
+                        let dst_desc = super::guest::operand_name(*dst, *address);
+                        let src_desc = super::guest::operand_name(*src, None);
+                        let body = trace_body.unwrap_or_else(|| program.disassemble());
+                        format!("Instruction: {}\nOperands: dst={}, src={}{mem_line}\nPIL ({}/{} stepped):\n{}", d.label, dst_desc, src_desc, stepped, program.tokens.len(), body)
+                    }
+                    super::guest::Operation::Input { next } => format!("Instruction: {}\nOperation: MOCK_IN -> AL (next EIP={:08x}){mem_line}", d.label, next),
+                    super::guest::Operation::Output { next } => format!("Instruction: {}\nOperation: MOCK_OUT <- AL (next EIP={:08x}){mem_line}", d.label, next),
+                    super::guest::Operation::Halt => format!("Instruction: {}\nOperation: HLT (monitor stop){mem_line}", d.label),
+                },
+                Err(e) => format!("Decode error at EIP={:08x}: {e:?}{mem_line}", self.cpu.eip),
+            }
+        } else if let Some(instruction) = self.instructions.get(&self.cpu.eip) {
+            match &instruction.action {
+                Action::Cpu { program, dst, src, .. } => {
+                    let dst_desc = super::guest::register_name(*dst);
+                    let src_desc = super::guest::register_name(*src);
+                    let body = trace_body.unwrap_or_else(|| program.disassemble());
+                    format!("Instruction: {}\nOperands: dst={}, src={}{mem_line}\nPIL ({}/{} stepped):\n{}", instruction.label, dst_desc, src_desc, stepped, program.tokens.len(), body)
+                }
+                Action::CpuMemory { program, dst, src, address, .. } => {
+                    let dst_desc = super::guest::register_name(*dst);
+                    let src_desc = super::guest::register_name(*src);
+                    let body = trace_body.unwrap_or_else(|| program.disassemble());
+                    format!("Instruction: {}\nOperands: dst={}, src={}, addr=0x{:x}{mem_line}\nPIL ({}/{} stepped):\n{}", instruction.label, dst_desc, src_desc, address, stepped, program.tokens.len(), body)
+                }
+                _ => format!("Instruction: {}{mem_line}", instruction.label),
+            }
+        } else {
+            format!("No instruction at EIP={:08x}{mem_line}", self.cpu.eip)
+        }
+    }
     fn dump_memory(&self,address:u32,count:u64,width:super::memory::MemWidth,decimal:bool)->Result<String,String>{
         if count==0||count>256{return Err("dump count must be 1..256 values".into());}
         let bytes=usize::from(width.bytes());let length=(count as usize)*bytes;
@@ -355,10 +543,14 @@ impl Debugger {
                 "Counter, echo and memory use harness operations. Check selftest, factorials, loop, mandelbrot or extensions.").into(),
             ["quit"]|["exit"]=>return Ok(("bye".into(),true)),
             ["demo",name]=>{self.load_demo(name)?;format!("loaded {} at EIP={:08x}",self.demo,self.cpu.eip)}
-            ["load",path]=>{let bytes=std::fs::read(path).map_err(|e|e.to_string())?;self.load_image(&bytes,path)?;format!("loaded {} guest bytes at EIP=00000100",bytes.len())}
+            ["load",path]=>{
+                let bytes=read_guest_image_file(path).map_err(|e|e.to_string())?;
+                self.load_image(&bytes,path)?;format!("loaded {} guest bytes at EIP=00000100",bytes.len())
+            }
             ["dosprobe",path]=>super::dos::report(&[path.to_string()],10000)?,
             ["dosprobe",path,budget]=>super::dos::report(&[path.to_string()],usize::try_from(number(budget)?).map_err(|_|"budget out of range")?)?,
             ["check"]=>self.check_current()?,
+            ["pil"]=>self.current_pil(),
             ["list"]=>self.listing(self.cpu.eip,16)?,
             ["list",count]=>self.listing(self.cpu.eip,number(count)?)?,
             ["list",start,count]=>{
@@ -369,6 +561,7 @@ impl Debugger {
                 let from=self.cpu.eip;let stop=self.step();
                 format!("{}; EIP {from:08x} -> {:08x}",Self::stop_text(&stop),self.cpu.eip)
             }
+            ["pilstep"]|["ps"]=>self.step_pil().0,
             ["run"]|["continue"]|["c"]=>{
                 let (n,stop)=self.run(DEFAULT_RUN)?;format!("{n} completed steps; {}",Self::stop_text(&stop))
             }
@@ -479,13 +672,42 @@ impl Debugger {
     }
 }
 
+pub(crate) fn read_guest_image_file(path:&str)->io::Result<Vec<u8>> {
+    use std::io::Read;
+    const MAX_RAW:usize=super::guest::RAM_BYTES-super::guest::ENTRY as usize;
+    const MAX_HEX_TEXT:usize=65536;
+    let file=std::fs::File::open(path)?;
+    if path.to_ascii_lowercase().ends_with(".hex"){
+        let mut raw=Vec::new();
+        file.take((MAX_HEX_TEXT+1)as u64).read_to_end(&mut raw)?;
+        if raw.len()>MAX_HEX_TEXT{
+            return Err(io::Error::new(io::ErrorKind::InvalidData,"hex file exceeds 64 KiB text limit"));
+        }
+        let text=std::str::from_utf8(&raw).map_err(|e|io::Error::new(io::ErrorKind::InvalidData,e))?;
+        let mut bytes=Vec::new();
+        for line in text.lines(){
+            let clean=line.split('#').next().unwrap_or("").split(';').next().unwrap_or("");
+            for token in clean.split_whitespace(){
+                let token=token.strip_prefix("0x").or_else(||token.strip_prefix("0X")).unwrap_or(token);
+                bytes.push(u8::from_str_radix(token,16).map_err(|e|io::Error::new(io::ErrorKind::InvalidData,e))?);
+                if bytes.len()>MAX_RAW{break;}
+            }
+            if bytes.len()>MAX_RAW{break;}
+        }
+        Ok(bytes)
+    }else{
+        let mut bytes=Vec::new();
+        file.take((MAX_RAW+1)as u64).read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+}
 pub fn repl<R:BufRead,W:Write>(input:R,output:W)->io::Result<()> {
     let debugger=Debugger::new("counter").map_err(|e|io::Error::new(io::ErrorKind::Other,e))?;
     repl_with(input,output,debugger)
 }
 pub fn repl_image<R:BufRead,W:Write>(input:R,output:W,path:&str)->io::Result<()> {
     let mut debugger=Debugger::new("counter").map_err(|e|io::Error::new(io::ErrorKind::Other,e))?;
-    let bytes=std::fs::read(path)?;
+    let bytes=read_guest_image_file(path)?;
     debugger.load_image(&bytes,path).map_err(|e|io::Error::new(io::ErrorKind::Other,e))?;
     repl_with(input,output,debugger)
 }
@@ -589,10 +811,11 @@ pub fn render_mandelbrot_checked(size:u32,iterations:u32,capture:bool)->Result<s
     let bytes=super::mandelbrot::guest_bytes(size,iterations)?;let mut d=Debugger::new("counter")?;d.load_image(&bytes,"mandelbrot render")?;
     let expected_pixels=(size*size)as usize;let budget=u64::from(size)*u64::from(size)*(u64::from(iterations)*26+40);
     let mut checkpoints=Vec::new();
-    let(mut pixels,mut steps,mut blocked)=(Vec::new(),0u64,0u32);let start=std::time::Instant::now();
+    let(mut pixels,mut steps,mut blocked)=(Vec::new(),0u64,0u32);let mut lazy=super::LazyFlags::None;let start=std::time::Instant::now();
     loop{
         if steps>budget{return Err("Mandelbrot instruction budget exhausted".into());}
-        let stop=d.step();
+        let stop=d.step_image_lazy(&mut lazy);
+        if stop!=Stop::Advanced{lazy.flush(&mut d.cpu.eflags,&mut d.cpu.undefined_flags);}
         if capture && matches!(stop,Stop::TxBlocked(_)|Stop::Halt(_)){
             let (rx,tx)=d.serial.snapshot();let kind=if matches!(stop,Stop::Halt(_)){1}else{3};
             super::trace::record_machine(&mut checkpoints,0,[kind,d.cpu.eip,0,0,0],&d.cpu.regs,d.cpu.eflags,d.cpu.undefined_flags,d.cpu.eip,d.ram.bytes(),&rx,&tx,&d.image.as_ref().unwrap().segment_state());

@@ -27,8 +27,9 @@ ARM or legacy hardware run is claimed. Details: [current status](development/STA
 
 The [I/O service and debugger proposal](development/IO_SERVICE_AND_DEBUGGER_DESIGN.md)
 records the user's direction: host-backed DOS compatibility services, analogous
-to Wine's Windows API provision, with lispy3/z80-cpm debugger patterns. The
-service extraction and new frontend are not yet implemented.
+to Wine's Windows API provision, with lispy3/z80-cpm debugger patterns.
+The [IDE plan](development/IDE_PLAN.md) outlines the full tripartite development
+environment (Editor, Listener, Inspector) based on the `lispy_machine.pyw` layout.
 
 ## What PIL does
 

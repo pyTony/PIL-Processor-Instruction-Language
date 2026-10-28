@@ -9,7 +9,8 @@ export in addition to development tests. Full history and planning remain here.
 
 Route device/service I/O through an explicit service boundary and improve the
 debugger using the user's other projects as design references. See the
-[concrete proposal](development/IO_SERVICE_AND_DEBUGGER_DESIGN.md) and pinned
+[concrete proposal](development/IO_SERVICE_AND_DEBUGGER_DESIGN.md), the
+[IDE plan](development/IDE_PLAN.md) based on the lispy machine layout, and pinned
 lispy3/z80-cpm review. The user clarified a DOS compatibility layer analogous
 to Wine's Windows service provision; no external Dine project is involved.
 This is planned architecture work; v0.34 runtime behavior is unchanged.
