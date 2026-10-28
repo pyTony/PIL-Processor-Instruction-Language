@@ -1939,7 +1939,7 @@
         "DOS AH25/35 RAM interrupt-vector services",
         "Memory XCHG86/87 with explicit memory LOCK in bounded single-executor RAM"
       ],
-      "status": "linux-verified-windows-checks-pending",
+      "status": "hosted-verified",
       "limitations": [
         "No interrupt delivery or kernel handlers",
         "No new full FreeDOS image run",
@@ -1952,7 +1952,7 @@
         "backend_cases": 185,
         "trace_bytes": 7224306,
         "linux_full_checks": "passed",
-        "windows_full_checks": "pending"
+        "windows_full_checks": "passed"
       }
     }
   ]

@@ -20,10 +20,10 @@ Original regression tests cover every vector, endpoint layout, unmapped handler
 pointers, upper register halves, flags, all four protected store bytes, truncated
 RAM, direct guest IVT writes and bridge retirement through the next stop/exit.
 
-Validation: Hosted Linux CI40621030314 passed319 Rust tests,185 full-state cases
+Validation: Hosted Windows/Linux CI40621030314 passed319 Rust tests,185 full-state cases
 (7,224,306 matching trace bytes), standalone runtime/native-package checks and
-full256x256 Mandelbrot comparisons. Windows has passed319 tests and is still
-running remaining checks. No new FreeDOS-image, ARM or legacy hardware run.
+full256x256 Mandelbrot comparisons on both hosts.
+No new FreeDOS-image, ARM or legacy hardware run.
 
 CI: https://github.com/pyTony/pil_proof/actions/runs/40621030314
 Code97bbe894302b6135df28e716af44a377f3a77654. Local Rust is unavailable;
