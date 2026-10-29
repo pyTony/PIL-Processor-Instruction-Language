@@ -165,6 +165,23 @@ impl Image {
                 let text=description(name).map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("{}{}",name.to_ascii_uppercase(),if w==32{"D"}else{""}),compile(&instantiate(text,w),w))
             }
+            0xe0..=0xe2 => {
+                disp = r.byte()? as i8 as i32;
+                disp_bits = 8;
+                let a = if addr32 { 32 } else { 16 };
+                let (mnemonic, desc_name) = match opcode {
+                    0xe0 => ("LOOPNE", "loopne"),
+                    0xe1 => ("LOOPE", "loope"),
+                    _ => ("LOOP", "loop"),
+                };
+                let text = description(desc_name)
+                    .map_err(GuestError::Decode)?
+                    .replace("$A", &a.to_string());
+                (
+                    format!("{mnemonic} 0x{:08x}", r.pos.wrapping_add(disp as u32) & super::mask(w) as u32),
+                    compile(&instantiate(text, w), w),
+                )
+            }
             0xfa|0xfb=>{
                 let name=if opcode==0xfa{"cli"}else{"sti"};
                 (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
@@ -467,7 +484,7 @@ impl Image {
             0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
-        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe3|0x0f) {disp_bits=32;}
+        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe3|0xe0..=0xe2|0x0f) {disp_bits=32;}
         if opcode==0x0f && disp==0 && disp_bits==8 {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
@@ -565,4 +582,6 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
+
 

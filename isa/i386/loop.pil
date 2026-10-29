@@ -1,0 +1,15 @@
+require_width 16_or_32
+read_gpr count 1 $A
+const one $A 1
+sub new_count count one
+write_gpr 1 new_count
+zero done new_count
+not take done
+read_ip fallthrough next 32
+trunc base fallthrough $W
+read_disp delta $W
+add wrapped base delta
+zext target wrapped 32
+branch_if target take
+preserve_flags all
+retire

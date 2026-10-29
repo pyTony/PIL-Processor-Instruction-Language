@@ -833,3 +833,8 @@ pub fn render_mandelbrot_checked(size:u32,iterations:u32,capture:bool)->Result<s
     if pixels!=reference{return Err(format!("Mandelbrot pixel mismatch: expected {}, received {}",reference.len(),pixels.len()));}
     Ok(super::mandelbrot::Render{pixels,steps,seconds,blocked,cache:d.cache.summary(),checkpoints})
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/loops.rs"]
+mod loop_tests;
+

@@ -1863,6 +1863,9 @@ fn description(name: &str) -> R<String> {
         "popf" => Some(include_str!("../isa/i386/popf.pil")),
         "cli" => Some(include_str!("../isa/i386/cli.pil")),
         "sti" => Some(include_str!("../isa/i386/sti.pil")),
+        "loop" => Some(include_str!("../isa/i386/loop.pil")),
+        "loope" | "loopz" => Some(include_str!("../isa/i386/loope.pil")),
+        "loopne" | "loopnz" => Some(include_str!("../isa/i386/loopne.pil")),
         "jcxz" => Some(include_str!("../isa/i386/jcxz.pil")),
         "leave" => Some(include_str!("../isa/i386/leave.pil")),
         "cmps" => Some(include_str!("../isa/i386/cmps.pil")),
@@ -2224,3 +2227,5 @@ mod exchange_memory_tests;
 #[cfg(test)]
 #[path = "../tests/unit/les.rs"]
 mod les_tests;
+
+
