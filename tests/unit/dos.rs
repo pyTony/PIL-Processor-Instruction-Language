@@ -329,3 +329,73 @@ fn cursor_shape_roundtrip_uses_bda_and_faults_atomically(){
  assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
  p.cpu.regs[0]=0x0300;p.cpu.regs[3]=0x0800;let old=p.cpu.clone();assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old);
 }
+#[test]
+fn bios_screen_reads_guest_vram_and_writes_last_cell_without_moving_cursor(){
+ let mut p=load(&[0xcd,0x10],"screen.com").unwrap();let mut out=vec![];
+ assert_eq!(p.allocated_end,0xa0000); // video is not DOS-allocatable conventional memory
+ for page in 0..8u32{
+  p.cpu.regs[3]=page<<8;p.cpu.regs[0]=0x0800;service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0x0720);
+  p.ram.store(0x450+page*2,MemWidth::Word,0x184f).unwrap();
+  p.cpu.regs[0]=0xabcd0941;p.cpu.regs[1]=1;p.cpu.regs[3]=(page<<8)|0x1e;
+  let old=p.cpu.clone();service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu,old);
+  let at=0xb8000+page*4096+3998;assert_eq!(p.ram.load(at,MemWidth::Word).unwrap(),0x1e41);
+  p.cpu.regs[0]=0xabcd0a42;service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.ram.load(at,MemWidth::Word).unwrap(),0x1e42);
+  p.ram.store(at,MemWidth::Word,0x2f58).unwrap();p.cpu.regs[0]=0xabcd0800;
+  service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd2f58);
+  assert_eq!(p.ram.load(0x450+page*2,MemWidth::Word).unwrap(),0x184f);
+ }assert!(out.is_empty());
+}
+#[test]
+fn bios_screen_repeated_write_preflights_every_cell(){
+ for fault in [0xb8000,0xb8003,0xb8005]{
+  let mut p=load(&[0xcd,0x10],"screen.com").unwrap();p.cpu.regs[0]=0x0941;p.cpu.regs[1]=3;p.cpu.regs[3]=0x1e;
+  p.ram.protect(fault,1).unwrap();let old=p.clone();let mut out=vec![];
+  assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+ }
+ for (page,pos,count) in [(8,0,1),(0,0x1900,1),(0,0x0050,1),(7,0x184f,2)]{
+  let mut p=load(&[0xcd,0x10],"screen.com").unwrap();p.cpu.regs[0]=0x0941;p.cpu.regs[1]=count;p.cpu.regs[3]=page<<8;
+  if page<8{p.ram.store(0x450+page*2,MemWidth::Word,pos).unwrap();}
+  let old=p.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+ }
+}
+#[test]
+fn bios_keyboard_peek_read_ring_wrap_full_and_zero_are_distinct(){
+ let mut p=load(&[0xcd,0x16],"keys.com").unwrap();let mut out=vec![];
+ p.cpu.regs[0]=0xabcd0100;p.cpu.eflags=0x203;p.cpu.undefined_flags=0x40;
+ service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.eflags,0x243);assert_eq!(p.cpu.regs[0],0xabcd0100);assert_eq!(p.cpu.undefined_flags,0);
+ for round in 0..3{
+  for n in 0..15{assert!(p.enqueue_key(if n==0{0}else{0x4800+n+round}).unwrap());}
+  let ram=p.ram.clone();assert!(!p.enqueue_key(0x1e61).unwrap());assert_eq!(p.ram,ram);
+  for n in 0..15{
+   let key=if n==0{0}else{0x4800+n+round};
+   for _ in 0..2{p.cpu.regs[0]=0xabcd0100;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0000|u32::from(key));assert_eq!(p.cpu.eflags&0x40,0);}
+   p.cpu.regs[0]=0xabcd0000;let flags=p.cpu.eflags;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0000|u32::from(key));assert_eq!(p.cpu.eflags,flags);
+  }
+ }
+}
+#[test]
+fn bios_keyboard_faults_and_bad_pointers_preserve_queue_and_cpu(){
+ for fault in [0x41e,0x41d]{
+  let mut p=load(&[0xcd,0x16],"keys.com").unwrap();p.ram.protect(fault,1).unwrap();let old=p.clone();
+  assert!(p.enqueue_key(0x1e61).is_err());assert_eq!(p.ram,old.ram);assert_eq!(p.cpu,old.cpu);
+ }
+ let mut p=load(&[0xcd,0x16],"keys.com").unwrap();p.enqueue_key(0x4800).unwrap();p.ram.protect(0x41a,1).unwrap();let old=p.clone();
+ assert!(service(&mut p,0x16,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);assert_eq!(p.cpu,old.cpu);
+ for bad in [0,0x1f,0x3e,0xffff]{
+  let mut p=load(&[0xcd,0x16],"keys.com").unwrap();p.ram.store(0x41a,MemWidth::Word,bad).unwrap();let old=p.clone();
+  let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.completed,0);assert_eq!(r.loaded.cpu,old.cpu);assert_eq!(r.loaded.ram,old.ram);
+ }
+}
+#[test]
+fn bios_keyboard_wait_resumes_same_interrupt_once(){
+ let p=load(&[0xcd,0x16,0x89,0xc3,0xb8,0,0x4c,0xcd,0x21],"keys.com").unwrap();let old=p.clone();
+ let r=run(p,10).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert_eq!((r.completed,r.pil_steps,r.dos_calls),(0,0,0));assert_eq!(r.loaded.cpu,old.cpu);assert_eq!(r.loaded.ram,old.ram);
+ let mut p=r.loaded;assert!(p.enqueue_key(0x4800).unwrap());let r=run(p,10).unwrap();
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[3],0x4800);assert_eq!((r.completed,r.pil_steps,r.dos_calls),(4,2,2));
+}
+#[test]
+fn bios_keyboard_store_and_shift_status_services(){
+ let mut p=load(&[0xcd,0x16],"keys.com").unwrap();let mut out=vec![];
+ for n in 0..16{p.cpu.regs[0]=0xabcd0500;p.cpu.regs[1]=0x1e61;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0500|u32::from(n==15));}
+ p.ram.store(0x417,MemWidth::Byte,0xa5).unwrap();p.cpu.regs[0]=0xabcd0200;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd02a5);
+}

@@ -413,6 +413,7 @@ def main():
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--dosbox', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--suite', choices=('cpu', 'console'), default='cpu')
     parser.add_argument('--timeout', type=int, default=90)
     parser.add_argument('--negative-control', action='store_true',
                         help='Deliberately corrupt the first expected result; both engines must fail it')
@@ -422,8 +423,13 @@ def main():
     tests = cases()
     if args.negative_control:
         tests[0]['expected_eax'] ^= 1
+    if args.suite == 'console':
+        from verify_dos_console import build_console
+        tests, guest_bytes = build_console(args.negative_control)
+    else:
+        guest_bytes = build(tests)
     guest = directory/'CPUTEST.COM'
-    guest.write_bytes(build(tests))
+    guest.write_bytes(guest_bytes)
     (directory/'cases.json').write_text(json.dumps(tests, indent=2)+'\n', encoding='utf-8')
     config = directory/'dosbox.conf'
     config.write_text('[sdl]\nfullscreen=false\n[dosbox]\nmemsize=16\n[cpu]\ncore=normal\ncputype=386\ncycles=fixed 10000\n[mixer]\nnosound=true\n[autoexec]\n@echo off\nmount c "'+str(directory)+'"\nc:\nCPUTEST.COM > DBOX.TXT\nexit\n', encoding='utf-8')
@@ -452,14 +458,14 @@ def main():
     if dosbox.returncode != 0 or pil.returncode != 0 or 'STOP Exit(0)' not in pil.stdout:
         errors.append('An engine failed, timed out, or PIL did not reach successful DOS exit')
     report = dict(kind='original self-checking DOS COM emulator comparison',
-                  hardware_or_external_suite=False, negative_control=args.negative_control,
+                  hardware_or_external_suite=False, suite=args.suite, negative_control=args.negative_control,
                   tests=len(tests), com_bytes=guest.stat().st_size,
                   initial_hashes=initial_hashes,
                   com_sha256=sha(guest), dosbox=str(args.dosbox.resolve()), dosbox_sha256=sha(args.dosbox),
                   pil=str(args.engine.resolve()), pil_sha256=sha(args.engine),
                   dosbox_cpu='386', dosbox_core='normal', dosbox_result=box_result,
                   pil_result=pil_result, elapsed_seconds=time.time()-started, errors=errors,
-                  excluded=['divide-error delivery', 'undefined flag values', 'BIOS/devices', 'protected/V86 mode', 'cycle timing'])
+                  excluded=['divide-error delivery', 'undefined flag values', 'full BIOS/device conformance', 'protected/V86 mode', 'cycle timing'])
     (directory/'result.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
     print(json.dumps(report, indent=2))
     raise SystemExit(bool(errors))

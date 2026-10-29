@@ -1982,5 +1982,23 @@
         "standalone_native_package_and_full_mandelbrot": "passed"
       }
     }
+  ],
+  "development_increments": [
+    {
+      "date": "2026-10-29",
+      "name": "DOS BIOS console foundation",
+      "base": "e3414df",
+      "verification": {
+        "windows_rust_tests": 359,
+        "dosbox_console_cases": 4,
+        "dosbox_cpu_cases": 328,
+        "negative_control": "one deliberate failure in both engines"
+      },
+      "limitations": [
+        "no Python console wiring",
+        "no BIOS teletype/scroll/mode switching",
+        "DOS output capture remains separate"
+      ]
+    }
   ]
 }

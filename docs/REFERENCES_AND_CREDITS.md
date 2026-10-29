@@ -575,3 +575,11 @@ has been imported. Existing project licence status remains unchanged.
 
 Code, PIL and fixtures are original. No reference text or third-party code
 imported. Native hardware/whole-image verification is not implied by this audit.
+
+## DOS console design reference (2026-10-29)
+
+Reviewed [pyTony/z80-cpm](https://github.com/pyTony/z80-cpm) Console, AnsiScreen
+and GuiConsole for separation of input, display and guest execution. No code
+was copied. DOS uses BIOS scan/ASCII words and RAM-backed text pages.
+Original tools/verify_dos_console.py fixtures compare the implemented subset
+against DOSBox-X, not physical hardware.

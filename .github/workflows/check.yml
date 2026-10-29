@@ -33,6 +33,10 @@ jobs:
       - run: python tools/verify_flag_transfer.py
       - run: python tools/verify_direction_flag.py
       - run: python tools/verify_dos_probe.py
+      - if: runner.os == 'Linux'
+        run: python tools/verify_dos_console.py --engine target/debug/pil-proof --out target/console-fixtures
+      - if: runner.os == 'Windows'
+        run: python tools/verify_dos_console.py --engine target/debug/pil-proof.exe --out target/console-fixtures
       - run: python tools/verify_containers.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check
