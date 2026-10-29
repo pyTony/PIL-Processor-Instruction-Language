@@ -35,6 +35,34 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.image.segments[es]=SegmentCache::real_mode(selector);
             Ok(None)
         },
+        (0x21,0x1a)=>{
+            // Store the far pointer without dereferencing the caller's buffer.
+            p.dta=(p.image.selectors[SegmentRegister::Ds.index()],p.cpu.regs[2]as u16);
+            Ok(None)
+        },
+        (0x21,0x2f)=>{
+            let (segment,offset)=p.dta;
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(offset);
+            let es=SegmentRegister::Es.index();
+            p.selectors[es]=segment;p.image.selectors[es]=segment;
+            p.image.segments[es]=SegmentCache::real_mode(segment);
+            Ok(None)
+        },
+        (0x21,0x44) if p.cpu.regs[0]as u8==0=>{
+            let handle=p.cpu.regs[3]&0xffff;
+            if handle>=5 || p.open_handles&(1<<handle)==0{
+                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;
+                p.cpu.eflags|=1;
+            }else{
+                // Minimal character-device profile: CON for 0..2, AUX/PRN for 3..4.
+                // No raw mode, direct INT29 output or generic IOCTL advertised.
+                let info=if handle<3{0x83}else{0x80};
+                p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|info;
+                p.cpu.eflags&=!1;
+            }
+            p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
         (0x21,0x30)=>{
             let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
             let flags=p.cpu.regs[0]as u8==1;
@@ -62,9 +90,23 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0720;
             Ok(None)
         },
+        (0x10,0x01)=>{
+            p.ram.store(0x460,MemWidth::Word,p.cpu.regs[1]&0xffff).map_err(|e|format!("BIOS cursor shape write: {e:?}"))?;
+            Ok(None)
+        },
+        (0x10,0x02)=>{
+            let page=(p.cpu.regs[3]>>8)&255;
+            if page>=8{return Err("BIOS cursor page must be 0..7".into());}
+            p.ram.store(0x450+page*2,MemWidth::Word,p.cpu.regs[2]&0xffff).map_err(|e|format!("BIOS cursor position write: {e:?}"))?;
+            Ok(None)
+        },
         (0x10,0x03)=>{
-            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|0x0607;
-            p.cpu.regs[2]&=0xffff0000;
+            let page=(p.cpu.regs[3]>>8)&255;
+            if page>=8{return Err("BIOS cursor page must be 0..7".into());}
+            let shape=p.ram.load(0x460,MemWidth::Word).map_err(|e|format!("BIOS cursor shape read: {e:?}"))?;
+            let position=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?;
+            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|shape;
+            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|position;
             Ok(None)
         },
         (0x11,_)=>{

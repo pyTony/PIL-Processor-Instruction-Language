@@ -280,3 +280,52 @@ fn dos_open_and_close_validate_paths_modes_and_tracked_psp_handles(){
  service(&mut p,0x21,&mut out).unwrap();
  assert_eq!((p.cpu.eflags&1,p.cpu.regs[0]),(1,0xabcd0006));
 }
+
+#[test]
+fn dta_default_and_far_pointer_roundtrip_preserve_cpu_flags_and_memory(){
+ let mut p=load(&[0xcd,0x21],"dta.com").unwrap();let mut out=vec![];
+ assert_eq!(p.dta,(PSP,0x80));
+ p.cpu.regs[0]=0x2f00;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!(p.cpu.regs[3],0x80);assert_eq!(p.image.selectors[0],PSP);
+ p.image.selectors[3]=0xf123;p.cpu.regs[2]=0xabcdffff;p.cpu.regs[0]=0x1a00;
+ p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x891;let before=p.cpu.clone();let ram=p.ram.clone();
+ service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu,before);assert_eq!(p.ram,ram);
+ p.cpu.regs[0]=0x2f00;p.cpu.regs[3]=0x98760000;
+ service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[3],0x9876ffff);
+ assert_eq!(p.selectors[0],0xf123);assert_eq!(p.image.selectors[0],0xf123);
+ assert_eq!(p.image.segments[0],SegmentCache::real_mode(0xf123));
+ assert_eq!((p.cpu.eflags,p.cpu.undefined_flags),(0xad7,0x891));
+}
+#[test]
+fn ioctl_device_info_validates_handles_and_preserves_unrelated_state(){
+ let mut p=load(&[0xcd,0x21],"ioctl.com").unwrap();let mut out=vec![];
+ for h in [0,1,2,3,4,5,19,20,65535]{
+  p.cpu.regs[0]=0xabcd4400;p.cpu.regs[3]=h;p.cpu.regs[2]=0x98765432;
+  p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x891;
+  service(&mut p,0x21,&mut out).unwrap();
+  assert_eq!(p.cpu.eflags&!1,0xad6);assert_eq!(p.cpu.undefined_flags,0x890);
+  if h<5{assert_eq!(p.cpu.eflags&1,0);assert_eq!(p.cpu.regs[2],0x98760000|if h<3{0x83}else{0x80});}
+  else{assert_eq!(p.cpu.eflags&1,1);assert_eq!(p.cpu.regs[0],0xabcd0006);assert_eq!(p.cpu.regs[2],0x98765432);}
+ }
+ p.cpu.regs[3]=1;p.cpu.regs[0]=0x3e00;service(&mut p,0x21,&mut out).unwrap();
+ p.cpu.regs[0]=0x4400;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0],6);
+ p.cpu.regs[0]=0x4401;let old=p.clone();assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+}
+#[test]
+fn cursor_shape_roundtrip_uses_bda_and_faults_atomically(){
+ let mut p=load(&[0xcd,0x10],"cursor.com").unwrap();let mut out=vec![];
+ assert_eq!(p.ram.load(0x460,MemWidth::Word).unwrap(),0x0607);
+ p.cpu.regs[0]=0x0100;p.cpu.regs[1]=0x12342000;let before=p.cpu.clone();
+ service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu,before);
+ p.cpu.regs[0]=0x0200;p.cpu.regs[3]=0x0700;p.cpu.regs[2]=0x1827;
+ let before=p.cpu.clone();service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu,before);
+ assert_eq!(p.ram.load(0x45e,MemWidth::Word).unwrap(),0x1827);
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
+ p.ram.protect(0x45f,1).unwrap();let old=p.clone();
+ assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+ p.cpu.regs[0]=0x0300;p.cpu.regs[3]=0x0700;p.cpu.regs[2]=0x98760000;
+ service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu.regs[1],0x12342000);assert_eq!(p.cpu.regs[2],0x98761827);
+ p.cpu.regs[0]=0x0100;p.ram.protect(0x461,1).unwrap();let old=p.clone();
+ assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+ p.cpu.regs[0]=0x0300;p.cpu.regs[3]=0x0800;let old=p.cpu.clone();assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old);
+}
