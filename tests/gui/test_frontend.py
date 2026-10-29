@@ -191,4 +191,95 @@ class FrontendTests(unittest.TestCase):
         self.assertIn("Hex: 0x12345678 · Dec: 305,419,896 · Bytes: [78 56 34 12] · Chars (4): |xV4.| ('x' 'V' '4' '\\x12')", text4)
         self.assertEqual(front.find_memory_highlight_spans(dump, eff4), [('1.22', '1.33'), ('1.63', '1.67')])
 
+    def test_case_manifest_loader_and_monitor_case_builder(self):
+        sample_case = {
+            'index': 7,
+            'name': 'xchg16_0',
+            'width': 16,
+            'eax': 0x13570012,
+            'ecx': 0x246800fe,
+            'edx': 0xc0deface,
+            'code': '91',
+            'expected_eax': 0x135700fe,
+            'expected_ecx': 0x24680012,
+            'expected_edx': 0xc0deface,
+            'flags': 0x8d5,
+            'flags_mask': 0xcd5,
+            'incoming_flags': 0x202 | 0x8d5,
+        }
+        with tempfile.TemporaryDirectory() as d:
+            manifest_path = Path(d) / 'cases.json'
+            com_path = Path(d) / 'CPUTEST.COM'
+            com_path.write_bytes(b'\xc3')
+            manifest_path.write_text(json.dumps([sample_case]), encoding='utf-8')
+            loaded_direct = front.load_case_manifest(manifest_path)
+            loaded_sibling = front.load_case_manifest(com_path)
+            self.assertEqual(len(loaded_direct), 1)
+            self.assertEqual(loaded_direct, loaded_sibling)
+            self.assertEqual(loaded_direct[0]['expected_ecx'], 0x24680012)
+
+            raw_bytes, meta = front.build_monitor_case(loaded_direct[0])
+            self.assertLessEqual(len(raw_bytes), front.MAX_MONITOR_BYTES)
+            self.assertIn('[setup]', front.format_case_inspector(meta, 0x100))
+            self.assertIn('[AT TEST INSTRUCTION]', front.format_case_inspector(meta, meta['test_eip']))
+            self.assertIn('[checking]', front.format_case_inspector(meta, meta['check_eip']))
+            self.assertIn('[PASSED]', front.format_case_inspector(meta, meta['pass_eip']))
+            self.assertIn('[FAILED]', front.format_case_inspector(meta, meta['fail_eip']))
+
+            bad_path = Path(d) / 'bad.json'
+            bad_path.write_text(json.dumps([{'name': 'broken'}]), encoding='utf-8')
+            self.assertEqual(front.load_case_manifest(bad_path), [])
+
+    def test_monitor_case_executes_and_bisects_in_engine_client(self):
+        dosbox_spec = importlib.util.spec_from_file_location(
+            'verify_dosbox_cpu', Path(__file__).resolve().parents[2] / 'tools/verify_dosbox_cpu.py'
+        )
+        dosbox_mod = importlib.util.module_from_spec(dosbox_spec)
+        dosbox_spec.loader.exec_module(dosbox_mod)
+        all_cases = {c['name']: c for c in dosbox_mod.cases()}
+        engine = front.find_engine()
+
+        with tempfile.TemporaryDirectory() as d:
+            for name in ('add8_0_c0', 'shl16_1', 'xchg32_0', 'imul32_0', 'lea32_esiedi'):
+                case = dict(all_cases[name], index=42)
+                raw_bytes, meta = front.build_monitor_case(case)
+                bin_path = Path(d) / f'{name}.bin'
+                bin_path.write_bytes(raw_bytes)
+                client = front.EngineClient([engine], bin_path)
+                try:
+                    ev, _, msg = client.events.get(timeout=5)
+                    self.assertEqual(ev, 'reply')
+                    self.assertTrue(client.request(f"break 0x{meta['test_eip']:x}"))
+                    client.events.get(timeout=5)
+                    self.assertTrue(client.request('run 256'))
+                    _, _, bp_msg = client.events.get(timeout=5)
+                    self.assertEqual(bp_msg['status'], 'breakpoint')
+                    self.assertEqual(bp_msg['state']['eip'], meta['test_eip'])
+                    self.assertTrue(client.request('pilstep'))
+                    _, _, ps_msg = client.events.get(timeout=5)
+                    self.assertEqual(ps_msg['status'], 'stepped')
+                    self.assertTrue(client.request('run 256'))
+                    _, _, end_msg = client.events.get(timeout=5)
+                    self.assertEqual(end_msg['status'], 'halt')
+                    self.assertEqual(end_msg['state']['registers'][0], 0)
+                finally:
+                    client.close()
+
+            # Negative control: corrupt expected_eax and verify monitor halts at fail_eip with EAX=index
+            bad_case = dict(all_cases['add8_0_c0'], index=99)
+            bad_case['expected_eax'] ^= 1
+            bad_bytes, bad_meta = front.build_monitor_case(bad_case)
+            bad_path = Path(d) / 'bad.bin'
+            bad_path.write_bytes(bad_bytes)
+            client = front.EngineClient([engine], bad_path)
+            try:
+                client.events.get(timeout=5)
+                self.assertTrue(client.request('run 256'))
+                _, _, fail_msg = client.events.get(timeout=5)
+                self.assertEqual(fail_msg['status'], 'halt')
+                self.assertEqual(fail_msg['state']['registers'][0], 99)
+                self.assertEqual(fail_msg['state']['eip'], bad_meta['fail_eip'] + 6)
+            finally:
+                client.close()
+
 if __name__=='__main__':unittest.main()

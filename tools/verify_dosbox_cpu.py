@@ -44,14 +44,22 @@ def arithmetic(a, b, width, subtract=False, carry=0):
     return result, flags
 
 
+def signed_value(v, width):
+    sign = 1 << (width - 1)
+    v &= (1 << width) - 1
+    return v - (1 << width) if (v & sign) else v
+
+
 def cases():
     result = []
-    def add(name, width, a, b, opcode, expected, flags, flag_mask=ARITH | DF, incoming=0):
+    def add(name, width, a, b, opcode, expected, flags, flag_mask=ARITH | DF, incoming=0, expected_ecx=None):
         initial_a = merge(0x13579bdf, a, width)
         initial_b = merge(0x2468ace0, b, width)
+        exp_b = initial_b if expected_ecx is None else merge(initial_b, expected_ecx, width)
         result.append(dict(name=name, width=width, eax=initial_a, ecx=initial_b,
                            edx=SENTINEL_DX, code=opcode.hex(),
                            expected_eax=merge(initial_a, expected, width),
+                           expected_ecx=exp_b,
                            expected_edx=SENTINEL_DX, flags=flags,
                            flags_mask=flag_mask, incoming_flags=0x202 | incoming))
     binary = [('add', 0x00), ('sub', 0x28), ('adc', 0x10), ('sbb', 0x18), ('cmp', 0x38)]
@@ -98,11 +106,183 @@ def cases():
             initial_d = SENTINEL_DX if width == 8 else merge(0xc0deface, dividend >> width, width)
             expected_a = merge(initial_a, (rem << 8) | q, 16) if width == 8 else merge(initial_a, q, width)
             expected_d = initial_d if width == 8 else merge(initial_d, rem, width)
+            initial_b = merge(0x2468ace0, divisor, width)
             result.append(dict(name=f'div{width}_{index}', width=width, eax=initial_a,
-                               ecx=merge(0x2468ace0, divisor, width), edx=initial_d,
+                               ecx=initial_b, edx=initial_d,
                                code=(prefix+bytes([0xf6+(width != 8), 0xf1])).hex(),
-                               expected_eax=expected_a, expected_edx=expected_d,
+                               expected_eax=expected_a, expected_ecx=initial_b,
+                               expected_edx=expected_d,
                                flags=0, flags_mask=DF, incoming_flags=0x202))
+        # Shifts (SHL, SHR, SAR): count=0 (CL), count=1 (D0/D1), count=4 (CL)
+        for name, ext in [('shl', 4), ('shr', 5), ('sar', 7)]:
+            a0 = sign | 3
+            add(f'{name}{width}_cl0', width, a0, 0,
+                prefix+bytes([0xd2+(width != 8), 0xc0 | (ext << 3)]),
+                a0, ARITH, flag_mask=ARITH | DF, incoming=ARITH)
+            if name == 'shl':
+                r1 = (a0 << 1) & mask
+                cf1 = (a0 >> (width - 1)) & 1
+                of1 = (((r1 >> (width - 1)) & 1) ^ cf1) << 11
+            elif name == 'shr':
+                r1 = a0 >> 1
+                cf1 = a0 & 1
+                of1 = ((a0 >> (width - 1)) & 1) << 11
+            else:
+                r1 = (a0 >> 1) | (a0 & sign)
+                cf1 = a0 & 1
+                of1 = 0
+            add(f'{name}{width}_1', width, a0, 1,
+                prefix+bytes([0xd0+(width != 8), 0xc0 | (ext << 3)]),
+                r1, parity_flags(r1, width) | cf1 | of1,
+                flag_mask=(ARITH & ~16) | DF, incoming=1)
+            a4 = sign | 0x5a
+            if name == 'shl':
+                r4 = (a4 << 4) & mask
+                cf4 = (a4 >> (width - 4)) & 1
+            elif name == 'shr':
+                r4 = a4 >> 4
+                cf4 = (a4 >> 3) & 1
+            else:
+                r4 = (a4 >> 4) | ((mask ^ (mask >> 4)) if (a4 & sign) else 0)
+                cf4 = (a4 >> 3) & 1
+            add(f'{name}{width}_cl4', width, a4, 4,
+                prefix+bytes([0xd2+(width != 8), 0xc0 | (ext << 3)]),
+                r4, parity_flags(r4, width) | cf4,
+                flag_mask=0x0c5 | DF, incoming=ARITH)
+            if name == 'shl':
+                ri3 = (a4 << 3) & mask
+                cfi3 = (a4 >> (width - 3)) & 1
+            elif name == 'shr':
+                ri3 = a4 >> 3
+                cfi3 = (a4 >> 2) & 1
+            else:
+                ri3 = (a4 >> 3) | ((mask ^ (mask >> 3)) if (a4 & sign) else 0)
+                cfi3 = (a4 >> 2) & 1
+            add(f'{name}{width}_imm3', width, a4, 0,
+                prefix+bytes([0xc0+(width != 8), 0xc0 | (ext << 3), 3]),
+                ri3, parity_flags(ri3, width) | cfi3,
+                flag_mask=0x0c5 | DF, incoming=ARITH)
+        # Rotates (ROL, ROR): count=1 (D0/D1), count=4 (CL), count=3 (C0/C1 imm8)
+        ar = sign | 1
+        rol1 = ((ar << 1) & mask) | ((ar >> (width - 1)) & 1)
+        rol1_cf = rol1 & 1
+        rol1_of = (((rol1 >> (width - 1)) & 1) ^ rol1_cf) << 11
+        add(f'rol{width}_1', width, ar, 1,
+            prefix+bytes([0xd0+(width != 8), 0xc0]),
+            rol1, (0x0d4 & ~1) | rol1_cf | rol1_of,
+            flag_mask=ARITH | DF, incoming=0x0d4)
+        ror1 = (ar >> 1) | ((ar & 1) << (width - 1))
+        ror1_cf = (ror1 >> (width - 1)) & 1
+        ror1_of = (((ror1 >> (width - 1)) & 1) ^ ((ror1 >> (width - 2)) & 1)) << 11
+        add(f'ror{width}_1', width, ar, 1,
+            prefix+bytes([0xd0+(width != 8), 0xc8]),
+            ror1, (0x0d4 & ~1) | ror1_cf | ror1_of,
+            flag_mask=ARITH | DF, incoming=0x0d4)
+        ar4 = sign | 0x35
+        rol4 = ((ar4 << 4) & mask) | ((ar4 >> (width - 4)) & 0x0f)
+        add(f'rol{width}_cl4', width, ar4, 4,
+            prefix+bytes([0xd2+(width != 8), 0xc0]),
+            rol4, (0x0d4 & ~1) | (rol4 & 1),
+            flag_mask=(ARITH & ~0x800) | DF, incoming=0x0d4)
+        ror4 = (ar4 >> 4) | ((ar4 & 0x0f) << (width - 4))
+        add(f'ror{width}_cl4', width, ar4, 4,
+            prefix+bytes([0xd2+(width != 8), 0xc8]),
+            ror4, (0x0d4 & ~1) | ((ror4 >> (width - 1)) & 1),
+            flag_mask=(ARITH & ~0x800) | DF, incoming=0x0d4)
+        rol3 = ((ar4 << 3) & mask) | ((ar4 >> (width - 3)) & 0x07)
+        add(f'rol{width}_imm3', width, ar4, 0,
+            prefix+bytes([0xc0+(width != 8), 0xc0, 3]),
+            rol3, (0x0d4 & ~1) | (rol3 & 1),
+            flag_mask=(ARITH & ~0x800) | DF, incoming=0x0d4)
+        ror3 = (ar4 >> 3) | ((ar4 & 0x07) << (width - 3))
+        add(f'ror{width}_imm3', width, ar4, 0,
+            prefix+bytes([0xc0+(width != 8), 0xc8, 3]),
+            ror3, (0x0d4 & ~1) | ((ror3 >> (width - 1)) & 1),
+            flag_mask=(ARITH & ~0x800) | DF, incoming=0x0d4)
+        # XCHG register forms (86 C8 for 8-bit, [66] 91 for 16/32-bit)
+        for index, (a, b) in enumerate([(0x12, 0xfe), (sign, sign - 1)]):
+            xchg_code = bytes([0x86, 0xc8]) if width == 8 else prefix + bytes([0x91])
+            add(f'xchg{width}_{index}', width, a, b, xchg_code,
+                b, ARITH, incoming=ARITH, expected_ecx=a)
+    # Extensions and sign conversions (MOVZX, MOVSX, CBW/CWDE, CWD/CDQ)
+    for dst_w, pfx in [(16, b''), (32, b'\x66')]:
+        for idx, bval in enumerate([0x7f, 0x80]):
+            add(f'movzx_b{dst_w}_{idx}', dst_w, 0xffff, bval, pfx + bytes([0x0f, 0xb6, 0xc1]),
+                bval, ARITH, incoming=ARITH)
+            sext = bval if bval < 0x80 else ((1 << dst_w) - 0x100 + bval)
+            add(f'movsx_b{dst_w}_{idx}', dst_w, 0, bval, pfx + bytes([0x0f, 0xbe, 0xc1]),
+                sext, ARITH, incoming=ARITH)
+    for idx, wval in enumerate([0x7fff, 0x8000]):
+        add(f'movzx_w32_{idx}', 32, 0xffffffff, wval, bytes([0x66, 0x0f, 0xb7, 0xc1]),
+            wval, ARITH, incoming=ARITH)
+        sext = wval if wval < 0x8000 else (0xffff0000 | wval)
+        add(f'movsx_w32_{idx}', 32, 0, wval, bytes([0x66, 0x0f, 0xbf, 0xc1]),
+            sext, ARITH, incoming=ARITH)
+    for idx, aval in enumerate([0x7f, 0x80]):
+        sext16 = aval if aval < 0x80 else (0xff00 | aval)
+        add(f'cbw_{idx}', 16, aval, 0, bytes([0x98]), sext16, ARITH, incoming=ARITH)
+    for idx, aval in enumerate([0x7fff, 0x8000]):
+        sext32 = aval if aval < 0x8000 else (0xffff0000 | aval)
+        add(f'cwde_{idx}', 32, aval, 0, bytes([0x66, 0x98]), sext32, ARITH, incoming=ARITH)
+    for width, pfx, mname in [(16, b'', 'cwd'), (32, b'\x66', 'cdq')]:
+        mask = (1 << width) - 1
+        sign = 1 << (width - 1)
+        for idx, aval in enumerate([sign - 1, sign]):
+            exp_dx = mask if (aval & sign) else 0
+            init_a = merge(0x13579bdf, aval, width)
+            init_b = 0x2468ace0
+            init_d = SENTINEL_DX
+            result.append(dict(name=f'{mname}_{idx}', width=width, eax=init_a, ecx=init_b,
+                               edx=init_d, code=(pfx + bytes([0x99])).hex(),
+                               expected_eax=init_a, expected_ecx=init_b,
+                               expected_edx=merge(init_d, exp_dx, width),
+                               flags=ARITH, flags_mask=ARITH | DF, incoming_flags=0x202 | ARITH))
+    # Carry, direction, and AH flag transfers (CLC, STC, CMC, CLD/STD, LAHF, SAHF)
+    for carry in (0, 1):
+        base_f = (ARITH & ~1) | carry
+        add(f'clc_c{carry}', 16, 0x1234, 0, bytes([0xf8]), 0x1234, ARITH & ~1, incoming=base_f)
+        add(f'stc_c{carry}', 16, 0x1234, 0, bytes([0xf9]), 0x1234, ARITH | 1, incoming=base_f)
+        add(f'cmc_c{carry}', 16, 0x1234, 0, bytes([0xf5]), 0x1234, (ARITH & ~1) | (carry ^ 1), incoming=base_f)
+    add('std_cld', 16, 0x1234, 0, bytes([0xfd, 0xfc]), 0x1234, ARITH, incoming=ARITH)
+    add('lahf_set', 16, 0x0055, 0, bytes([0x9f]), (0xd7 << 8) | 0x55, 0x0d5, incoming=0x0d5)
+    add('sahf_clear', 16, 0x00aa, 0, bytes([0x9e]), 0x00aa, 0x800, incoming=ARITH)
+    # Signed truncated IMUL (0F AF C1 and 6B C1 imm8) in 16-bit and 32-bit
+    for width, pfx in [(16, b''), (32, b'\x66')]:
+        mask = (1 << width) - 1
+        sign = 1 << (width - 1)
+        for idx, (a, b) in enumerate([(3, (-5) & mask), (7, 9), (sign - 1, 2), (sign, 2)]):
+            full = signed_value(a, width) * signed_value(b, width)
+            trunc = full & mask
+            overflow = full != signed_value(trunc, width)
+            cf_of = (0x801 if overflow else 0)
+            add(f'imul{width}_{idx}', width, a, b, pfx + bytes([0x0f, 0xaf, 0xc1]),
+                trunc, cf_of, flag_mask=0x801 | DF, incoming=ARITH)
+        for idx, (b, imm) in enumerate([(10, (-3) & 0xff), (sign - 1, 2)]):
+            full = signed_value(b, width) * signed_value(imm, 8)
+            trunc = full & mask
+            overflow = full != signed_value(trunc, width)
+            cf_of = (0x801 if overflow else 0)
+            add(f'imul_imm{width}_{idx}', width, 0, b, pfx + bytes([0x6b, 0xc1, imm]),
+                trunc, cf_of, flag_mask=0x801 | DF, incoming=ARITH)
+    # SETcc AL and LEA
+    for cname, cc, f_true, f_false in [
+        ('setz', 0x94, 0x040, 0x000),
+        ('setnz', 0x95, 0x000, 0x040),
+        ('setb', 0x92, 0x001, 0x000),
+        ('setl', 0x9c, 0x080, 0x880),
+        ('setg', 0x9f, 0x000, 0x040),
+    ]:
+        add(f'{cname}_1', 8, 0xaa, 0, bytes([0x0f, cc, 0xc0]), 1, f_true, incoming=f_true)
+        add(f'{cname}_0', 8, 0xaa, 0, bytes([0x0f, cc, 0xc0]), 0, f_false, incoming=f_false)
+    # LEA AX, [SI+0x1234] (SI=0x3344), LEA AX, [DI+0x1234] (DI=0x7788), and 32-bit LEA EAX
+    add('lea16_si', 16, 0, 0, bytes([0x8d, 0x84, 0x34, 0x12]),
+        (0x3344 + 0x1234) & 0xffff, ARITH, incoming=ARITH)
+    add('lea16_di', 16, 0, 0, bytes([0x8d, 0x85, 0x34, 0x12]),
+        (0x7788 + 0x1234) & 0xffff, ARITH, incoming=ARITH)
+    add('lea32_ecxdx', 32, 0, 0x00010000, bytes([0x67, 0x66, 0x8d, 0x84, 0x11, 0x34, 0x12, 0x00, 0x00]),
+        (0x00010000 + SENTINEL_DX + 0x1234) & 0xffffffff, ARITH, incoming=ARITH)
+    add('lea32_esiedi', 32, 0, 0, bytes([0x67, 0x66, 0x8d, 0x84, 0x3e, 0x10, 0x20, 0x00, 0x00]),
+        (0x11223344 + 0x55667788 + 0x2010) & 0xffffffff, ARITH, incoming=ARITH)
     return result
 
 
@@ -160,18 +340,22 @@ class ComBuilder:
 def build(tests):
     b = ComBuilder()
     b.puts('PIL-DOSBOX CPU CHECK v1\r\n')
+    positions = []
     for index, case in enumerate(tests, 1):
         tag = f'{index:03d} {case["name"]}'
         fail, done = f'fail_{index}', f'done_{index}'
+        entry_pos = len(b.code)
         for reg, value in [(0, case['eax']), (1, case['ecx']), (2, case['edx']),
                            (3, 0xdead0000), (6, 0x11223344), (7, 0x55667788)]:
             b.mov32(reg, value)
         b.emit(bytes([0x68]))
         b.word(case['incoming_flags'])
         b.emit(bytes([0x9d]))  # POPF; data/flags setup is identical in both engines.
+        test_pos = len(b.code)
         b.emit(bytes.fromhex(case['code']))
         b.emit(bytes.fromhex('9c5b'))  # PUSHF; POP BX, before any flag-changing checks.
-        for reg, expected in [(0, case['expected_eax']), (1, case['ecx']),
+        check_pos = len(b.code)
+        for reg, expected in [(0, case['expected_eax']), (1, case.get('expected_ecx', case['ecx'])),
                               (2, case['expected_edx']), (6, 0x11223344), (7, 0x55667788)]:
             b.cmp32(reg, expected)
             b.branch(fail, True)
@@ -187,12 +371,21 @@ def build(tests):
         b.emit(bytes.fromhex('ff06'))
         b.ref('fail_count')  # INC word [fail_count]
         b.label(done)
+        positions.append((index, case, entry_pos, test_pos, check_pos, fail, done))
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
     b.emit(bytes.fromhex('a1'))
     b.ref('fail_count')
     b.emit(bytes.fromhex('09c0'))  # OR AX,AX
     b.emit(bytes.fromhex('7405b8014ccd21b8004ccd21'))
-    return b.finish()
+    com_bytes = b.finish()
+    for index, case, entry_pos, test_pos, check_pos, fail, done in positions:
+        case['index'] = index
+        case['entry_eip'] = 0x100 + entry_pos
+        case['test_eip'] = 0x100 + test_pos
+        case['check_eip'] = 0x100 + check_pos
+        case['fail_eip'] = 0x100 + b.labels[fail]
+        case['done_eip'] = 0x100 + b.labels[done]
+    return com_bytes
 
 
 def sha(path):
