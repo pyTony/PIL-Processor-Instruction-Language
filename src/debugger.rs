@@ -853,3 +853,8 @@ mod lds_pusha_tests;
 #[path = "../tests/unit/popa.rs"]
 mod popa_tests;
 
+
+#[cfg(test)]
+#[path = "../tests/unit/mul.rs"]
+mod mul_tests;
+
