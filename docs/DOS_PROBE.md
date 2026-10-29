@@ -1,3 +1,28 @@
+# DOS BIOS console foundation — 29 October 2026
+
+INT10 AH08 now reads actual character/attribute data from B800:0000; AH09
+writes repeated character+attribute and AH0A preserves attributes. The fixed
+mode-3 profile has eight 4 KiB pages of 80x25 cells. Writes leave the cursor
+unchanged and reject invalid pages, coordinates and visible-page overflow.
+The whole write set is checked before mutation. Backing RAM extends to C0000;
+the DOS MCB allocator and conventional memory size remain capped at A0000.
+
+INT16 AH00/01/02/05 uses the classic BDA ring (15 usable scan/ASCII words).
+Peek leaves the queue unchanged; empty peek sets ZF. An empty blocking read
+returns WaitingForInput without retiring the INT. A host adapter can call
+Loaded::enqueue_key and resume the returned Loaded state. Queue overflow,
+invalid BDA pointers and protected memory have regression coverage. Enhanced
+keyboard translation, IRQ1 and keyboard-controller ports are not implemented.
+
+This is a backend foundation, not a visible interactive DOS console. DOS output
+capture remains separate. Teletype, scrolling, mode switching, active-page
+selection and Python display/input wiring are follow-ups. No ANSI.SYS behavior.
+
+Verification: 359 Rust tests passed on Windows. Four original COM console groups
+passed in both DOSBox-X (386/normal) and PIL; a deliberately wrong readback
+produced exactly one failure in each. Existing 328 CPU COM cases also passed in
+both engines. This does not establish physical 386 or full BIOS compatibility.
+
 # DOS COM/EXE import and instruction-gap probe
 
 This probe loads headerless COM or DOS MZ/ZM EXE files and runs the implemented

@@ -18,6 +18,8 @@ pub const MAX_STEPS:usize=1_000_000;
 const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
 #[path="dos_services.rs"]
 mod services;
+#[path="dos_console.rs"]
+mod console;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
@@ -29,6 +31,11 @@ pub struct Loaded{
     pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
     pub timer_ticks:u32,pub open_handles:u32,
     pub dta:(u16,u16),
+}
+impl Loaded{
+    /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
+    #[allow(dead_code)]
+    pub fn enqueue_key(&mut self,key:u16)->Result<bool,String>{console::enqueue(self,key)}
 }
 fn word(bytes:&[u8],at:usize)->Result<u16,String>{
     let b=bytes.get(at..at+2).ok_or("truncated DOS header/relocation word")?;Ok(u16::from_le_bytes([b[0],b[1]]))
@@ -103,7 +110,8 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
         selectors[SegmentRegister::Cs.index()]=cs;selectors[SegmentRegister::Ss.index()]=ss;
         cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);start=(module_base as usize).saturating_sub(cs_base)as u32;end=(module_base as usize+module.len()-cs_base).min(65536)as u32;
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
-    let mut ram=Ram::new(LIMIT);
+    let mut ram=Ram::new(0xc0000);
+    console::initialize(&mut ram)?;
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
     put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x18..0x1d].copy_from_slice(&[0,1,2,3,4]);psp[0x1d..0x2c].fill(0xff);
     put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;
@@ -116,7 +124,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80)})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
+pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
 #[derive(Clone,Debug)]
 pub struct Probe{
     pub loaded:Loaded,pub stop:Stop,pub completed:usize,pub pil_steps:usize,pub dos_calls:usize,
@@ -146,6 +154,11 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         if execution_steps==budget{break Stop::Budget;}
         if let Ok(encoded)=bytes_at(&p,2){if encoded[0]==0xcd{
             let vector=encoded[1];let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
+            match console::waiting(&p,vector){
+                Ok(true)=>break Stop::WaitingForInput,
+                Err(message)=>break Stop::Service(message),
+                Ok(false)=>{},
+            }
             match service(&mut p,vector,output){
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{break Stop::Exit(code);}continue;},

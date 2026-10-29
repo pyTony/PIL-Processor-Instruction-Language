@@ -688,3 +688,15 @@ files without overwriting an existing destination or modifying the source.
 FAT16 and ZIP stored/deflate are supported;this is not a booted DOS filesystem.
 
 See [container guide](docs/CONTAINERS.md) for commands and format limits.
+
+### BIOS console foundation
+
+RAM-backed BIOS text read/write and queued keyboard input are available to the
+DOS probe; Python UI wiring is pending. See [DOS profile](docs/DOS_PROBE.md).
+
+```powershell
+python tools/verify_dosbox_cpu.py --suite console --engine target/release/pil-proof.exe --dosbox C:/DOSBox-X/dosbox-x.exe --out target/console-check
+```
+
+Use a fresh output directory. `--negative-control` deliberately gives one failed
+case and a nonzero checker exit in both engines.
