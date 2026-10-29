@@ -237,13 +237,16 @@ def cases():
                                expected_eax=init_a, expected_ecx=init_b,
                                expected_edx=merge(init_d, exp_dx, width),
                                flags=ARITH, flags_mask=ARITH | DF, incoming_flags=0x202 | ARITH))
-    # Carry, direction, and AH flag transfers (CLC, STC, CMC, CLD/STD, LAHF, SAHF)
+    # Carry, direction, and AH flag transfers (CLC, STC, CMC, STD, CLD, LAHF, SAHF)
     for carry in (0, 1):
         base_f = (ARITH & ~1) | carry
         add(f'clc_c{carry}', 16, 0x1234, 0, bytes([0xf8]), 0x1234, ARITH & ~1, incoming=base_f)
         add(f'stc_c{carry}', 16, 0x1234, 0, bytes([0xf9]), 0x1234, ARITH | 1, incoming=base_f)
         add(f'cmc_c{carry}', 16, 0x1234, 0, bytes([0xf5]), 0x1234, (ARITH & ~1) | (carry ^ 1), incoming=base_f)
-    add('std_cld', 16, 0x1234, 0, bytes([0xfd, 0xfc]), 0x1234, ARITH, incoming=ARITH)
+    add('std_arith0', 16, 0x1234, 0, bytes([0xfd]), 0x1234, DF, flag_mask=ARITH | DF, incoming=0)
+    add('std_arith1', 16, 0x1234, 0, bytes([0xfd]), 0x1234, ARITH | DF, flag_mask=ARITH | DF, incoming=ARITH)
+    add('cld_arith0', 16, 0x1234, 0, bytes([0xfc]), 0x1234, 0, flag_mask=ARITH | DF, incoming=DF)
+    add('cld_arith1', 16, 0x1234, 0, bytes([0xfc]), 0x1234, ARITH, flag_mask=ARITH | DF, incoming=ARITH | DF)
     add('lahf_set', 16, 0x0055, 0, bytes([0x9f]), (0xd7 << 8) | 0x55, 0x0d5, incoming=0x0d5)
     add('sahf_clear', 16, 0x00aa, 0, bytes([0x9e]), 0x00aa, 0x800, incoming=ARITH)
     # Signed truncated IMUL (0F AF C1 and 6B C1 imm8) in 16-bit and 32-bit
@@ -353,7 +356,7 @@ def build(tests):
         b.emit(bytes([0x9d]))  # POPF; data/flags setup is identical in both engines.
         test_pos = len(b.code)
         b.emit(bytes.fromhex(case['code']))
-        b.emit(bytes.fromhex('9c5b'))  # PUSHF; POP BX, before any flag-changing checks.
+        b.emit(bytes.fromhex('9c5bfc'))  # PUSHF; POP BX; CLD so DF=1 tests never affect DOS INT 21h.
         check_pos = len(b.code)
         for reg, expected in [(0, case['expected_eax']), (1, case.get('expected_ecx', case['ecx'])),
                               (2, case['expected_edx']), (6, 0x11223344), (7, 0x55667788)]:

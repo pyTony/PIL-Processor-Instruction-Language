@@ -92,12 +92,47 @@ def parse_container_listing(stdout: str):
     return entries
 
 
+def _verify_cputest_com_matches_manifest(com_path: Path, validated: list) -> bool:
+    """Verify that `CPUTEST.COM` was built from `validated` (`cases.json`)."""
+    try:
+        size = com_path.stat().st_size
+        if not (1 <= size <= 0xff00):
+            return False
+        com_bytes = com_path.read_bytes()
+    except OSError:
+        return False
+    if b'PIL-DOSBOX CPU CHECK v1\r\n$' not in com_bytes:
+        return False
+    if f'COMPLETE {len(validated)} CASES\r\n$'.encode('ascii') not in com_bytes:
+        return False
+    u32 = lambda v: type(v) is int and 0 <= v <= 0xffffffff
+    for case in validated:
+        test_eip = case.get('test_eip')
+        done_eip = case.get('done_eip')
+        if not (u32(test_eip) and u32(done_eip)):
+            return False
+        code_bytes = bytes.fromhex(case['code'])
+        start_off = test_eip - 0x100
+        end_off = start_off + len(code_bytes)
+        if not (0 <= start_off < end_off <= done_eip - 0x100 <= len(com_bytes)):
+            return False
+        if com_bytes[start_off:end_off] != code_bytes:
+            return False
+    return True
+
+
 def load_case_manifest(path):
-    """Load and validate a DOSBox/PIL `cases.json` manifest from `path` or its sibling."""
+    """Load and validate `cases.json` explicitly, or from an authenticated `CPUTEST.COM`."""
     if not path:
         return []
     p = Path(path)
-    candidate = p if p.suffix.lower() == '.json' else p.with_name('cases.json')
+    is_json = p.suffix.lower() == '.json'
+    if is_json:
+        candidate = p
+    elif p.name.upper() == 'CPUTEST.COM':
+        candidate = p.with_name('cases.json')
+    else:
+        return []
     if not candidate.is_file():
         return []
     try:
@@ -128,6 +163,8 @@ def load_case_manifest(path):
         entry['index'] = item.get('index') if u32(item.get('index')) and item.get('index') > 0 else idx
         entry['expected_ecx'] = item.get('expected_ecx') if u32(item.get('expected_ecx')) else item['ecx']
         validated.append(entry)
+    if not is_json and not _verify_cputest_com_matches_manifest(p, validated):
+        return []
     return validated
 
 
@@ -158,7 +195,7 @@ def build_monitor_case(case):
     test_eip = 0x100 + len(code)
     code.extend(bytes.fromhex(case['code']))
     check_eip = 0x100 + len(code)
-    code.extend(b'\x9c\x5b')  # PUSHF; POP BX
+    code.extend(b'\x9c\x5b\xfc')  # PUSHF; POP BX; CLD
     fixups = []
     for reg, exp in [
         (0, case['expected_eax']),
@@ -555,6 +592,7 @@ def make_app(root, engine, raw_path=None):
             self.jobs = AsyncJobRunner()
             self.cases = []
             self.active_case_meta = None
+            self._pending_case_index = None
             self._temp_file = None
             self._last_dir = str(Path(__file__).resolve().parents[1] / 'programs')
             root.title('PIL debugger')
@@ -578,7 +616,7 @@ def make_app(root, engine, raw_path=None):
                                   values=['counter', 'echo', 'memory', 'selftest', 'hello',
                                           'factorials', 'loop', 'mandelbrot', 'extensions'])
             chooser.pack(side='right')
-            chooser.bind('<<ComboboxSelected>>', lambda e: (setattr(self, 'active_case_meta', None), self.send('demo ' + self.demo.get())))
+            chooser.bind('<<ComboboxSelected>>', self.on_demo_selected)
             pane = ttk.Panedwindow(root, orient='horizontal')
             pane.pack(fill='both', expand=True, padx=6)
             left, right = ttk.Frame(pane), ttk.Frame(pane)
@@ -692,13 +730,23 @@ def make_app(root, engine, raw_path=None):
                 self._temp_file = None
 
         def start(self, raw_path, *, is_temp=False):
-            if raw_path:
-                manifest = load_case_manifest(raw_path)
-                p = Path(raw_path)
-                if manifest and (p.suffix.lower() == '.json' or (p.is_file() and p.stat().st_size > MAX_MONITOR_BYTES)):
-                    self.set_case_manifest(manifest)
-                    self.load_case_index(0)
-                    return
+            if not is_temp:
+                self._pending_case_index = None
+                if raw_path:
+                    p = Path(raw_path)
+                    if p.suffix.lower() == '.json' or p.name.upper() == 'CPUTEST.COM':
+                        manifest = load_case_manifest(p)
+                        if manifest:
+                            self.set_case_manifest(manifest)
+                            self.load_case_index(0)
+                            return
+                        if p.suffix.lower() == '.json':
+                            self.busy = False
+                            msg = 'JSON file is not a valid DOSBox/PIL cases.json manifest'
+                            self.status.set(msg)
+                            messagebox.showerror('PIL debugger', msg, parent=root)
+                            return
+                self.set_case_manifest([])
             if self.client:
                 self.client.close()
             if not is_temp:
@@ -721,6 +769,7 @@ def make_app(root, engine, raw_path=None):
 
         def set_case_manifest(self, cases):
             self.cases = list(cases)
+            self._pending_case_index = None
             if self.cases:
                 labels = [f"{c['index']:03d} {c['name']}" for c in self.cases]
                 self.case_combo.configure(values=labels, state='readonly')
@@ -735,6 +784,8 @@ def make_app(root, engine, raw_path=None):
         def load_case_index(self, idx):
             if not (0 <= idx < len(self.cases)):
                 return
+            self._pending_case_index = None
+            prev_meta = self.active_case_meta
             case = self.cases[idx]
             raw_bytes, meta = build_monitor_case(case)
             tmp = tempfile.NamedTemporaryFile(suffix='.bin', prefix='pil_case_', delete=False)
@@ -748,16 +799,32 @@ def make_app(root, engine, raw_path=None):
             self.case_var.set(f"{meta['index']:03d} {meta['name']}")
             self.bp.set(f"0x{meta['test_eip']:x}")
             self.start(tmp_path, is_temp=True)
+            if self.client is None:
+                self.active_case_meta = prev_meta
+                self.case_var.set(f"{prev_meta['index']:03d} {prev_meta['name']}" if prev_meta else '')
+                return
             self.log(format_case_inspector(meta, meta['test_eip']))
             self.status.set(f"Loaded case #{meta['index']:03d} {meta['name']} (test @ 0x{meta['test_eip']:04x})")
 
         def on_case_selected(self, event=None):
             self.pause()
-            if self.busy:
-                return
             idx = self.case_combo.current()
-            if idx >= 0:
-                self.load_case_index(idx)
+            if not (0 <= idx < len(self.cases)):
+                return
+            if self.busy:
+                self._pending_case_index = idx
+                case = self.cases[idx]
+                self.status.set(f"Queued switch to case #{case['index']:03d} {case['name']}…")
+                return
+            self._pending_case_index = None
+            self.load_case_index(idx)
+
+        def on_demo_selected(self, event=None):
+            self.pause()
+            if self.send('demo ' + self.demo.get()):
+                self._pending_case_index = None
+                self.active_case_meta = None
+                self.case_var.set('')
 
         def break_at_case_test(self):
             if not self.active_case_meta:
@@ -878,14 +945,15 @@ def make_app(root, engine, raw_path=None):
                     return
 
                 size = path.stat().st_size
-                if not 1 <= size <= MAX_MONITOR_BYTES:
+                if path.name.upper() == 'CPUTEST.COM':
                     manifest = load_case_manifest(path)
                     if manifest:
                         self.set_case_manifest(manifest)
                         self.load_case_index(0)
                         return
+                if not 1 <= size <= MAX_MONITOR_BYTES:
                     raise ValueError(f'Raw monitor images must contain 1..{MAX_MONITOR_BYTES} bytes; use --dos-probe for DOS executables ({size} bytes)')
-                self.set_case_manifest(load_case_manifest(path))
+                self.set_case_manifest([])
                 self.start(str(path))
             except (OSError, ValueError) as error:
                 messagebox.showerror('Open program failed', str(error), parent=root)
@@ -1165,6 +1233,9 @@ def make_app(root, engine, raw_path=None):
                         self.pil_view.see(f'{row}.0')
                     elif line.startswith('✓ '):
                         self.pil_view.tag_add('pil_done', f'{row}.0', f'{row}.end')
+            if message['ok'] and (command.startswith('demo ') or command.startswith('load ')):
+                self.active_case_meta = None
+                self.case_var.set('')
             case_line = format_case_inspector(self.active_case_meta, state['eip'])
             inspector_text = (
                 (case_line + '\n' if case_line else '')
@@ -1195,7 +1266,11 @@ def make_app(root, engine, raw_path=None):
                     pass
                 else:
                     self.busy = False
-                    if event == 'error':
+                    if self._pending_case_index is not None and not self.closing:
+                        pending_idx = self._pending_case_index
+                        self._pending_case_index = None
+                        self.load_case_index(pending_idx)
+                    elif event == 'error':
                         self.running = False
                         self.log('Debugger disconnected: ' + value)
                         self.status.set('Disconnected')

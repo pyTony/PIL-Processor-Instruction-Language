@@ -191,32 +191,56 @@ class FrontendTests(unittest.TestCase):
         self.assertIn("Hex: 0x12345678 · Dec: 305,419,896 · Bytes: [78 56 34 12] · Chars (4): |xV4.| ('x' 'V' '4' '\\x12')", text4)
         self.assertEqual(front.find_memory_highlight_spans(dump, eff4), [('1.22', '1.33'), ('1.63', '1.67')])
 
-    def test_case_manifest_loader_and_monitor_case_builder(self):
-        sample_case = {
-            'index': 7,
-            'name': 'xchg16_0',
-            'width': 16,
-            'eax': 0x13570012,
-            'ecx': 0x246800fe,
-            'edx': 0xc0deface,
-            'code': '91',
-            'expected_eax': 0x135700fe,
-            'expected_ecx': 0x24680012,
-            'expected_edx': 0xc0deface,
-            'flags': 0x8d5,
-            'flags_mask': 0xcd5,
-            'incoming_flags': 0x202 | 0x8d5,
-        }
+    def _dosbox_module(self):
+        dosbox_spec = importlib.util.spec_from_file_location(
+            'verify_dosbox_cpu', Path(__file__).resolve().parents[2] / 'tools/verify_dosbox_cpu.py'
+        )
+        dosbox_mod = importlib.util.module_from_spec(dosbox_spec)
+        dosbox_spec.loader.exec_module(dosbox_mod)
+        return dosbox_mod
+
+    def test_case_manifest_loader_and_unrelated_binary_isolation(self):
+        dosbox_mod = self._dosbox_module()
+        sample_cases = [
+            {
+                'name': 'xchg16_0',
+                'width': 16,
+                'eax': 0x13570012,
+                'ecx': 0x246800fe,
+                'edx': 0xc0deface,
+                'code': '91',
+                'expected_eax': 0x135700fe,
+                'expected_ecx': 0x24680012,
+                'expected_edx': 0xc0deface,
+                'flags': 0x8d5,
+                'flags_mask': 0xcd5,
+                'incoming_flags': 0x202 | 0x8d5,
+            }
+        ]
+        com_bytes = dosbox_mod.build(sample_cases)
         with tempfile.TemporaryDirectory() as d:
             manifest_path = Path(d) / 'cases.json'
             com_path = Path(d) / 'CPUTEST.COM'
-            com_path.write_bytes(b'\xc3')
-            manifest_path.write_text(json.dumps([sample_case]), encoding='utf-8')
+            unrelated_path = Path(d) / 'unrelated.bin'
+            small_path = Path(d) / 'small.bin'
+            com_path.write_bytes(com_bytes)
+            unrelated_path.write_bytes(b'\x90' * 4000)
+            small_path.write_bytes(b'\x90\xf4')
+            manifest_path.write_text(json.dumps(sample_cases), encoding='utf-8')
+
             loaded_direct = front.load_case_manifest(manifest_path)
             loaded_sibling = front.load_case_manifest(com_path)
             self.assertEqual(len(loaded_direct), 1)
             self.assertEqual(loaded_direct, loaded_sibling)
             self.assertEqual(loaded_direct[0]['expected_ecx'], 0x24680012)
+
+            # Unrelated binaries in the same directory must never load cases.json
+            self.assertEqual(front.load_case_manifest(unrelated_path), [])
+            self.assertEqual(front.load_case_manifest(small_path), [])
+
+            # A mismatched/fake CPUTEST.COM must also be rejected
+            com_path.write_bytes(b'\x90' * 4000)
+            self.assertEqual(front.load_case_manifest(com_path), [])
 
             raw_bytes, meta = front.build_monitor_case(loaded_direct[0])
             self.assertLessEqual(len(raw_bytes), front.MAX_MONITOR_BYTES)
@@ -230,12 +254,111 @@ class FrontendTests(unittest.TestCase):
             bad_path.write_text(json.dumps([{'name': 'broken'}]), encoding='utf-8')
             self.assertEqual(front.load_case_manifest(bad_path), [])
 
+    def test_gui_case_selection_while_busy_and_unrelated_start_regression(self):
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.withdraw()
+        except Exception as exc:
+            self.skipTest(f'Tk display unavailable: {exc}')
+
+        dosbox_mod = self._dosbox_module()
+        all_cases = {c['name']: c for c in dosbox_mod.cases()}
+        two_cases = [dict(all_cases['add8_0_c0']), dict(all_cases['xchg32_0'])]
+        dosbox_mod.build(two_cases)
+        engine = front.find_engine()
+
+        def pump_until(predicate, timeout=5.0):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                app.poll()
+                root.update_idletasks()
+                if predicate():
+                    return True
+                time.sleep(0.01)
+            return predicate()
+
+        with tempfile.TemporaryDirectory() as d:
+            manifest_path = Path(d) / 'cases.json'
+            manifest_path.write_text(json.dumps(two_cases), encoding='utf-8')
+            unrelated_path = Path(d) / 'unrelated.bin'
+            unrelated_path.write_bytes(b'\x90' * 4000)
+
+            app = front.make_app(root, engine, str(manifest_path))
+            try:
+                self.assertTrue(pump_until(lambda: not app.busy))
+                self.assertEqual(app.active_case_meta['name'], 'add8_0_c0')
+                self.assertEqual(app.case_var.get(), '001 add8_0_c0')
+
+                # Put an engine command in flight for case A, then select case B while busy
+                self.assertTrue(app.send('step'))
+                self.assertTrue(app.busy)
+                app.case_combo.current(1)
+                app.on_case_selected()
+
+                self.assertTrue(pump_until(lambda: not app.busy and app._pending_case_index is None))
+                self.assertEqual(app.case_var.get(), '002 xchg32_0')
+                self.assertEqual(app.active_case_meta['name'], 'xchg32_0')
+                self.assertIn('XCHG EAX,ECX', app.state['listing'])
+                self.assertTrue(app.send('run 256'))
+                self.assertTrue(pump_until(lambda: not app.busy))
+                self.assertEqual(app.state['registers'][0], 0)
+                self.assertEqual(app.state['eip'], app.active_case_meta['pass_eip'] + 6)
+
+                # Starting an oversized unrelated binary beside cases.json must reject it, not load case 1
+                app.start(str(unrelated_path))
+                self.assertTrue(pump_until(lambda: not app.busy))
+                self.assertEqual(app.cases, [])
+                self.assertIsNone(app.active_case_meta)
+                self.assertEqual(app.status.get(), 'Disconnected')
+            finally:
+                if not app.closing:
+                    app.close()
+
+    def test_std_and_cld_cases_and_mutation_controls(self):
+        dosbox_mod = self._dosbox_module()
+        all_cases = {c['name']: c for c in dosbox_mod.cases()}
+        engine = front.find_engine()
+
+        def run_case(case_dict):
+            raw_bytes, meta = front.build_monitor_case(case_dict)
+            with tempfile.NamedTemporaryFile(suffix='.bin', delete=False) as tmp:
+                tmp.write(raw_bytes)
+                tmp_path = Path(tmp.name)
+            client = front.EngineClient([engine], tmp_path)
+            try:
+                client.events.get(timeout=5)
+                self.assertTrue(client.request('run 256'))
+                _, _, msg = client.events.get(timeout=5)
+                return msg, meta
+            finally:
+                client.close()
+                tmp_path.unlink(missing_ok=True)
+
+        for name, bad_opcodes in [
+            ('std_arith0', ['90', 'fc', 'f9']),
+            ('std_arith1', ['90', 'fc', 'f8']),
+            ('cld_arith0', ['90', 'fd', 'f9']),
+            ('cld_arith1', ['90', 'fd', 'f8']),
+        ]:
+            good = dict(all_cases[name], index=77)
+            msg, meta = run_case(good)
+            self.assertEqual(msg['status'], 'halt', name)
+            self.assertEqual(msg['state']['registers'][0], 0, f'{name} should pass')
+            self.assertEqual(msg['state']['eip'], meta['pass_eip'] + 6)
+
+            for mutated_hex in bad_opcodes:
+                mutated = dict(good, code=mutated_hex)
+                m_msg, m_meta = run_case(mutated)
+                self.assertEqual(m_msg['status'], 'halt')
+                self.assertEqual(
+                    m_msg['state']['registers'][0], 77,
+                    f'{name} mutated to {mutated_hex} must fail',
+                )
+                self.assertEqual(m_msg['state']['eip'], m_meta['fail_eip'] + 6)
+
     def test_monitor_case_executes_and_bisects_in_engine_client(self):
-        dosbox_spec = importlib.util.spec_from_file_location(
-            'verify_dosbox_cpu', Path(__file__).resolve().parents[2] / 'tools/verify_dosbox_cpu.py'
-        )
-        dosbox_mod = importlib.util.module_from_spec(dosbox_spec)
-        dosbox_spec.loader.exec_module(dosbox_mod)
+        dosbox_mod = self._dosbox_module()
         all_cases = {c['name']: c for c in dosbox_mod.cases()}
         engine = front.find_engine()
 
