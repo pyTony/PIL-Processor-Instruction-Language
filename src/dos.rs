@@ -28,6 +28,7 @@ pub struct Loaded{
     pub selectors:[u16;6],pub relocations:usize,pub module_bytes:usize,
     pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
     pub timer_ticks:u32,pub open_handles:u32,
+    pub dta:(u16,u16),
 }
 fn word(bytes:&[u8],at:usize)->Result<u16,String>{
     let b=bytes.get(at..at+2).ok_or("truncated DOS header/relocation word")?;Ok(u16::from_le_bytes([b[0],b[1]]))
@@ -111,7 +112,8 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f})
+    ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80)})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
