@@ -329,3 +329,33 @@ fn cursor_shape_roundtrip_uses_bda_and_faults_atomically(){
  assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
  p.cpu.regs[0]=0x0300;p.cpu.regs[3]=0x0800;let old=p.cpu.clone();assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old);
 }
+
+#[test]
+fn test_bios_get_video_mode() {
+    let mut loaded = load(&hello("com").unwrap(), "test.com").unwrap();
+    let mut out = crate::host_io::CaptureOutput::new(1024);
+    loaded.cpu.regs[0] = 0x0f00; // AH=0Fh
+    loaded.cpu.regs[3] = 0x1234; // BH != 0
+    let res = service(&mut loaded, 0x10, &mut out);
+    assert_eq!(res, Ok(None));
+    assert_eq!(loaded.cpu.regs[0] & 0xffff, 0x5003); // 80 cols, mode 3
+    assert_eq!((loaded.cpu.regs[3] >> 8) & 0xff, 0); // BH = 0
+}
+
+#[test]
+fn test_dos_handle_write() {
+    let mut loaded = load(&hello("com").unwrap(), "test.com").unwrap();
+    let mut out = crate::host_io::CaptureOutput::new(1024);
+    let msg = b"Testing INT 21h AH=40h";
+    let ds_base = u32::from(loaded.selectors[3]) * 16;
+    loaded.ram.write_bytes(ds_base + 0x200, msg).unwrap();
+    loaded.cpu.regs[0] = 0x4000; // AH=40h
+    loaded.cpu.regs[3] = 1;      // BX=1 (stdout)
+    loaded.cpu.regs[1] = msg.len() as u32; // CX
+    loaded.cpu.regs[2] = 0x200;  // DX
+    let res = service(&mut loaded, 0x21, &mut out);
+    assert_eq!(res, Ok(None));
+    assert_eq!(loaded.cpu.regs[0] & 0xffff, msg.len() as u32);
+    assert_eq!(loaded.cpu.eflags & 1, 0);
+    assert_eq!(out.bytes(), msg);
+}

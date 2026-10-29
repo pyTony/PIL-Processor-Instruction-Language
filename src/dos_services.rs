@@ -71,6 +71,33 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[1]&=0xffff0000;
             Ok(None)
         },
+        (0x21,0x40)=>{
+            let handle=(p.cpu.regs[3]&0xffff) as usize;
+            let count=(p.cpu.regs[1]&0xffff) as usize;
+            if handle>=20 || p.open_handles&(1<<handle)==0{
+                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;
+                p.cpu.eflags|=1;
+                p.cpu.undefined_flags&=!1;
+                return Ok(None);
+            }
+            let offset=p.cpu.regs[2]&0xffff;
+            let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+            let mut buf=Vec::with_capacity(count);
+            for i in 0..count as u32{
+                let at=offset.wrapping_add(i)&0xffff;
+                let addr=context.translate(at,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS write buffer access: {e:?}"))?;
+                let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS write RAM access: {e:?}"))? as u8;
+                buf.push(b);
+            }
+            if !buf.is_empty(){
+                if buf.len()>out.remaining(){return Err("DOS output limit reached before handle write".into());}
+                out.write_atomic(&buf).map_err(|e|format!("DOS write output provider: {e:?}"))?;
+            }
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(count as u32);
+            p.cpu.eflags&=!1;
+            p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
         (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
@@ -85,6 +112,13 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
                 if text.len()>=out.remaining(){return Err("DOS output limit reached before string terminator".into());}
                 text.push(b);
             }Err("DOS string has no $ terminator before segment end".into())
+        },
+        (0x10,0x0f)=>{
+            // AL = 0x03 (80x25 color text), AH = 80 (columns) -> AX = 0x5003
+            // BH = 0 (active display page)
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x5003;
+            p.cpu.regs[3]&=0xffff00ff; // BH = 0
+            Ok(None)
         },
         (0x10,0x08)=>{
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0720;
@@ -170,3 +204,4 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
 }
+
