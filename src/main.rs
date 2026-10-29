@@ -1841,6 +1841,7 @@ fn description(name: &str) -> R<String> {
         "cwd"|"cdq" => Some(include_str!("../isa/i386/cwd.pil")),
         "imul" => Some(include_str!("../isa/i386/imul.pil")),
         "jmp" => Some(include_str!("../isa/i386/jmp.pil")),
+        "jmp_indirect" => Some(include_str!("../isa/i386/jmp_indirect.pil")),
         "shl"|"sal" => Some(include_str!("../isa/i386/shl.pil")),
         "shr" => Some(include_str!("../isa/i386/shr.pil")),
         "sar" => Some(include_str!("../isa/i386/sar.pil")),
@@ -2227,5 +2228,6 @@ mod exchange_memory_tests;
 #[cfg(test)]
 #[path = "../tests/unit/les.rs"]
 mod les_tests;
+
 
 

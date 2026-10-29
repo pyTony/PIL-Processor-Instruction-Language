@@ -110,14 +110,15 @@ impl Image {
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         if locked&&!matches!(opcode,0x86|0x87){return Err(GuestError::Decode("LOCK requires memory XCHG in this profile".into()));}
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;
+        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;let mut jmp_indirect=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
             if opcode==0xff&&extension==2{call_indirect=Some(m);opcode=0xe8;}
+            else if opcode==0xff&&extension==4{jmp_indirect=Some(m);opcode=0xe9;}
             else if opcode==0xff&&extension==3{if m>>6==3{return Err(GuestError::Decode("far CALL requires a memory pointer".into()));}far_indirect=Some(m);opcode=0x9a;}
             else if opcode==0x8f || extension==6{
                 if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
-                if m>>6!=3{
+                if m>>6!=3u8{
                     if opcode==0x8f{memory_pop=Some(m);}else{memory_push=Some(m);}
                 }else{opcode=(if opcode==0x8f{0x58}else{0x50})|(m&7);}
             }else{r.pos-=1;}
@@ -203,7 +204,7 @@ impl Image {
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let (target,label)=if let Some(m)=call_indirect{
                     dst=view((m&7)as usize,w);src=dst;
-                    if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});(format!("read_address operand\nload target_value operand {w}"),operand_name(dst,address))}
+                    if m>>6!=3u8{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});(format!("read_address operand\nload target_value operand {w}"),operand_name(dst,address))}
                     else{(format!("read target_value dst {w}"),register_name(dst).into())}
                 }else{
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
@@ -276,7 +277,7 @@ impl Image {
                 let seg=["ES","CS","SS","DS","FS","GS"][segment];
                 let mut text=if opcode==0x8c{format!("read_segment selector {segment}\nwrite dst selector\npreserve_flags all\nretire")}
                     else{format!("read selector src 16\nwrite_segment {segment} selector\npreserve_flags all\nretire")};
-                if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                if m>>6!=3u8{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
                     text=if opcode==0x8c{text.replace("write dst selector","read_address addr\nstore addr selector")}else{text.replace("read selector src 16","read_address addr\nload selector addr 16")};}
                 let operand=operand_name(dst,address);
                 (if opcode==0x8c{format!("MOV {operand},{seg}")}else{format!("MOV {seg},{operand}")},compile(&text,w))
@@ -321,9 +322,24 @@ impl Image {
                 (format!("{} 0x{:08x}",name.to_ascii_uppercase(),r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description(&name).map_err(GuestError::Decode)?,w),w))
             }
             0xeb|0xe9=>{
-                disp_bits=if opcode==0xeb{8}else{w};
-                let raw=r.unsigned(disp_bits)?;disp=match disp_bits{8=>raw as i8 as i32,16=>raw as i16 as i32,_=>raw as i32};
-                (format!("JMP 0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w) as u32),compile(&instantiate(description("jmp").map_err(GuestError::Decode)?,w),w))
+                if let Some(m) = jmp_indirect {
+                    let (target, label) = if (m >> 6) != 3u8 {
+                        let effective = r.effective(m, addr32)?;
+                        address = Some(AddressContext { effective, override_segment, segments: self.segments });
+                        (format!("read_address operand\nload target_value operand {w}"), operand_name(dst, address))
+                    } else {
+                        dst = view((m & 7) as usize, w);
+                        src = dst;
+                        (format!("read target_value dst {w}"), register_name(dst).into())
+                    };
+                    let text = include_str!("../isa/i386/jmp_indirect.pil").replace("$TARGET", &target);
+                    (format!("JMP {label}"), compile(&instantiate(text, w), w))
+                } else {
+                    disp_bits = if opcode == 0xeb { 8 } else { w };
+                    let raw = r.unsigned(disp_bits)?;
+                    disp = match disp_bits { 8 => raw as i8 as i32, 16 => raw as i16 as i32, _ => raw as i32 };
+                    (format!("JMP 0x{:08x}", r.pos.wrapping_add(disp as u32) & super::mask(w) as u32), compile(&instantiate(description("jmp").map_err(GuestError::Decode)?, w), w))
+                }
             }
             0x0f=>{
                 let second=r.byte()?;
@@ -332,7 +348,7 @@ impl Image {
                     if wide&&m>>6==3{return Err(GuestError::Decode("SMSW r32 upper-half policy is outside the 386 word profile".into()));}
                     w=16;dst=view((m&7)as usize,w);src=dst;
                     let mut text=description("smsw").map_err(GuestError::Decode)?;
-                    if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("write dst status","read_address destination\nstore destination status");}
+                    if m>>6!=3u8{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("write dst status","read_address destination\nstore destination status");}
                     (format!("SMSW {}",operand_name(dst,address)),compile(&text,w))
                 }else if (0x80..=0x8f).contains(&second){
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
@@ -343,7 +359,7 @@ impl Image {
                     let m=r.byte()?;dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,source_width);
                     let name=if second&8==0{"movzx"}else{"movsx"};
                     let mut text=description(&format!("{name}{source_width}")).map_err(GuestError::Decode)?;
-                    let source_label=if m>>6!=3{
+                    let source_label=if m>>6!=3u8{
                         let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
                         let label=operand_name(src,address);src=dst;
                         text=text.replace(&format!("read a src {source_width}"),&format!("read_address addr\nload a addr {source_width}"));label
@@ -352,7 +368,7 @@ impl Image {
                 }else if second==0xaf {
                     let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
                     dst=reg;src=rm;
-                    if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});src=reg;}
+                    if m>>6!=3u8{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});src=reg;}
                     let text=operand_text("imul",w,address.is_some(),true,None)?;
                     (format!("IMUL {},{}",register_name(dst),operand_name(src,address)),compile(&text,w))
                 }else{
@@ -362,7 +378,7 @@ impl Image {
                 w=8;dst=view((m&7) as usize,w);src=dst;
                 let name=format!("set{}",CONDITIONS[(second&15) as usize]);
                 let mut text=description(&name).map_err(GuestError::Decode)?;
-                if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("write dst result","read_address destination\nstore destination result");}
+                if m>>6!=3u8{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("write dst result","read_address destination\nstore destination result");}
                 (format!("{} {}",name.to_ascii_uppercase(),operand_name(dst,address)),compile(&instantiate(text,w),w))
                 }
             }
@@ -582,6 +598,10 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
+
+
+
 
 
 

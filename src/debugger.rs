@@ -838,3 +838,8 @@ pub fn render_mandelbrot_checked(size:u32,iterations:u32,capture:bool)->Result<s
 #[path = "../tests/unit/loops.rs"]
 mod loop_tests;
 
+
+#[cfg(test)]
+#[path = "../tests/unit/jmp_indirect.rs"]
+mod jmp_indirect_tests;
+

@@ -1,0 +1,7 @@
+require_width 16_or_32
+$TARGET
+zext target32 target_value 32
+const take 1 1
+branch_if target32 take
+preserve_flags all
+retire
