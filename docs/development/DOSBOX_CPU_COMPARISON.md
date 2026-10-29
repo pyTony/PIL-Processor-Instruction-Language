@@ -5,22 +5,21 @@ test, not SingleStepTests, a hardware oracle or full 386/DOS conformance.
 
 ## Measured result
 
-The exact same 36,340-byte CPUTEST.COM passed all 210 cases in both engines.
+The exact same 57,117-byte CPUTEST.COM passed all 328 cases in both engines.
 Both outputs contain every expected case ID in order, no failures, and the
 completion marker. Captured output matches after CR/LF normalization. PIL
 also reaches DOS exit code zero.
 
 - DOSBox-X 2026.10.01, commit b6abbd5, Visual Studio SDL2 64-bit.
 - DOSBox-X configuration: `core=normal`, `cputype=386`, fixed 10000 cycles.
-- PIL executable reports 0.35.0-alpha.1. It came from the user's working tree;
-  no exact source-commit provenance is asserted for that executable.
-- COM SHA256: `e548b4c22f9f02137688a171d66edbc0ceaf143170b88d1f8db63d4469cee3ec`.
-- PIL executable SHA256: `d2bf3c71db0e2062410f4d341de1414043397fb80634946d045b3699be9c78ad`.
+- PIL executable reports 0.35.0-alpha.1 (built from `dev` `8d012c5`).
+- COM SHA256: `a8521fe22f60d0d886853756c785425b4ddfd76d622c415d5cb55e31e1a2d97f`.
+- PIL executable SHA256: `4c5c807b437d160c46cd47ec1d80438c8f687cf68b5711d5c0ced0bd85fb6b5c`.
 - DOSBox-X executable SHA256: `e248c42984a7c2b6814474914f4161acc6a22eb65553e5a051e106bb86c39874`.
 
 The negative control deliberately changes the first expected ADD result.
-Both engines then report exactly one failed case (001), 209 passes, and PIL
-exits with code one. The comparison script returns failure as required.
+Both engines then report exactly one failed case (001), 327 passes, and PIL
+exits with code one (`com_sha256`: `cdb33e9c0457e3945a4e9e170630edee05fadadddcc68289c7cf59be523bdd67`). The comparison script returns failure as required.
 The final normal run also verifies that neither executable nor the guest COM
 changed between the start and end of the comparison.
 
@@ -34,15 +33,39 @@ changed between the start and end of the comparison.
 | INC, DEC, NOT, NEG | 48 |
 | MOV | 6 |
 | Valid unsigned DIV | 15 |
-| Total | 210 |
+| Shifts (SHL, SHR, SAR: CL=0, 1, CL=4, imm8=3) | 36 |
+| Rotates (ROL, ROR: 1, CL=4, imm8=3) | 18 |
+| XCHG (8/16/32-bit, checking both EAX and ECX) | 6 |
+| Extensions & conversions (MOVZX, MOVSX, CBW/CWDE, CWD/CDQ) | 20 |
+| Flag transfers & carry/direction (CLC, STC, CMC, separate STD & CLD, LAHF, SAHF) | 12 |
+| Signed truncated IMUL (16/32-bit r,r/m and r,r/m,imm8) | 12 |
+| Condition byte set (SETZ, SETNZ, SETB, SETL, SETG) & LEA (16/32-bit) | 14 |
+| Total | 328 |
 
-All families exercise 8-, 16- and 32-bit operand sizes. Cases use fixed
+All operand-sized families exercise 8-, 16- and 32-bit widths (or 16/32-bit for
+extensions, conversions, IMUL and LEA). Cases use fixed
 accumulator/source registers and explicit boundary inputs. The COM checks
-EAX, ECX, EDX, ESI and EDI, including untouched upper register bits. It captures
-FLAGS before comparisons and checks independently computed defined/preserved
-bits. Logical AF and all undefined DIV arithmetic flags are excluded. The
-direction flag is checked as preserved clear. EBX holds the flags snapshot;
+EAX, ECX, EDX, ESI and EDI, including untouched upper register bits and swapped
+ECX on XCHG. It captures
+FLAGS before comparisons (followed by `CLD` so `DF=1` cases never affect DOS
+output) and checks independently computed defined/preserved
+bits. `STD` (`DF: 0 -> 1`) and `CLD` (`DF: 1 -> 0`) are tested separately with
+both cleared and set incoming arithmetic flags. Logical AF, multi-bit
+shift/rotate OF, IMUL non-carry/overflow flags and
+all undefined DIV arithmetic flags are excluded. EBX holds the flags snapshot;
 this is not an all-register or arbitrary-addressing test.
+
+## Interactive Debugger Case Manifest & Bisection
+
+`tools/verify_dosbox_cpu.py` records each case's 1-based `index` and exact
+guest addresses (`entry_eip`, `test_eip`, `check_eip`, `fail_eip`, `done_eip`)
+in `cases.json`. Opening `cases.json` explicitly—or opening `CPUTEST.COM`
+when its instruction bytes match the neighbouring `cases.json`—in
+`tools/pil_debugger.py` populates the **Case** selector and synthesizes a
+self-contained `<200`-byte monitor image for any selected case so you can jump
+directly to `test_eip` (`BP @ Test`), step individual PIL tokens (`Step PIL F8`),
+and inspect register/flag checks inside the 4 KB monitor. Unrelated binaries in
+the same directory never trigger manifest discovery.
 
 The program uses only INT21/AH09 for reporting and AH4C to exit. Test values
 and expectations come from original Python reference calculations, not from

@@ -92,6 +92,177 @@ def parse_container_listing(stdout: str):
     return entries
 
 
+def _verify_cputest_com_matches_manifest(com_path: Path, validated: list) -> bool:
+    """Verify that `CPUTEST.COM` was built from `validated` (`cases.json`)."""
+    try:
+        size = com_path.stat().st_size
+        if not (1 <= size <= 0xff00):
+            return False
+        com_bytes = com_path.read_bytes()
+    except OSError:
+        return False
+    if b'PIL-DOSBOX CPU CHECK v1\r\n$' not in com_bytes:
+        return False
+    if f'COMPLETE {len(validated)} CASES\r\n$'.encode('ascii') not in com_bytes:
+        return False
+    u32 = lambda v: type(v) is int and 0 <= v <= 0xffffffff
+    for case in validated:
+        test_eip = case.get('test_eip')
+        done_eip = case.get('done_eip')
+        if not (u32(test_eip) and u32(done_eip)):
+            return False
+        code_bytes = bytes.fromhex(case['code'])
+        start_off = test_eip - 0x100
+        end_off = start_off + len(code_bytes)
+        if not (0 <= start_off < end_off <= done_eip - 0x100 <= len(com_bytes)):
+            return False
+        if com_bytes[start_off:end_off] != code_bytes:
+            return False
+    return True
+
+
+def load_case_manifest(path):
+    """Load and validate `cases.json` explicitly, or from an authenticated `CPUTEST.COM`."""
+    if not path:
+        return []
+    p = Path(path)
+    is_json = p.suffix.lower() == '.json'
+    if is_json:
+        candidate = p
+    elif p.name.upper() == 'CPUTEST.COM':
+        candidate = p.with_name('cases.json')
+    else:
+        return []
+    if not candidate.is_file():
+        return []
+    try:
+        if candidate.stat().st_size > 4 * 1024 * 1024:
+            return []
+        raw = json.loads(candidate.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw, list) or not (1 <= len(raw) <= 4096):
+        return []
+    u32 = lambda v: type(v) is int and 0 <= v <= 0xffffffff
+    validated = []
+    for idx, item in enumerate(raw, 1):
+        if not isinstance(item, dict) or not isinstance(item.get('name'), str):
+            return []
+        if not all(u32(item.get(k)) for k in ('eax', 'ecx', 'edx', 'expected_eax', 'expected_edx', 'flags', 'flags_mask', 'incoming_flags')):
+            return []
+        code_hex = item.get('code')
+        if not isinstance(code_hex, str):
+            return []
+        try:
+            code_bytes = bytes.fromhex(code_hex)
+        except ValueError:
+            return []
+        if not (1 <= len(code_bytes) <= 15):
+            return []
+        entry = dict(item)
+        entry['index'] = item.get('index') if u32(item.get('index')) and item.get('index') > 0 else idx
+        entry['expected_ecx'] = item.get('expected_ecx') if u32(item.get('expected_ecx')) else item['ecx']
+        validated.append(entry)
+    if not is_json and not _verify_cputest_com_matches_manifest(p, validated):
+        return []
+    return validated
+
+
+def build_monitor_case(case):
+    """Build a self-contained monitor binary (<=MAX_MONITOR_BYTES) for a single test case."""
+    code = bytearray()
+
+    def mov32(reg, val):
+        code.extend(bytes([0x66, 0xb8 + reg]) + int(val & 0xffffffff).to_bytes(4, 'little'))
+
+    def cmp32(reg, val):
+        code.extend(bytes([0x66, 0x81, 0xf8 + reg]) + int(val & 0xffffffff).to_bytes(4, 'little'))
+
+    # SS=0x20 in the 4KB monitor -> linear base 0x200; SP=0x0dfe -> linear 0x0ffe.
+    mov32(4, 0x00000dfe)
+    for reg, val in [
+        (0, case['eax']),
+        (1, case['ecx']),
+        (2, case['edx']),
+        (3, 0xdead0000),
+        (6, 0x11223344),
+        (7, 0x55667788),
+    ]:
+        mov32(reg, val)
+    code.append(0x68)
+    code.extend(int(case['incoming_flags'] & 0xffff).to_bytes(2, 'little'))
+    code.append(0x9d)  # POPF
+    test_eip = 0x100 + len(code)
+    code.extend(bytes.fromhex(case['code']))
+    check_eip = 0x100 + len(code)
+    code.extend(b'\x9c\x5b\xfc')  # PUSHF; POP BX; CLD
+    fixups = []
+    for reg, exp in [
+        (0, case['expected_eax']),
+        (1, case.get('expected_ecx', case['ecx'])),
+        (2, case['expected_edx']),
+        (6, 0x11223344),
+        (7, 0x55667788),
+    ]:
+        cmp32(reg, exp)
+        code.extend(b'\x0f\x85')
+        fixups.append(len(code))
+        code.extend(b'\x00\x00')
+    code.extend(b'\x81\xe3')
+    code.extend(int(case['flags_mask'] & 0xffff).to_bytes(2, 'little'))
+    code.extend(b'\x81\xfb')
+    code.extend(int((case['flags'] & case['flags_mask']) & 0xffff).to_bytes(2, 'little'))
+    code.extend(b'\x0f\x85')
+    fixups.append(len(code))
+    code.extend(b'\x00\x00')
+    pass_eip = 0x100 + len(code)
+    mov32(0, 0)
+    code.append(0xf4)  # HLT on PASS (EAX=0)
+    fail_pos = len(code)
+    fail_eip = 0x100 + fail_pos
+    mov32(0, int(case.get('index', 1)))
+    code.append(0xf4)  # HLT on FAIL (EAX=index, BX=masked flags)
+    for pos in fixups:
+        rel = (fail_pos - (pos + 2)) & 0xffff
+        code[pos:pos + 2] = rel.to_bytes(2, 'little')
+    meta = {
+        'index': int(case.get('index', 1)),
+        'name': case['name'],
+        'test_eip': test_eip,
+        'check_eip': check_eip,
+        'pass_eip': pass_eip,
+        'fail_eip': fail_eip,
+        'expected_eax': case['expected_eax'],
+        'expected_ecx': case.get('expected_ecx', case['ecx']),
+        'expected_edx': case['expected_edx'],
+        'expected_flags': case['flags'] & case['flags_mask'],
+        'flags_mask': case['flags_mask'],
+    }
+    return bytes(code), meta
+
+
+def format_case_inspector(meta, eip):
+    """Format a compact bisection summary for the active monitor test case."""
+    if not isinstance(meta, dict):
+        return ''
+    if eip == meta['test_eip']:
+        phase = 'AT TEST INSTRUCTION'
+    elif eip in (meta['pass_eip'], meta['pass_eip'] + 6):
+        phase = 'PASSED'
+    elif eip in (meta['fail_eip'], meta['fail_eip'] + 6):
+        phase = 'FAILED'
+    elif eip >= meta['check_eip']:
+        phase = 'checking'
+    else:
+        phase = 'setup'
+    return (
+        f"Case #{meta['index']:03d} {meta['name']} [{phase}] "
+        f"(test=0x{meta['test_eip']:04x} pass=0x{meta['pass_eip']:04x} fail=0x{meta['fail_eip']:04x}) "
+        f"exp EAX={meta['expected_eax']:08X} ECX={meta['expected_ecx']:08X} "
+        f"EDX={meta['expected_edx']:08X} FLAGS&{meta['flags_mask']:04X}={meta['expected_flags']:04X}"
+    )
+
+
 class CommandHistory:
     """Bounded command history for the listener, navigating previous/next entries."""
     def __init__(self, limit=100):
@@ -419,6 +590,10 @@ def make_app(root, engine, raw_path=None):
             self.state, self.previous, self.guest = {}, {}, bytearray()
             self.history = CommandHistory()
             self.jobs = AsyncJobRunner()
+            self.cases = []
+            self.active_case_meta = None
+            self._pending_case_index = None
+            self._temp_file = None
             self._last_dir = str(Path(__file__).resolve().parents[1] / 'programs')
             root.title('PIL debugger')
             root.geometry('1180x780')
@@ -441,7 +616,7 @@ def make_app(root, engine, raw_path=None):
                                   values=['counter', 'echo', 'memory', 'selftest', 'hello',
                                           'factorials', 'loop', 'mandelbrot', 'extensions'])
             chooser.pack(side='right')
-            chooser.bind('<<ComboboxSelected>>', lambda e: self.send('demo ' + self.demo.get()))
+            chooser.bind('<<ComboboxSelected>>', self.on_demo_selected)
             pane = ttk.Panedwindow(root, orient='horizontal')
             pane.pack(fill='both', expand=True, padx=6)
             left, right = ttk.Frame(pane), ttk.Frame(pane)
@@ -454,8 +629,15 @@ def make_app(root, engine, raw_path=None):
             bp = ttk.Frame(left)
             bp.pack(fill='x')
             self.bp = tk.StringVar()
-            ttk.Entry(bp, textvariable=self.bp, width=15).pack(side='left', padx=3)
+            ttk.Entry(bp, textvariable=self.bp, width=12).pack(side='left', padx=3)
             ttk.Button(bp, text='Toggle breakpoint F9', command=self.breakpoint).pack(side='left')
+            ttk.Label(bp, text='Case:').pack(side='left', padx=(8, 2))
+            self.case_var = tk.StringVar()
+            self.case_combo = ttk.Combobox(bp, textvariable=self.case_var, state='disabled', width=24)
+            self.case_combo.pack(side='left', padx=2)
+            self.case_combo.bind('<<ComboboxSelected>>', self.on_case_selected)
+            self.case_bp_btn = ttk.Button(bp, text='BP @ Test', command=self.break_at_case_test, state='disabled')
+            self.case_bp_btn.pack(side='left', padx=2)
             self.console = self.text(left, 'Guest serial output · control/binary bytes escaped', height=9)
             self.regs = ttk.Treeview(right, columns=('value', 'dec'), show='tree headings', height=10)
             self.regs.heading('#0', text='Register')
@@ -542,9 +724,37 @@ def make_app(root, engine, raw_path=None):
             self.listener.see('end')
             self.listener.configure(state='disabled')
 
-        def start(self, raw_path):
+        def _cleanup_temp(self):
+            if self._temp_file:
+                Path(self._temp_file).unlink(missing_ok=True)
+                self._temp_file = None
+
+        def start(self, raw_path, *, is_temp=False):
+            if not is_temp:
+                self._pending_case_index = None
+                if raw_path:
+                    p = Path(raw_path)
+                    if p.suffix.lower() == '.json' or p.name.upper() == 'CPUTEST.COM':
+                        manifest = load_case_manifest(p)
+                        if manifest:
+                            self.set_case_manifest(manifest)
+                            self.load_case_index(0)
+                            return
+                        if p.suffix.lower() == '.json':
+                            self.busy = False
+                            msg = 'JSON file is not a valid DOSBox/PIL cases.json manifest'
+                            self.status.set(msg)
+                            messagebox.showerror('PIL debugger', msg, parent=root)
+                            return
+                self.set_case_manifest([])
             if self.client:
                 self.client.close()
+            if not is_temp:
+                self._cleanup_temp()
+            else:
+                if self._temp_file and self._temp_file != str(raw_path):
+                    Path(self._temp_file).unlink(missing_ok=True)
+                self._temp_file = str(raw_path)
             self.running, self.busy, self.previous, self.prev_memory = False, True, {}, ''
             self.guest.clear()
             self.replace(self.console, '')
@@ -556,6 +766,71 @@ def make_app(root, engine, raw_path=None):
                 self.busy = False
                 self.status.set(str(error))
                 messagebox.showerror('PIL debugger', str(error), parent=root)
+
+        def set_case_manifest(self, cases):
+            self.cases = list(cases)
+            self._pending_case_index = None
+            if self.cases:
+                labels = [f"{c['index']:03d} {c['name']}" for c in self.cases]
+                self.case_combo.configure(values=labels, state='readonly')
+                self.case_bp_btn.configure(state='normal')
+                self.log(f'Loaded {len(self.cases)} test cases from cases.json')
+            else:
+                self.case_combo.configure(values=[], state='disabled')
+                self.case_var.set('')
+                self.case_bp_btn.configure(state='disabled')
+                self.active_case_meta = None
+
+        def load_case_index(self, idx):
+            if not (0 <= idx < len(self.cases)):
+                return
+            self._pending_case_index = None
+            prev_meta = self.active_case_meta
+            case = self.cases[idx]
+            raw_bytes, meta = build_monitor_case(case)
+            tmp = tempfile.NamedTemporaryFile(suffix='.bin', prefix='pil_case_', delete=False)
+            try:
+                tmp.write(raw_bytes)
+                tmp.flush()
+                tmp_path = tmp.name
+            finally:
+                tmp.close()
+            self.active_case_meta = meta
+            self.case_var.set(f"{meta['index']:03d} {meta['name']}")
+            self.bp.set(f"0x{meta['test_eip']:x}")
+            self.start(tmp_path, is_temp=True)
+            if self.client is None:
+                self.active_case_meta = prev_meta
+                self.case_var.set(f"{prev_meta['index']:03d} {prev_meta['name']}" if prev_meta else '')
+                return
+            self.log(format_case_inspector(meta, meta['test_eip']))
+            self.status.set(f"Loaded case #{meta['index']:03d} {meta['name']} (test @ 0x{meta['test_eip']:04x})")
+
+        def on_case_selected(self, event=None):
+            self.pause()
+            idx = self.case_combo.current()
+            if not (0 <= idx < len(self.cases)):
+                return
+            if self.busy:
+                self._pending_case_index = idx
+                case = self.cases[idx]
+                self.status.set(f"Queued switch to case #{case['index']:03d} {case['name']}…")
+                return
+            self._pending_case_index = None
+            self.load_case_index(idx)
+
+        def on_demo_selected(self, event=None):
+            self.pause()
+            if self.send('demo ' + self.demo.get()):
+                self._pending_case_index = None
+                self.active_case_meta = None
+                self.case_var.set('')
+
+        def break_at_case_test(self):
+            if not self.active_case_meta:
+                return
+            self.bp.set(f"0x{self.active_case_meta['test_eip']:x}")
+            self.breakpoint()
 
         def send(self, command):
             if not self.client or self.busy or self.closing:
@@ -627,10 +902,11 @@ def make_app(root, engine, raw_path=None):
                 title='Open program (Hex, Binary, or Image)',
                 initialdir=initial,
                 filetypes=[
-                    ('Executable & Hex programs', '*.hex *.bin *.com'),
+                    ('Executable, Hex & Case manifests', '*.hex *.bin *.com *.json'),
                     ('Hex programs (*.hex)', '*.hex'),
                     ('Raw binary (*.bin)', '*.bin'),
                     ('DOS COM (*.com)', '*.com'),
+                    ('Case manifest (*.json)', '*.json'),
                     ('Disk images & archives (*.img *.ima *.zip)', '*.img *.ima *.zip'),
                     ('All files (*.*)', '*.*'),
                 ],
@@ -644,6 +920,14 @@ def make_app(root, engine, raw_path=None):
                 self.open_image_browser(name)
                 return
             try:
+                if ext == '.json':
+                    manifest = load_case_manifest(path)
+                    if not manifest:
+                        raise ValueError('JSON file is not a valid DOSBox/PIL cases.json manifest')
+                    self.set_case_manifest(manifest)
+                    self.load_case_index(0)
+                    return
+
                 if ext == '.hex':
                     raw_bytes = read_bounded_hex_file(path)
                     if not 1 <= len(raw_bytes) <= MAX_MONITOR_BYTES:
@@ -655,13 +939,21 @@ def make_app(root, engine, raw_path=None):
                         tmp_path = tmp.name
                     finally:
                         tmp.close()
-                    self.start(tmp_path)
+                    self.set_case_manifest([])
+                    self.start(tmp_path, is_temp=True)
                     self.status.set(f'Loaded hex program: {path.name} ({len(raw_bytes)} bytes)')
                     return
 
                 size = path.stat().st_size
+                if path.name.upper() == 'CPUTEST.COM':
+                    manifest = load_case_manifest(path)
+                    if manifest:
+                        self.set_case_manifest(manifest)
+                        self.load_case_index(0)
+                        return
                 if not 1 <= size <= MAX_MONITOR_BYTES:
                     raise ValueError(f'Raw monitor images must contain 1..{MAX_MONITOR_BYTES} bytes; use --dos-probe for DOS executables ({size} bytes)')
+                self.set_case_manifest([])
                 self.start(str(path))
             except (OSError, ValueError) as error:
                 messagebox.showerror('Open program failed', str(error), parent=root)
@@ -771,7 +1063,8 @@ def make_app(root, engine, raw_path=None):
                         raise
 
                 def load(tmp_name, size):
-                    self.start(tmp_name)
+                    self.set_case_manifest([])
+                    self.start(tmp_name, is_temp=True)
                     self.status.set(f'Loaded {sel} ({size} bytes) from {img_path.name}')
                     win.destroy()
 
@@ -940,8 +1233,16 @@ def make_app(root, engine, raw_path=None):
                         self.pil_view.see(f'{row}.0')
                     elif line.startswith('✓ '):
                         self.pil_view.tag_add('pil_done', f'{row}.0', f'{row}.end')
-            self.replace(self.inspector, f"Undefined flags={state['undefined_flags']:08X}\n{state['segments']}\nBreakpoints: "
-                         + ', '.join(f'{n:08x}' for n in state['breakpoints']) + '\n' + state['cache'])
+            if message['ok'] and (command.startswith('demo ') or command.startswith('load ')):
+                self.active_case_meta = None
+                self.case_var.set('')
+            case_line = format_case_inspector(self.active_case_meta, state['eip'])
+            inspector_text = (
+                (case_line + '\n' if case_line else '')
+                + f"Undefined flags={state['undefined_flags']:08X}\n{state['segments']}\nBreakpoints: "
+                + ', '.join(f'{n:08x}' for n in state['breakpoints']) + '\n' + state['cache']
+            )
+            self.replace(self.inspector, inspector_text)
             self.address.set(f"0x{state['memory_address']:x}")
             if message['ok'] and (command == 'reset' or command.startswith('demo ')):
                 self.guest.clear()
@@ -965,7 +1266,11 @@ def make_app(root, engine, raw_path=None):
                     pass
                 else:
                     self.busy = False
-                    if event == 'error':
+                    if self._pending_case_index is not None and not self.closing:
+                        pending_idx = self._pending_case_index
+                        self._pending_case_index = None
+                        self.load_case_index(pending_idx)
+                    elif event == 'error':
                         self.running = False
                         self.log('Debugger disconnected: ' + value)
                         self.status.set('Disconnected')
@@ -984,6 +1289,7 @@ def make_app(root, engine, raw_path=None):
             self.closing, self.running = True, False
             if self.client:
                 self.client.close()
+            self._cleanup_temp()
             root.destroy()
 
     return App()
