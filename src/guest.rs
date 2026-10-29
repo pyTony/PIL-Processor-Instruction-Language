@@ -154,6 +154,11 @@ impl Image {
                 let text=include_str!("../isa/i386/pusha.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (if w==32{"PUSHAD".into()}else{"PUSHA".into()},compile(&instantiate(text,w),w))
             }
+            0x61=>{
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let text=include_str!("../isa/i386/popa.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (if w==32{"POPAD".into()}else{"POPA".into()},compile(&instantiate(text,w),w))
+            }
             0xc9=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let text=description("leave").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
@@ -606,6 +611,8 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
+
 
 
 

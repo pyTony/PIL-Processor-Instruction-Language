@@ -848,3 +848,8 @@ mod jmp_indirect_tests;
 #[path = "../tests/unit/lds_pusha.rs"]
 mod lds_pusha_tests;
 
+
+#[cfg(test)]
+#[path = "../tests/unit/popa.rs"]
+mod popa_tests;
+

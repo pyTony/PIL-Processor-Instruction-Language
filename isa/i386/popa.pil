@@ -1,0 +1,35 @@
+require_width 16_or_32
+read_gpr old_sp 4 $S
+const step $S $BYTES
+add s1 old_sp step
+add s2 s1 step
+add s3 s2 step
+add s4 s3 step
+add s5 s4 step
+add s6 s5 step
+add s7 s6 step
+add new_sp s7 step
+zext a0 old_sp 32
+zext a1 s1 32
+zext a2 s2 32
+zext a4 s4 32
+zext a5 s5 32
+zext a6 s6 32
+zext a7 s7 32
+load_segment di 2 a0 $W
+load_segment si 2 a1 $W
+load_segment bp 2 a2 $W
+load_segment bx 2 a4 $W
+load_segment dx 2 a5 $W
+load_segment cx 2 a6 $W
+load_segment ax 2 a7 $W
+write_gpr 7 di
+write_gpr 6 si
+write_gpr 5 bp
+write_gpr 3 bx
+write_gpr 2 dx
+write_gpr 1 cx
+write_gpr 0 ax
+write_gpr 4 new_sp
+preserve_flags all
+retire
