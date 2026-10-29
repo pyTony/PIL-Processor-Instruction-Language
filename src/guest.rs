@@ -149,6 +149,11 @@ impl Image {
                 let text=include_str!("../isa/i386/pop_memory.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$HIGH_MASK",if stack_bits==16{"4294901760"}else{"0"}).replace("$WRAP_GUARD",guard);
                 (format!("POP {}",operand_name(dst,address)),compile(&instantiate(text,w),w))
             }
+            0x60=>{
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let text=include_str!("../isa/i386/pusha.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (if w==32{"PUSHAD".into()}else{"PUSHA".into()},compile(&instantiate(text,w),w))
+            }
             0xc9=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let text=description("leave").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
@@ -258,15 +263,18 @@ impl Image {
                 let text=if memory{format!("read_address addr\nconst v {w} {immediate}\nstore addr v\npreserve_flags all\nretire")}else{format!("const v {w} {immediate}\nwrite dst v\npreserve_flags all\nretire")};
                 (format!("MOV {},0x{immediate:0digits$x}",operand_name(dst,address),digits=(w/4)as usize),compile(&text,w))
             }
-            0xc4=>{
-                if !self.real_mode{return Err(GuestError::Decode("LES requires real-mode context".into()));}
-                let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode("LES requires a memory far pointer".into()));}
+            0xc4|0xc5=>{
+                let is_lds = opcode == 0xc5;
+                let name = if is_lds { "LDS" } else { "LES" };
+                if !self.real_mode{return Err(GuestError::Decode(format!("{name} requires real-mode context")));}
+                let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode(format!("{name} requires a memory far pointer")));}
                 dst=view(((m>>3)&7)as usize,w);src=dst;
                 let effective=r.effective(m,addr32)?;
                 let segment=effective.resolve(&[0;8],override_segment)?.segment.index();
                 address=Some(AddressContext{effective,override_segment,segments:self.segments});
-                let text=include_str!("../isa/i386/les.pil").replace("$SEG",&segment.to_string()).replace("$SPAN",&(w/8+2).to_string()).replace("$BYTES",&(w/8).to_string());
-                (format!("LES {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
+                let body = if is_lds { include_str!("../isa/i386/lds.pil") } else { include_str!("../isa/i386/les.pil") };
+                let text=body.replace("$SEG",&segment.to_string()).replace("$SPAN",&(w/8+2).to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
             }
             0x8c|0x8e=>{
                 let m=r.byte()?;let segment=((m>>3)&7)as usize;
@@ -598,6 +606,7 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
 
 
 

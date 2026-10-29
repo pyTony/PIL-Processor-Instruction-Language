@@ -1,0 +1,38 @@
+require_width 16_or_32
+read_gpr ax 0 $W
+read_gpr cx 1 $W
+read_gpr dx 2 $W
+read_gpr bx 3 $W
+read_gpr orig_sp 4 $W
+read_gpr bp 5 $W
+read_gpr si 6 $W
+read_gpr di 7 $W
+read_gpr sp_addr 4 $S
+const step $S $BYTES
+sub s1 sp_addr step
+sub s2 s1 step
+sub s3 s2 step
+sub s4 s3 step
+sub s5 s4 step
+sub s6 s5 step
+sub s7 s6 step
+sub new_sp s7 step
+zext a1 s1 32
+zext a2 s2 32
+zext a3 s3 32
+zext a4 s4 32
+zext a5 s5 32
+zext a6 s6 32
+zext a7 s7 32
+zext a8 new_sp 32
+store_segment 2 a1 ax
+store_segment 2 a2 cx
+store_segment 2 a3 dx
+store_segment 2 a4 bx
+store_segment 2 a5 orig_sp
+store_segment 2 a6 bp
+store_segment 2 a7 si
+store_segment 2 a8 di
+write_gpr 4 new_sp
+preserve_flags all
+retire

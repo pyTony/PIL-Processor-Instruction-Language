@@ -1081,7 +1081,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["store_segment", register, address, input]=>{
                     let segment=number(register)?;let a=slot(&names,address)?;let v=slot(&names,input)?;
-                    if segment>=6||widths[a]!=32||store_count>=2{return Err("at most two stores with segment0..5 and bv32 offset required".into());}
+                    if segment>=6||widths[a]!=32||store_count>=8{return Err("at most two stores with segment0..5 and bv32 offset required".into());}
                     let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be8/16/32")?;stored=true;store_count+=1;Token::StoreSegment(a,v,mem,segment as usize)
                 }
                 ["retire_if", predicate]=>{
@@ -1420,7 +1420,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_resume=false;
     let mut pending_interrupt_shadow=false;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
-    let mut pending_stores:[Option<(u32,MemWidth,u32)>;2]=[None;2];let mut store_index=0;
+    let mut pending_stores:[Option<(u32,MemWidth,u32)>;8]=[None;8];let mut store_index=0;
     let mut probed:Option<ProbedMemoryAccess>=None;
     // Keep ordinary instructions on the stack without restricting valid PIL programs.
     let mut value_stack = [Value { bits: 0, width: 0 }; 64];
@@ -1921,7 +1921,7 @@ fn emit_rust_functions(p:&Program)->String {
          context.validate(w,{})?;\n\
          if {} && ram.is_none() {{ return Err(ExecError::InvalidContext); }}\n\
          let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
-         let mut pending_stores: [Option<(u32,MemWidth,u32)>;2] = [None;2];let mut store_index=0;\n\
+         let mut pending_stores: [Option<(u32,MemWidth,u32)>;8] = [None;8];let mut store_index=0;\n\
          let mut pending_eip = context.next_eip;\n\
          let mut pending_resume = false;\nlet mut pending_interrupt_shadow = false;\n\
          let mut pending_flags = *flags;\n\
@@ -2228,6 +2228,8 @@ mod exchange_memory_tests;
 #[cfg(test)]
 #[path = "../tests/unit/les.rs"]
 mod les_tests;
+
+
 
 
 

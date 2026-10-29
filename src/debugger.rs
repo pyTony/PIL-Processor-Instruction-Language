@@ -843,3 +843,8 @@ mod loop_tests;
 #[path = "../tests/unit/jmp_indirect.rs"]
 mod jmp_indirect_tests;
 
+
+#[cfg(test)]
+#[path = "../tests/unit/lds_pusha.rs"]
+mod lds_pusha_tests;
+

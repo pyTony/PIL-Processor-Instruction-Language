@@ -1,3 +1,4 @@
+use crate::host_io::Output;
 use super::*;
 #[test]
 fn dos_vectors_round_trip_all_entries_and_preserve_flags_and_upper_bx(){
@@ -359,3 +360,4 @@ fn test_dos_handle_write() {
     assert_eq!(loaded.cpu.eflags & 1, 0);
     assert_eq!(out.bytes(), msg);
 }
+
