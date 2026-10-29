@@ -492,12 +492,13 @@ impl Image {
                 let group1=matches!(opcode,0x80|0x81|0x83);
                 let group3=matches!(opcode,0xf6|0xf7);
                 let group45=matches!(opcode,0xfe|0xff);
-                if group3 && extension == 4 {
+                                if group3 && extension == 4 {
                     let memory = m >> 6 != 3u8;
-                    dst = view(0, w);
+                    let target_w = if w == 8 { 16 } else { w };
+                    dst = view(0, target_w);
                     src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
                     let text = mul_pil(w, memory);
-                    (format!("MUL {}", operand_name(src, address)), compile(&text, w))
+                    (format!("MUL {}", operand_name(src, address)), compile(&text, target_w))
                 } else if group3 && extension == 6 {
                     let memory = m >> 6 != 3;
                     dst = view(0, w);
@@ -590,7 +591,7 @@ fn view(register:usize,width:u8)->View {
 fn mul_pil(w: u8, memory: bool) -> String {
     let read_operand = if memory { format!("read_address addr\nload b addr {w}") } else { format!("read b src {w}") };
     match w {
-        8 => format!("read_gpr ax 0 16\ntrunc a ax 8\n{read_operand}\nzext aw a 16\nzext bw b 16\nmul wide aw bw\nwrite_gpr 0 wide 16\nconst mask 16 65280\nand hi wide mask\nzero no_overflow hi\nnot overflow no_overflow\nflag CF overflow\nflag OF overflow\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
+        8 => format!("read ax dst 16\ntrunc a ax 8\n{read_operand}\nzext aw a 16\nzext bw b 16\nmul wide aw bw\nwrite dst wide\nconst mask 16 65280\nand hi wide mask\nzero no_overflow hi\nnot overflow no_overflow\nflag CF overflow\nflag OF overflow\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
         16 => format!("read_gpr ax 0 16\n{read_operand}\nzext aw ax 32\nzext bw b 32\nmul wide aw bw\ntrunc low wide 16\nconst shift 32 16\nlshr hi wide shift\ntrunc dx hi 16\nwrite_gpr 0 low\nwrite_gpr 2 dx\nzero no_overflow dx\nnot overflow no_overflow\nflag CF overflow\nflag OF overflow\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
         32 => format!("read_gpr eax 0 32\n{read_operand}\nzext aw eax 64\nzext bw b 64\nmul wide aw bw\ntrunc low wide 32\nconst shift 64 32\nlshr hi wide shift\ntrunc edx hi 32\nwrite_gpr 0 low\nwrite_gpr 2 edx\nzero no_overflow edx\nnot overflow no_overflow\nflag CF overflow\nflag OF overflow\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
         _ => unreachable!(),
@@ -641,6 +642,9 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
+
+
 
 
 
