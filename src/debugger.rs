@@ -858,3 +858,8 @@ mod popa_tests;
 #[path = "../tests/unit/mul.rs"]
 mod mul_tests;
 
+
+#[cfg(test)]
+#[path = "../tests/unit/rcl_rcr.rs"]
+mod rcl_rcr_tests;
+

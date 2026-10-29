@@ -1846,6 +1846,10 @@ fn description(name: &str) -> R<String> {
         "shr" => Some(include_str!("../isa/i386/shr.pil")),
         "sar" => Some(include_str!("../isa/i386/sar.pil")),
         "rol" => Some(include_str!("../isa/i386/rol.pil")),
+        "rcl" => Some(include_str!("../isa/i386/rcl.pil")),
+        "rcr" => Some(include_str!("../isa/i386/rcr.pil")),
+        "rcl" => Some(include_str!("../isa/i386/rcl.pil")),
+        "rcr" => Some(include_str!("../isa/i386/rcr.pil")),
         "ror" => Some(include_str!("../isa/i386/ror.pil")),
         "clc" => Some(include_str!("../isa/i386/clc.pil")),
         "call" => Some(include_str!("../isa/i386/call.pil")),
@@ -2228,6 +2232,8 @@ mod exchange_memory_tests;
 #[cfg(test)]
 #[path = "../tests/unit/les.rs"]
 mod les_tests;
+
+
 
 
 

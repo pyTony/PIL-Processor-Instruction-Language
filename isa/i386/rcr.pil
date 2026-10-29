@@ -1,0 +1,33 @@
+# RCR: Rotate through Carry Right modulo (width + 1).
+read a dst $W
+read b src $W
+const count_mask $W 31
+and count b count_mask
+const zero $W 0
+zero is_zero count
+not active is_zero
+const one $W 1
+xor cmo count one
+zero single cmo
+
+# Luetaan incoming CF ja rakennetaan laajennettu rengas
+read_flag carry CF
+zext cw carry $W
+const sign_shift $W $SIGN
+shl cw_top cw sign_shift
+const one_w $W 1
+lshr a_down a one_w
+or r a_down cw_top
+bit low_out a 0
+
+# OF 1-bit kierroksella: top ^ second_top
+bit new_top r $SIGN
+const second_idx $W $SIGN
+# OF = old_top ^ second_top = old_CF ^ new_top
+xor of carry new_top
+
+write dst r
+flag_if CF low_out active active
+flag_if OF of single active
+preserve_flags remaining
+retire

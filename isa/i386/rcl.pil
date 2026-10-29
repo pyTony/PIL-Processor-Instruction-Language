@@ -1,0 +1,35 @@
+# RCL: Rotate through Carry Left modulo (width + 1).
+read a dst $W
+read b src $W
+const count_mask $W 31
+and count b count_mask
+const zero $W 0
+zero is_zero count
+not active is_zero
+const one $W 1
+xor cmo count one
+zero single cmo
+
+# Luetaan incoming CF ja rakennetaan laajennettu rengas (W + 1 bittiä)
+read_flag carry CF
+zext cw carry 64
+zext aw a 64
+const shift 64 1
+shl aw_shifted aw shift
+or ring aw_shifted cw
+
+# Modulo pyörähdys yhdelle kierrokselle (count == 1 tai yleinen)
+# 1-bit tapauksessa:
+bit top_out a $SIGN
+const w_const 64 $W
+lshr top_down aw w_const
+or ring_rot aw_shifted cw
+trunc r ring_rot $W
+bit new_top r $SIGN
+xor of top_out new_top
+
+write dst r
+flag_if CF top_out active active
+flag_if OF of single active
+preserve_flags remaining
+retire

@@ -423,7 +423,7 @@ impl Image {
             }
             0xc0|0xc1|0xd0|0xd1|0xd2|0xd3=>{
                 if opcode&1==0{w=8;}
-                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror",4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
+                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror", 2=>"rcl", 3=>"rcr",4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
                 dst=view((m&7) as usize,w);src=view(1,w);
                 let memory=m>>6!=3;
                 if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=view(0,w);}
@@ -627,6 +627,7 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
 
 
 
