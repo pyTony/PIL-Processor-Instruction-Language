@@ -159,6 +159,20 @@ impl Image {
                 let text=include_str!("../isa/i386/popa.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (if w==32{"POPAD".into()}else{"POPA".into()},compile(&instantiate(text,w),w))
             }
+            0xc8=>{
+                let alloc = r.unsigned(16)?;
+                let nesting = r.byte()?;
+                if nesting != 0 {
+                    return Err(GuestError::Decode("ENTER with nesting level > 0 is unsupported".into()));
+                }
+                let stack_bits = if matches!(self.segments[2].access, SegmentAccess::Data { big: true, .. }) { 32 } else { 16 };
+                let text = description("enter")
+                    .map_err(GuestError::Decode)?
+                    .replace("$S", &stack_bits.to_string())
+                    .replace("$BYTES", &(w / 8).to_string())
+                    .replace("$ALLOC", &alloc.to_string());
+                (format!("ENTER 0x{alloc:04x}, 0x{nesting:02x}"), compile(&instantiate(text, w), w))
+            }
             0xc9=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let text=description("leave").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
@@ -627,6 +641,7 @@ impl Reader<'_> {
 #[cfg(test)]
 #[path="../tests/unit/guest.rs"]
 mod tests;
+
 
 
 

@@ -1,0 +1,16 @@
+# ENTER: Create stack frame for procedure parameters and local variables.
+# Real-mode / standard C-abi nesting level 0 profile.
+require_width 16_or_32
+read_gpr old_bp 5 $W
+read_gpr old_sp 4 $S
+const step $S $BYTES
+sub pushed_sp old_sp step
+zext stack_offset pushed_sp 32
+store_segment 2 stack_offset old_bp
+trunc new_bp pushed_sp $W
+write_gpr 5 new_bp
+const alloc $S $ALLOC
+sub new_sp pushed_sp alloc
+write_gpr 4 new_sp
+preserve_flags all
+retire

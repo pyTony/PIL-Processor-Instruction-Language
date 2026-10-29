@@ -863,3 +863,8 @@ mod mul_tests;
 #[path = "../tests/unit/rcl_rcr.rs"]
 mod rcl_rcr_tests;
 
+
+#[cfg(test)]
+#[path = "../tests/unit/enter.rs"]
+mod enter_tests;
+
