@@ -1098,3 +1098,11 @@ fn demo_programs_print_exact_factorials_and_a_text_mandelbrot(){
  assert_eq!(lines[0],"::::::::::::::::::---------------------------=====---------::::::::::::::::::::");
  assert_eq!(lines[11],":====+%++++++**@#############################################+===------------::");
 }
+#[test]
+fn ega_and_vga_video_functions_return_unchanged_on_the_cga_bios(){
+ // AX=1130h (font info), 1A00h (display combination), 1003h (blink), 1B00h, 1C00h, 1210h (EGA info).
+ for ax in [0x1130u32,0x1a00,0x1003,0x1b00,0x1c00,0x1210]{
+  let mut p=load(&[0xcd,0x10],"vga.com").unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=0x0010;p.cpu.regs[2]=0x1234;p.cpu.regs[1]=0x5678;
+  let before=p.cpu.clone();service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs,before.regs,"AX={ax:04x}");assert_eq!(p.cpu.eflags,before.eflags);
+ }
+}

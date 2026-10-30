@@ -1998,6 +1998,17 @@
         "all drives are read-only; writes return access denied",
         "no graphics modes yet"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "INT 10h EGA/VGA functions return unchanged on the CGA BIOS",
+      "base": "dev after #60 (EXEC)",
+      "verification": {
+        "linux_rust_tests": 409
+      },
+      "limitations": [
+        "no EGA/VGA fonts, palettes or graphics modes yet"
+      ]
     }
   ],
   "development_increments": [

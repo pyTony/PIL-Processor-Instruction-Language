@@ -1,3 +1,13 @@
+# INT 10h EGA/VGA functions return unchanged on the CGA BIOS — 30 October 2026
+
+`SETLANG SU` in FD14LITE stopped at INT 10h AH=11h (character generator).
+Dine's video BIOS is CGA class on an AT BIOS, which returns from AH=10h-12h
+(reserved entries) and from functions past its table without changing
+anything. AH=10h, 11h, 1Ah, 1Bh and 1Ch now do the same, as AH=12h and 4Fh
+already did. Programs that check AX=1A00h or BL=10h see no VGA and no EGA.
+
+Verification: 409 Rust tests passed on Linux.
+
 # EXEC: programs start from FreeCOM, plus FACTOR and MANDEL — 30 October 2026
 
 Step 4 of Goal 1 (COMMAND.COM in the GUI, DIR, factorial, Mandelbrot). In
