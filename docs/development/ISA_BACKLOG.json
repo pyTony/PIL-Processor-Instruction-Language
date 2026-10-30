@@ -251,8 +251,8 @@
         "JCXZ",
         "JECXZ"
       ],
-      "status": "planned",
-      "remaining": "Address-sized counter,ZF,zero/wrap,preserved flags and targets",
+      "status": "partial",
+      "remaining": "LOOP/LOOPE/LOOPNE (E0-E2) implemented with address-sized counters, ZF conditions and preserved flags; DOSBox-X and both-backend cases pass. Hardware audit and protected-mode targets remain.",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -356,7 +356,7 @@
         "IMUL"
       ],
       "status": "partial",
-      "remaining": "Add implicit AL/AX/EAX products and high/low destinations",
+      "remaining": "Unsigned MUL F6/F7 /4 (AX, DX:AX, EDX:EAX; CF=OF from the upper half) implemented. One-operand IMUL F6/F7 /5 remains.",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

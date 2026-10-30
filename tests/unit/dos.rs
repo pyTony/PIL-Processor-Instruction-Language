@@ -656,3 +656,26 @@ fn dos_line_input_waits_between_keys_and_resumes_same_call(){
  let mut p=r.loaded;line_keys(&mut p,&[0x1579,0x1c0d]);let r=run(p,20).unwrap();
  assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"y\r");assert!(!r.loaded.flushed);assert_eq!(line_bytes(&r.loaded,base,4),[8,1,b'y',13]);
 }
+#[test]
+fn bios_pointing_device_reports_function_not_supported(){
+ for al in [0u32,5,7]{
+  let mut p=load(&[0xcd,0x15],"mouse.com").unwrap();p.cpu.regs[0]=0x1234c200|al;p.cpu.regs[3]=0x5678_0100;p.cpu.eflags=0x2;p.cpu.undefined_flags=1;
+  let ram=p.ram.clone();service(&mut p,0x15,&mut vec![]).unwrap();
+  assert_eq!(p.cpu.regs[0],0x12348600|al);assert_eq!(p.cpu.regs[3],0x5678_0100);assert_eq!(p.cpu.eflags,0x3);assert_eq!(p.cpu.undefined_flags,0);assert_eq!(p.ram,ram);
+ }
+}
+#[test]
+fn mul_and_loop_forms_have_literal_results(){
+ // MOV AX,FFFF; MOV CX,FFFF; MUL CX -> DX:AX=FFFE:0001, CF=OF=1.
+ let mut p=load(&[0xb8,0xff,0xff,0xb9,0xff,0xff,0xf7,0xe1,0xf4],"mul.com").unwrap();p.cpu.regs[2]=0xabcd1234;p.cpu.eflags=0x2;
+ let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x0001);assert_eq!(r.loaded.cpu.regs[2],0xabcdfffe);assert_eq!(r.loaded.cpu.eflags&0x801,0x801);
+ // MUL BL with AL=10h, BL=0Fh -> AX=00F0, CF=OF=0, DX untouched.
+ let mut p=load(&[0xb0,0x10,0xb3,0x0f,0xf6,0xe3,0xf4],"mul8.com").unwrap();p.cpu.regs[0]=0x1234ff00;p.cpu.regs[2]=0x55;p.cpu.eflags=0x803;
+ let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs[0],0x123400f0);assert_eq!(r.loaded.cpu.regs[2],0x55);assert_eq!(r.loaded.cpu.eflags&0x801,0);
+ // LOOP with CX=3 runs INC AX three times and leaves the upper ECX half alone.
+ let mut p=load(&[0x40,0xe2,0xfd,0xf4],"loop.com").unwrap();p.cpu.regs[1]=0x77770003;p.cpu.regs[0]=0;
+ let r=run(p,20).unwrap();assert_eq!(r.loaded.cpu.regs[0],3);assert_eq!(r.loaded.cpu.regs[1],0x77770000);
+ // LOOPNE stops on ZF=1 after one pass: CMP AL,AL sets ZF.
+ let mut p=load(&[0x40,0x38,0xc0,0xe0,0xfb,0xf4],"loopne.com").unwrap();p.cpu.regs[1]=5;p.cpu.regs[0]=0;
+ let r=run(p,20).unwrap();assert_eq!(r.loaded.cpu.regs[0],1);assert_eq!(r.loaded.cpu.regs[1],4);
+}

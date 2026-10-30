@@ -153,6 +153,16 @@ impl Image {
                 let text=description("leave").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 ("LEAVE".into(),compile(&instantiate(text,w),w))
             }
+            0xe0..=0xe2=>{
+                disp=r.byte()? as i8 as i32;
+                let (name,condition)=match opcode{
+                    0xe0=>("LOOPNE","read_flag z ZF\nnot nz z\nand take more nz"),
+                    0xe1=>("LOOPE","read_flag z ZF\nand take more z"),
+                    _=>("LOOP","or take more more"),
+                };
+                let text=include_str!("../isa/i386/loop.pil").replace("$A",if addr32{"32"}else{"16"}).replace("$CONDITION",condition);
+                (format!("{name} 0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w)as u32),compile(&instantiate(text,w),w))
+            }
             0xe3=>{
                 disp=r.byte()? as i8 as i32;
                 let name=if addr32{"JECXZ"}else{"JCXZ"};
@@ -432,7 +442,12 @@ impl Image {
                 let group1=matches!(opcode,0x80|0x81|0x83);
                 let group3=matches!(opcode,0xf6|0xf7);
                 let group45=matches!(opcode,0xfe|0xff);
-                if group3 && extension == 6 {
+                if group3 && extension == 4 {
+                    let memory = m >> 6 != 3;
+                    dst = view(0, w);
+                    src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
+                    (format!("MUL {}", operand_name(src, address)), compile(&mul_pil(w, memory), w))
+                } else if group3 && extension == 6 {
                     let memory = m >> 6 != 3;
                     dst = view(0, w);
                     src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
@@ -467,7 +482,7 @@ impl Image {
             0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
-        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe3|0x0f) {disp_bits=32;}
+        if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe0..=0xe3|0x0f) {disp_bits=32;}
         if opcode==0x0f && disp==0 && disp_bits==8 {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
@@ -520,6 +535,17 @@ fn operand_text(name:&str,w:u8,memory:bool,reverse:bool,immediate:Option<u32>)->
 }
 fn view(register:usize,width:u8)->View {
     if width==8 && register>=4 {View{register:register-4,low:8,width}}else{View{register,low:0,width}}
+}
+// Unsigned MUL: the double-width product goes to AX, DX:AX or EDX:EAX.
+// CF=OF=1 when the upper half is non-zero; SF/ZF/AF/PF are undefined.
+fn mul_pil(w: u8, memory: bool) -> String {
+    let read_source = if memory { format!("read_address addr\nload source addr {w}") } else { format!("read source src {w}") };
+    let d = w * 2;
+    let write = match w {
+        8 => "write_gpr 0 product".to_string(),
+        _ => format!("trunc low product {w}\nconst shift {d} {w}\nlshr high_wide product shift\ntrunc high high_wide {w}\nwrite_gpr 0 low\nwrite_gpr 2 high"),
+    };
+    format!("read_gpr acc 0 {w}\n{read_source}\nzext acc_wide acc {d}\nzext source_wide source {d}\nmul product acc_wide source_wide\nconst upper_shift {d} {w}\nlshr upper product upper_shift\nzero fits upper\nnot overflow fits\n{write}\nflag CF overflow\nflag OF overflow\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire")
 }
 fn div_pil(w: u8, memory: bool) -> String {
     let read_divisor = if memory { format!("read_address addr\nload divisor addr {w}") } else { format!("read divisor src {w}") };

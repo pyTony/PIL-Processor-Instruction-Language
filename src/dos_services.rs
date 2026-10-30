@@ -118,6 +118,13 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
             Ok(None)
         },
+        (0x15,0xc2)=>{
+            // No PS/2 pointing device is modelled: answer as a BIOS without one
+            // (SeaBIOS: CF=1, AH=86h function not supported).
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
         (0x1a,0x00)=>{
             const TICKS_PER_DAY:u32=0x0018_00b0;
             let ticks=p.timer_ticks;

@@ -286,6 +286,30 @@ def cases():
         (0x00010000 + SENTINEL_DX + 0x1234) & 0xffffffff, ARITH, incoming=ARITH)
     add('lea32_esiedi', 32, 0, 0, bytes([0x67, 0x66, 0x8d, 0x84, 0x3e, 0x10, 0x20, 0x00, 0x00]),
         (0x11223344 + 0x55667788 + 0x2010) & 0xffffffff, ARITH, incoming=ARITH)
+    # Unsigned MUL r/m (F6/F7 /4) with CL/CX/ECX; CF=OF report a non-zero upper half.
+    for width, pfx in [(8, b''), (16, b''), (32, b'\x66')]:
+        mask = (1 << width) - 1
+        sign = 1 << (width - 1)
+        for idx, (a, b) in enumerate([(0, mask), (3, 5), (sign, 2), (mask, mask)]):
+            product = a * b
+            initial_a = merge(0x13579bdf, a, width)
+            initial_b = merge(0x2468ace0, b, width)
+            if width == 8:
+                expected_a, expected_d = merge(initial_a, product, 16), SENTINEL_DX
+            else:
+                expected_a = merge(initial_a, product & mask, width)
+                expected_d = merge(SENTINEL_DX, product >> width, width)
+            result.append(dict(name=f'mul{width}_{idx}', width=width, eax=initial_a, ecx=initial_b,
+                               edx=SENTINEL_DX, code=(pfx+bytes([0xf6+(width != 8), 0xe1])).hex(),
+                               expected_eax=expected_a, expected_ecx=initial_b, expected_edx=expected_d,
+                               flags=0x801 if product >> width else 0, flags_mask=0x801 | DF,
+                               incoming_flags=0x202 | ARITH))
+    # LOOP/LOOPE/LOOPNE jumping to themselves: CX counts down, flags stay.
+    for name, opcode, incoming, after in [('loop', 0xe2, 0, 0), ('loopne_nz', 0xe0, 0, 0),
+                                          ('loopne_z', 0xe0, 0x40, 2), ('loope_z', 0xe1, 0x40, 0),
+                                          ('loope_nz', 0xe1, 0, 2)]:
+        add(name, 16, 0, 3, bytes([opcode, 0xfe]), 0, incoming, incoming=incoming, expected_ecx=after)
+    add('loop_a32', 32, 0, 2, bytes([0x67, 0xe2, 0xfd]), 0, ARITH, incoming=ARITH, expected_ecx=0)
     return result
 
 

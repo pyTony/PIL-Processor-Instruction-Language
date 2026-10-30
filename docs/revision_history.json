@@ -2066,6 +2066,22 @@
         "AH48 blocks above the load-time allocation are not executable",
         "no INT15 AHC2 pointing-device BIOS"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "LOOP family, unsigned MUL and INT15 AH=C2",
+      "base": "75a934b",
+      "verification": {
+        "linux_rust_tests": 380,
+        "generated_backend_cases": 214,
+        "dosbox_cpu_cases": "346/346 in DOSBox-X 2024.03.01",
+        "freedos_probe": "not rerun"
+      },
+      "limitations": [
+        "one-operand IMUL F6/F7 /5 not yet",
+        "no PS/2 mouse model",
+        "PUSHA/POPA, RCL/RCR, DAS still missing"
+      ]
     }
   ]
 }
