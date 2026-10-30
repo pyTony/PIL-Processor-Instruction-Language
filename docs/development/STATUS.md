@@ -1,3 +1,28 @@
+# INT 10h EGA/VGA functions on the CGA BIOS, and handle duplication — 30 October 2026
+
+`SETLANG SU` in FD14LITE stopped at INT 10h AH=11h (character generator).
+Dine's video BIOS is CGA class on an AT BIOS, which returns from AH=10h-12h
+(reserved entries) and from functions past its table without changing
+anything. AH=10h, 11h, 1Ah, 1Bh and 1Ch now do the same, as AH=12h and 4Fh
+already did. Programs that check AX=1A00h or BL=10h see no VGA and no EGA.
+
+`MORE SETLANG.BAT` stopped at INT 21h AH=45h. AH45 (duplicate a handle into
+the lowest free one) and AH46 (force CX to refer to BX's file, closing CX
+first) now work. Handles are resolved through their JFT entry, so duplicates
+share one file position, and a file stays open until no handle in the running
+program or its waiting parents refers to it. Writing to a file handle returns
+access denied (5), since every file is opened read-only.
+
+The terminal (`tools/dos_terminal.py`) now passes characters beyond ASCII
+that the host keyboard layout produced, such as ä, ö and å, in code page 437,
+with the scan code of their key in the Nordic layouts. Characters 437 lacks
+(such as €) are still dropped. Since the host already applies the layout, no
+DOS KEYB driver is needed. The screen now draws all 256 characters with their
+IBM PC glyphs, including ☺ ♥ ♪ ► ↑ for 01h-1Fh and ⌂ for 7Fh, which Python's
+cp437 codec leaves as control characters; § and ¶ can be typed as 15h/14h.
+
+Verification: 410 Rust tests passed on Linux.
+
 # EXEC: programs start from FreeCOM, plus FACTOR and MANDEL — 30 October 2026
 
 Step 4 of Goal 1 (COMMAND.COM in the GUI, DIR, factorial, Mandelbrot). In

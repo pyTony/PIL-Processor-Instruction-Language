@@ -21,7 +21,12 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('F10', ''), (0, 0x44))
         self.assertEqual(term.key_code('c', '\x03', True), (3, 0x2e))
         self.assertIsNone(term.key_code('Shift_L', ''))
-        self.assertIsNone(term.key_code('adiaeresis', 'ä'))
+        self.assertEqual(term.key_code('adiaeresis', 'ä'), (0x84, 0x28))
+        self.assertEqual(term.key_code('Odiaeresis', 'Ö'), (0x99, 0x27))
+        self.assertEqual(term.key_code('aring', 'å'), (0x86, 0x1a))
+        self.assertIsNone(term.key_code('EuroSign', '€'))
+        self.assertEqual(term.key_code('section', '§'), (0x15, 0x29))
+        self.assertEqual(term.key_code('eacute', 'é'), (0x82, 0))
 
     def test_screen_rows_decode_cp437_characters_and_attributes(self):
         cells = bytearray(b' \x07' * 80 * 25)
@@ -30,6 +35,14 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(len(rows), 25)
         self.assertEqual(rows[0][0][:3], '╔AB')
         self.assertEqual(rows[0][1][:4], [0x1f, 0x1f, 0x4e, 0x07])
+
+    def test_all_256_characters_have_their_pc_glyph(self):
+        cells = bytearray(b' \x07' * 80 * 25)
+        cells[0:512:2] = bytes(range(256))
+        text = ''.join(row[0] for row in term.screen_rows({'screen': cells.hex(), 'columns': 80}))[:256]
+        self.assertEqual(text[:4] + text[0x0f] + text[0x1f] + text[0x7f], ' ☺☻♥☼▼⌂')
+        self.assertEqual(text[0x80] + text[0xb0] + text[0xdb] + text[0xe1] + text[0xfe], 'Ç░█ß■')
+        self.assertEqual(len(set(text[1:])), 255, 'no two codes share a glyph except 00h/20h')
 
     def test_session_runs_waits_for_keys_and_exits(self):
         engine = term.find_engine()

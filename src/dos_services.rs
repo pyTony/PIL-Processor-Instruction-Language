@@ -170,7 +170,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
         (0x21,ah @ (0x38|0x65))=>{nls::service(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==0=>{files::service(p,0x44)?;Ok(None)},
-        (0x21,ah @ (0x0e|0x19|0x29|0x36|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x5a|0x5b|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
+        (0x21,ah @ (0x0e|0x19|0x29|0x36|0x45|0x46|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x5a|0x5b|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
         (0x21,0x51|0x62)=>{
             // DOS 3+: AH51 and AH62 both return the current PSP segment.
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
@@ -184,10 +184,13 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             // AX=1680h leaves AL=80h (time slice not released).
             Ok(None)
         },
-        (0x10,0x12|0x4f)=>{
-            // CGA-class video BIOS: no EGA/VGA alternate functions and no VBE.
-            // Such a BIOS ignores these calls, so BL=10h stays 10h (no EGA)
-            // and AX=4F00h does not return AL=4Fh.
+        (0x10,0x10|0x11|0x12|0x1a|0x1b|0x1c|0x4f)=>{
+            // CGA-class video BIOS: no EGA/VGA palette (10h), font (11h),
+            // alternate (12h), display combination (1Ah) or state (1Bh/1Ch)
+            // functions and no VBE. The AT BIOS returns from these unchanged
+            // (10h-12h are reserved entries, the rest are past its table), so
+            // BL=10h stays 10h (no EGA), AX=1A00h does not return AL=1Ah (no
+            // VGA) and AX=4F00h does not return AL=4Fh.
             Ok(None)
         },
         (0x15,0xe8)=>{
@@ -277,11 +280,13 @@ pub(super) fn jft(p:&Loaded,handle:u16)->Result<u32,String>{
 }
 fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let handle=p.cpu.regs[3]&0xffff;
-    if handle>=20||p.open_handles&(1<<handle)==0{
+    let Some(sft)=files::system_file(p,handle as u16)? else{
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
         return Ok(());
-    }
-    if handle>=3{return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
+    };
+    // Files are opened for reading only, so writing to one is access denied.
+    if sft>=5{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|5;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(());}
+    if sft>=3{return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
     let offset=p.cpu.regs[2]&0xffff;let count=p.cpu.regs[1]&0xffff;
     if offset+count>0x10000{return Err("DOS write buffer exceeds segment end".into());}
     if count as usize>out.remaining(){return Err("DOS output limit reached before handle write".into());}
@@ -441,10 +446,9 @@ fn line_edit(p:&mut Loaded,out:&mut impl Output,at:&dyn Fn(u32)->Result<u32,Stri
         *first=false;
     }
 }
-/// Handles 0..2 still on CON: open, and not a file AH3D opened.
+/// Handles on CON: system files 0..2, also through AH45/46 copies.
 fn console_handle(p:&Loaded)->bool{
-    let handle=(p.cpu.regs[3]&0xffff)as u16;
-    handle<3&&p.open_handles&(1<<handle)!=0&&!p.drive.is_file(handle)
+    matches!(files::system_file(p,(p.cpu.regs[3]&0xffff)as u16),Ok(Some(0..=2)))
 }
 /// AH3F from CON reads cooked lines, as FreeDOS read_line_handle does: a line
 /// is edited as AH0A edits it (127 characters), CR echoes LF, and the line
