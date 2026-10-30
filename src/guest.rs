@@ -302,6 +302,13 @@ impl Image {
                 };
                 (format!("{} {operand}",name.to_ascii_uppercase()),compile(&instantiate(text,w),w))
             }
+            0x60|0x61=>{
+                let stack_bits=if matches!(self.segments[SegmentRegister::Ss.index()].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
+                let file=if opcode==0x60{include_str!("../isa/i386/pusha.pil")}else{include_str!("../isa/i386/popa.pil")};
+                let text=file.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("{}{}",if opcode==0x60{"PUSHA"}else{"POPA"},if w==32{"D"}else{""}),compile(&instantiate(text,w),w))
+            }
             0xb0..=0xbf=>{
                 if opcode<0xb8 {w=8;}
                 dst=view((opcode&7) as usize,w);src=dst;
@@ -387,13 +394,18 @@ impl Image {
             }
             0xc0|0xc1|0xd0|0xd1|0xd2|0xd3=>{
                 if opcode&1==0{w=8;}
-                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror",4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
+                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror",2=>"rcl",3=>"rcr",4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
                 dst=view((m&7) as usize,w);src=view(1,w);
                 let memory=m>>6!=3;
                 if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=view(0,w);}
                 let immediate=match opcode{0xc0|0xc1=>Some(u32::from(r.byte()?)),0xd0|0xd1=>Some(1),_=>None};
                 let text=operand_text(name,w,memory,false,immediate)?;
                 (format!("{} {},{}",name.to_ascii_uppercase(),operand_name(dst,address),immediate.map(|v|format!("0x{v:02x}")).unwrap_or_else(||"CL".into())),compile(&text,w))
+            }
+            0x27|0x2f=>{
+                w=8;dst=view(0,w);src=dst;
+                let name=if opcode==0x27{"daa"}else{"das"};
+                (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
             }
             0x9e|0x9f=>{
                 w=8;dst=view(4,w);src=dst;

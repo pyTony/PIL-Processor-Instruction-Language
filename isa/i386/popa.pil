@@ -1,0 +1,38 @@
+# POPA/POPAD: pop DI, SI, BP, (skip SP), BX, DX, CX, AX; SP/ESP rises by 8 slots.
+require_width 16_or_32
+read_gpr old_sp 4 $S
+const step $S $BYTES
+zext o0 old_sp 32
+load v7 o0 $W
+add a1 old_sp step
+zext o1 a1 32
+load v6 o1 $W
+add a2 a1 step
+zext o2 a2 32
+load v5 o2 $W
+add a3 a2 step
+zext o3 a3 32
+load v4 o3 $W
+add a4 a3 step
+zext o4 a4 32
+load v3 o4 $W
+add a5 a4 step
+zext o5 a5 32
+load v2 o5 $W
+add a6 a5 step
+zext o6 a6 32
+load v1 o6 $W
+add a7 a6 step
+zext o7 a7 32
+load v0 o7 $W
+add new_sp a7 step
+write_gpr 7 v7
+write_gpr 6 v6
+write_gpr 5 v5
+write_gpr 3 v3
+write_gpr 2 v2
+write_gpr 1 v1
+write_gpr 0 v0
+write_gpr 4 new_sp
+preserve_flags all
+retire

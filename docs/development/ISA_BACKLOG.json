@@ -265,8 +265,8 @@
         "POPA",
         "POPAD"
       ],
-      "status": "planned",
-      "remaining": "Original SP snapshot,ordered accesses,386-specific POPAD behavior",
+      "status": "partial",
+      "remaining": "PUSHA/PUSHAD and POPA/POPAD implemented with the original SP snapshot and eight staged stores; 386-specific POPAD upper-ESP behaviour and hardware audit remain.",
       "modern_user_mode_oracle": "legacy_only",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -292,7 +292,7 @@
         "RCR"
       ],
       "status": "partial",
-      "remaining": "RCL/RCR and full mode/prefix audit;ROL/ROR8/16/32 implemented",
+      "remaining": "ROL/ROR and RCL/RCR 8/16/32 implemented (RCL/RCR: count mod width+1); full mode/prefix audit remains",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -393,8 +393,8 @@
         "DAA",
         "DAS"
       ],
-      "status": "planned",
-      "remaining": "386 defined results and explicit undefined metadata",
+      "status": "partial",
+      "remaining": "DAA/DAS implemented from SDM pseudocode (OF undefined); AAA/AAS/AAM/AAD remain",
       "modern_user_mode_oracle": "legacy_only",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

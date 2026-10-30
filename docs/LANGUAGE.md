@@ -152,10 +152,10 @@ fetch or the fall-through limit. The monitor performs CS fetch checks separately
 |---|---|
 | `read_address out` | Caller-supplied address/offset as `bv<32>` |
 | `load out address WIDTH` | 8/16/32-bit little-endian RAM read; address must be `bv<32>` |
-| `store address input` | Stage an 8/16/32-bit RAM store (at most two), width inferred from input |
+| `store address input` | Stage an 8/16/32-bit RAM store (at most eight), width inferred from input |
 
 Any of these statements, including `read_address` alone, requires a RAM-capable
-execution API. Multiple loads are allowed, but at most two stores and no loads
+execution API. Multiple loads are allowed, but at most eight stores and no loads
 after that store. Checks occur in token order. A store checks permission before
 being staged and is published at retirement before infallible CPU-state commits.
 Later faults and overlap conflicts cancel the staged store and CPU effects.
@@ -299,7 +299,7 @@ operations;flags and markers remain intact and stores commit after checks.
 
 `load_segment out SEG offset WIDTH` and `store_segment SEG offset value` use
 explicit loaded caches per access (0..5 =ES,CS,SS,DS,FS,GS). Offsets are bv32;
-widths8/16/32;at most two ordered staged stores are allowed. Source reads precede the store and
+widths8/16/32;at most eight ordered staged stores are allowed. Source reads precede the store and
 all effects of a faulting element remain uncommitted. Requires machine context.
 Named GPR reads/writes now also admit low8 values for AL string operations.
 
@@ -446,7 +446,7 @@ after validation. A source segment override never redirects the stack store.
 
 ### Two-store and far CALL profile (0.32)
 
-A program may stage at most two `store`/`store_segment` effects in total.
+A program may stage at most eight `store`/`store_segment` effects in total (PUSHA/PUSHAD uses all eight).
 All loads must precede the first store. Each store checks its full destination
 before staging; retirement commits writes in program order only after all
 instruction checks pass. Overlapping stores use the later store's bytes.

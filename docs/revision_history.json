@@ -2082,6 +2082,22 @@
         "no PS/2 mouse model",
         "PUSHA/POPA, RCL/RCR, DAS still missing"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "RCL/RCR, DAA/DAS and PUSHA/POPA",
+      "base": "isa/loop-mul-int15",
+      "verification": {
+        "linux_rust_tests": 381,
+        "generated_backend_cases": 221,
+        "dosbox_cpu_cases": "384/384 in DOSBox-X 2024.03.01",
+        "freedos_probe": "not rerun"
+      },
+      "limitations": [
+        "AAA/AAS/AAM/AAD not yet",
+        "FPU (FNINIT) and SMSW r32 remain",
+        "one-operand IMUL F6/F7 /5 not yet"
+      ]
     }
   ]
 }

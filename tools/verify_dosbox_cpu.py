@@ -304,6 +304,58 @@ def cases():
                                expected_eax=expected_a, expected_ecx=initial_b, expected_edx=expected_d,
                                flags=0x801 if product >> width else 0, flags_mask=0x801 | DF,
                                incoming_flags=0x202 | ARITH))
+    # Rotates through carry (RCL /2, RCR /3): count 1 (D0/D1) with CF 0 and 1, CL=9 and imm8=3.
+    for width, pfx in [(8, b''), (16, b''), (32, b'\x66')]:
+        mask = (1 << width) - 1
+        for name, ext in [('rcl', 2), ('rcr', 3)]:
+            a = (1 << (width - 1)) | 0x35
+            # Four forms per width keep CPUTEST.COM inside the 64 KB COM limit.
+            for label, count, carry, code in [('1', 1, 0, bytes([0xd0 + (width != 8), 0xc0 | (ext << 3)])),
+                                              ('1', 1, 1, bytes([0xd0 + (width != 8), 0xc0 | (ext << 3)])),
+                                              ('cl9', 9, 1, bytes([0xd2 + (width != 8), 0xc0 | (ext << 3)])),
+                                              ('imm3', 3, 0, bytes([0xc0 + (width != 8), 0xc0 | (ext << 3), 3]))]:
+                turns = (count & 31) % (width + 1)
+                v = (carry << width) | a
+                ring = (1 << (width + 1)) - 1
+                if name == 'rcl':
+                    r = ((v << turns) | (v >> (width + 1 - turns))) & ring
+                else:
+                    r = ((v >> turns) | (v << (width + 1 - turns))) & ring
+                value, cf = r & mask, r >> width
+                flags = 0x0d4 | cf
+                flag_mask = 1 | DF
+                if count == 1:
+                    if name == 'rcl':
+                        of = ((value >> (width - 1)) & 1) ^ cf
+                    else:
+                        of = ((a >> (width - 1)) & 1) ^ carry
+                    flags |= of << 11
+                    flag_mask |= 0x800
+                add(f'{name}{width}_{label}_c{carry}', width, a, count if label != '1' else 0,
+                    pfx + code, value, flags, flag_mask=flag_mask, incoming=0x0d4 | carry)
+    # DAA/DAS from the Intel SDM pseudocode; OF is undefined.
+    def decimal_adjust(al, cf, af, subtract):
+        old_al, old_cf, cf = al, cf, 0
+        if (al & 0x0f) > 9 or af:
+            borrow = al < 6 if subtract else al + 6 > 0xff
+            al = (al - 6 if subtract else al + 6) & 0xff
+            cf, af = old_cf | borrow, 1
+        else:
+            af = 0
+        if old_al > 0x99 or old_cf:
+            al = (al - 0x60 if subtract else al + 0x60) & 0xff
+            cf = 1
+        return al, (parity_flags(al, 8) & ~0x11) | cf | (af << 4)
+    for name, opcode in [('daa', 0x27), ('das', 0x2f)]:
+        for index, (al, cf, af) in enumerate([(0x0f, 0, 0), (0x9a, 0, 0), (0x99, 1, 0), (0x45, 0, 1), (0x05, 1, 1)]):
+            value, flags = decimal_adjust(al, cf, af, name == 'das')
+            add(f'{name}_{index}', 8, al, 0, bytes([opcode]), value, flags,
+                flag_mask=(ARITH & ~0x800) | DF, incoming=cf | (af << 4))
+    # PUSHA/POPA round trip, and the first popped slot is DI/EDI.
+    add('pusha16_popa', 16, 0x1234, 0x5678, bytes.fromhex('6031c031c961'), 0x1234, 0, flag_mask=DF)
+    add('pusha16_order', 16, 0x1234, 0, bytes.fromhex('605883c40e'), 0x7788, 0, flag_mask=DF)
+    add('pushad_popad', 32, 0x12345678, 0x9abcdef0, bytes.fromhex('66606631c06631c96661'), 0x12345678, 0, flag_mask=DF)
+    add('pushad_order', 32, 0x12345678, 0, bytes.fromhex('6660665883c41c'), 0x55667788, 0, flag_mask=DF)
     # LOOP/LOOPE/LOOPNE jumping to themselves: CX counts down, flags stay.
     for name, opcode, incoming, after in [('loop', 0xe2, 0, 0), ('loopne_nz', 0xe0, 0, 0),
                                           ('loopne_z', 0xe0, 0x40, 2), ('loope_z', 0xe1, 0x40, 0),
@@ -342,8 +394,12 @@ class ComBuilder:
         self.ref(name, True)
 
     def puts(self, text):
-        name = f'text_{len(self.data)}'
-        self.data.append((name, text.encode('ascii')+b'$'))
+        # Identical strings share one copy so the CPU suite fits in one COM.
+        data = text.encode('ascii')+b'$'
+        name = next((n for n, d in self.data if d == data), None)
+        if name is None:
+            name = f'text_{len(self.data)}'
+            self.data.append((name, data))
         self.emit(bytes([0xba]))
         self.ref(name)
         self.emit(bytes.fromhex('b409cd21'))
@@ -391,10 +447,12 @@ def build(tests):
         b.emit(bytes.fromhex('81fb'))  # CMP BX, expected defined/preserved bits.
         b.word(case['flags'] & case['flags_mask'])
         b.branch(fail, True)
-        b.puts('PASS '+tag+'\r\n')
+        b.puts('PASS ')
+        b.puts(tag+'\r\n')
         b.branch(done)
         b.label(fail)
-        b.puts('FAIL '+tag+'\r\n')
+        b.puts('FAIL ')
+        b.puts(tag+'\r\n')
         b.emit(bytes.fromhex('ff06'))
         b.ref('fail_count')  # INC word [fail_count]
         b.label(done)

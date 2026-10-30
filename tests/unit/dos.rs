@@ -679,3 +679,23 @@ fn mul_and_loop_forms_have_literal_results(){
  let mut p=load(&[0x40,0x38,0xc0,0xe0,0xfb,0xf4],"loopne.com").unwrap();p.cpu.regs[1]=5;p.cpu.regs[0]=0;
  let r=run(p,20).unwrap();assert_eq!(r.loaded.cpu.regs[0],1);assert_eq!(r.loaded.cpu.regs[1],4);
 }
+#[test]
+fn rotate_through_carry_decimal_adjust_and_pusha_have_literal_results(){
+ // STC; MOV AL,81h; RCL AL,1 -> AL=03, CF=1, OF=MSB(0)^CF=1.
+ let r=run(load(&[0xf9,0xb0,0x81,0xd0,0xd0,0xf4],"rcl.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x03);assert_eq!(r.loaded.cpu.eflags&0x801,0x801);
+ // CLC; MOV AX,0001; MOV CL,17; RCR AX,CL -> count 17 mod 17 = 0: AX and CF unchanged.
+ let r=run(load(&[0xf8,0xb8,0x01,0x00,0xb1,0x11,0xd3,0xd8,0xf4],"rcr.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,0);
+ // STC; MOV AX,0002; RCR AX,1 -> AX=8001, CF=0, OF=MSB(0002)^1=1.
+ let r=run(load(&[0xf9,0xb8,0x02,0x00,0xd1,0xd8,0xf4],"rcr1.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x8001);assert_eq!(r.loaded.cpu.eflags&0x801,0x800);
+ // MOV AL,79h; ADD AL,35h; DAA -> AL=14h, CF=1 (79+35=114 BCD).
+ let r=run(load(&[0xb0,0x79,0x04,0x35,0x27,0xf4],"daa.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x14);assert_eq!(r.loaded.cpu.eflags&1,1);
+ // MOV AL,35h; SUB AL,47h; DAS -> AL=88h, CF=1 (35-47 = -12 -> 88 with borrow).
+ let r=run(load(&[0xb0,0x35,0x2c,0x47,0x2f,0xf4],"das.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x88);assert_eq!(r.loaded.cpu.eflags&1,1);
+ // PUSHA stores AX..DI below SP with the original SP in the fifth slot; POPA skips it.
+ let mut p=load(&[0x60,0xf4],"pusha.com").unwrap();p.cpu.regs=[0x1111,0x2222,0x3333,0x4444,0xfffe,0x6666,0x7777,0x8888];
+ let r=run(p,10).unwrap();let ss=r.loaded.image.segments[SegmentRegister::Ss.index()].base;assert_eq!(r.loaded.cpu.regs[4],0xffee);
+ let words:Vec<u32>=(0..8).map(|i|r.loaded.ram.load(ss+0xffee+i*2,MemWidth::Word).unwrap()).collect();
+ assert_eq!(words,[0x8888,0x7777,0x6666,0xfffe,0x4444,0x3333,0x2222,0x1111]);
+ let mut p=load(&[0x61,0xf4],"popa.com").unwrap();p.cpu.regs[4]=0xffee;for (i,w) in words.iter().enumerate(){p.ram.store(ss+0xffee+i as u32*2,MemWidth::Word,*w).unwrap();}
+ let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs,[0x1111,0x2222,0x3333,0x4444,0xfffe,0x6666,0x7777,0x8888]);
+}
