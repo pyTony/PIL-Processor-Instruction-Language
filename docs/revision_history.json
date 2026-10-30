@@ -2211,6 +2211,24 @@
         "text pages only (B800); no graphics modes yet",
         "US key layout; keys without an ASCII value outside the listed set are ignored"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "Drives C: and D:, DIR in FreeCOM, IDIV and country information",
+      "base": "dev after #56 plus the DOS data area (#57) and the session (#58)",
+      "verification": {
+        "linux_rust_tests": 404,
+        "native_verifier_cases": 247,
+        "dosbox_x_cases": 519,
+        "manual": "FreeCOM 0.86 driven through DIR, CD, C:/D: and TYPE on a test FAT16 image and a host folder"
+      },
+      "limitations": [
+        "all drives are read-only; writes return access denied",
+        "no long-file-name API (AH71): non-8.3 host names appear only as BASIS~N aliases",
+        "only country 001 / code page 437",
+        "divide error stops the run instead of reaching INT 0",
+        "EXEC (AH4B) is not modelled yet, so external programs do not start from COMMAND.COM"
+      ]
     }
   ]
 }

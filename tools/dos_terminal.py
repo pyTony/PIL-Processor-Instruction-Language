@@ -6,6 +6,10 @@ and sends key presses as BIOS keystrokes. Execution, DOS services and the
 screen contents all come from the engine; this file only displays them.
 
     python tools/dos_terminal.py images/FD14LITE.img::COMMAND.COM
+    python tools/dos_terminal.py --mount dosfiles images/FD14LITE.img::COMMAND.COM
+
+An image becomes read-only drive C:; --mount adds a host folder as the next
+drive (D: after an image), also read-only.
 """
 import argparse
 import json
@@ -66,8 +70,9 @@ def screen_rows(reply):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program):
-        self.process = subprocess.Popen([str(engine), '--dos-session', str(program)], stdin=subprocess.PIPE,
+    def __init__(self, engine, program, mount=None):
+        mount_args = ['--mount', str(mount)] if mount else []
+        self.process = subprocess.Popen([str(engine), '--dos-session', *mount_args, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.seq = 0
@@ -98,7 +103,7 @@ class Session:
             self.process.kill()
 
 
-def make_app(root, engine, program):
+def make_app(root, engine, program, mount=None):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -112,7 +117,7 @@ def make_app(root, engine, program):
     for attr in range(256):
         text.tag_configure(f'a{attr}', foreground=PALETTE[attr & 15], background=PALETTE[(attr >> 4) & 7])
     text.tag_configure('cursor', underline=True)
-    session = Session(engine, program)
+    session = Session(engine, program, mount)
     keys = []
 
     def draw(reply):
@@ -169,11 +174,12 @@ def make_app(root, engine, program):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('program', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH')
+    parser.add_argument('--mount', help='host folder shown as the next read-only drive (D: after an image)')
     parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
     args = parser.parse_args(argv)
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program)
+    make_app(root, find_engine(args.engine), args.program, args.mount)
     root.mainloop()
 
 

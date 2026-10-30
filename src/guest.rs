@@ -48,12 +48,15 @@ pub enum Operation {
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>}
+/// `fetch_base+start..fetch_base+end` is the program; `system` is one more linear
+/// range of host-provided code (such as Dine's case-map routine) that may run.
+pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:(u32,u32),pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>}
 impl Image {
     // Keep the imported physical code window fixed when CS changes.
     pub fn contains_offset(&self,offset:u32)->bool{
         let at=u64::from(self.segments[1].base)+u64::from(offset);
-        at>=u64::from(self.fetch_base)+u64::from(self.start)&&at<u64::from(self.fetch_base)+u64::from(self.end)
+        (at>=u64::from(self.fetch_base)+u64::from(self.start)&&at<u64::from(self.fetch_base)+u64::from(self.end))
+            ||(at>=u64::from(self.system.0)&&at<u64::from(self.system.1))
     }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
     pub fn segment_state(&self)->SegmentState{SegmentState{msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,flag_checkpoint:self.flag_checkpoint}}
@@ -68,7 +71,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:(0,0),segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -83,7 +86,7 @@ impl Image {
             SegmentAccess::Code{readable}=>readable,
             _=>false,
         };
-        if readable && last_off<=u64::from(cs.limit) && lin_start>=img_start && lin_end<=img_end && lin_end<=0x1_0000_0000 {
+        if readable && last_off<=u64::from(cs.limit) && ((lin_start>=img_start && lin_end<=img_end)||(lin_start>=u64::from(self.system.0)&&lin_end<=u64::from(self.system.1))) && lin_end<=0x1_0000_0000 {
             if let Some(slice)=ram.bytes().get(lin_start as usize..lin_end as usize) {
                 let mut bytes=[0u8;15];
                 bytes[..length as usize].copy_from_slice(slice);
@@ -528,6 +531,11 @@ impl Image {
                     src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
                     let text = div_pil(w, memory);
                     (format!("DIV {}", operand_name(src, address)), compile(&text, w))
+                } else if group3 && extension == 7 {
+                    let memory = m >> 6 != 3;
+                    dst = view(0, w);
+                    src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
+                    (format!("IDIV {}", operand_name(src, address)), compile(&idiv_pil(w, memory), w))
                 } else {
                 let name=if group1{alu_name(extension)}else if group3 {
                     match extension{0=>"test",2=>"not",3=>"neg",_=>return Err(GuestError::Decode("unsupported group 3 extension".into()))}
@@ -641,6 +649,23 @@ fn div_pil(w: u8, memory: bool) -> String {
         32 => format!("read_gpr eax 0 32\nread_gpr edx 2 32\nzext eax_64 eax 64\nzext edx_64 edx 64\nconst shift 64 32\nshl edx_high edx_64 shift\nor dividend edx_high eax_64\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nzext divisor_64 divisor 64\ndiv q_64 dividend divisor_64\nrem r_64 dividend divisor_64\ntrunc q_32 q_64 32\ntrunc r_32 r_64 32\nzext q_check q_32 64\nult overflow q_check q_64\nnot no_overflow overflow\nrequire no_overflow\nwrite_gpr 0 q_32\nwrite_gpr 2 r_32\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
         _ => unreachable!(),
     }
+}
+/// IDIV: signed division of AX, DX:AX or EDX:EAX through magnitudes. A zero
+/// divisor or a quotient outside the signed operand range is #DE (`require`).
+/// The remainder takes the dividend's sign; flags are undefined.
+fn idiv_pil(w: u8, memory: bool) -> String {
+    let read_divisor = if memory { format!("read_address addr\nload divisor addr {w}") } else { format!("read divisor src {w}") };
+    let d = w * 2;
+    let dividend = match w {
+        8 => "read_gpr dividend 0 16".to_string(),
+        _ => format!("read_gpr low 0 {w}\nread_gpr high 2 {w}\nzext low_wide low {d}\nzext high_wide high {d}\nconst shift {d} {w}\nshl high_up high_wide shift\nor dividend high_up low_wide"),
+    };
+    let write = match w {
+        8 => "zext q_wide q_w 16\nzext r_wide r_w 16\nconst shift 16 8\nshl r_high r_wide shift\nor ax_new r_high q_wide\nwrite_gpr 0 ax_new".to_string(),
+        _ => "write_gpr 0 q_w\nwrite_gpr 2 r_w".to_string(),
+    };
+    let top = d - 1;
+    format!("{dividend}\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nsext d_wide divisor {d}\nconst none {d} 0\nbit n_sign dividend {top}\nbit d_sign d_wide {top}\nsub n_neg none dividend\nselect n_abs n_sign n_neg dividend\nsub d_neg none d_wide\nselect d_abs d_sign d_neg d_wide\ndiv q_abs n_abs d_abs\nrem r_abs n_abs d_abs\nxor q_sign n_sign d_sign\nsub q_neg none q_abs\nselect q q_sign q_neg q_abs\nsub r_neg none r_abs\nselect r n_sign r_neg r_abs\ntrunc q_w q {w}\nsext q_check q_w {d}\nxor q_lost q_check q\nzero q_fits q_lost\nrequire q_fits\ntrunc r_w r {w}\n{write}\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire")
 }
 fn gpr(n:u8)->Gpr {[Gpr::Eax,Gpr::Ecx,Gpr::Edx,Gpr::Ebx,Gpr::Esp,Gpr::Ebp,Gpr::Esi,Gpr::Edi][n as usize]}
 struct Reader<'a> {image:&'a Image,ram:&'a Ram,start:u32,pos:u32}

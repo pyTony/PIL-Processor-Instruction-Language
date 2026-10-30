@@ -33,6 +33,10 @@ mod services;
 mod console;
 #[path="dos_session.rs"]
 pub mod session;
+#[path="dos_files.rs"]
+mod files;
+#[path="dos_nls.rs"]
+mod nls;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
@@ -54,9 +58,9 @@ pub struct Loaded{
     /// AH58 allocation strategy (first fit only is modelled) and the AH31
     /// paragraphs kept resident when the program terminated that way.
     pub alloc_strategy:u8,pub resident:Option<u16>,
-    /// The program's own file, the only file the probe can open (read-only),
-    /// its upper-case base name, and the open handle with its position.
-    pub own_file:Vec<u8>,pub own_name:Vec<u8>,pub own_open:Option<(u16,u32)>,
+    /// The program's own file, which opens read-only by its upper-case base
+    /// name from any directory, and the drive with the files AH3D opened.
+    pub own_file:std::sync::Arc<Vec<u8>>,pub own_name:Vec<u8>,pub drive:files::Drives,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -81,7 +85,8 @@ fn dos_data(ram:&mut Ram)->Result<(),String>{
     for field in [0x00,0x04,0x08,0x0c,0x12,0x16,0x1a]{data[usize::from(SYSVARS)+field..][..4].fill(0xff);}
     put_word(&mut data,usize::from(SYSVARS)+0x10,512);
     let nul=usize::from(SYSVARS)+0x22;data[nul..nul+4].fill(0xff);put_word(&mut data,nul+4,0x8004);data[nul+10..nul+18].copy_from_slice(b"NUL     ");
-    ram.write_bytes(u32::from(DOSDATA)*16,&data).map_err(|e|format!("DOS data area: {e:?}"))
+    ram.write_bytes(u32::from(DOSDATA)*16,&data).map_err(|e|format!("DOS data area: {e:?}"))?;
+    nls::install(ram)
 }
 fn rom(ram:&mut Ram)->Result<(),String>{
     let mut top=[0xffu8;16];
@@ -109,18 +114,29 @@ pub fn read_file(path:&Path)->Result<Vec<u8>,String>{
     file.take((MAX_FILE+1)as u64).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
     if bytes.len()>MAX_FILE{return Err("DOS input exceeds 1 MiB file limit".into());}Ok(bytes)
 }
-/// DOS 3+ environment: COMSPEC, an empty string ending the list, the count
-/// word 1, then the program's own path, on the default drive A:.
 fn base_name(path:&[u8])->Vec<u8>{
     let start=path.iter().rposition(|&b|matches!(b,b'/'|b'\\'|b':')).map_or(0,|i|i+1);
     path[start..].iter().filter(|b|b.is_ascii_graphic()).map(|b|b.to_ascii_uppercase()).take(12).collect()
 }
-fn environment(name:&str)->Vec<u8>{
-    let base=base_name(name.as_bytes());
-    let mut env=b"COMSPEC=A:\\COMMAND.COM\0\0\x01\0A:\\".to_vec();env.extend(base);env.push(0);
+/// DOS 3+ environment: COMSPEC, an empty string ending the list, the count
+/// word 1, then the program's own path: `path` on the default drive.
+fn environment(path:&[u8],drive:u8)->Vec<u8>{
+    let drive=char::from(drive);
+    let mut env=format!("COMSPEC={drive}:\\COMMAND.COM\0\0\x01\0{drive}:\\").into_bytes();env.extend(path);env.push(0);
     env
 }
-pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
+pub use files::Source;
+/// Loads a program with no drives: A: is an empty read-only drive.
+pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{load_with_drives(bytes,name,Vec::new(),None)}
+/// Loads a program with `drives` as read-only C:, D:, ...; `path` is where the
+/// program lies on C: (else its base name in the root).
+pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>)->Result<Loaded,String>{
+    for source in &drives{if let Source::Host(root)=source{if !root.is_dir(){return Err(format!("mount {} is not a folder",root.display()));}}}
+    let drive=files::Drives::new(drives);
+    let program=match path{
+        Some(path)=>path.bytes().map(|b|if b==b'/'{b'\\'}else{b.to_ascii_uppercase()}).filter(|b|b.is_ascii_graphic()).take(64).collect(),
+        None=>base_name(name.as_bytes()),
+    };
     if bytes.is_empty()||bytes.len()>MAX_FILE{return Err("DOS input must contain 1..1048576 bytes".into());}
     let mz=bytes.starts_with(b"MZ")||bytes.starts_with(b"ZM");
     if !mz&&Path::new(name).extension().is_some_and(|x|x.to_str().is_some_and(|s|s.eq_ignore_ascii_case("exe"))){
@@ -179,7 +195,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;put_word(&mut psp,0x2c,ENV);
     put_word(&mut psp,0x32,20);put_word(&mut psp,0x34,0x18);put_word(&mut psp,0x36,PSP);
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
-    ram.write_bytes(u32::from(ENV)*16,&environment(name)).map_err(|e|format!("{e:?}"))?;
+    ram.write_bytes(u32::from(ENV)*16,&environment(&program,drive.letter())).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
@@ -188,7 +204,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:bytes.to_vec(),own_name:base_name(name.as_bytes()),own_open:None})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -269,7 +285,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 and AH33/06 version; default drive A:; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE). Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001, code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE). Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{

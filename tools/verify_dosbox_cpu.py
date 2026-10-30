@@ -113,6 +113,25 @@ def cases():
                                expected_eax=expected_a, expected_ecx=initial_b,
                                expected_edx=expected_d,
                                flags=0, flags_mask=DF, incoming_flags=0x202))
+        # Valid signed division: quotients truncate toward zero, remainders take
+        # the dividend's sign, and the most negative quotient still fits.
+        half = 1 << (width - 1)
+        for index, (dividend, divisor) in enumerate([(-7, 2), (7, -2), (-7, -2), (-half, 1), (half * 3 - 1, -3)]):
+            q = abs(dividend) // abs(divisor) * (-1 if (dividend < 0) != (divisor < 0) else 1)
+            rem = dividend - q * divisor
+            assert -half <= q < half
+            wide = dividend & ((1 << (2 * width)) - 1)
+            initial_a = (0x13570000 | wide) if width == 8 else merge(0x13579bdf, wide & mask, width)
+            initial_d = SENTINEL_DX if width == 8 else merge(0xc0deface, wide >> width, width)
+            expected_a = merge(initial_a, ((rem & 0xff) << 8) | (q & 0xff), 16) if width == 8 else merge(initial_a, q & mask, width)
+            expected_d = initial_d if width == 8 else merge(initial_d, rem & mask, width)
+            initial_b = merge(0x2468ace0, divisor & mask, width)
+            result.append(dict(name=f'idiv{width}_{index}', width=width, eax=initial_a,
+                               ecx=initial_b, edx=initial_d,
+                               code=(prefix+bytes([0xf6+(width != 8), 0xf9])).hex(),
+                               expected_eax=expected_a, expected_ecx=initial_b,
+                               expected_edx=expected_d,
+                               flags=0, flags_mask=DF, incoming_flags=0x202))
         # Shifts (SHL, SHR, SAR): count=0 (CL), count=1 (D0/D1), count=4 (CL)
         for name, ext in [('shl', 4), ('shr', 5), ('sar', 7)]:
             a0 = sign | 3

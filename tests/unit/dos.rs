@@ -317,7 +317,7 @@ fn ioctl_device_info_validates_handles_and_preserves_unrelated_state(){
   p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x891;
   service(&mut p,0x21,&mut out).unwrap();
   assert_eq!(p.cpu.eflags&!1,0xad6);assert_eq!(p.cpu.undefined_flags,0x890);
-  if h<5{assert_eq!(p.cpu.eflags&1,0);assert_eq!(p.cpu.regs[2],0x98760000|if h<3{0x83}else{0x80});}
+  if h<5{assert_eq!(p.cpu.eflags&1,0);assert_eq!(p.cpu.regs[2],0x98760000|if h<3{0xc3}else{0xc0});}
   else{assert_eq!(p.cpu.eflags&1,1);assert_eq!(p.cpu.regs[0],0xabcd0006);assert_eq!(p.cpu.regs[2],0x98765432);}
  }
  p.cpu.regs[3]=1;p.cpu.regs[0]=0x3e00;service(&mut p,0x21,&mut out).unwrap();
@@ -786,10 +786,10 @@ fn tsr_date_strategy_lfn_and_extended_memory(){
  assert_eq!(r.loaded.cpu.regs[1]&0xffff,1980);assert_eq!(r.loaded.cpu.regs[2]&0xffff,0x0101);assert_eq!(r.loaded.cpu.regs[0]&255,2);
  // AH0D has nothing to flush.
  let r=run(load(&[0xb4,0x0d,0xcd,0x21,0xfa,0xf4],"reset.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
- // AX=5801 BX=0080 accepted, then AX=5800 returns 0080; BX=0003 is invalid; BX=0001 is not modelled.
+ // AX=5801 BX=0080 accepted, then AX=5800 returns 0080; BX=0003 is invalid; BX=0041 (upper memory only) is accepted and allocates low.
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x80,0x00,0xcd,0x21,0xb8,0x00,0x58,0xcd,0x21,0xfa,0xf4],"strategy.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x80);assert_eq!(r.loaded.cpu.eflags&1,0);
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x03,0x00,0xcd,0x21,0xfa,0xf4],"badfit.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
- let r=run(load(&[0xb8,0x01,0x58,0xbb,0x41,0x00,0xcd,0x21,0xfa,0xf4],"upperonly.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x41,0x00,0xcd,0x21,0xfa,0xf4],"upperonly.com").unwrap(),10).unwrap();assert_eq!((r.loaded.alloc_strategy,r.loaded.cpu.eflags&1),(0x41,0));
  // AX=5803 (link UMBs) fails: no UMB chain.
  let r=run(load(&[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xfa,0xf4],"umb.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
  // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=0, CF=0.
@@ -853,7 +853,7 @@ fn program_reads_its_own_file_and_nothing_else(){
  let r=run(load(&code,"self.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[6]&0xffff,r.loaded.cpu.eflags&1),(5,4,0));
  let buffer:Vec<u32>=(0..4).map(|i|r.loaded.ram.load(u32::from(PSP)*16+0x200+i,MemWidth::Byte).unwrap()).collect();assert_eq!(buffer,[0x3d,0xba,0x26,0x01]);
- assert_eq!((r.loaded.open_handles,r.loaded.own_open),(0x1f,None));
+ assert_eq!((r.loaded.open_handles,r.loaded.drive.open_files()),(0x1f,0));
  // Seek from the end gives DX:AX = file size; reading there returns 0 bytes.
  let mut end=code.clone();end[10..18].copy_from_slice(&[0xb8,0x02,0x42,0x31,0xc9,0x31,0xd2,0x90]);end[30..32].copy_from_slice(&[0x89,0xc6]);
  let r=run(load(&end,"self.com").unwrap(),20).unwrap();assert_eq!(r.loaded.cpu.regs[6]&0xffff,0);
@@ -896,4 +896,135 @@ fn session_commands_run_queue_keys_and_report_the_screen(){
  let (reply,_)=s.command(3,"run 100").unwrap();assert!(reply.contains("\"status\":\"exit\"")&&reply.contains("exit code 97"),"{reply}");
  for (n,bad) in ["run 0","run x","key 300 1","dance"].iter().enumerate(){let (reply,_)=s.command(4+n as u64,bad).unwrap();assert!(reply.contains("\"ok\":false"),"{bad}: {reply}");}
  assert!(s.command(9,"quit").unwrap().1);
+}
+fn call(p:&mut Loaded,ax:u32,cx:u32,path:&[u8])->(u32,u32){
+ let psp=u32::from(PSP)*16;let mut z=path.to_vec();z.push(0);p.ram.write_bytes(psp+0x200,&z).unwrap();
+ p.cpu.regs[0]=ax;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x200;p.cpu.eflags=0x202;service(p,0x21,&mut vec![]).unwrap();
+ (p.cpu.regs[0]&0xffff,p.cpu.eflags&1)
+}
+fn dta_name(p:&Loaded)->(u8,u32,Vec<u8>){
+ let base=u32::from(PSP)*16+0x80;let b=|i|p.ram.load(base+i,MemWidth::Byte).unwrap()as u8;
+ let name=(0x1e..0x2b).map(b).take_while(|&c|c!=0).collect();(b(0x15),p.ram.load(base+0x1a,MemWidth::Dword).unwrap(),name)
+}
+#[test]
+fn eight_dot_three_names_and_aliases_follow_dos_rules(){
+ use files::probe::*;
+ assert_eq!(&fcb(b"readme.txt"),b"README  TXT");assert_eq!(&fcb(b"*.*"),b"???????????");assert_eq!(&fcb(b"a*.c*"),b"A???????C??");
+ assert_eq!(&fcb(b"longername.html"),b"LONGERNAHTM");assert_eq!(display(&fcb(b"dir")),b"DIR");
+ assert_eq!(short("Factor.com").map(|n|display(&n)),Some(b"FACTOR.COM".to_vec()));
+ for long in ["mandelbrot.com","two.dots.txt","has space.c",".hidden","x.html"]{assert!(short(long).is_none(),"{long}");}
+ let mut taken=std::collections::BTreeSet::new();
+ let first=alias("mandelbrot.com",&taken).unwrap();assert_eq!(display(&first),b"MANDEL~1.COM");taken.insert(first);
+ assert_eq!(display(&alias("Mandelbrot2.com",&taken).unwrap()),b"MANDEL~2.COM");
+ assert_eq!(display(&alias("two.dots.txt",&taken).unwrap()),b"TWODOT~1.TXT");assert_eq!(display(&alias(".bashrc",&taken).unwrap()),b"BASHRC~1");
+ // 1980-01-01 00:00:00 and 2026-10-30 16:26:02 UTC; earlier times clamp to 1980.
+ use std::time::{Duration,UNIX_EPOCH};
+ assert_eq!(stamp(Some(UNIX_EPOCH)),(0,0x0021));
+ assert_eq!(stamp(Some(UNIX_EPOCH+Duration::from_secs(1_793_377_562))),(16<<11|26<<5|1,(46<<9|10<<5|30)as u16));
+}
+#[test]
+fn mounted_folder_is_drive_c_for_find_chdir_and_read_only_files(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-drive-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ std::fs::create_dir_all(dir.join("Games")).unwrap();std::fs::write(dir.join("factor.com"),b"FACT").unwrap();
+ std::fs::write(dir.join("mandelbrot.com"),b"MANDELBROT").unwrap();std::fs::write(dir.join("Games/readme.txt"),b"hello").unwrap();
+ let mut p=load_with_drives(&[0xcd,0x21],"COMMAND.COM",vec![Source::Host(dir.clone())],None).unwrap();
+ let env:Vec<u8>=(0..22).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(env,b"COMSPEC=C:\\COMMAND.COM");
+ assert_eq!(call(&mut p,0x1900,0,b"").0&255,2);
+ // Files only, then with directories: host order, 8.3 aliases, sizes.
+ let mut names=Vec::new();let mut r=call(&mut p,0x4e00,0,b"*.*");
+ while r.1==0{names.push(dta_name(&p));r=call(&mut p,0x4f00,0,b"");}
+ assert_eq!(r.0,0x12);assert_eq!(names,vec![(0x20,4,b"FACTOR.COM".to_vec()),(0x20,10,b"MANDEL~1.COM".to_vec())]);
+ assert_eq!(call(&mut p,0x4e00,0x10,b"C:\\G*").1,0);assert_eq!(dta_name(&p),(0x10,0,b"GAMES".to_vec()));
+ assert_eq!(call(&mut p,0x4e00,0x08,b"\\*.*"),(0x12,1),"no volume label");assert_eq!(call(&mut p,0x4e00,0,b"NOPE\\*.*"),(3,1));
+ // CD into the directory: . and .. come first, AH47 reports it, .. leads back.
+ assert_eq!(call(&mut p,0x3b00,0,b"games").1,0);
+ let mut names=Vec::new();let mut r=call(&mut p,0x4e00,0x10,b"*.*");while r.1==0{names.push(dta_name(&p).2);r=call(&mut p,0x4f00,0,b"");}
+ assert_eq!(names,vec![b".".to_vec(),b"..".to_vec(),b"README.TXT".to_vec()]);
+ p.cpu.regs[6]=0x300;assert_eq!(call(&mut p,0x4700,0,b""),(0x0100,0));
+ let cwd:Vec<u8>=(0..6).map(|i|p.ram.load(u32::from(PSP)*16+0x300+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(cwd,b"GAMES\0");
+ assert_eq!(call(&mut p,0x3b00,0,b"..\\..").1,1);assert_eq!(call(&mut p,0x3b00,0,b"A:\\").1,1);
+ // Read a file through its alias from another directory; writing is refused.
+ let (handle,cf)=call(&mut p,0x3d00,0,b"\\mandel~1.com");assert_eq!(cf,0);
+ p.cpu.regs[3]=handle;p.cpu.regs[2]=0x400;p.cpu.regs[1]=4;p.cpu.regs[0]=0x3f00;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[0]&0xffff,4);let read:Vec<u8>=(0..4).map(|i|p.ram.load(u32::from(PSP)*16+0x400+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(read,b"MAND");
+ p.cpu.regs[0]=0x4400;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[2]&0xffff,0x42);
+ p.cpu.regs[0]=0x3e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.drive.open_files(),0);
+ assert_eq!(call(&mut p,0x3d02,0,b"readme.txt"),(5,1));assert_eq!(call(&mut p,0x3d00,0,b"missing.txt"),(2,1));assert_eq!(call(&mut p,0x3d00,0,b"\\games"),(5,1));
+ assert_eq!(call(&mut p,0x3c00,0,b"new.txt"),(5,1));assert_eq!(call(&mut p,0x4100,0,b"readme.txt"),(5,1));
+ assert_eq!(call(&mut p,0x4300,0,b"readme.txt"),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x20);assert_eq!(call(&mut p,0x4301,0x20,b"readme.txt"),(5,1));
+ // AH36: read-only, so no free clusters; three 512-byte clusters hold the files.
+ p.cpu.regs[2]=0;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(1,0,512,3));
+ p.cpu.regs[2]=1;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0xffff);
+ // Without a mount, A: is an empty drive.
+ let mut empty=load(&[0xcd,0x21],"x.com").unwrap();assert_eq!(call(&mut empty,0x4e00,0x10,b"*.*"),(0x12,1));assert_eq!(call(&mut empty,0x1900,0,b"").0&255,0);
+ std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn idiv_truncates_toward_zero_and_keeps_the_dividend_sign_in_the_remainder(){
+ // MOV AX,-7; MOV BL,2; IDIV BL; MOV SI,AX; MOV DX,FFFE; MOV AX,7960; MOV CX,7; IDIV CX; CLI; HLT
+ let code=[0xb8,0xf9,0xff,0xb3,0x02,0xf6,0xfb,0x89,0xc6,0xba,0xfe,0xff,0xb8,0x60,0x79,0xb9,0x07,0x00,0xf7,0xf9,0xfa,0xf4];
+ let r=run(load(&code,"idiv.com").unwrap(),20).unwrap();
+ // -7/2 = -3 r -1; -100000/7 = -14285 r -5.
+ assert_eq!((r.loaded.cpu.regs[6]&0xffff,r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[2]&0xffff),(0xfffd,0xc833,0xfffb));
+ // 128/1 does not fit a signed byte: divide error, which stops the run.
+ let r=run(load(&[0xb8,0x80,0x00,0xb1,0x01,0xf6,0xf9,0xfa,0xf4],"idivde.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Fault(_)),"{:?}",r.stop);
+}
+#[test]
+fn country_information_is_us_code_page_437_with_a_working_case_map(){
+ let mut p=load(&[0xcd,0x21],"nls.com").unwrap();let psp=u32::from(PSP)*16;let mut out=vec![];
+ let bytes=|p:&Loaded,at:u32,n:u32|->Vec<u8>{(0..n).map(|i|p.ram.load(at+i,MemWidth::Byte).unwrap()as u8).collect()};
+ // AH38 AL=00: 24 bytes at DS:DX, AX=BX=1.
+ p.cpu.regs[0]=0x3800;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.eflags&1),(1,1,0));
+ let info=bytes(&p,psp+0x200,24);assert_eq!(&info[..18],b"\0\0$\0\0\0\0,\0.\0-\0:\0\0\x02\0");assert_eq!(info[22],b',');
+ // AX=6501: ID 1, size 1Ch, country 1, code page 437, then the same record.
+ p.cpu.regs[0]=0x6501;p.cpu.regs[3]=0xffff;p.cpu.regs[2]=0xffff;p.cpu.regs[1]=0x40;p.cpu.regs[7]=0x300;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!(bytes(&p,psp+0x300,7),[1,0x1c,0,1,0,0xb5,1]);assert_eq!(bytes(&p,psp+0x307,24),info);
+ // A buffer too small is error 1; information ID 3 does not exist.
+ p.cpu.regs[0]=0x6501;p.cpu.regs[1]=30;service(&mut p,0x21,&mut out).unwrap();assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.eflags&1),(1,1));
+ p.cpu.regs[0]=0x6503;p.cpu.regs[1]=0x40;service(&mut p,0x21,&mut out).unwrap();assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.eflags&1),(1,1));
+ // AX=6502 points at the upper-case table: size 128, then 80h..FFh.
+ p.cpu.regs[0]=0x6502;p.cpu.regs[1]=5;service(&mut p,0x21,&mut out).unwrap();let rec=bytes(&p,psp+0x300,5);assert_eq!(rec[0],2);
+ let table=u32::from(u16::from_le_bytes([rec[3],rec[4]]))*16+u32::from(u16::from_le_bytes([rec[1],rec[2]]));
+ assert_eq!(bytes(&p,table,2),[0x80,0]);assert_eq!(bytes(&p,table+2+(0x84-0x80),1),[0x8e]);assert_eq!(bytes(&p,table+2+(0xa4-0x80),1),[0xa5]);
+ // Upper-case calls: a character, a counted buffer and an ASCIIZ string.
+ p.cpu.regs[0]=0x6520;p.cpu.regs[2]=0x81;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[2]&255,0x9a);
+ p.ram.write_bytes(psp+0x400,b"ab\x87d\0zz").unwrap();p.cpu.regs[0]=0x6522;p.cpu.regs[2]=0x400;service(&mut p,0x21,&mut out).unwrap();assert_eq!(bytes(&p,psp+0x400,7),b"AB\x80D\0zz");
+ p.cpu.regs[0]=0x6521;p.cpu.regs[1]=6;service(&mut p,0x21,&mut out).unwrap();assert_eq!(bytes(&p,psp+0x400,7),b"AB\x80D\0Zz");
+ p.cpu.regs[0]=0x6523;p.cpu.regs[2]=u32::from(b'n');service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0);
+ // The case-map routine from the record runs as code: CALL FAR it with AL=84h (a with diaeresis).
+ let ptr=u32::from(u16::from_le_bytes([info[20],info[21]]))<<16|u32::from(u16::from_le_bytes([info[18],info[19]]));
+ let mut code=vec![0xb0,0x84,0x9a];code.extend((ptr as u16).to_le_bytes());code.extend(((ptr>>16)as u16).to_le_bytes());code.extend([0xfa,0xf4]);
+ let r=run(load(&code,"casemap.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu.regs[0]&255,0x8e);
+}
+#[test]
+fn image_is_drive_c_with_its_label_and_the_host_folder_is_drive_d(){
+ use crate::containers::{FatEntry,FatNode,FatTree};use std::sync::Arc;
+ let entry=|name:&[u8;11],attr,size,node|FatEntry{name:*name,attr,time:0x8000,date:0x5d5e,size,node};
+ let tree=FatTree{dirs:vec![vec![entry(b"COMMAND COM",0x20,3,FatNode::File(0)),entry(b"KERNEL  SYS",0x27,4,FatNode::File(1)),entry(b"DOCS       ",0x10,0,FatNode::Dir(1))],vec![entry(b"NOTE    TXT",0x20,4,FatNode::File(2))]],
+  files:vec![Arc::new(b"abc".to_vec()),Arc::new(b"kern".to_vec()),Arc::new(b"note".to_vec())],label:Some(*b"FD14-LITE  "),sectors_per_cluster:4,clusters:5000};
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-drives-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("factor.com"),b"F").unwrap();
+ let mut p=load_with_drives(&[0xcd,0x21],"img::FREEDOS/COMMAND.COM",vec![Source::Image(Arc::new(tree)),Source::Host(dir.clone())],Some("FREEDOS/COMMAND.COM")).unwrap();
+ let env:Vec<u8>=(0..56).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();
+ assert!(env.starts_with(b"COMSPEC=C:\\COMMAND.COM\0\0\x01\0C:\\FREEDOS\\COMMAND.COM\0"),"{env:?}");
+ // Label search, then files: hidden/system KERNEL.SYS only with those bits asked for.
+ assert_eq!(call(&mut p,0x4e00,0x08,b"C:\\*.*").1,0);assert_eq!(dta_name(&p),(0x08,0,b"FD14-LIT.E".to_vec()));
+ let mut names=Vec::new();let mut r=call(&mut p,0x4e00,0x10,b"*.*");while r.1==0{names.push(dta_name(&p).2);r=call(&mut p,0x4f00,0,b"");}
+ assert_eq!(names,vec![b"COMMAND.COM".to_vec(),b"DOCS".to_vec()]);
+ assert_eq!(call(&mut p,0x4e00,0x16,b"K*.*").1,0);assert_eq!(dta_name(&p),(0x27,4,b"KERNEL.SYS".to_vec()));
+ // Read a file from a subdirectory of the image.
+ let (handle,cf)=call(&mut p,0x3d00,0,b"c:\\docs\\note.txt");assert_eq!(cf,0);
+ p.cpu.regs[3]=handle;p.cpu.regs[2]=0x400;p.cpu.regs[1]=8;p.cpu.regs[0]=0x3f00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,4);
+ // AH36 reports the image geometry with nothing free; AH0E moves to D:, the host folder.
+ p.cpu.regs[2]=3;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.regs[2]&0xffff),(4,0,5000));
+ p.cpu.regs[2]=3;p.cpu.regs[0]=0x0e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,5);
+ assert_eq!(call(&mut p,0x1900,0,b"").0&255,3);assert_eq!(call(&mut p,0x4e00,0,b"*.COM").1,0);assert_eq!(dta_name(&p).2,b"FACTOR.COM");
+ // E: does not exist: selecting it keeps D:, and its paths are not found.
+ p.cpu.regs[2]=4;p.cpu.regs[0]=0x0e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(call(&mut p,0x1900,0,b"").0&255,3);
+ assert_eq!(call(&mut p,0x3d00,0,b"E:\\X"),(3,1));
+ std::fs::remove_dir_all(dir).unwrap();
 }

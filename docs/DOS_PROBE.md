@@ -1,3 +1,45 @@
+# Drives C: and D:, DIR in FreeCOM, IDIV and country information — 30 October 2026
+
+Step 3 of Goal 1 (COMMAND.COM in the GUI, DIR, factorial, Mandelbrot). FreeDOS
+report 47 (dev after #56 and the DOS data area): 69 Exit, and COMMAND.COM got
+past AH52 to AH43, the most common stop (16 programs).
+
+- Dine has drives now, all read-only:
+  - `--dos-session IMAGE.img::PROGRAM` makes the FAT16 image drive C:, with its
+    volume label, attributes, dates and directory tree. COMSPEC and the program
+    path point at C:.
+  - `--mount DIR` adds a host folder as the next drive (D:, or C: without an
+    image). Names that are not 8.3 get BASIS~N aliases per directory
+    (`a-long-file-name.txt` is `A-LONG~1.TXT`); dates come from the host
+    modification time in UTC. Symbolic links are not followed.
+  - With neither, A: is an empty drive, as before.
+- DOS services on those drives: AH4E/4F find (attribute filtering, `.` and `..`
+  below the root, label-only searches), AH3B CD, AH47 current directory, AH0E
+  and AH19 drive selection (LASTDRIVE E:), AH36 (an image's own geometry; no
+  cluster is free), AH43 get attributes, and AH3D/3F/42/3E reading any file.
+  Writes (AH39/3A/3C/41/56/5A/5B, AH43 set, AH3D for writing) return access
+  denied. AH44/00 gives files their drive and CON bit 6 (not at end of input),
+  as FreeDOS opens devices. AX=6900h and AH73 are invalid functions.
+- Country 001, code page 437: AH38, AX=6501h, the 6502/04/05/06/07 table
+  pointers, AH65 upper-case calls (20h-23h, A0h-A2h) and a far case-map
+  routine in Dine's data segment that programs call.
+- AH58 accepts the 4xh (upper memory only) strategies and allocates low, as
+  FreeDOS does without UMBs. INT 2F AX=AE00h and B700h find no installable
+  command and no APPEND.
+- IDIV (F6/F7 /7): signed division through magnitudes, in both backends, with
+  7 native verifier cases and 15 DOSBox-X comparison cases.
+
+FreeCOM 0.86 now runs interactively: the `C:\>` prompt, DIR (volume label, 8.3
+names, `<DIR>`, sizes with thousands separators, totals), CD, switching
+between C: and D:, TYPE and VER.
+
+  `python tools/dos_terminal.py --mount dosfiles images/FD14LITE.img::COMMAND.COM`
+
+Verification: 404 Rust tests passed on Linux, 247 native verifier cases, and
+DOSBox-X 2024.03.01 matched PIL on all 519 comparison cases. FreeCOM 0.86 was
+driven through DIR, CD, C:/D: switching and TYPE on a test FAT16 image plus a
+host folder. FD14LITE itself is not in CI.
+
 # Interactive DOS session and text-mode terminal — 30 October 2026
 
 Step 2 of Goal 1 (COMMAND.COM in the GUI, DIR, factorial, Mandelbrot):
