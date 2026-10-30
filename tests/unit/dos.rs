@@ -699,3 +699,10 @@ fn rotate_through_carry_decimal_adjust_and_pusha_have_literal_results(){
  let mut p=load(&[0x61,0xf4],"popa.com").unwrap();p.cpu.regs[4]=0xffee;for (i,w) in words.iter().enumerate(){p.ram.store(ss+0xffee+i as u32*2,MemWidth::Word,*w).unwrap();}
  let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs,[0x1111,0x2222,0x3333,0x4444,0xfffe,0x6666,0x7777,0x8888]);
 }
+#[test]
+fn near_indirect_jump_reads_register_and_cs_memory_targets(){
+ // JMP CS:[0107] -> 010B (MOV AL,2A; HLT); the skipped bytes are HLT.
+ let r=run(load(&[0x2e,0xff,0x26,0x07,0x01,0xf4,0xf4,0x0b,0x01,0xf4,0xf4,0xb0,0x2a,0xf4],"jmpmem.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x2a);
+ // MOV BX,0106; JMP BX -> MOV AL,2B; HLT.
+ let r=run(load(&[0xbb,0x06,0x01,0xff,0xe3,0xf4,0xb0,0x2b,0xf4],"jmpreg.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x2b);
+}

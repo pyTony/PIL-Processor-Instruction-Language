@@ -1,6 +1,6 @@
-# RCL/RCR, DAA/DAS and PUSHA/POPA — 30 October 2026
+# RCL/RCR, DAA/DAS, PUSHA/POPA and indirect JMP — 30 October 2026
 
-The rest of the integer encodings that stop programs in FreeDOS report 38:
+The rest of the integer encodings that stop programs in FreeDOS reports 38 and 39:
 
 - RCL and RCR (group 2 /2 and /3: D0-D3, C0/C1) at 8/16/32 bits, register or
   memory, in isa/i386/rcl.pil and rcr.pil. The count is masked to five bits
@@ -13,15 +13,20 @@ The rest of the integer encodings that stop programs in FreeDOS report 38:
   up to eight staged stores per instruction (was two), so all eight PUSHA
   stores are checked before any commits: a protected or out-of-segment slot
   leaves registers and RAM unchanged.
+- Near indirect JMP r/m16 and r/m32 (FF /4) from a register or memory, in
+  isa/i386/jmp_indirect.pil. The new offset is zero-extended and checked
+  against CS.limit. Report 39 stopped DISKCOPY, RECOVER, REPLACE, SHARE and
+  UNFORMAT on `JMP [mem]` jump tables.
 
-The DOSBox-X CPU suite puts identical strings in the COM once, so the 384 cases
+The DOSBox-X CPU suite puts identical strings in the COM once, so the 387 cases
 still fit in one 64 KB COM.
 
-Verification: 381 Rust tests passed on Linux. The generated-Rust verifier
-matches the interpreter byte for byte across 221 cases (new: RCL/RCR mix, RCL
+Verification: 382 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 223 cases (new: RCL/RCR mix, RCL
 on read-only memory, DAA/DAS chain, PUSHA/POPA 16 and 32, PUSHA on a read-only
-stack slot, POPA at the top of the stack). DOSBox-X 2024.03.01 headless: CPU
-suite 384/384 (24 RCL/RCR, 10 DAA/DAS, 4 PUSHA/POPA new) and console 8/8 in
+stack slot, POPA at the top of the stack, indirect JMP register/memory/32-bit,
+indirect JMP past CS.limit). DOSBox-X 2024.03.01 headless: CPU suite 387/387
+(24 RCL/RCR, 10 DAA/DAS, 4 PUSHA/POPA, 3 indirect JMP new) and console 8/8 in
 both engines. Not yet rerun on the FreeDOS image.
 
 # LOOP family, unsigned MUL and INT15 AH=C2 — 30 October 2026

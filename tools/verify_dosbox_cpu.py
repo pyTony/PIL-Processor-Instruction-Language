@@ -362,6 +362,11 @@ def cases():
                                           ('loope_nz', 0xe1, 0, 2)]:
         add(name, 16, 0, 3, bytes([opcode, 0xfe]), 0, incoming, incoming=incoming, expected_ecx=after)
     add('loop_a32', 32, 0, 2, bytes([0x67, 0xe2, 0xfd]), 0, ARITH, incoming=ARITH, expected_ecx=0)
+    # Near indirect JMP (FF /4). CALL $+3; POP BX finds the case's own offset,
+    # so each target skips one INC AX and lands on INC CX.
+    add('jmp_reg16', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c307ffe34041'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
+    add('jmp_ss_mem16', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c30b5389e336ff27405b41'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
+    add('jmp_reg32', 32, 0x1234, 0x10, bytes.fromhex('e800005b83c30c660fb7db66ffe34041'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
     return result
 
 

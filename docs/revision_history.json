@@ -2085,12 +2085,12 @@
     },
     {
       "date": "2026-10-30",
-      "name": "RCL/RCR, DAA/DAS and PUSHA/POPA",
-      "base": "isa/loop-mul-int15",
+      "name": "RCL/RCR, DAA/DAS, PUSHA/POPA and indirect JMP",
+      "base": "dev after #50",
       "verification": {
-        "linux_rust_tests": 381,
-        "generated_backend_cases": 221,
-        "dosbox_cpu_cases": "384/384 in DOSBox-X 2024.03.01",
+        "linux_rust_tests": 382,
+        "generated_backend_cases": 223,
+        "dosbox_cpu_cases": "387/387 in DOSBox-X 2024.03.01",
         "freedos_probe": "not rerun"
       },
       "limitations": [

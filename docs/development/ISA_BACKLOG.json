@@ -224,7 +224,7 @@
         "JMP"
       ],
       "status": "partial",
-      "remaining": "Relative implemented; near indirect here,far transfers inP6/P7",
+      "remaining": "Relative and near indirect FF /4 (register and memory, 16/32-bit, CS.limit fault) implemented and backend-verified; far JMP (EA, FF /5) in P6/P7",
       "modern_user_mode_oracle": "mode_specific",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

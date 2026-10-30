@@ -290,6 +290,10 @@ pub fn cases()->Result<Vec<Case>,String> {
     t.regs=[0x11111111,0x22222222,0x33333333,0x44444444,0x800,0x66666666,0x77777777,0x88888888];tests.push(t);
     let mut t=case("pusha_readonly_stack",vec![0x60,0xf4])?;t.regs[4]=0x800;t.regs[0]=0x1234;t.protect=Some((0x9f0,2));tests.push(t);
     let mut t=case("popa_high_stack_fault",vec![0x61,0xf4])?;t.regs[4]=0xfff8;tests.push(t);
+    // JMP AX -> 0x104; JMP [BX] -> 0x108 from RAM; JMP ECX -> 0x10d. Skipped bytes are HLT.
+    let mut t=case("jmp_indirect",vec![0xff,0xe0,0xf4,0xf4,0xff,0x27,0xf4,0xf4,0x66,0xff,0xe1,0xf4,0xf4,0xf4])?;
+    t.regs[0]=0xabcd0104;t.regs[1]=0x0000010d;t.regs[3]=0x400;t.patch=Some((0x500,vec![0x08,0x01]));tests.push(t);
+    let mut t=case("jmp_indirect_limit_fault",vec![0xff,0xe0,0xf4])?;t.regs[0]=0x180;t.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
 }

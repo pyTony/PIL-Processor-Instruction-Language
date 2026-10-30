@@ -110,10 +110,11 @@ impl Image {
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         if locked&&!matches!(opcode,0x86|0x87){return Err(GuestError::Decode("LOCK requires memory XCHG in this profile".into()));}
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;
+        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;let mut jump_indirect=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
             if opcode==0xff&&extension==2{call_indirect=Some(m);opcode=0xe8;}
+            else if opcode==0xff&&extension==4{jump_indirect=Some(m);}
             else if opcode==0xff&&extension==3{if m>>6==3{return Err(GuestError::Decode("far CALL requires a memory pointer".into()));}far_indirect=Some(m);opcode=0x9a;}
             else if opcode==0x8f || extension==6{
                 if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
@@ -130,6 +131,13 @@ impl Image {
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0xff if jump_indirect.is_some()=>{
+                let m=jump_indirect.unwrap();dst=view((m&7)as usize,w);src=dst;
+                let (target,label)=if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});(format!("read_address operand\nload target_value operand {w}"),operand_name(dst,address))}
+                    else{(format!("read target_value dst {w}"),register_name(dst).into())};
+                let text=include_str!("../isa/i386/jmp_indirect.pil").replace("$TARGET",&target);
+                (format!("JMP {label}"),compile(&instantiate(text,w),w))
+            }
             0xff if memory_push.is_some()=>{
                 let m=memory_push.unwrap();
                 let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
