@@ -1,5 +1,7 @@
 # PIL development branch
 
+PIL = Processor Instruction Language, the project's architecture description language (ADL) for x86.
+
 ## 0.35: Unsigned division (DIV) and foundational BIOS / DOS service shims
 
 ### Unsigned Division (DIV F6/F7 /6)
