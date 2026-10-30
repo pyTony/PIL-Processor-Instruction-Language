@@ -166,8 +166,10 @@ fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,St
     writes.push((0x450+page*2,MemWidth::Word,(row<<8)|col));
     Ok(writes)
 }
+/// AH0E writes to the active page and ignores BH, as SeaBIOS and DOSBox-X do;
+/// the earliest IBM PC ROMs required BH to equal the active page anyway.
 fn teletype(p:&mut Loaded)->Result<(),String>{
-    let writes=teletype_plan(p,(p.cpu.regs[3]>>8)&255,&[p.cpu.regs[0]as u8],false)?;
+    let writes=teletype_plan(p,active_page(p)?,&[p.cpu.regs[0]as u8],false)?;
     commit(p,&writes)
 }
 /// DOS console output also reaches the active page, as through INT29/AH0E.

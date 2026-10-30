@@ -25,11 +25,20 @@ full provider changes neither capture nor RAM.
 
 Verification: 372 Rust tests passed on Linux (six new). The console COM fixture
 has seven cases, adding DOS status/read/extended-key/poll/flush; all pass in
-PIL and the deliberate failure still fails once. Not yet rerun in DOSBox-X.
+PIL and the deliberate failure still fails once.
+
+DOSBox-X comparison (Ubuntu dosbox-x 2024.03.01, headless SDL dummy driver):
+all 328 CPU cases and all seven console cases pass in both engines; the
+negative control fails exactly case 001 in both. Linux CI now installs
+dosbox-x and runs both suites. The comparison found that BIOS AH0E writes to
+the active page and ignores BH (as SeaBIOS also does); PIL now does the same.
+BEL is not in the COM fixture: DOSBox-X 2024.03 advances the cursor on BEL,
+while IBM and SeaBIOS BIOSes do not, and PIL keeps the IBM behaviour.
 
 # BIOS teletype, scrolling, mode and page services — 30 October 2026
 
-INT10 AH0E writes AL at page BH's cursor, keeps the cell attribute and handles
+INT10 AH0E writes AL at the active page's cursor (BH is ignored, as in SeaBIOS
+and DOSBox-X), keeps the cell attribute and handles
 BEL (no write), BS (left, no erase, stops at column 0), CR and LF. Column 80
 wraps; leaving row 24 scrolls that page up one line and fills the new line with
 the attribute under the incoming cursor. TAB is rejected: IBM-derived and

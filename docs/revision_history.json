@@ -2025,8 +2025,9 @@
       "verification": {
         "linux_rust_tests": 372,
         "pil_console_cases": 7,
-        "dosbox_console_cases": "not rerun",
-        "negative_control": "one deliberate failure in PIL"
+        "dosbox_console_cases": "7/7 in DOSBox-X 2024.03.01 (Linux, headless)",
+        "negative_control": "one deliberate failure in PIL",
+        "dosbox_cpu_cases": "328/328 in DOSBox-X 2024.03.01"
       },
       "limitations": [
         "no AH0A buffered input",

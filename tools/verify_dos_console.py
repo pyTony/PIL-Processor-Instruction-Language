@@ -70,13 +70,17 @@ def build_console(negative=False):
     def read_at(page, pos, fail, want):
         position(page, pos); mov(0, 0x0800); mov(3, page << 8); interrupt(0x10); check(0, want, fail)
     def teletype(fail):
+        # AH0E follows the active page; BH is ignored by SeaBIOS and DOSBox-X.
+        mov(0, 0x0501); interrupt(0x10)
         position(1, 0x0105)
-        for ch, want in ((8, 0x0104), (13, 0x0100), (10, 0x0200), (7, 0x0200)):
+        # BEL is left out: DOSBox-X 2024.03 advances the cursor, IBM/SeaBIOS do not.
+        for ch, want in ((8, 0x0104), (13, 0x0100), (10, 0x0200)):
             tty(1, ch); cursor(1, fail, want)
         position(1, 0x184f)
         mov(0, 0x0978); mov(3, 0x014e); mov(1, 1); interrupt(0x10)
         tty(1, 0x51); cursor(1, fail, 0x1800)
         read_at(1, 0x174f, fail, 0x4e51); read_at(1, 0x1800, fail, 0x4e20)
+        mov(0, 0x0500); interrupt(0x10)
     case('teletype_controls_wrap_and_scroll', teletype)
     def scroll(fail):
         mov(0, 0x0501); interrupt(0x10)

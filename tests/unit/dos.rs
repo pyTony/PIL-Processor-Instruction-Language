@@ -406,7 +406,8 @@ fn bios_keyboard_store_and_shift_status_services(){
 }
 fn cell(p:&Loaded,page:u32,row:u32,col:u32)->u32{p.ram.load(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word).unwrap()}
 fn put(p:&mut Loaded,page:u32,row:u32,col:u32,value:u32){p.ram.store(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word,value).unwrap();}
-fn tty(p:&mut Loaded,page:u32,ch:u8)->Result<Option<u8>,String>{p.cpu.regs[0]=0xabcd0e00|u32::from(ch);p.cpu.regs[3]=0x1234_0000|(page<<8)|0x4f;service(p,0x10,&mut vec![])}
+/// Teletype onto `page` made active; BH deliberately names another page.
+fn tty(p:&mut Loaded,page:u32,ch:u8)->Result<Option<u8>,String>{if page<8{p.ram.store(0x462,MemWidth::Byte,page).unwrap();}p.cpu.regs[0]=0xabcd0e00|u32::from(ch);p.cpu.regs[3]=0x1234_0000|(((page+1)&7)<<8)|0x4f;service(p,0x10,&mut vec![])}
 #[test]
 fn bios_teletype_keeps_attributes_wraps_controls_and_preserves_registers(){
  for page in 0..8u32{
@@ -442,7 +443,7 @@ fn bios_teletype_scrolls_its_page_with_attribute_under_cursor(){
 fn bios_teletype_rejects_tab_bad_page_cursor_and_faults_atomically(){
  let mut p=load(&[0xcd,0x10],"tty.com").unwrap();
  for (page,ch,cursor) in [(0,9u8,0),(8,b'A',0),(0,b'A',0x1900),(0,b'A',0x0050)]{
-  if page<8{p.ram.store(0x450,MemWidth::Word,cursor).unwrap();}let old=p.clone();
+  p.ram.store(0x462,MemWidth::Byte,0).unwrap();if page<8{p.ram.store(0x450,MemWidth::Word,cursor).unwrap();}else{p.ram.store(0x462,MemWidth::Byte,page).unwrap();}let old=p.clone();
   assert!(tty(&mut p,page,ch).is_err());assert_eq!(p.ram,old.ram);
  }
  // A bottom-row scroll checks every page cell and the cursor before writing.
