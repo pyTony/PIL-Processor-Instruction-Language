@@ -5,6 +5,11 @@ test, not SingleStepTests, a hardware oracle or full 386/DOS conformance.
 
 ## Measured result
 
+Update 30 October 2026 (evening): 3 real-mode IRET cases (a frame built with
+PUSH imm16, PUSH CS and CALL, popping flags 0ED7h, 0202h and 0CD5h) bring the
+suite to 522 cases in 32,249 bytes; dosbox-x 2024.03.01 passes all 522 in both
+engines.
+
 Update 30 October 2026 (later): 15 valid signed IDIV cases (8/16/32-bit,
 truncation toward zero, remainder sign, most negative quotient) bring the
 suite to 519 cases in 32,054 bytes; dosbox-x 2024.03.01 passes all 519 in both
@@ -67,7 +72,8 @@ changed between the start and end of the comparison.
 | One-operand IMUL (8/16/32-bit), XLAT through SS:BX | 7 |
 | BT/BTS/BTR/BTC, 16/32-bit, register and immediate offsets | 48 |
 | SHLD/SHRD, 16/32-bit, CL and immediate counts | 56 |
-| Total | 519 |
+| Real-mode IRET with three flag images | 3 |
+| Total | 522 |
 
 All operand-sized families exercise 8-, 16- and 32-bit widths (or 16/32-bit for
 extensions, conversions, IMUL and LEA). Cases use fixed

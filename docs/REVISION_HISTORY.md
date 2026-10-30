@@ -1,3 +1,15 @@
+# IRET in real mode — 30 October 2026
+
+`MORE` stopped at opcode CFh (IRET) in its own code before printing anything.
+IRET and IRETD now run in real mode, in `isa/i386/iret.pil`: the whole IP, CS
+and FLAGS frame is checked against SS first, then the far branch, SP and the
+flags POPF can write (bits 1, 3, 5 and 15 stay fixed; RF and VM are kept) are
+committed together. Protected-mode IRET still stops.
+
+Verification: 411 Rust tests passed on Linux; 252 native verifier cases (5 new:
+IRET and IRETD with 16- and 32-bit stacks, and a frame fault); DOSBox-X
+2024.03.01 matched PIL on all 522 comparison cases (3 new IRET cases).
+
 # INT 10h EGA/VGA functions on the CGA BIOS, and handle duplication — 30 October 2026
 
 `SETLANG SU` in FD14LITE stopped at INT 10h AH=11h (character generator).

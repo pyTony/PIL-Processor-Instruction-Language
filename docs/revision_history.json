@@ -2010,6 +2010,19 @@
         "no EGA/VGA fonts, palettes or graphics modes yet",
         "handles inherited by a child are not marked no-inherit; every open handle is passed on"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "IRET in real mode",
+      "base": "dev after #61",
+      "verification": {
+        "linux_rust_tests": 411,
+        "native_verifier_cases": 252,
+        "dosbox_x_cases": 522
+      },
+      "limitations": [
+        "protected-mode IRET, INT n as a CPU instruction, INT3 and INTO are not modelled"
+      ]
     }
   ],
   "development_increments": [

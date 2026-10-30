@@ -60,3 +60,21 @@ fn far_return_dos_usage_fixture_reaches_original_exit_after_cs_change(){
  // PUSH 1010; PUSH 0009; RETF -> physical10109 (MOV AX,4C00;INT21).
  let bytes=[0x68,0x10,0x10,0x68,9,0,0xcb,0x90,0x90,0xb8,0,0x4c,0xcd,0x21];let result=dos::run(dos::load(&bytes,"far.com").unwrap(),30).unwrap();assert_eq!(result.stop,dos::Stop::Exit(0));assert_eq!(result.loaded.selectors[1],0x1010);assert_eq!(result.loaded.cpu.regs[4],0xfffe);
 }
+#[test]
+fn iret_pops_ip_cs_and_the_writable_flags_together(){
+ for w in [16u8,32]{
+  let mut code=Vec::new();if w==32{code.push(0x66);}code.push(0xcf);
+  let(mut i,_)=guest::Image::load(&code).unwrap();let mut r=Ram::new(0x21000);r.write_bytes(0x100,&code).unwrap();
+  let mut c=Cpu{regs:[0,0,0,0,0xabcd0800,0,0,0],eflags:0x0246,undefined_flags:u32::MAX,eip:0x100};
+  let width=MemWidth::from_bits(w).unwrap();let slot=u32::from(w/8);
+  // Flags word FFFFh: bits 1, 3, 5 and 15 are not writable; TF, IF, DF, IOPL and NT are.
+  r.store(0xa00,width,0x345).unwrap();r.store(0xa00+slot,width,0x1234).unwrap();r.store(0xa00+2*slot,width,0xffff_ffff).unwrap();
+  step(&mut i,&mut r,&mut c).unwrap();
+  assert_eq!((c.eip,i.selectors[1],c.regs[4]),(0x345,0x1234,0xabcd0800+3*slot),"IRET width {w}");
+  assert_eq!(c.eflags&0xffff,0x7fd7);
+ }
+ // A frame that runs past the stack segment faults before anything changes.
+ let(mut i,_)=guest::Image::load(&[0xcf]).unwrap();let mut r=Ram::new(0x21000);r.write_bytes(0x100,&[0xcf]).unwrap();
+ let mut c=Cpu{regs:[0,0,0,0,0xfffc,0,0,0],eflags:0x0246,undefined_flags:u32::MAX,eip:0x100};let old=c.clone();
+ assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!(c,old);
+}

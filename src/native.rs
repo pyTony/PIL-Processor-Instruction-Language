@@ -171,6 +171,16 @@ pub fn cases()->Result<Vec<Case>,String> {
         let target=0x100+bytes.len()as u32-2-16;let mut data=if w==16{(target as u16).to_le_bytes().to_vec()}else{target.to_le_bytes().to_vec()};if w==16{data.extend([1,0]);}else{data.extend([1,0,0xcd,0xab]);}
         let mut t=case(match(w,big,cleanup){(16,false,false)=>"retf16_ss16",(16,false,true)=>"retfi16_ss16",(16,true,false)=>"retf16_ss32",(16,true,true)=>"retfi16_ss32",(32,false,false)=>"retf32_ss16",(32,false,true)=>"retfi32_ss16",(32,true,false)=>"retf32_ss32",_=>"retfi32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,data));tests.push(t);
     }}}
+    for w in [16,32]{for big in [false,true]{
+        // IRET to 0001:target with flags 0ED7h (DF, IF, OF and arithmetic flags), from 0246h.
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0xcf,0x41,0xf4]);
+        let target=0x100+bytes.len()as u32-2-16;
+        let mut data=if w==16{(target as u16).to_le_bytes().to_vec()}else{target.to_le_bytes().to_vec()};
+        if w==16{data.extend([1,0,0xd7,0x0e]);}else{data.extend([1,0,0xcd,0xab,0xd7,0x0e,0x34,0x12]);}
+        let mut t=case(match(w,big){(16,false)=>"iret16_ss16",(16,true)=>"iret16_ss32",(32,false)=>"iret32_ss16",_=>"iret32_ss32"},bytes)?;
+        t.regs[4]=0x800;t.flags=0x246;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,data));tests.push(t);
+    }}
+    let mut t=case("iret_frame_fault",vec![0xcf,0xf4])?;t.regs[4]=0xfffc;tests.push(t);
     let mut t=case("retf_alias_branch",vec![0xcb,0x74,1,0x40,0xf4])?;t.regs[4]=0x800;t.flags=0x246;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
     let mut t=case("retf_alias_cs_store",vec![0xcb,0x2e,0xc6,6,0,8,0x42,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
     let mut t=case("retf_outside_window",vec![0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,2,1,0]));tests.push(t);
