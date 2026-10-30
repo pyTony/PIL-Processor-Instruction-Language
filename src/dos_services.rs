@@ -3,7 +3,7 @@ use super::*;
 use crate::host_io::Output;
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     match(vector,(p.cpu.regs[0]>>8)as u8){
-        (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
+        (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
         (0x21,0x02)=>{console::dos_break_check(p)?;put_char(p,out,p.cpu.regs[2]as u8)?;Ok(None)},
         (0x21,ah @ (0x01|0x07|0x08))=>{read_char(p,out,ah)?;Ok(None)},
         (0x21,0x06)=>{direct_console(p,out)?;Ok(None)},
@@ -49,7 +49,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x21,0x30)=>{
-            let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
+            let version=p.ram.load(u32::from(p.psp)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
             let flags=p.cpu.regs[0]as u8==1;
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|version;
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|if flags{0}else{0xff00};
@@ -59,7 +59,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x21,0x33) if p.cpu.regs[0]as u8==6=>{
             // True version: the same 6.22 profile as AH30, revision 0, and
             // DH=0 because Dine is neither in ROM nor in the HMA.
-            let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS true version PSP read: {e:?}"))?;
+            let version=p.ram.load(u32::from(p.psp)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS true version PSP read: {e:?}"))?;
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|version;
             p.cpu.regs[2]&=0xffff0000;
             Ok(None)
@@ -69,7 +69,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             // the current table only updates PSP:32h; a larger one allocates a
             // new table (AH48 rules), copies the old entries, fills the rest
             // with FFh and points PSP:34h at it. No memory: CF=1, AX=8.
-            let psp=u32::from(PSP)*16;let load=|p:&Loaded,at:u32|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT PSP read: {e:?}"));
+            let psp=u32::from(p.psp)*16;let load=|p:&Loaded,at:u32|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT PSP read: {e:?}"));
             let wanted=p.cpu.regs[3]&0xffff;let current=load(p,psp+0x32)?;
             if wanted>current{
                 let saved=(p.cpu.regs[0],p.cpu.regs[3]);
@@ -98,6 +98,14 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
+        (0x21,0x4b)=>{exec::exec(p)?;Ok(None)},
+        (0x21,0x4d)=>{
+            // The last child's return code (AH = how it ended), read once.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(std::mem::take(&mut p.return_code));
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        (0x21,0x3f) if console_handle(p)=>{console_read(p,out)?;Ok(None)},
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
             let offset=p.cpu.regs[2]&0xffff;let mut text=Vec::new();
@@ -162,10 +170,10 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
         (0x21,ah @ (0x38|0x65))=>{nls::service(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==0=>{files::service(p,0x44)?;Ok(None)},
-        (0x21,ah @ (0x0e|0x19|0x36|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x5a|0x5b|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
+        (0x21,ah @ (0x0e|0x19|0x29|0x36|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x5a|0x5b|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
         (0x21,0x51|0x62)=>{
             // DOS 3+: AH51 and AH62 both return the current PSP segment.
-            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(PSP);
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
             Ok(None)
         },
         (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300|0xae00|0xb700|0xb710)=>{
@@ -264,7 +272,7 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
 /// a terminator. AUX/PRN (3..4) are not modelled; a closed handle is error 6.
 /// Linear address of a handle's entry in the job file table PSP:34h points at.
 pub(super) fn jft(p:&Loaded,handle:u16)->Result<u32,String>{
-    let psp=u32::from(PSP)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
+    let psp=u32::from(p.psp)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
     Ok(word(psp+0x36)?*16+word(psp+0x34)?+u32::from(handle))
 }
 fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
@@ -366,8 +374,11 @@ fn echo(p:&mut Loaded,out:&mut impl Output,bytes:&[u8],mut writes:Vec<(u32,MemWi
 /// once, at CR: the bytes including CR, and a count without it. Template keys
 /// (F1-F5, RIGHT, INS, DEL) are rejected; other extended keys are ignored.
 fn line_input(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
-    let dx=p.cpu.regs[2]&0xffff;
     let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+    line_into(p,out,context,p.cpu.regs[2]&0xffff)
+}
+/// The AH0A editor on the buffer at `context`:`dx`.
+fn line_into(p:&mut Loaded,out:&mut impl Output,context:MemoryContext,dx:u32)->Result<(),String>{
     let eip=p.cpu.eip;
     let at=move|n:u32|->Result<u32,String>{
         if dx+n>0xffff{return Err("DOS line buffer exceeds segment end".into());}
@@ -429,4 +440,37 @@ fn line_edit(p:&mut Loaded,out:&mut impl Output,at:&dyn Fn(u32)->Result<u32,Stri
         if clear{p.pending_scan=None;}
         *first=false;
     }
+}
+/// Handles 0..2 still on CON: open, and not a file AH3D opened.
+fn console_handle(p:&Loaded)->bool{
+    let handle=(p.cpu.regs[3]&0xffff)as u16;
+    handle<3&&p.open_handles&(1<<handle)!=0&&!p.drive.is_file(handle)
+}
+/// AH3F from CON reads cooked lines, as FreeDOS read_line_handle does: a line
+/// is edited as AH0A edits it (127 characters), CR echoes LF, and the line
+/// with CR LF is handed out over as many reads as the program makes.
+fn console_read(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
+    let wanted=(p.cpu.regs[1]&0xffff)as usize;let dx=p.cpu.regs[2]&0xffff;
+    if wanted==0{p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(());}
+    if dx as usize+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
+    if p.con_pending.is_empty(){
+        let base=u32::from(DOSDATA)*16+u32::from(CON_LINE);
+        if p.line.is_none(){p.ram.store(base,MemWidth::Byte,128).map_err(|e|format!("DOS console line write: {e:?}"))?;}
+        let context=MemoryContext{segment:SegmentRegister::Ds,cache:SegmentCache::real_mode(DOSDATA)};
+        console::dos_break_check(p)?;
+        line_into(p,out,context,u32::from(CON_LINE))?;
+        if p.input_wait{return Ok(());}
+        let count=p.ram.load(base+1,MemWidth::Byte).map_err(|e|format!("DOS console line read: {e:?}"))?;
+        let mut line=(0..=count).map(|i|p.ram.load(base+2+i,MemWidth::Byte).map(|b|b as u8)).collect::<Result<Vec<_>,_>>().map_err(|e|format!("DOS console line read: {e:?}"))?;line.push(10);
+        echo(p,out,b"\n",Vec::new())?;
+        p.con_pending=line;
+    }
+    let n=wanted.min(p.con_pending.len());
+    let bytes:Vec<u8>=p.con_pending.drain(..n).collect();
+    let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+    let addrs=(0..n as u32).map(|i|context.translate(dx+i,MemWidth::Byte,true,p.cpu.eip).map_err(|e|format!("DOS read buffer access: {e:?}"))).collect::<Result<Vec<_>,_>>()?;
+    for &a in &addrs{p.ram.check_write(a,MemWidth::Byte).map_err(|e|format!("DOS read buffer write: {e:?}"))?;}
+    for(a,&b)in addrs.into_iter().zip(&bytes){p.ram.store(a,MemWidth::Byte,u32::from(b)).map_err(|e|format!("DOS read buffer write: {e:?}"))?;}
+    p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|n as u32;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+    Ok(())
 }

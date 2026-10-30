@@ -16,6 +16,8 @@ impl Session{
         self.steps+=probe.completed;self.stop=probe.stop;self.loaded=Some(probe.loaded);
         Ok(probe.output)
     }
+    #[cfg(test)]
+    pub fn loaded(&self)->Option<&Loaded>{self.loaded.as_ref()}
     /// Queues one key as the BIOS stores it: scan code in the high byte, ASCII low.
     pub fn key(&mut self,ascii:u8,scan:u8)->Result<bool,String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;

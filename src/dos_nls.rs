@@ -21,7 +21,7 @@ const UPPER:[u8;38]=[0x80,0x9a,0x45,0x41,0x8e,0x41,0x8f,0x80,0x45,0x45,0x45,0x49
 /// signs as "$", inverted marks and guillemets as "?", "!" and a quote.
 const COLLATE:&[u8;48]=b"CUEAAAACEEEIIIAAEAAOOOUUYOU$$$$$AIOUNN\xa6\xa7?\xa9\xaa\xab\xac!\"\"";
 fn collate(c:u8)->u8{match c{b'a'..=b'z'=>c-32,0x80..=0xaf=>COLLATE[usize::from(c-0x80)],0xe1=>b'S',c=>c}}
-fn upper(c:u8)->u8{match c{b'a'..=b'z'=>c-32,0x80..=0xa5=>UPPER[usize::from(c-0x80)],c=>c}}
+pub(super) fn upper(c:u8)->u8{match c{b'a'..=b'z'=>c-32,0x80..=0xa5=>UPPER[usize::from(c-0x80)],c=>c}}
 /// Linear extent of the case-map routine, the only Dine code a program runs.
 pub(super) const CODE:(u32,u32)=(DOSDATA as u32*16+CASE_MAP as u32,DOSDATA as u32*16+CASE_MAP as u32+12);
 /// The case-map routine (AL >= 80h is looked up in the table) and the table.

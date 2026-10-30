@@ -1,3 +1,51 @@
+# EXEC: programs start from FreeCOM, plus FACTOR and MANDEL — 30 October 2026
+
+Step 4 of Goal 1 (COMMAND.COM in the GUI, DIR, factorial, Mandelbrot). In
+Tony's screenshots after #59, programs typed at the FreeCOM prompt stopped at
+AH29 just before EXEC, and DATE/TIME stopped reading CON through AH3F.
+
+- INT 21 AH4B AL=00h (load and execute), after FreeDOS task.c:
+  - COM files and MZ EXE files, with relocations applied at the load segment.
+    The program comes from any Dine drive. A missing file gives error 2 or 3,
+    a directory error 5, and an unusable header error 11.
+  - The child gets its own environment block (the given one or the parent's,
+    then the count word and its full path) and program block. A COM file takes
+    the largest free block; an EXE takes what fits between its minimum and
+    maximum. Error 8 is returned when memory is short.
+  - The PSP carries INT 20h, the block end, the parent's return address and
+    INT 23h/24h vectors, the parent PSP, a copy of the parent's handles, the
+    environment, the 20-entry handle table, the DOS version word, the INT 21h
+    RETF stub, both FCBs and the command tail.
+  - When the child ends (AH4C, INT 20h, AH31), its memory is freed (all
+    but the resident block for AH31) and the files it opened are closed. The
+    parent continues after its INT 21h with CF=0. Programs can nest 8 deep.
+  - The PSP is no longer fixed at 1000h: AH51/62, AH48 ownership, the handle
+    table and termination all follow the running program.
+  - AL=01h and AL=03h (load without running, overlays) still stop the run.
+- AH4D returns the last child's exit code and how it ended (AH=00h normal,
+  03h resident) once, then 0.
+- AH29 parses a file name into an FCB as FreeDOS FcbParseFname does: the four
+  AL option bits, drive letters (FFh for a drive that does not exist), `*` and
+  `?`, `.` and `..`, and DS:SI left after the name.
+- AH3F on handles 0-2 while they are still CON reads a cooked line: the same
+  editor as AH0A (127 characters), CR echoes LF, and the line with CR LF is
+  handed out over as many reads as the program asks for.
+- `programs/dos/` has two original demo programs with their NASM sources:
+  `FACTOR.COM [n]` prints 0! to n! as exact decimals, and `MANDEL.COM` draws
+  the Mandelbrot set in text characters with 8.8 fixed point.
+
+From the FreeCOM 0.86 prompt this now works: running COM and EXE programs from
+C: and D:, `IF ERRORLEVEL`, a nested `COMMAND` and `EXIT` back to the first
+one, and typing a new date at the DATE prompt (setting it, AH2B, still stops).
+
+  `python tools/dos_terminal.py --mount programs/dos images/FD14LITE.img::COMMAND.COM`
+
+Verification: 408 Rust tests passed on Linux, including EXEC of a COM and a
+relocated EXE with their return codes, AH29 cases from FreeDOS's rules, a CON
+read split over two calls, and the output of both demo programs. FreeCOM 0.86
+was driven through HELLO, an EXE, FACTOR 30, MANDEL, nested COMMAND and DATE
+on a test FAT16 image plus a host folder. FD14LITE itself is not in CI.
+
 # Drives C: and D:, DIR in FreeCOM, IDIV and country information — 30 October 2026
 
 Step 3 of Goal 1 (COMMAND.COM in the GUI, DIR, factorial, Mandelbrot). FreeDOS
