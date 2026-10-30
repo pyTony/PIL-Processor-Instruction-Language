@@ -37,6 +37,15 @@ jobs:
         run: python tools/verify_dos_console.py --engine target/debug/pil-proof --out target/console-fixtures
       - if: runner.os == 'Windows'
         run: python tools/verify_dos_console.py --engine target/debug/pil-proof.exe --out target/console-fixtures
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x
+      - if: runner.os == 'Linux'
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          python tools/verify_dosbox_cpu.py --engine target/debug/pil-proof --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
+          python tools/verify_dosbox_cpu.py --engine target/debug/pil-proof --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
       - run: python tools/verify_containers.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check
