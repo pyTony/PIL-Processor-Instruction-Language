@@ -1187,3 +1187,18 @@ fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
  assert_eq!(call(&mut p,0x4100,0,b"SUB"),(2,1));
  std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn speaker_ports_take_watcoms_sound_and_nosound(){
+ // sound(900): IN AL,61h by DX; OR AL,3; OUT; mode B6h to 43h; count 052Dh to 42h low then high; CLI; HLT.
+ let code=[0xba,0x61,0x00,0xec,0x0c,0x03,0xee,0xb0,0xb6,0xba,0x43,0x00,0xee,0xba,0x42,0x00,0xb0,0x2d,0xee,0xb0,0x05,0xee,0xfa,0xf4];
+ let r=run(load(&code,"sound.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.speaker.tone(),r.loaded.speaker.beeps),(900,1));
+ // nosound(): IN AL,61h; AND AL,FCh; OUT 61h,AL. Bit 4 toggles on each read.
+ let code=[0xe4,0x61,0x88,0xc3,0xe4,0x61,0x24,0xfc,0xe6,0x61,0xe4,0x61,0xfa,0xf4];
+ let r=run(load(&code,"nosound.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.cpu.regs[3]&255,r.loaded.cpu.regs[0]&255,r.loaded.speaker.tone()),(0x10,0x10,0));
+ // Other ports, word accesses and PIT reads stop the run.
+ for code in [&[0xe4,0x40,0xfa,0xf4][..],&[0xe5,0x61,0xfa,0xf4],&[0xba,0x42,0x00,0xec,0xfa,0xf4],&[0xb0,0x36,0xe6,0x43,0xfa,0xf4]]{
+  let r=run(load(code,"port.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ }
+}

@@ -2048,8 +2048,20 @@
         "AH36 reports no free space",
         "create attributes are not kept",
         "two opens of one file do not see each other's writes",
-        "redirected standard input for AH01/06/07/08/0A is not modelled",
-        "FreeCOM's beep stops at IN AL,DX"
+        "redirected standard input for AH01/06/07/08/0A is not modelled"
+      ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "PC speaker ports",
+      "base": "dev after #62",
+      "verification": {
+        "linux_rust_tests": 414
+      },
+      "limitations": [
+        "the PIT does not count: reading port 42h and other PIT commands stop",
+        "word port accesses and other ports stop",
+        "port 61h bit 5 reads 0"
       ]
     }
   ],

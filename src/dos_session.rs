@@ -49,7 +49,9 @@ impl Session{
         let hex:String=cells.iter().map(|b|format!("{b:02x}")).collect();
         let cs=self.loaded.as_ref().map(|p|p.selectors[SegmentRegister::Cs.index()]).unwrap_or(0);
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
-        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\",\"output\":{}}}",
+        // The speaker: times it was switched on so far, and its tone now (0 off).
+        let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
+        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\",\"beeps\":{beeps},\"tone\":{tone},\"output\":{}}}",
             quote(text),quote(&detail),self.steps,quote(&String::from_utf8_lossy(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `snapshot` or `quit`.

@@ -1,3 +1,23 @@
+# PC speaker ports — 30 October 2026
+
+FreeCOM's beep (the `BEEP` command, and a key the line editor does not take,
+such as Ctrl-V) stopped at IN AL,DX (opcode ECh). Dine now answers byte IN
+and OUT on the speaker ports on the host, as it answers INT services
+(`src/dos_ports.rs`): PIT channel 2 takes its mode at 43h and its count at
+42h, and port 61h bits 0 and 1 switch the speaker. Reading 61h returns the
+bits last written, with bit 4 toggling as the refresh bit does. The session
+reply reports `beeps` (times the speaker was switched on) and `tone` (Hz, 0
+when off), and the Tk terminal rings the host bell for each new beep.
+
+Limitations: the PIT does not count, so reading 42h, other PIT commands, word
+port accesses and every other port still stop the run; bit 5 of port 61h
+(channel 2 output) reads 0.
+
+Verification: 414 Rust tests passed on Linux (one new test for Watcom's
+sound and nosound sequences and for the ports that still stop). FreeCOM 0.86
+ran `BEEP` and a Ctrl-V at the prompt, then `ECHO after`, with `beeps` 1 and
+then 2.
+
 # Writable host folder: pipes, redirection and file commands — 30 October 2026
 
 The `--mount` folder (D: after an image) can now be written; the image stays
@@ -28,8 +48,7 @@ Limitations: AH43 AL=01h (set attributes) is still access denied, AH36 still
 reports no free space (the host's free space is not read), attributes given
 to a create are not kept, two opens of one file do not see each other's
 writes until reopened, and redirected standard input for AH01/06/07/08/0A is
-not modelled. FreeCOM's beep (`DEL *.*` answered with a wrong key) stops at
-IN AL,DX (opcode ECh).
+not modelled.
 
 Verification: 413 Rust tests passed on Linux (one new test for the writable
 folder; the image test now checks every write is refused). FreeCOM 0.86 from

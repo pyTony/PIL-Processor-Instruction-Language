@@ -136,6 +136,7 @@ def make_app(root, engine, program, mount=None):
     text.tag_configure('cursor', underline=True)
     session = Session(engine, program, mount)
     keys = []
+    beeps = [session.last.get('beeps', 0)]
 
     def draw(reply):
         text.configure(state='normal')
@@ -153,6 +154,10 @@ def make_app(root, engine, program, mount=None):
         text.configure(state='disabled')
         detail = f" — {reply['detail']}" if reply['detail'] else ''
         status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}")
+        # The program switched the PC speaker on: sound the host's bell.
+        if reply.get('beeps', 0) > beeps[0]:
+            beeps[0] = reply['beeps']
+            root.bell()
 
     def on_key(event):
         code = key_code(event.keysym, event.char, bool(event.state & 0x4))
