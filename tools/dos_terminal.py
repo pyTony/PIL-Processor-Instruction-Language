@@ -162,6 +162,10 @@ def make_app(root, engine, program, mount=None):
     for attr in range(256):
         text.tag_configure(f'a{attr}', foreground=PALETTE[attr & 15], background=PALETTE[(attr >> 4) & 7])
     text.tag_configure('cursor', underline=True)
+    # The colour tags paint every cell's background: keep the selection above
+    # them, and visible when the window does not have the focus.
+    text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
+    text.tag_raise('sel')
     session = Session(engine, program, mount)
     # DOS date and time come from this computer's clock in local time.
     session.send(f'clock {local_offset()}')
