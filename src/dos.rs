@@ -204,7 +204,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 version; INT1A/AH00 advances deterministic tick counter; INT21/AH3D validates DS:DX and returns file-not-found; INT21/AH3E tracks open PSP handles 0..4. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 version; INT1A/AH00 advances deterministic tick counter; INT21/AH3D validates DS:DX and returns file-not-found; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT2F installation checks find no redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE). Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{

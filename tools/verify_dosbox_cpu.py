@@ -367,6 +367,12 @@ def cases():
     add('jmp_reg16', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c307ffe34041'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
     add('jmp_ss_mem16', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c30b5389e336ff27405b41'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
     add('jmp_reg32', 32, 0x1234, 0x10, bytes.fromhex('e800005b83c30c660fb7db66ffe34041'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
+    # LDS from a far pointer pushed on the stack; DS is saved and restored.
+    add('lds16', 16, 0, 0, bytes.fromhex('1e687856683412' '89e336c50f8cd883c4041f'), 0x5678, 0, flag_mask=DF, expected_ecx=0x1234)
+    add('lds32', 32, 0x13570000, 0, bytes.fromhex('1e68785666687856341289e33666c50f8cd883c4061f'), 0x13575678, 0, flag_mask=DF, expected_ecx=0x12345678)
+    # ENTER n,0 then AX=BP-SP=n, and LEAVE restores the frame.
+    add('enter16', 16, 0, 0, bytes.fromhex('c804000089e829e0c9'), 4, 0, flag_mask=DF)
+    add('enter32', 16, 0, 0, bytes.fromhex('66c808000089e829e066c9'), 8, 0, flag_mask=DF)
     return result
 
 

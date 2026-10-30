@@ -706,3 +706,38 @@ fn near_indirect_jump_reads_register_and_cs_memory_targets(){
  // MOV BX,0106; JMP BX -> MOV AL,2B; HLT.
  let r=run(load(&[0xbb,0x06,0x01,0xff,0xe3,0xf4,0xb0,0x2b,0xf4],"jmpreg.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x2b);
 }
+#[test]
+fn lds_and_enter_have_literal_results(){
+ // LDS SI,[0110] loads SI=1234, DS=5678; then MOV AX,DS.
+ let r=run(load(&[0xc5,0x36,0x10,0x01,0x8c,0xd8,0xf4,0,0,0,0,0,0,0,0,0,0x34,0x12,0x78,0x56],"lds.com").unwrap(),10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[6]&0xffff,0x1234);assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x5678);
+ // ENTER 001E,0 with SP=FFFE, BP=ABCD: [SS:FFFC]=ABCD, BP=FFFC, SP=FFDE.
+ let mut p=load(&[0xc8,0x1e,0x00,0x00,0xf4],"enter.com").unwrap();p.cpu.regs[5]=0x1111abcd;
+ let sp=p.cpu.regs[4]&0xffff;let r=run(p,10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[5],0x11110000|(sp-2));assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp-2-0x1e);
+ let ss=u32::from(r.loaded.selectors[SegmentRegister::Ss.index()])*16;
+ assert_eq!(r.loaded.ram.load(ss+sp-2,MemWidth::Word).unwrap(),0xabcd);
+ // A non-zero nesting level is outside the profile.
+ let r=run(load(&[0xc8,0x10,0x00,0x01,0xf4],"enter1.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{..}),"{:?}",r.stop);
+}
+#[test]
+fn handle_write_psp_query_and_absent_extensions(){
+ // MOV AH,40; MOV BX,1; MOV CX,3; MOV DX,0110; INT 21; HLT; ... "abc" at 0110.
+ let mut code=vec![0xb4,0x40,0xbb,0x01,0x00,0xb9,0x03,0x00,0xba,0x10,0x01,0xcd,0x21,0xf4];code.resize(0x10,0);code.extend(b"abc");
+ let r=run(load(&code,"write.com").unwrap(),10).unwrap();assert_eq!(r.output,b"abc");assert_eq!(r.loaded.cpu.regs[0]&0xffff,3);assert_eq!(r.loaded.cpu.eflags&1,0);
+ // A closed handle is error 6; AUX/PRN writes stop as unmodelled.
+ code[3]=7;let r=run(load(&code,"write7.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,6);assert_eq!(r.loaded.cpu.eflags&1,1);assert!(r.output.is_empty());
+ code[3]=4;let r=run(load(&code,"prn.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ // MOV AH,51; INT 21 and MOV AH,62; INT 21 both return the PSP in BX.
+ for ah in [0x51,0x62]{let r=run(load(&[0xb4,ah,0xcd,0x21,0xf4],"psp.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&0xffff,u32::from(r.loaded.selectors[SegmentRegister::Ds.index()]));}
+ // INT 2F installation checks find nothing: AX comes back unchanged.
+ for ax in [0x1100u16,0x1600,0x1680,0x1687,0x1a00,0x4300]{
+  let [lo,hi]=ax.to_le_bytes();let r=run(load(&[0xb8,lo,hi,0xcd,0x2f,0xf4],"mux.com").unwrap(),10).unwrap();
+  assert_eq!(r.loaded.cpu.regs[0]&0xffff,u32::from(ax));assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ }
+ // AX=4310h (XMS entry point) is only meaningful once XMS is present: still a stop.
+ let r=run(load(&[0xb8,0x10,0x43,0xcd,0x2f,0xf4],"xms.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
+ // MOV AH,12; MOV BL,10; INT 10: no EGA, BL stays 10h. INT 15 AH=C0: CF=1, AH=86h.
+ let r=run(load(&[0xb4,0x12,0xb3,0x10,0xcd,0x10,0xf4],"ega.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&255,0x10);
+ let r=run(load(&[0xb4,0xc0,0xcd,0x15,0xf4],"config.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
+}
