@@ -2051,6 +2051,21 @@
         "Ctrl-C/INT23 not modeled",
         "no Python console wiring"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "DOS fetch window is the program's memory block",
+      "base": "e819b84",
+      "verification": {
+        "linux_rust_tests": 378,
+        "dosbox_cpu_cases": "328/328",
+        "dosbox_console_cases": "8/8",
+        "freedos_probe": "not rerun"
+      },
+      "limitations": [
+        "AH48 blocks above the load-time allocation are not executable",
+        "no INT15 AHC2 pointing-device BIOS"
+      ]
     }
   ]
 }

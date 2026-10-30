@@ -1,3 +1,18 @@
+# Code runs anywhere in the program's DOS block — 30 October 2026
+
+The DOS loader's instruction fetch window was the bytes loaded from the file.
+Self-unpacking COMs (UPX-style stubs) copy code above the file image and jump
+there, so 36 small FreeDOS COMs stopped at Boundary. The window is now the
+memory block DOS gives the program at load: PSP through the load-time
+allocation end (all conventional memory for a COM; the MZ minimum/maximum
+block otherwise). A fetch outside that block, such as a far call into ROM,
+still stops as Boundary. The decode cache already re-checks instruction bytes
+on reuse, so code written by the guest is decoded fresh.
+
+Verification: 378 Rust tests passed on Linux (one new, two adjusted). The
+DOSBox-X CPU (328) and console (8) comparisons still pass in both engines.
+Not yet rerun on the FreeDOS image.
+
 # DOS buffered line input (INT21 AH0A) — 30 October 2026
 
 INT21 AH0A reads a line into the DS:DX buffer (size byte, count byte, text).

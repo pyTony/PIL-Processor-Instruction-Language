@@ -107,7 +107,15 @@ fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
     let b=[0xb4,0x31,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
     let r=run(load(&[0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
-    let r=run(load(&[0x90],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));
+    let r=run(load(&[0x9a,0,0,0,0xa0],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));assert_eq!(r.completed,1);
+}
+#[test]
+fn code_written_past_the_file_runs_inside_the_program_block(){
+    // Store MOV AX,4C00 / INT 21 at 200h (past the 20-byte file) and jump there, as unpackers do.
+    let code=[0xc7,0x06,0x00,0x02,0xb8,0x00,0xc7,0x06,0x02,0x02,0x4c,0xcd,0xc6,0x06,0x04,0x02,0x21,0xe9,0xec,0x00];
+    let r=run(load(&code,"unpack.com").unwrap(),20).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.completed,6);
+    // An MZ program's fetch window is its whole block, PSP through allocation end.
+    let p=load(&hello("exe").unwrap(),"hello.exe").unwrap();assert_eq!((p.image.fetch_base,p.image.fetch_base+p.image.end),(u32::from(PSP)*16,p.allocated_end));
 }
 #[test]
 fn loops_are_budgeted_and_psp_int20_can_be_reached(){
@@ -131,7 +139,7 @@ fn corpus_report_ranks_first_blockers_and_keeps_service_failures_separate(){
 fn mz_negative_relative_segments_wrap_before_entry_and_stack_validation(){
     let mut bytes=hello("exe").unwrap();put_word(&mut bytes,22,0xfff0);put_word(&mut bytes,20,0x100);put_word(&mut bytes,14,0xfff0);
     // With CS=DS=PSP, hello's data offset10C still names the original string.
-    let p=load(&bytes,"wrapped.exe").unwrap();assert_eq!(p.selectors[1],PSP);assert_eq!(p.selectors[2],PSP);assert_eq!(p.image.start,0x100);assert_eq!(p.cpu.eip,0x100);
+    let p=load(&bytes,"wrapped.exe").unwrap();assert_eq!(p.selectors[1],PSP);assert_eq!(p.selectors[2],PSP);assert_eq!((p.image.fetch_base,p.image.start),(u32::from(PSP)*16,0));assert_eq!(p.cpu.eip,0x100);
     let r=run(p,100).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"Hello, DOS!\r\n");
     put_word(&mut bytes,20,0xff);assert!(load(&bytes,"outside.exe").is_err());
 }
