@@ -2017,6 +2017,23 @@
         "DOS output not mirrored to the screen",
         "no Python console wiring"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "DOS console input and screen-mirrored output",
+      "base": "458ea5b",
+      "verification": {
+        "linux_rust_tests": 372,
+        "pil_console_cases": 7,
+        "dosbox_console_cases": "not rerun",
+        "negative_control": "one deliberate failure in PIL"
+      },
+      "limitations": [
+        "no AH0A buffered input",
+        "Ctrl-C/INT23 break handling not modeled (stops)",
+        "no stdin/stdout redirection",
+        "no Python console wiring"
+      ]
     }
   ]
 }

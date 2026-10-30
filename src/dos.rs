@@ -31,6 +31,9 @@ pub struct Loaded{
     pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
     pub timer_ticks:u32,pub open_handles:u32,
     pub dta:(u16,u16),
+    /// DOS console state: scan code owed after an ASCII-0 key, and an AH0C flush
+    /// already performed for the read that is waiting.
+    pub pending_scan:Option<u8>,pub flushed:bool,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -121,7 +124,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80)})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -154,7 +157,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         if execution_steps==budget{break Stop::Budget;}
         if let Ok(encoded)=bytes_at(&p,2){if encoded[0]==0xcd{
             let vector=encoded[1];let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
-            match console::waiting(&p,vector){
+            match console::waiting(&mut p,vector){
                 Ok(true)=>break Stop::WaitingForInput,
                 Err(message)=>break Stop::Service(message),
                 Ok(false)=>{},

@@ -31,9 +31,19 @@ fn ring(p:&Loaded)->Result<(u32,u32),String>{
     }Ok((head,tail))
 }
 fn next(n:u32)->u32{if n==0x3c{0x1e}else{n+2}}
-pub(super) fn waiting(p:&Loaded,vector:u8)->Result<bool,String>{
-    if vector!=0x16 || (p.cpu.regs[0]>>8)as u8!=0{return Ok(false);}
-    let (head,tail)=ring(p)?;Ok(head==tail)
+/// Blocking reads stop without retiring. AH0C flushes once before its first
+/// wait, so resuming after a key arrives does not discard that key.
+pub(super) fn waiting(p:&mut Loaded,vector:u8)->Result<bool,String>{
+    let(ah,al)=((p.cpu.regs[0]>>8)as u8,p.cpu.regs[0]as u8);
+    match(vector,ah){
+        (0x16,0)=>{let(head,tail)=ring(p)?;Ok(head==tail)},
+        (0x21,1|7|8)=>Ok(!dos_available(p)?),
+        (0x21,0x0c) if matches!(al,1|7|8)=>{
+            if !p.flushed{let writes=dos_flush_writes(p)?;commit(p,&writes)?;p.pending_scan=None;p.flushed=true;}
+            Ok(!dos_available(p)?)
+        },
+        _=>Ok(false),
+    }
 }
 /// Host adapter input: legacy BIOS scan code in AH, character in AL; full is not EOF.
 pub(super) fn enqueue(p:&mut Loaded,key:u16)->Result<bool,String>{
@@ -123,30 +133,78 @@ fn window_writes(page:u32,cells:&[u32],window:(u32,u32,u32,u32))->Vec<(u32,MemWi
     (top..=bottom).flat_map(|row|(left..=right).map(move|col|row*COLS+col))
         .map(|cell|(VIDEO+page*PAGE+cell*2,MemWidth::Word,cells[cell as usize])).collect()
 }
-/// INT10/AH0E for page BH. Text mode keeps the cell attribute; the blank line
-/// after a bottom-row scroll uses the attribute under the incoming cursor.
-fn teletype(p:&mut Loaded)->Result<(),String>{
-    let ch=p.cpu.regs[0]&255;let page=(p.cpu.regs[3]>>8)&255;
+type Writes=Vec<(u32,MemWidth,u32)>;
+/// Teletype bytes onto a copy of `page`. Text mode keeps cell attributes; a
+/// bottom-row scroll fills with the attribute under the cursor before that byte.
+/// DOS callers expand TAB from the screen column; BIOS AH0E rejects it because
+/// IBM-derived and DOSBox-derived BIOSes differ.
+fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,String>{
     if page>=8{return Err("BIOS video page must be 0..7".into());}
-    // IBM and DOSBox-derived BIOSes differ for TAB; do not choose silently.
-    if ch==9{return Err("BIOS teletype TAB policy is not part of this profile".into());}
-    let(mut row,mut col)=cursor(p,page)?;let base=VIDEO+page*PAGE;
-    let at=base+(row*COLS+col)*2;let mut writes=Vec::new();
-    match ch{
-        7=>{},
-        8=>col=col.saturating_sub(1),
-        10=>row+=1,
-        13=>col=0,
-        _=>{writes.push((at,MemWidth::Byte,ch));col+=1;if col==COLS{col=0;row+=1;}},
+    if !dos_tabs&&bytes.contains(&9){return Err("BIOS teletype TAB policy is not part of this profile".into());}
+    let(mut row,mut col)=cursor(p,page)?;let mut cells=page_cells(p,page)?;
+    let(mut dirty,mut scrolled)=(Vec::new(),false);
+    for &b in bytes{
+        let n=if b==9{8-col%8}else{1};
+        for _ in 0..n{
+            let ch=if b==9{32}else{u32::from(b)};let incoming=(row*COLS+col)as usize;
+            match ch{
+                7=>{},
+                8=>col=col.saturating_sub(1),
+                10=>row+=1,
+                13=>col=0,
+                _=>{cells[incoming]=(cells[incoming]&0xff00)|ch;dirty.push(incoming);col+=1;if col==COLS{col=0;row+=1;}},
+            }
+            if row==ROWS{
+                let attr=cells[incoming]>>8;
+                scroll(&mut cells,(0,0,ROWS-1,COLS-1),1,attr,true);row=ROWS-1;scrolled=true;
+            }
+        }
     }
-    if row==ROWS{
-        let attr=read(p,at)?>>8;let mut cells=page_cells(p,page)?;
-        if let Some(&(_,_,value))=writes.first(){let cell=((at-base)/2)as usize;cells[cell]=(cells[cell]&0xff00)|value;}
-        scroll(&mut cells,(0,0,ROWS-1,COLS-1),1,attr,true);
-        writes=window_writes(page,&cells,(0,0,ROWS-1,COLS-1));row=ROWS-1;
-    }
+    let base=VIDEO+page*PAGE;
+    let mut writes=if scrolled{window_writes(page,&cells,(0,0,ROWS-1,COLS-1))}
+        else{dirty.into_iter().map(|cell|(base+cell as u32*2,MemWidth::Byte,cells[cell]&255)).collect()};
     writes.push((0x450+page*2,MemWidth::Word,(row<<8)|col));
+    Ok(writes)
+}
+fn teletype(p:&mut Loaded)->Result<(),String>{
+    let writes=teletype_plan(p,(p.cpu.regs[3]>>8)&255,&[p.cpu.regs[0]as u8],false)?;
     commit(p,&writes)
+}
+/// DOS console output also reaches the active page, as through INT29/AH0E.
+pub(super) fn dos_screen(p:&Loaded,bytes:&[u8])->Result<Writes,String>{
+    let writes=teletype_plan(p,active_page(p)?,bytes,true)?;
+    check(p,&writes)?;Ok(writes)
+}
+pub(super) fn check(p:&Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
+    for &(at,width,_) in writes{p.ram.check_write(at,width).map_err(|e|format!("BIOS console write: {e:?}"))?;}
+    Ok(())
+}
+/// Store a write set that `check` already accepted.
+pub(super) fn store(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{commit(p,writes)}
+/// DOS stdin is CON on the BIOS ring. An ASCII-0 key returns 00h, then its scan
+/// code on the next read, as single-byte DOS reads do.
+pub(super) fn dos_available(p:&Loaded)->Result<bool,String>{
+    if p.pending_scan.is_some(){return Ok(true);}
+    let(head,tail)=ring(p)?;Ok(head!=tail)
+}
+/// Plan one DOS character read: the byte, ring writes and the next pending scan.
+pub(super) fn dos_take(p:&Loaded)->Result<(u8,Writes,Option<u8>),String>{
+    if let Some(scan)=p.pending_scan{return Ok((scan,Vec::new(),None));}
+    let(head,tail)=ring(p)?;
+    if head==tail{return Err("DOS console read requires input".into());}
+    let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
+    if key&255==0{Ok((0,writes,Some((key>>8)as u8)))}else{Ok((key as u8,writes,None))}
+}
+/// Ctrl-C at the head of input would run DOS break handling (INT23), which
+/// this shim does not model; stop before any effect instead of ignoring it.
+pub(super) fn dos_break_check(p:&Loaded)->Result<(),String>{
+    if p.pending_scan.is_some(){return Ok(());}
+    let(head,tail)=ring(p)?;
+    if head!=tail&&read(p,0x400+head)?&255==3{return Err("DOS Ctrl-C break handling (INT23) is not modeled".into());}
+    Ok(())
+}
+pub(super) fn dos_flush_writes(p:&Loaded)->Result<Writes,String>{
+    let(_,tail)=ring(p)?;let writes=vec![(0x41a,MemWidth::Word,tail)];check(p,&writes)?;Ok(writes)
 }
 /// INT10/AH06 (up) and AH07 (down) on the active page. Lower-right corners
 /// beyond the text page are clamped; an inverted window changes nothing.

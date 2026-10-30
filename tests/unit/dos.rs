@@ -163,12 +163,17 @@ fn dos_version_failed_psp_read_changes_no_registers_or_output(){
  let mut p=load(&[0xcd,0x21],"version.com").unwrap();p.cpu.regs[0]=0x3000;p.ram=Ram::new(u32::from(PSP)as usize*16+0x41);let old=p.cpu.clone();let oldram=p.ram.clone();let mut out=vec![65];assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old);assert_eq!(p.ram,oldram);assert_eq!(out,vec![65]);
 }
 
+/// RAM equal outside the active text page and its cursor word.
+fn same_outside_screen(a:&Ram,b:&Ram)->bool{
+ let(x,y)=(a.bytes(),b.bytes());x.len()==y.len()&&x.iter().zip(y).enumerate().all(|(i,(u,v))|u==v||(0xb8000..0xb8fa0).contains(&i)||(0x450..0x452).contains(&i))
+}
 #[test]
 fn dos_character_output_preserves_other_state_and_returns_character(){
  for byte in 0..=255u32{
   let mut p=load(&[0xcd,0x21],"putchar.com").unwrap();p.cpu.regs[0]=0xabcd02ff;p.cpu.regs[2]=0x12345600|byte;p.cpu.eflags=0xed7;p.cpu.undefined_flags=u32::MAX;
   let mut want=p.cpu.clone();want.regs[0]=0xabcd0200|if byte==9{32}else{byte};let ram=p.ram.clone();let image=p.image.clone();let mut out=vec![];
-  service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu,want);assert_eq!(p.ram,ram);assert_eq!(p.image,image);assert_eq!(out,if byte==9{vec![32;8]}else{vec![byte as u8]});
+  service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu,want);assert!(same_outside_screen(&p.ram,&ram));assert_eq!(p.image,image);assert_eq!(out,if byte==9{vec![32;8]}else{vec![byte as u8]});
+  if !matches!(byte,7..=10|13){assert_eq!(p.ram.load(0xb8000,MemWidth::Word).unwrap(),0x0700|byte);assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),1);}
  }
 }
 #[test]
@@ -181,7 +186,7 @@ fn dos_tabs_use_column_after_text_cr_lf_backspace_and_bell(){
 fn dos_character_output_limit_is_all_or_none_including_tab_expansion(){
  for (length,byte,ok) in [(MAX_OUTPUT-1,b'A',true),(MAX_OUTPUT,b'A',false),(MAX_OUTPUT-1,9,true),(MAX_OUTPUT,9,false)]{
   let mut p=load(&[0xcd,0x21],"limit.com").unwrap();p.cpu.regs[0]=0x02ff;p.cpu.regs[2]=u32::from(byte);let old=p.cpu.clone();let image=p.image.clone();let ram=p.ram.clone();let mut out=vec![b'x';length];let before=out.clone();
-  assert_eq!(service(&mut p,0x21,&mut out).is_ok(),ok);if ok{assert_eq!(out.len(),MAX_OUTPUT);}else{assert_eq!(out,before);assert_eq!(p.cpu,old);}assert_eq!(p.image,image);assert_eq!(p.ram,ram);
+  assert_eq!(service(&mut p,0x21,&mut out).is_ok(),ok);if ok{assert_eq!(out.len(),MAX_OUTPUT);assert!(same_outside_screen(&p.ram,&ram));}else{assert_eq!(out,before);assert_eq!(p.cpu,old);assert_eq!(p.ram,ram);}assert_eq!(p.image,image);
  }
  // A tab after CR needs8 bytes even with only one remaining output byte.
  let mut p=load(&[0xcd,0x21],"limit.com").unwrap();p.cpu.regs[0]=0x0200;p.cpu.regs[2]=9;let mut out=vec![b'x';MAX_OUTPUT-2];out.push(13);let before=out.clone();let old=p.cpu.clone();assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(out,before);assert_eq!(p.cpu,old);
@@ -502,4 +507,82 @@ fn bios_set_mode_three_resets_bda_and_clears_unless_bit7(){
  for al in [0u32,1,2,7,0x13,0x87]{let mut p=load(&[0xcd,0x10],"mode.com").unwrap();p.cpu.regs[0]=al;let old=p.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);}
  let mut p=load(&[0xcd,0x10],"mode.com").unwrap();p.ram.protect(0xbef9f,1).unwrap();p.cpu.regs[0]=3;let old=p.clone();
  assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);
+}
+fn dos(p:&mut Loaded,ax:u32,dx:u32,out:&mut Vec<u8>)->Result<Option<u8>,String>{p.cpu.regs[0]=0xabcd0000|ax;p.cpu.regs[2]=0x12340000|dx;service(p,0x21,out)}
+#[test]
+fn dos_output_reaches_active_page_with_screen_tab_and_atomic_faults(){
+ let bytes=[0xcd,0x21,b'A',b'B',9,b'C',13,10,b'$'];
+ let mut p=load(&bytes,"screen.com").unwrap();p.ram.store(0x462,MemWidth::Byte,2).unwrap();p.ram.store(0x454,MemWidth::Word,0x0003).unwrap();
+ let mut out=vec![];dos(&mut p,0x0900,0x102,&mut out).unwrap();assert_eq!(out,b"AB\tC\r\n");
+ let row:Vec<u32>=(0..10).map(|c|cell(&p,2,0,c)&255).collect();assert_eq!(row,[32,32,32,65,66,32,32,32,67,32]);
+ assert_eq!(p.ram.load(0x454,MemWidth::Word).unwrap(),0x0100);assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
+ // A protected screen cell or bad cursor stops before capture or registers change.
+ for setup in 0..2{
+  let mut p=load(&bytes,"screen.com").unwrap();if setup==0{p.ram.protect(0xb8000,1).unwrap();}else{p.ram.store(0x450,MemWidth::Word,0x1900).unwrap();}
+  for (ax,dx) in [(0x0900,0x102),(0x0200,0x41),(0x0600,0x41)]{let old=p.clone();let mut out=vec![];assert!(dos(&mut p,ax,dx,&mut out).is_err());assert!(out.is_empty());assert_eq!(p.ram,old.ram);assert_eq!(p.cpu.regs[0],0xabcd0000|ax);}
+ }
+ // Provider failure leaves the screen untouched as well.
+ let mut p=load(&bytes,"screen.com").unwrap();let mut out=vec![b'x';MAX_OUTPUT];let old=p.ram.clone();assert!(dos(&mut p,0x0200,0x41,&mut out).is_err());assert_eq!(p.ram,old);
+}
+#[test]
+fn dos_reads_echo_extended_keys_in_two_calls_and_keep_flags(){
+ let mut p=load(&[0xcd,0x21],"read.com").unwrap();let mut out=vec![];
+ for key in [0x1e61,0x4800,0x2e63,0x4b00,0x2064]{assert!(p.enqueue_key(key).unwrap());}
+ p.cpu.eflags=0xad7;p.cpu.undefined_flags=u32::MAX;
+ for (ah,al,echo) in [(1u32,0x61u32,true),(1,0,true),(1,0x48,true),(8,0x63,false),(7,0,false),(7,0x4b,false),(8,0x64,false)]{
+  let n=out.len();dos(&mut p,ah<<8,0x55,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0000|(ah<<8)|al);assert_eq!(p.cpu.regs[2],0x12340055);
+  assert_eq!(out[n..],if echo{vec![al as u8]}else{vec![]});
+ }
+ assert_eq!((p.cpu.eflags,p.cpu.undefined_flags),(0xad7,u32::MAX));assert_eq!(p.pending_scan,None);
+ assert_eq!(cell(&p,0,0,0)&255,0x61);assert_eq!(cell(&p,0,0,2)&255,0x48);assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),3);
+ assert!(dos(&mut p,0x0100,0,&mut out).is_err()); // service needs input; the run loop waits first
+}
+#[test]
+fn dos_ctrl_c_is_returned_raw_or_stops_before_any_effect(){
+ for ah in [1u32,2,8,9,0x0b]{
+  let mut p=load(&[0xcd,0x21,b'$'],"break.com").unwrap();p.enqueue_key(0x2e03).unwrap();let old=p.clone();let mut out=vec![];
+  assert!(dos(&mut p,ah<<8,if ah==9{0x102}else{0x41},&mut out).is_err());assert!(out.is_empty());assert_eq!(p.ram,old.ram);assert_eq!(p.cpu.regs[0],0xabcd0000|(ah<<8));
+ }
+ for (ah,dl) in [(7u32,0),(6,0xff)]{
+  let mut p=load(&[0xcd,0x21],"break.com").unwrap();p.enqueue_key(0x2e03).unwrap();let mut out=vec![];
+  dos(&mut p,ah<<8,dl,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,3);assert!(out.is_empty());assert!(!console::dos_available(&p).unwrap());
+ }
+}
+#[test]
+fn dos_direct_console_and_status_poll_without_waiting(){
+ let mut p=load(&[0xcd,0x21],"poll.com").unwrap();let mut out=vec![];p.cpu.eflags=0x2;p.cpu.undefined_flags=0x40;
+ dos(&mut p,0x06ff,0xff,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0600);assert_eq!(p.cpu.eflags&0x40,0x40);assert_eq!(p.cpu.undefined_flags,0);
+ dos(&mut p,0x0bff,0,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0b00);
+ p.enqueue_key(0x4800).unwrap();
+ dos(&mut p,0x0b00,0,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0bff);
+ for al in [0u32,0x48]{dos(&mut p,0x0600,0xff,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0600|al);assert_eq!(p.cpu.eflags&0x40,0);}
+ dos(&mut p,0x0b00,0,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0b00);assert!(out.is_empty());
+ dos(&mut p,0x0600,9,&mut out).unwrap();assert_eq!(out,vec![32;8]);assert_eq!(p.cpu.regs[0]&255,32);
+ dos(&mut p,0x0600,0x41,&mut out).unwrap();assert_eq!(out[8],0x41);assert_eq!(cell(&p,0,0,8)&255,0x41);
+}
+#[test]
+fn dos_flush_then_read_flushes_once_and_resumes_with_new_key(){
+ // Type-ahead 'x' is discarded; the read waits, then returns and echoes 'y'.
+ let code=[0xb8,1,0x0c,0xcd,0x21,0x88,0xc3,0xb8,0,0x4c,0xcd,0x21];
+ let mut p=load(&code,"flush.com").unwrap();p.enqueue_key(0x2d78).unwrap();
+ let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert!(r.loaded.flushed);assert!(!console::dos_available(&r.loaded).unwrap());
+ let mut p=r.loaded;p.enqueue_key(0x1579).unwrap();let r=run(p,20).unwrap();
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[3]&255,0x79);assert_eq!(r.output,b"y");assert!(!r.loaded.flushed);
+ // Other subfunctions flush, then AL=0; AL=06 polls the now-empty input; AL=0A is not implemented.
+ for (al,dl,want) in [(0u32,0,0u32),(0x0b,0,0),(0x02,0,0),(0x06,0xff,0)]{
+  let mut p=load(&[0xcd,0x21],"flush.com").unwrap();p.enqueue_key(0x2d78).unwrap();p.pending_scan=Some(0x48);let mut out=vec![];
+  dos(&mut p,0x0c00|al,dl,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,want);assert!(!console::dos_available(&p).unwrap());assert!(out.is_empty());
+  if al==6{assert_eq!(p.cpu.eflags&0x40,0x40);}
+ }
+ let mut p=load(&[0xcd,0x21],"flush.com").unwrap();p.enqueue_key(0x2d78).unwrap();let old=p.clone();
+ assert!(dos(&mut p,0x0c0a,0,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);
+}
+#[test]
+fn dos_blocking_reads_wait_without_retiring_then_resume(){
+ for ah in [1u8,7,8]{
+  let code=[0xb4,ah,0xcd,0x21,0x88,0xc3,0xb8,0,0x4c,0xcd,0x21];
+  let p=load(&code,"wait.com").unwrap();let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert_eq!(r.completed,1);
+  let mut p=r.loaded;p.enqueue_key(0x1e61).unwrap();let r=run(p,20).unwrap();
+  assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[3]&255,0x61);assert_eq!(r.output,if ah==1{b"a".to_vec()}else{vec![]});
+ }
 }

@@ -1,3 +1,32 @@
+# DOS console input and screen-mirrored output — 30 October 2026
+
+DOS stdin/stdout are CON. INT21 AH01 (echo), AH07 and AH08 read the BIOS
+keyboard ring; with nothing typed they stop with WaitingForInput without
+retiring and resume after Loaded::enqueue_key. An ASCII-0 key returns 00h,
+then its scan code on the next read. AH01 echoes every byte it returns,
+including that 00h, as the FreeDOS handler does. AH06 DL=FF polls: nothing
+ready gives ZF=1/AL=0 without consuming; otherwise ZF=0 and the byte. Other
+AH06 DL values output like AH02. AH0B returns AL=FF when input is ready, else
+00. AH0C flushes type-ahead (and any owed scan code), then runs AL=01/06/07/08;
+other AL values return 00h. A waiting AH0C read flushes once before its first
+wait, so the key that ends the wait is kept. AH0C/AL0A is rejected until
+buffered input (AH0A) exists.
+
+Ctrl-C (03h) at the head of input stops AH01/02/08/09/0B before any effect,
+because DOS break handling (INT23) is not modeled; AH06/AH07 return it as 03h.
+Behaviour follows the FreeDOS kernel handlers (inthndlr.c, chario.c at
+d6791add); no kernel code is copied.
+
+DOS output from AH02, AH06 and AH09 now also teletypes onto the active text
+page, as DOS console output does through the BIOS. The captured output is
+unchanged. AH09 TABs expand to the next eight-column stop on the screen. The
+screen write set is checked before capture, so a protected cell, bad cursor or
+full provider changes neither capture nor RAM.
+
+Verification: 372 Rust tests passed on Linux (six new). The console COM fixture
+has seven cases, adding DOS status/read/extended-key/poll/flush; all pass in
+PIL and the deliberate failure still fails once. Not yet rerun in DOSBox-X.
+
 # BIOS teletype, scrolling, mode and page services — 30 October 2026
 
 INT10 AH0E writes AL at page BH's cursor, keeps the cell attribute and handles

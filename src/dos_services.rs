@@ -4,16 +4,15 @@ use crate::host_io::Output;
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     match(vector,(p.cpu.regs[0]>>8)as u8){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==PSP{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
-        (0x21,0x02)=>{
-            let byte=p.cpu.regs[2]as u8;
-            let count=if byte==9{8-out.column()%8}else{1};
-            if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
-            let value=if byte==9{b' '}else{byte};
-            let spaces=[b' ';8];let single=[byte];
-            out.write_atomic(if byte==9{&spaces[..count]}else{&single}).map_err(|e|format!("DOS character output provider: {e:?}"))?;
-            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
-            Ok(None)
+        (0x21,0x02)=>{console::dos_break_check(p)?;put_char(p,out,p.cpu.regs[2]as u8)?;Ok(None)},
+        (0x21,ah @ (0x01|0x07|0x08))=>{read_char(p,out,ah)?;Ok(None)},
+        (0x21,0x06)=>{direct_console(p,out)?;Ok(None)},
+        (0x21,0x0b)=>{
+            console::dos_break_check(p)?;
+            let ready=console::dos_available(p)?;
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|if ready{0xff}else{0};Ok(None)
         },
+        (0x21,0x0c)=>{flush_then(p,out)?;Ok(None)},
         (0x21,0x37)=>{
             if p.cpu.regs[0]as u8!=0{return Err("DOS switch-character shim supports AH37/AL00 query only".into());}
             p.cpu.regs[0]&=!255;p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(b'/');
@@ -80,7 +79,9 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
                 let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS string access: {e:?}"))?;
                 let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))?as u8;
                 if b==b'$'{
-                    out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);
+                    console::dos_break_check(p)?;let screen=console::dos_screen(p,&text)?;
+                    out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
+                    console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);
                 }
                 if text.len()>=out.remaining(){return Err("DOS output limit reached before string terminator".into());}
                 text.push(b);
@@ -167,5 +168,60 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
+    }
+}
+/// AH02 (and AH06 output): capture and active-page screen change together.
+fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
+    let count=if byte==9{8-out.column()%8}else{1};
+    if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
+    let value=if byte==9{b' '}else{byte};
+    let spaces=[b' ';8];let single=[byte];let bytes=if byte==9{&spaces[..count]}else{&single[..]};
+    let screen=console::dos_screen(p,bytes)?;
+    out.write_atomic(bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
+    console::store(p,&screen)?;
+    p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+    Ok(())
+}
+/// AH01 echoes (including the 00h of an extended key); AH01/AH08 check Ctrl-C;
+/// AH06/AH07 return it as 03h. The caller already waited for input.
+fn read_char(p:&mut Loaded,out:&mut impl Output,ah:u8)->Result<(),String>{
+    if matches!(ah,1|8){console::dos_break_check(p)?;}
+    let(byte,ring,pending)=console::dos_take(p)?;
+    let mut writes=ring;
+    if ah==1{
+        if out.remaining()==0{return Err("DOS output limit reached before input echo".into());}
+        writes.extend(console::dos_screen(p,&[byte])?);
+    }
+    console::check(p,&writes)?;
+    if ah==1{out.write_atomic(&[byte]).map_err(|e|format!("DOS echo output provider: {e:?}"))?;}
+    console::store(p,&writes)?;p.pending_scan=pending;
+    p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(byte);Ok(())
+}
+/// AH06: DL=FF polls without waiting or a Ctrl-C check. Other DL values output
+/// like AH02 without its Ctrl-C check, as the FreeDOS handler does.
+fn direct_console(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
+    if p.cpu.regs[2]as u8!=0xff{return put_char(p,out,p.cpu.regs[2]as u8);}
+    p.cpu.undefined_flags&=!0x40;
+    if !console::dos_available(p)?{p.cpu.regs[0]&=!255;p.cpu.eflags|=0x40;return Ok(());}
+    read_char(p,out,6)?;p.cpu.eflags&=!0x40;Ok(())
+}
+/// AH0C flushes type-ahead, then runs AL=01/06/07/08; other AL values return 00h.
+/// Waiting reads were flushed before their first wait (see console::waiting).
+fn flush_then(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
+    let al=p.cpu.regs[0]as u8;
+    match al{
+        1|7|8=>{
+            if !p.flushed{return Err("DOS AH0C read reached without its flush".into());}
+            read_char(p,out,al)?;p.flushed=false;Ok(())
+        },
+        0x0a=>Err("DOS AH0C/AL0A buffered input is not implemented".into()),
+        _=>{
+            let flush=console::dos_flush_writes(p)?;
+            let saved=(p.ram.clone(),p.cpu.clone(),p.pending_scan);
+            console::store(p,&flush)?;p.pending_scan=None;
+            let result=if al==6{direct_console(p,out)}else{p.cpu.regs[0]&=!255;Ok(())};
+            if result.is_err(){(p.ram,p.cpu,p.pending_scan)=saved;}
+            result
+        },
     }
 }

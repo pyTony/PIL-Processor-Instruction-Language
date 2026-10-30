@@ -90,6 +90,19 @@ def build_console(negative=False):
         read_at(1, 0x0103, fail, 0x2e20); read_at(1, 0x0203, fail, 0x1741)
         mov(0, 0x0500); interrupt(0x10)
     case('active_page_query_and_window_scroll', scroll)
+    def dos_input(fail):
+        mov(0, 0x40); b.emit(bytes.fromhex('8ec0'))
+        b.emit(bytes.fromhex('26c7061a001e0026c7061c001e00'))
+        for value in (0x1e61, 0x4800):
+            mov(0, 0x0500); mov(1, value); interrupt(0x16)
+        for ax, want in ((0x0b00, 0x0bff), (0x0800, 0x0861), (0x0700, 0x0700), (0x0700, 0x0748), (0x0b00, 0x0b00)):
+            mov(0, ax); interrupt(0x21); check(0, want, fail)
+        mov(0, 0x0600); mov(2, 0x00ff); interrupt(0x21); check(0, 0x0600, fail)
+        b.emit(bytes.fromhex('9c5a81e24000')); check(2, 0x40, fail)  # ZF set: nothing ready
+        mov(0, 0x0500); mov(1, 0x2e63); interrupt(0x16)
+        mov(0, 0x0c00); interrupt(0x21); check(0, 0x0c00, fail)
+        mov(0, 0x0b00); interrupt(0x21); check(0, 0x0b00, fail)
+    case('dos_status_read_extended_poll_and_flush', dos_input)
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
     b.emit(bytes.fromhex('a1')); b.ref('fail_count')
     b.emit(bytes.fromhex('09c07405b8014ccd21b8004ccd21'))
