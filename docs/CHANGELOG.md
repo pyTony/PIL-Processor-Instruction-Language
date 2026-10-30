@@ -1,3 +1,28 @@
+# BIOS teletype, scrolling, mode and page services — 30 October 2026
+
+INT10 AH0E writes AL at page BH's cursor, keeps the cell attribute and handles
+BEL (no write), BS (left, no erase, stops at column 0), CR and LF. Column 80
+wraps; leaving row 24 scrolls that page up one line and fills the new line with
+the attribute under the incoming cursor. TAB is rejected: IBM-derived and
+DOSBox-derived BIOSes differ, so no policy is chosen silently.
+
+AH06/AH07 scroll the inclusive CH,CL..DH,DL window on the active page up/down
+by AL lines with fill attribute BH. AL=0 or more lines than the window clears
+it; corners beyond 24,79 are clamped and an inverted window changes nothing.
+AH05 selects active page 0..7 (BDA 0462, start offset 044E). AH0F returns
+AH=80, AL=mode and BH=active page. AH00 accepts only mode 3: it resets the
+mode-3 BDA fields, all eight cursors and the 0607 cursor shape, and clears all
+pages unless AL bit 7 is set. Registers are preserved. Other modes are rejected.
+
+Every service checks its full write set (cells and BDA) before mutating; faults,
+bad pages and bad cursors change nothing. No CRTC/VGA ports are modeled. DOS
+AH02/AH09 output still goes only to the capture provider, not to the screen.
+
+Verification: 366 Rust tests passed on Linux (seven new service tests). The
+console COM fixture grows from four to six cases (teletype controls/wrap/scroll,
+active page query and window scroll); all six pass in PIL and the deliberate
+readback failure still fails exactly once. Not yet rerun in DOSBox-X.
+
 # DOS BIOS console foundation — 29 October 2026
 
 INT10 AH08 now reads actual character/attribute data from B800:0000; AH09
