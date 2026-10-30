@@ -1,4 +1,4 @@
-# Far JMP, TSR exit, date and absent-feature answers — 30 October 2026
+# Far JMP, TSR exit, date, BIOS identity bytes and HLT idle — 30 October 2026
 
 FreeDOS report 41 (dev after #52, 10,000 steps): 81 Budget, 43 Exit, 19 Service,
 4 MissingEncoding, 2 Fault, 2 Monitor. This round:
@@ -21,11 +21,19 @@ FreeDOS report 41 (dev after #52, 10,000 steps): 81 Budget, 43 Exit, 19 Service,
   FreeDOS does without an LFN API.
 - INT 15h AH=88h returns AX=0: no memory above 1 MB.
 
-Not changed, pending a profile decision: DISKCOPY and REPLACE read the BIOS ROM
-at F000:FFEA, which the shim does not map (Fault), and VDELAY/VPAUSE execute
-HLT to idle, which the probe treats as a monitor stop.
+- BIOS area (Tony's decision): C000:0000-F000:FFFF now reads as an empty bus
+  (FFh, so no option-ROM 55AAh signature) and is read-only. The top 16 bytes
+  identify a PC/AT-class BIOS: the reset jump, the date 01/10/84 at F000:FFF5
+  and model byte FCh at F000:FFFE. No BIOS code is present. DISKCOPY and
+  REPLACE faulted reading F000:FFEA, where they look for "COMPAQ"; they now
+  read FFh. RAM grows from 768 KB to 1 MB to hold it.
+- HLT (Tony's decision): with IF=1, as DOS starts programs, HLT idles until
+  the next timer tick: one tick passes (seen by INT 1Ah) and execution
+  continues. VDELAY and VPAUSE idle this way. With IF=0, HLT never resumes and
+  stays a monitor stop. DOS unit fixtures that use HLT as an end marker now
+  clear IF first.
 
-Verification: 386 Rust tests passed on Linux. The generated-Rust verifier
+Verification: 387 Rust tests passed on Linux. The generated-Rust verifier
 matches the interpreter byte for byte across 233 cases (new: far JMP immediate,
 memory 16 and 32, pointer past the segment end, real-mode rejection). DOSBox-X
 2024.03.01 headless: CPU suite 393/393 (2 far JMP new; the COM is 64,183 bytes,

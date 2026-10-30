@@ -106,7 +106,7 @@ fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
     let b=[0xb4,0x52,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
-    let r=run(load(&[0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
+    let r=run(load(&[0xfa,0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
     let r=run(load(&[0x9a,0,0,0,0xa0],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));assert_eq!(r.completed,1);
 }
 #[test]
@@ -682,21 +682,21 @@ fn mul_and_loop_forms_have_literal_results(){
 #[test]
 fn rotate_through_carry_decimal_adjust_and_pusha_have_literal_results(){
  // STC; MOV AL,81h; RCL AL,1 -> AL=03, CF=1, OF=MSB(0)^CF=1.
- let r=run(load(&[0xf9,0xb0,0x81,0xd0,0xd0,0xf4],"rcl.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x03);assert_eq!(r.loaded.cpu.eflags&0x801,0x801);
+ let r=run(load(&[0xf9,0xb0,0x81,0xd0,0xd0,0xfa,0xf4],"rcl.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x03);assert_eq!(r.loaded.cpu.eflags&0x801,0x801);
  // CLC; MOV AX,0001; MOV CL,17; RCR AX,CL -> count 17 mod 17 = 0: AX and CF unchanged.
- let r=run(load(&[0xf8,0xb8,0x01,0x00,0xb1,0x11,0xd3,0xd8,0xf4],"rcr.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,0);
+ let r=run(load(&[0xf8,0xb8,0x01,0x00,0xb1,0x11,0xd3,0xd8,0xfa,0xf4],"rcr.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,0);
  // STC; MOV AX,0002; RCR AX,1 -> AX=8001, CF=0, OF=MSB(0002)^1=1.
- let r=run(load(&[0xf9,0xb8,0x02,0x00,0xd1,0xd8,0xf4],"rcr1.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x8001);assert_eq!(r.loaded.cpu.eflags&0x801,0x800);
+ let r=run(load(&[0xf9,0xb8,0x02,0x00,0xd1,0xd8,0xfa,0xf4],"rcr1.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x8001);assert_eq!(r.loaded.cpu.eflags&0x801,0x800);
  // MOV AL,79h; ADD AL,35h; DAA -> AL=14h, CF=1 (79+35=114 BCD).
- let r=run(load(&[0xb0,0x79,0x04,0x35,0x27,0xf4],"daa.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x14);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb0,0x79,0x04,0x35,0x27,0xfa,0xf4],"daa.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x14);assert_eq!(r.loaded.cpu.eflags&1,1);
  // MOV AL,35h; SUB AL,47h; DAS -> AL=88h, CF=1 (35-47 = -12 -> 88 with borrow).
- let r=run(load(&[0xb0,0x35,0x2c,0x47,0x2f,0xf4],"das.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x88);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb0,0x35,0x2c,0x47,0x2f,0xfa,0xf4],"das.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x88);assert_eq!(r.loaded.cpu.eflags&1,1);
  // PUSHA stores AX..DI below SP with the original SP in the fifth slot; POPA skips it.
- let mut p=load(&[0x60,0xf4],"pusha.com").unwrap();p.cpu.regs=[0x1111,0x2222,0x3333,0x4444,0xfffe,0x6666,0x7777,0x8888];
+ let mut p=load(&[0x60,0xfa,0xf4],"pusha.com").unwrap();p.cpu.regs=[0x1111,0x2222,0x3333,0x4444,0xfffe,0x6666,0x7777,0x8888];
  let r=run(p,10).unwrap();let ss=r.loaded.image.segments[SegmentRegister::Ss.index()].base;assert_eq!(r.loaded.cpu.regs[4],0xffee);
  let words:Vec<u32>=(0..8).map(|i|r.loaded.ram.load(ss+0xffee+i*2,MemWidth::Word).unwrap()).collect();
  assert_eq!(words,[0x8888,0x7777,0x6666,0xfffe,0x4444,0x3333,0x2222,0x1111]);
- let mut p=load(&[0x61,0xf4],"popa.com").unwrap();p.cpu.regs[4]=0xffee;for (i,w) in words.iter().enumerate(){p.ram.store(ss+0xffee+i as u32*2,MemWidth::Word,*w).unwrap();}
+ let mut p=load(&[0x61,0xfa,0xf4],"popa.com").unwrap();p.cpu.regs[4]=0xffee;for (i,w) in words.iter().enumerate(){p.ram.store(ss+0xffee+i as u32*2,MemWidth::Word,*w).unwrap();}
  let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs,[0x1111,0x2222,0x3333,0x4444,0xfffe,0x6666,0x7777,0x8888]);
 }
 #[test]
@@ -723,23 +723,23 @@ fn lds_and_enter_have_literal_results(){
 #[test]
 fn handle_write_psp_query_and_absent_extensions(){
  // MOV AH,40; MOV BX,1; MOV CX,3; MOV DX,0110; INT 21; HLT; ... "abc" at 0110.
- let mut code=vec![0xb4,0x40,0xbb,0x01,0x00,0xb9,0x03,0x00,0xba,0x10,0x01,0xcd,0x21,0xf4];code.resize(0x10,0);code.extend(b"abc");
+ let mut code=vec![0xb4,0x40,0xbb,0x01,0x00,0xb9,0x03,0x00,0xba,0x10,0x01,0xcd,0x21,0xfa,0xf4];code.resize(0x10,0);code.extend(b"abc");
  let r=run(load(&code,"write.com").unwrap(),10).unwrap();assert_eq!(r.output,b"abc");assert_eq!(r.loaded.cpu.regs[0]&0xffff,3);assert_eq!(r.loaded.cpu.eflags&1,0);
  // A closed handle is error 6; AUX/PRN writes stop as unmodelled.
  code[3]=7;let r=run(load(&code,"write7.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,6);assert_eq!(r.loaded.cpu.eflags&1,1);assert!(r.output.is_empty());
  code[3]=4;let r=run(load(&code,"prn.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  // MOV AH,51; INT 21 and MOV AH,62; INT 21 both return the PSP in BX.
- for ah in [0x51,0x62]{let r=run(load(&[0xb4,ah,0xcd,0x21,0xf4],"psp.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&0xffff,u32::from(r.loaded.selectors[SegmentRegister::Ds.index()]));}
+ for ah in [0x51,0x62]{let r=run(load(&[0xb4,ah,0xcd,0x21,0xfa,0xf4],"psp.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&0xffff,u32::from(r.loaded.selectors[SegmentRegister::Ds.index()]));}
  // INT 2F installation checks find nothing: AX comes back unchanged.
  for ax in [0x1100u16,0x1600,0x1680,0x1687,0x1a00,0x4300]{
-  let [lo,hi]=ax.to_le_bytes();let r=run(load(&[0xb8,lo,hi,0xcd,0x2f,0xf4],"mux.com").unwrap(),10).unwrap();
+  let [lo,hi]=ax.to_le_bytes();let r=run(load(&[0xb8,lo,hi,0xcd,0x2f,0xfa,0xf4],"mux.com").unwrap(),10).unwrap();
   assert_eq!(r.loaded.cpu.regs[0]&0xffff,u32::from(ax));assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  }
  // AX=4310h (XMS entry point) is only meaningful once XMS is present: still a stop.
- let r=run(load(&[0xb8,0x10,0x43,0xcd,0x2f,0xf4],"xms.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
+ let r=run(load(&[0xb8,0x10,0x43,0xcd,0x2f,0xfa,0xf4],"xms.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
  // MOV AH,12; MOV BL,10; INT 10: no EGA, BL stays 10h. INT 15 AH=C0: CF=1, AH=86h.
- let r=run(load(&[0xb4,0x12,0xb3,0x10,0xcd,0x10,0xf4],"ega.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&255,0x10);
- let r=run(load(&[0xb4,0xc0,0xcd,0x15,0xf4],"config.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb4,0x12,0xb3,0x10,0xcd,0x10,0xfa,0xf4],"ega.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&255,0x10);
+ let r=run(load(&[0xb4,0xc0,0xcd,0x15,0xfa,0xf4],"config.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
 }
 #[test]
 fn far_jump_forms_transfer_cs_and_ip(){
@@ -756,19 +756,34 @@ fn far_jump_forms_transfer_cs_and_ip(){
 #[test]
 fn tsr_date_strategy_lfn_and_extended_memory(){
  // MOV AX,3105; MOV DX,0002; INT 21 -> exit 5, 6 paragraphs kept (FreeDOS minimum).
- let r=run(load(&[0xb8,0x05,0x31,0xba,0x02,0x00,0xcd,0x21,0xf4],"tsr.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Exit(5)));assert_eq!(r.loaded.resident,Some(6));
+ let r=run(load(&[0xb8,0x05,0x31,0xba,0x02,0x00,0xcd,0x21,0xfa,0xf4],"tsr.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Exit(5)));assert_eq!(r.loaded.resident,Some(6));
  // AH2A: 1980-01-01, Tuesday.
- let r=run(load(&[0xb4,0x2a,0xcd,0x21,0xf4],"date.com").unwrap(),10).unwrap();
+ let r=run(load(&[0xb4,0x2a,0xcd,0x21,0xfa,0xf4],"date.com").unwrap(),10).unwrap();
  assert_eq!(r.loaded.cpu.regs[1]&0xffff,1980);assert_eq!(r.loaded.cpu.regs[2]&0xffff,0x0101);assert_eq!(r.loaded.cpu.regs[0]&255,2);
  // AH0D has nothing to flush.
- let r=run(load(&[0xb4,0x0d,0xcd,0x21,0xf4],"reset.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
+ let r=run(load(&[0xb4,0x0d,0xcd,0x21,0xfa,0xf4],"reset.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
  // AX=5801 BX=0080 accepted, then AX=5800 returns 0080; BX=0003 is invalid; BX=0001 is not modelled.
- let r=run(load(&[0xb8,0x01,0x58,0xbb,0x80,0x00,0xcd,0x21,0xb8,0x00,0x58,0xcd,0x21,0xf4],"strategy.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x80);assert_eq!(r.loaded.cpu.eflags&1,0);
- let r=run(load(&[0xb8,0x01,0x58,0xbb,0x03,0x00,0xcd,0x21,0xf4],"badfit.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
- let r=run(load(&[0xb8,0x01,0x58,0xbb,0x01,0x00,0xcd,0x21,0xf4],"bestfit.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x80,0x00,0xcd,0x21,0xb8,0x00,0x58,0xcd,0x21,0xfa,0xf4],"strategy.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x80);assert_eq!(r.loaded.cpu.eflags&1,0);
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x03,0x00,0xcd,0x21,0xfa,0xf4],"badfit.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x01,0x00,0xcd,0x21,0xfa,0xf4],"bestfit.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
  // AX=5803 (link UMBs) fails: no UMB chain.
- let r=run(load(&[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xf4],"umb.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xfa,0xf4],"umb.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
  // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=0, CF=0.
- let r=run(load(&[0xb8,0x47,0x71,0xcd,0x21,0xf4],"lfn.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x7100);assert_eq!(r.loaded.cpu.eflags&1,1);
- let r=run(load(&[0xb4,0x88,0xf9,0xcd,0x15,0xf4],"ext.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0);assert_eq!(r.loaded.cpu.eflags&1,0);
+ let r=run(load(&[0xb8,0x47,0x71,0xcd,0x21,0xfa,0xf4],"lfn.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x7100);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb4,0x88,0xf9,0xcd,0x15,0xfa,0xf4],"ext.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0);assert_eq!(r.loaded.cpu.eflags&1,0);
+}
+#[test]
+fn bios_rom_identity_and_hlt_idle(){
+ let p=load(&[0xf4],"rom.com").unwrap();
+ // Empty bus FFh at F000:FFEA (no "COMPAQ"), date at F000:FFF5, model FCh.
+ assert_eq!(p.ram.load(0xfffea,MemWidth::Byte).unwrap(),0xff);assert_eq!(p.ram.load(0xc0000,MemWidth::Word).unwrap(),0xffff);
+ assert_eq!(&p.ram.bytes()[0xffff5..0xffffd],b"01/10/84");assert_eq!(p.ram.load(0xffffe,MemWidth::Byte).unwrap(),0xfc);
+ // MOV AX,F000; MOV ES,AX; MOV AL,ES:[FFFE]; MOV ES:[FFFE],AL faults: the ROM is read-only.
+ let r=run(load(&[0xb8,0x00,0xf0,0x8e,0xc0,0x26,0xa0,0xfe,0xff,0x26,0xa2,0xfe,0xff,0xf4],"romw.com").unwrap(),10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[0]&255,0xfc);assert!(matches!(r.stop,Stop::Fault(_)),"{:?}",r.stop);
+ // With IF=1 (as loaded), HLT; HLT; INT 1A AH=00 sees two idle ticks, then MOV AH,4C; INT 21.
+ let r=run(load(&[0xf4,0xf4,0xb4,0x00,0xcd,0x1a,0xb4,0x4c,0xcd,0x21],"idle.com").unwrap(),10).unwrap();
+ assert!(matches!(r.stop,Stop::Exit(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu.regs[2]&0xffff,2);assert_eq!(r.instructions.get("HLT (idle tick)"),Some(&2));
+ // With IF=0, HLT never resumes.
+ let r=run(load(&[0xfa,0xf4],"hang.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
 }

@@ -126,7 +126,6 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x1a,0x00)=>{
-            const TICKS_PER_DAY:u32=0x0018_00b0;
             let ticks=p.timer_ticks;
             let next=ticks+1;
             let (next_ticks,rollover)=if next>=TICKS_PER_DAY{(0,1u32)}else{(next,0u32)};

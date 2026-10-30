@@ -12,6 +12,8 @@ const DOS_COMPAT_VERSION:u16=0x1606; // major6, minor22 decimal
 const PSP:u16=0x1000;
 const LOAD:u16=PSP+0x10;
 const LIMIT:usize=0xa0000;
+/// BIOS timer ticks in 24 hours (INT1A, BDA 0040:006C).
+const TICKS_PER_DAY:u32=0x0018_00b0;
 pub const MAX_FILE:usize=1024*1024;
 pub const MAX_STEPS:usize=1_000_000;
 #[cfg(test)]
@@ -51,6 +53,18 @@ fn word(bytes:&[u8],at:usize)->Result<u16,String>{
     let b=bytes.get(at..at+2).ok_or("truncated DOS header/relocation word")?;Ok(u16::from_le_bytes([b[0],b[1]]))
 }
 fn put_word(bytes:&mut[u8],at:usize,n:u16){bytes[at..at+2].copy_from_slice(&n.to_le_bytes());}
+/// C000:0000..F000:FFFF reads as an empty bus (FFh, so no option-ROM 55AAh
+/// signature) and is read-only. The top 16 bytes carry what a PC/AT-class BIOS
+/// identifies itself with: the reset jump, a BIOS date at F000:FFF5 and model
+/// byte FCh at F000:FFFE. No BIOS code is present; services are answered by Dine.
+fn rom(ram:&mut Ram)->Result<(),String>{
+    let mut top=[0xffu8;16];
+    top[..5].copy_from_slice(&[0xea,0x5b,0xe0,0x00,0xf0]);
+    top[5..13].copy_from_slice(b"01/10/84");top[13]=0;top[14]=0xfc;top[15]=0;
+    ram.write_bytes(0xc0000,&vec![0xff;0x3fff0]).map_err(|e|format!("{e:?}"))?;
+    ram.write_bytes(0xffff0,&top).map_err(|e|format!("{e:?}"))?;
+    ram.protect(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
+}
 pub fn hello(format:&str)->Result<Vec<u8>,String>{
     // Both original examples address their string relative to the initial PSP DS.
     let mut code=vec![0xba,0x0c,0x01,0xb4,9,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21];
@@ -120,8 +134,9 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
         selectors[SegmentRegister::Cs.index()]=cs;selectors[SegmentRegister::Ss.index()]=ss;
         cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
-    let mut ram=Ram::new(0xc0000);
+    let mut ram=Ram::new(0x100000);
     console::initialize(&mut ram)?;
+    rom(&mut ram)?;
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
     put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x18..0x1d].copy_from_slice(&[0,1,2,3,4]);psp[0x1d..0x2c].fill(0xff);
     put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;
@@ -188,7 +203,14 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 let mut machine=p.image.segment_state();let result=super::execute_machine(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine);
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
-            Operation::Halt=>break Stop::Monitor("HLT reached;monitor stop is not DOS process termination".into()),
+            Operation::Halt if p.cpu.eflags&0x200!=0=>{
+                // With IF=1 the timer interrupt ends HLT: one tick passes, then
+                // execution continues after it. Programs use this to idle.
+                p.timer_ticks=(p.timer_ticks+1)%TICKS_PER_DAY;
+                p.cpu.eip=(p.cpu.eip+decoded.length)&0xffff;p.image.retired();
+                completed+=1;execution_steps+=1;*instructions.entry("HLT (idle tick)".into()).or_insert(0)+=1;continue;
+            },
+            Operation::Halt=>break Stop::Monitor("HLT with IF=0 never resumes; monitor stop is not DOS process termination".into()),
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),
         };
         if let Err(e)=result{break Stop::Fault(format!("{e:?}"));}
@@ -207,7 +229,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 version; INT1A/AH00 advances deterministic tick counter; INT21/AH3D validates DS:DX and returns file-not-found; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; no LFN API, extended memory or UMBs; INT2F installation checks find no redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE). Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 version; INT1A/AH00 advances deterministic tick counter; INT21/AH3D validates DS:DX and returns file-not-found; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE). Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{
