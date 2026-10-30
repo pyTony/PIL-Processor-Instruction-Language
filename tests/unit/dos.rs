@@ -1106,3 +1106,25 @@ fn ega_and_vga_video_functions_return_unchanged_on_the_cga_bios(){
   let before=p.cpu.clone();service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs,before.regs,"AX={ax:04x}");assert_eq!(p.cpu.eflags,before.eflags);
  }
 }
+#[test]
+fn duplicated_handles_share_the_file_position_and_close_independently(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-dup-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("text.txt"),b"abcdef").unwrap();
+ let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(dir.clone())],None).unwrap();let psp=u32::from(PSP)*16;
+ let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32|->(u32,u32){p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ let (file,cf)=call(&mut p,0x3d00,0,b"text.txt");assert_eq!((file,cf),(5,0));
+ // AH45 takes the lowest free handle; reads through either handle advance one position.
+ assert_eq!(svc(&mut p,0x4500,file,0),(6,0));
+ assert_eq!(svc(&mut p,0x3f00,file,2),(2,0));assert_eq!(svc(&mut p,0x3f00,6,2),(2,0));
+ assert_eq!(p.ram.load(psp+0x400,MemWidth::Word).unwrap(),u32::from(u16::from_le_bytes(*b"cd")));
+ // Closing the original keeps the copy open; closing the copy closes the file.
+ assert_eq!(svc(&mut p,0x3e00,file,0).1,0);assert_eq!(p.drive.open_files(),1);
+ assert_eq!(svc(&mut p,0x3f00,6,9),(2,0));assert_eq!(svc(&mut p,0x3e00,6,0).1,0);assert_eq!(p.drive.open_files(),0);
+ // AH46 points handle 9 at CON: device information and writes follow it; writing a file is access denied.
+ assert_eq!(svc(&mut p,0x4600,1,9).1,0);assert_eq!(svc(&mut p,0x4400,9,0).1,0);assert_eq!(p.cpu.regs[2]&0xffff,0xc3);
+ let (file,_)=call(&mut p,0x3d00,0,b"text.txt");assert_eq!(svc(&mut p,0x4000,file,1),(5,1));
+ // Bad source handle, and a target past the 20-entry table.
+ assert_eq!(svc(&mut p,0x4500,12,0),(6,1));assert_eq!(svc(&mut p,0x4600,1,20),(6,1));
+ std::fs::remove_dir_all(dir).unwrap();
+}

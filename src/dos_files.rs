@@ -29,7 +29,9 @@ pub struct Drives{
     files:Vec<OpenFile>,searches:Vec<(usize,Vec<Name>)>,next_search:usize,
 }
 #[derive(Clone,Debug)]
-struct OpenFile{handle:u16,data:Arc<Vec<u8>>,pos:u32,drive:u8}
+/// An open file by its system file number (the JFT entry), which handles
+/// duplicated with AH45/46 share with their position.
+struct OpenFile{sft:u8,data:Arc<Vec<u8>>,pos:u32,drive:u8}
 /// A directory on some drive.
 #[derive(Clone,Debug)]
 enum Dir{Empty,Host(PathBuf),Image(usize)}
@@ -55,8 +57,6 @@ impl Drives{
     /// Handles AH3D opened that are still open.
     #[allow(dead_code)]
     pub fn open_files(&self)->usize{self.files.len()}
-    /// Whether AH3D opened `handle` (otherwise it is a device handle).
-    pub fn is_file(&self,handle:u16)->bool{self.files.iter().any(|f|f.handle==handle)}
     /// The drive with DOS number `n` (0 default, 1 A:), as a list index.
     fn number(&self,n:u8)->Option<usize>{
         if n==0{return Some(self.current);}
@@ -326,15 +326,17 @@ fn open(p:&mut Loaded)->Result<(),String>{
     };
     let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
     let Some(handle)=(5..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
-    // The JFT entry is the system file number; Dine numbers files by handle.
-    p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(handle)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
-    p.open_handles|=1<<handle;p.drive.files.push(OpenFile{handle,data,pos:0,drive});
+    // System file numbers 0..4 are the devices; files take the lowest free one above.
+    let Some(sft)=(5..=0xfeu8).find(|n|!p.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};
+    p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
+    p.open_handles|=1<<handle;p.drive.files.push(OpenFile{sft,data,pos:0,drive});
     set_ax(p,u32::from(handle));ok(p);Ok(())
 }
 fn open_file(p:&mut Loaded,service:&str)->Result<Option<usize>,String>{
     let handle=(p.cpu.regs[3]&0xffff)as u16;
-    if let Some(i)=p.drive.files.iter().position(|f|f.handle==handle){return Ok(Some(i));}
-    if handle<20&&p.open_handles&(1<<handle)!=0{return Err(format!("DOS {service} handle {handle} is not modelled"));}
+    let Some(sft)=system_file(p,handle)? else{fail(p,6);return Ok(None)};
+    if let Some(i)=p.drive.files.iter().position(|f|f.sft==sft){return Ok(Some(i));}
+    if sft<5{return Err(format!("DOS {service} handle {handle} (device {sft}) is not modelled"));}
     fail(p,6);Ok(None)
 }
 /// The file an EXEC path names and its full path (`C:\DIR\NAME.EXT`), or a
@@ -346,9 +348,39 @@ pub(super) fn program(p:&Loaded,raw:&[u8])->Result<Result<(Arc<Vec<u8>>,Vec<u8>)
     let mut full=vec![p.drive.list[drive].letter,b':',b'\\'];full.extend(path.iter().map(display).collect::<Vec<_>>().join(&b'\\'));
     Ok(Ok((read_entry(&p.drive.list[drive],&entry)?,full)))
 }
-/// Closes what a child opened when it ends: every handle not in `inherited`.
-pub(super) fn close_child_files(p:&mut Loaded,inherited:u32){
-    p.drive.files.retain(|f|inherited&(1<<f.handle)!=0);
+/// The system file number behind an open handle of the running program.
+pub(super) fn system_file(p:&Loaded,handle:u16)->Result<Option<u8>,String>{
+    if handle>=20||p.open_handles&(1<<handle)==0{return Ok(None);}
+    p.ram.load(jft(p,handle)?,MemWidth::Byte).map(|b|Some(b as u8)).map_err(|e|format!("DOS JFT read: {e:?}"))
+}
+/// Drops the files no handle refers to any more, in the running program or
+/// in the parents waiting for it, as DOS frees an SFT entry at count zero.
+pub(super) fn drop_unreferenced(p:&mut Loaded)->Result<(),String>{
+    let mut live=std::collections::BTreeSet::new();
+    for(psp,handles)in exec::chain(p){
+        let base=u32::from(psp)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
+        let table=word(base+0x36)?*16+word(base+0x34)?;
+        for h in (0..20).filter(|h|handles&(1<<h)!=0){live.insert(p.ram.load(table+h,MemWidth::Byte).map_err(|e|format!("DOS JFT read: {e:?}"))?as u8);}
+    }
+    p.drive.files.retain(|f|live.contains(&f.sft));Ok(())
+}
+/// AH45 duplicates BX into the lowest free handle; AH46 makes CX refer to
+/// BX's file, closing CX first. Both handles then share the file position.
+fn duplicate(p:&mut Loaded,ah:u8)->Result<(),String>{
+    let from=(p.cpu.regs[3]&0xffff)as u16;
+    let Some(sft)=system_file(p,from)? else{fail(p,6);return Ok(())};
+    let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
+    let to=if ah==0x45{
+        let Some(to)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};to
+    }else{
+        let to=(p.cpu.regs[1]&0xffff)as u16;
+        if to>=limit{fail(p,6);return Ok(());}
+        to
+    };
+    p.ram.store(jft(p,to)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS duplicate JFT write: {e:?}"))?;
+    p.open_handles|=1<<to;drop_unreferenced(p)?;
+    if ah==0x45{set_ax(p,u32::from(to));}
+    ok(p);Ok(())
 }
 /// AH29 parses the name at DS:SI into the FCB at ES:DI, after FreeDOS
 /// FcbParseFname: AL bit 0 skips leading separators, bit 1 keeps the drive
@@ -424,6 +456,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(LAST_DRIVE.max(p.drive.list.last().map_or(0,|d|d.letter-b'A'+1)));
         },
         0x29=>parse_name(p)?,
+        0x45|0x46=>duplicate(p,ah)?,
         0x19=>p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.drive.letter()-b'A'),
         0x36=>{
             let Some(drive)=p.drive.number(dl)else{set_ax(p,0xffff);return Ok(())};
@@ -483,17 +516,18 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             let handle=(p.cpu.regs[3]&0xffff)as u16;
             if handle<20&&(p.open_handles&(1u32<<handle))!=0{
                 p.ram.store(jft(p,handle)?,MemWidth::Byte,0xff).map_err(|e|format!("DOS close JFT write: {e:?}"))?;
-                p.open_handles&=!(1u32<<handle);p.drive.files.retain(|f|f.handle!=handle);ok(p);
+                p.open_handles&=!(1u32<<handle);drop_unreferenced(p)?;ok(p);
             }else{fail(p,6);}
         },
         0x44=>{
             // AL=00 device information: CON for 0..2, AUX/PRN for 3..4, with
             // bit 6 (not at end of input) set as FreeDOS opens devices, and an
             // unwritten file on this drive for handles AH3D opened.
-            let handle=p.cpu.regs[3]&0xffff;
-            let info=if handle<20&&p.open_handles&(1<<handle)!=0{
-                if handle<3{Some(0xc3)}else if handle<5{Some(0xc0)}else{p.drive.files.iter().find(|f|u32::from(f.handle)==handle).map(|f|0x40|u32::from(f.drive-b'A'))}
-            }else{None};
+            let info=match system_file(p,(p.cpu.regs[3]&0xffff)as u16)?{
+                Some(0..=2)=>Some(0xc3),Some(3|4)=>Some(0xc0),
+                Some(sft)=>p.drive.files.iter().find(|f|f.sft==sft).map(|f|0x40|u32::from(f.drive-b'A')),
+                None=>None,
+            };
             match info{Some(info)=>{p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|info;ok(p);},None=>fail(p,6)}
         },
         0x4e=>find_first(p)?,

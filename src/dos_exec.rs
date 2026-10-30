@@ -126,10 +126,14 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
     let frame=p.exec.pop().ok_or("terminate without a parent")?;
     let keep=p.resident.take().map(|_|p.psp);
     p.arena.release(&mut p.ram,p.psp,keep)?;
-    files::close_child_files(p,frame.open_handles);
     p.return_code=u16::from(kind)<<8|u16::from(code);
     p.cpu=frame.cpu;p.cpu.eip=(p.cpu.eip+2)&0xffff;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     p.selectors=frame.selectors;p.image=frame.image;p.image.retired();
     p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.psp;
-    Ok(())
+    // Files only the child's handles referred to are closed with it.
+    files::drop_unreferenced(p)
+}
+/// The running program's PSP and open handles, then each waiting parent's.
+pub(super) fn chain(p:&Loaded)->Vec<(u16,u32)>{
+    std::iter::once((p.psp,p.open_handles)).chain(p.exec.iter().rev().map(|f|(f.psp,f.open_handles))).collect()
 }

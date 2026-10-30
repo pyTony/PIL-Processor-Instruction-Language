@@ -2001,13 +2001,14 @@
     },
     {
       "date": "2026-10-30",
-      "name": "INT 10h EGA/VGA functions return unchanged on the CGA BIOS",
+      "name": "INT 10h EGA/VGA functions on the CGA BIOS, and handle duplication",
       "base": "dev after #60 (EXEC)",
       "verification": {
-        "linux_rust_tests": 409
+        "linux_rust_tests": 410
       },
       "limitations": [
-        "no EGA/VGA fonts, palettes or graphics modes yet"
+        "no EGA/VGA fonts, palettes or graphics modes yet",
+        "handles inherited by a child are not marked no-inherit; every open handle is passed on"
       ]
     }
   ],

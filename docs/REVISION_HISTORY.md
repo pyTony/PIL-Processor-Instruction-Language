@@ -1,4 +1,4 @@
-# INT 10h EGA/VGA functions return unchanged on the CGA BIOS — 30 October 2026
+# INT 10h EGA/VGA functions on the CGA BIOS, and handle duplication — 30 October 2026
 
 `SETLANG SU` in FD14LITE stopped at INT 10h AH=11h (character generator).
 Dine's video BIOS is CGA class on an AT BIOS, which returns from AH=10h-12h
@@ -6,7 +6,14 @@ Dine's video BIOS is CGA class on an AT BIOS, which returns from AH=10h-12h
 anything. AH=10h, 11h, 1Ah, 1Bh and 1Ch now do the same, as AH=12h and 4Fh
 already did. Programs that check AX=1A00h or BL=10h see no VGA and no EGA.
 
-Verification: 409 Rust tests passed on Linux.
+`MORE SETLANG.BAT` stopped at INT 21h AH=45h. AH45 (duplicate a handle into
+the lowest free one) and AH46 (force CX to refer to BX's file, closing CX
+first) now work. Handles are resolved through their JFT entry, so duplicates
+share one file position, and a file stays open until no handle in the running
+program or its waiting parents refers to it. Writing to a file handle returns
+access denied (5), since every file is opened read-only.
+
+Verification: 410 Rust tests passed on Linux.
 
 # EXEC: programs start from FreeCOM, plus FACTOR and MANDEL — 30 October 2026
 
