@@ -1261,3 +1261,20 @@ fn mandbbc_draws_the_same_characters_as_the_bbc_basic_floating_point_program(){
  assert!(matches!(r.stop,Stop::Exit(0)),"{:?}",r.stop);let text=String::from_utf8(r.output).unwrap();
  let lines:Vec<&str>=text.split_terminator("\r\n").collect();assert_eq!(lines,expected);
 }
+#[test]
+fn host_clock_gives_the_local_date_and_time_of_day(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let mut p=load(&[0xcd,0x21],"clock.com").unwrap();p.clock_offset=Some(3*3600);
+ let now=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+3*3600;
+ p.cpu.regs[0]=0x2a00;service(&mut p,0x21,&mut vec![]).unwrap();
+ let(_,date)=files::probe::stamp(Some(UNIX_EPOCH+std::time::Duration::from_secs(now)));
+ assert_eq!((p.cpu.regs[1]&0xffff,(p.cpu.regs[2]>>8)&255,p.cpu.regs[2]&255),(1980+u32::from(date>>9),u32::from(date>>5&15),u32::from(date&31)));
+ assert_eq!(p.cpu.regs[0]&255,((now/86400+4)%7)as u32,"day of week");
+ // AH2C: hours and minutes of the local time of day (within a minute of now).
+ p.cpu.regs[0]=0x2c00;service(&mut p,0x21,&mut vec![]).unwrap();
+ let got=((p.cpu.regs[1]>>8)&255)*60+(p.cpu.regs[1]&255);let want=(now%86400/60)as u32;
+ assert!(got==want||(got+1)%1440==want,"{got} vs {want}");
+ // The deterministic clock stays at midnight on 1 January 1980.
+ let mut p=load(&[0xcd,0x21],"clock.com").unwrap();p.cpu.regs[0]=0x2a00;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.cpu.regs[0]&255),(1980,0x0101,2));
+}

@@ -1,6 +1,7 @@
 //! DOS compatibility contracts. CPU execution and host output are separate.
 use super::*;
 use crate::host_io::Output;
+use std::time::{SystemTime,UNIX_EPOCH};
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     match(vector,(p.cpu.regs[0]>>8)as u8){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
@@ -231,11 +232,20 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(Some(p.cpu.regs[0]as u8))
         },
         (0x21,0x2a)=>{
-            // No clock driver or CMOS: DOS keeps its 1 January 1980 default, a
-            // Tuesday (FreeDOS systime.c: day of week (days+2)%7 with days=0).
-            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|1980;
-            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|0x0101;
-            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|2;
+            // Without the host clock there is no clock driver or CMOS: DOS keeps
+            // its 1 January 1980 default, a Tuesday (FreeDOS systime.c: day of
+            // week (days+2)%7 with days=0). With it, the host's local date.
+            let(year,month,day,weekday)=match p.clock_offset{
+                Some(offset)=>{
+                    let(days,_)=local_now(offset);
+                    let(_,date)=files::stamp(Some(UNIX_EPOCH+std::time::Duration::from_secs(days*86400)));
+                    (1980+u32::from(date>>9),u32::from(date>>5&15),u32::from(date&31),((days+4)%7)as u32)
+                },
+                None=>(1980,1,1,2),
+            };
+            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|year;
+            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|month<<8|day;
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|weekday;
             Ok(None)
         },
         (0x21,0x58)=>{
@@ -265,12 +275,28 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
 }
-/// One INT 1Ah AH=00h read: the current count, then the deterministic clock
-/// advances one tick. The rollover flag is consumed by this read.
+/// Days since 1970-01-01 and milliseconds into the day, in the host's local
+/// time `offset` seconds east of UTC.
+fn local_now(offset:i64)->(u64,u64){
+    let ms=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.as_millis()as i64)+offset*1000;
+    let ms=ms.max(0)as u64;(ms/86_400_000,ms%86_400_000)
+}
+/// One INT 1Ah AH=00h read. With the host clock, the count is the host's
+/// local time of day at 1193180/65536 ticks a second, and rollover is set when
+/// midnight passed since the last read. Otherwise it is the current count,
+/// then the deterministic clock advances one tick. Either way the rollover
+/// flag is consumed by this read.
 fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
-    let ticks=p.timer_ticks;
-    let next=ticks+1;
-    let (next_ticks,rollover)=if next>=TICKS_PER_DAY{(0,1u32)}else{(next,0u32)};
+    let(ticks,next_ticks,rollover)=match p.clock_offset{
+        Some(offset)=>{
+            let(_,ms)=local_now(offset);let now=((ms*1_193_180)/(65_536*1000))as u32;
+            (now,now,u32::from(now<p.timer_ticks))
+        },
+        None=>{
+            let ticks=p.timer_ticks;let next=ticks+1;
+            if next>=TICKS_PER_DAY{(ticks,0,1)}else{(ticks,next,0)}
+        },
+    };
     // Validate the entire service write set before committing either cell.
     p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
