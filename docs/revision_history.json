@@ -2076,6 +2076,17 @@
         "Z: holds 32 MiB",
         "its contents are lost when the session ends"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "MANDBBC.COM: the BBC BASIC Mandelbrot",
+      "base": "PR #64 (compat/memdrive)",
+      "verification": {
+        "linux_rust_tests": 416
+      },
+      "limitations": [
+        "MANDBBC needs a 386: it uses 32-bit registers in real mode"
+      ]
     }
   ],
   "development_increments": [

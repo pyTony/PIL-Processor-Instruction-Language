@@ -1,3 +1,19 @@
+# MANDBBC.COM: the BBC BASIC Mandelbrot — 30 October 2026
+
+`programs/dos/MANDBBC.COM` draws the classic BBC BASIC benchmark Mandelbrot:
+X from -49 to 29 (C = X*2.29/50), Y from -12 to 12 (D = Y*4.16/50), z
+starting at c, escape at |z|^2 >= 5, at most 16 iterations, and the shades
+`.,'~=+:;*%&$OXB#@`. It uses 32-bit integers with 20 fraction bits (386
+instructions in real mode). A Python model of fewer fraction bits differs
+from the floating-point program in 1 to 95 of the 1975 cells; with 20 bits
+none differ, so MANDBBC prints the same characters as BBC BASIC with
+floating point.
+
+Verification: 416 Rust tests passed on Linux; the new test compares all 25
+rows of MANDBBC's output in Dine with the rows the floating-point program
+gives (computed in Python from the BASIC listing). FreeCOM ran `MANDBBC`
+from D:.
+
 # Z: memory drive — 30 October 2026
 
 Every `--dos-session` now has Z:, a drive held in memory, as DOSBox has its
