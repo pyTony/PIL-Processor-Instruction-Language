@@ -14,7 +14,8 @@ change, delete or rename change in the host folder itself.
 Z: is a drive held in memory for the session, with TEMP=Z:\\ so that pipes
 work from any drive; what is written there is gone when the session ends.
 
-DOS date and time follow this computer's clock. Ctrl+Shift+C copies the
+DOS date and time follow this computer's clock in its time zone, or in the
+one --utc-offset gives (hours, such as 2 or -5:30); the status line shows it. Ctrl+Shift+C copies the
 selection (or the whole screen), Ctrl+Shift+V or Shift+Insert types the
 clipboard; both are also on the right-click menu.
 """
@@ -144,11 +145,26 @@ class Session:
 
 def local_offset():
     """Seconds east of UTC of local time now, daylight saving included."""
-    import time
-    return time.localtime().tm_gmtoff
+    from datetime import datetime
+    return int(datetime.now().astimezone().utcoffset().total_seconds())
 
 
-def make_app(root, engine, program, mount=None):
+def parse_offset(text):
+    """A UTC offset given as hours ("2", "-5", "5.5") or "+HH:MM", in seconds."""
+    text = text.strip()
+    sign = -1 if text.startswith('-') else 1
+    body = text.lstrip('+-')
+    if ':' in body:
+        hours, minutes = body.split(':', 1)
+        seconds = int(hours) * 3600 + int(minutes) * 60
+    else:
+        seconds = round(float(body) * 3600)
+    if seconds > 14 * 3600:
+        raise ValueError(f'UTC offset {text} is beyond 14 hours')
+    return sign * seconds
+
+
+def make_app(root, engine, program, mount=None, utc_offset=None):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -168,7 +184,9 @@ def make_app(root, engine, program, mount=None):
     text.tag_raise('sel')
     session = Session(engine, program, mount)
     # DOS date and time come from this computer's clock in local time.
-    session.send(f'clock {local_offset()}')
+    offset = local_offset() if utc_offset is None else utc_offset
+    session.send(f'clock {offset}')
+    zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
     beeps = [session.last.get('beeps', 0)]
 
@@ -187,7 +205,7 @@ def make_app(root, engine, program, mount=None):
                 text.tag_add('sel', *selection)
             text.configure(state='disabled')
         detail = f" — {reply['detail']}" if reply['detail'] else ''
-        status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}")
+        status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}   clock {zone}")
         # The program switched the PC speaker on: sound the host's bell.
         if reply.get('beeps', 0) > beeps[0]:
             beeps[0] = reply['beeps']
@@ -272,10 +290,12 @@ def main(argv=None):
     parser.add_argument('program', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH')
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
     parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
+    parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
+                        help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset)
     root.mainloop()
 
 

@@ -28,6 +28,12 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('section', '§'), (0x15, 0x29))
         self.assertEqual(term.key_code('eacute', 'é'), (0x82, 0))
 
+    def test_utc_offsets_parse_as_hours_or_hours_and_minutes(self):
+        self.assertEqual([term.parse_offset(t) for t in ('2', '-5', '5.5', '+02:00', '-03:30', '0')],
+                         [7200, -18000, 19800, 7200, -12600, 0])
+        with self.assertRaises(ValueError):
+            term.parse_offset('15')
+
     def test_pasted_text_becomes_keystrokes(self):
         self.assertEqual(term.paste_keys('Dir\r\nä\t€x'),
                          [(0x44, 0x20), (0x69, 0x17), (0x72, 0x13), (13, 0x1c), (0x84, 0x28), (9, 0x0f), (0x78, 0x2d)])
