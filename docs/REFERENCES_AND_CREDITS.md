@@ -186,9 +186,9 @@ RAM transaction/protection contract is a project design, not an extracted x86
 MMU specification. Do not cite these flat RAM tests as validation of page-table,
 segmentation, MMIO or hardware exception behaviour.
 
-Upstream baseline inspected: pyTony/pil_proof, commit
+Upstream baseline inspected: pyTony/PIL-Processor-Instruction-Language, commit
 cfd4143512497c8afd28df9ef6739a96fc62b9f0 (26 October 2026).
-GitHub: https://github.com/pyTony/pil_proof
+GitHub: https://github.com/pyTony/PIL-Processor-Instruction-Language
 The complete materialized source tree was checked against its Git blob hashes.
 
 

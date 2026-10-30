@@ -1,7 +1,7 @@
 # PIL debugger delivery
 ## Documentation
 
-[Complete documentation overview](https://github.com/pyTony/pil_proof/blob/dev/docs/README.md)
+[Complete documentation overview](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/README.md)
 provides the map to all language, design, verification and planning documents.
 
 | Read this | What it covers |

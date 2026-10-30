@@ -113,4 +113,4 @@ Windows/Linux CI40470152015 passed210 tests and independent CLI/package checks.
 The compiled Linux reader extracted all2,147 files from the actual supplied image
 byte-identically to Python. The corrected runtime imported151 DOS programs and
 rejected5LE inputs;one exited and the rest exposed encoding/service/access blockers.
-See the [measured FreeDOS results](https://github.com/pyTony/pil_proof/blob/dev/docs/development/FREEDOS_PROBE_RESULTS.md).
+See the [measured FreeDOS results](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/development/FREEDOS_PROBE_RESULTS.md).

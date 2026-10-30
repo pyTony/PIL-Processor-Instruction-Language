@@ -28,7 +28,7 @@ whole-image exit count is claimed.
 
 Version0.33 adds AH25/35 RAM interrupt-vector services and ordinary-RAM XCHG.
 Windows/Linux CI40621030314 passed319 tests and185 backend cases, plus full
-Mandelbrot and standalone-package checks. [PR38](https://github.com/pyTony/pil_proof/pull/38)
+Mandelbrot and standalone-package checks. [PR38](https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/38)
 is the separate runtime delivery. Existing far CALL/RETF and memory PUSH/POP
 remain part of the supported bounded profile.
 
@@ -91,7 +91,7 @@ and bus I/O exist. No external-suite passes are claimed yet.
 - Next: explicit effective-address/segment context and controlled instruction
   fetch/decode, while maintaining precise errors. Add general checkpoints for
   multi-store/string/device instructions rather than extending RAM rollback to MMIO.
-- GitHub repository now exists privately at pyTony/pil_proof on main. Continue
+- GitHub repository now exists privately at pyTony/PIL-Processor-Instruction-Language on main. Continue
   supplying patches inside ~/pil_proof; no more version folders in home.
 
 ## Earlier roadmap detail

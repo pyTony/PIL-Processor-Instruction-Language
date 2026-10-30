@@ -14,7 +14,11 @@
 
 # Repository status
 
-The private repository https://github.com/pyTony/pil_proof now exists. The user
+The repository was renamed from pyTony/pil_proof to
+pyTony/PIL-Processor-Instruction-Language on 30 October 2026; old URLs redirect.
+Local checkout folders such as ~/pil_proof and the crate and binary names are unchanged.
+
+The private repository https://github.com/pyTony/PIL-Processor-Instruction-Language now exists. The user
 pushed main and configured origin/main tracking. The inspected baseline for
 v0.6 is cfd4143512497c8afd28df9ef6739a96fc62b9f0.
 
