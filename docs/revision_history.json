@@ -2063,6 +2063,19 @@
         "word port accesses and other ports stop",
         "port 61h bit 5 reads 0"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "Z: memory drive",
+      "base": "PR #63 (compat/pipes)",
+      "verification": {
+        "linux_rust_tests": 415
+      },
+      "limitations": [
+        "Z: starts empty: no DOSBox-style built-in programs",
+        "Z: holds 32 MiB",
+        "its contents are lost when the session ends"
+      ]
     }
   ],
   "development_increments": [

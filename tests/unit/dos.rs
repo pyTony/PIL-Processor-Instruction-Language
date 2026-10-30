@@ -1202,3 +1202,28 @@ fn speaker_ports_take_watcoms_sound_and_nosound(){
   let r=run(load(code,"port.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  }
 }
+#[test]
+fn memory_drive_is_z_with_temp_and_keeps_files_for_the_session(){
+ let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Memory(MemDir::default())],None).unwrap();let psp=u32::from(PSP)*16;
+ let env:Vec<u8>=(0..33).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(env,b"COMSPEC=A:\\COMMAND.COM\0TEMP=Z:\\\0\0");
+ let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ // Create, write, close, reopen and read back; seek and truncate.
+ let (h,cf)=call(&mut p,0x3c00,0,b"Z:\\PIPE.TMP");assert_eq!(cf,0);assert_eq!(svc(&mut p,0x4000,h,5,b"hello"),(5,0));assert_eq!(svc(&mut p,0x3e00,h,0,b"").1,0);
+ let (h,_)=call(&mut p,0x3d02,0,b"z:pipe.tmp");assert_eq!(svc(&mut p,0x3f00,h,9,b""),(5,0));
+ assert_eq!((0..5).map(|i|p.ram.load(psp+0x400+i,MemWidth::Byte).unwrap()as u8).collect::<Vec<_>>(),b"hello");
+ p.cpu.regs[2]=2;p.cpu.regs[1]=0;p.cpu.regs[3]=h;p.cpu.regs[0]=0x4200;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(svc(&mut p,0x4000,h,0,b""),(0,0));
+ // AH57 on a memory file, then close; the size in a search is the truncated one.
+ p.cpu.regs[1]=0x6000;p.cpu.regs[2]=0x5b4f;p.cpu.regs[3]=h;p.cpu.regs[0]=0x5701;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&1,0);
+ assert_eq!(svc(&mut p,0x3e00,h,0,b"").1,0);
+ assert_eq!(call(&mut p,0x4e00,0x10,b"Z:\\*.*").1,0);assert_eq!(dta_name(&p),(0x20,2,b"PIPE.TMP".to_vec()));
+ // Directories, rename into one, a refused non-empty remove, delete; AH36 counts 2 KiB clusters.
+ assert_eq!(call(&mut p,0x3900,0,b"Z:\\SUB").1,0);
+ p.ram.write_bytes(psp+0x300,b"Z:\\SUB\\P.TMP\0").unwrap();p.cpu.regs[7]=0x300;assert_eq!(call(&mut p,0x5600,0,b"Z:\\PIPE.TMP").1,0);
+ assert_eq!(call(&mut p,0x3a00,0,b"Z:\\SUB"),(5,1));assert_eq!(call(&mut p,0x3d00,0,b"Z:\\PIPE.TMP"),(2,1));
+ p.cpu.regs[2]=26;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(4,16383,512,16384));
+ assert_eq!(call(&mut p,0x4100,0,b"Z:\\SUB\\P.TMP").1,0);assert_eq!(call(&mut p,0x3a00,0,b"Z:\\SUB").1,0);
+ assert_eq!(call(&mut p,0x4e00,0x10,b"Z:\\*.*"),(0x12,1));
+ // AH0E reports drives up to Z:.
+ p.cpu.regs[2]=0;p.cpu.regs[0]=0x0e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,26);
+}

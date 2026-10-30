@@ -96,6 +96,8 @@ pub fn serve(path:&str,mount:Option<&str>)->Result<(),String>{
         None=>read_file(Path::new(path))?,
     };
     if let Some(mount)=mount{drives.push(Source::Host(std::path::PathBuf::from(mount)));}
+    // Z: holds files in memory for the session, and TEMP points there.
+    drives.push(Source::Memory(MemDir::default()));
     let mut session=Session::new(load_with_drives(&bytes,path,drives,inner)?);
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;

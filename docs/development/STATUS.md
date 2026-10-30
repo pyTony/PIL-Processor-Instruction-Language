@@ -1,3 +1,19 @@
+# Z: memory drive — 30 October 2026
+
+Every `--dos-session` now has Z:, a drive held in memory, as DOSBox has its
+own Z:. It starts empty, takes the same create, write, delete, rename and
+directory services as the host folder, and is gone when the session ends.
+The environment gains `TEMP=Z:\`, so FreeCOM's pipes work from C: (the
+read-only image) without a SET first. Z: holds 32 MiB in 2 KiB clusters, and
+AH36 reports its real free space; when a write does not fit, nothing is
+written and AX=0, as DOS reports a full disk. AH0E now reports drives up to
+Z:. The probe (no drives) is unchanged.
+
+Verification: 415 Rust tests passed on Linux (one new memory-drive test).
+FreeCOM 0.86 ran `SET` (shows TEMP=Z:\), `DIR | D:MORE` from C:, and on Z:
+`ECHO > A.TXT`, `MD`, `COPY`, `REN`, `DIR /S` (33,550,336 bytes free),
+`TYPE`, `DEL` and `RD`.
+
 # PC speaker ports — 30 October 2026
 
 FreeCOM's beep (the `BEEP` command, and a key the line editor does not take,
