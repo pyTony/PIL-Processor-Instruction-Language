@@ -21,7 +21,10 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('F10', ''), (0, 0x44))
         self.assertEqual(term.key_code('c', '\x03', True), (3, 0x2e))
         self.assertIsNone(term.key_code('Shift_L', ''))
-        self.assertIsNone(term.key_code('adiaeresis', 'ä'))
+        self.assertEqual(term.key_code('adiaeresis', 'ä'), (0x84, 0x28))
+        self.assertEqual(term.key_code('Odiaeresis', 'Ö'), (0x99, 0x27))
+        self.assertEqual(term.key_code('aring', 'å'), (0x86, 0x1a))
+        self.assertIsNone(term.key_code('EuroSign', '€'))
 
     def test_screen_rows_decode_cp437_characters_and_attributes(self):
         cells = bytearray(b' \x07' * 80 * 25)

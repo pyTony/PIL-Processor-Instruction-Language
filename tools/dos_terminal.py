@@ -37,14 +37,25 @@ SPECIAL = {'Return': (13, 0x1c), 'KP_Enter': (13, 0x1c), 'BackSpace': (8, 0x0e),
            'Home': (0, 0x47), 'End': (0, 0x4f), 'Prior': (0, 0x49), 'Next': (0, 0x51),
            'Insert': (0, 0x52), 'Delete': (0, 0x53)}
 SPECIAL.update({f'F{n}': (0, 0x3a + n) for n in range(1, 11)})
+# Letters beyond ASCII take the scan code of the key they sit on in the Nordic
+# layouts (Finnish/Swedish: å ä ö; Danish/Norwegian: å æ ø); others get 0.
+_NATIONAL = {'å': 0x1a, 'ä': 0x28, 'ö': 0x27, 'æ': 0x28, 'ø': 0x27, '§': 0x29, '½': 0x29}
 
 
 def key_code(keysym, char, control=False):
     """Map a Tk key event to (ascii, scan), or None for keys DOS never sees."""
     if keysym in SPECIAL:
         return SPECIAL[keysym]
-    if not char or len(char) != 1 or ord(char) > 0x7e:
+    if not char or len(char) != 1:
         return None
+    if ord(char) > 0x7e:
+        # The host keyboard layout already chose the character (no KEYB needed):
+        # pass it on in code page 437, or drop it if 437 has no such character.
+        try:
+            code = char.encode('cp437')[0]
+        except UnicodeEncodeError:
+            return None
+        return code, _NATIONAL.get(char.lower(), 0)
     if 1 <= ord(char) <= 26:  # Tk already turned Ctrl+letter into a control code
         return ord(char), SCAN[chr(ord(char) + 0x60)]
     base = char.lower() if char.isalpha() else _SHIFTED.get(char, char)

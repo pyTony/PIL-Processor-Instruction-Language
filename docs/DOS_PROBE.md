@@ -13,6 +13,12 @@ share one file position, and a file stays open until no handle in the running
 program or its waiting parents refers to it. Writing to a file handle returns
 access denied (5), since every file is opened read-only.
 
+The terminal (`tools/dos_terminal.py`) now passes characters beyond ASCII
+that the host keyboard layout produced, such as ä, ö and å, in code page 437,
+with the scan code of their key in the Nordic layouts. Characters 437 lacks
+(such as €) are still dropped. Since the host already applies the layout, no
+DOS KEYB driver is needed.
+
 Verification: 410 Rust tests passed on Linux.
 
 # EXEC: programs start from FreeCOM, plus FACTOR and MANDEL — 30 October 2026
