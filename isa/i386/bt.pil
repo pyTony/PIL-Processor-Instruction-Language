@@ -1,0 +1,20 @@
+# BT/BTS/BTR/BTC. The bit offset is taken modulo the operand width, the
+# selected bit is copied to CF, and the 386 leaves OF, SF, ZF, AF and PF
+# undefined. The decoder fills in the operand, offset and update lines; the
+# update is empty for BT, which writes nothing back.
+$OPERAND
+$OFFSET
+const index_mask $W $SIGN
+and index b index_mask
+lshr shifted a index
+bit cf shifted 0
+const one $W 1
+shl selected one index
+$UPDATE
+flag CF cf
+undef_flag OF
+undef_flag SF
+undef_flag ZF
+undef_flag AF
+undef_flag PF
+retire

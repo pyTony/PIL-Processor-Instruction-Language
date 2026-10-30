@@ -331,8 +331,8 @@
         "BTR",
         "BTC"
       ],
-      "status": "planned",
-      "remaining": "Signed memory indices,immediates,CF and other flag classification",
+      "status": "partial",
+      "remaining": "Register forms (0F A3/AB/B3/BB) and the 0F BA /4-/7 immediate forms on registers and memory are implemented and backend-verified (offset modulo width, CF from the bit, OF/SF/ZF/AF/PF undefined); register-offset memory forms with signed bit-string addressing remain",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

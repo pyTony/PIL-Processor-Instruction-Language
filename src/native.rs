@@ -314,6 +314,11 @@ pub fn cases()->Result<Vec<Case>,String> {
     // XLAT with BX, with EBX (67h) and with an ES override.
     let mut t=case("xlat",vec![0xd7,0x67,0xd7,0x26,0xd7,0xf4])?;
     t.regs[0]=0xabcd0002;t.regs[3]=0x400;t.patch=Some((0x500,vec![7,6,5,4,3,2,1,0]));tests.push(t);
+    // BT/BTS/BTR/BTC: the AC-probe BTC EAX,ESI from report 44, register forms
+    // and immediate memory forms, then a read-only BTS that must fault.
+    let mut t=case("bit_test",vec![0x66,0x0f,0xbb,0xf0,0x0f,0xa3,0xc8,0x66,0x0f,0xab,0xc8,0x0f,0xb3,0xc8,0x0f,0xba,0x27,0x0f,0x66,0x0f,0xba,0x3f,0x1f,0xf4])?;
+    t.regs[0]=0x00240001;t.regs[1]=0x25;t.regs[3]=0x400;t.regs[6]=18;t.flags=0x8d7;t.patch=Some((0x500,vec![0x01,0x80,0,0]));tests.push(t);
+    let mut t=case("bit_test_readonly",vec![0x0f,0xba,0x2f,0x01,0xf4])?;t.regs[3]=0x400;t.protect=Some((0x500,4));tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
 }

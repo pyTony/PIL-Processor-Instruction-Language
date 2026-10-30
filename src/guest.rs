@@ -383,6 +383,21 @@ impl Image {
                         text=text.replace(&format!("read a src {source_width}"),&format!("read_address addr\nload a addr {source_width}"));label
                     }else{register_name(src).into()};
                     (format!("{} {},{}",name.to_ascii_uppercase(),register_name(dst),source_label),compile(&instantiate(text,w),w))
+                }else if matches!(second,0xa3|0xab|0xb3|0xbb|0xba){
+                    // Register-offset memory forms address a bit string beyond
+                    // the operand, so only the immediate form takes memory.
+                    let m=r.byte()?;let memory=m>>6!=3;
+                    let kind=if second==0xba{(m>>3)&7}else{4+((second>>3)&3)};
+                    if kind<4{return Err(GuestError::Decode("unsupported 0FBA group extension (BT/BTS/BTR/BTC /4-/7 only)".into()));}
+                    if memory&&second!=0xba{return Err(GuestError::Decode("BT-family bit-string memory operand is outside this profile".into()));}
+                    let name=["BT","BTS","BTR","BTC"][(kind-4)as usize];
+                    dst=view((m&7)as usize,w);src=view(((m>>3)&7)as usize,w);
+                    if memory{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});}
+                    let (offset,offset_label)=if second==0xba{let imm=r.byte()?;(format!("const b $W {imm}"),format!("0x{imm:02x}"))}else{("read b src $W".into(),register_name(src).into())};
+                    let (operand,write)=if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
+                    let update=match kind{5=>format!("or r a selected\n{write}"),6=>format!("not cleared selected\nand r a cleared\n{write}"),7=>format!("xor r a selected\n{write}"),_=>String::new()};
+                    let text=include_str!("../isa/i386/bt.pil").replace("$OPERAND",operand).replace("$OFFSET",&offset).replace("$UPDATE",&update);
+                    (format!("{name} {},{offset_label}",operand_name(dst,address)),compile(&instantiate(text,w),w))
                 }else if second==0xaf {
                     let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
                     dst=reg;src=rm;

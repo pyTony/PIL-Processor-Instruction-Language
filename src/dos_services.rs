@@ -71,6 +71,27 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[1]&=0xffff0000;
             Ok(None)
         },
+        (0x21,0x33) if p.cpu.regs[0]as u8==6=>{
+            // True version: the same 6.22 profile as AH30, revision 0, and
+            // DH=0 because Dine is neither in ROM nor in the HMA.
+            let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS true version PSP read: {e:?}"))?;
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|version;
+            p.cpu.regs[2]&=0xffff0000;
+            Ok(None)
+        },
+        (0x21,0x19)=>{
+            // Default drive A:, matching the single floppy in the INT11 list.
+            p.cpu.regs[0]&=0xffffff00;
+            Ok(None)
+        },
+        (0x21,0x67)=>{
+            // The PSP holds a 20-entry handle table and Dine never moves it, so
+            // only a request that fits that table can succeed.
+            let wanted=p.cpu.regs[3]&0xffff;
+            if wanted>20{return Err(format!("INT21/AH67 asks for {wanted} handles; this profile has only the 20-entry PSP table"));}
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
         (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
@@ -160,10 +181,10 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(PSP);
             Ok(None)
         },
-        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0600|0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300)=>{
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300|0xb710)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
-            // int2f.asm; RBIL): no ASSIGN, redirector, Windows, DPMI host, ANSI.SYS or
+            // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS or
             // XMS driver. AX=1680h leaves AL=80h (time slice not released).
             Ok(None)
         },

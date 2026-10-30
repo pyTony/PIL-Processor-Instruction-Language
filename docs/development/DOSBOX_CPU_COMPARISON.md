@@ -6,9 +6,9 @@ test, not SingleStepTests, a hardware oracle or full 386/DOS conformance.
 ## Measured result
 
 Update 30 October 2026: MUL, LOOP-family, RCL/RCR, DAA/DAS, PUSHA/POPA,
-indirect JMP, LDS, ENTER, far JMP, one-operand IMUL and XLAT cases bring the
-suite to 400. A shared PASS/FAIL routine keeps the COM at 57,402 bytes. Ubuntu
-dosbox-x 2024.03.01 (headless, Linux CI) passes all 400 in both engines. The Windows measurement below is the earlier 328-case run.
+indirect JMP, LDS, ENTER, far JMP, one-operand IMUL, XLAT and BT-family cases bring
+the suite to 448. A shared PASS/FAIL routine keeps the COM at 64,398 bytes. Ubuntu
+dosbox-x 2024.03.01 (headless, Linux CI) passes all 448 in both engines. The Windows measurement below is the earlier 328-case run.
 
 The exact same 57,117-byte CPUTEST.COM passed all 328 cases in both engines.
 Both outputs contain every expected case ID in order, no failures, and the
@@ -54,7 +54,8 @@ changed between the start and end of the comparison.
 | LDS (16/32-bit), ENTER n,0 with LEAVE (16/32-bit) | 4 |
 | Far JMP through SS:[BX] (16/32-bit) | 2 |
 | One-operand IMUL (8/16/32-bit), XLAT through SS:BX | 7 |
-| Total | 400 |
+| BT/BTS/BTR/BTC, 16/32-bit, register and immediate offsets | 48 |
+| Total | 448 |
 
 All operand-sized families exercise 8-, 16- and 32-bit widths (or 16/32-bit for
 extensions, conversions, IMUL and LEA). Cases use fixed

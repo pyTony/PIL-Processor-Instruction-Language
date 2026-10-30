@@ -1,3 +1,34 @@
+# BT family, true DOS version, default drive and handle count — 30 October 2026
+
+FreeDOS report 44 (dev after #54, 100,000 steps): 63 programs exit and 16
+reach a keyboard prompt. This round:
+
+- BT, BTS, BTR and BTC (0F A3/AB/B3/BB) on registers, and the 0F BA /4-/7
+  immediate forms on registers and memory, in isa/i386/bt.pil. The bit offset
+  is taken modulo the operand width, CF gets the selected bit, and OF, SF, ZF,
+  AF and PF are undefined. Register-offset memory forms (bit strings past the
+  operand) are still a decode stop. Five programs stopped on `BTC EAX,ESI`, the
+  EFLAGS.AC probe that tells a 386 from a 486.
+- INT 21h AX=3306h (true version) returns BX=1606h (6.22, the same profile as
+  AH30), DL=0 (revision) and DH=0 (not in ROM or the HMA), as FreeDOS
+  inthndlr.c does with its own version. Other AH33 subfunctions still stop.
+  DEVLOAD stopped here.
+- INT 21h AH=19h returns AL=0, drive A:, matching the single floppy in the
+  INT 11h equipment word. This is a profile choice; there is no filesystem.
+  ASSIGN stopped here.
+- INT 21h AH=67h (set handle count) succeeds for BX up to 20, the PSP handle
+  table Dine already has. Larger requests stop, because Dine does not move the
+  table. SWSUBST stopped here.
+- INT 2Fh AX=0100h (PRINT) and AX=B710h (APPEND) installation checks reach
+  the kernel default and return AX unchanged.
+
+Verification: 393 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 238 cases (new: bit_test with the
+report's BTC EAX,ESI, register and immediate-memory forms; bit_test_readonly
+faults on a read-only BTS). DOSBox-X 2024.03.01 headless: CPU suite 448/448
+(48 BT-family cases new, COM 64,398 bytes), the negative control fails case 1
+in both engines as intended. Not yet rerun on the FreeDOS image.
+
 # One-operand IMUL, XLAT, DOS time and allocation strategies — 30 October 2026
 
 FreeDOS report 42 (dev after #53, 10,000 steps): 84 Budget, 47 Exit, 15 Service,
