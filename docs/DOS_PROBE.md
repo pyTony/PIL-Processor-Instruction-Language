@@ -1,3 +1,18 @@
+# Code runs anywhere in the program's DOS block — 30 October 2026
+
+The DOS loader's instruction fetch window was the bytes loaded from the file.
+Self-unpacking COMs (UPX-style stubs) copy code above the file image and jump
+there, so 36 small FreeDOS COMs stopped at Boundary. The window is now the
+memory block DOS gives the program at load: PSP through the load-time
+allocation end (all conventional memory for a COM; the MZ minimum/maximum
+block otherwise). A fetch outside that block, such as a far call into ROM,
+still stops as Boundary. The decode cache already re-checks instruction bytes
+on reuse, so code written by the guest is decoded fresh.
+
+Verification: 378 Rust tests passed on Linux (one new, two adjusted). The
+DOSBox-X CPU (328) and console (8) comparisons still pass in both engines.
+Not yet rerun on the FreeDOS image.
+
 # DOS buffered line input (INT21 AH0A) — 30 October 2026
 
 INT21 AH0A reads a line into the DS:DX buffer (size byte, count byte, text).
@@ -185,7 +200,7 @@ spaces use the CLI; the REPL uses whitespace-separated arguments. The existing
 | `MissingEncoding` | Decoder stopped on an unsupported instruction/form/prefix |
 | `Service` | Unsupported DOS/BIOS call or a bounded DOS-string service failure |
 | `Fault` | Shared execution or fetch/segment/RAM check failed |
-| `Boundary` | Instruction fetch left the imported code window or truncated an instruction |
+| `Boundary` | Instruction fetch left the program's DOS memory block (PSP to load-time allocation end) or truncated an instruction |
 | `Budget` | Per-program execution limit reached |
 | `Monitor` | Reached HLT or monitor-port I/O, which are not DOS termination/services |
 | `IMPORT ERROR` | File/header/relocation/allocation checks rejected the input |
@@ -215,8 +230,8 @@ reveal the next one. Dynamic paths, inputs and loops affect the frequencies.
 Ordinary COM/MZ CS caches permit data reads and writes, including CS overrides
 used by startup and unpacking code. Segment limits and RAM write protection
 still apply. Modified instruction bytes invalidate the interpreter decode cache
-on reuse. The bounded loaded-image fetch window remains: this does not yet let
-unpacked code execute outside that window. Explicit protected Code caches keep
+on reuse. Fetch is allowed anywhere in the program's block (PSP through the
+load-time allocation end), so unpacked or relocated code runs. Explicit protected Code caches keep
 their read/write restrictions. Fixed compiled images retain changed-code guards.
 
 ## Loader and service contract
@@ -312,8 +327,8 @@ Physical probe RAM is now always640KiB,independent of MZ initial allocation.
 PSP:0002 retains the original load-time end,as in the FreeDOS handler;
 allocation_end tracks the current owned PSP block separately. Successful4A
 returns the block segment in AX. Allocation is DOS bookkeeping,not hardware memory protection:
-freed/unallocated RAM remains addressable in real mode. Loaded instruction
-fetch windows are unchanged,so allocating RAM does not make arbitrary data
+freed/unallocated RAM remains addressable in real mode. The instruction
+fetch window is the load-time program block; AH48 blocks above it are not
 executable. All MCB writes are prechecked before committing metadata or
 register results; readonly header-write failures stop the bridge without partial state.
 

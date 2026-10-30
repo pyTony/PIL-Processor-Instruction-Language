@@ -73,7 +73,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
         return Err(".EXE input requires a DOS MZ/ZM header; not a raw monitor image".into());
     }
     let(mut format,mut cpu,mut selectors,mut header_bytes,mut relocations)=(Format::Com,Cpu::default(),[PSP;6],0,0);
-    let(mut module_base,mut module_bytes,mut start,mut end,mut allocation_end,mut trailing)=(u32::from(PSP)*16+0x100,bytes.len(),0u32,0x100+bytes.len()as u32,LIMIT,0);
+    let(mut module_base,mut module_bytes,mut allocation_end,mut trailing)=(u32::from(PSP)*16+0x100,bytes.len(),LIMIT,0);
     let mut module=bytes.to_vec();
     cpu.eip=0x100;cpu.regs[4]=0xfffe;cpu.eflags=0x202;
     if mz{
@@ -115,7 +115,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
         if entry<module_base as usize||entry>=module_base as usize+module.len(){return Err("MZ initial CS:IP is outside load module".into());}
         if usize::from(ss)*16<usize::from(PSP)*16||usize::from(ss)*16+usize::from(sp)>allocation_end{return Err("MZ initial SS:SP is outside allocated probe block".into());}
         selectors[SegmentRegister::Cs.index()]=cs;selectors[SegmentRegister::Ss.index()]=ss;
-        cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);start=(module_base as usize).saturating_sub(cs_base)as u32;end=(module_base as usize+module.len()-cs_base).min(65536)as u32;
+        cpu.eip=u32::from(ip);cpu.regs[4]=u32::from(sp);
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
     let mut ram=Ram::new(0xc0000);
     console::initialize(&mut ram)?;
@@ -128,7 +128,9 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false})
+    // Code may run anywhere in the block DOS gave the program (PSP to allocation
+    // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
