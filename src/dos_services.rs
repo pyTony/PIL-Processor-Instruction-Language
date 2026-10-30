@@ -109,6 +109,14 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
+        (0x21,ah @ (0x34|0x52))=>{
+            // ES:BX -> InDOS byte (critical-error byte just before it) or the
+            // list of lists, in Dine's DOS data segment.
+            let es=SegmentRegister::Es.index();
+            p.selectors[es]=DOSDATA;p.image.selectors[es]=DOSDATA;p.image.segments[es]=SegmentCache::real_mode(DOSDATA);
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(if ah==0x34{INDOS}else{SYSVARS});
+            Ok(None)
+        },
         (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{

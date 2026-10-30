@@ -2184,6 +2184,19 @@
         "only the program's own file opens, read-only, one open at a time",
         "INT21 AH34/38/4B/52/5F, INT2F AX=0601h/1400h/4310h, INT13 AH08, INT33, INT29 still stop"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "DOS data area: list of lists and InDOS",
+      "base": "dev after #56",
+      "verification": {
+        "linux_rust_tests": 397,
+        "freedos_probe": "report 46 is the baseline; not rerun"
+      },
+      "limitations": [
+        "list of lists: DPB, SFT, CLOCK$, CON, buffers, CDS and FCB pointers are FFFF:FFFF; no block devices or drives",
+        "NUL device strategy and interrupt entry points are not modelled"
+      ]
     }
   ]
 }

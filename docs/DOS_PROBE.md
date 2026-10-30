@@ -1,3 +1,23 @@
+# DOS data area: list of lists and InDOS — 30 October 2026
+
+FreeDOS report 46 (dev after #56, 100,000 steps): 67 Exit, 48 Budget, 33
+Service, 3 MissingEncoding. FreeCOM now loads its strings through the
+environment block and its own file. It then stops at INT 21h AH=52h, as do 20
+other programs. This round:
+
+- Dine's DOS data segment is 0070h. INT 21h AH=52h returns ES:BX = 0070:0026,
+  the list of lists, with the first MCB segment in the word before it. That is
+  the only field FreeCOM reads (lib/get1mcb.c), and the MCB chain it leads to
+  is the real one: environment, program, end. The NUL device header ends the
+  device chain and sectors are 512 bytes. Structures Dine does not model (DPB,
+  SFT, CLOCK$, CON, buffers, CDS, FCBs) are FFFF:FFFF, and there are no block
+  devices or drives yet.
+- INT 21h AH=34h returns ES:BX = 0070:0001, the InDOS byte, which is 0. The
+  critical-error byte before it is also 0.
+
+Verification: 397 Rust tests passed on Linux. Not yet rerun on the FreeDOS
+image.
+
 # SHLD/SHRD, environment block, own-file reads and a growable handle table — 30 October 2026
 
 FreeDOS report 45 (dev after #55, 100,000 steps): 65 Exit, 16 WaitingForInput,
