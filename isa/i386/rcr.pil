@@ -1,0 +1,35 @@
+# Rotate CF:dst right as a $EXT-bit ring. The 386 masks the count to five
+# bits, then reduces it modulo $EXT; flags change only for a non-zero masked
+# count, and OF (MSB of the input XOR the incoming CF) only for a count of one.
+read a dst $W
+read b src $W
+read_flag carry CF
+const count_mask $W 31
+and count b count_mask
+zext count_ext count $EXT
+const ring $EXT $EXT
+rem turns count_ext ring
+sub complement ring turns
+zext a_ext a $EXT
+zext c_ext carry $EXT
+const top $EXT $W
+shl c_high c_ext top
+or v a_ext c_high
+lshr right v turns
+shl left v complement
+or rotated left right
+trunc r rotated $W
+bit cf rotated $W
+bit msb a $SIGN
+xor of msb carry
+const one $W 1
+const yes 1 1
+zero is_zero count
+not active is_zero
+xor count_minus_one count one
+zero single count_minus_one
+write dst r
+flag_if CF cf yes active
+flag_if OF of single active
+preserve_flags remaining
+retire

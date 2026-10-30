@@ -182,7 +182,7 @@ fn memory_shift_rmw_checks_zero_counts_and_preserves_fault_state(){
 }
 #[test]
 fn unimplemented_rotate_extensions_and_truncated_operands_stay_diagnostics(){
-    for bytes in [vec![0xc1,0xe0],vec![0xc0,0x66],vec![0xd1,0xd0],vec![0xd3,0xf0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    for bytes in [vec![0xc1,0xe0],vec![0xc0,0x66],vec![0xd1,0xf0],vec![0xd3,0xf0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
     assert_eq!(description("shl").unwrap(),description("sal").unwrap());
 }
 

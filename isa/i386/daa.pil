@@ -1,0 +1,40 @@
+# DAA: decimal adjust AL after addition (Intel SDM pseudocode, 386).
+# OF is undefined. Bound to AL by the decoder.
+read al dst 8
+read_flag old_cf CF
+read_flag old_af AF
+const low_mask 8 15
+and low al low_mask
+const nine 8 9
+ult low_ok nine low
+or adjust_low low_ok old_af
+const six 8 6
+const zero8 8 0
+select step_low adjust_low six zero8
+zext al_wide al 9
+zext step_wide step_low 9
+add sum_wide al_wide step_wide
+trunc mid sum_wide 8
+bit carry sum_wide 8
+or cf_low old_cf carry
+const no 1 0
+select cf_after_low adjust_low cf_low no
+const limit 8 153
+ult high_ok limit al
+or adjust_high high_ok old_cf
+const sixty 8 96
+select step_high adjust_high sixty zero8
+add r mid step_high
+const yes 1 1
+select cf adjust_high yes cf_after_low
+bit sf r 7
+zero zf r
+parity pf r
+write dst r
+flag CF cf
+flag AF adjust_low
+flag SF sf
+flag ZF zf
+flag PF pf
+undef_flag OF
+retire

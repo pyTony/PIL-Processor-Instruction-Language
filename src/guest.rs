@@ -110,10 +110,11 @@ impl Image {
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         if locked&&!matches!(opcode,0x86|0x87){return Err(GuestError::Decode("LOCK requires memory XCHG in this profile".into()));}
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;
+        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;let mut jump_indirect=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
             if opcode==0xff&&extension==2{call_indirect=Some(m);opcode=0xe8;}
+            else if opcode==0xff&&extension==4{jump_indirect=Some(m);}
             else if opcode==0xff&&extension==3{if m>>6==3{return Err(GuestError::Decode("far CALL requires a memory pointer".into()));}far_indirect=Some(m);opcode=0x9a;}
             else if opcode==0x8f || extension==6{
                 if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
@@ -130,6 +131,13 @@ impl Image {
         }
         let mut w=if wide {32}else{16};let mut dst=view(0,w);let mut src=dst;let mut address=None;let mut disp=0;let mut disp_bits=8;
         let (label,program)=match opcode {
+            0xff if jump_indirect.is_some()=>{
+                let m=jump_indirect.unwrap();dst=view((m&7)as usize,w);src=dst;
+                let (target,label)=if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});(format!("read_address operand\nload target_value operand {w}"),operand_name(dst,address))}
+                    else{(format!("read target_value dst {w}"),register_name(dst).into())};
+                let text=include_str!("../isa/i386/jmp_indirect.pil").replace("$TARGET",&target);
+                (format!("JMP {label}"),compile(&instantiate(text,w),w))
+            }
             0xff if memory_push.is_some()=>{
                 let m=memory_push.unwrap();
                 let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
@@ -302,6 +310,13 @@ impl Image {
                 };
                 (format!("{} {operand}",name.to_ascii_uppercase()),compile(&instantiate(text,w),w))
             }
+            0x60|0x61=>{
+                let stack_bits=if matches!(self.segments[SegmentRegister::Ss.index()].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
+                let file=if opcode==0x60{include_str!("../isa/i386/pusha.pil")}else{include_str!("../isa/i386/popa.pil")};
+                let text=file.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("{}{}",if opcode==0x60{"PUSHA"}else{"POPA"},if w==32{"D"}else{""}),compile(&instantiate(text,w),w))
+            }
             0xb0..=0xbf=>{
                 if opcode<0xb8 {w=8;}
                 dst=view((opcode&7) as usize,w);src=dst;
@@ -387,13 +402,18 @@ impl Image {
             }
             0xc0|0xc1|0xd0|0xd1|0xd2|0xd3=>{
                 if opcode&1==0{w=8;}
-                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror",4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
+                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror",2=>"rcl",3=>"rcr",4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
                 dst=view((m&7) as usize,w);src=view(1,w);
                 let memory=m>>6!=3;
                 if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=view(0,w);}
                 let immediate=match opcode{0xc0|0xc1=>Some(u32::from(r.byte()?)),0xd0|0xd1=>Some(1),_=>None};
                 let text=operand_text(name,w,memory,false,immediate)?;
                 (format!("{} {},{}",name.to_ascii_uppercase(),operand_name(dst,address),immediate.map(|v|format!("0x{v:02x}")).unwrap_or_else(||"CL".into())),compile(&text,w))
+            }
+            0x27|0x2f=>{
+                w=8;dst=view(0,w);src=dst;
+                let name=if opcode==0x27{"daa"}else{"das"};
+                (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
             }
             0x9e|0x9f=>{
                 w=8;dst=view(4,w);src=dst;
