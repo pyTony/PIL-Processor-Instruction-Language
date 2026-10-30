@@ -373,6 +373,9 @@ def cases():
     # ENTER n,0 then AX=BP-SP=n, and LEAVE restores the frame.
     add('enter16', 16, 0, 0, bytes.fromhex('c804000089e829e0c9'), 4, 0, flag_mask=DF)
     add('enter32', 16, 0, 0, bytes.fromhex('66c808000089e829e066c9'), 8, 0, flag_mask=DF)
+    # Far JMP through a CS:offset pointer pushed on the stack (FF /5, 16 and 32-bit).
+    add('jmp_far_mem16', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c30c0e5389e336ff2f4083c40441'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
+    add('jmp_far_mem32', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c312660fb7db0e665389e33666ff2f4083c40641'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
     return result
 
 

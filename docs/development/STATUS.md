@@ -1,3 +1,38 @@
+# Far JMP, TSR exit, date and absent-feature answers — 30 October 2026
+
+FreeDOS report 41 (dev after #52, 10,000 steps): 81 Budget, 43 Exit, 19 Service,
+4 MissingEncoding, 2 Fault, 2 Monitor. This round:
+
+- Far JMP: EA ptr16:16/32 and FF /5 m16:16/32 (memory only) in
+  isa/i386/jmp_far.pil, real mode, with the pointer read whole before the
+  transfer. Report 41 stopped GREP on `JMP FAR [mem]`.
+- INT 21h AH=31h ends the run as a TSR exit: the report shows Exit(AL) and a
+  RESIDENT line with the paragraphs kept (at least 6, as in FreeDOS). No
+  resident code runs afterwards.
+- INT 21h AH=2Ah returns 1 January 1980, a Tuesday: the DOS default with no
+  clock driver (FreeDOS systime.c computes the weekday as (days+2) mod 7).
+- INT 21h AH=0Dh (disk reset) has no buffers to flush.
+- INT 21h AH=58h: AL=00h returns the strategy; AL=01h accepts 00h and 80h
+  (first fit; without UMBs 80h allocates low), rejects BL>82h or a fit above
+  2 with error 1 as FreeDOS does, and stops on best/last fit, which the
+  first-fit arena does not model. AL=02h returns link state 0; AL=03h fails
+  with error 1 because there is no UMB chain.
+- INT 21h AH=71h (long file names) returns AL=00h, CF=1 (AX=7100h), as
+  FreeDOS does without an LFN API.
+- INT 15h AH=88h returns AX=0: no memory above 1 MB.
+
+Not changed, pending a profile decision: DISKCOPY and REPLACE read the BIOS ROM
+at F000:FFEA, which the shim does not map (Fault), and VDELAY/VPAUSE execute
+HLT to idle, which the probe treats as a monitor stop.
+
+Verification: 386 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 233 cases (new: far JMP immediate,
+memory 16 and 32, pointer past the segment end, real-mode rejection). DOSBox-X
+2024.03.01 headless: CPU suite 393/393 (2 far JMP new; the COM is 64,183 bytes,
+close to the 64 KB limit) and console 9/9 in both engines. The date and DOS
+memory answers are not compared with DOSBox-X, which uses the host clock and
+has UMBs and XMS. Not yet rerun on the FreeDOS image.
+
 # LDS, ENTER and absent-extension answers — 30 October 2026
 
 FreeDOS report 40 (dev after #51, 10,000 steps): 79 Budget, 38 Exit, 28 Service,

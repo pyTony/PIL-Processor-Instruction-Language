@@ -105,7 +105,7 @@ fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
-    let b=[0xb4,0x31,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
+    let b=[0xb4,0x52,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
     let r=run(load(&[0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
     let r=run(load(&[0x9a,0,0,0,0xa0],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));assert_eq!(r.completed,1);
 }
@@ -740,4 +740,35 @@ fn handle_write_psp_query_and_absent_extensions(){
  // MOV AH,12; MOV BL,10; INT 10: no EGA, BL stays 10h. INT 15 AH=C0: CF=1, AH=86h.
  let r=run(load(&[0xb4,0x12,0xb3,0x10,0xcd,0x10,0xf4],"ega.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&255,0x10);
  let r=run(load(&[0xb4,0xc0,0xcd,0x15,0xf4],"config.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
+}
+#[test]
+fn far_jump_forms_transfer_cs_and_ip(){
+ // JMP FAR 1000:0107 (same place, new encoding) -> MOV AL,2A; HLT.
+ let mut code=vec![0xea,0x07,0x01,0,0,0xf4,0xf4,0xb0,0x2a,0xf4];let psp=load(&code,"probe.com").unwrap().selectors[1];
+ code[3..5].copy_from_slice(&psp.to_le_bytes());
+ let r=run(load(&code,"jmpfar.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x2a);assert_eq!(r.loaded.selectors[1],psp);
+ // JMP FAR [0110] with the pointer CS:0109 in the program.
+ let mut code=vec![0xff,0x2e,0x10,0x01,0xf4,0xf4,0xf4,0xf4,0xf4,0xb0,0x2b,0xf4,0,0,0,0,0x09,0x01];code.extend(psp.to_le_bytes());
+ let r=run(load(&code,"jmpfarm.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,0x2b);
+ // FF /5 with a register operand has no far pointer.
+ let r=run(load(&[0xff,0xe8,0xf4],"jmpfarr.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{..}));
+}
+#[test]
+fn tsr_date_strategy_lfn_and_extended_memory(){
+ // MOV AX,3105; MOV DX,0002; INT 21 -> exit 5, 6 paragraphs kept (FreeDOS minimum).
+ let r=run(load(&[0xb8,0x05,0x31,0xba,0x02,0x00,0xcd,0x21,0xf4],"tsr.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Exit(5)));assert_eq!(r.loaded.resident,Some(6));
+ // AH2A: 1980-01-01, Tuesday.
+ let r=run(load(&[0xb4,0x2a,0xcd,0x21,0xf4],"date.com").unwrap(),10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[1]&0xffff,1980);assert_eq!(r.loaded.cpu.regs[2]&0xffff,0x0101);assert_eq!(r.loaded.cpu.regs[0]&255,2);
+ // AH0D has nothing to flush.
+ let r=run(load(&[0xb4,0x0d,0xcd,0x21,0xf4],"reset.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
+ // AX=5801 BX=0080 accepted, then AX=5800 returns 0080; BX=0003 is invalid; BX=0001 is not modelled.
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x80,0x00,0xcd,0x21,0xb8,0x00,0x58,0xcd,0x21,0xf4],"strategy.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x80);assert_eq!(r.loaded.cpu.eflags&1,0);
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x03,0x00,0xcd,0x21,0xf4],"badfit.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x01,0x00,0xcd,0x21,0xf4],"bestfit.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
+ // AX=5803 (link UMBs) fails: no UMB chain.
+ let r=run(load(&[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xf4],"umb.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
+ // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=0, CF=0.
+ let r=run(load(&[0xb8,0x47,0x71,0xcd,0x21,0xf4],"lfn.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x7100);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb4,0x88,0xf9,0xcd,0x15,0xf4],"ext.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0);assert_eq!(r.loaded.cpu.eflags&1,0);
 }

@@ -6,8 +6,9 @@ test, not SingleStepTests, a hardware oracle or full 386/DOS conformance.
 ## Measured result
 
 Update 30 October 2026: MUL, LOOP-family, RCL/RCR, DAA/DAS, PUSHA/POPA,
-indirect JMP, LDS and ENTER cases bring the suite to 391. Ubuntu dosbox-x
-2024.03.01 (headless, Linux CI) passes all 391 in both engines. The Windows measurement below is the earlier 328-case run.
+indirect JMP, LDS, ENTER and far JMP cases bring the suite to 393 (64,183-byte
+COM). Ubuntu dosbox-x 2024.03.01 (headless, Linux CI) passes all 393 in both
+engines. The Windows measurement below is the earlier 328-case run.
 
 The exact same 57,117-byte CPUTEST.COM passed all 328 cases in both engines.
 Both outputs contain every expected case ID in order, no failures, and the
@@ -51,7 +52,8 @@ changed between the start and end of the comparison.
 | PUSHA/POPA, PUSHAD/POPAD | 4 |
 | Near indirect JMP (r16, SS:[BX], r32) | 3 |
 | LDS (16/32-bit), ENTER n,0 with LEAVE (16/32-bit) | 4 |
-| Total | 391 |
+| Far JMP through SS:[BX] (16/32-bit) | 2 |
+| Total | 393 |
 
 All operand-sized families exercise 8-, 16- and 32-bit widths (or 16/32-bit for
 extensions, conversions, IMUL and LEA). Cases use fixed

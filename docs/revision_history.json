@@ -2115,6 +2115,24 @@
         "INT21 AH58/52/31/5F/71, INT2F AX=4310h, INT33 still stop",
         "FPU (DB) and SMSW r32 remain"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "Far JMP, TSR exit, date and absent-feature answers",
+      "base": "dev after #52",
+      "verification": {
+        "linux_rust_tests": 386,
+        "generated_backend_cases": 233,
+        "dosbox_cpu_cases": "393/393 in DOSBox-X 2024.03.01",
+        "dosbox_console_cases": "9/9",
+        "freedos_probe": "report 41 is the baseline; not rerun"
+      },
+      "limitations": [
+        "no BIOS ROM bytes mapped at F000:xxxx",
+        "HLT is a monitor stop, not an idle wait",
+        "INT21 AH52/5F, INT2F AX=4310h, INT33, INT29 still stop",
+        "FPU (DB) and SMSW r32 remain"
+      ]
     }
   ]
 }

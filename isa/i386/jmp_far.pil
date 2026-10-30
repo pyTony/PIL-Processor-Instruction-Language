@@ -1,0 +1,10 @@
+# Bounded real-mode far JMP (EA ptr16:16/32, FF /5 m16:16/32). The caller
+# substitutes the target reader, which defines target_value and selector;
+# a memory pointer is read whole before the transfer.
+require_width 16_or_32
+require_real_mode
+$FAR_TARGET
+zext target32 target_value 32
+far_branch selector target32
+preserve_flags all
+retire
