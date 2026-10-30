@@ -1,3 +1,16 @@
+# Time zone option for the DOS terminal clock — 30 October 2026
+
+On Tony's Windows machine the terminal's DOS clock showed UTC: the local
+offset Python reported there was 0. `tools/dos_terminal.py` now takes
+`--utc-offset HOURS` (2, -5, 5.5 or +02:00, at most 14 hours) to set the time
+zone of the DOS clock, reads the default offset with
+`datetime.now().astimezone()`, and shows the zone in use on the status line
+(`clock UTC+02:00`).
+
+Verification: GUI tests pass (offset parsing); under Xvfb, `--utc-offset 2`
+made FreeCOM's `PROMPT $T` show 01:02 at 23:02 UTC, and the status line read
+`clock UTC+02:00`.
+
 # Visible text selection in the DOS terminal — 30 October 2026
 
 A mouse selection in the Tk terminal was made but never shown: the colour
