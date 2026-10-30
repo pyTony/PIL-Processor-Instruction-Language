@@ -17,7 +17,9 @@ The terminal (`tools/dos_terminal.py`) now passes characters beyond ASCII
 that the host keyboard layout produced, such as ä, ö and å, in code page 437,
 with the scan code of their key in the Nordic layouts. Characters 437 lacks
 (such as €) are still dropped. Since the host already applies the layout, no
-DOS KEYB driver is needed.
+DOS KEYB driver is needed. The screen now draws all 256 characters with their
+IBM PC glyphs, including ☺ ♥ ♪ ► ↑ for 01h-1Fh and ⌂ for 7Fh, which Python's
+cp437 codec leaves as control characters; § and ¶ can be typed as 15h/14h.
 
 Verification: 410 Rust tests passed on Linux.
 
