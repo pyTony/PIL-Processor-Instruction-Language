@@ -145,6 +145,15 @@ fn environment(path:&[u8],drive:u8,temp:Option<u8>)->Vec<u8>{
     env
 }
 pub use files::{MemDir,Source};
+/// Puts `text` in the PSP command tail at 80h as COMMAND.COM passes it: a
+/// count, a leading space, the text and CR. Printable ASCII only, up to 125
+/// characters, so that the tail fits its 127 bytes.
+pub fn set_command_tail(p:&mut Loaded,text:&str)->Result<(),String>{
+    if text.len()>125{return Err("command line is longer than 125 characters".into());}
+    if !text.bytes().all(|b|(0x20..0x7f).contains(&b)){return Err("command line must be printable ASCII".into());}
+    let mut tail=vec![text.len() as u8+1,b' '];tail.extend(text.bytes());tail.push(0x0d);
+    p.ram.write_bytes(u32::from(PSP)*16+0x80,&tail).map_err(|e|format!("{e:?}"))
+}
 /// Loads a program with no drives: A: is an empty read-only drive.
 pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{load_with_drives(bytes,name,Vec::new(),None)}
 /// Loads a program with `drives` as read-only C:, D:, ...; `path` is where the

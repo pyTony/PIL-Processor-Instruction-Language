@@ -84,9 +84,10 @@ fn quote(text:&str)->String{
     for c in text.chars(){match c{'"'=>out.push_str("\\\""),'\\'=>out.push_str("\\\\"),'\n'=>out.push_str("\\n"),'\r'=>out.push_str("\\r"),'\t'=>out.push_str("\\t"),c if (c as u32)<0x20=>out.push_str(&format!("\\u{:04x}",c as u32)),c=>out.push(c)}}
     out.push('"');out
 }
-/// `--dos-session [--mount DIR] PATH`: PATH is a file or IMAGE::INNER inside a
-/// container. A FAT16 image becomes read-only drive C: and DIR the next drive.
-pub fn serve(path:&str,mount:Option<&str>)->Result<(),String>{
+/// `--dos-session [--mount DIR] [--args TEXT] PATH`: PATH is a file or
+/// IMAGE::INNER inside a container. A FAT16 image becomes read-only drive C:
+/// and DIR the next drive; TEXT is the program's command line.
+pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>)->Result<(),String>{
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;
     let bytes=match containers{
@@ -103,7 +104,9 @@ pub fn serve(path:&str,mount:Option<&str>)->Result<(),String>{
     if let Some(mount)=mount{drives.push(Source::Host(std::path::PathBuf::from(mount)));}
     // Z: holds files in memory for the session, and TEMP points there.
     drives.push(Source::Memory(MemDir::default()));
-    let mut session=Session::new(load_with_drives(&bytes,path,drives,inner)?);
+    let mut loaded=load_with_drives(&bytes,path,drives,inner)?;
+    if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
+    let mut session=Session::new(loaded);
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
     for(seq,line)in stdin.lock().lines().enumerate(){

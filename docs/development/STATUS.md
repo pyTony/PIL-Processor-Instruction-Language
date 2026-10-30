@@ -1,3 +1,17 @@
+# Startup command line for the DOS terminal — 30 October 2026
+
+`--dos-session` takes `--args COMMAND_LINE` and puts it in the PSP command
+tail at 80h as COMMAND.COM passes one (count, leading space, text, CR;
+printable ASCII, at most 125 characters). `tools/dos_terminal.py --args`
+passes it through, so `--args "/K D:\START.BAT"` has FreeCOM run a batch file
+from the mounted folder and then stay at the prompt. Without `--args` the
+tail stays empty, as before.
+
+Verification: unit test for the tail bytes and limits; GUI test where a COM
+writes its tail back; 418 Rust tests pass. With FD14LITE.img (local only),
+`--mount D --args "/K D:\START.BAT"` ran START.BAT (ECHO, VER, PROMPT $T $P$G)
+before the first prompt, and DIR /W worked afterwards.
+
 # Time zone option for the DOS terminal clock — 30 October 2026
 
 On Tony's Windows machine the terminal's DOS clock showed UTC: the local

@@ -1278,3 +1278,14 @@ fn host_clock_gives_the_local_date_and_time_of_day(){
  let mut p=load(&[0xcd,0x21],"clock.com").unwrap();p.cpu.regs[0]=0x2a00;service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.cpu.regs[0]&255),(1980,0x0101,2));
 }
+#[test]
+fn command_line_goes_to_the_psp_tail_as_command_com_passes_it(){
+    let mut p=load(&[0xcd,0x20],"x.com").unwrap();let tail=u32::from(PSP)*16+0x80;
+    let read=|p:&Loaded,n:u32|(0..n).map(|i|p.ram.load(tail+i,MemWidth::Byte).unwrap()as u8).collect::<Vec<_>>();
+    assert_eq!(read(&p,2),[0,0x0d],"empty by default");
+    set_command_tail(&mut p,"/K D:\\START.BAT").unwrap();
+    assert_eq!(read(&p,18),b"\x10 /K D:\\START.BAT\r");
+    assert!(set_command_tail(&mut p,&"x".repeat(126)).is_err());
+    assert!(set_command_tail(&mut p,"\u{e4}").is_err());
+    set_command_tail(&mut p,&"x".repeat(125)).unwrap();assert_eq!(read(&p,1),[126]);assert_eq!(read(&p,128)[127],0x0d);
+}
