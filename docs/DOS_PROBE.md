@@ -1,3 +1,36 @@
+# One-operand IMUL, XLAT, DOS time and allocation strategies — 30 October 2026
+
+FreeDOS report 42 (dev after #53, 10,000 steps): 84 Budget, 47 Exit, 15 Service,
+5 MissingEncoding, and no Fault or Monitor stops. VDELAY, VPAUSE, DISKCOPY and
+REPLACE got past their report-41 stops. This round:
+
+- One-operand IMUL (F6 /5, F7 /5) at 8/16/32 bits, register or memory: the
+  signed product goes to AX, DX:AX or EDX:EAX, and CF=OF=1 when it does not
+  fit the sign-extended low half (SF, ZF, AF, PF undefined). DISKCOPY stopped
+  on `IMUL DX`.
+- XLAT (D7) in isa/i386/xlat.pil: AL = seg:[(E)BX+AL], DS unless overridden,
+  BX+AL wrapping at 16 bits. GREP stopped on it.
+- INT 21h AH=2Ch reads the BIOS tick count (one INT 1Ah read, so the clock
+  advances one tick) and scales it to hours, minutes, seconds and hundredths
+  by 65536*5/59659, the scaling the FreeDOS clock driver uses.
+- INT 21h AH=58h/01h now also accepts best fit (1) and last fit (2), with or
+  without the 80h high-memory bit (no UMBs, so 8xh allocates low). AH=48h
+  follows the strategy: best fit takes the smallest block that fits, last fit
+  takes the top of the last block that fits. Upper-only strategies (4xh)
+  still stop. SWSUBST stopped on last fit.
+- INT 2Fh AX=0600h (ASSIGN installation check) returns AX unchanged.
+- INT 15h AH=E8h (E801h/E820h memory maps) returns CF=1, AH=86h, like the
+  other functions newer than this AT-class BIOS.
+- DOSBox-X CPU suite: each case now calls one shared routine to print
+  PASS/FAIL, so the COM shrank from 64,183 to 57,402 bytes with 400 cases.
+
+Verification: 390 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 236 cases (new: imul1 with
+8/16/32-bit register and memory forms, imul1 past the segment end, XLAT with
+BX, EBX and ES). DOSBox-X 2024.03.01 headless: CPU suite 400/400 (6 one-operand
+IMUL, 1 XLAT new), the negative control fails case 1 in both engines as
+intended, and console 9/9. Not yet rerun on the FreeDOS image.
+
 # Far JMP, TSR exit, date, BIOS identity bytes and HLT idle — 30 October 2026
 
 FreeDOS report 41 (dev after #52, 10,000 steps): 81 Budget, 43 Exit, 19 Service,

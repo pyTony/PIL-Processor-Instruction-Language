@@ -42,10 +42,23 @@ pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
     match function{
         0x48=>{
             next.coalesce();
-            if let Some(i)=next.blocks.iter().position(|b|b.owner==0&&b.size>=requested){
+            // AH58 strategy, low two bits: 0 first fit, 1 best fit, 2 last fit.
+            let fits=|b:&&Block|b.owner==0&&b.size>=requested;
+            let chosen=match p.alloc_strategy&3{
+                1=>next.blocks.iter().enumerate().filter(|(_,b)|fits(b)).min_by_key(|(_,b)|b.size).map(|(i,_)|i),
+                2=>next.blocks.iter().rposition(|b|fits(&b)),
+                _=>next.blocks.iter().position(|b|fits(&b)),
+            };
+            if let Some(i)=chosen{
                 let available=next.blocks[i].size;let header=next.blocks[i].header;
-                next.blocks[i].owner=PSP;next.blocks[i].size=requested;allocated=Some(header+1);
-                if requested<available{next.blocks.insert(i+1,Block{header:header+1+requested,size:available-requested-1,owner:0});}
+                if p.alloc_strategy&3==2&&requested<available{
+                    // Last fit takes the top of the block and leaves the bottom free.
+                    let low=available-requested-1;next.blocks[i].size=low;
+                    next.blocks.insert(i+1,Block{header:header+1+low,size:requested,owner:PSP});allocated=Some(header+2+low);
+                }else{
+                    next.blocks[i].owner=PSP;next.blocks[i].size=requested;allocated=Some(header+1);
+                    if requested<available{next.blocks.insert(i+1,Block{header:header+1+requested,size:available-requested-1,owner:0});}
+                }
             }else{error=Some(8);bx=Some(next.largest());}
         }
         0x49=>{

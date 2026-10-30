@@ -1,0 +1,11 @@
+# XLAT/XLATB: AL = byte at seg:(E)BX + AL. Address size selects BX or EBX
+# (the 16-bit sum wraps); DS unless a segment prefix overrides it.
+read_gpr base 3 $A
+read_gpr index 0 8
+zext index_wide index $A
+add sum base index_wide
+zext offset sum 32
+load_segment value $SEG offset 8
+write_gpr 0 value
+preserve_flags all
+retire

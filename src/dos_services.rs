@@ -126,15 +126,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x1a,0x00)=>{
-            let ticks=p.timer_ticks;
-            let next=ticks+1;
-            let (next_ticks,rollover)=if next>=TICKS_PER_DAY{(0,1u32)}else{(next,0u32)};
-            // Validate the entire service write set before committing either cell.
-            p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-            p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
-            p.ram.store(0x046c,MemWidth::Dword,ticks).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-            p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
-            p.timer_ticks=next_ticks;
+            let (ticks,rollover)=bios_ticks(p)?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|rollover;
             p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|((ticks>>16)&0xffff);
             p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|(ticks&0xffff);
@@ -168,10 +160,10 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(PSP);
             Ok(None)
         },
-        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300)=>{
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0600|0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
-            // int2f.asm; RBIL): no redirector, Windows, DPMI host, ANSI.SYS or
+            // int2f.asm; RBIL): no ASSIGN, redirector, Windows, DPMI host, ANSI.SYS or
             // XMS driver. AX=1680h leaves AL=80h (time slice not released).
             Ok(None)
         },
@@ -179,6 +171,22 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             // CGA-class video BIOS: no EGA/VGA alternate functions and no VBE.
             // Such a BIOS ignores these calls, so BL=10h stays 10h (no EGA)
             // and AX=4F00h does not return AL=4Fh.
+            Ok(None)
+        },
+        (0x15,0xe8)=>{
+            // E801h/E820h memory maps postdate this AT-class BIOS: unsupported.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        (0x21,0x2c)=>{
+            // DOS reads the BIOS tick count (one INT 1Ah AH=00h read) and scales it
+            // by 65536*5/59659 to hundredths, as the FreeDOS clock driver does.
+            let (ticks,_)=bios_ticks(p)?;
+            let scaled=5*ticks;let hs=((scaled/59659)<<16)+((scaled%59659)<<16)/59659;
+            let (minutes,rest)=(hs/6000,hs%6000);
+            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|((minutes/60)<<8)|(minutes%60);
+            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|((rest/100)<<8)|(rest%100);
             Ok(None)
         },
         (0x15,0xc0)=>{
@@ -207,9 +215,9 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             match al{
                 0=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.alloc_strategy);p.cpu.eflags&=!1;},
                 1 if bl>0x82||(bl&0x3f)>2=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
-                // Without UMBs, 80h (high then low) allocates low like first fit.
-                1 if matches!(bl,0|0x80)=>{p.alloc_strategy=bl;p.cpu.eflags&=!1;},
-                1=>return Err(format!("DOS allocation strategy {bl:02x}h is not modelled (first fit only)")),
+                // Without UMBs, 8xh (high then low) allocates low with the same fit.
+                1 if bl&0x40==0=>{p.alloc_strategy=bl;p.cpu.eflags&=!1;},
+                1=>return Err(format!("DOS allocation strategy {bl:02x}h (upper memory only) is not modelled")),
                 2=>{p.cpu.regs[0]&=!255;p.cpu.eflags&=!1;},
                 // No UMB chain exists, so linking it is an invalid function (FreeDOS).
                 _=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
@@ -240,6 +248,20 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         },
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
+}
+/// One INT 1Ah AH=00h read: the current count, then the deterministic clock
+/// advances one tick. The rollover flag is consumed by this read.
+fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
+    let ticks=p.timer_ticks;
+    let next=ticks+1;
+    let (next_ticks,rollover)=if next>=TICKS_PER_DAY{(0,1u32)}else{(next,0u32)};
+    // Validate the entire service write set before committing either cell.
+    p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
+    p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
+    p.ram.store(0x046c,MemWidth::Dword,ticks).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
+    p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
+    p.timer_ticks=next_ticks;
+    Ok((ticks,rollover))
 }
 /// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without
 /// a terminator. AUX/PRN (3..4) are not modelled; a closed handle is error 6.

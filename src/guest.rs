@@ -164,6 +164,11 @@ impl Image {
                 let text=include_str!("../isa/i386/enter.pil").replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("ENTER 0x{size:04x},0"),compile(&instantiate(&text,w),w))
             }
+            0xd7=>{
+                let seg=override_segment.unwrap_or(SegmentRegister::Ds).index();
+                let text=include_str!("../isa/i386/xlat.pil").replace("$A",if addr32{"32"}else{"16"}).replace("$SEG",&seg.to_string());
+                ("XLAT".into(),compile(&text,w))
+            }
             0xc9=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let text=description("leave").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
@@ -488,6 +493,11 @@ impl Image {
                     dst = view(0, w);
                     src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
                     (format!("MUL {}", operand_name(src, address)), compile(&mul_pil(w, memory), w))
+                } else if group3 && extension == 5 {
+                    let memory = m >> 6 != 3;
+                    dst = view(0, w);
+                    src = if memory { let effective = r.effective(m, addr32)?; address = Some(AddressContext { effective, override_segment, segments: self.segments }); dst } else { rm };
+                    (format!("IMUL {}", operand_name(src, address)), compile(&imul1_pil(w, memory), w))
                 } else if group3 && extension == 6 {
                     let memory = m >> 6 != 3;
                     dst = view(0, w);
@@ -587,6 +597,17 @@ fn mul_pil(w: u8, memory: bool) -> String {
         _ => format!("trunc low product {w}\nconst shift {d} {w}\nlshr high_wide product shift\ntrunc high high_wide {w}\nwrite_gpr 0 low\nwrite_gpr 2 high"),
     };
     format!("read_gpr acc 0 {w}\n{read_source}\nzext acc_wide acc {d}\nzext source_wide source {d}\nmul product acc_wide source_wide\nconst upper_shift {d} {w}\nlshr upper product upper_shift\nzero fits upper\nnot overflow fits\n{write}\nflag CF overflow\nflag OF overflow\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire")
+}
+/// One-operand IMUL: AL/AX/EAX times r/m into AX, DX:AX or EDX:EAX. CF=OF=1
+/// when the signed product does not fit the sign-extended low half.
+fn imul1_pil(w: u8, memory: bool) -> String {
+    let read_source = if memory { format!("read_address addr\nload source addr {w}") } else { format!("read source src {w}") };
+    let d = w * 2;
+    let write = match w {
+        8 => "write_gpr 0 product".to_string(),
+        _ => format!("const shift {d} {w}\nlshr high_wide product shift\ntrunc high high_wide {w}\nwrite_gpr 0 low\nwrite_gpr 2 high"),
+    };
+    format!("read_gpr acc 0 {w}\n{read_source}\nsext acc_wide acc {d}\nsext source_wide source {d}\nmul product acc_wide source_wide\ntrunc low product {w}\nsext restored low {d}\nxor lost product restored\nzero fits lost\nnot overflow fits\n{write}\nflag CF overflow\nflag OF overflow\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire")
 }
 fn div_pil(w: u8, memory: bool) -> String {
     let read_divisor = if memory { format!("read_address addr\nload divisor addr {w}") } else { format!("read divisor src {w}") };
