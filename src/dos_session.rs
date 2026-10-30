@@ -75,13 +75,24 @@ fn quote(text:&str)->String{
     for c in text.chars(){match c{'"'=>out.push_str("\\\""),'\\'=>out.push_str("\\\\"),'\n'=>out.push_str("\\n"),'\r'=>out.push_str("\\r"),'\t'=>out.push_str("\\t"),c if (c as u32)<0x20=>out.push_str(&format!("\\u{:04x}",c as u32)),c=>out.push(c)}}
     out.push('"');out
 }
-/// `--dos-session PATH`: PATH is a file or IMAGE::INNER inside a container.
-pub fn serve(path:&str)->Result<(),String>{
-    let bytes=match super::super::containers::split_container_path(path){
-        Some((container,inner))=>super::super::containers::read_entry(Path::new(container),inner)?,
+/// `--dos-session [--mount DIR] PATH`: PATH is a file or IMAGE::INNER inside a
+/// container. A FAT16 image becomes read-only drive C: and DIR the next drive.
+pub fn serve(path:&str,mount:Option<&str>)->Result<(),String>{
+    let containers=super::super::containers::split_container_path(path);
+    let mut drives=Vec::new();let mut inner=None;
+    let bytes=match containers{
+        Some((container,entry))=>{
+            let is_image=Path::new(container).extension().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("img")||x.eq_ignore_ascii_case("ima"));
+            if is_image{
+                let data=super::super::containers::read_image(Path::new(container))?;
+                drives.push(Source::Image(std::sync::Arc::new(super::super::containers::fat16_tree(&data)?)));inner=Some(entry);
+            }
+            super::super::containers::read_entry(Path::new(container),entry)?
+        },
         None=>read_file(Path::new(path))?,
     };
-    let mut session=Session::new(load(&bytes,path)?);
+    if let Some(mount)=mount{drives.push(Source::Host(std::path::PathBuf::from(mount)));}
+    let mut session=Session::new(load_with_drives(&bytes,path,drives,inner)?);
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
     for(seq,line)in stdin.lock().lines().enumerate(){

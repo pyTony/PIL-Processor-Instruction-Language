@@ -48,21 +48,6 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.image.segments[es]=SegmentCache::real_mode(segment);
             Ok(None)
         },
-        (0x21,0x44) if p.cpu.regs[0]as u8==0=>{
-            let handle=p.cpu.regs[3]&0xffff;
-            if handle>=5 || p.open_handles&(1<<handle)==0{
-                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;
-                p.cpu.eflags|=1;
-            }else{
-                // Minimal character-device profile: CON for 0..2, AUX/PRN for 3..4.
-                // No raw mode, direct INT29 output or generic IOCTL advertised.
-                let info=if handle<3{0x83}else{0x80};
-                p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|info;
-                p.cpu.eflags&=!1;
-            }
-            p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
         (0x21,0x30)=>{
             let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
             let flags=p.cpu.regs[0]as u8==1;
@@ -77,11 +62,6 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             let version=p.ram.load(u32::from(PSP)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS true version PSP read: {e:?}"))?;
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|version;
             p.cpu.regs[2]&=0xffff0000;
-            Ok(None)
-        },
-        (0x21,0x19)=>{
-            // Default drive A:, matching the single floppy in the INT11 list.
-            p.cpu.regs[0]&=0xffffff00;
             Ok(None)
         },
         (0x21,0x67)=>{
@@ -179,87 +159,21 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
-        (0x21,0x3d)=>{
-            let mode=(p.cpu.regs[0]&7)as u8;
-            if mode>2{
-                p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x000c;
-                return Ok(None);
-            }
-            let offset=p.cpu.regs[2]&0xffff;
-            let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            let mut path=Vec::new();let mut terminated=false;
-            for i in 0..128u32{
-                let Some(at)=offset.checked_add(i).filter(|&a|a<=0xffff)else{return Err("DOS open path exceeds segment end before NUL terminator".into());};
-                let addr=context.translate(at,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS open path access: {e:?}"))?;
-                let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS open path RAM access: {e:?}"))?as u8;
-                if b==0{terminated=true;break;}
-                path.push(b);
-            }
-            if !terminated{return Err("DOS open path has no NUL terminator within 128 bytes".into());}
-            if !path.is_empty()&&base_name(&path)==p.own_name{
-                // The program's own file is the one file there is. Directories
-                // are not modelled, so any path ending in its name opens it.
-                if mode!=0{return Err("opening the program file for writing is not modelled".into());}
-                if p.own_open.is_some(){return Err("a second open of the program file is not modelled".into());}
-                let limit=p.ram.load(u32::from(PSP)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
-                let Some(handle)=(5..limit).find(|&h|p.open_handles&(1<<h)==0)else{
-                    p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0004;return Ok(None);
-                };
-                p.ram.store(jft(p,handle)?,MemWidth::Byte,5).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
-                p.open_handles|=1<<handle;p.own_open=Some((handle,0));
-                p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(handle);
-                return Ok(None);
-            }
-            let err=if path.is_empty(){0x0003}else{0x0002};
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|err;
-            Ok(None)
-        },
-        (0x21,0x3f)=>{
-            let handle=(p.cpu.regs[3]&0xffff)as u16;
-            let Some((open,pos))=p.own_open.filter(|&(h,_)|h==handle)else{
-                if handle<20&&p.open_handles&(1<<handle)!=0{return Err(format!("DOS read from handle {handle} is not modelled"));}
-                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(None);
-            };
-            let offset=p.cpu.regs[2]&0xffff;let wanted=p.cpu.regs[1]&0xffff;
-            if offset+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
-            let start=(pos as usize).min(p.own_file.len());let count=(wanted as usize).min(p.own_file.len()-start);
-            let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            for n in 0..count{
-                let addr=context.translate(offset+n as u32,MemWidth::Byte,true,p.cpu.eip).map_err(|e|format!("DOS read buffer access: {e:?}"))?;
-                p.ram.store(addr,MemWidth::Byte,u32::from(p.own_file[start+n])).map_err(|e|format!("DOS read buffer RAM access: {e:?}"))?;
-            }
-            p.own_open=Some((open,pos+count as u32));
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|count as u32;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
-        (0x21,0x42)=>{
-            let handle=(p.cpu.regs[3]&0xffff)as u16;
-            let Some((open,pos))=p.own_open.filter(|&(h,_)|h==handle)else{
-                if handle<20&&p.open_handles&(1<<handle)!=0{return Err(format!("DOS seek on handle {handle} is not modelled"));}
-                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(None);
-            };
-            let distance=i64::from(((p.cpu.regs[1]&0xffff)<<16|(p.cpu.regs[2]&0xffff))as i32);
-            let origin=match p.cpu.regs[0]as u8{0=>0,1=>i64::from(pos),2=>p.own_file.len()as i64,_=>{
-                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(None);
-            }};
-            let target=origin+distance;
-            if !(0..=i64::from(u32::MAX)).contains(&target){return Err("DOS seek before the start of the file is not modelled".into());}
-            p.own_open=Some((open,target as u32));
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(target as u32&0xffff);p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|(target as u32>>16);
-            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
+        (0x21,ah @ (0x38|0x65))=>{nls::service(p,ah)?;Ok(None)},
+        (0x21,0x44) if p.cpu.regs[0]as u8==0=>{files::service(p,0x44)?;Ok(None)},
+        (0x21,ah @ (0x0e|0x19|0x36|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x5a|0x5b|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
         (0x21,0x51|0x62)=>{
             // DOS 3+: AH51 and AH62 both return the current PSP segment.
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(PSP);
             Ok(None)
         },
-        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300|0xb710)=>{
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300|0xae00|0xb700|0xb710)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
             // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS or
-            // XMS driver. AX=1680h leaves AL=80h (time slice not released).
+            // XMS driver, and no installable command claims AX=AE00h (AL stays 00h).
+            // AX=1680h leaves AL=80h (time slice not released).
             Ok(None)
         },
         (0x10,0x12|0x4f)=>{
@@ -310,9 +224,9 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             match al{
                 0=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.alloc_strategy);p.cpu.eflags&=!1;},
                 1 if bl>0x82||(bl&0x3f)>2=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
-                // Without UMBs, 8xh (high then low) allocates low with the same fit.
-                1 if bl&0x40==0=>{p.alloc_strategy=bl;p.cpu.eflags&=!1;},
-                1=>return Err(format!("DOS allocation strategy {bl:02x}h (upper memory only) is not modelled")),
+                // With no UMB chain linked, FreeDOS DosMemAlloc searches low
+                // memory for 4xh (high only) and 8xh (high first) with the same fit.
+                1=>{p.alloc_strategy=bl;p.cpu.eflags&=!1;},
                 2=>{p.cpu.regs[0]&=!255;p.cpu.eflags&=!1;},
                 // No UMB chain exists, so linking it is an invalid function (FreeDOS).
                 _=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
@@ -327,19 +241,6 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x15,0x88)=>{
             // No memory above 1 MB: 0 KB of extended memory.
             p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
-        (0x21,0x3e)=>{
-            let handle=(p.cpu.regs[3]&0xffff)as u16;
-            if handle<20&&(p.open_handles&(1u32<<handle))!=0{
-                p.ram.store(jft(p,handle)?,MemWidth::Byte,0xff).map_err(|e|format!("DOS close JFT write: {e:?}"))?;
-                p.open_handles&=!(1u32<<handle);
-                if p.own_open.is_some_and(|(h,_)|h==handle){p.own_open=None;}
-                p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
-            }else{
-                p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
-                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0006;
-            }
             Ok(None)
         },
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
@@ -362,7 +263,7 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
 /// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without
 /// a terminator. AUX/PRN (3..4) are not modelled; a closed handle is error 6.
 /// Linear address of a handle's entry in the job file table PSP:34h points at.
-fn jft(p:&Loaded,handle:u16)->Result<u32,String>{
+pub(super) fn jft(p:&Loaded,handle:u16)->Result<u32,String>{
     let psp=u32::from(PSP)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
     Ok(word(psp+0x36)?*16+word(psp+0x34)?+u32::from(handle))
 }

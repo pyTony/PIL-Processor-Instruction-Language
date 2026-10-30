@@ -2050,8 +2050,12 @@ fn main() -> R<()> {
         f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
-        if dos_args.len()!=3{return Err("usage: pil-proof --dos-session PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH".into());}
-        return dos::session::serve(&dos_args[2]).map_err(Into::into);
+        let usage="usage: pil-proof --dos-session [--mount HOST_FOLDER] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        return match &dos_args[2..]{
+            [program]=>dos::session::serve(program,None),
+            [flag,folder,program] if flag=="--mount"=>dos::session::serve(program,Some(folder)),
+            _=>Err(usage.into()),
+        }.map_err(Into::into);
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;

@@ -96,7 +96,9 @@ impl Fat<'_>{
         }Ok(())
     }
 }
-fn fat16(data:&[u8])->Result<Archive,String>{
+/// A FAT16 volume's metadata: the walker over its clusters, the root directory
+/// span and the volume's offset in the image.
+fn fat_volume(data:&[u8])->Result<(Fat<'_>,usize,usize,usize),String>{
     if range(data,510,2)?!=b"\x55\xaa"{return Err("image has no DOS boot signature".into());}
     let mut base=0;let mut partition_end=data.len();
     // A valid FAT16 superfloppy BPB has no partition table requirement.
@@ -117,8 +119,53 @@ fn fat16(data:&[u8])->Result<Archive,String>{
     let root_start=fat_start+nf*spf*512;let root_bytes=((roots*32+511)/512)*512;let cluster_base=root_start+root_bytes;
     let clusters=volume_end.checked_sub(cluster_base).ok_or("FAT16 metadata exceeds volume")?/unit;
     if !(4085..65525).contains(&clusters)||fat.len()/2<clusters+2{return Err("not a valid FAT16 cluster layout".into());}
-    let mut fs=Fat{data:range(data,0,volume_end)?,fat,cluster_base,unit,clusters,dirs:BTreeSet::new(),archive:Archive::new()};
-    fs.walk(range(data,root_start,roots*32)?,"",0)?;fs.archive.notes.push(format!("FAT16 volume atLBA{};{} files before package expansion",base/512,fs.archive.files.len()));Ok(fs.archive)
+    Ok((Fat{data:range(data,0,volume_end)?,fat,cluster_base,unit,clusters,dirs:BTreeSet::new(),archive:Archive::new()},root_start,roots*32,base))
+}
+fn fat16(data:&[u8])->Result<Archive,String>{
+    let(mut fs,root_start,root_len,base)=fat_volume(data)?;
+    fs.walk(range(data,root_start,root_len)?,"",0)?;fs.archive.notes.push(format!("FAT16 volume atLBA{};{} files before package expansion",base/512,fs.archive.files.len()));Ok(fs.archive)
+}
+/// One directory entry of a FAT volume as DOS returns it from a search.
+#[derive(Clone,Debug)]
+pub struct FatEntry{pub name:[u8;11],pub attr:u8,pub time:u16,pub date:u16,pub size:u32,pub node:FatNode}
+/// A subdirectory (index into `FatTree::dirs`) or a file (into `FatTree::files`).
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum FatNode{Dir(usize),File(usize)}
+/// A FAT16 volume's directories (the root first), file contents, volume
+/// label, cluster size in sectors and cluster count. `.` and `..` are left out.
+#[derive(Debug)]
+pub struct FatTree{pub dirs:Vec<Vec<FatEntry>>,pub files:Vec<std::sync::Arc<Vec<u8>>>,pub label:Option<[u8;11]>,pub sectors_per_cluster:u16,pub clusters:u16}
+pub fn fat16_tree(data:&[u8])->Result<FatTree,String>{
+    let(fs,root_start,root_len,_)=fat_volume(data)?;
+    let mut tree=FatTree{dirs:Vec::new(),files:Vec::new(),label:None,sectors_per_cluster:(fs.unit/512)as u16,clusters:fs.clusters.min(0xffff)as u16};
+    let(mut pending,mut seen,mut total)=(vec![(range(data,root_start,root_len)?.to_vec(),0usize)],BTreeSet::new(),0usize);
+    tree.dirs.push(Vec::new());
+    while let Some((raw,index))=pending.pop(){
+        for e in raw.chunks_exact(32){
+            if e[0]==0{break;}if e[0]==0xe5||e[11]&0x0f==0x0f{continue;}
+            let mut name=[0u8;11];name.copy_from_slice(&e[..11]);if name[0]==5{name[0]=0xe5;}
+            if e[11]&8!=0{if index==0&&tree.label.is_none(){tree.label=Some(name);}continue;}
+            if name[0]==b'.'{continue;}
+            let(attr,time,date,cluster,size)=(e[11],u16(e,22)?,u16(e,24)?,usize::from(u16(e,26)?),u32(e,28)?);
+            let node=if attr&16!=0{
+                if tree.dirs.len()>=MAX_FILES||!seen.insert(cluster){return Err("FAT16 directory loop/count limit".into());}
+                tree.dirs.push(Vec::new());pending.push((fs.chain(cluster)?,tree.dirs.len()-1));FatNode::Dir(tree.dirs.len()-1)
+            }else{
+                if size as usize>MAX_ENTRY||tree.files.len()>=MAX_FILES{return Err("FAT16 file exceeds entry/count limit".into());}
+                let mut bytes=if cluster==0&&size==0{Vec::new()}else{fs.chain(cluster)?};
+                if bytes.len()<size as usize{return Err("FAT16 chain shorter than directory size".into());}bytes.truncate(size as usize);
+                total+=bytes.len();if total>MAX_TOTAL{return Err("FAT16 volume exceeds total size limit".into());}
+                tree.files.push(std::sync::Arc::new(bytes));FatNode::File(tree.files.len()-1)
+            };
+            tree.dirs[index].push(FatEntry{name,attr,time,date,size:if attr&16!=0{0}else{size},node});
+        }
+    }
+    Ok(tree)
+}
+/// Reads an image file whole, within the container input limit.
+pub fn read_image(path:&Path)->Result<Vec<u8>,String>{
+    let file=std::fs::File::open(path).map_err(|e|e.to_string())?;let mut data=Vec::new();file.take((MAX_INPUT+1)as u64).read_to_end(&mut data).map_err(|e|e.to_string())?;
+    if data.len()>MAX_INPUT{return Err("container exceeds64MiB input limit".into());}Ok(data)
 }
 pub fn parse(data:&[u8],is_zip:bool)->Result<Archive,String>{
     if data.len()>MAX_INPUT{return Err("container exceeds64MiB input limit".into());}

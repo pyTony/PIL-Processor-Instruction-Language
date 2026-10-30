@@ -5,6 +5,11 @@ test, not SingleStepTests, a hardware oracle or full 386/DOS conformance.
 
 ## Measured result
 
+Update 30 October 2026 (later): 15 valid signed IDIV cases (8/16/32-bit,
+truncation toward zero, remainder sign, most negative quotient) bring the
+suite to 519 cases in 32,054 bytes; dosbox-x 2024.03.01 passes all 519 in both
+engines.
+
 Update 30 October 2026: MUL, LOOP-family, RCL/RCR, DAA/DAS, PUSHA/POPA,
 indirect JMP, LDS, ENTER, far JMP, one-operand IMUL, XLAT, BT-family and
 SHLD/SHRD cases bring the suite to 504. Each case is now CALL setup, the code
@@ -43,6 +48,7 @@ changed between the start and end of the comparison.
 | INC, DEC, NOT, NEG | 48 |
 | MOV | 6 |
 | Valid unsigned DIV | 15 |
+| Valid signed IDIV | 15 |
 | Shifts (SHL, SHR, SAR: CL=0, 1, CL=4, imm8=3) | 36 |
 | Rotates (ROL, ROR: 1, CL=4, imm8=3) | 18 |
 | XCHG (8/16/32-bit, checking both EAX and ECX) | 6 |
@@ -61,7 +67,7 @@ changed between the start and end of the comparison.
 | One-operand IMUL (8/16/32-bit), XLAT through SS:BX | 7 |
 | BT/BTS/BTR/BTC, 16/32-bit, register and immediate offsets | 48 |
 | SHLD/SHRD, 16/32-bit, CL and immediate counts | 56 |
-| Total | 504 |
+| Total | 519 |
 
 All operand-sized families exercise 8-, 16- and 32-bit widths (or 16/32-bit for
 extensions, conversions, IMUL and LEA). Cases use fixed

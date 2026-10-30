@@ -367,8 +367,8 @@
         "DIV",
         "IDIV"
       ],
-      "status": "planned",
-      "remaining": "Wide dividend,quotient,remainder,zero/overflow and precise#DE",
+      "status": "partial",
+      "remaining": "DIV F6/F7 /6 and IDIV F6/F7 /7 implemented for AX, DX:AX and EDX:EAX (IDIV through magnitudes: quotient truncated toward zero, remainder with the dividend's sign, most negative quotient accepted) and backend-verified; divide error stops the run as a fault instead of being delivered through INT 0.",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
