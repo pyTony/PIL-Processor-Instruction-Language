@@ -1,5 +1,7 @@
-//! Dine's drives: a FAT16 image and a host folder, both read-only, with C:
-//! the first of them; with neither, A: is an empty drive. Host names that are
+//! Dine's drives: a FAT16 image, read-only, and a host folder, which DOS can
+//! write: create, write, delete, rename, make and remove directories reach
+//! the host folder itself. C: is the first of them; with neither, A: is an
+//! empty drive. Host names that are
 //! not valid 8.3 names get BASIS~N aliases per directory, the way a DOS 7
 //! volume shows them to DOS 6; the long-name API (AH71) stays unsupported.
 //! Symbolic links in a host folder are not followed.
@@ -26,12 +28,19 @@ struct Drive{letter:u8,source:Source,cwd:Vec<Name>}
 #[derive(Clone,Debug)]
 pub struct Drives{
     list:Vec<Drive>,current:usize,
-    files:Vec<OpenFile>,searches:Vec<(usize,Vec<Name>)>,next_search:usize,
+    files:Vec<OpenFile>,searches:Vec<Search>,next_search:usize,
 }
 #[derive(Clone,Debug)]
 /// An open file by its system file number (the JFT entry), which handles
 /// duplicated with AH45/46 share with their position.
-struct OpenFile{sft:u8,data:Arc<Vec<u8>>,pos:u32,drive:u8}
+/// `data` is the whole file; a host file (`host`) opened for writing is
+/// written through at each AH40. `mode` is the AH3D access mode: 0 read, 1
+/// write, 2 both. `stamp` is the time and date an image file shows.
+struct OpenFile{sft:u8,data:Arc<Vec<u8>>,pos:u32,drive:u8,host:Option<PathBuf>,mode:u8,written:bool,stamp:(u16,u16)}
+/// An AH4E search: drive, directory and the host name last found there, so
+/// AH4F goes on after it when files were deleted or made in between.
+#[derive(Clone,Debug)]
+struct Search{drive:usize,path:Vec<Name>,last:Option<std::ffi::OsString>}
 /// A directory on some drive.
 #[derive(Clone,Debug)]
 enum Dir{Empty,Host(PathBuf),Image(usize)}
@@ -54,6 +63,8 @@ impl Drives{
     }
     /// The default drive's letter.
     pub fn letter(&self)->u8{self.list[self.current].letter}
+    /// The first drive's letter, which Dine reports as the boot drive.
+    pub fn first_letter(&self)->u8{self.list[0].letter}
     /// Handles AH3D opened that are still open.
     #[allow(dead_code)]
     pub fn open_files(&self)->usize{self.files.len()}
@@ -81,9 +92,10 @@ pub(super) fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{
     Err("DOS path has no NUL terminator within 128 bytes".into())
 }
 /// Writes `bytes` at DS:offset after checking every byte can be written.
-fn store_ds(p:&mut Loaded,offset:u32,bytes:&[u8])->Result<(),String>{
+fn store_ds(p:&mut Loaded,offset:u32,bytes:&[u8])->Result<(),String>{store(p,ds(),offset,bytes)}
+fn store(p:&mut Loaded,segment:SegmentRegister,offset:u32,bytes:&[u8])->Result<(),String>{
     if offset as usize+bytes.len()>0x10000{return Err("DOS buffer exceeds segment end".into());}
-    let context=MemoryContext{segment:ds(),cache:p.image.segments[ds().index()]};
+    let context=MemoryContext{segment,cache:p.image.segments[segment.index()]};
     let mut addrs=Vec::with_capacity(bytes.len());
     for n in 0..bytes.len()as u32{
         let addr=context.translate(offset+n,MemWidth::Byte,true,p.cpu.eip).map_err(|e|format!("DOS buffer access: {e:?}"))?;
@@ -149,6 +161,16 @@ pub(super) fn alias(host:&str,taken:&std::collections::BTreeSet<Name>)->Option<N
         if !taken.contains(&candidate){return Some(candidate);}
     }
     None
+}
+/// The host time of a DOS packed time and date, the inverse of `stamp`.
+pub(super) fn unstamp(time:u16,date:u16)->SystemTime{
+    let(year,month,day)=(i64::from(date>>9)+1980,i64::from(date>>5&15).clamp(1,12),i64::from(date&31).max(1));
+    // A civil date to days since 1970-01-01 (H. Hinnant's algorithm).
+    let y=year-i64::from(month<=2);let era=y/400;let yoe=y-era*400;
+    let doy=(153*(if month>2{month-3}else{month+9})+2)/5+day-1;let doe=yoe*365+yoe/4-yoe/100+doy;
+    let days=era*146_097+doe-719_468;
+    let secs=u64::from(time>>11)*3600+u64::from(time>>5&63)*60+u64::from(time&31)*2;
+    UNIX_EPOCH+std::time::Duration::from_secs(days as u64*86400+secs)
 }
 /// DOS packed time and date of a host modification time (UTC), held to 1980..2107.
 pub(super) fn stamp(modified:Option<SystemTime>)->(u16,u16){
@@ -239,7 +261,7 @@ fn find_next(p:&mut Loaded)->Result<(),String>{
     let state=dta_read(p,0,0x15)?;
     let pattern:Name=state[1..12].try_into().unwrap();let attr=state[12];
     let next=usize::from(u16::from_le_bytes([state[13],state[14]]));let slot=usize::from(u16::from_le_bytes([state[15],state[16]]));
-    let Some((drive,path))=p.drive.searches.get(slot).cloned().filter(|(drive,_)|p.drive.list.get(*drive).is_some_and(|d|d.letter-b'A'+1==state[0]))else{fail(p,0x12);return Ok(())};
+    let Some(Search{drive,path,last})=p.drive.searches.get(slot).cloned().filter(|s|p.drive.list.get(s.drive).is_some_and(|d|d.letter-b'A'+1==state[0]))else{fail(p,0x12);return Ok(())};
     let d=&p.drive.list[drive];
     let entries=match dir_of(d,&path){
         Ok((dir,time,date))=>{
@@ -250,10 +272,15 @@ fn find_next(p:&mut Loaded)->Result<(),String>{
         },
         Err(_)=>Vec::new(),
     };
+    // A host directory may have changed since the last find: go on after
+    // the host name found last, as a FAT slot would stay where it was.
+    let host_name=|e:&Entry|match &e.node{Node::Host(path)=>path.file_name().map(|n|n.to_os_string()),Node::Image(_)=>None};
+    let next=match &last{Some(last)=>entries.iter().position(|e|host_name(e).is_some_and(|n|n>*last)).unwrap_or(entries.len()),None=>next};
     for(i,entry)in entries.iter().enumerate().skip(next){
         // Hidden, system and directory entries need their bit in the search
         // attribute; the volume label is found only by a label search.
         if entry.attr&0x16&!attr!=0||!matches(&pattern,&entry.name){continue;}
+        p.drive.searches[slot].last=host_name(entry);
         return found(p,&state,i+1,entry,&display(&entry.name));
     }
     fail(p,0x12);Ok(())
@@ -276,7 +303,8 @@ fn find_first(p:&mut Loaded)->Result<(),String>{
         return found(p,&state,0xffff,&entry,&name);
     }
     let slot=p.drive.next_search;p.drive.next_search=(slot+1)%MAX_SEARCHES;
-    if slot<p.drive.searches.len(){p.drive.searches[slot]=(drive,parent.to_vec());}else{p.drive.searches.push((drive,parent.to_vec()));}
+    let search=Search{drive,path:parent.to_vec(),last:None};
+    if slot<p.drive.searches.len(){p.drive.searches[slot]=search;}else{p.drive.searches.push(search);}
     state[15..17].copy_from_slice(&(slot as u16).to_le_bytes());
     dta_write(p,0,&state)?;
     find_next(p)
@@ -311,26 +339,139 @@ fn open(p:&mut Loaded)->Result<(),String>{
     if mode>2{fail(p,0x0c);return Ok(());}
     let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
     let own=!raw.is_empty()&&base_name(&raw)==p.own_name;
-    let(data,drive)=if own{
+    let(data,drive,host,stamp)=if own{
         // The program's own file opens by its name from any directory.
         if mode!=0{return Err("opening the program file for writing is not modelled".into());}
         if p.drive.files.iter().any(|f|Arc::ptr_eq(&f.data,&p.own_file)){return Err("a second open of the program file is not modelled".into());}
-        (p.own_file.clone(),p.drive.letter())
+        (p.own_file.clone(),p.drive.letter(),None,(0,0x21))
     }else{
         if raw.is_empty(){fail(p,3);return Ok(());}
         match lookup(&p.drive,&raw){
             Err(code)=>{fail(p,code);return Ok(());},
-            Ok((_,entry)) if entry.attr&0x18!=0||mode!=0=>{fail(p,5);return Ok(());},
-            Ok((drive,entry))=>(read_entry(&p.drive.list[drive],&entry)?,p.drive.list[drive].letter),
+            Ok((_,entry)) if entry.attr&0x18!=0=>{fail(p,5);return Ok(());},
+            // Writing needs a host file without the read-only attribute.
+            Ok((_,Entry{node:Node::Image(_),..})) if mode!=0=>{fail(p,5);return Ok(());},
+            Ok((_,entry)) if mode!=0&&entry.attr&1!=0=>{fail(p,5);return Ok(());},
+            Ok((drive,entry))=>{
+                let host=match &entry.node{Node::Host(path)=>Some(path.clone()),Node::Image(_)=>None};
+                (read_entry(&p.drive.list[drive],&entry)?,p.drive.list[drive].letter,host,(entry.time,entry.date))
+            },
         }
     };
+    install(p,OpenFile{sft:0,data,pos:0,drive,host,mode,written:false,stamp})
+}
+/// Gives an open file the lowest free handle and system file number, and
+/// returns the handle in AX; error 4 when either runs out.
+fn install(p:&mut Loaded,mut file:OpenFile)->Result<(),String>{
     let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
-    let Some(handle)=(5..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
+    // FreeCOM redirects by closing handle 0 or 1 and opening: the file takes it.
+    let Some(handle)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
     // System file numbers 0..4 are the devices; files take the lowest free one above.
     let Some(sft)=(5..=0xfeu8).find(|n|!p.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};
     p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
-    p.open_handles|=1<<handle;p.drive.files.push(OpenFile{sft,data,pos:0,drive});
+    file.sft=sft;p.open_handles|=1<<handle;p.drive.files.push(file);
     set_ax(p,u32::from(handle));ok(p);Ok(())
+}
+/// Where a new entry would go: drive, host directory, its 8.3 name and the
+/// entry already there. Error 3 for a missing directory or a name DOS cannot
+/// hold, 5 on a drive DOS cannot write.
+fn place(d:&Drives,raw:&[u8])->Result<(usize,PathBuf,Name,Option<Entry>),u16>{
+    let(drive,path)=components(d,raw)?;
+    let Some((last,parent))=path.split_last()else{return Err(3)};
+    if last[0]==b' '||last[0]==b'.'||!last.iter().all(|&c|c==b' '||valid(c)){return Err(3);}
+    let(dir,..)=dir_of(&d.list[drive],parent)?;
+    let Dir::Host(folder)=dir else{return Err(5)};
+    let existing=host_listing(&folder)?.into_iter().find(|e|&e.name==last);
+    Ok((drive,folder,*last,existing))
+}
+/// The host file name DOS makes for an 8.3 name: `NAME.EXT` in upper case.
+fn host_name(name:&Name)->String{display(name).into_iter().map(char::from).collect()}
+/// AH3C creates or truncates, AH5B creates only a new file (error 50h if it
+/// exists), AH5A makes a new file with a unique name it appends to the path.
+/// The attribute in CX is not kept; the handle reads and writes.
+fn create(p:&mut Loaded,ah:u8)->Result<(),String>{
+    let dx=p.cpu.regs[2]&0xffff;
+    let mut raw=asciiz(p,dx)?;
+    if raw.is_empty(){fail(p,3);return Ok(());}
+    if ah==0x5a{
+        if !matches!(raw.last(),Some(b'\\'|b'/'|b':')){raw.push(b'\\');}
+        let(drive,path)=match components(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
+        let folder=match dir_of(&p.drive.list[drive],&path){Ok((Dir::Host(folder),..))=>folder,Ok(_)=>{fail(p,5);return Ok(())},Err(code)=>{fail(p,code);return Ok(())}};
+        let taken:std::collections::BTreeSet<Name>=match host_listing(&folder){Ok(list)=>list.iter().map(|e|e.name).collect(),Err(code)=>{fail(p,code);return Ok(())}};
+        let seed=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.subsec_nanos()^d.as_secs()as u32);
+        let Some(name)=(0..0x10000u32).map(|n|fcb(format!("{:08X}",seed.wrapping_add(n)).as_bytes())).find(|n|!taken.contains(n))else{fail(p,5);return Ok(())};
+        raw.extend(display(&name));
+        let mut stored=raw.clone();stored.push(0);store_ds(p,dx,&stored)?;
+    }
+    let(drive,folder,name,existing)=match place(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
+    let path=match existing{
+        Some(_) if ah!=0x3c=>{fail(p,0x50);return Ok(());},
+        Some(entry) if entry.attr&0x19!=0=>{fail(p,5);return Ok(());},
+        Some(Entry{node:Node::Host(path),..})=>path,
+        _=>folder.join(host_name(&name)),
+    };
+    if std::fs::File::create(&path).is_err(){fail(p,5);return Ok(());}
+    let letter=p.drive.list[drive].letter;
+    install(p,OpenFile{sft:0,data:Arc::new(Vec::new()),pos:0,drive:letter,host:Some(path),mode:2,written:false,stamp:(0,0x21)})
+}
+/// AH40 to a file: CX bytes at the file position, written through to the
+/// host; CX=0 truncates or extends the file to the position. Error 5 on a
+/// handle opened for reading.
+pub(super) fn write(p:&mut Loaded,sft:u8,bytes:&[u8])->Result<Result<(),u16>,String>{
+    use std::io::{Seek,SeekFrom,Write};
+    let Some(i)=p.drive.files.iter().position(|f|f.sft==sft)else{return Ok(Err(6))};
+    let file=&mut p.drive.files[i];
+    let Some(host)=file.host.clone().filter(|_|file.mode!=0)else{return Ok(Err(5))};
+    let pos=file.pos as usize;let end=pos+bytes.len();
+    if end as u64>MAX_OPEN{return Err("DOS write past 16 MiB in a host file is not modelled".into());}
+    let mut out=std::fs::OpenOptions::new().write(true).open(&host).map_err(|e|format!("DOS write to host file: {e}"))?;
+    if bytes.is_empty(){out.set_len(pos as u64)}else{out.seek(SeekFrom::Start(pos as u64)).and_then(|_|out.write_all(bytes))}.map_err(|e|format!("DOS write to host file: {e}"))?;
+    let data=Arc::make_mut(&mut file.data);
+    if bytes.is_empty(){data.resize(pos,0);}else{if data.len()<end{data.resize(end,0);}data[pos..end].copy_from_slice(bytes);}
+    file.pos=end as u32;file.written=true;Ok(Ok(()))
+}
+/// The open file standard output (handle 1) refers to, when it is a file.
+pub(super) fn redirected_output(p:&Loaded)->Result<Option<u8>,String>{
+    Ok(system_file(p,1)?.filter(|&sft|sft>=5&&p.drive.files.iter().any(|f|f.sft==sft)))
+}
+/// AH41 deletes a file, AH56 renames a file or directory (DS:DX to ES:DI on
+/// the same drive), AH39 makes and AH3A removes an empty directory.
+fn change(p:&mut Loaded,ah:u8)->Result<(),String>{
+    let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
+    if raw.is_empty(){fail(p,3);return Ok(());}
+    let host=|e:&Entry|match &e.node{Node::Host(path)=>Some(path.clone()),Node::Image(_)=>None};
+    let result=match ah{
+        0x39=>place(&p.drive,&raw).and_then(|(_,folder,name,existing)|{
+            if existing.is_some(){return Err(5);}
+            std::fs::create_dir(folder.join(host_name(&name))).map_err(|_|5)
+        }),
+        0x3a=>lookup(&p.drive,&raw).and_then(|(drive,entry)|{
+            let path=host(&entry).filter(|_|entry.attr&0x10!=0).ok_or(5u16)?;
+            // The current directory of a drive cannot go: error 10h.
+            let(_,names)=components(&p.drive,&raw)?;
+            if p.drive.list[drive].cwd.starts_with(&names){return Err(0x10);}
+            std::fs::remove_dir(path).map_err(|_|5)
+        }),
+        0x41=>lookup(&p.drive,&raw).and_then(|(_,entry)|{
+            let path=host(&entry).filter(|_|entry.attr&0x19==0).ok_or(5u16)?;
+            std::fs::remove_file(path).map_err(|_|5)
+        }),
+        _=>{
+            let es=SegmentRegister::Es;
+            let saved=p.image.segments[ds().index()];p.image.segments[ds().index()]=p.image.segments[es.index()];
+            let to=asciiz(p,p.cpu.regs[7]&0xffff);p.image.segments[ds().index()]=saved;
+            let to=to?;
+            lookup(&p.drive,&raw).and_then(|(drive,entry)|{
+                let from=host(&entry).filter(|_|entry.attr&0x0d==0).ok_or(5u16)?;
+                let(to_drive,folder,name,existing)=place(&p.drive,&to)?;
+                if to_drive!=drive{return Err(0x11);}
+                if existing.is_some(){return Err(5);}
+                std::fs::rename(from,folder.join(host_name(&name))).map_err(|_|5)
+            })
+        },
+    };
+    match result{Ok(())=>ok(p),Err(code)=>fail(p,code)}
+    Ok(())
 }
 fn open_file(p:&mut Loaded,service:&str)->Result<Option<usize>,String>{
     let handle=(p.cpu.regs[3]&0xffff)as u16;
@@ -460,8 +601,10 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
         0x19=>p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.drive.letter()-b'A'),
         0x36=>{
             let Some(drive)=p.drive.number(dl)else{set_ax(p,0xffff);return Ok(())};
-            // Read-only drives: no cluster is free. An image reports its own
-            // geometry; a host folder 512-byte clusters for the files it holds.
+            // No cluster is reported free: the image is read-only, and the
+            // host's free space is not read (Dine has no statvfs). An image
+            // reports its own geometry; a host folder 512-byte clusters for
+            // the files it holds.
             let(per_cluster,clusters)=match &p.drive.list[drive].source{
                 Source::Image(tree)=>(u32::from(tree.sectors_per_cluster),u32::from(tree.clusters)),
                 Source::Host(root)=>(1,used_clusters(root)),Source::Empty=>(1,0),
@@ -488,6 +631,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             match(al,found){
                 (0,Ok(attr))=>{p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|u32::from(attr);ok(p);},
                 (0,Err(code))=>fail(p,code),
+                // Setting attributes is not modelled: access denied.
                 (1,_)=>fail(p,5),
                 _=>fail(p,1),
             }
@@ -495,6 +639,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
         0x3d=>open(p)?,
         0x3f=>{
             let Some(i)=open_file(p,"read from")? else{return Ok(())};
+            if p.drive.files[i].mode==1{fail(p,5);return Ok(());}
             let offset=p.cpu.regs[2]&0xffff;let wanted=p.cpu.regs[1]&0xffff;
             if offset+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
             let file=&p.drive.files[i];let start=(file.pos as usize).min(file.data.len());
@@ -521,20 +666,48 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
         },
         0x44=>{
             // AL=00 device information: CON for 0..2, AUX/PRN for 3..4, with
-            // bit 6 (not at end of input) set as FreeDOS opens devices, and an
-            // unwritten file on this drive for handles AH3D opened.
+            // bit 6 (not at end of input) set as FreeDOS opens devices, and a
+            // file's drive, bit 6 set until it is written.
             let info=match system_file(p,(p.cpu.regs[3]&0xffff)as u16)?{
                 Some(0..=2)=>Some(0xc3),Some(3|4)=>Some(0xc0),
-                Some(sft)=>p.drive.files.iter().find(|f|f.sft==sft).map(|f|0x40|u32::from(f.drive-b'A')),
+                Some(sft)=>p.drive.files.iter().find(|f|f.sft==sft).map(|f|if f.written{0}else{0x40}|u32::from(f.drive-b'A')),
                 None=>None,
             };
             match info{Some(info)=>{p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|info;ok(p);},None=>fail(p,6)}
         },
         0x4e=>find_first(p)?,
         0x4f=>find_next(p)?,
-        // Make or remove directory, create, delete, rename, temporary and new
-        // file: the drive is read-only, so access denied.
-        0x39|0x3a|0x3c|0x41|0x56|0x5a|0x5b=>fail(p,5),
+        0x3c|0x5a|0x5b=>create(p,ah)?,
+        0x57=>{
+            // File time and date: AL=00 gets them into CX and DX, AL=01 sets
+            // the host file's modification time. Image files cannot change.
+            let Some(i)=open_file(p,"time and date of")? else{return Ok(())};
+            let file=&p.drive.files[i];
+            match al{
+                0=>{
+                    let(time,date)=match &file.host{Some(path)=>stamp(std::fs::metadata(path).and_then(|m|m.modified()).ok()),None=>file.stamp};
+                    p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|u32::from(time);p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|u32::from(date);ok(p);
+                },
+                1=>{
+                    let when=unstamp(p.cpu.regs[1]as u16,p.cpu.regs[2]as u16);
+                    let set=file.host.as_ref().is_some_and(|path|std::fs::OpenOptions::new().write(true).open(path).and_then(|f|f.set_modified(when)).is_ok());
+                    if set{ok(p);}else{fail(p,5);}
+                },
+                _=>fail(p,1),
+            }
+        },
+        0x60=>{
+            // Truename: the full path of DS:SI at ES:DI, upper case, with `.`
+            // and `..` resolved and `*` as `?`, whether or not it exists.
+            let raw=asciiz(p,p.cpu.regs[6]&0xffff)?;
+            if raw.len()>=2&&raw[1]==b':'&&!p.drive.list.iter().any(|d|raw[0].eq_ignore_ascii_case(&d.letter)){fail(p,0x0f);return Ok(());}
+            let(drive,path)=match components(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
+            if raw.is_empty(){fail(p,3);return Ok(());}
+            let mut full=vec![p.drive.list[drive].letter,b':',b'\\'];full.extend(path.iter().map(display).collect::<Vec<_>>().join(&b'\\'));full.push(0);
+            if full.len()>128{fail(p,3);return Ok(());}
+            store(p,SegmentRegister::Es,p.cpu.regs[7]&0xffff,&full)?;ok(p);
+        },
+        0x39|0x3a|0x41|0x56=>change(p,ah)?,
         // No media ID (AX=6900h/6901h): invalid function.
         0x69=>fail(p,1),
         // No FAT32 extensions: AL=00h, CF=1, as for AH71.

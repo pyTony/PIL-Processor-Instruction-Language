@@ -1,3 +1,73 @@
+# PC speaker ports — 30 October 2026
+
+FreeCOM's beep (the `BEEP` command, and a key the line editor does not take,
+such as Ctrl-V) stopped at IN AL,DX (opcode ECh). Dine now answers byte IN
+and OUT on the speaker ports on the host, as it answers INT services
+(`src/dos_ports.rs`): PIT channel 2 takes its mode at 43h and its count at
+42h, and port 61h bits 0 and 1 switch the speaker. Reading 61h returns the
+bits last written, with bit 4 toggling as the refresh bit does. The session
+reply reports `beeps` (times the speaker was switched on) and `tone` (Hz, 0
+when off), and the Tk terminal rings the host bell for each new beep.
+
+Limitations: the PIT does not count, so reading 42h, other PIT commands, word
+port accesses and every other port still stop the run; bit 5 of port 61h
+(channel 2 output) reads 0.
+
+Verification: 414 Rust tests passed on Linux (one new test for Watcom's
+sound and nosound sequences and for the ports that still stop). FreeCOM 0.86
+ran `BEEP` and a Ctrl-V at the prompt, then `ECHO after`, with `beeps` 1 and
+then 2.
+
+# Writable host folder: pipes, redirection and file commands — 30 October 2026
+
+The `--mount` folder (D: after an image) can now be written; the image stays
+read-only. DOS programs create, write, delete and rename files and make and
+remove directories there, and the changes reach the host folder itself.
+FreeCOM's `DIR > OUT.TXT`, `ECHO ... >> FILE`, `DIR | MORE`, `COPY`, `DEL`,
+`REN`, `MD` and `RD` work on that drive.
+
+- AH3C, AH5A and AH5B create files; AH3D opens host files for writing (modes
+  1 and 2); AH40 writes through to the host file at the file position, and
+  CX=0 truncates or extends the file there.
+- AH41 deletes, AH56 renames (same drive only, error 11h otherwise), AH39 and
+  AH3A make and remove directories (error 10h for a current directory).
+- AH57 gets and sets a file's time and date; AH60 (truename) returns the full
+  upper-case path.
+- Opens and creates take the lowest free handle, as DOS does, so FreeCOM's
+  close-then-open redirection lands on handle 0 or 1. AH02, AH06 and AH09
+  output goes to the file when handle 1 was redirected.
+- AH4F goes on after the host name it found last, so `DEL *.*` does not skip
+  files when the directory changes between searches.
+- New host files take the upper-case 8.3 name (`OUT.TXT`).
+
+FreeCOM puts its pipe file in TEMP, TMP or the current directory. From the
+read-only C:, use `SET TEMP=D:\` first, or FreeCOM reports "Can not create
+temporary file".
+
+Limitations: AH43 AL=01h (set attributes) is still access denied, AH36 still
+reports no free space (the host's free space is not read), attributes given
+to a create are not kept, two opens of one file do not see each other's
+writes until reopened, and redirected standard input for AH01/06/07/08/0A is
+not modelled.
+
+Verification: 413 Rust tests passed on Linux (one new test for the writable
+folder; the image test now checks every write is refused). FreeCOM 0.86 from
+FD14LITE ran `DIR > OUT.TXT`, `TYPE OUT.TXT`, `ECHO >>`, `DIR | MORE` with
+FreeDOS MORE, `COPY`, `REN`, `MD`, `COPY *.TXT SUB`, `DEL SUB\*.*`, `RD`,
+`DEL *.TXT` and a refused `ECHO x > C:\X.TXT`, with the results checked in
+the host folder.
+
+# AH33 AL=05h boot drive — 30 October 2026
+
+`DIR | MORE` stopped at INT 21h AX=3305h. FreeCOM asks for the boot drive
+when no TEMP, TMP or current directory can take a temporary file, which is
+always the case while every drive is read-only. Dine now reports its first
+drive (C: with an image or a mounted folder, A: without). Pipes still cannot
+work until some drive can be written: FreeCOM falls back to running the left
+side to the screen and the right side reading the keyboard.
+
+Verification: 412 Rust tests passed on Linux.
+
 # IRET in real mode — 30 October 2026
 
 `MORE` stopped at opcode CFh (IRET) in its own code before printing anything.

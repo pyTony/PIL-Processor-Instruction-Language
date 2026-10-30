@@ -923,7 +923,7 @@ fn eight_dot_three_names_and_aliases_follow_dos_rules(){
  assert_eq!(stamp(Some(UNIX_EPOCH+Duration::from_secs(1_793_377_562))),(16<<11|26<<5|1,(46<<9|10<<5|30)as u16));
 }
 #[test]
-fn mounted_folder_is_drive_c_for_find_chdir_and_read_only_files(){
+fn mounted_folder_is_drive_c_for_find_chdir_and_reading_files(){
  use std::time::{SystemTime,UNIX_EPOCH};
  let dir=std::env::temp_dir().join(format!("pil-drive-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
  std::fs::create_dir_all(dir.join("Games")).unwrap();std::fs::write(dir.join("factor.com"),b"FACT").unwrap();
@@ -944,16 +944,15 @@ fn mounted_folder_is_drive_c_for_find_chdir_and_read_only_files(){
  p.cpu.regs[6]=0x300;assert_eq!(call(&mut p,0x4700,0,b""),(0x0100,0));
  let cwd:Vec<u8>=(0..6).map(|i|p.ram.load(u32::from(PSP)*16+0x300+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(cwd,b"GAMES\0");
  assert_eq!(call(&mut p,0x3b00,0,b"..\\..").1,1);assert_eq!(call(&mut p,0x3b00,0,b"A:\\").1,1);
- // Read a file through its alias from another directory; writing is refused.
+ // Read a file through its alias from another directory; a read handle cannot write.
  let (handle,cf)=call(&mut p,0x3d00,0,b"\\mandel~1.com");assert_eq!(cf,0);
  p.cpu.regs[3]=handle;p.cpu.regs[2]=0x400;p.cpu.regs[1]=4;p.cpu.regs[0]=0x3f00;service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!(p.cpu.regs[0]&0xffff,4);let read:Vec<u8>=(0..4).map(|i|p.ram.load(u32::from(PSP)*16+0x400+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(read,b"MAND");
  p.cpu.regs[0]=0x4400;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[2]&0xffff,0x42);
  p.cpu.regs[0]=0x3e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.drive.open_files(),0);
- assert_eq!(call(&mut p,0x3d02,0,b"readme.txt"),(5,1));assert_eq!(call(&mut p,0x3d00,0,b"missing.txt"),(2,1));assert_eq!(call(&mut p,0x3d00,0,b"\\games"),(5,1));
- assert_eq!(call(&mut p,0x3c00,0,b"new.txt"),(5,1));assert_eq!(call(&mut p,0x4100,0,b"readme.txt"),(5,1));
+ assert_eq!(call(&mut p,0x3d00,0,b"missing.txt"),(2,1));assert_eq!(call(&mut p,0x3d00,0,b"\\games"),(5,1));
  assert_eq!(call(&mut p,0x4300,0,b"readme.txt"),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x20);assert_eq!(call(&mut p,0x4301,0x20,b"readme.txt"),(5,1));
- // AH36: read-only, so no free clusters; three 512-byte clusters hold the files.
+ // AH36: no free clusters reported; three 512-byte clusters hold the files.
  p.cpu.regs[2]=0;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(1,0,512,3));
  p.cpu.regs[2]=1;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0xffff);
@@ -1026,6 +1025,10 @@ fn image_is_drive_c_with_its_label_and_the_host_folder_is_drive_d(){
  // E: does not exist: selecting it keeps D:, and its paths are not found.
  p.cpu.regs[2]=4;p.cpu.regs[0]=0x0e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(call(&mut p,0x1900,0,b"").0&255,3);
  assert_eq!(call(&mut p,0x3d00,0,b"E:\\X"),(3,1));
+ // The image is read-only: no write opens, creates, deletes, renames or directories.
+ assert_eq!(call(&mut p,0x3d01,0,b"C:\\DOCS\\NOTE.TXT"),(5,1));assert_eq!(call(&mut p,0x3c00,0,b"C:\\NEW.TXT"),(5,1));
+ assert_eq!(call(&mut p,0x5b00,0,b"C:\\NEW.TXT"),(5,1));assert_eq!(call(&mut p,0x4100,0,b"C:\\DOCS\\NOTE.TXT"),(5,1));
+ assert_eq!(call(&mut p,0x3900,0,b"C:\\NEWDIR"),(5,1));assert_eq!(call(&mut p,0x3a00,0,b"C:\\DOCS"),(5,1));
  std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
@@ -1127,4 +1130,75 @@ fn duplicated_handles_share_the_file_position_and_close_independently(){
  // Bad source handle, and a target past the 20-entry table.
  assert_eq!(svc(&mut p,0x4500,12,0),(6,1));assert_eq!(svc(&mut p,0x4600,1,20),(6,1));
  std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn boot_drive_is_the_first_drive(){
+ let mut p=load(&[0xcd,0x21],"x.com").unwrap();p.cpu.regs[0]=0x3305;p.cpu.regs[2]=0xff;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[2]&255,1,"A: without drives");
+ let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(std::env::temp_dir())],None).unwrap();p.cpu.regs[0]=0x3305;p.cpu.regs[2]=0xff;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[2]&255,3,"C:");
+}
+#[test]
+fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-write-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("old.txt"),b"abcdef").unwrap();
+ let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(dir.clone())],None).unwrap();let psp=u32::from(PSP)*16;
+ let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ // FreeCOM's redirection: close handle 1, then AH3C takes it; AH02 and AH40 on handle 1 reach the file.
+ assert_eq!(svc(&mut p,0x3e00,1,0,b"").1,0);
+ assert_eq!(call(&mut p,0x3c00,0,b"out.txt"),(1,0));
+ assert_eq!(svc(&mut p,0x4000,1,3,b"DIR"),(3,0));p.cpu.regs[2]=u32::from(b'!');p.cpu.regs[0]=0x0200;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(std::fs::read(dir.join("OUT.TXT")).unwrap(),b"DIR!");
+ // Bit 6 of the device information clears once the file is written.
+ assert_eq!(svc(&mut p,0x4400,1,0,b"").1,0);assert_eq!(p.cpu.regs[2]&0xffff,2);
+ // Seek back and write over, past the end, then CX=0 truncates at the position.
+ p.cpu.regs[2]=1;p.cpu.regs[1]=0;p.cpu.regs[3]=1;p.cpu.regs[0]=0x4200;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(svc(&mut p,0x4000,1,5,b"xyzzy"),(5,0));assert_eq!(std::fs::read(dir.join("OUT.TXT")).unwrap(),b"Dxyzzy");
+ p.cpu.regs[2]=3;p.cpu.regs[1]=0;p.cpu.regs[3]=1;p.cpu.regs[0]=0x4200;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(svc(&mut p,0x4000,1,0,b""),(0,0));assert_eq!(std::fs::read(dir.join("OUT.TXT")).unwrap(),b"Dxy");
+ // AH5B refuses a name that exists; AH3C truncates it; a read handle cannot write, a write handle cannot read.
+ assert_eq!(call(&mut p,0x5b00,0,b"OLD.TXT"),(0x50,1));
+ let (read,_)=call(&mut p,0x3d00,0,b"old.txt");assert_eq!(svc(&mut p,0x4000,read,1,b"q"),(5,1));
+ let (wo,_)=call(&mut p,0x3d01,0,b"old.txt");assert_eq!(svc(&mut p,0x3f00,wo,1,b""),(5,1));assert_eq!(svc(&mut p,0x4000,wo,2,b"AB"),(2,0));
+ assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(),b"ABcdef");
+ assert_eq!(call(&mut p,0x3c00,0,b"old.txt").1,0);assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(),b"");
+ // AH5A appends a new eight-digit name to the path and creates the file.
+ let (_,cf)=call(&mut p,0x5a00,0,b"\\");assert_eq!(cf,0);
+ let name:Vec<u8>=(0..14).map(|i|p.ram.load(psp+0x200+i,MemWidth::Byte).unwrap()as u8).take_while(|&c|c!=0).collect();
+ assert_eq!(name.len(),9);assert!(dir.join(std::str::from_utf8(&name[1..]).unwrap()).is_file());
+ // AH57 sets and gets the time and date of an open file.
+ let stamp=(12u32<<11|34<<5|28,(45u32<<9|6<<5|15));
+ p.cpu.regs[1]=stamp.0;p.cpu.regs[2]=stamp.1;p.cpu.regs[3]=1;p.cpu.regs[0]=0x5701;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&1,0);
+ p.cpu.regs[1]=0;p.cpu.regs[2]=0;p.cpu.regs[0]=0x5700;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),stamp);
+ // Directories: make, refuse twice, rename into, remove only when empty and not current.
+ assert_eq!(call(&mut p,0x3900,0,b"sub").1,0);assert_eq!(call(&mut p,0x3900,0,b"SUB"),(5,1));
+ p.ram.write_bytes(psp+0x300,b"SUB\\NEW.TXT\0").unwrap();p.cpu.regs[7]=0x300;
+ assert_eq!(call(&mut p,0x5600,0,b"OUT.TXT").1,0);assert!(dir.join("SUB/NEW.TXT").is_file()&&!dir.join("OUT.TXT").exists());
+ assert_eq!(call(&mut p,0x3a00,0,b"SUB"),(5,1),"not empty");
+ assert_eq!(call(&mut p,0x5600,0,b"MISSING.TXT"),(2,1));
+ // AH60 gives the full name; AH41 deletes; AH4E/4F go on after a deleted file.
+ p.cpu.regs[6]=0x200;p.cpu.regs[7]=0x300;let (_,cf)=call(&mut p,0x6000,0,b"sub\\..\\x*.txt");assert_eq!(cf,0);
+ let full:Vec<u8>=(0..16).map(|i|p.ram.load(psp+0x300+i,MemWidth::Byte).unwrap()as u8).take_while(|&c|c!=0).collect();assert_eq!(full,b"C:\\X???????.TXT");
+ for n in ["A.TXT","B.TXT","C.TXT"]{std::fs::write(dir.join("SUB").join(n),b"").unwrap();}
+ let mut names=Vec::new();let mut r=call(&mut p,0x4e00,0,b"SUB\\*.TXT");
+ while r.1==0{let found=dta_name(&p).2;let mut path=b"SUB\\".to_vec();path.extend(&found);assert_eq!(call(&mut p,0x4100,0,&path).1,0);names.push(found);r=call(&mut p,0x4f00,0,b"");}
+ assert_eq!(names,vec![b"A.TXT".to_vec(),b"B.TXT".to_vec(),b"C.TXT".to_vec(),b"NEW.TXT".to_vec()]);
+ assert_eq!(call(&mut p,0x3b00,0,b"SUB").1,0);assert_eq!(call(&mut p,0x3a00,0,b"\\SUB"),(0x10,1),"current directory");
+ assert_eq!(call(&mut p,0x3b00,0,b"..").1,0);assert_eq!(call(&mut p,0x3a00,0,b"SUB").1,0);assert!(!dir.join("SUB").exists());
+ assert_eq!(call(&mut p,0x4100,0,b"SUB"),(2,1));
+ std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn speaker_ports_take_watcoms_sound_and_nosound(){
+ // sound(900): IN AL,61h by DX; OR AL,3; OUT; mode B6h to 43h; count 052Dh to 42h low then high; CLI; HLT.
+ let code=[0xba,0x61,0x00,0xec,0x0c,0x03,0xee,0xb0,0xb6,0xba,0x43,0x00,0xee,0xba,0x42,0x00,0xb0,0x2d,0xee,0xb0,0x05,0xee,0xfa,0xf4];
+ let r=run(load(&code,"sound.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.speaker.tone(),r.loaded.speaker.beeps),(900,1));
+ // nosound(): IN AL,61h; AND AL,FCh; OUT 61h,AL. Bit 4 toggles on each read.
+ let code=[0xe4,0x61,0x88,0xc3,0xe4,0x61,0x24,0xfc,0xe6,0x61,0xe4,0x61,0xfa,0xf4];
+ let r=run(load(&code,"nosound.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.cpu.regs[3]&255,r.loaded.cpu.regs[0]&255,r.loaded.speaker.tone()),(0x10,0x10,0));
+ // Other ports, word accesses and PIT reads stop the run.
+ for code in [&[0xe4,0x40,0xfa,0xf4][..],&[0xe5,0x61,0xfa,0xf4],&[0xba,0x42,0x00,0xec,0xfa,0xf4],&[0xb0,0x36,0xe6,0x43,0xfa,0xf4]]{
+  let r=run(load(code,"port.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ }
 }

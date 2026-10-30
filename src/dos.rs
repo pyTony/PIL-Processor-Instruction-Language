@@ -41,6 +41,8 @@ mod files;
 mod nls;
 #[path="dos_exec.rs"]
 mod exec;
+#[path="dos_ports.rs"]
+mod ports;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
@@ -69,6 +71,8 @@ pub struct Loaded{
     /// child's return code for AH4D, and console bytes AH3F read but did not
     /// return yet.
     pub psp:u16,exec:Vec<exec::Frame>,pub return_code:u16,con_pending:Vec<u8>,
+    /// The PC speaker behind ports 42h, 43h and 61h.
+    pub speaker:ports::Speaker,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -212,7 +216,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -262,6 +266,14 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 Err(message)=>break Stop::Service(message),
             }
         }}
+        match ports::io(&mut p){
+            Ok(Some(length))=>{
+                p.cpu.eip=(p.cpu.eip+length)&0xffff;p.image.retired();completed+=1;execution_steps+=1;
+                *instructions.entry(if length==1{"IN/OUT DX".into()}else{"IN/OUT imm8".into()}).or_insert(0)+=1;continue;
+            },
+            Ok(None)=>{},
+            Err(message)=>break Stop::Service(message),
+        }
         let decoded=match cache.fetch(&p.image,&p.ram,p.cpu.eip){
             Ok(d)=>d,Err(GuestError::Execution(e))=>break Stop::Fault(format!("{e:?}")),
             Err(GuestError::Decode(detail))=>break if detail.starts_with("fetch outside loaded image"){Stop::Boundary(detail)}else{Stop::MissingEncoding{key:opcode_key(&site_bytes(&p)),detail}},

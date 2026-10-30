@@ -56,6 +56,12 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[1]&=0xffff0000;
             Ok(None)
         },
+        (0x21,0x33) if p.cpu.regs[0]as u8==5=>{
+            // Boot drive: the first drive Dine has (C: for an image or a
+            // mounted folder, A: when there is neither), as DL=1 for A:.
+            p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(p.drive.first_letter()-b'A'+1);
+            Ok(None)
+        },
         (0x21,0x33) if p.cpu.regs[0]as u8==6=>{
             // True version: the same 6.22 profile as AH30, revision 0, and
             // DH=0 because Dine is neither in ROM nor in the HMA.
@@ -114,7 +120,9 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
                 let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS string access: {e:?}"))?;
                 let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))?as u8;
                 if b==b'$'{
-                    console::dos_break_check(p)?;let screen=console::dos_screen(p,&text)?;
+                    console::dos_break_check(p)?;
+                    if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
+                    let screen=console::dos_screen(p,&text)?;
                     out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
                     console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);
                 }
@@ -170,7 +178,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
         (0x21,ah @ (0x38|0x65))=>{nls::service(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==0=>{files::service(p,0x44)?;Ok(None)},
-        (0x21,ah @ (0x0e|0x19|0x29|0x36|0x45|0x46|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x5a|0x5b|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
+        (0x21,ah @ (0x0e|0x19|0x29|0x36|0x45|0x46|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x60|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
         (0x21,0x51|0x62)=>{
             // DOS 3+: AH51 and AH62 both return the current PSP segment.
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
@@ -272,7 +280,8 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
     Ok((ticks,rollover))
 }
 /// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without
-/// a terminator. AUX/PRN (3..4) are not modelled; a closed handle is error 6.
+/// a terminator, and on a file writes them there. AUX/PRN (3..4) are not
+/// modelled; a closed handle is error 6.
 /// Linear address of a handle's entry in the job file table PSP:34h points at.
 pub(super) fn jft(p:&Loaded,handle:u16)->Result<u32,String>{
     let psp=u32::from(p.psp)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
@@ -284,17 +293,22 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
         return Ok(());
     };
-    // Files are opened for reading only, so writing to one is access denied.
-    if sft>=5{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|5;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(());}
-    if sft>=3{return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
+    if (3..5).contains(&sft){return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
     let offset=p.cpu.regs[2]&0xffff;let count=p.cpu.regs[1]&0xffff;
     if offset+count>0x10000{return Err("DOS write buffer exceeds segment end".into());}
-    if count as usize>out.remaining(){return Err("DOS output limit reached before handle write".into());}
+    if sft<3&&count as usize>out.remaining(){return Err("DOS output limit reached before handle write".into());}
     let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
     let mut text=Vec::with_capacity(count as usize);
     for n in offset..offset+count{
         let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS write buffer access: {e:?}"))?;
         text.push(p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS write buffer RAM access: {e:?}"))?as u8);
+    }
+    if sft>=5{
+        match files::write(p,sft,&text)?{
+            Ok(())=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|count;p.cpu.eflags&=!1;},
+            Err(code)=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(code);p.cpu.eflags|=1;},
+        }
+        p.cpu.undefined_flags&=!1;return Ok(());
     }
     console::dos_break_check(p)?;let screen=console::dos_screen(p,&text)?;
     out.write_atomic(&text).map_err(|e|format!("DOS handle output provider: {e:?}"))?;
@@ -302,8 +316,15 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|count;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     Ok(())
 }
+/// AH02/06/09 output goes to the file handle 1 was redirected to, if any.
+/// DOS has no error return there, so a failed write stops the run.
+fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
+    let Some(sft)=files::redirected_output(p)? else{return Ok(false)};
+    match files::write(p,sft,bytes)?{Ok(())=>Ok(true),Err(code)=>Err(format!("DOS console output to redirected handle 1 failed with error {code}"))}
+}
 /// AH02 (and AH06 output): capture and active-page screen change together.
 fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
+    if to_file(p,&[byte])?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(byte);return Ok(());}
     let count=if byte==9{8-out.column()%8}else{1};
     if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
     let value=if byte==9{b' '}else{byte};
