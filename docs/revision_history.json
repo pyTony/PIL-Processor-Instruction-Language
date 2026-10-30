@@ -2034,6 +2034,23 @@
       "limitations": [
         "pipes and redirection to files need a writable drive, which Dine does not have yet"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "Writable host folder: pipes, redirection and file commands",
+      "base": "dev after #62",
+      "verification": {
+        "linux_rust_tests": 413
+      },
+      "limitations": [
+        "the image stays read-only",
+        "AH43 AL=01h set attributes is access denied",
+        "AH36 reports no free space",
+        "create attributes are not kept",
+        "two opens of one file do not see each other's writes",
+        "redirected standard input for AH01/06/07/08/0A is not modelled",
+        "FreeCOM's beep stops at IN AL,DX"
+      ]
     }
   ],
   "development_increments": [

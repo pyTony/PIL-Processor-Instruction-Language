@@ -9,7 +9,8 @@ screen contents all come from the engine; this file only displays them.
     python tools/dos_terminal.py --mount dosfiles images/FD14LITE.img::COMMAND.COM
 
 An image becomes read-only drive C:; --mount adds a host folder as the next
-drive (D: after an image), also read-only.
+drive (D: after an image), which DOS programs can write: files they create,
+change, delete or rename change in the host folder itself.
 """
 import argparse
 import json
@@ -190,7 +191,7 @@ def make_app(root, engine, program, mount=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('program', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH')
-    parser.add_argument('--mount', help='host folder shown as the next read-only drive (D: after an image)')
+    parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
     parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
     args = parser.parse_args(argv)
     import tkinter as tk

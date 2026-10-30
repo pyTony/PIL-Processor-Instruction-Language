@@ -1,3 +1,43 @@
+# Writable host folder: pipes, redirection and file commands — 30 October 2026
+
+The `--mount` folder (D: after an image) can now be written; the image stays
+read-only. DOS programs create, write, delete and rename files and make and
+remove directories there, and the changes reach the host folder itself.
+FreeCOM's `DIR > OUT.TXT`, `ECHO ... >> FILE`, `DIR | MORE`, `COPY`, `DEL`,
+`REN`, `MD` and `RD` work on that drive.
+
+- AH3C, AH5A and AH5B create files; AH3D opens host files for writing (modes
+  1 and 2); AH40 writes through to the host file at the file position, and
+  CX=0 truncates or extends the file there.
+- AH41 deletes, AH56 renames (same drive only, error 11h otherwise), AH39 and
+  AH3A make and remove directories (error 10h for a current directory).
+- AH57 gets and sets a file's time and date; AH60 (truename) returns the full
+  upper-case path.
+- Opens and creates take the lowest free handle, as DOS does, so FreeCOM's
+  close-then-open redirection lands on handle 0 or 1. AH02, AH06 and AH09
+  output goes to the file when handle 1 was redirected.
+- AH4F goes on after the host name it found last, so `DEL *.*` does not skip
+  files when the directory changes between searches.
+- New host files take the upper-case 8.3 name (`OUT.TXT`).
+
+FreeCOM puts its pipe file in TEMP, TMP or the current directory. From the
+read-only C:, use `SET TEMP=D:\` first, or FreeCOM reports "Can not create
+temporary file".
+
+Limitations: AH43 AL=01h (set attributes) is still access denied, AH36 still
+reports no free space (the host's free space is not read), attributes given
+to a create are not kept, two opens of one file do not see each other's
+writes until reopened, and redirected standard input for AH01/06/07/08/0A is
+not modelled. FreeCOM's beep (`DEL *.*` answered with a wrong key) stops at
+IN AL,DX (opcode ECh).
+
+Verification: 413 Rust tests passed on Linux (one new test for the writable
+folder; the image test now checks every write is refused). FreeCOM 0.86 from
+FD14LITE ran `DIR > OUT.TXT`, `TYPE OUT.TXT`, `ECHO >>`, `DIR | MORE` with
+FreeDOS MORE, `COPY`, `REN`, `MD`, `COPY *.TXT SUB`, `DEL SUB\*.*`, `RD`,
+`DEL *.TXT` and a refused `ECHO x > C:\X.TXT`, with the results checked in
+the host folder.
+
 # AH33 AL=05h boot drive — 30 October 2026
 
 `DIR | MORE` stopped at INT 21h AX=3305h. FreeCOM asks for the boot drive
