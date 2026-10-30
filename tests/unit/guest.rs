@@ -151,8 +151,10 @@ fn imul_memory_source_is_readonly_and_faults_preserve_cpu(){
     assert!(execute_one(&[0x0f,0xaf,0x07],&mut c,0,false).is_err());assert_eq!(c,before);
 }
 #[test]
-fn imul_fetch_lengths_and_unimplemented_implicit_forms_are_diagnostics(){
-    for bytes in [vec![0x0f,0xaf],vec![0x69,0xc0,1],vec![0x66,0x6b,0x86,0],vec![0xf6,0xe8],vec![0xf7,0xe8]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+fn imul_fetch_lengths_truncated_forms_and_one_operand_forms(){
+    for bytes in [vec![0x0f,0xaf],vec![0x69,0xc0,1],vec![0x66,0x6b,0x86,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    // The one-operand F6/F7 /5 forms are implemented now.
+    for bytes in [vec![0xf6,0xe8],vec![0xf7,0xe8]] {assert!(decode(&bytes).is_ok(),"{bytes:02x?}");}
     let (mut image,ram)=Image::load(&[0x69,0xc0,1,0]).unwrap();image.segments[1].limit=ENTRY+2;
     assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
 }

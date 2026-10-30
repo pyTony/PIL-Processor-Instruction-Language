@@ -45,3 +45,14 @@ fn protected_old_or_new_mcb_write_stops_service_without_any_commit(){
 fn original_guest_calls_reach_resize_allocate_free_and_exit(){
  let code=[0xbb,0,0x10,0xb4,0x4a,0xcd,0x21,0xbb,0x10,0,0xb4,0x48,0xcd,0x21,0x8e,0xc0,0xb4,0x49,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21];let result=run(load(&code,"allocate.com").unwrap(),50).unwrap();assert_eq!(result.stop,Stop::Exit(0));assert_eq!(result.dos_calls,4);assert_eq!(result.loaded.allocated_end,0x20000);assert!(result.loaded.arena.valid(&result.loaded.ram));
 }
+#[test]
+fn best_and_last_fit_strategies_pick_their_blocks(){
+ // Free blocks after shrinking the PSP: 0x100 (between two allocations) and the tail.
+ let setup=|strategy:u8|{let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0x100,0);let a=p.cpu.regs[0]as u16;call(&mut p,0x48,0x10,0);call(&mut p,0x49,0,a);p.alloc_strategy=strategy;p};
+ // First fit and best fit both choose the 0x100 hole for 0x80 paragraphs.
+ for strategy in [0,1,0x81]{let mut p=setup(strategy);call(&mut p,0x48,0x80,0);assert!(!cf(&p));assert_eq!(p.cpu.regs[0]as u16,0x2001);assert!(p.arena.valid(&p.ram));}
+ // Last fit takes the top of the tail block: it ends at A000.
+ let mut p=setup(2);call(&mut p,0x48,0x80,0);assert!(!cf(&p));assert_eq!(p.cpu.regs[0]as u16,0xa000-0x80);assert!(p.arena.valid(&p.ram));
+ // For 0x100 paragraphs the old hole is an exact fit, smaller than the tail.
+ let mut p=setup(1);call(&mut p,0x48,0x100,0);assert_eq!(p.cpu.regs[0]as u16,0x2001);
+}

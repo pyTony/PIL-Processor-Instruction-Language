@@ -307,6 +307,13 @@ pub fn cases()->Result<Vec<Case>,String> {
         let mut t=case(name,bytes)?;t.regs[4]=0xabcd0800;t.regs[5]=0x12345678;tests.push(t);
     }
     let mut t=case("enter_readonly_stack",vec![0xc8,0x1e,0x00,0x00,0xf4])?;t.regs[4]=0x800;t.regs[5]=0x1234;t.protect=Some((0x9fe,2));tests.push(t);
+    // IMUL r/m (one operand): 8/16/32-bit register and memory, fitting and overflowing.
+    let mut t=case("imul1",vec![0xf6,0xeb,0xf7,0xea,0xf7,0x2f,0x66,0xf7,0xe9,0xf4])?;
+    t.regs[0]=0x12340080;t.regs[1]=0xfffffffd;t.regs[2]=0x56780003;t.regs[3]=0x11110402;t.flags=0x2;t.patch=Some((0x502,vec![0x00,0x80]));tests.push(t);
+    let mut t=case("imul1_gp_fault",vec![0xf7,0x2f,0xf4])?;t.regs[3]=0xffff;tests.push(t);
+    // XLAT with BX, with EBX (67h) and with an ES override.
+    let mut t=case("xlat",vec![0xd7,0x67,0xd7,0x26,0xd7,0xf4])?;
+    t.regs[0]=0xabcd0002;t.regs[3]=0x400;t.patch=Some((0x500,vec![7,6,5,4,3,2,1,0]));tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
 }

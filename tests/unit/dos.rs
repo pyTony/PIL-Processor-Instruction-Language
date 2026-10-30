@@ -765,7 +765,7 @@ fn tsr_date_strategy_lfn_and_extended_memory(){
  // AX=5801 BX=0080 accepted, then AX=5800 returns 0080; BX=0003 is invalid; BX=0001 is not modelled.
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x80,0x00,0xcd,0x21,0xb8,0x00,0x58,0xcd,0x21,0xfa,0xf4],"strategy.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x80);assert_eq!(r.loaded.cpu.eflags&1,0);
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x03,0x00,0xcd,0x21,0xfa,0xf4],"badfit.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
- let r=run(load(&[0xb8,0x01,0x58,0xbb,0x01,0x00,0xcd,0x21,0xfa,0xf4],"bestfit.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x41,0x00,0xcd,0x21,0xfa,0xf4],"upperonly.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
  // AX=5803 (link UMBs) fails: no UMB chain.
  let r=run(load(&[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xfa,0xf4],"umb.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
  // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=0, CF=0.
@@ -786,4 +786,25 @@ fn bios_rom_identity_and_hlt_idle(){
  assert!(matches!(r.stop,Stop::Exit(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu.regs[2]&0xffff,2);assert_eq!(r.instructions.get("HLT (idle tick)"),Some(&2));
  // With IF=0, HLT never resumes.
  let r=run(load(&[0xfa,0xf4],"hang.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
+}
+#[test]
+fn one_operand_imul_and_xlat_have_literal_results(){
+ // MOV AX,FFFE; MOV DX,0003; IMUL DX -> DX:AX = FFFF:FFFA (-6), fits: CF=OF=0.
+ let r=run(load(&[0xb8,0xfe,0xff,0xba,0x03,0x00,0xf7,0xea,0xfa,0xf4],"imul.com").unwrap(),10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[0]&0xffff,0xfffa);assert_eq!(r.loaded.cpu.regs[2]&0xffff,0xffff);assert_eq!(r.loaded.cpu.eflags&0x801,0);
+ // MOV AL,80; MOV BL,02; IMUL BL -> AX = FF00 (-256), does not fit AL: CF=OF=1.
+ let r=run(load(&[0xb0,0x80,0xb3,0x02,0xf6,0xeb,0xfa,0xf4],"imul8.com").unwrap(),10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[0]&0xffff,0xff00);assert_eq!(r.loaded.cpu.eflags&0x801,0x801);
+ // MOV BX,0110; MOV AL,03; XLAT -> AL = byte at DS:0113 = 'd'.
+ let mut code=vec![0xbb,0x10,0x01,0xb0,0x03,0xd7,0xfa,0xf4];code.resize(0x10,0);code.extend(b"abcd");
+ let r=run(load(&code,"xlat.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&255,u32::from(b'd'));
+}
+#[test]
+fn dos_time_scales_bios_ticks_like_the_clock_driver(){
+ // 65543 ticks are 359,998 hundredths: 00:59:59.98 (CH=0, CL=59, DH=59, DL=98).
+ let mut p=load(&[0xb4,0x2c,0xcd,0x21,0xfa,0xf4],"time.com").unwrap();p.timer_ticks=65543;
+ let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs[1]&0xffff,0x003b);assert_eq!(r.loaded.cpu.regs[2]&0xffff,0x3b62);assert_eq!(r.loaded.timer_ticks,65544);
+ // INT 15 AX=E801 is unsupported on this AT-class BIOS; INT 2F AX=0600 finds no ASSIGN.
+ let r=run(load(&[0xb8,0x01,0xe8,0xcd,0x15,0xfa,0xf4],"e801.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
+ let r=run(load(&[0xb8,0x00,0x06,0xcd,0x2f,0xfa,0xf4],"assign.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x0600);
 }

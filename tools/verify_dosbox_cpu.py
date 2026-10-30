@@ -376,6 +376,22 @@ def cases():
     # Far JMP through a CS:offset pointer pushed on the stack (FF /5, 16 and 32-bit).
     add('jmp_far_mem16', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c30c0e5389e336ff2f4083c40441'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
     add('jmp_far_mem32', 16, 0x1234, 0x10, bytes.fromhex('e800005b83c312660fb7db0e665389e33666ff2f4083c40641'), 0x1234, 0, flag_mask=DF, expected_ecx=0x11)
+    # One-operand IMUL: CF=OF say the signed product does not fit the low half.
+    # The high half is moved to CX and DX is restored to its sentinel.
+    for index, (a, b) in enumerate([(0x80, 2), (0xfe, 3), (0x7f, 0x7f)]):
+        product = ((a ^ 0x80) - 0x80) * ((b ^ 0x80) - 0x80)
+        flags = 0 if -128 <= product < 128 else 0x801
+        add(f'imul1_8_{index}', 16, a, b, bytes([0xf6, 0xe9]), product & 0xffff, flags, flag_mask=0x801 | DF)
+    for width, (a, b) in [(16, (0xfffe, 3)), (16, (0x8000, 2)), (32, (0x7fffffff, 2))]:
+        bits = 1 << width
+        product = ((a ^ (bits >> 1)) - (bits >> 1)) * ((b ^ (bits >> 1)) - (bits >> 1))
+        fits = -(bits >> 1) <= product < (bits >> 1)
+        prefix = b'\x66' if width == 32 else b''
+        restore = prefix+b'\xba'+(SENTINEL_DX & (bits-1)).to_bytes(width//8, 'little')
+        add(f'imul1_{width}_{a:x}_{b}', width, a, b, prefix+b'\xf7\xe9'+prefix+b'\x89\xd1'+restore,
+            product & (bits-1), 0 if fits else 0x801, flag_mask=0x801 | DF, expected_ecx=(product >> width) & (bits-1))
+    # XLAT through SS:BX into a two-byte table pushed on the stack.
+    add('xlat_ss', 8, 1, 0, bytes.fromhex('68aa5589e336d75b'), 0x55, 0, flag_mask=DF)
     return result
 
 
@@ -407,13 +423,17 @@ class ComBuilder:
         self.emit(bytes.fromhex('0f85') if conditional else bytes([0xe9]))
         self.ref(name, True)
 
-    def puts(self, text):
+    def text(self, text):
         # Identical strings share one copy so the CPU suite fits in one COM.
         data = text.encode('ascii')+b'$'
         name = next((n for n, d in self.data if d == data), None)
         if name is None:
             name = f'text_{len(self.data)}'
             self.data.append((name, data))
+        return name
+
+    def puts(self, text):
+        name = self.text(text)
         self.emit(bytes([0xba]))
         self.ref(name)
         self.emit(bytes.fromhex('b409cd21'))
@@ -461,14 +481,14 @@ def build(tests):
         b.emit(bytes.fromhex('81fb'))  # CMP BX, expected defined/preserved bits.
         b.word(case['flags'] & case['flags_mask'])
         b.branch(fail, True)
-        b.puts('PASS ')
-        b.puts(tag+'\r\n')
+        # The shared report routines print PASS/FAIL then the tag at DX, so
+        # each case costs a few bytes and the suite still fits in one COM.
+        b.emit(bytes([0xba])); b.ref(b.text(tag+'\r\n'))
+        b.emit(bytes([0xe8])); b.ref('report_pass', True)
         b.branch(done)
         b.label(fail)
-        b.puts('FAIL ')
-        b.puts(tag+'\r\n')
-        b.emit(bytes.fromhex('ff06'))
-        b.ref('fail_count')  # INC word [fail_count]
+        b.emit(bytes([0xba])); b.ref(b.text(tag+'\r\n'))
+        b.emit(bytes([0xe8])); b.ref('report_fail', True)
         b.label(done)
         positions.append((index, case, entry_pos, test_pos, check_pos, fail, done))
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
@@ -476,6 +496,13 @@ def build(tests):
     b.ref('fail_count')
     b.emit(bytes.fromhex('09c0'))  # OR AX,AX
     b.emit(bytes.fromhex('7405b8014ccd21b8004ccd21'))
+    for name, word in (('report_fail', 'FAIL '), ('report_pass', 'PASS ')):
+        b.label(name)
+        if name == 'report_fail':
+            b.emit(bytes.fromhex('ff06')); b.ref('fail_count')  # INC word [fail_count]
+        b.emit(bytes([0x52]))  # PUSH DX
+        b.puts(word)
+        b.emit(bytes.fromhex('5ab409cd21c3'))  # POP DX; MOV AH,09; INT 21h; RET
     com_bytes = b.finish()
     for index, case, entry_pos, test_pos, check_pos, fail, done in positions:
         case['index'] = index
