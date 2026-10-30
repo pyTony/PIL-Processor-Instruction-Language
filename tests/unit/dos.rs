@@ -1,4 +1,4 @@
-use crate::host_io::Output;
+﻿use crate::host_io::Output;
 use super::*;
 #[test]
 fn dos_vectors_round_trip_all_entries_and_preserve_flags_and_upper_bx(){
@@ -361,3 +361,21 @@ fn test_dos_handle_write() {
     assert_eq!(out.bytes(), msg);
 }
 
+
+#[test]
+fn test_dos_buffered_input() {
+    let mut loaded = load(&hello("com").unwrap(), "test.com").unwrap();
+    let mut out = crate::host_io::CaptureOutput::new(1024);
+    let ds_base = u32::from(loaded.selectors[SegmentRegister::Ds.index()]) * 16;
+    loaded.ram.store(ds_base + 0x200, MemWidth::Byte, 32).unwrap();
+    loaded.cpu.regs[0] = 0x0a00; // AH=0Ah
+    loaded.cpu.regs[2] = 0x200;  // DX=0x200
+    let res = service(&mut loaded, 0x21, &mut out);
+    assert_eq!(res, Ok(None));
+    let len = loaded.ram.load(ds_base + 0x201, MemWidth::Byte).unwrap();
+    assert_eq!(len, 3);
+    assert_eq!(loaded.ram.load(ds_base + 0x202, MemWidth::Byte).unwrap(), b'D' as u32);
+    assert_eq!(loaded.ram.load(ds_base + 0x203, MemWidth::Byte).unwrap(), b'I' as u32);
+    assert_eq!(loaded.ram.load(ds_base + 0x204, MemWidth::Byte).unwrap(), b'R' as u32);
+    assert_eq!(loaded.ram.load(ds_base + 0x205, MemWidth::Byte).unwrap(), 0x0d);
+}

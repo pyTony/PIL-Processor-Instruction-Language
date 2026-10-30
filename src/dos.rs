@@ -1,4 +1,4 @@
-//! Bounded DOS executable importer and diagnostic runner, not a DOS/BIOS kernel.
+﻿//! Bounded DOS executable importer and diagnostic runner, not a DOS/BIOS kernel.
 use std::{collections::BTreeMap,fmt::Write as _,io::Read,path::Path};
 use super::Cpu;
 use super::address::{MemoryContext,SegmentCache,SegmentRegister};
@@ -28,7 +28,7 @@ pub struct Loaded{
     pub selectors:[u16;6],pub relocations:usize,pub module_bytes:usize,
     pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
     pub timer_ticks:u32,pub open_handles:u32,
-    pub dta:(u16,u16),
+    pub dta:(u16,u16), pub image_bytes: Vec<u8>, pub file_pos: usize,
 }
 fn word(bytes:&[u8],at:usize)->Result<u16,String>{
     let b=bytes.get(at..at+2).ok_or("truncated DOS header/relocation word")?;Ok(u16::from_le_bytes([b[0],b[1]]))
@@ -106,14 +106,26 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     let mut ram=Ram::new(LIMIT);
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
     put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x18..0x1d].copy_from_slice(&[0,1,2,3,4]);psp[0x1d..0x2c].fill(0xff);
-    put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;
+        const ENV_SEG: u16 = PSP - 0x20;
+    put_word(&mut psp, 0x2c, ENV_SEG);
+    put_word(&mut psp, 0x40, DOS_COMPAT_VERSION);
+    psp[0x81] = 0x0d;
+
+    let env_base = u32::from(ENV_SEG) * 16;
+    let mut env = Vec::new();
+    env.extend_from_slice(b"COMSPEC=C:\\COMMAND.COM\0");
+    env.extend_from_slice(b"PATH=C:\\\0");
+    env.push(0); // Ympäristömuuttujien loppu
+    env.extend_from_slice(&[1, 0]); // DOS 3.0+ magic prefix
+    env.extend_from_slice(b"C:\\COMMAND.COM\0");
+    ram.write_bytes(env_base, &env).map_err(|e| format!("{e:?}"))?;
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80)})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80), image_bytes: bytes.to_vec(), file_pos: 0})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,Monitor(String)}
