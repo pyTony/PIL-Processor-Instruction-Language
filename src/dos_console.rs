@@ -249,3 +249,13 @@ pub(super) fn display(p:&mut Loaded,ah:u8)->Result<(),String>{
         _=>Err(format!("unimplemented BIOS video AH={ah:02x}")),
     }
 }
+/// One AH0A key: a byte below 256, or scan<<8 for an ASCII-0 key read as the
+/// two-byte pair read_line consumes. An owed scan from an earlier single-byte
+/// read comes back as a plain byte. None means no input is ready.
+pub(super) fn dos_line_key(p:&Loaded)->Result<Option<(u32,Writes)>,String>{
+    if let Some(scan)=p.pending_scan{return Ok(Some((u32::from(scan),Vec::new())));}
+    let(head,tail)=ring(p)?;
+    if head==tail{return Ok(None);}
+    let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
+    Ok(Some((if key&255==0{key&0xff00}else{key&255},writes)))
+}

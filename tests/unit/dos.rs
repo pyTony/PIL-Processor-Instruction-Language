@@ -575,8 +575,6 @@ fn dos_flush_then_read_flushes_once_and_resumes_with_new_key(){
   dos(&mut p,0x0c00|al,dl,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,want);assert!(!console::dos_available(&p).unwrap());assert!(out.is_empty());
   if al==6{assert_eq!(p.cpu.eflags&0x40,0x40);}
  }
- let mut p=load(&[0xcd,0x21],"flush.com").unwrap();p.enqueue_key(0x2d78).unwrap();let old=p.clone();
- assert!(dos(&mut p,0x0c0a,0,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);
 }
 #[test]
 fn dos_blocking_reads_wait_without_retiring_then_resume(){
@@ -586,4 +584,67 @@ fn dos_blocking_reads_wait_without_retiring_then_resume(){
   let mut p=r.loaded;p.enqueue_key(0x1e61).unwrap();let r=run(p,20).unwrap();
   assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[3]&255,0x61);assert_eq!(r.output,if ah==1{b"a".to_vec()}else{vec![]});
  }
+}
+/// DS:offset of a line buffer with its size byte set.
+fn line_buf(p:&mut Loaded,size:u32)->u32{let base=p.image.segments[SegmentRegister::Ds.index()].base+0x200;p.ram.store(base,MemWidth::Byte,size).unwrap();base}
+fn line_keys(p:&mut Loaded,keys:&[u16]){for &k in keys{assert!(p.enqueue_key(k).unwrap());}}
+fn line_bytes(p:&Loaded,base:u32,n:u32)->Vec<u8>{(0..n).map(|i|p.ram.load(base+i,MemWidth::Byte).unwrap()as u8).collect()}
+#[test]
+fn dos_line_input_edits_echoes_and_stores_count_without_cr(){
+ // 'a' 'b' BS 'c' ^A F6 LF Up ^F CR: control chars as ^X, F6 as ^Z, LF only echoes, Up and ^F ignored.
+ let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,10);
+ line_keys(&mut p,&[0x1e61,0x3062,0x0e08,0x2e63,0x1e01,0x4000,0x1c0a,0x4800,0x2106,0x1c0d]);
+ p.cpu.eflags=0xad7;let mut out=vec![];dos(&mut p,0x0a00,0x200,&mut out).unwrap();
+ assert!(!p.input_wait);assert_eq!(p.line,None);assert_eq!(p.cpu.regs[0],0xabcd0a00);assert_eq!(p.cpu.eflags,0xad7);
+ assert_eq!(out,b"ab\x08 \x08c^A^Z\r\n\r");assert_eq!(line_bytes(&p,base,7),[10,4,b'a',b'c',1,0x1a,13]);
+ assert!(!console::dos_available(&p).unwrap());assert_eq!(cell(&p,0,0,0)&255,u32::from(b'a'));
+}
+#[test]
+fn dos_line_input_backspaces_control_and_tab_columns(){
+ let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,10);
+ line_keys(&mut p,&[0x1e01,0x0e08,0x1e61,0x0f09,0x0e08,0x4b00,0x0e08,0x1c0d]);
+ let mut out=b"xy".to_vec();dos(&mut p,0x0a00,0x200,&mut out).unwrap();
+ let mut want=b"xy^A\x08 \x08\x08 \x08a\t".to_vec();for _ in 0..5{want.extend_from_slice(b"\x08 \x08");}
+ want.extend_from_slice(b"\x08 \x08\r");assert_eq!(out,want);assert_eq!(line_bytes(&p,base,3),[10,0,13]);
+}
+#[test]
+fn dos_line_input_full_buffer_beeps_and_escape_restarts_line(){
+ let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,3);
+ line_keys(&mut p,&[0x1e61,0x3062,0x2e63,0x011b,0x2064,0x1c0d]);
+ let mut out=b"> ".to_vec();dos(&mut p,0x0a00,0x200,&mut out).unwrap();
+ assert_eq!(out,b"> ab\x07\\\r\n  d\r");assert_eq!(line_bytes(&p,base,4),[3,1,b'd',13]);
+ // Size 1 only takes CR; size 0 returns without reading or writing.
+ let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,1);line_keys(&mut p,&[0x1e61,0x1c0d]);
+ let mut out=vec![];dos(&mut p,0x0a00,0x200,&mut out).unwrap();assert_eq!(out,b"\x07\r");assert_eq!(line_bytes(&p,base,3),[1,0,13]);
+ let mut p=load(&[0xcd,0x21],"line.com").unwrap();line_buf(&mut p,0);line_keys(&mut p,&[0x1e61]);let old=p.clone();
+ let mut out=vec![];dos(&mut p,0x0a00,0x200,&mut out).unwrap();assert!(out.is_empty());assert_eq!(p.ram,old.ram);assert!(!p.input_wait);
+}
+#[test]
+fn dos_line_input_rejects_template_keys_and_ctrl_c_keeping_line(){
+ for stop in [0x3b00,0x5300,0x2e03]{
+  let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,10);line_keys(&mut p,&[0x1e61,stop]);
+  let mut out=vec![];assert!(dos(&mut p,0x0a00,0x200,&mut out).is_err());assert_eq!(out,b"a");
+  assert_eq!(p.line,Some((b"a".to_vec(),0,false)));assert!(console::dos_available(&p).unwrap());assert_eq!(line_bytes(&p,base,2),[10,0]);
+ }
+ // A buffer crossing the segment end stops before reading a key.
+ let mut p=load(&[0xcd,0x21],"line.com").unwrap();line_keys(&mut p,&[0x1e61,0x1c0d]);
+ let end=p.image.segments[SegmentRegister::Ds.index()].base+0xfff0;
+ p.ram.store(end,MemWidth::Byte,15).unwrap();assert!(dos(&mut p,0x0a00,0xfff0,&mut vec![]).is_err());assert!(console::dos_available(&p).unwrap());
+ p.ram.store(end,MemWidth::Byte,14).unwrap();assert!(dos(&mut p,0x0a00,0xfff0,&mut vec![]).is_ok());assert!(!console::dos_available(&p).unwrap());
+}
+#[test]
+fn dos_line_input_waits_between_keys_and_resumes_same_call(){
+ // mov dx,200h; mov ah,0Ah; int 21h; mov ax,4C00h; int 21h
+ let code=[0xba,0,2,0xb4,0x0a,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21];
+ let mut p=load(&code,"line.com").unwrap();let base=line_buf(&mut p,8);line_keys(&mut p,&[0x1e61]);
+ let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert_eq!(r.completed,2);assert_eq!(r.output,b"a");
+ let mut p=r.loaded;assert_eq!(p.line,Some((b"a".to_vec(),0,false)));assert!(!p.input_wait);
+ line_keys(&mut p,&[0x3062,0x1c0d]);let r=run(p,20).unwrap();
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"b\r");assert_eq!(r.loaded.line,None);assert_eq!(line_bytes(&r.loaded,base,5),[8,2,b'a',b'b',13]);
+ // AH0C/AL0A flushes the type-ahead once, then edits keys typed after the wait.
+ let code=[0xba,0,2,0xb8,0x0a,0x0c,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21];
+ let mut p=load(&code,"line.com").unwrap();let base=line_buf(&mut p,8);line_keys(&mut p,&[0x2d78]);
+ let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert!(r.loaded.flushed);
+ let mut p=r.loaded;line_keys(&mut p,&[0x1579,0x1c0d]);let r=run(p,20).unwrap();
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"y\r");assert!(!r.loaded.flushed);assert_eq!(line_bytes(&r.loaded,base,4),[8,1,b'y',13]);
 }

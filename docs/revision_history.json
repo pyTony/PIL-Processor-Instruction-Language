@@ -2035,6 +2035,22 @@
         "no stdin/stdout redirection",
         "no Python console wiring"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "DOS buffered line input (INT21 AH0A)",
+      "base": "c17f983",
+      "verification": {
+        "linux_rust_tests": 377,
+        "pil_console_cases": 8,
+        "dosbox_console_cases": "8/8 in DOSBox-X 2024.03.01 (Linux, headless), output byte-identical",
+        "negative_control": "one deliberate failure in both engines"
+      },
+      "limitations": [
+        "DOS template editing keys (F1-F5, Right, Ins, Del) rejected",
+        "Ctrl-C/INT23 not modeled",
+        "no Python console wiring"
+      ]
     }
   ]
 }

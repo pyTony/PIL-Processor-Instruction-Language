@@ -1,3 +1,27 @@
+# DOS buffered line input (INT21 AH0A) — 30 October 2026
+
+INT21 AH0A reads a line into the DS:DX buffer (size byte, count byte, text).
+Keys come from the BIOS ring and are echoed to capture and the active page.
+With no key the call waits without retiring and keeps the partial line, so a
+line can be typed across several runs. A size byte of 0 returns at once; the
+whole buffer must lie inside DS before any key is taken. Up to size-1
+characters are kept; a key past that echoes BEL and is dropped. CR is stored
+and echoed alone (no LF); the count byte excludes it. LF echoes CR LF (not as
+the first key) and is not stored. BS and Left erase the last character on
+screen: two columns for a ^X control character, back to the tab stop for TAB.
+ESC echoes `\`, CR LF and indent spaces, then restarts the line. F6 stores
+^Z. Control characters echo as ^X; ^F and other extended keys are ignored.
+The DOS template keys (F1-F5, Right, Ins, Del) stop with "not modeled", and
+Ctrl-C at the head of input stops as for the other break-checking reads.
+AH0C/AL0A now flushes type-ahead once, then runs AH0A. Behaviour follows the
+FreeDOS read_line (chario.c at d6791add); no kernel code is copied.
+
+Verification: 377 Rust tests passed on Linux (five new). The console COM
+fixture has eight cases, adding a stuffed-keys line edit (BS) and a full
+buffer (BEL). In DOSBox-X 2024.03.01 (headless) all eight console cases pass
+and the full output, including the echoed lines, is byte-identical to PIL;
+the negative control fails exactly case 001 in both.
+
 # DOS console input and screen-mirrored output — 30 October 2026
 
 DOS stdin/stdout are CON. INT21 AH01 (echo), AH07 and AH08 read the BIOS
