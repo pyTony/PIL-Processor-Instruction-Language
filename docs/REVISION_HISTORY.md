@@ -1,3 +1,34 @@
+# LDS, ENTER and absent-extension answers — 30 October 2026
+
+FreeDOS report 40 (dev after #51, 10,000 steps): 79 Budget, 38 Exit, 28 Service,
+6 MissingEncoding, down from 25 MissingEncoding in report 39. This round takes
+the integer encodings and the services with a documented "not present" answer:
+
+- LDS (C5) shares isa/i386/les.pil, which now takes the destination segment
+  register. Report 40 stopped LBACACHE and RECOVER on it.
+- ENTER size,0 (C8) in isa/i386/enter.pil: push BP/EBP, set BP to the pushed
+  slot, reserve the frame. A non-zero nesting level is still a decode stop.
+- INT 21h AH=40h writes CX bytes from DS:DX to the CON handles 0..2, with the
+  same screen and capture path as AH=09h, and returns AX=CX. A closed handle
+  returns error 6; AUX/PRN (3, 4) still stop as not modelled.
+- INT 21h AH=51h returns the PSP in BX, like AH=62h (also added).
+- INT 2Fh installation checks AX=1100h, 1600h, 1680h, 1687h, 1A00h and 4300h
+  return AX unchanged, which is what the FreeDOS kernel's default multiplex
+  handler does (kernel/int2f.asm, inthndlr.c) when no redirector, Windows,
+  DPMI host, ANSI.SYS or XMS driver is loaded. AX=4310h (XMS entry point) is
+  still a stop, because a caller should only ask after 4300h says installed.
+- INT 10h AH=12h and AH=4Fh: the video BIOS is CGA-class, so these calls are
+  ignored (BL=10h stays 10h: no EGA; AL is not 4Fh: no VBE).
+- INT 15h AH=C0h returns CF=1, AH=86h (no configuration table), like AH=C2h.
+
+Verification: 384 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 228 cases (new: lds16, lds32,
+enter16, enter32, ENTER on a read-only stack slot). DOSBox-X 2024.03.01
+headless: CPU suite 391/391 (2 LDS, 2 ENTER new) and console 9/9 (AH40 to
+STDOUT, AH51/AH62) in both engines. INT 2Fh and INT 10h AH=12h are not compared
+with DOSBox-X, which has its own XMS and a VGA BIOS. Not yet rerun on the
+FreeDOS image.
+
 # RCL/RCR, DAA/DAS, PUSHA/POPA and indirect JMP — 30 October 2026
 
 The rest of the integer encodings that stop programs in FreeDOS reports 38 and 39:

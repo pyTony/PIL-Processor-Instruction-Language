@@ -2098,6 +2098,23 @@
         "FPU (FNINIT) and SMSW r32 remain",
         "one-operand IMUL F6/F7 /5 not yet"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "LDS, ENTER and absent-extension answers",
+      "base": "dev after #51",
+      "verification": {
+        "linux_rust_tests": 384,
+        "generated_backend_cases": 228,
+        "dosbox_cpu_cases": "391/391 in DOSBox-X 2024.03.01",
+        "dosbox_console_cases": "9/9",
+        "freedos_probe": "report 40 is the baseline; not rerun"
+      },
+      "limitations": [
+        "ENTER nesting level above zero not yet",
+        "INT21 AH58/52/31/5F/71, INT2F AX=4310h, INT33 still stop",
+        "FPU (DB) and SMSW r32 remain"
+      ]
     }
   ]
 }

@@ -1,4 +1,5 @@
-# Bounded real-mode LES. Read the whole pointer before staging either write.
+# Bounded real-mode LES/LDS. Read the whole pointer before staging either write.
+# $DEST is the segment register index: 0 for ES (LES), 3 for DS (LDS).
 require_width 16_or_32
 require_real_mode
 read_address pointer
@@ -9,6 +10,6 @@ const size 32 $BYTES
 add selector_at pointer size
 load selector selector_at 16
 write dst offset
-write_segment 0 selector
+write_segment $DEST selector
 preserve_flags all
 retire

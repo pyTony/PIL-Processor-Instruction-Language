@@ -120,6 +120,18 @@ def build_console(negative=False):
             for offset, want in zip((0xf001, 0xf003), words):
                 b.emit(bytes([0xa1])); b.word(offset); check(0, want, fail)  # MOV AX,[offset]
     case('dos_buffered_line_edit_and_full_buffer', line_input)
+    def handle_write(fail):
+        # AH40 to STDOUT writes CX bytes with no terminator; AH51/AH62 return the PSP.
+        for i, ch in enumerate(b'w$z\r\n'):
+            b.emit(bytes([0xc6, 0x06, i, 0xf0, ch]))  # MOV BYTE [F000+i],ch
+        mov(0, 0x4000); mov(3, 1); mov(1, 5); mov(2, 0xf000); interrupt(0x21)
+        check(0, 5, fail)
+        b.emit(bytes.fromhex('9c5a81e20100')); check(2, 0, fail)  # CF clear
+        b.emit(bytes.fromhex('8cda'))  # MOV DX,DS
+        for ah in (0x51, 0x62):
+            mov(0, ah << 8); mov(3, 0); interrupt(0x21)
+            b.emit(bytes.fromhex('39d3')); b.branch(fail, True)  # CMP BX,DX
+    case('dos_handle_write_and_psp_query', handle_write)
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
     b.emit(bytes.fromhex('a1')); b.ref('fail_count')
     b.emit(bytes.fromhex('09c07405b8014ccd21b8004ccd21'))

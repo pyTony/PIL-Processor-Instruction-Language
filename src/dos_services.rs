@@ -163,6 +163,31 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|err;
             Ok(None)
         },
+        (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
+        (0x21,0x51|0x62)=>{
+            // DOS 3+: AH51 and AH62 both return the current PSP segment.
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(PSP);
+            Ok(None)
+        },
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300)=>{
+            // Nothing hooks the multiplex chain, so these installation checks
+            // reach the kernel default, which returns AX unchanged (FreeDOS
+            // int2f.asm; RBIL): no redirector, Windows, DPMI host, ANSI.SYS or
+            // XMS driver. AX=1680h leaves AL=80h (time slice not released).
+            Ok(None)
+        },
+        (0x10,0x12|0x4f)=>{
+            // CGA-class video BIOS: no EGA/VGA alternate functions and no VBE.
+            // Such a BIOS ignores these calls, so BL=10h stays 10h (no EGA)
+            // and AX=4F00h does not return AL=4Fh.
+            Ok(None)
+        },
+        (0x15,0xc0)=>{
+            // No system configuration table: CF=1, AH=86h as for AH=C2.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
         (0x21,0x3e)=>{
             let handle=(p.cpu.regs[3]&0xffff)as u16;
             if handle<20&&(p.open_handles&(1u32<<handle))!=0{
@@ -177,6 +202,30 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         },
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
+}
+/// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without
+/// a terminator. AUX/PRN (3..4) are not modelled; a closed handle is error 6.
+fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
+    let handle=p.cpu.regs[3]&0xffff;
+    if handle>=20||p.open_handles&(1<<handle)==0{
+        p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+        return Ok(());
+    }
+    if handle>=3{return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
+    let offset=p.cpu.regs[2]&0xffff;let count=p.cpu.regs[1]&0xffff;
+    if offset+count>0x10000{return Err("DOS write buffer exceeds segment end".into());}
+    if count as usize>out.remaining(){return Err("DOS output limit reached before handle write".into());}
+    let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+    let mut text=Vec::with_capacity(count as usize);
+    for n in offset..offset+count{
+        let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS write buffer access: {e:?}"))?;
+        text.push(p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS write buffer RAM access: {e:?}"))?as u8);
+    }
+    console::dos_break_check(p)?;let screen=console::dos_screen(p,&text)?;
+    out.write_atomic(&text).map_err(|e|format!("DOS handle output provider: {e:?}"))?;
+    console::store(p,&screen)?;
+    p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|count;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+    Ok(())
 }
 /// AH02 (and AH06 output): capture and active-page screen change together.
 fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{

@@ -1,0 +1,16 @@
+# ENTER size,0: push BP/EBP, point BP/EBP at the saved value and reserve
+# the frame. SS address size selects SP/BP or ESP/EBP; operand size selects
+# the pushed width. Nesting levels above zero are rejected by the decoder.
+require_width 16_or_32
+read_gpr old_sp 4 $S
+read_gpr old_bp 5 $W
+const step $S $BYTES
+sub frame old_sp step
+zext at frame 32
+store_segment 2 at old_bp
+const size $S $SIZE
+sub new_sp frame size
+write_gpr 5 frame
+write_gpr 4 new_sp
+preserve_flags all
+retire
