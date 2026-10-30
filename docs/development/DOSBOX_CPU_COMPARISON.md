@@ -6,9 +6,14 @@ test, not SingleStepTests, a hardware oracle or full 386/DOS conformance.
 ## Measured result
 
 Update 30 October 2026: MUL, LOOP-family, RCL/RCR, DAA/DAS, PUSHA/POPA,
-indirect JMP, LDS, ENTER, far JMP, one-operand IMUL, XLAT and BT-family cases bring
-the suite to 448. A shared PASS/FAIL routine keeps the COM at 64,398 bytes. Ubuntu
-dosbox-x 2024.03.01 (headless, Linux CI) passes all 448 in both engines. The Windows measurement below is the earlier 328-case run.
+indirect JMP, LDS, ENTER, far JMP, one-operand IMUL, XLAT, BT-family and
+SHLD/SHRD cases bring the suite to 504. Each case is now CALL setup, the code
+under test, CALL check, with registers and flags in a 32-byte record per case,
+so the COM fell from 64,398 bytes (448 cases) to 31,169 bytes (504 cases).
+Ubuntu dosbox-x 2024.03.01 (headless, Linux CI) passes all 504 in both engines.
+One flag is left out: DOSBox-X takes the OF of a 16-bit SHLD by one from the
+source word (cpu/flags.cpp, get_OF for t_DSHLw), where Intel defines it as a
+sign change of the destination. PIL follows Intel and the unit tests check it. The Windows measurement below is the earlier 328-case run.
 
 The exact same 57,117-byte CPUTEST.COM passed all 328 cases in both engines.
 Both outputs contain every expected case ID in order, no failures, and the
@@ -55,7 +60,8 @@ changed between the start and end of the comparison.
 | Far JMP through SS:[BX] (16/32-bit) | 2 |
 | One-operand IMUL (8/16/32-bit), XLAT through SS:BX | 7 |
 | BT/BTS/BTR/BTC, 16/32-bit, register and immediate offsets | 48 |
-| Total | 448 |
+| SHLD/SHRD, 16/32-bit, CL and immediate counts | 56 |
+| Total | 504 |
 
 All operand-sized families exercise 8-, 16- and 32-bit widths (or 16/32-bit for
 extensions, conversions, IMUL and LEA). Cases use fixed

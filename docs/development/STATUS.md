@@ -1,3 +1,39 @@
+# SHLD/SHRD, environment block, own-file reads and a growable handle table — 30 October 2026
+
+FreeDOS report 45 (dev after #55, 100,000 steps): 65 Exit, 16 WaitingForInput,
+45 Budget, 17 Service, 8 MissingEncoding. The BTC probe is gone. This round:
+
+- SHLD and SHRD (0F A4/A5/AC/AD) by immediate or CL, on registers and memory,
+  in isa/i386/shld.pil and shrd.pil. The count is masked to five bits and a
+  zero count changes no flags. CF is the last bit shifted out, OF is defined
+  only for a count of one, and AF is undefined. A 16-bit count above 16 leaves
+  the result undefined on the 386, so it is rejected instead of guessed. All
+  four CWSDPMI programs and FDNPKG stopped on `SHLD DX,AX,CL`.
+- Environment block: PSP:2Ch points at a 16-paragraph block in its own MCB,
+  owned by the program (so AH49 can free it), holding `COMSPEC=A:\COMMAND.COM`,
+  the end-of-list NUL, the count word 1 and the program path `A:\NAME.EXT`.
+- The program's own file is the one file the probe can open. AH3D with a path
+  ending in the program's name opens it read-only on the lowest free handle;
+  AH3F reads from it, AH42 seeks (origins 0, 1, 2; DX:AX is the new position)
+  and AH3E closes it. Opening it for writing, a second open, and seeking before
+  its start stop. Other paths still return file-not-found. Directories are not
+  modelled. This was salvaged from the `feature/command-interactive` branch.
+- INT 21h AH=67h follows FreeDOS SetJFTSize. PSP:32h/34h now hold the table
+  size (20) and a far pointer to PSP:18h. A count that fits updates PSP:32h; a
+  larger one allocates a block with AH48 rules, copies the entries, fills the
+  rest with FFh and points PSP:34h at it. Without free memory it returns CF=1,
+  AX=8. Handle opens and closes go through the pointer. SWSUBST asked for 50.
+- DOSBox-X CPU suite is table-driven: 504 cases in a 31,169-byte COM (was
+  448 cases in 64,398 bytes, near the FF00h limit). 16-bit SHLD-by-one OF is
+  not compared, because DOSBox-X takes it from the source word.
+
+Verification: 396 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 240 cases (new: double_shift with
+CL and immediate counts on registers and memory; double_shift_reject for a
+16-bit count of 17). DOSBox-X 2024.03.01 headless: CPU suite 504/504, the
+negative control fails case 1 in both engines, console 9/9. The Python tool
+checks and GUI tests pass. Not yet rerun on the FreeDOS image.
+
 # BT family, true DOS version, default drive and handle count — 30 October 2026
 
 FreeDOS report 44 (dev after #54, 100,000 steps): 63 programs exit and 16

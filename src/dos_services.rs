@@ -85,10 +85,27 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x21,0x67)=>{
-            // The PSP holds a 20-entry handle table and Dine never moves it, so
-            // only a request that fits that table can succeed.
-            let wanted=p.cpu.regs[3]&0xffff;
-            if wanted>20{return Err(format!("INT21/AH67 asks for {wanted} handles; this profile has only the 20-entry PSP table"));}
+            // Set handle count, as FreeDOS SetJFTSize does: a count that fits
+            // the current table only updates PSP:32h; a larger one allocates a
+            // new table (AH48 rules), copies the old entries, fills the rest
+            // with FFh and points PSP:34h at it. No memory: CF=1, AX=8.
+            let psp=u32::from(PSP)*16;let load=|p:&Loaded,at:u32|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT PSP read: {e:?}"));
+            let wanted=p.cpu.regs[3]&0xffff;let current=load(p,psp+0x32)?;
+            if wanted>current{
+                let saved=(p.cpu.regs[0],p.cpu.regs[3]);
+                p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|(wanted+15)>>4;memory_service(p,0x48)?;
+                let segment=p.cpu.regs[0]&0xffff;p.cpu.regs[3]=saved.1;
+                if p.cpu.eflags&1!=0{p.cpu.regs[0]=(saved.0&0xffff0000)|8;return Ok(None);}
+                p.cpu.regs[0]=saved.0;
+                let old=jft(p,0)?;
+                for n in 0..wanted{
+                    let entry=if n<current{p.ram.load(old+n,MemWidth::Byte).map_err(|e|format!("DOS JFT read: {e:?}"))?}else{0xff};
+                    p.ram.store(segment*16+n,MemWidth::Byte,entry).map_err(|e|format!("DOS JFT write: {e:?}"))?;
+                }
+                p.ram.store(psp+0x34,MemWidth::Word,0).map_err(|e|format!("DOS JFT PSP write: {e:?}"))?;
+                p.ram.store(psp+0x36,MemWidth::Word,segment).map_err(|e|format!("DOS JFT PSP write: {e:?}"))?;
+            }
+            p.ram.store(psp+0x32,MemWidth::Word,wanted).map_err(|e|format!("DOS JFT PSP write: {e:?}"))?;
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
@@ -162,17 +179,66 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             }
             let offset=p.cpu.regs[2]&0xffff;
             let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            let mut len=0usize;let mut terminated=false;
+            let mut path=Vec::new();let mut terminated=false;
             for i in 0..128u32{
                 let Some(at)=offset.checked_add(i).filter(|&a|a<=0xffff)else{return Err("DOS open path exceeds segment end before NUL terminator".into());};
                 let addr=context.translate(at,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS open path access: {e:?}"))?;
                 let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS open path RAM access: {e:?}"))?as u8;
                 if b==0{terminated=true;break;}
-                len+=1;
+                path.push(b);
             }
             if !terminated{return Err("DOS open path has no NUL terminator within 128 bytes".into());}
-            let err=if len==0{0x0003}else{0x0002};
+            if !path.is_empty()&&base_name(&path)==p.own_name{
+                // The program's own file is the one file there is. Directories
+                // are not modelled, so any path ending in its name opens it.
+                if mode!=0{return Err("opening the program file for writing is not modelled".into());}
+                if p.own_open.is_some(){return Err("a second open of the program file is not modelled".into());}
+                let limit=p.ram.load(u32::from(PSP)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
+                let Some(handle)=(5..limit).find(|&h|p.open_handles&(1<<h)==0)else{
+                    p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0004;return Ok(None);
+                };
+                p.ram.store(jft(p,handle)?,MemWidth::Byte,5).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
+                p.open_handles|=1<<handle;p.own_open=Some((handle,0));
+                p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(handle);
+                return Ok(None);
+            }
+            let err=if path.is_empty(){0x0003}else{0x0002};
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|err;
+            Ok(None)
+        },
+        (0x21,0x3f)=>{
+            let handle=(p.cpu.regs[3]&0xffff)as u16;
+            let Some((open,pos))=p.own_open.filter(|&(h,_)|h==handle)else{
+                if handle<20&&p.open_handles&(1<<handle)!=0{return Err(format!("DOS read from handle {handle} is not modelled"));}
+                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(None);
+            };
+            let offset=p.cpu.regs[2]&0xffff;let wanted=p.cpu.regs[1]&0xffff;
+            if offset+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
+            let start=(pos as usize).min(p.own_file.len());let count=(wanted as usize).min(p.own_file.len()-start);
+            let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+            for n in 0..count{
+                let addr=context.translate(offset+n as u32,MemWidth::Byte,true,p.cpu.eip).map_err(|e|format!("DOS read buffer access: {e:?}"))?;
+                p.ram.store(addr,MemWidth::Byte,u32::from(p.own_file[start+n])).map_err(|e|format!("DOS read buffer RAM access: {e:?}"))?;
+            }
+            p.own_open=Some((open,pos+count as u32));
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|count as u32;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        (0x21,0x42)=>{
+            let handle=(p.cpu.regs[3]&0xffff)as u16;
+            let Some((open,pos))=p.own_open.filter(|&(h,_)|h==handle)else{
+                if handle<20&&p.open_handles&(1<<handle)!=0{return Err(format!("DOS seek on handle {handle} is not modelled"));}
+                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(None);
+            };
+            let distance=i64::from(((p.cpu.regs[1]&0xffff)<<16|(p.cpu.regs[2]&0xffff))as i32);
+            let origin=match p.cpu.regs[0]as u8{0=>0,1=>i64::from(pos),2=>p.own_file.len()as i64,_=>{
+                p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(None);
+            }};
+            let target=origin+distance;
+            if !(0..=i64::from(u32::MAX)).contains(&target){return Err("DOS seek before the start of the file is not modelled".into());}
+            p.own_open=Some((open,target as u32));
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(target as u32&0xffff);p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|(target as u32>>16);
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
@@ -258,8 +324,9 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x21,0x3e)=>{
             let handle=(p.cpu.regs[3]&0xffff)as u16;
             if handle<20&&(p.open_handles&(1u32<<handle))!=0{
-                p.ram.store(u32::from(PSP)*16+0x18+u32::from(handle),MemWidth::Byte,0xff).map_err(|e|format!("DOS close JFT write: {e:?}"))?;
+                p.ram.store(jft(p,handle)?,MemWidth::Byte,0xff).map_err(|e|format!("DOS close JFT write: {e:?}"))?;
                 p.open_handles&=!(1u32<<handle);
+                if p.own_open.is_some_and(|(h,_)|h==handle){p.own_open=None;}
                 p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             }else{
                 p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
@@ -286,6 +353,11 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
 }
 /// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without
 /// a terminator. AUX/PRN (3..4) are not modelled; a closed handle is error 6.
+/// Linear address of a handle's entry in the job file table PSP:34h points at.
+fn jft(p:&Loaded,handle:u16)->Result<u32,String>{
+    let psp=u32::from(PSP)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
+    Ok(word(psp+0x36)?*16+word(psp+0x34)?+u32::from(handle))
+}
 fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let handle=p.cpu.regs[3]&0xffff;
     if handle>=20||p.open_handles&(1<<handle)==0{

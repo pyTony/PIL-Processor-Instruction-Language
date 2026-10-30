@@ -398,6 +398,15 @@ impl Image {
                     let update=match kind{5=>format!("or r a selected\n{write}"),6=>format!("not cleared selected\nand r a cleared\n{write}"),7=>format!("xor r a selected\n{write}"),_=>String::new()};
                     let text=include_str!("../isa/i386/bt.pil").replace("$OPERAND",operand).replace("$OFFSET",&offset).replace("$UPDATE",&update);
                     (format!("{name} {},{offset_label}",operand_name(dst,address)),compile(&instantiate(text,w),w))
+                }else if matches!(second,0xa4|0xa5|0xac|0xad){
+                    let m=r.byte()?;let memory=m>>6!=3;
+                    dst=view((m&7)as usize,w);src=view(((m>>3)&7)as usize,w);
+                    if memory{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});}
+                    let (count,count_label)=if second&1==0{let imm=r.byte()?;(format!("const raw 8 {imm}"),format!("0x{imm:02x}"))}else{("read_gpr raw 1 8".into(),"CL".into())};
+                    let (operand,write)=if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
+                    let (name,text)=if second<0xa8{("SHLD",include_str!("../isa/i386/shld.pil"))}else{("SHRD",include_str!("../isa/i386/shrd.pil"))};
+                    let text=text.replace("$OPERAND",operand).replace("$COUNT",&count).replace("$WRITE",write);
+                    (format!("{name} {},{},{count_label}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
                 }else if second==0xaf {
                     let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
                     dst=reg;src=rm;

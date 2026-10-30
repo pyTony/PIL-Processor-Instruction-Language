@@ -1,5 +1,5 @@
 //! Bounded single-process DOS MCB arena. No UMBs, EXEC, TSR or device ownership.
-use super::{Loaded,Ram,MemWidth,PSP,LIMIT};
+use super::{Loaded,Ram,MemWidth,PSP,LIMIT,ENV,ENV_PARAS};
 const END:u16=(LIMIT/16)as u16;
 const MAX_BLOCKS:usize=4096;
 #[derive(Clone,Debug,PartialEq,Eq)]
@@ -8,7 +8,7 @@ struct Block{header:u16,size:u16,owner:u16}
 pub(super) struct Arena{blocks:Vec<Block>}
 impl Arena{
     pub(super) fn new(program_end:u16)->Self{
-        let mut blocks=vec![Block{header:PSP-1,size:program_end-PSP,owner:PSP}];
+        let mut blocks=vec![Block{header:ENV-1,size:ENV_PARAS,owner:PSP},Block{header:PSP-1,size:program_end-PSP,owner:PSP}];
         if program_end<END{blocks.push(Block{header:program_end,size:END-program_end-1,owner:0});}
         Self{blocks}
     }

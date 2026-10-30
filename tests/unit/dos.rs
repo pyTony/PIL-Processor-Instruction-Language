@@ -750,9 +750,20 @@ fn true_version_default_drive_and_handle_count_answers(){
  let r=run(load(&[0xb8,0x00,0x33,0xcd,0x21,0xfa,0xf4],"break.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  // MOV AX,19FF; INT 21: AL=0 (A:).
  let r=run(load(&[0xb8,0xff,0x19,0xcd,0x21,0xfa,0xf4],"drive.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x1900);
- // MOV AH,67; MOV BX,n; STC; INT 21: 20 handles fit the PSP table (CF=0), 21 stops.
+ // MOV AH,67; MOV BX,20; STC; INT 21: 20 handles fit the PSP table (CF=0).
  let r=run(load(&[0xb4,0x67,0xbb,20,0,0xf9,0xcd,0x21,0xfa,0xf4],"jft.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.eflags&1,0);assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
- let r=run(load(&[0xb4,0x67,0xbb,21,0,0xf9,0xcd,0x21,0xfa,0xf4],"jft21.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ // 50 handles need a new table; a COM owns all memory, so AH48 fails: CF=1, AX=8.
+ let r=run(load(&[0xb4,0x67,0xbb,50,0,0xcd,0x21,0xfa,0xf4],"jft50.com").unwrap(),10).unwrap();
+ assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.eflags&1),(8,50,1));
+ let psp=u32::from(PSP)*16;assert_eq!(r.loaded.ram.load(psp+0x32,MemWidth::Word).unwrap(),20);
+ // After AH4A shrinks the program to 1000h paragraphs, the table moves: PSP:34h
+ // points at the new block, entries 0-4 are copied and the rest are FFh.
+ let r=run(load(&[0xb4,0x4a,0xbb,0x00,0x10,0xcd,0x21,0xb4,0x67,0xbb,50,0,0xcd,0x21,0xfa,0xf4],"jftmove.com").unwrap(),10).unwrap();
+ assert_eq!(r.loaded.cpu.eflags&1,0);assert_eq!(r.loaded.ram.load(psp+0x32,MemWidth::Word).unwrap(),50);
+ let (off,seg)=(r.loaded.ram.load(psp+0x34,MemWidth::Word).unwrap(),r.loaded.ram.load(psp+0x36,MemWidth::Word).unwrap());
+ assert_eq!((off,seg),(0,u32::from(PSP)+0x1001));
+ let table:Vec<u32>=(0..50).map(|n|r.loaded.ram.load(seg*16+n,MemWidth::Byte).unwrap()).collect();
+ assert_eq!(&table[..5],&[0,1,2,3,4]);assert!(table[5..].iter().all(|&b|b==0xff));
 }
 #[test]
 fn far_jump_forms_transfer_cs_and_ip(){
@@ -820,4 +831,35 @@ fn dos_time_scales_bios_ticks_like_the_clock_driver(){
  // INT 15 AX=E801 is unsupported on this AT-class BIOS; INT 2F AX=0600 finds no ASSIGN.
  let r=run(load(&[0xb8,0x01,0xe8,0xcd,0x15,0xfa,0xf4],"e801.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
  let r=run(load(&[0xb8,0x00,0x06,0xcd,0x2f,0xfa,0xf4],"assign.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x0600);
+}
+
+#[test]
+fn environment_block_names_comspec_and_the_program_and_can_be_freed(){
+ // MOV ES,[002C]; MOV AH,49; INT 21; CLI; HLT
+ let r=run(load(&[0x8e,0x06,0x2c,0x00,0xb4,0x49,0xcd,0x21,0xfa,0xf4],"images/FD.img::BIN/Self.com").unwrap(),10).unwrap();
+ let psp=u32::from(PSP)*16;assert_eq!(r.loaded.ram.load(psp+0x2c,MemWidth::Word).unwrap(),u32::from(ENV));
+ let want=b"COMSPEC=A:\\COMMAND.COM\0\0\x01\0A:\\SELF.COM\0";
+ let got:Vec<u8>=(0..want.len()as u32).map(|i|r.loaded.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(got,want);
+ // The environment has its own MCB owned by the PSP, so AH49 frees it.
+ assert_eq!(r.loaded.cpu.eflags&1,0);assert_eq!(r.loaded.ram.load(u32::from(ENV-1)*16+1,MemWidth::Word).unwrap(),0);
+}
+#[test]
+fn program_reads_its_own_file_and_nothing_else(){
+ // MOV AX,3D00; MOV DX,0124; INT 21; MOV BX,AX; MOV AX,4200; XOR CX,CX; MOV DX,2; INT 21;
+ // MOV AH,3F; MOV CX,4; MOV DX,0200; INT 21; MOV SI,AX; MOV AH,3E; INT 21; CLI; HLT; "A:\SELF.COM"
+ let mut code=vec![0xb8,0x00,0x3d,0xba,0x26,0x01,0xcd,0x21,0x89,0xc3,0xb8,0x00,0x42,0x31,0xc9,0xba,0x02,0x00,0xcd,0x21,
+  0xb4,0x3f,0xb9,0x04,0x00,0xba,0x00,0x02,0xcd,0x21,0x89,0xc6,0xb4,0x3e,0xcd,0x21,0xfa,0xf4];
+ assert_eq!(code.len(),0x26);code.extend(b"A:\\SELF.COM\0");
+ let r=run(load(&code,"self.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[6]&0xffff,r.loaded.cpu.eflags&1),(5,4,0));
+ let buffer:Vec<u32>=(0..4).map(|i|r.loaded.ram.load(u32::from(PSP)*16+0x200+i,MemWidth::Byte).unwrap()).collect();assert_eq!(buffer,[0x3d,0xba,0x26,0x01]);
+ assert_eq!((r.loaded.open_handles,r.loaded.own_open),(0x1f,None));
+ // Seek from the end gives DX:AX = file size; reading there returns 0 bytes.
+ let mut end=code.clone();end[10..18].copy_from_slice(&[0xb8,0x02,0x42,0x31,0xc9,0x31,0xd2,0x90]);end[30..32].copy_from_slice(&[0x89,0xc6]);
+ let r=run(load(&end,"self.com").unwrap(),20).unwrap();assert_eq!(r.loaded.cpu.regs[6]&0xffff,0);
+ // Another name is not found; the program file opened for writing stops.
+ let mut other=code.clone();other[0x29]=b'X';let r=run(load(&other,"self.com").unwrap(),3).unwrap();assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.eflags&1),(2,1));
+ let mut write=code.clone();write[1]=2;let r=run(load(&write,"self.com").unwrap(),3).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ // AH3F on a closed handle is error 6.
+ let r=run(load(&[0xb4,0x3f,0xbb,0x07,0x00,0xcd,0x21,0xfa,0xf4],"read.com").unwrap(),5).unwrap();assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.eflags&1),(6,1));
 }

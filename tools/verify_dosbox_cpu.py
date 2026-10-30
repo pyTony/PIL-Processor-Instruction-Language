@@ -404,6 +404,31 @@ def cases():
                 value = {'bt': a, 'bts': a | (1 << bit), 'btr': a & ~(1 << bit), 'btc': a ^ (1 << bit)}[name]
                 add(f'{name}{width}_r_{b}', width, a, b, prefix+bytes([0x0f, opcode, 0xc8]), value, cf, flag_mask=1 | DF)
                 add(f'{name}{width}_i_{b}', width, a, 0, prefix+bytes([0x0f, 0xba, 0xc0 | (ext << 3), b]), value, cf, flag_mask=1 | DF)
+    # SHLD/SHRD by CL and by immediate into AX/EAX from CX/ECX. Only counts
+    # 1..width are compared (16-bit counts above 16 are undefined); OF is
+    # compared for a count of one (but see below), AF never.
+    for width in (16, 32):
+        prefix = b'\x66' if width == 32 else b''
+        mask = (1 << width)-1
+        for name, opcode in [('shld', 0xa4), ('shrd', 0xac)]:
+            for a, b in [(0x80014002, 0x12348765), (0x00000001, 0xffffffff)]:
+                for count in (1, 4, width-1) + ((16,) if width == 16 else ()):
+                    a &= mask
+                    bb = ((b & ~0xff) | count) & mask
+                    if name == 'shld':
+                        value = ((a << count) | (bb >> (width-count))) & mask
+                        cf = (a >> (width-count)) & 1
+                    else:
+                        value = ((a >> count) | (bb << (width-count))) & mask
+                        cf = (a >> (count-1)) & 1
+                    sf = (value >> (width-1)) & 1
+                    flags = cf | (parity_flags(value, width) & 0xc4) | (((sf ^ (a >> (width-1))) & 1) << 11)
+                    # DOSBox-X (cpu/flags.cpp, get_OF t_DSHLw) takes 16-bit SHLD OF
+                    # from the source word instead of the destination, so that one
+                    # OF is left out here; the unit tests check Intel's rule.
+                    flag_mask = (0x8c5 if count == 1 and (width, name) != (16, 'shld') else 0xc5) | DF
+                    add(f'{name}{width}_cl_{a:x}_{count}', width, a, bb, prefix+bytes([0x0f, opcode+1, 0xc8]), value, flags & flag_mask, flag_mask=flag_mask)
+                    add(f'{name}{width}_i_{a:x}_{count}', width, a, bb, prefix+bytes([0x0f, opcode, 0xc8, count]), value, flags & flag_mask, flag_mask=flag_mask)
     return result
 
 
@@ -467,47 +492,50 @@ class ComBuilder:
 
 
 def build(tests):
+    # Each case is CALL setup / DW record, the code under test, CALL check /
+    # DW record. The shared routines load and compare registers from a 32-byte
+    # record, so a case costs about 60 bytes and the suite fits in one COM.
     b = ComBuilder()
     b.puts('PIL-DOSBOX CPU CHECK v1\r\n')
     positions = []
     for index, case in enumerate(tests, 1):
-        tag = f'{index:03d} {case["name"]}'
-        fail, done = f'fail_{index}', f'done_{index}'
+        record = f'record_{index}'
         entry_pos = len(b.code)
-        for reg, value in [(0, case['eax']), (1, case['ecx']), (2, case['edx']),
-                           (3, 0xdead0000), (6, 0x11223344), (7, 0x55667788)]:
-            b.mov32(reg, value)
-        b.emit(bytes([0x68]))
-        b.word(case['incoming_flags'])
-        b.emit(bytes([0x9d]))  # POPF; data/flags setup is identical in both engines.
+        b.emit(bytes([0xe8])); b.ref('setup', True); b.ref(record)
         test_pos = len(b.code)
         b.emit(bytes.fromhex(case['code']))
-        b.emit(bytes.fromhex('9c5bfc'))  # PUSHF; POP BX; CLD so DF=1 tests never affect DOS INT 21h.
         check_pos = len(b.code)
-        for reg, expected in [(0, case['expected_eax']), (1, case.get('expected_ecx', case['ecx'])),
-                              (2, case['expected_edx']), (6, 0x11223344), (7, 0x55667788)]:
-            b.cmp32(reg, expected)
-            b.branch(fail, True)
-        b.emit(bytes.fromhex('81e3'))  # AND BX, defined-flag mask.
-        b.word(case['flags_mask'])
-        b.emit(bytes.fromhex('81fb'))  # CMP BX, expected defined/preserved bits.
-        b.word(case['flags'] & case['flags_mask'])
-        b.branch(fail, True)
-        # The shared report routines print PASS/FAIL then the tag at DX, so
-        # each case costs a few bytes and the suite still fits in one COM.
-        b.emit(bytes([0xba])); b.ref(b.text(tag+'\r\n'))
-        b.emit(bytes([0xe8])); b.ref('report_pass', True)
-        b.branch(done)
-        b.label(fail)
-        b.emit(bytes([0xba])); b.ref(b.text(tag+'\r\n'))
-        b.emit(bytes([0xe8])); b.ref('report_fail', True)
-        b.label(done)
-        positions.append((index, case, entry_pos, test_pos, check_pos, fail, done))
+        b.emit(bytes([0xe8])); b.ref('check', True); b.ref(record)
+        positions.append((index, case, entry_pos, test_pos, check_pos, len(b.code)))
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
     b.emit(bytes.fromhex('a1'))
     b.ref('fail_count')
     b.emit(bytes.fromhex('09c0'))  # OR AX,AX
     b.emit(bytes.fromhex('7405b8014ccd21b8004ccd21'))
+    # setup: POP BP; MOV BX,[BP]; INC BP x2; PUSH BP; load EAX/ECX/EDX; PUSH
+    # incoming flags; sentinels in ESI/EDI/EBX; POPF; RET to the case code.
+    b.label('setup')
+    b.emit(bytes.fromhex('5d8b5e00454555'
+                         '668b4700668b4f04668b5708ff7718'))
+    b.mov32(6, 0x11223344); b.mov32(7, 0x55667788); b.mov32(3, 0xdead0000)
+    b.emit(bytes.fromhex('9dc3'))
+    # check: PUSHF; CLD (DF=1 cases must not reach INT 21h); PUSH BP;
+    # MOV BP,SP; MOV BX,[BP+4]; MOV BX,[BX]; compare the registers, then the
+    # flags masked by the record. DX gets the case tag for the report.
+    b.label('check')
+    b.emit(bytes.fromhex('9cfc5589e58b5e048b1f'))
+    for compare in ('663b470c', '663b4f10', '663b5714'):
+        b.emit(bytes.fromhex(compare)); b.branch('check_fail', True)
+    b.cmp32(6, 0x11223344); b.branch('check_fail', True)
+    b.cmp32(7, 0x55667788); b.branch('check_fail', True)
+    b.emit(bytes.fromhex('8b460223471a3b471c'))  # MOV AX,[BP+2]; AND AX,[BX+26]; CMP AX,[BX+28]
+    b.branch('check_fail', True)
+    b.emit(bytes.fromhex('8b571e')); b.emit(bytes([0xe8])); b.ref('report_pass', True)
+    b.branch('check_out')
+    b.label('check_fail')
+    b.emit(bytes.fromhex('8b571e')); b.emit(bytes([0xe8])); b.ref('report_fail', True)
+    b.label('check_out')
+    b.emit(bytes.fromhex('5d83c4025b434353c3'))  # POP BP; ADD SP,2; return past the DW
     for name, word in (('report_fail', 'FAIL '), ('report_pass', 'PASS ')):
         b.label(name)
         if name == 'report_fail':
@@ -515,14 +543,21 @@ def build(tests):
         b.emit(bytes([0x52]))  # PUSH DX
         b.puts(word)
         b.emit(bytes.fromhex('5ab409cd21c3'))  # POP DX; MOV AH,09; INT 21h; RET
+    for index, case, *_ in positions:
+        b.label(f'record_{index}')
+        for value in (case['eax'], case['ecx'], case['edx'], case['expected_eax'],
+                      case.get('expected_ecx', case['ecx']), case['expected_edx']):
+            b.emit(int(value).to_bytes(4, 'little'))
+        b.word(case['incoming_flags']); b.word(case['flags_mask']); b.word(case['flags'] & case['flags_mask'])
+        b.ref(b.text(f'{index:03d} {case["name"]}\r\n'))
     com_bytes = b.finish()
-    for index, case, entry_pos, test_pos, check_pos, fail, done in positions:
+    for index, case, entry_pos, test_pos, check_pos, done_pos in positions:
         case['index'] = index
         case['entry_eip'] = 0x100 + entry_pos
         case['test_eip'] = 0x100 + test_pos
         case['check_eip'] = 0x100 + check_pos
-        case['fail_eip'] = 0x100 + b.labels[fail]
-        case['done_eip'] = 0x100 + b.labels[done]
+        case['fail_eip'] = 0x100 + b.labels['check_fail']
+        case['done_eip'] = 0x100 + done_pos
     return com_bytes
 
 
