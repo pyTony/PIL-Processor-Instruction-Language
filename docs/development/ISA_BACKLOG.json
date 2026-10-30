@@ -648,8 +648,8 @@
         "IRET",
         "IRETD"
       ],
-      "status": "planned",
-      "remaining": "Frames,return IP,error codes,nested faults,#DF/shutdown",
+      "status": "partial",
+      "remaining": "Real-mode IRET/IRETD implemented (IP, CS and the POPF-writable flags from one checked frame). INT n as a CPU instruction, INT3, INTO, protected-mode frames, error codes, nested faults and #DF/shutdown remain.",
       "modern_user_mode_oracle": "legacy_or_system",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

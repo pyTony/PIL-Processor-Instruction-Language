@@ -268,6 +268,11 @@ def cases():
     add('cld_arith1', 16, 0x1234, 0, bytes([0xfc]), 0x1234, ARITH, flag_mask=ARITH | DF, incoming=ARITH | DF)
     add('lahf_set', 16, 0x0055, 0, bytes([0x9f]), (0xd7 << 8) | 0x55, 0x0d5, incoming=0x0d5)
     add('sahf_clear', 16, 0x00aa, 0, bytes([0x9e]), 0x00aa, 0x800, incoming=ARITH)
+    # IRET through a frame built in place: PUSH imm16 flags; PUSH CS; CALL to
+    # the IRET, which returns to the JMP that skips it, with the pushed flags.
+    for idx, pushed in enumerate((0x0ed7, 0x0202, 0x08d5 | DF)):
+        add(f'iret_{idx}', 16, 0x1234, 0, bytes([0x68]) + pushed.to_bytes(2, 'little') + bytes.fromhex('0ee80200eb01cf'),
+            0x1234, pushed, incoming=ARITH ^ (pushed & ARITH))
     # Signed truncated IMUL (0F AF C1 and 6B C1 imm8) in 16-bit and 32-bit
     for width, pfx in [(16, b''), (32, b'\x66')]:
         mask = (1 << width) - 1

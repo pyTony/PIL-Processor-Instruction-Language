@@ -1856,6 +1856,7 @@ fn description(name: &str) -> R<String> {
         "call" => Some(include_str!("../isa/i386/call.pil")),
         "ret" => Some(include_str!("../isa/i386/ret.pil")),
         "retf" => Some(include_str!("../isa/i386/retf.pil")),
+        "iret" => Some(include_str!("../isa/i386/iret.pil")),
         "call_far" => Some(include_str!("../isa/i386/call_far.pil")),
         "movs" => Some(include_str!("../isa/i386/movs.pil")),
         "stos" => Some(include_str!("../isa/i386/stos.pil")),

@@ -246,6 +246,11 @@ impl Image {
                 let text=include_str!("../isa/i386/retf.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/4).to_string());
                 (if opcode==0xca{format!("RETF 0x{cleanup:04x}")}else{"RETF".into()},compile(&instantiate(text,w),w))
             }
+            0xcf=>{
+                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let text=description("iret").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/8*3).to_string());
+                (if w==32{"IRETD".into()}else{"IRET".into()},compile(&instantiate(text,w),w))
+            }
             0xc2|0xc3=>{
                 let cleanup=if opcode==0xc2{r.unsigned(16)?}else{0};let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let text=include_str!("../isa/i386/ret.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());

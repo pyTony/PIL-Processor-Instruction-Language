@@ -1,0 +1,45 @@
+# Real-mode interrupt return: read IP, CS and FLAGS from the whole frame
+# before staging, then branch and restore the writable 386 flags as POPF does.
+require_width 16_or_32
+require_real_mode
+read_gpr old_sp 4 $S
+zext stack_wide old_sp 64
+check_segment 2 stack_wide $FRAME
+zext stack_offset old_sp 32
+load_segment target_value 2 stack_offset $W
+const slot32 32 $BYTES
+add selector_offset stack_offset slot32
+load_segment selector_value 2 selector_offset $W
+add flags_offset selector_offset slot32
+load_segment packed 2 flags_offset $W
+trunc selector selector_value 16
+zext target32 target_value 32
+far_branch selector target32
+const frame_bytes $S $FRAME
+add new_sp old_sp frame_bytes
+write_gpr 4 new_sp
+bit f0 packed 0
+flag CF f0
+bit f2 packed 2
+flag PF f2
+bit f4 packed 4
+flag AF f4
+bit f6 packed 6
+flag ZF f6
+bit f7 packed 7
+flag SF f7
+bit f8 packed 8
+flag TF f8
+bit f9 packed 9
+flag IF f9
+bit f10 packed 10
+flag DF f10
+bit f11 packed 11
+flag OF f11
+bit f12 packed 12
+flag IOPL0 f12
+bit f13 packed 13
+flag IOPL1 f13
+bit f14 packed 14
+flag NT f14
+retire
