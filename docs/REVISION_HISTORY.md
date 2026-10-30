@@ -1,3 +1,14 @@
+# Visible text selection in the DOS terminal — 30 October 2026
+
+A mouse selection in the Tk terminal was made but never shown: the colour
+tags that paint each cell's background lay above Tk's selection tag. The
+selection tag is now raised above them, with a blue highlight that stays
+visible while the window does not have the focus, so text can be picked
+for Ctrl+Shift+C.
+
+Verification: a selection dragged under Xvfb shows highlighted in a
+screenshot; the GUI tests pass.
+
 # Host clock and copy/paste in the DOS terminal — 30 October 2026
 
 The Tk terminal now runs DOS time on this computer's clock, so FreeCOM's
