@@ -1,3 +1,25 @@
+# LOOP family, unsigned MUL and INT15 AH=C2 — 30 October 2026
+
+FreeDOS probe report 38 (current dev, 10,000 steps) stopped 16 programs on
+missing encodings and 12 CTMOUSE builds on INT15 AH=C2. This adds:
+
+- LOOP, LOOPE/LOOPZ and LOOPNE/LOOPNZ (E2, E1, E0) in isa/i386/loop.pil. The
+  address size picks CX or ECX; the counter is decremented and written whether
+  or not the branch is taken; flags are preserved. A taken target outside CS
+  faults before the counter is written.
+- Unsigned MUL F6/F7 /4 at 8/16/32 bits, register or memory: AX, DX:AX or
+  EDX:EAX receive the product; CF=OF=1 when the upper half is non-zero;
+  SF/ZF/AF/PF are undefined.
+- INT15 AH=C2 (PS/2 pointing device) answers CF=1, AH=86h "function not
+  supported", as a BIOS without PS/2 mouse support does (SeaBIOS behaviour).
+  No mouse is modelled; Dine does not pretend one exists.
+
+Verification: 380 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 214 cases (seven new MUL/LOOP
+cases, including a memory-operand fault and a taken-target fault). The DOSBox-X
+CPU comparison grows to 346 cases (12 MUL, 6 LOOP) and passes in both engines.
+Not yet rerun on the FreeDOS image.
+
 # Code runs anywhere in the program's DOS block — 30 October 2026
 
 The DOS loader's instruction fetch window was the bytes loaded from the file.

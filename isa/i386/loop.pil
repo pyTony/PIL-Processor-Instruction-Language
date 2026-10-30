@@ -1,0 +1,18 @@
+# LOOP/LOOPE/LOOPNE: address size chooses CX or ECX, operand size chooses
+# target wrapping. The counter is written whether or not the branch is taken.
+require_width 16_or_32
+read_gpr old 1 $A
+const one $A 1
+sub count old one
+write_gpr 1 count
+zero done count
+not more done
+$CONDITION
+read_ip fallthrough next 32
+trunc base fallthrough $W
+read_disp delta $W
+add wrapped base delta
+zext target wrapped 32
+branch_if target take
+preserve_flags all
+retire
