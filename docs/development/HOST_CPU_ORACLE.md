@@ -106,7 +106,7 @@ hardware-vector adapter.
 
 ## Verified development result —27 October2026
 
-[CI40415384652](https://github.com/pyTony/pil_proof/actions/runs/40415384652)
+[CI40415384652](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40415384652)
 passed for source24d28740c8d63a0ce393cec05b56320b7833b5c4. Both hosts passed
 167 tests and20,280 hardware cases against both PIL backends,including the
 six native harness checks. Ubuntu reported GenuineIntel; Windows reported
@@ -129,7 +129,7 @@ User reported the preceding source48556af passing20,280 cases under WSL on
 AuthenticAMD (CPUID1 EAX00a20f10),rustc1.99.1,with fingerprint8b8c01e8fdeff584.
 The helper ran one test with166 filtered out; artifacts used target/wsl.
 
-[CI40417668829](https://github.com/pyTony/pil_proof/actions/runs/40417668829)
+[CI40417668829](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40417668829)
 passed for sourcef6ff393221cb9c771b12556fe76c05336f3559d4 on both Windows/Linux
 AuthenticAMD hosts (CPUID1 EAX00a00f11). Each passed167 tests and52,728 native
 cases against both backends. Existing39 trace cases,full256x256 Mandelbrot
@@ -173,7 +173,7 @@ User Windows baseline atd23ab45 passed52,728 cases,one selected test with166
 filtered out,on AuthenticAMD EAX00a20f10/ECXfed8320b,rustc1.99.1,fingerprint
 0bc8895949b33008. This is user-reported correctness evidence,not throughput.
 
-[CI40419168682](https://github.com/pyTony/pil_proof/actions/runs/40419168682)
+[CI40419168682](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40419168682)
 passed for source342375e3a732dfe59f4b799358bf743d51cdd496. Both hosts passed
 168 tests and85,176 hardware cases against the interpreter and generated Rust.
 Linux reported AuthenticAMD EAX00b00f21; Windows reported AuthenticAMD
@@ -212,7 +212,7 @@ CLC/STC define CF and preserve every other bit/marker and full nativeRAX.
 
 ## 0.16 verified delivery evidence
 
-[CI40423654988](https://github.com/pyTony/pil_proof/actions/runs/40423654988)
+[CI40423654988](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40423654988)
 passed175 tests and321,784 hardware cases per Windows/Linux host for source
 21d65da9a430d77ee3ad1e658afbeede907ae041. Both backends matched the admitted
 hardware outputs and independent metadata policy. Independent Python checked

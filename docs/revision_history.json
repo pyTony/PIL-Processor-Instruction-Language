@@ -233,7 +233,7 @@
         "selftest_completed_steps": 63,
         "build_debug_scripts": "passed on both hosts",
         "native_zip_creation": "passed on both hosts",
-        "ci_run": "https://github.com/pyTony/pil_proof/actions/runs/40318741977",
+        "ci_run": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40318741977",
         "termux_manual_selftest": {
           "status": "user-confirmed PASS",
           "completed_steps": 63,
@@ -256,7 +256,7 @@
         "runtime_commit": "fd97dca67d25a4d1e4f59ffdc9bbf53baabdb94b",
         "exported_from_dev": "0cb33f73a629af01315f3562a3d0be46b58d4fba",
         "runtime_files": 36,
-        "verification": "https://github.com/pyTony/pil_proof/actions/runs/40320291757",
+        "verification": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40320291757",
         "results": "92 dev tests and isolated runtime build/scripts/serial/generated Rust passed on Ubuntu/Windows; native archives verified unpacked",
         "runtime_test_count": 0
       }
@@ -272,7 +272,7 @@
       ],
       "rust_verification": {
         "tests_supplied": 94,
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40324429616",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40324429616",
         "source_commit": "c1eca1982401e179b5eaa893d25a0572490a28b8",
         "tests_passed": 94,
         "tests_failed": 0,
@@ -296,7 +296,7 @@
       ],
       "rust_verification": {
         "tests_supplied": 101,
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40331078455",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40331078455",
         "phone_numeric": "user-confirmed PASS: factorial table, 100 stress runs and 65536 loop",
         "source_commit": "2ff2bcb89bbc03ac46870413a6dabfb7cd5d90b9",
         "tests_passed": 101,
@@ -349,7 +349,7 @@
       ],
       "rust_verification": {
         "tests_supplied": 116,
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40336149129",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40336149129",
         "phone_cache": "user-confirmed PASS: cached and uncached release benchmark",
         "source_commit": "bf9e681065cf26f976954ea9a5a997604d4d7582",
         "tests_passed": 116,
@@ -454,7 +454,7 @@
       ],
       "rust_verification": {
         "tests_supplied": 120,
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40341288842",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40341288842",
         "phone_native": "not yet reported",
         "pc_user_run": "planned by user",
         "source_commit": "ca195663533ad41a6f50952442bf6a38d1a92447",
@@ -536,7 +536,7 @@
         "ubuntu_seconds": 8.35,
         "windows_seconds": 12.67,
         "source_commit": "cdb5fc396617071a134fc65ce67807cf56dc68f3",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40360385843",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40360385843",
         "verifier_cases": 9,
         "matched_trace_bytes": 2046769,
         "runtime_export": "50-file isolated build/launchers/generated backend passed",
@@ -598,7 +598,7 @@
         "ubuntu_seconds": 7.5,
         "windows_seconds": 16.08,
         "source_commit": "aab72b00d47f77aa31ad30abb404070472fcb49c",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40364437807",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40364437807",
         "verifier_cases": 14,
         "matched_trace_bytes": 2460193,
         "runtime_export": "58-file standalone checks passed",
@@ -775,7 +775,7 @@
         "ubuntu_seconds": 10.65,
         "windows_seconds": 18.35,
         "source_commit": "c1a91bcaa82a555e2b7ec3d4682729d6619ff93a",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40367901727",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40367901727",
         "verifier_cases": 18,
         "matched_trace_bytes": 2535361,
         "runtime_export": "59-file isolated checks passed",
@@ -829,7 +829,7 @@
         "ubuntu_seconds": 12.43,
         "windows_seconds": 22,
         "source_commit": "1a35fa53fcddd5a89e86813699736e5cc3c68832",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40371543845",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40371543845",
         "verifier_cases": 23,
         "matched_trace_bytes": 3044833,
         "runtime_export": "62-file isolated checks passed",
@@ -908,7 +908,7 @@
         "ubuntu_seconds": 12.39,
         "windows_seconds": 16.8,
         "source_commit": "381cac63ee71c552d248177ba0156e07ddce7b79",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40373417827",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40373417827",
         "verifier_cases": 23,
         "matched_trace_bytes": 3044833,
         "runtime_export": "62-file isolated checks passed",
@@ -959,7 +959,7 @@
         "ubuntu_seconds": 8.32,
         "windows_seconds": 18.29,
         "source_commit": "0e2d8d495f84c27830dda4ae0cf31579247e9afd",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40374526560",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40374526560",
         "verifier_cases": 23,
         "matched_trace_bytes": 3044833,
         "runtime_export": "62-file isolated checks passed",
@@ -969,7 +969,7 @@
       "runtime_files": 62,
       "provenance": "original display formatting from decoded metadata; no new external references",
       "delivery": {
-        "pr": "https://github.com/pyTony/pil_proof/pull/13",
+        "pr": "https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/13",
         "head_commit": "6b193b23c11946855b87d4bf6221ddde74fe5a6c",
         "source_commit": "d57ca83e80ec1ce247478a59be9616aa1610546a",
         "base_main": "7efaf780d0041b9c6c56260810f87940a4b4d175"
@@ -1038,7 +1038,7 @@
         "ubuntu_seconds": 13.6,
         "windows_seconds": 17.87,
         "source_commit": "6c7297ea7c4075e73bb5738167ead7a496152f11",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40378440616",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40378440616",
         "verifier_cases": 26,
         "matched_trace_bytes": 4273138,
         "runtime_export": "66-file standalone checks passed",
@@ -1122,7 +1122,7 @@
         "ubuntu_seconds": 11.13,
         "windows_seconds": 26.02,
         "source_commit": "a5db4e29542b4b62bdcc4389df17e741de8d094e",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40384865363",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40384865363",
         "verifier_cases": 26,
         "matched_trace_bytes": 4273138,
         "standalone_runtime": "66-file isolated build and scripts passed",
@@ -1153,7 +1153,7 @@
         "scope": "single cold render each; checkpoint capture and draining included; setup/reference/files/process startup/compilation excluded; not median benchmark or386 cycles"
       },
       "runtime_delivery": {
-        "pull_request": "https://github.com/pyTony/pil_proof/pull/15",
+        "pull_request": "https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/15",
         "head": "46053bcd2193060477efa43c0cbc6a8647b5e5c1",
         "source_commit": "441844483574e5b55c7eb8691fdce7ff828a6a4c",
         "base_main": "cf8cd1cbdc1843f4a92db9de44a820ace3dacf1c"
@@ -1195,7 +1195,7 @@
         "ubuntu_seconds": 14.66,
         "windows_seconds": 31.44,
         "source_commit": "6ba1ac3b8affe72702290a067a9c1c95f9626626",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40404626380",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40404626380",
         "verifier_cases": 34,
         "matched_trace_bytes": 4394242,
         "runtime_export": "72-file isolated build/platform scripts/emitted Rust passed",
@@ -1212,7 +1212,7 @@
         "status": "both hosts passed"
       },
       "runtime_delivery": {
-        "pull_request": "https://github.com/pyTony/pil_proof/pull/16",
+        "pull_request": "https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/16",
         "head": "0d4da793e2159ff21ccd129d034d0738a1adfe1d",
         "source_commit": "1ebf5ac9609ddaff6553920243268ef6301940e2"
       }
@@ -1246,7 +1246,7 @@
         "ubuntu_seconds": 15.29,
         "windows_seconds": 22.3,
         "source_commit": "54149d44cba6079d4ccf4f1b1716ac2f4511821a",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40405704118",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40405704118",
         "verifier_cases": 34,
         "matched_trace_bytes": 4394242,
         "standalone_runtime": "72-file build/platform helpers passed",
@@ -1257,7 +1257,7 @@
       "runtime_files": 72,
       "provenance": "User-supplied Claude runtime review; original diagnostic/test changes, no new external material",
       "runtime_delivery": {
-        "pull_request": "https://github.com/pyTony/pil_proof/pull/17",
+        "pull_request": "https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/17",
         "head": "9c40f41cec5971c740573734ad72d456691bbc91",
         "source_commit": "0ced9f0e9263162f7ffe4259be9f2020d4f8c93a",
         "base_main": "33377e984e4e7d54b99cf6db2f1e9c57b238b35c"
@@ -1309,7 +1309,7 @@
         "ubuntu_seconds": 15.27,
         "windows_seconds": 22.7,
         "source_commit": "036ff225fcd30a16079fa48e1387fd29891d8a34",
-        "host_ci": "https://github.com/pyTony/pil_proof/actions/runs/40408105698",
+        "host_ci": "https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40408105698",
         "verifier_cases": 39,
         "matched_trace_bytes": 4494466,
         "runtime_export": "72-file isolated build/scripts/new demo passed",
@@ -1345,7 +1345,7 @@
         "plan": "docs/development/EXTERNAL_TEST_SUITES.md"
       },
       "runtime_delivery": {
-        "pull_request": "https://github.com/pyTony/pil_proof/pull/18",
+        "pull_request": "https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/18",
         "head": "a1babcdbee46d9c99a9e4ae7e62c2866478f211c",
         "source_commit": "6b152b91e9d74e3bf3fc5c537351b4b6776ac9ec",
         "base_main": "ecfdb9a673af6d833d4000814a3299f5ed0986bb"
@@ -1615,7 +1615,7 @@
       },
       "runtime_delivery": {
         "pr": 19,
-        "url": "https://github.com/pyTony/pil_proof/pull/19",
+        "url": "https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/19",
         "head": "e010681736c87979f3bee77276e1ae27e4fa8f93",
         "base": "9653d8f6738a53320b5ff5c1c6ad966c2a756a11",
         "source": "21d65da9a430d77ee3ad1e658afbeede907ae041",

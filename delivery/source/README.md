@@ -29,7 +29,7 @@ faults. Reports print the runtime version and per-program step budget.
 BIOS screen reads, CPU interrupt delivery, protected-mode pointer loads and
 execution outside the loaded-image fetch window remain separate work.
 
-[Windows/Linux verification](https://github.com/pyTony/pil_proof/actions/runs/40624671136)
+[Windows/Linux verification](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40624671136)
 passed328 Rust tests,199 full-state cases and standalone/package/Mandelbrot checks.
 
 
@@ -42,12 +42,12 @@ ordinary RAM and registers through the shared PIL transaction, including
 explicit LOCK memory forms. MMIO and concurrent bus masters remain unmodeled.
 
 This is a runtime-only delivery. Automated tests and CI live on the
-[dev branch](https://github.com/pyTony/pil_proof/tree/dev). `cargo test` here
+[dev branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/dev). `cargo test` here
 intentionally runs zero tests; see [automated verification](#automated-verification).
 
 ## Documentation
 
-[Complete documentation overview](https://github.com/pyTony/pil_proof/blob/dev/docs/README.md)
+[Complete documentation overview](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/README.md)
 provides the map to all language, design, verification and planning documents.
 
 | Read this | What it covers |
@@ -166,7 +166,7 @@ and [references and credits](docs/REFERENCES_AND_CREDITS.md).
 
 This branch contains the portable build/run source, descriptions embedded in
 the binary, helper scripts, sample program and user documentation. Development
-is maintained on [dev](https://github.com/pyTony/pil_proof/tree/dev).
+is maintained on [dev](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/dev).
 
 No external Cargo dependencies are required. Host builds use Rust's standard
 library. A Termux build runs on the phone; Linux/Windows desktop executables
@@ -581,8 +581,8 @@ validation. The interpreter and generated runner execute the same tokens.
 
 This is a runtime-only source delivery. `cargo test` here intentionally runs no
 development tests. The automated suite and Windows/Linux CI live on the
-[dev branch](https://github.com/pyTony/pil_proof/tree/dev) and the
-[Actions page](https://github.com/pyTony/pil_proof/actions). CI checks both the
+[dev branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/dev) and the
+[Actions page](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions). CI checks both the
 full development suite and an isolated runtime export. DELIVERY.json identifies
 the development source revision used for this delivery.
 

@@ -25,7 +25,7 @@ Validation: Hosted Windows/Linux CI40621030314 passed319 Rust tests,185 full-sta
 full256x256 Mandelbrot comparisons on both hosts.
 No new FreeDOS-image, ARM or legacy hardware run.
 
-CI: https://github.com/pyTony/pil_proof/actions/runs/40621030314
+CI: https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40621030314
 Code97bbe894302b6135df28e716af44a377f3a77654. Local Rust is unavailable;
 independent Python arithmetic, flow, RAM and exchange checks passed locally.
 Keep development on dev; main receives a separate strict runtime projection.
