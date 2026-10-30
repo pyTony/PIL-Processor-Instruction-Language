@@ -11,6 +11,8 @@ screen contents all come from the engine; this file only displays them.
 An image becomes read-only drive C:; --mount adds a host folder as the next
 drive (D: after an image), which DOS programs can write: files they create,
 change, delete or rename change in the host folder itself.
+Z: is a drive held in memory for the session, with TEMP=Z:\ so that pipes
+work from any drive; what is written there is gone when the session ends.
 """
 import argparse
 import json

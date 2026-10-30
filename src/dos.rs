@@ -130,14 +130,17 @@ fn base_name(path:&[u8])->Vec<u8>{
     let start=path.iter().rposition(|&b|matches!(b,b'/'|b'\\'|b':')).map_or(0,|i|i+1);
     path[start..].iter().filter(|b|b.is_ascii_graphic()).map(|b|b.to_ascii_uppercase()).take(12).collect()
 }
-/// DOS 3+ environment: COMSPEC, an empty string ending the list, the count
-/// word 1, then the program's own path: `path` on the default drive.
-fn environment(path:&[u8],drive:u8)->Vec<u8>{
+/// DOS 3+ environment: COMSPEC, TEMP on the memory drive when there is one,
+/// an empty string ending the list, the count word 1, then the program's
+/// own path: `path` on the default drive.
+fn environment(path:&[u8],drive:u8,temp:Option<u8>)->Vec<u8>{
     let drive=char::from(drive);
-    let mut env=format!("COMSPEC={drive}:\\COMMAND.COM\0\0\x01\0{drive}:\\").into_bytes();env.extend(path);env.push(0);
+    let mut env=format!("COMSPEC={drive}:\\COMMAND.COM\0").into_bytes();
+    if let Some(temp)=temp{env.extend(format!("TEMP={}:\\\0",char::from(temp)).bytes());}
+    env.extend(format!("\0\x01\0{drive}:\\").bytes());env.extend(path);env.push(0);
     env
 }
-pub use files::Source;
+pub use files::{MemDir,Source};
 /// Loads a program with no drives: A: is an empty read-only drive.
 pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{load_with_drives(bytes,name,Vec::new(),None)}
 /// Loads a program with `drives` as read-only C:, D:, ...; `path` is where the
@@ -207,7 +210,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;put_word(&mut psp,0x2c,ENV);
     put_word(&mut psp,0x32,20);put_word(&mut psp,0x34,0x18);put_word(&mut psp,0x36,PSP);
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
-    ram.write_bytes(u32::from(ENV)*16,&environment(&program,drive.letter())).map_err(|e|format!("{e:?}"))?;
+    ram.write_bytes(u32::from(ENV)*16,&environment(&program,drive.letter(),drive.memory_letter())).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);

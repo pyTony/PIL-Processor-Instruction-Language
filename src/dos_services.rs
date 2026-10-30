@@ -305,7 +305,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     }
     if sft>=5{
         match files::write(p,sft,&text)?{
-            Ok(())=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|count;p.cpu.eflags&=!1;},
+            Ok(written)=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|written;p.cpu.eflags&=!1;},
             Err(code)=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(code);p.cpu.eflags|=1;},
         }
         p.cpu.undefined_flags&=!1;return Ok(());
@@ -320,7 +320,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
 /// DOS has no error return there, so a failed write stops the run.
 fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
     let Some(sft)=files::redirected_output(p)? else{return Ok(false)};
-    match files::write(p,sft,bytes)?{Ok(())=>Ok(true),Err(code)=>Err(format!("DOS console output to redirected handle 1 failed with error {code}"))}
+    match files::write(p,sft,bytes)?{Ok(n) if n as usize==bytes.len()=>Ok(true),Ok(_)=>Err("DOS console output to redirected handle 1 found the drive full".into()),Err(code)=>Err(format!("DOS console output to redirected handle 1 failed with error {code}"))}
 }
 /// AH02 (and AH06 output): capture and active-page screen change together.
 fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
