@@ -31,7 +31,7 @@ faults. Reports print the runtime version and per-program step budget.
 BIOS screen reads, CPU interrupt delivery, protected-mode pointer loads and
 execution outside the loaded-image fetch window remain separate work.
 
-[Windows/Linux verification](https://github.com/pyTony/pil_proof/actions/runs/40624671136)
+[Windows/Linux verification](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40624671136)
 passed328 Rust tests,199 full-state cases and standalone/package/Mandelbrot checks.
 
 
@@ -108,7 +108,7 @@ enter `serial rx 41`, `run 1000`, then `check` to exercise it. Full command
 reference: [Debugger guide](docs/DEBUGGER.md).
 
 
-This is the full development tree. The [main branch](https://github.com/pyTony/pil_proof/tree/main)
+This is the full development tree. The [main branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/main)
 is a separate runtime-only delivery: portable build/run source, embedded PIL
 descriptions, scripts, the sample guest program and user documentation.
 

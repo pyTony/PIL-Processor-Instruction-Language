@@ -2,8 +2,8 @@
 
 Start here to find the language specification, executable examples, user guides
 and development plans. The complete documentation lives on the
-[dev branch](https://github.com/pyTony/pil_proof/tree/dev).
-The [main branch](https://github.com/pyTony/pil_proof/tree/main) is a separate
+[dev branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/dev).
+The [main branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/main) is a separate
 runtime delivery and contains a smaller set of user documentation.
 
 ## Current increment: 0.34.0-alpha.1
@@ -15,9 +15,9 @@ See [current status](development/STATUS.md) and the
 
 ## Previous delivery: 0.33.0-alpha.1
 
-[PR38](https://github.com/pyTony/pil_proof/pull/38) adds DOS AH25/35 vector
+[PR38](https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/38) adds DOS AH25/35 vector
 services and ordinary-RAM memory XCHG86/87, including explicit memory LOCK.
-[Windows/Linux CI40621030314](https://github.com/pyTony/pil_proof/actions/runs/40621030314)
+[Windows/Linux CI40621030314](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40621030314)
 passed319 Rust tests,185 full-state cases (7,224,306 trace bytes), standalone
 build/package checks and full Mandelbrot comparisons. No new full FreeDOS-image,
 ARM or legacy hardware run is claimed. Details: [current status](development/STATUS.md),

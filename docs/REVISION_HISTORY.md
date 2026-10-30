@@ -555,7 +555,7 @@ source verification on both host platforms and remove development history from
 native user archives. No CPU/decoder semantics changed by this correction.
 
 Runtime split verified at dev 0cb33f73a629af01315f3562a3d0be46b58d4fba:
-https://github.com/pyTony/pil_proof/actions/runs/40320291757
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40320291757
 Both hosts passed the 92 dev tests (Ubuntu 4.90 s, Windows 7.57 s), the isolated
 36-file runtime build/launch/serial/generated-Rust checks, and unpacked native
 ZIP checks. Runtime cargo test reports zero tests because tests stay on dev.
@@ -574,7 +574,7 @@ EIP 0x1cb, PASS with DX=600D, RAM signatures, console output 41 | A and TX: 41.
 This confirms the manual test as well as the previous automated host checks.
 
 v0.7.1 host verification passed at dev c1eca1982401e179b5eaa893d25a0572490a28b8:
-https://github.com/pyTony/pil_proof/actions/runs/40324429616
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40324429616
 94 tests passed on Ubuntu (5.90 s) and Windows (10.60 s). Isolated 38-file
 runtime builds, Hello-world serial transcripts, generated Rust and unpacked
 native delivery checks passed on both. Runtime-only PR #4 targets main from
@@ -595,7 +595,7 @@ Host v0.8 verification pending. Development remains on dev; runtime-only main
 delivery will contain 44 files. No new third-party material used.
 
 v0.8 host verification at dev 2ff2bcb89bbc03ac46870413a6dabfb7cd5d90b9:
-https://github.com/pyTony/pil_proof/actions/runs/40331078455
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40331078455
 101 tests passed on Ubuntu (7.71 s) and Windows (13.29 s). Numeric CLI checks
 verified all factorials and fresh-state loop/stress samples. Release benchmark
 helpers, isolated 44-file runtime builds/scripts/generated Rust, and unpacked
@@ -627,7 +627,7 @@ Cached host verification pending; no phone cache performance claim yet. Main
 will receive a 45-file runtime-only export; dev retains all history and tests.
 
 v0.9 host verification at dev bf9e681065cf26f976954ea9a5a997604d4d7582:
-https://github.com/pyTony/pil_proof/actions/runs/40336149129
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40336149129
 116 tests passed on Ubuntu (5.24 s) and Windows (10.81 s). Standalone 45-file
 runtime, generated Rust, both cache modes and unpacked native deliveries passed.
 Release 10000-iteration / 5-sample loop comparisons (30003 instructions/sample):
@@ -666,7 +666,7 @@ byte-exact traces match. Add --cpu-bench on x86-64 using a bounded, checked
 for this x86-specific baseline. No original 386 MHz claim is made.
 
 Alpha source dev ca195663533ad41a6f50952442bf6a38d1a92447 verified:
-https://github.com/pyTony/pil_proof/actions/runs/40341288842
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40341288842
 120 tests passed on Ubuntu (8.20 s) and Windows (14.03 s). Independent verifier
 matched 2,046,769 trace bytes over nine cases; comparisons were gated on that
 match. Verification-only command passed. Isolated 50-file runtime source and
@@ -699,7 +699,7 @@ instruction and malformed/truncated/extra records. No external code/materials
 were used for this change; trace format and implementation are project originals.
 
 Alpha.2 hosted verification at cdb5fc396617071a134fc65ce67807cf56dc68f3:
-https://github.com/pyTony/pil_proof/actions/runs/40360385843 — 122 passed on
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40360385843 — 122 passed on
 Ubuntu in8.35 s and Windows in12.67 s. Nine cases/2,046,769 trace bytes,
 verification-only invocation, isolated runtime and unpacked native checks passed.
 Runtime-only PR #8 awaits user review; no GitHub release/tag published.
@@ -727,7 +727,7 @@ Python independent logic oracle extended to OR/XOR/TEST. Runtime58 files.
 Reference-only use of Intel 80386 manual recorded; no third-party code imported.
 
 Verification completed at aab72b00d47f77aa31ad30abb404070472fcb49c:
-https://github.com/pyTony/pil_proof/actions/runs/40364437807 — 128 tests passed
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40364437807 — 128 tests passed
 on Ubuntu7.50 s and Windows16.08 s. Fourteen traces matched2,460,193 bytes.
 Python oracle1,184,058 arithmetic/logical +1,030 conditional cases passed.
 Standalone58-file runtime and unpacked native deliveries passed. Runtime-only
@@ -756,7 +756,7 @@ tests cover widths1/8/16/32/63/64 and generated Rust. Credits updated for Intel
 IMUL reference; no source imports. PC commands included in user docs.
 
 Verification completed at c1a91bcaa82a555e2b7ec3d4682729d6619ff93a:
-https://github.com/pyTony/pil_proof/actions/runs/40367901727 — 134 tests
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40367901727 — 134 tests
 passed on Ubuntu10.65 s and Windows18.35 s. Eighteen full-state cases matched
 2,535,361 bytes. Standalone59-file source and unpacked native checks passed.
 Runtime-only PR #10 awaits user review. Phone/PC user verification pending.
@@ -805,7 +805,7 @@ User requested a README documentation index after finding launch instructions
 in docs. Linked indexes added to development, runtime-source and native READMEs.
 
 0.13 hosted verification completed at1a35fa53fcddd5a89e86813699736e5cc3c68832:
-https://github.com/pyTony/pil_proof/actions/runs/40371543845 —140 passed on
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40371543845 —140 passed on
 Ubuntu12.43 s and Windows22.00 s;23 cases/3,044,833 exact trace bytes.
 Standalone62-file runtime and unpacked native checks passed. Independent
 Python59,940 shifts and65,680 signed products plus prior oracles passed.
@@ -842,7 +842,7 @@ iteration. Narrower scope,not386 cycles.10000 iterations/30003 instructions
 per sample,5 samples plus1 excluded warmup. REPL startup confirmed.
 
 0.13.0-alpha.2 host verification at381cac63ee71c552d248177ba0156e07ddce7b79:
-https://github.com/pyTony/pil_proof/actions/runs/40373417827 —144 passed,
+https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40373417827 —144 passed,
 Ubuntu12.39 s/Windows16.80 s. Existing23 cases/3,044,833 trace bytes match.
 Standalone62-file source and unpacked native delivery checks passed. Runtime
 PR #12 awaits review; typed dump user verification unreported.
@@ -926,7 +926,7 @@ Prepare delivery/v0.14.0-alpha.2 from main cf8cd1cbdc1843f4a92db9de44a820ace3dac
 user reviews/merges in browser. No tag/release; development stays dev.
 Next: user full-image comparison,then additional device/machine-state support.
 
-Runtime-only PR #15: https://github.com/pyTony/pil_proof/pull/15;
+Runtime-only PR #15: https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/15;
 head46053bcd2193060477efa43c0cbc6a8647b5e5c1,source441844483574e5b55c7eb8691fdce7ff828a6a4c.
 User review pending; no tag/release published.
 
@@ -1012,7 +1012,7 @@ cargo test0 is intentional; automated tests/CI live ondev. Claude's runtime
 review passed8 demos; no-tests conclusion does not describe development branch.
 No new external sources/code/dependencies. No release/tag; no phonealpha.2 result yet.
 
-Runtime-only PR #17: https://github.com/pyTony/pil_proof/pull/17;
+Runtime-only PR #17: https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/17;
 head9c40f41cec5971c740573734ad72d456691bbc91,source0ced9f0e9263162f7ffe4259be9f2020d4f8c93a.
 User review pending. Tests/history remain ondev; main retains runtime-only policy.
 
@@ -1064,7 +1064,7 @@ vectors/code/ROM imported or executed. First external CPU adapter must preserve
 original state/addresses and compare each backend to hardware; testROM islater.
 Prepare separate0.15alpha.3 runtime PR from main; keep test/plan/history ondev.
 
-Runtime-only PR #18: https://github.com/pyTony/pil_proof/pull/18;
+Runtime-only PR #18: https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/18;
 heada1babcdbee46d9c99a9e4ae7e62c2866478f211c,source6b152b91e9d74e3bf3fc5c537351b4b6776ac9ec.
 User review pending. Tests and external-suite plan remain ondev.
 
@@ -1183,7 +1183,7 @@ checks per host. Full256x256 Mandelbrot and isolated runtime/package checks pass
 Runtime export76 files; PR19 is open and mergeable,awaiting browser review.
 Delivery head e010681736c87979f3bee77276e1ae27e4fa8f93; base main9653d8f.
 No release/tag or main merge performed. No ARM execution claimed for this increment.
-RCL/RCR,CMC and double shifts remain planned. Runtime PR: https://github.com/pyTony/pil_proof/pull/19
+RCL/RCR,CMC and double shifts remain planned. Runtime PR: https://github.com/pyTony/PIL-Processor-Instruction-Language/pull/19
 Keep dev separate from main; user reviews/merges the delivery PR. No external386 suite execution claimed.
 
 ## Two bound register effects and XCHG supplied —27 October2026
