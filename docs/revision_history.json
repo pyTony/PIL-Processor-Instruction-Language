@@ -2197,6 +2197,20 @@
         "list of lists: DPB, SFT, CLOCK$, CON, buffers, CDS and FCB pointers are FFFF:FFFF; no block devices or drives",
         "NUL device strategy and interrupt entry points are not modelled"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "Interactive DOS session and text-mode terminal",
+      "base": "dev after #56 plus the DOS data area (#57)",
+      "verification": {
+        "linux_rust_tests": 398,
+        "gui_tests": "tests/gui 18 run, 1 skipped",
+        "manual": "dos_terminal.py driven under Xvfb with typed keys"
+      },
+      "limitations": [
+        "text pages only (B800); no graphics modes yet",
+        "US key layout; keys without an ASCII value outside the listed set are ignored"
+      ]
     }
   ]
 }

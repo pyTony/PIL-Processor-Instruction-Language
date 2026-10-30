@@ -2049,6 +2049,10 @@ fn main() -> R<()> {
         let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
         f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
     }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
+        if dos_args.len()!=3{return Err("usage: pil-proof --dos-session PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH".into());}
+        return dos::session::serve(&dos_args[2]).map_err(Into::into);
+    }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;
         if dos_args.get(at).map(String::as_str)==Some("--steps"){

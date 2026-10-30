@@ -1,3 +1,31 @@
+# Interactive DOS session and text-mode terminal — 30 October 2026
+
+Step 2 of Goal 1 (COMMAND.COM in the GUI, DIR, factorial, Mandelbrot):
+
+- `pil-proof --dos-session PROGRAM` loads a .COM/.EXE, or IMAGE.img::INNER
+  from a container, and serves one command per stdin line with one JSON reply
+  per line:
+  - `run N` executes up to N steps (1..1000000). The run pauses on the step
+    budget and when the program waits for a key, and ends at exit or at the
+    first unmodelled service, encoding, fault or boundary.
+  - `key ASCII SCAN` puts one keystroke in the BIOS keyboard ring.
+  - `snapshot` replies without running, and `quit` ends the session.
+  - Every reply carries the status, the active B800 text page (character and
+    attribute bytes as hex), its width, the BIOS cursor, CS:IP, the step
+    count and the program's DOS output for that slice.
+- tools/dos_terminal.py is a Tk window for the session. It draws the 80x25 page
+  in the 16 CGA colours with the cursor, maps keys to BIOS ASCII and scan codes
+  (US layout; arrows, F1-F10, Home/End, PgUp/PgDn, Ins/Del, Ctrl+letter), and
+  shows the status, step count and CS:IP. It only displays: execution, Dine
+  services and screen contents all come from the engine.
+
+  `python tools/dos_terminal.py images/FD14LITE.img::COMMAND.COM`
+
+Verification: 398 Rust tests passed on Linux (a new session test covers run,
+the 15-key ring, exit and malformed commands). tests/gui/test_dos_terminal.py
+covers key mapping, CP437 decoding and a live session that waits for keys,
+echoes them and exits. The window was also driven under Xvfb with typed keys.
+
 # DOS data area: list of lists and InDOS — 30 October 2026
 
 FreeDOS report 46 (dev after #56, 100,000 steps): 67 Exit, 48 Budget, 33
