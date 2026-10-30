@@ -15,6 +15,12 @@ const LIMIT:usize=0xa0000;
 /// Paragraphs of the environment block the probe gives each program.
 const ENV_PARAS:u16=0x10;
 const ENV:u16=PSP-1-ENV_PARAS;
+/// Segment of Dine's DOS data: the critical-error and InDOS bytes (AH34) at
+/// offsets 0 and 1, and the AH52 list of lists at SYSVARS with the first MCB
+/// segment in the word before it.
+const DOSDATA:u16=0x0070;
+const INDOS:u16=0x0001;
+const SYSVARS:u16=0x0026;
 /// BIOS timer ticks in 24 hours (INT1A, BDA 0040:006C).
 const TICKS_PER_DAY:u32=0x0018_00b0;
 pub const MAX_FILE:usize=1024*1024;
@@ -63,6 +69,18 @@ fn put_word(bytes:&mut[u8],at:usize,n:u16){bytes[at..at+2].copy_from_slice(&n.to
 /// signature) and is read-only. The top 16 bytes carry what a PC/AT-class BIOS
 /// identifies itself with: the reset jump, a BIOS date at F000:FFF5 and model
 /// byte FCh at F000:FFFE. No BIOS code is present; services are answered by Dine.
+/// The list of lists holds only what Dine models: the first MCB, 512-byte
+/// sectors and a NUL device header ending the device chain. Pointers to
+/// structures Dine has no (DPB, SFT, CLOCK$, CON, buffers, CDS, FCBs) are
+/// FFFF:FFFF, and there are no block devices or drives yet.
+fn dos_data(ram:&mut Ram)->Result<(),String>{
+    let mut data=vec![0u8;usize::from(SYSVARS)+0x40];
+    put_word(&mut data,usize::from(SYSVARS)-2,ENV-1);
+    for field in [0x00,0x04,0x08,0x0c,0x12,0x16,0x1a]{data[usize::from(SYSVARS)+field..][..4].fill(0xff);}
+    put_word(&mut data,usize::from(SYSVARS)+0x10,512);
+    let nul=usize::from(SYSVARS)+0x22;data[nul..nul+4].fill(0xff);put_word(&mut data,nul+4,0x8004);data[nul+10..nul+18].copy_from_slice(b"NUL     ");
+    ram.write_bytes(u32::from(DOSDATA)*16,&data).map_err(|e|format!("DOS data area: {e:?}"))
+}
 fn rom(ram:&mut Ram)->Result<(),String>{
     let mut top=[0xffu8;16];
     top[..5].copy_from_slice(&[0xea,0x5b,0xe0,0x00,0xf0]);
@@ -164,6 +182,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
+    dos_data(&mut ram)?;
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
@@ -248,7 +267,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 and AH33/06 version; default drive A:; AH67 moves the handle table to an AH48 block when it grows; INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE). Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM/filesystem; PSP:0040 supplies AH30 and AH33/06 version; default drive A:; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE). Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{

@@ -105,7 +105,7 @@ fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
-    let b=[0xb4,0x52,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
+    let b=[0xb4,0x5f,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
     let r=run(load(&[0xfa,0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
     let r=run(load(&[0x9a,0,0,0,0xa0],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));assert_eq!(r.completed,1);
 }
@@ -862,4 +862,24 @@ fn program_reads_its_own_file_and_nothing_else(){
  let mut write=code.clone();write[1]=2;let r=run(load(&write,"self.com").unwrap(),3).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  // AH3F on a closed handle is error 6.
  let r=run(load(&[0xb4,0x3f,0xbb,0x07,0x00,0xcd,0x21,0xfa,0xf4],"read.com").unwrap(),5).unwrap();assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.eflags&1),(6,1));
+}
+
+#[test]
+fn list_of_lists_leads_to_the_real_mcb_chain_and_indos_is_clear(){
+ // MOV AH,52; INT 21; CLI; HLT
+ let r=run(load(&[0xb4,0x52,0xcd,0x21,0xfa,0xf4],"lol.com").unwrap(),10).unwrap();
+ let es=r.loaded.selectors[SegmentRegister::Es.index()];let bx=r.loaded.cpu.regs[3]&0xffff;assert_eq!((es,bx),(DOSDATA,u32::from(SYSVARS)));
+ let base=u32::from(es)*16+bx;let ram=&r.loaded.ram;
+ // Walk the chain from ES:[BX-2]: environment, program, then the 'Z' block.
+ let mut mcb=ram.load(base-2,MemWidth::Word).unwrap();let mut seen=Vec::new();
+ loop{let kind=ram.load(mcb*16,MemWidth::Byte).unwrap()as u8;let owner=ram.load(mcb*16+1,MemWidth::Word).unwrap();let size=ram.load(mcb*16+3,MemWidth::Word).unwrap();seen.push((kind,owner));if kind==b'Z'{break;}mcb+=size+1;}
+ assert_eq!(seen,vec![(b'M',u32::from(PSP)),(b'Z',u32::from(PSP))]);
+ // Unmodelled structures are FFFF:FFFF, no block devices, and NUL ends the device chain.
+ assert_eq!(ram.load(base+0x04,MemWidth::Dword).unwrap(),0xffff_ffff);assert_eq!(ram.load(base+0x20,MemWidth::Byte).unwrap(),0);
+ assert_eq!(ram.load(base+0x22,MemWidth::Dword).unwrap(),0xffff_ffff);assert_eq!(ram.load(base+0x26,MemWidth::Word).unwrap(),0x8004);
+ let name:Vec<u8>=(0..8).map(|i|ram.load(base+0x2c+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(name,b"NUL     ");
+ // MOV AH,34; INT 21: ES:BX -> InDOS = 0, critical-error byte before it = 0.
+ let r=run(load(&[0xb4,0x34,0xcd,0x21,0xfa,0xf4],"indos.com").unwrap(),10).unwrap();
+ let at=u32::from(r.loaded.selectors[SegmentRegister::Es.index()])*16+(r.loaded.cpu.regs[3]&0xffff);
+ assert_eq!((r.loaded.ram.load(at,MemWidth::Byte).unwrap(),r.loaded.ram.load(at-1,MemWidth::Byte).unwrap()),(0,0));
 }
