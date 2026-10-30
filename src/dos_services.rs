@@ -126,7 +126,6 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x1a,0x00)=>{
-            const TICKS_PER_DAY:u32=0x0018_00b0;
             let ticks=p.timer_ticks;
             let next=ticks+1;
             let (next_ticks,rollover)=if next>=TICKS_PER_DAY{(0,1u32)}else{(next,0u32)};
@@ -186,6 +185,45 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             // No system configuration table: CF=1, AH=86h as for AH=C2.
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        (0x21,0x0d)=>Ok(None), // No disk buffers are modelled, so the flush has nothing to write.
+        (0x21,0x31)=>{
+            // Terminate and stay resident: the run ends here, as for AH4C, and the
+            // report records the paragraphs kept (at least 6, as FreeDOS does).
+            p.resident=Some((p.cpu.regs[2]as u16).max(6));
+            Ok(Some(p.cpu.regs[0]as u8))
+        },
+        (0x21,0x2a)=>{
+            // No clock driver or CMOS: DOS keeps its 1 January 1980 default, a
+            // Tuesday (FreeDOS systime.c: day of week (days+2)%7 with days=0).
+            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|1980;
+            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|0x0101;
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|2;
+            Ok(None)
+        },
+        (0x21,0x58)=>{
+            let al=p.cpu.regs[0]as u8;let bl=p.cpu.regs[3]as u8;
+            match al{
+                0=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.alloc_strategy);p.cpu.eflags&=!1;},
+                1 if bl>0x82||(bl&0x3f)>2=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
+                // Without UMBs, 80h (high then low) allocates low like first fit.
+                1 if matches!(bl,0|0x80)=>{p.alloc_strategy=bl;p.cpu.eflags&=!1;},
+                1=>return Err(format!("DOS allocation strategy {bl:02x}h is not modelled (first fit only)")),
+                2=>{p.cpu.regs[0]&=!255;p.cpu.eflags&=!1;},
+                // No UMB chain exists, so linking it is an invalid function (FreeDOS).
+                _=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
+            }
+            p.cpu.undefined_flags&=!1;Ok(None)
+        },
+        (0x21,0x71)=>{
+            // No long-file-name API: AL=00h, CF=1, so AX=7100h (FreeDOS without LFN).
+            p.cpu.regs[0]&=!255;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        (0x15,0x88)=>{
+            // No memory above 1 MB: 0 KB of extended memory.
+            p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
         (0x21,0x3e)=>{

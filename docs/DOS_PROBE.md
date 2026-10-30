@@ -1,3 +1,46 @@
+# Far JMP, TSR exit, date, BIOS identity bytes and HLT idle — 30 October 2026
+
+FreeDOS report 41 (dev after #52, 10,000 steps): 81 Budget, 43 Exit, 19 Service,
+4 MissingEncoding, 2 Fault, 2 Monitor. This round:
+
+- Far JMP: EA ptr16:16/32 and FF /5 m16:16/32 (memory only) in
+  isa/i386/jmp_far.pil, real mode, with the pointer read whole before the
+  transfer. Report 41 stopped GREP on `JMP FAR [mem]`.
+- INT 21h AH=31h ends the run as a TSR exit: the report shows Exit(AL) and a
+  RESIDENT line with the paragraphs kept (at least 6, as in FreeDOS). No
+  resident code runs afterwards.
+- INT 21h AH=2Ah returns 1 January 1980, a Tuesday: the DOS default with no
+  clock driver (FreeDOS systime.c computes the weekday as (days+2) mod 7).
+- INT 21h AH=0Dh (disk reset) has no buffers to flush.
+- INT 21h AH=58h: AL=00h returns the strategy; AL=01h accepts 00h and 80h
+  (first fit; without UMBs 80h allocates low), rejects BL>82h or a fit above
+  2 with error 1 as FreeDOS does, and stops on best/last fit, which the
+  first-fit arena does not model. AL=02h returns link state 0; AL=03h fails
+  with error 1 because there is no UMB chain.
+- INT 21h AH=71h (long file names) returns AL=00h, CF=1 (AX=7100h), as
+  FreeDOS does without an LFN API.
+- INT 15h AH=88h returns AX=0: no memory above 1 MB.
+
+- BIOS area (Tony's decision): C000:0000-F000:FFFF now reads as an empty bus
+  (FFh, so no option-ROM 55AAh signature) and is read-only. The top 16 bytes
+  identify a PC/AT-class BIOS: the reset jump, the date 01/10/84 at F000:FFF5
+  and model byte FCh at F000:FFFE. No BIOS code is present. DISKCOPY and
+  REPLACE faulted reading F000:FFEA, where they look for "COMPAQ"; they now
+  read FFh. RAM grows from 768 KB to 1 MB to hold it.
+- HLT (Tony's decision): with IF=1, as DOS starts programs, HLT idles until
+  the next timer tick: one tick passes (seen by INT 1Ah) and execution
+  continues. VDELAY and VPAUSE idle this way. With IF=0, HLT never resumes and
+  stays a monitor stop. DOS unit fixtures that use HLT as an end marker now
+  clear IF first.
+
+Verification: 387 Rust tests passed on Linux. The generated-Rust verifier
+matches the interpreter byte for byte across 233 cases (new: far JMP immediate,
+memory 16 and 32, pointer past the segment end, real-mode rejection). DOSBox-X
+2024.03.01 headless: CPU suite 393/393 (2 far JMP new; the COM is 64,183 bytes,
+close to the 64 KB limit) and console 9/9 in both engines. The date and DOS
+memory answers are not compared with DOSBox-X, which uses the host clock and
+has UMBs and XMS. Not yet rerun on the FreeDOS image.
+
 # LDS, ENTER and absent-extension answers — 30 October 2026
 
 FreeDOS report 40 (dev after #51, 10,000 steps): 79 Budget, 38 Exit, 28 Service,

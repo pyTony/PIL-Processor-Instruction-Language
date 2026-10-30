@@ -216,6 +216,12 @@ pub fn cases()->Result<Vec<Case>,String> {
         let mut t=case(if w==16{"far_esp16"}else{"far_esp32"},bytes)?;t.regs[4]=0x800;
         let mut ptr=0x100u32.to_le_bytes()[..(w/8)as usize].to_vec();ptr.extend([1,0]);t.patch=Some((0xa00,ptr));tests.push(t);
     }
+    for (name,mut bytes,ptr) in [("jmpfar_imm16",vec![0xea,0,1,1,0,0xf4],None),("jmpfar_mem16",vec![0xff,0x2e,0,4,0xf4],Some(vec![0,1,1,0])),("jmpfar_mem32",vec![0x66,0xff,0x2e,0,4,0xf4],Some(vec![0,1,0,0,1,0]))]{
+        while bytes.len()<16{bytes.push(0x90);}bytes.extend([0x41,0xf4]);
+        let mut t=case(name,bytes)?;t.flags=0xed7;t.patch=ptr.map(|p|(0x500,p));tests.push(t);
+    }
+    tests.push(case("jmpfar_pointer_boundary",vec![0xff,0x2e,0xfd,0xff,0xf4])?);
+    let mut t=case("jmpfar_mode_reject",vec![0xea,0,1,1,0,0xf4])?;t.image.real_mode=false;tests.push(t);
     let mut t=case("far_second_store_fault",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fc,2));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("far_pointer_boundary",vec![0xff,0x1e,0xfd,0xff,0xf4])?;t.regs[4]=0x800;tests.push(t);
     let mut t=case("far_target_fault",vec![0x66,0x9a,0,0,1,0,1,0,0xf4])?;t.regs[4]=0x800;tests.push(t);

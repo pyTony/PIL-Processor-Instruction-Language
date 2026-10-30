@@ -110,11 +110,12 @@ impl Image {
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         if locked&&!matches!(opcode,0x86|0x87){return Err(GuestError::Decode("LOCK requires memory XCHG in this profile".into()));}
         // Normalize alternative register encodings while retaining consumed bytes.
-        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;let mut jump_indirect=None;
+        let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;let mut jump_indirect=None;let mut far_jump=None;
         if matches!(opcode,0xff|0x8f){
             let m=r.byte()?;let extension=(m>>3)&7;
             if opcode==0xff&&extension==2{call_indirect=Some(m);opcode=0xe8;}
             else if opcode==0xff&&extension==4{jump_indirect=Some(m);}
+            else if opcode==0xff&&extension==5{if m>>6==3{return Err(GuestError::Decode("far JMP requires a memory pointer".into()));}far_jump=Some(m);opcode=0xea;}
             else if opcode==0xff&&extension==3{if m>>6==3{return Err(GuestError::Decode("far CALL requires a memory pointer".into()));}far_indirect=Some(m);opcode=0x9a;}
             else if opcode==0x8f || extension==6{
                 if opcode==0x8f && extension!=0{return Err(GuestError::Decode("unsupported POP group extension".into()));}
@@ -193,6 +194,18 @@ impl Image {
             0xfa|0xfb=>{
                 let name=if opcode==0xfa{"cli"}else{"sti"};
                 (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
+            }
+            0xea=>{
+                let (target,label)=if let Some(m)=far_jump{
+                    let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                    let seg=effective.resolve(&[0;8],override_segment)?.segment.index();
+                    (format!("read_address operand\nzext operand_wide operand 64\ncheck_segment {seg} operand_wide {}\nload target_value operand {w}\nconst slot 32 {}\nadd selector_at operand slot\nload selector selector_at 16",w/8+2,w/8),operand_name(dst,address))
+                }else{
+                    let offset=r.unsigned(w)?;let selector=r.unsigned(16)?;
+                    (format!("const target_value {w} {offset}\nconst selector 16 {selector}"),format!("{selector:04x}:{offset:08x}"))
+                };
+                let text=include_str!("../isa/i386/jmp_far.pil").replace("$FAR_TARGET",&target);
+                (format!("JMP FAR {label}"),compile(&instantiate(&text,w),w))
             }
             0x9a=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
