@@ -1028,3 +1028,73 @@ fn image_is_drive_c_with_its_label_and_the_host_folder_is_drive_d(){
  assert_eq!(call(&mut p,0x3d00,0,b"E:\\X"),(3,1));
  std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn exec_runs_a_com_and_a_relocated_exe_and_returns_their_codes(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-exec-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ std::fs::create_dir_all(&dir).unwrap();
+ // CHILD.COM: MOV AL,[80h]; MOV AH,4C; INT 21 (exits with its tail length).
+ std::fs::write(dir.join("child.com"),[0xa0,0x80,0x00,0xb4,0x4c,0xcd,0x21]).unwrap();
+ // CHILD.EXE: one relocation (MOV AX,seg), then exits with the byte 7 from that segment.
+ let mut exe=vec![0x4d,0x5a,0x2d,0x00,0x01,0x00,0x01,0x00,0x02,0x00,0x00,0x00,0xff,0xff,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x1c,0x00,0x00,0x00,0x01,0x00,0x00,0x00];
+ exe.extend([0xb8,0x00,0x00,0x8e,0xd8,0xa0,0x0c,0x00,0xb4,0x4c,0xcd,0x21,0x07]);std::fs::write(dir.join("child.exe"),exe).unwrap();
+ // Shrinks itself to 100h paragraphs, EXECs CHILD.COM with tail " hi", CHILD.EXE and
+ // NONE.COM; SI and DI get the AH4D codes, BP the error from the missing file.
+ let parent=[0xbb,0x00,0x01,0xb4,0x4a,0xcd,0x21,0x8c,0x0e,0x48,0x01,0x8c,0x0e,0x4c,0x01,0x8c,0x0e,0x50,0x01,0xba,0x67,0x01,0xbb,0x44,0x01,0xb8,0x00,0x4b,0xcd,0x21,0xb4,0x4d,0xcd,0x21,0x89,0xc6,0xba,0x71,0x01,0xbb,0x44,0x01,0xb8,0x00,0x4b,0xcd,0x21,0xb4,0x4d,0xcd,0x21,0x89,0xc7,0xba,0x7b,0x01,0xbb,0x44,0x01,0xb8,0x00,0x4b,0xcd,0x21,0x89,0xc5,0xfa,0xf4,
+  0x00,0x00,0x52,0x01,0x00,0x00,0x57,0x01,0x00,0x00,0x57,0x01,0x00,0x00,0x03,0x20,0x68,0x69,0x0d,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+ let mut code=parent.to_vec();code.extend(b"CHILD.COM\0CHILD.EXE\0NONE.COM\0");
+ let p=load_with_drives(&code,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
+ let r=run(p,200).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ let regs=&r.loaded.cpu.regs;assert_eq!((regs[6]&0xffff,regs[7]&0xffff,regs[5]&0xffff),(3,7,2));
+ // Back in the parent: its PSP again, the children's blocks free, no frames left.
+ assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
+ let mut again=r.loaded;again.cpu.regs[0]=0x4800;again.cpu.regs[3]=0xffff;service(&mut again,0x21,&mut vec![]).unwrap();
+ assert_eq!(again.cpu.regs[3]&0xffff,u32::from(again.arena.free()));assert!(again.arena.free()>0x8000);
+ std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn parse_name_fills_an_fcb_like_freedos(){
+ let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(std::env::temp_dir())],None).unwrap();let psp=u32::from(PSP)*16;
+ let mut parse=|text:&[u8],al:u32,fcb:&[u8;12]|->(u32,u32,Vec<u8>){
+  let mut z=text.to_vec();z.push(0);p.ram.write_bytes(psp+0x200,&z).unwrap();p.ram.write_bytes(psp+0x300,fcb).unwrap();
+  p.cpu.regs[0]=0x2900|al;p.cpu.regs[6]=0x200;p.cpu.regs[7]=0x300;service(&mut p,0x21,&mut vec![]).unwrap();
+  (p.cpu.regs[0]&255,(p.cpu.regs[6]&0xffff)-0x200,(0..16).map(|i|p.ram.load(psp+0x300+i,MemWidth::Byte).unwrap()as u8).collect())
+ };
+ let old=*b"\x05OLDNAME OLD";
+ assert_eq!(parse(b" c:readme.txt rest",1,&old),(0,13,b"\x03README  TXT\0\0\0\0".to_vec()));
+ assert_eq!(parse(b"*.c?",0,&old),(1,4,b"\0????????C? \0\0\0\0".to_vec()));
+ // Bit 1 keeps the drive byte and bit 3 the extension; FreeDOS blanks the rest
+ // of the name field even with bit 2. Z: does not exist; a name stops at 8.
+ assert_eq!(parse(b"",0x0e,&old),(0,0,b"\x05        OLD\0\0\0\0".to_vec()));
+ assert_eq!(parse(b"z:longfilename.text",0,&old),(0xff,10,b"\x1aLONGFILE   \0\0\0\0".to_vec()));
+ assert_eq!(parse(b"..\\x",0,&old),(0,2,b"\0..         \0\0\0\0".to_vec()));
+ // Leading separators are skipped only with bit 0.
+ assert_eq!(parse(b";,a",0,&old).1,0);assert_eq!(parse(b";,a",1,&old),(0,3,b"\0A          \0\0\0\0".to_vec()));
+}
+#[test]
+fn console_handle_reads_a_cooked_line_in_pieces(){
+ // MOV AH,3F; XOR BX,BX; MOV CX,2; MOV DX,200; INT 21; MOV SI,AX; MOV AH,3F; MOV CX,10; INT 21; CLI; HLT
+ let code=[0xb4,0x3f,0x31,0xdb,0xb9,0x02,0x00,0xba,0x00,0x02,0xcd,0x21,0x89,0xc6,0xb4,0x3f,0xb9,0x0a,0x00,0xcd,0x21,0xfa,0xf4];
+ let mut s=session::Session::new(load(&code,"con.com").unwrap());
+ let (reply,_)=s.command(1,"run 100").unwrap();assert!(reply.contains("\"status\":\"waiting_input\""),"{reply}");
+ for(a,sc)in [(b'a',0x1e),(b'x',0x2d),(8,0x0e),(b'b',0x30),(13,0x1c)]{assert!(s.key(a,sc).unwrap());}
+ let (reply,_)=s.command(2,"run 100").unwrap();assert!(reply.contains("monitor stop"),"{reply}");
+ let (screen,_,cursor)=s.screen().unwrap();assert_eq!((screen[0],screen[2]),(b'a',b'b'));assert_eq!(cursor,(1,0),"CR then LF");
+ let p=s.loaded().unwrap();
+ // The first read takes "ab", the second the CR LF that ends the line.
+ assert_eq!((p.cpu.regs[6]&0xffff,p.cpu.regs[0]&0xffff),(2,2));
+ let got:Vec<u8>=(0..2).map(|i|p.ram.load(u32::from(PSP)*16+0x200+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(got,b"\r\n");
+}
+#[test]
+fn demo_programs_print_exact_factorials_and_a_text_mandelbrot(){
+ let r=run(load(include_bytes!("../../programs/dos/FACTOR.COM"),"FACTOR.COM").unwrap(),200_000).unwrap();
+ assert!(matches!(r.stop,Stop::Exit(0)),"{:?}",r.stop);let text=String::from_utf8(r.output).unwrap();
+ assert!(text.starts_with(" 0! = 1\r\n 1! = 1\r\n"),"{text}");assert!(text.contains("20! = 2432902008176640000\r\n"));
+ assert!(text.ends_with("25! = 15511210043330985984000000\r\n"),"{text}");
+ let r=run(load(include_bytes!("../../programs/dos/MANDEL.COM"),"MANDEL.COM").unwrap(),1_000_000).unwrap();
+ assert!(matches!(r.stop,Stop::Exit(0)),"{:?}",r.stop);let text=String::from_utf8(r.output).unwrap();
+ let lines:Vec<&str>=text.split_terminator("\r\n").collect();assert_eq!(lines.len(),24);assert!(lines.iter().all(|l|l.len()==79));
+ // The top row is far outside the set; the row just above the axis crosses it.
+ assert_eq!(lines[0],"::::::::::::::::::---------------------------=====---------::::::::::::::::::::");
+ assert_eq!(lines[11],":====+%++++++**@#############################################+===------------::");
+}

@@ -1981,6 +1981,23 @@
         ],
         "standalone_native_package_and_full_mandelbrot": "passed"
       }
+    },
+    {
+      "date": "2026-10-30",
+      "name": "EXEC: programs start from FreeCOM, plus FACTOR and MANDEL",
+      "base": "dev after #59 (drives C: and D:)",
+      "verification": {
+        "linux_rust_tests": 408,
+        "manual": "FreeCOM 0.86 driven through a COM, an EXE, FACTOR 30, MANDEL, IF ERRORLEVEL, nested COMMAND/EXIT and DATE on a test FAT16 image and a host folder"
+      },
+      "limitations": [
+        "EXEC AL=01h/03h (load only, overlays) still stop the run",
+        "a child ending with AH31 keeps its whole program block, not only the DX paragraphs it asked for",
+        "AH2B/AH2D (set date and time) still stop the run",
+        "AH3F from CON ignores redirection: handles 0-2 always read the keyboard while they are CON",
+        "all drives are read-only; writes return access denied",
+        "no graphics modes yet"
+      ]
     }
   ],
   "development_increments": [

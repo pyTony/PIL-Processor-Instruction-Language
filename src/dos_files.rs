@@ -55,6 +55,8 @@ impl Drives{
     /// Handles AH3D opened that are still open.
     #[allow(dead_code)]
     pub fn open_files(&self)->usize{self.files.len()}
+    /// Whether AH3D opened `handle` (otherwise it is a device handle).
+    pub fn is_file(&self,handle:u16)->bool{self.files.iter().any(|f|f.handle==handle)}
     /// The drive with DOS number `n` (0 default, 1 A:), as a list index.
     fn number(&self,n:u8)->Option<usize>{
         if n==0{return Some(self.current);}
@@ -66,7 +68,7 @@ fn fail(p:&mut Loaded,code:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::fr
 fn set_ax(p:&mut Loaded,ax:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(ax&0xffff);}
 fn ds()->SegmentRegister{SegmentRegister::Ds}
 /// ASCIIZ path at DS:offset, at most 128 bytes before the NUL.
-fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{
+pub(super) fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{
     let context=MemoryContext{segment:ds(),cache:p.image.segments[ds().index()]};
     let mut path=Vec::new();
     for i in 0..128u32{
@@ -322,7 +324,7 @@ fn open(p:&mut Loaded)->Result<(),String>{
             Ok((drive,entry))=>(read_entry(&p.drive.list[drive],&entry)?,p.drive.list[drive].letter),
         }
     };
-    let limit=p.ram.load(u32::from(PSP)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
+    let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
     let Some(handle)=(5..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
     // The JFT entry is the system file number; Dine numbers files by handle.
     p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(handle)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
@@ -335,6 +337,84 @@ fn open_file(p:&mut Loaded,service:&str)->Result<Option<usize>,String>{
     if handle<20&&p.open_handles&(1<<handle)!=0{return Err(format!("DOS {service} handle {handle} is not modelled"));}
     fail(p,6);Ok(None)
 }
+/// The file an EXEC path names and its full path (`C:\DIR\NAME.EXT`), or a
+/// DOS error: 2 or 3 when it is missing, 5 for a directory or label.
+pub(super) fn program(p:&Loaded,raw:&[u8])->Result<Result<(Arc<Vec<u8>>,Vec<u8>),u16>,String>{
+    let(drive,path)=match components(&p.drive,raw){Ok(found)=>found,Err(code)=>return Ok(Err(code))};
+    let entry=match lookup(&p.drive,raw){Ok((_,entry))=>entry,Err(code)=>return Ok(Err(code))};
+    if entry.attr&0x18!=0{return Ok(Err(5));}
+    let mut full=vec![p.drive.list[drive].letter,b':',b'\\'];full.extend(path.iter().map(display).collect::<Vec<_>>().join(&b'\\'));
+    Ok(Ok((read_entry(&p.drive.list[drive],&entry)?,full)))
+}
+/// Closes what a child opened when it ends: every handle not in `inherited`.
+pub(super) fn close_child_files(p:&mut Loaded,inherited:u32){
+    p.drive.files.retain(|f|inherited&(1<<f.handle)!=0);
+}
+/// AH29 parses the name at DS:SI into the FCB at ES:DI, after FreeDOS
+/// FcbParseFname: AL bit 0 skips leading separators, bit 1 keeps the drive
+/// byte, bits 2 and 3 keep the name and extension when none is given. AL
+/// returns 0, 1 (wildcards) or FFh (no such drive); SI points past the name.
+fn parse_name(p:&mut Loaded)->Result<(),String>{
+    let mode=p.cpu.regs[0]as u8;
+    let si=p.cpu.regs[6]&0xffff;
+    let context=MemoryContext{segment:ds(),cache:p.image.segments[ds().index()]};
+    let mut text=Vec::new();
+    for n in 0..128u32{
+        if si+n>0xffff{break;}
+        let addr=context.translate(si+n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS parse name access: {e:?}"))?;
+        let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS parse name read: {e:?}"))?as u8;
+        text.push(b);if b==0{break;}
+    }
+    text.push(0);
+    let at=|i:usize|text.get(i).copied().unwrap_or(0);
+    let field_sep=|c:u8|c<=b' '||b"/\\\"[]<>|.:;,=+\t".contains(&c);
+    let mut i=0;
+    if mode&1!=0{while at(i)!=0&&b":;,=+ \t".contains(&at(i)){i+=1;}}
+    while matches!(at(i),b' '|b'\t'){i+=1;}
+    let es=SegmentRegister::Es;
+    let fcb_at=MemoryContext{segment:es,cache:p.image.segments[es.index()]};
+    let di=p.cpu.regs[7]&0xffff;
+    let mut fcb=[0u8;16];
+    for(n,b)in fcb.iter_mut().enumerate(){
+        if di+n as u32>0xffff{return Err("DOS parse name FCB exceeds segment end".into());}
+        let addr=fcb_at.translate(di+n as u32,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS parse name FCB access: {e:?}"))?;
+        *b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS parse name FCB read: {e:?}"))?as u8;
+    }
+    let mut bad_drive=false;
+    if !field_sep(at(i))&&at(i+1)==b':'{
+        let drive=nls::upper(at(i)).wrapping_sub(b'A');
+        bad_drive=p.drive.number(drive.wrapping_add(1)).is_none()||drive>25;
+        fcb[0]=drive.wrapping_add(1);i+=2;
+    }else if mode&2==0{fcb[0]=0;}
+    fcb[12..16].fill(0);
+    if mode&4==0{fcb[1..9].fill(b' ');}
+    if mode&8==0{fcb[9..12].fill(b' ');}
+    let mut wild=false;
+    if at(i)==b'.'{
+        fcb[1]=b'.';i+=1;
+        if at(i)==b'.'{fcb[2]=b'.';i+=1;}
+        mode_result(p,0);
+    }else{
+        let mut field=|i:&mut usize,start:usize,width:usize,fcb:&mut [u8;16]|{
+            let(mut n,mut fill)=(0,b' ');
+            while at(*i)!=0&&!field_sep(at(*i))&&n<width{
+                if at(*i)==b'*'{wild=true;fill=b'?';*i+=1;break;}
+                if at(*i)==b'?'{wild=true;}
+                fcb[start+n]=nls::upper(at(*i));*i+=1;n+=1;
+            }
+            fcb[start+n..start+width].fill(fill);
+        };
+        field(&mut i,1,8,&mut fcb);
+        if at(i)==b'.'{i+=1;field(&mut i,9,3,&mut fcb);}
+        mode_result(p,if bad_drive{0xff}else if wild{1}else{0});
+    }
+    let addrs=(0..16u32).map(|n|fcb_at.translate(di+n,MemWidth::Byte,true,p.cpu.eip).map_err(|e|format!("DOS parse name FCB access: {e:?}"))).collect::<Result<Vec<_>,_>>()?;
+    for &a in &addrs{p.ram.check_write(a,MemWidth::Byte).map_err(|e|format!("DOS parse name FCB write: {e:?}"))?;}
+    for(a,&b)in addrs.into_iter().zip(&fcb){p.ram.store(a,MemWidth::Byte,u32::from(b)).map_err(|e|format!("DOS parse name FCB write: {e:?}"))?;}
+    p.cpu.regs[6]=(p.cpu.regs[6]&0xffff0000)|((si+i as u32)&0xffff);
+    Ok(())
+}
+fn mode_result(p:&mut Loaded,al:u8){p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(al);}
 pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
     let al=p.cpu.regs[0]as u8;let dl=p.cpu.regs[2]as u8;
     match ah{
@@ -343,6 +423,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             if let Some(i)=p.drive.list.iter().position(|d|d.letter-b'A'==dl){p.drive.current=i;}
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(LAST_DRIVE.max(p.drive.list.last().map_or(0,|d|d.letter-b'A'+1)));
         },
+        0x29=>parse_name(p)?,
         0x19=>p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.drive.letter()-b'A'),
         0x36=>{
             let Some(drive)=p.drive.number(dl)else{set_ax(p,0xffff);return Ok(())};

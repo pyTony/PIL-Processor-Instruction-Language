@@ -21,6 +21,8 @@ const ENV:u16=PSP-1-ENV_PARAS;
 const DOSDATA:u16=0x0070;
 const INDOS:u16=0x0001;
 const SYSVARS:u16=0x0026;
+/// Offset in DOSDATA of the 128-byte line buffer CON reads (AH3F) edit into.
+const CON_LINE:u16=0x0300;
 /// BIOS timer ticks in 24 hours (INT1A, BDA 0040:006C).
 const TICKS_PER_DAY:u32=0x0018_00b0;
 pub const MAX_FILE:usize=1024*1024;
@@ -37,6 +39,8 @@ pub mod session;
 mod files;
 #[path="dos_nls.rs"]
 mod nls;
+#[path="dos_exec.rs"]
+mod exec;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
@@ -61,6 +65,10 @@ pub struct Loaded{
     /// The program's own file, which opens read-only by its upper-case base
     /// name from any directory, and the drive with the files AH3D opened.
     pub own_file:std::sync::Arc<Vec<u8>>,pub own_name:Vec<u8>,pub drive:files::Drives,
+    /// The running program's PSP, the parents waiting in EXEC, the last
+    /// child's return code for AH4D, and console bytes AH3F read but did not
+    /// return yet.
+    pub psp:u16,exec:Vec<exec::Frame>,pub return_code:u16,con_pending:Vec<u8>,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -204,7 +212,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -245,7 +253,12 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             match service(&mut p,vector,output){
                 Ok(_) if p.input_wait=>{p.input_wait=false;break Stop::WaitingForInput},
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
-                    if let Some(code)=exit{break Stop::Exit(code);}continue;},
+                    if let Some(code)=exit{
+                        // A child returns to the parent that ran it; the first program ends the run.
+                        if p.exec.is_empty(){break Stop::Exit(code);}
+                        let kind=if p.resident.is_some(){3}else{0};
+                        if let Err(message)=exec::terminate(&mut p,code,kind){break Stop::Service(message);}
+                    }continue;},
                 Err(message)=>break Stop::Service(message),
             }
         }}
