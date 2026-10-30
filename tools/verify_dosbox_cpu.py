@@ -392,6 +392,18 @@ def cases():
             product & (bits-1), 0 if fits else 0x801, flag_mask=0x801 | DF, expected_ecx=(product >> width) & (bits-1))
     # XLAT through SS:BX into a two-byte table pushed on the stack.
     add('xlat_ss', 8, 1, 0, bytes.fromhex('68aa5589e336d75b'), 0x55, 0, flag_mask=DF)
+    # BT/BTS/BTR/BTC with a register offset (taken modulo the width) and an
+    # immediate offset. Only CF is defined; the other arithmetic flags are not.
+    for width in (16, 32):
+        prefix = b'\x66' if width == 32 else b''
+        for name, ext, opcode in [('bt', 4, 0xa3), ('bts', 5, 0xab), ('btr', 6, 0xb3), ('btc', 7, 0xbb)]:
+            for a, b in [(0x00040001, 18), (0x00040001, 17), (0x80000001, 0x3f)]:
+                a &= (1 << width)-1
+                bit = b % width
+                cf = (a >> bit) & 1
+                value = {'bt': a, 'bts': a | (1 << bit), 'btr': a & ~(1 << bit), 'btc': a ^ (1 << bit)}[name]
+                add(f'{name}{width}_r_{b}', width, a, b, prefix+bytes([0x0f, opcode, 0xc8]), value, cf, flag_mask=1 | DF)
+                add(f'{name}{width}_i_{b}', width, a, 0, prefix+bytes([0x0f, 0xba, 0xc0 | (ext << 3), b]), value, cf, flag_mask=1 | DF)
     return result
 
 

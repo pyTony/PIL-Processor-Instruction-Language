@@ -2150,6 +2150,23 @@
         "INT21 AH4B/52/5F, INT2F AX=4310h, INT33, INT29 still stop",
         "FPU (DB) and SMSW r32 remain"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "BT family, true DOS version, default drive and handle count",
+      "base": "dev after #54",
+      "verification": {
+        "linux_rust_tests": 393,
+        "generated_backend_cases": 238,
+        "dosbox_cpu_cases": "448/448 in DOSBox-X 2024.03.01",
+        "dosbox_console_cases": "9/9",
+        "freedos_probe": "report 44 is the baseline; not rerun"
+      },
+      "limitations": [
+        "BT-family register-offset memory forms (bit strings) stop",
+        "AH33 subfunctions other than 06h stop; AH67 above 20 handles stops",
+        "INT21 AH38/4B/52/5F, INT2F AX=1400h/4310h, INT13 AH08, INT33, INT29 still stop"
+      ]
     }
   ]
 }

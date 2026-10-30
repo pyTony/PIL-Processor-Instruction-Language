@@ -486,3 +486,53 @@ fn div_zero_and_quotient_overflow_faults_preserve_all_state(){
   }else{panic!("expected DIV PIL");}
  }
 }
+
+#[test]
+fn bit_test_family_register_and_immediate_forms_set_cf_and_update_the_bit(){
+ use super::super::Cpu;
+ // EAX=0x00040001, ECX selects bit 18 (and 50, which wraps to 18 at 32 bits).
+ for(bytes,ecx,label,want_eax,cf)in [
+  (vec![0x66,0x0f,0xa3,0xc8],18,"BT EAX,ECX",0x00040001,1),
+  (vec![0x66,0x0f,0xab,0xc8],1,"BTS EAX,ECX",0x00040003,0),
+  (vec![0x66,0x0f,0xb3,0xc8],50,"BTR EAX,ECX",0x00000001,1),
+  (vec![0x66,0x0f,0xbb,0xc8],18,"BTC EAX,ECX",0x00000001,1),
+  (vec![0x66,0x0f,0xbb,0xc8],17,"BTC EAX,ECX",0x00060001,0),
+  (vec![0x0f,0xbb,0xc8],16,"BTC AX,CX",0x00040000,1),
+  (vec![0x0f,0xba,0xe0,0x10],0,"BT AX,0x10",0x00040001,1),
+  (vec![0x66,0x0f,0xba,0xf8,0x1f],0,"BTC EAX,0x1f",0x80040001,0),
+ ]{
+  assert_eq!(decode(&bytes).unwrap().label,label);
+  for incoming in [0x202,0x203]{
+   let mut c=Cpu{regs:[0x00040001,ecx,2,0x400,4,5,6,7],eflags:incoming,undefined_flags:0,eip:ENTRY};
+   execute_one(&bytes,&mut c,0,false).unwrap();
+   assert_eq!((c.regs[0],c.regs[1]),(want_eax,ecx),"{bytes:02x?}");
+   assert_eq!((c.eflags&1,c.eflags&0x600),(cf,0x200),"{bytes:02x?}");
+   assert_eq!(c.undefined_flags,0x8d4);
+   assert_eq!(c.eip,ENTRY+bytes.len()as u32);
+  }
+ }
+}
+
+#[test]
+fn bit_test_immediate_memory_writes_only_for_modifying_forms(){
+ use super::super::Cpu;
+ for(bytes,label,want,cf)in [
+  (vec![0x0f,0xba,0x27,0x0f],"BT word DS:[BX],0x0f",0x8001u32,1),
+  (vec![0x0f,0xba,0x2f,0x01],"BTS word DS:[BX],0x01",0x8003,0),
+  (vec![0x0f,0xba,0x37,0x10],"BTR word DS:[BX],0x10",0x8000,1),
+  (vec![0x66,0x0f,0xba,0x3f,0x1f],"BTC dword DS:[BX],0x1f",0x80008001,0),
+ ]{
+  assert_eq!(decode(&bytes).unwrap().label,label);
+  let mut c=Cpu{regs:[0,1,2,0x400,4,5,6,7],eflags:0x202,undefined_flags:0,eip:ENTRY};
+  let ram=execute_one(&bytes,&mut c,0x8001,false).unwrap();
+  assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),want,"{bytes:02x?}");
+  assert_eq!(c.eflags&1,cf);
+ }
+ // BT only reads, so read-only memory is fine; BTS must fail without changing state.
+ let mut c=Cpu{regs:[0,1,2,0x400,4,5,6,7],eflags:0x202,undefined_flags:0,eip:ENTRY};
+ execute_one(&[0x0f,0xba,0x27,0x00],&mut c,1,true).unwrap();assert_eq!(c.eflags&1,1);
+ let mut c=Cpu{regs:[0,1,2,0x400,4,5,6,7],eflags:0x202,undefined_flags:0,eip:ENTRY};let before=c.clone();
+ assert!(execute_one(&[0x0f,0xba,0x2f,0x01],&mut c,1,true).is_err());assert_eq!(c,before);
+ // Register-offset memory forms and /0-/3 of 0FBA stay decode diagnostics.
+ for bytes in [vec![0x0f,0xa3,0x07],vec![0x0f,0xbb,0x07],vec![0x0f,0xba,0xc0,1],vec![0x0f,0xba,0xd8,1]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+}
