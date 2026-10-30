@@ -34,6 +34,10 @@ pub struct Loaded{
     /// DOS console state: scan code owed after an ASCII-0 key, and an AH0C flush
     /// already performed for the read that is waiting.
     pub pending_scan:Option<u8>,pub flushed:bool,
+    /// AH0A line being edited across waits: bytes so far, entry column, first key.
+    pub line:Option<(Vec<u8>,usize,bool)>,
+    /// Set by a service that consumed what input there was and must wait.
+    pub input_wait:bool,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -124,7 +128,7 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:segments[1].base,start,end,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -163,6 +167,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 Ok(false)=>{},
             }
             match service(&mut p,vector,output){
+                Ok(_) if p.input_wait=>{p.input_wait=false;break Stop::WaitingForInput},
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{break Stop::Exit(code);}continue;},
                 Err(message)=>break Stop::Service(message),

@@ -107,6 +107,19 @@ def build_console(negative=False):
         mov(0, 0x0c00); interrupt(0x21); check(0, 0x0c00, fail)
         mov(0, 0x0b00); interrupt(0x21); check(0, 0x0b00, fail)
     case('dos_status_read_extended_poll_and_flush', dos_input)
+    def line_input(fail):
+        # Keys are stuffed first; the echo lands in the compared output, ended by LF.
+        mov(0, 0x40); b.emit(bytes.fromhex('8ec0'))
+        b.emit(bytes.fromhex('26c7061a001e0026c7061c001e00'))
+        for value in (0x1e61, 0x3062, 0x0e08, 0x2e63, 0x1c0d, 0x1e61, 0x3062, 0x2e63, 0x1c0d):
+            mov(0, 0x0500); mov(1, value); interrupt(0x16)
+        for size, words in ((8, (0x6102, 0x0d63)), (3, (0x6102, 0x0d62))):
+            b.emit(bytes([0xc6, 0x06, 0x00, 0xf0, size]))  # MOV BYTE [F000],size
+            mov(2, 0xf000); mov(0, 0x0a00); interrupt(0x21)
+            mov(0, 0x0200); mov(2, 0x000a); interrupt(0x21)
+            for offset, want in zip((0xf001, 0xf003), words):
+                b.emit(bytes([0xa1])); b.word(offset); check(0, want, fail)  # MOV AX,[offset]
+    case('dos_buffered_line_edit_and_full_buffer', line_input)
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
     b.emit(bytes.fromhex('a1')); b.ref('fail_count')
     b.emit(bytes.fromhex('09c07405b8014ccd21b8004ccd21'))

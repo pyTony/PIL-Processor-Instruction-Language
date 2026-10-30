@@ -13,6 +13,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|if ready{0xff}else{0};Ok(None)
         },
         (0x21,0x0c)=>{flush_then(p,out)?;Ok(None)},
+        (0x21,0x0a)=>{console::dos_break_check(p)?;line_input(p,out)?;Ok(None)},
         (0x21,0x37)=>{
             if p.cpu.regs[0]as u8!=0{return Err("DOS switch-character shim supports AH37/AL00 query only".into());}
             p.cpu.regs[0]&=!255;p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(b'/');
@@ -214,7 +215,14 @@ fn flush_then(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
             if !p.flushed{return Err("DOS AH0C read reached without its flush".into());}
             read_char(p,out,al)?;p.flushed=false;Ok(())
         },
-        0x0a=>Err("DOS AH0C/AL0A buffered input is not implemented".into()),
+        0x0a=>{
+            if !p.flushed{
+                let flush=console::dos_flush_writes(p)?;console::store(p,&flush)?;
+                p.pending_scan=None;p.flushed=true;
+            }
+            line_input(p,out)?;
+            if !p.input_wait{p.flushed=false;}Ok(())
+        },
         _=>{
             let flush=console::dos_flush_writes(p)?;
             let saved=(p.ram.clone(),p.cpu.clone(),p.pending_scan);
@@ -223,5 +231,84 @@ fn flush_then(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
             if result.is_err(){(p.ram,p.cpu,p.pending_scan)=saved;}
             result
         },
+    }
+}
+const F1:u32=0x3b00;const F5:u32=0x3f00;const F6:u32=0x4000;
+const INS:u32=0x5200;const DEL:u32=0x5300;const LEFT:u32=0x4b00;const RIGHT:u32=0x4d00;
+/// Echo `bytes` to capture and screen and apply `writes`, all or nothing.
+fn echo(p:&mut Loaded,out:&mut impl Output,bytes:&[u8],mut writes:Vec<(u32,MemWidth,u32)>)->Result<(),String>{
+    if bytes.len()>out.remaining(){return Err("DOS output limit reached during line input".into());}
+    writes.extend(console::dos_screen(p,bytes)?);console::check(p,&writes)?;
+    out.write_atomic(bytes).map_err(|e|format!("DOS line echo provider: {e:?}"))?;
+    console::store(p,&writes)
+}
+/// AH0A buffered input at DS:DX (max, count, bytes), after FreeDOS read_line.
+/// Keys are consumed and echoed as they arrive; with none left before CR the
+/// line state stays in Loaded and the INT waits. The guest buffer is written
+/// once, at CR: the bytes including CR, and a count without it. Template keys
+/// (F1-F5, RIGHT, INS, DEL) are rejected; other extended keys are ignored.
+fn line_input(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
+    let dx=p.cpu.regs[2]&0xffff;
+    let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+    let eip=p.cpu.eip;
+    let at=move|n:u32|->Result<u32,String>{
+        if dx+n>0xffff{return Err("DOS line buffer exceeds segment end".into());}
+        context.translate(dx+n,MemWidth::Byte,false,eip).map_err(|e|format!("DOS line buffer access: {e:?}"))
+    };
+    let size=p.ram.load(at(0)?,MemWidth::Byte).map_err(|e|format!("DOS line buffer read: {e:?}"))?as usize;
+    if size==0{p.line=None;return Ok(());}
+    at(1+size as u32)?; // the whole buffer must lie inside DS before any key is taken
+    let(mut line,cu_pos,mut first)=p.line.take().unwrap_or((Vec::new(),out.column(),true));
+    let result=line_edit(p,out,&at,size,&mut line,cu_pos,&mut first);
+    if p.input_wait||result.is_err(){p.line=Some((line,cu_pos,first));}
+    result
+}
+
+fn line_edit(p:&mut Loaded,out:&mut impl Output,at:&dyn Fn(u32)->Result<u32,String>,size:usize,line:&mut Vec<u8>,cu_pos:usize,first:&mut bool)->Result<(),String>{
+    loop{
+        console::dos_break_check(p)?;
+        let Some((c,ring))=console::dos_line_key(p)? else{p.input_wait=true;return Ok(());};
+        let clear=p.pending_scan.is_some();
+        let mut c=c;if c==F6{c=0x1a;}
+        match c{
+            10=>{echo(p,out,if *first{&[]}else{b"\r\n"},ring)?;},
+            6=>echo(p,out,&[],ring)?,
+            F1..=F5|INS|DEL|RIGHT=>return Err(format!("DOS line template key {:02x} is not modeled",c>>8)),
+            8|LEFT=>{
+                let mut bs=Vec::new();
+                if let Some(last)=line.pop(){
+                    let n=if last==9{
+                        let mut col=cu_pos;
+                        for &b in line.iter(){col=if b==9{(col+8)&!7}else if b<32{col+2}else{col+1};}
+                        out.column().saturating_sub(col).max(1)
+                    }else if last<32{2}else{1};
+                    for _ in 0..n{bs.extend_from_slice(b"\x08 \x08");}
+                }
+                echo(p,out,&bs,ring)?;
+            },
+            27=>{
+                let mut e=b"\\\r\n".to_vec();e.extend(std::iter::repeat_n(b' ',cu_pos));
+                echo(p,out,&e,ring)?;line.clear();
+            },
+            c if c>=256=>echo(p,out,&[],ring)?,
+            13=>{
+                line.push(13);
+                let mut writes=ring;
+                for (i,&b) in line.iter().enumerate(){writes.push((at(2+i as u32)?,MemWidth::Byte,u32::from(b)));}
+                writes.push((at(1)?,MemWidth::Byte,(line.len()-1)as u32));
+                echo(p,out,b"\r",writes)?;
+                if clear{p.pending_scan=None;}
+                return Ok(());
+            },
+            c=>{
+                let b=c as u8;
+                if line.len()+1<size{
+                    let shown:&[u8]=if b<32&&b!=9{&[b'^',b+64]}else{&[b]};
+                    echo(p,out,shown,ring)?;line.push(b);
+                }else{echo(p,out,&[7],ring)?;}
+            },
+        }
+        if clear{p.pending_scan=None;}
+        *first=false;
     }
 }
