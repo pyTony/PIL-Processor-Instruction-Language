@@ -1128,3 +1128,8 @@ fn duplicated_handles_share_the_file_position_and_close_independently(){
  assert_eq!(svc(&mut p,0x4500,12,0),(6,1));assert_eq!(svc(&mut p,0x4600,1,20),(6,1));
  std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn boot_drive_is_the_first_drive(){
+ let mut p=load(&[0xcd,0x21],"x.com").unwrap();p.cpu.regs[0]=0x3305;p.cpu.regs[2]=0xff;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[2]&255,1,"A: without drives");
+ let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(std::env::temp_dir())],None).unwrap();p.cpu.regs[0]=0x3305;p.cpu.regs[2]=0xff;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[2]&255,3,"C:");
+}

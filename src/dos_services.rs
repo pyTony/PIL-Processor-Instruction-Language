@@ -56,6 +56,12 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[1]&=0xffff0000;
             Ok(None)
         },
+        (0x21,0x33) if p.cpu.regs[0]as u8==5=>{
+            // Boot drive: the first drive Dine has (C: for an image or a
+            // mounted folder, A: when there is neither), as DL=1 for A:.
+            p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(p.drive.first_letter()-b'A'+1);
+            Ok(None)
+        },
         (0x21,0x33) if p.cpu.regs[0]as u8==6=>{
             // True version: the same 6.22 profile as AH30, revision 0, and
             // DH=0 because Dine is neither in ROM nor in the HMA.

@@ -1,3 +1,14 @@
+# AH33 AL=05h boot drive — 30 October 2026
+
+`DIR | MORE` stopped at INT 21h AX=3305h. FreeCOM asks for the boot drive
+when no TEMP, TMP or current directory can take a temporary file, which is
+always the case while every drive is read-only. Dine now reports its first
+drive (C: with an image or a mounted folder, A: without). Pipes still cannot
+work until some drive can be written: FreeCOM falls back to running the left
+side to the screen and the right side reading the keyboard.
+
+Verification: 412 Rust tests passed on Linux.
+
 # IRET in real mode — 30 October 2026
 
 `MORE` stopped at opcode CFh (IRET) in its own code before printing anything.

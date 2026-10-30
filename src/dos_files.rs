@@ -54,6 +54,8 @@ impl Drives{
     }
     /// The default drive's letter.
     pub fn letter(&self)->u8{self.list[self.current].letter}
+    /// The first drive's letter, which Dine reports as the boot drive.
+    pub fn first_letter(&self)->u8{self.list[0].letter}
     /// Handles AH3D opened that are still open.
     #[allow(dead_code)]
     pub fn open_files(&self)->usize{self.files.len()}
