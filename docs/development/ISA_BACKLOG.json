@@ -317,8 +317,8 @@
         "SHLD",
         "SHRD"
       ],
-      "status": "planned",
-      "remaining": "16/32 immediate/CL forms and undefined-count policy",
+      "status": "partial",
+      "remaining": "16/32-bit immediate and CL forms on registers and memory are implemented and backend-verified (count masked to 5 bits, zero count changes no flags, OF only for a count of one, AF undefined). A 16-bit count above 16 is rejected rather than guessed; a hardware vector is needed to set that policy",
       "modern_user_mode_oracle": "overlap",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

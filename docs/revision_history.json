@@ -2167,6 +2167,23 @@
         "AH33 subfunctions other than 06h stop; AH67 above 20 handles stops",
         "INT21 AH38/4B/52/5F, INT2F AX=1400h/4310h, INT13 AH08, INT33, INT29 still stop"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "SHLD/SHRD, environment block, own-file reads and a growable handle table",
+      "base": "dev after #55",
+      "verification": {
+        "linux_rust_tests": 396,
+        "generated_backend_cases": 240,
+        "dosbox_cpu_cases": "504/504 in DOSBox-X 2024.03.01 (16-bit SHLD-by-one OF not compared)",
+        "dosbox_console_cases": "9/9",
+        "freedos_probe": "report 45 is the baseline; not rerun"
+      },
+      "limitations": [
+        "16-bit SHLD/SHRD counts above 16 are rejected",
+        "only the program's own file opens, read-only, one open at a time",
+        "INT21 AH34/38/4B/52/5F, INT2F AX=0601h/1400h/4310h, INT13 AH08, INT33, INT29 still stop"
+      ]
     }
   ]
 }

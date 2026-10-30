@@ -1,0 +1,45 @@
+# SHLD: shift dst left, filling from the top of src. The 386 masks the count
+# to five bits; a zero count changes no flags. A 16-bit count above 16 leaves
+# the result undefined, so this profile rejects it instead of guessing.
+$OPERAND
+read b src $W
+$COUNT
+const count_mask 8 31
+and masked raw count_mask
+zext count masked $W
+const width $W $W
+ult over width count
+not fits over
+require fits
+const one $W 1
+const yes 1 1
+const no 1 0
+zero is_zero count
+not active is_zero
+xor count_minus_one count one
+zero single count_minus_one
+zext a_wide a $DOUBLE
+zext b_wide b $DOUBLE
+const half $DOUBLE $W
+shl a_high a_wide half
+or joined a_high b_wide
+zext count_wide count $DOUBLE
+shl moved joined count_wide
+lshr top moved half
+trunc r top $W
+sub back width count
+lshr out a back
+bit cf out 0
+bit sf r $SIGN
+bit old_sign a $SIGN
+xor of sf old_sign
+zero zf r
+parity pf r
+$WRITE
+flag_if CF cf yes active
+flag_if OF of single active
+flag_if AF no no active
+flag_if SF sf yes active
+flag_if ZF zf yes active
+flag_if PF pf yes active
+retire

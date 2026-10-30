@@ -5,13 +5,13 @@ fn fresh()->Loaded{load(&[0x90],"arena.com").unwrap()}
 fn cf(p:&Loaded)->bool{p.cpu.eflags&1!=0}
 #[test]
 fn loader_creates_mcb_chain_and_ram_is_distinct_from_allocation(){
- let p=fresh();assert_eq!(p.ram.bytes().len(),0x100000);assert_eq!(p.allocated_end,LIMIT as u32);assert_eq!(p.ram.load(u32::from(PSP-1)*16,MemWidth::Byte).unwrap(),u32::from(b'Z'));assert_eq!(p.arena.blocks,vec![Block{header:PSP-1,size:0x9000,owner:PSP}]);assert!(p.arena.valid(&p.ram));
- let mut b=hello("exe").unwrap();super::super::put_word(&mut b,12,1);super::super::put_word(&mut b,16,0x10);let p=load(&b,"small.exe").unwrap();assert!(p.allocated_end<LIMIT as u32);assert_eq!(p.arena.blocks.len(),2);assert_eq!(p.arena.blocks[1].owner,0);assert!(p.arena.valid(&p.ram));
+ let p=fresh();assert_eq!(p.ram.bytes().len(),0x100000);assert_eq!(p.allocated_end,LIMIT as u32);assert_eq!(p.ram.load(u32::from(PSP-1)*16,MemWidth::Byte).unwrap(),u32::from(b'Z'));assert_eq!(p.ram.load(u32::from(ENV-1)*16,MemWidth::Byte).unwrap(),u32::from(b'M'));assert_eq!(p.arena.blocks,vec![Block{header:ENV-1,size:ENV_PARAS,owner:PSP},Block{header:PSP-1,size:0x9000,owner:PSP}]);assert!(p.arena.valid(&p.ram));
+ let mut b=hello("exe").unwrap();super::super::put_word(&mut b,12,1);super::super::put_word(&mut b,16,0x10);let p=load(&b,"small.exe").unwrap();assert!(p.allocated_end<LIMIT as u32);assert_eq!(p.arena.blocks.len(),3);assert_eq!(p.arena.blocks[2].owner,0);assert!(p.arena.valid(&p.ram));
 }
 #[test]
 fn shrink_alloc_free_and_first_fit_reuse_have_correct_headers(){
- let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);assert!(!cf(&p));assert_eq!(p.allocated_end,0x20000);assert_eq!(p.ram.load(u32::from(PSP)*16+2,MemWidth::Word).unwrap(),0xa000);assert_eq!(p.cpu.regs[0]as u16,PSP);assert_eq!(p.arena.blocks[1],Block{header:0x2000,size:0x7fff,owner:0});
- call(&mut p,0x48,0x20,0);assert!(!cf(&p));assert_eq!(p.cpu.regs[0]as u16,0x2001);assert_eq!(p.arena.blocks[1],Block{header:0x2000,size:0x20,owner:PSP});call(&mut p,0x49,0,0x2001);assert!(!cf(&p));assert_eq!(p.arena.blocks[1].owner,0);call(&mut p,0x48,0x10,0);assert_eq!(p.cpu.regs[0]as u16,0x2001);assert!(p.arena.valid(&p.ram));
+ let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);assert!(!cf(&p));assert_eq!(p.allocated_end,0x20000);assert_eq!(p.ram.load(u32::from(PSP)*16+2,MemWidth::Word).unwrap(),0xa000);assert_eq!(p.cpu.regs[0]as u16,PSP);assert_eq!(p.arena.blocks[2],Block{header:0x2000,size:0x7fff,owner:0});
+ call(&mut p,0x48,0x20,0);assert!(!cf(&p));assert_eq!(p.cpu.regs[0]as u16,0x2001);assert_eq!(p.arena.blocks[2],Block{header:0x2000,size:0x20,owner:PSP});call(&mut p,0x49,0,0x2001);assert!(!cf(&p));assert_eq!(p.arena.blocks[2].owner,0);call(&mut p,0x48,0x10,0);assert_eq!(p.cpu.regs[0]as u16,0x2001);assert!(p.arena.valid(&p.ram));
 }
 #[test]
 fn allocation_failure_returns_largest_and_preserves_high_registers_flags(){
@@ -21,11 +21,11 @@ fn allocation_failure_returns_largest_and_preserves_high_registers_flags(){
 #[test]
 fn resize_failure_grows_to_maximum_before_returning_dos8(){
  let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0x100,0);let block=p.cpu.regs[0]as u16;call(&mut p,0x4a,0xffff,PSP);assert!(cf(&p));assert_eq!((p.cpu.regs[0]as u16,p.cpu.regs[3]as u16),(8,0x1000));assert_eq!(p.allocated_end,0x20000);
- call(&mut p,0x49,0,block);call(&mut p,0x4a,0xffff,PSP);assert!(cf(&p));assert_eq!((p.cpu.regs[0]as u16,p.cpu.regs[3]as u16),(8,0x9000));assert_eq!(p.allocated_end,LIMIT as u32);assert_eq!(p.arena.blocks.len(),1);assert!(p.arena.valid(&p.ram));
+ call(&mut p,0x49,0,block);call(&mut p,0x4a,0xffff,PSP);assert!(cf(&p));assert_eq!((p.cpu.regs[0]as u16,p.cpu.regs[3]as u16),(8,0x9000));assert_eq!(p.allocated_end,LIMIT as u32);assert_eq!(p.arena.blocks.len(),2);assert!(p.arena.valid(&p.ram));
 }
 #[test]
 fn free_does_not_zero_data_and_coalescing_waits_until_allocate(){
- let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0x10,0);let a=p.cpu.regs[0]as u16;call(&mut p,0x48,0x10,0);let b=p.cpu.regs[0]as u16;p.ram.store(u32::from(a)*16,MemWidth::Word,0xbeef).unwrap();call(&mut p,0x49,0,a);call(&mut p,0x49,0,b);assert_eq!(p.arena.blocks.len(),4);assert_eq!(p.ram.load(u32::from(a)*16,MemWidth::Word).unwrap(),0xbeef);call(&mut p,0x48,0x30,0);assert_eq!(p.cpu.regs[0]as u16,a);assert_eq!(p.arena.blocks.len(),3);assert!(p.arena.valid(&p.ram));
+ let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0x10,0);let a=p.cpu.regs[0]as u16;call(&mut p,0x48,0x10,0);let b=p.cpu.regs[0]as u16;p.ram.store(u32::from(a)*16,MemWidth::Word,0xbeef).unwrap();call(&mut p,0x49,0,a);call(&mut p,0x49,0,b);assert_eq!(p.arena.blocks.len(),5);assert_eq!(p.ram.load(u32::from(a)*16,MemWidth::Word).unwrap(),0xbeef);call(&mut p,0x48,0x30,0);assert_eq!(p.cpu.regs[0]as u16,a);assert_eq!(p.arena.blocks.len(),4);assert!(p.arena.valid(&p.ram));
 }
 #[test]
 fn invalid_block_double_free_and_corrupted_mcb_return_dos_errors(){
@@ -35,7 +35,7 @@ fn invalid_block_double_free_and_corrupted_mcb_return_dos_errors(){
 }
 #[test]
 fn zero_size_and_exact_fit_keep_a_valid_terminating_chain(){
- let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0,0);let seg=p.cpu.regs[0]as u16;assert!(!cf(&p));assert_eq!(seg,0x2001);assert_eq!(p.arena.blocks[1].size,0);call(&mut p,0x49,0,seg);call(&mut p,0x48,0x7fff,0);assert!(!cf(&p));assert_eq!(p.arena.blocks.len(),2);assert!(p.arena.valid(&p.ram));
+ let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0,0);let seg=p.cpu.regs[0]as u16;assert!(!cf(&p));assert_eq!(seg,0x2001);assert_eq!(p.arena.blocks[2].size,0);call(&mut p,0x49,0,seg);call(&mut p,0x48,0x7fff,0);assert!(!cf(&p));assert_eq!(p.arena.blocks.len(),3);assert!(p.arena.valid(&p.ram));
 }
 #[test]
 fn protected_old_or_new_mcb_write_stops_service_without_any_commit(){

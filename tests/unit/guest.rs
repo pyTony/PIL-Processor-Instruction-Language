@@ -536,3 +536,44 @@ fn bit_test_immediate_memory_writes_only_for_modifying_forms(){
  // Register-offset memory forms and /0-/3 of 0FBA stay decode diagnostics.
  for bytes in [vec![0x0f,0xa3,0x07],vec![0x0f,0xbb,0x07],vec![0x0f,0xba,0xc0,1],vec![0x0f,0xba,0xd8,1]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
 }
+
+fn double_shift_reference(left:bool,w:u32,a:u64,b:u64,c:u32)->(u64,u32){
+ let mask=(1u64<<w)-1;let (a,b)=(a&mask,b&mask);
+ let r=if left{((a<<c)|(b>>(w-c)))&mask}else{((a>>c)|(b<<(w-c)))&mask};
+ let cf=if left{(a>>(w-c))&1}else{(a>>(c-1))&1} as u32;
+ let sf=((r>>(w-1))&1) as u32;let of=sf^((a>>(w-1))&1) as u32;
+ let pf=u32::from((r&0xff).count_ones()%2==0);
+ (r,cf|(pf<<2)|(u32::from(r==0)<<6)|(sf<<7)|if c==1{of<<11}else{0})
+}
+#[test]
+fn double_precision_shifts_match_a_reference_for_register_and_memory_forms(){
+ use super::super::Cpu;
+ for w in [16u32,32]{for left in [true,false]{for(a,b)in [(0x8001_4002u64,0x1234_8765u64),(0x0000_0001,0xffff_ffff),(0x7fff_8000,0)]{
+  for c in [0u32,1,4,15,16,17,31,32,33]{
+   let opcode=if left{0xa4u8}else{0xac};
+   // Register form with an immediate count, then the CL form.
+   for(bytes,ecx)in [(vec![0x0f,opcode,0xc8,c as u8],b as u32),(vec![0x0f,opcode|1,0xc8],(b as u32&!0xff)|c)]{
+    let mut bytes=bytes;if w==32{bytes.insert(0,0x66);}
+    let mut cpu=Cpu{regs:[a as u32,ecx,0,0x400,4,5,6,7],eflags:0x8d7,undefined_flags:0,eip:ENTRY};
+    let (b_now,masked)=(u64::from(ecx),c&31);
+    let result=execute_one(&bytes,&mut cpu,0,false);
+    if w==16&&masked>16{assert!(result.is_err(),"{bytes:02x?}");continue;}
+    result.unwrap();
+    if masked==0{assert_eq!((cpu.regs[0],cpu.eflags,cpu.undefined_flags),(a as u32,0x8d7,0),"{bytes:02x?}");continue;}
+    let (r,flags)=double_shift_reference(left,w,a,b_now,masked);
+    let keep=if w==16{a as u32&0xffff0000}else{0};
+    assert_eq!(cpu.regs[0],keep|r as u32,"{bytes:02x?} c={masked}");
+    let defined=if masked==1{0x8c5}else{0xc5};
+    assert_eq!(cpu.eflags&defined,flags,"{bytes:02x?} c={masked}");
+    assert_eq!(cpu.undefined_flags,0x8d5&!defined,"{bytes:02x?} c={masked}");
+   }
+  }
+ }}}
+ // Memory destination: SHLD word DS:[BX],AX,4 and the label forms.
+ assert_eq!(decode(&[0x0f,0xa5,0xc2]).unwrap().label,"SHLD DX,AX,CL");
+ assert_eq!(decode(&[0x66,0x0f,0xac,0x07,0x08]).unwrap().label,"SHRD dword DS:[BX],EAX,0x08");
+ let mut cpu=Cpu{regs:[0xabcd,0,0,0x400,4,5,6,7],eflags:0x202,undefined_flags:0,eip:ENTRY};
+ let ram=execute_one(&[0x0f,0xa4,0x07,0x04],&mut cpu,0x1234,false).unwrap();assert_eq!(ram.load(0x500,MemWidth::Word).unwrap(),0x234a);
+ let mut cpu=Cpu{regs:[0xabcd,0,0,0x400,4,5,6,7],eflags:0x202,undefined_flags:0,eip:ENTRY};let before=cpu.clone();
+ assert!(execute_one(&[0x0f,0xa4,0x07,0x04],&mut cpu,0x1234,true).is_err());assert_eq!(cpu,before);
+}
