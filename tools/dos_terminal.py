@@ -7,10 +7,13 @@ screen contents all come from the engine; this file only displays them.
 
     python tools/dos_terminal.py images/FD14LITE.img::COMMAND.COM
     python tools/dos_terminal.py --mount dosfiles images/FD14LITE.img::COMMAND.COM
+    python tools/dos_terminal.py --mount dosfiles --args "/K D:\\START.BAT" images/FD14LITE.img::COMMAND.COM
 
 An image becomes read-only drive C:; --mount adds a host folder as the next
 drive (D: after an image), which DOS programs can write: files they create,
 change, delete or rename change in the host folder itself.
+--args gives the program its command line; for COMMAND.COM, /K runs a batch
+file or command and then stays at the prompt.
 Z: is a drive held in memory for the session, with TEMP=Z:\\ so that pipes
 work from any drive; what is written there is gone when the session ends.
 
@@ -110,9 +113,9 @@ def screen_rows(reply):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None):
-        mount_args = ['--mount', str(mount)] if mount else []
-        self.process = subprocess.Popen([str(engine), '--dos-session', *mount_args, str(program)], stdin=subprocess.PIPE,
+    def __init__(self, engine, program, mount=None, args=None):
+        options = (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
+        self.process = subprocess.Popen([str(engine), '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.seq = 0
@@ -164,7 +167,7 @@ def parse_offset(text):
     return sign * seconds
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -182,7 +185,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None):
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount)
+    session = Session(engine, program, mount, args)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -289,13 +292,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('program', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH')
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
+    parser.add_argument('--args', metavar='COMMAND_LINE',
+                        help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
     parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args)
     root.mainloop()
 
 

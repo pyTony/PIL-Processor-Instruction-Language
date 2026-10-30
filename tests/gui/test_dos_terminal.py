@@ -9,6 +9,9 @@ spec.loader.exec_module(term)
 # MOV AH,9; MOV DX,msg; INT 21; loop: MOV AH,1; INT 21; CMP AL,0D; JNE loop; MOV AX,4C00; INT 21; NOP; "Name? $"
 ASK = bytes([0xb4, 0x09, 0xba, 0x15, 0x01, 0xcd, 0x21, 0xb4, 0x01, 0xcd, 0x21, 0x3c, 0x0d, 0x75, 0xf8,
              0xb8, 0x00, 0x4c, 0xcd, 0x21, 0x90]) + b'Name? $'
+# Writes its command tail (PSP:81h, length at 80h) to standard output and exits.
+TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 0xba, 0x81, 0x00, 0xcd, 0x21,
+              0xcd, 0x20])
 
 
 class DosTerminalTests(unittest.TestCase):
@@ -75,6 +78,18 @@ class DosTerminalTests(unittest.TestCase):
                 reply = session.send('run 1000')
                 self.assertEqual((reply['status'], reply['detail']), ('exit', 'exit code 0'))
                 self.assertFalse(session.send('run 0')['ok'])
+            finally:
+                session.close()
+
+    def test_args_reach_the_program_command_line(self):
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as d:
+            program = Path(d) / 'tail.com'
+            program.write_bytes(TAIL)
+            session = term.Session(engine, program, args='/K D:\\START.BAT')
+            try:
+                reply = session.send('run 1000')
+                self.assertEqual((reply['status'], term.screen_rows(reply)[0][0].rstrip()), ('exit', ' /K D:\\START.BAT'))
             finally:
                 session.close()
 
