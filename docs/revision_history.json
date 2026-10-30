@@ -1999,6 +1999,24 @@
         "no BIOS teletype/scroll/mode switching",
         "DOS output capture remains separate"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "BIOS teletype, scrolling, mode and page services",
+      "base": "e9c89d6",
+      "verification": {
+        "linux_rust_tests": 366,
+        "pil_console_cases": 6,
+        "dosbox_console_cases": "not rerun",
+        "negative_control": "one deliberate failure in PIL"
+      },
+      "limitations": [
+        "TAB rejected in AH0E",
+        "mode 3 only",
+        "no CRTC/VGA ports",
+        "DOS output not mirrored to the screen",
+        "no Python console wiring"
+      ]
     }
   ]
 }

@@ -63,6 +63,33 @@ def build_console(negative=False):
         mov(0, 0x0100); interrupt(0x16)
         b.emit(bytes.fromhex('9c5a81e24000')); check(2, 0x40, fail)
     case('keyboard_peek_consume_extended_empty', key)
+    def tty(page, ch):
+        mov(0, 0x0e00 | ch); mov(3, page << 8); interrupt(0x10)
+    def cursor(page, fail, want):
+        mov(0, 0x0300); mov(3, page << 8); interrupt(0x10); check(2, want, fail)
+    def read_at(page, pos, fail, want):
+        position(page, pos); mov(0, 0x0800); mov(3, page << 8); interrupt(0x10); check(0, want, fail)
+    def teletype(fail):
+        position(1, 0x0105)
+        for ch, want in ((8, 0x0104), (13, 0x0100), (10, 0x0200), (7, 0x0200)):
+            tty(1, ch); cursor(1, fail, want)
+        position(1, 0x184f)
+        mov(0, 0x0978); mov(3, 0x014e); mov(1, 1); interrupt(0x10)
+        tty(1, 0x51); cursor(1, fail, 0x1800)
+        read_at(1, 0x174f, fail, 0x4e51); read_at(1, 0x1800, fail, 0x4e20)
+    case('teletype_controls_wrap_and_scroll', teletype)
+    def scroll(fail):
+        mov(0, 0x0501); interrupt(0x10)
+        mov(0, 0x0f00); interrupt(0x10); check(0, 0x5003, fail)
+        b.emit(bytes.fromhex('81e300ff')); check(3, 0x0100, fail)  # AND BX,FF00
+        position(1, 0x0103); mov(0, 0x0942); mov(3, 0x0117); mov(1, 1); interrupt(0x10)
+        position(1, 0x0203); mov(0, 0x0941); mov(3, 0x0117); mov(1, 1); interrupt(0x10)
+        mov(0, 0x0601); mov(3, 0x1f00); mov(1, 0x0103); mov(2, 0x0205); interrupt(0x10)
+        read_at(1, 0x0103, fail, 0x1741); read_at(1, 0x0203, fail, 0x1f20)
+        mov(0, 0x0701); mov(3, 0x2e00); mov(1, 0x0103); mov(2, 0x0205); interrupt(0x10)
+        read_at(1, 0x0103, fail, 0x2e20); read_at(1, 0x0203, fail, 0x1741)
+        mov(0, 0x0500); interrupt(0x10)
+    case('active_page_query_and_window_scroll', scroll)
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
     b.emit(bytes.fromhex('a1')); b.ref('fail_count')
     b.emit(bytes.fromhex('09c07405b8014ccd21b8004ccd21'))
@@ -92,7 +119,7 @@ if __name__ == '__main__':
         report = validate_output(text, tests, 'PIL')
         expected_errors = ['PIL: FAIL 001 last_cell_attribute_cursor'] if negative else []
         assert report['errors'] == expected_errors, report
-        assert report['passed'] == (3 if negative else 4), report
+        assert report['passed'] == len(tests) - int(negative), report
         assert report['failed'] == int(negative), report
         assert f'STOP Exit({int(negative)})' in result.stdout, result.stdout
-    print('PASS: four BIOS console fixtures and deliberate readback failure')
+    print(f'PASS: {len(tests)} BIOS console fixtures and deliberate readback failure')

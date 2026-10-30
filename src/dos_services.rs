@@ -87,6 +87,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             }Err("DOS string has no $ terminator before segment end".into())
         },
         (0x10,ah @ (0x08|0x09|0x0a))=>{console::video(p,ah)?;Ok(None)},
+        (0x10,ah @ (0x00|0x05|0x06|0x07|0x0e|0x0f))=>{console::display(p,ah)?;Ok(None)},
         (0x16,ah)=>{console::keyboard(p,ah)?;Ok(None)},
         (0x10,0x01)=>{
             p.ram.store(0x460,MemWidth::Word,p.cpu.regs[1]&0xffff).map_err(|e|format!("BIOS cursor shape write: {e:?}"))?;

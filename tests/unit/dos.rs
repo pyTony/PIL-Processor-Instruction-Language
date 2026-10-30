@@ -399,3 +399,107 @@ fn bios_keyboard_store_and_shift_status_services(){
  for n in 0..16{p.cpu.regs[0]=0xabcd0500;p.cpu.regs[1]=0x1e61;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0500|u32::from(n==15));}
  p.ram.store(0x417,MemWidth::Byte,0xa5).unwrap();p.cpu.regs[0]=0xabcd0200;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd02a5);
 }
+fn cell(p:&Loaded,page:u32,row:u32,col:u32)->u32{p.ram.load(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word).unwrap()}
+fn put(p:&mut Loaded,page:u32,row:u32,col:u32,value:u32){p.ram.store(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word,value).unwrap();}
+fn tty(p:&mut Loaded,page:u32,ch:u8)->Result<Option<u8>,String>{p.cpu.regs[0]=0xabcd0e00|u32::from(ch);p.cpu.regs[3]=0x1234_0000|(page<<8)|0x4f;service(p,0x10,&mut vec![])}
+#[test]
+fn bios_teletype_keeps_attributes_wraps_controls_and_preserves_registers(){
+ for page in 0..8u32{
+  let mut p=load(&[0xcd,0x10],"tty.com").unwrap();put(&mut p,page,0,0,0x1e00);
+  p.cpu.eflags=0xad7;p.cpu.undefined_flags=u32::MAX;
+  tty(&mut p,page,b'A').unwrap();let regs=p.cpu.clone();
+  assert_eq!(cell(&p,page,0,0),0x1e41);assert_eq!(p.ram.load(0x450+page*2,MemWidth::Word).unwrap(),0x0001);
+  for (ch,want) in [(7u8,0x0001),(8,0x0000),(8,0x0000),(10,0x0100),(b'B',0x0101),(13,0x0100)]{
+   tty(&mut p,page,ch).unwrap();assert_eq!(p.ram.load(0x450+page*2,MemWidth::Word).unwrap(),want,"{ch}");
+  }
+  assert_eq!(cell(&p,page,1,0),0x0742);assert_eq!(cell(&p,page,0,1),0x0720);
+  p.ram.store(0x450+page*2,MemWidth::Word,0x054f).unwrap();tty(&mut p,page,b'Z').unwrap();
+  assert_eq!(cell(&p,page,5,79),0x075a);assert_eq!(p.ram.load(0x450+page*2,MemWidth::Word).unwrap(),0x0600);
+  assert_eq!(p.cpu.regs[1..],regs.regs[1..]);assert_eq!(p.cpu.regs[0],0xabcd0e5a);assert_eq!((p.cpu.eflags,p.cpu.undefined_flags),(0xad7,u32::MAX));
+  for other in (0..8).filter(|&o|o!=page){assert_eq!(p.ram.load(0x450+other*2,MemWidth::Word).unwrap(),0);assert_eq!(cell(&p,other,0,0),0x0720);}
+ }
+}
+#[test]
+fn bios_teletype_scrolls_its_page_with_attribute_under_cursor(){
+ for (ch,start) in [(10u8,0x1805u32),(b'Q',0x184f)]{
+  let mut p=load(&[0xcd,0x10],"tty.com").unwrap();
+  for row in 0..25{put(&mut p,3,row,7,0x0700|(0x30+row));}put(&mut p,3,24,5,0x2f20);put(&mut p,3,24,79,0x4e20);
+  p.ram.store(0x456,MemWidth::Word,start).unwrap();let other=p.ram.clone();tty(&mut p,3,ch).unwrap();
+  for row in 0..24{assert_eq!(cell(&p,3,row,7),0x0700|(0x31+row));}
+  let attr=if ch==10{0x2f}else{0x4e};
+  for col in 0..80{assert_eq!(cell(&p,3,24,col),0x20|(attr<<8));}
+  if ch==b'Q'{assert_eq!(cell(&p,3,23,79),0x4e51);}
+  assert_eq!(p.ram.load(0x456,MemWidth::Word).unwrap(),if ch==10{0x1805}else{0x1800});
+  for page in [0,1,2,4,5,6,7]{for c in 0..2000u32{let at=0xb8000+page*4096+c*2;assert_eq!(p.ram.load(at,MemWidth::Word).unwrap(),other.load(at,MemWidth::Word).unwrap());}}
+ }
+}
+#[test]
+fn bios_teletype_rejects_tab_bad_page_cursor_and_faults_atomically(){
+ let mut p=load(&[0xcd,0x10],"tty.com").unwrap();
+ for (page,ch,cursor) in [(0,9u8,0),(8,b'A',0),(0,b'A',0x1900),(0,b'A',0x0050)]{
+  if page<8{p.ram.store(0x450,MemWidth::Word,cursor).unwrap();}let old=p.clone();
+  assert!(tty(&mut p,page,ch).is_err());assert_eq!(p.ram,old.ram);
+ }
+ // A bottom-row scroll checks every page cell and the cursor before writing.
+ for fault in [0xb8000,0xb8f9e,0x450]{
+  let mut p=load(&[0xcd,0x10],"tty.com").unwrap();p.ram.store(0x450,MemWidth::Word,0x184f).unwrap();p.ram.protect(fault,1).unwrap();
+  let old=p.clone();assert!(tty(&mut p,0,b'A').is_err());assert_eq!(p.cpu.regs[0],0xabcd0e41);assert_eq!(p.ram,old.ram);
+ }
+}
+fn scroll_call(p:&mut Loaded,ah:u32,lines:u32,attr:u32,from:u32,to:u32)->Result<Option<u8>,String>{
+ p.cpu.regs[0]=0xabcd0000|(ah<<8)|lines;p.cpu.regs[3]=0x1234_0000|(attr<<8)|0x55;p.cpu.regs[1]=0x9876_0000|from;p.cpu.regs[2]=0x5432_0000|to;service(p,0x10,&mut vec![])
+}
+#[test]
+fn bios_scroll_moves_only_window_on_active_page_and_clamps_corner(){
+ for (ah,lines) in [(6u32,1u32),(6,2),(7,1),(7,3),(6,0),(7,9),(6,200)]{
+  let mut p=load(&[0xcd,0x10],"scroll.com").unwrap();
+  p.ram.store(0x462,MemWidth::Byte,2).unwrap();
+  for page in 0..8{for row in 0..25{for col in 0..80{put(&mut p,page,row,col,(page<<12)|(row<<6)|col);}}}
+  let before=p.clone();
+  scroll_call(&mut p,ah,lines,0x1f,0x0203,0x0605).unwrap();
+  assert_eq!(p.cpu.regs[..4],[0xabcd0000|(ah<<8)|lines,0x98760203,0x54320605,0x12341f55]);
+  for page in 0..8{for row in 0..25{for col in 0..80{
+   let old=cell(&before,page,row,col);let inside=page==2&&(2..=6).contains(&row)&&(3..=5).contains(&col);
+   let n=if lines==0||lines>5{5}else{lines};
+   let want=if !inside{old}else if ah==6{if row+n<=6{cell(&before,page,row+n,col)}else{0x1f20}}else if row>=2+n{cell(&before,page,row-n,col)}else{0x1f20};
+   assert_eq!(cell(&p,page,row,col),want,"{ah} {lines} {page} {row} {col}");
+  }}}
+ }
+ let mut p=load(&[0xcd,0x10],"scroll.com").unwrap();for row in 0..25{put(&mut p,0,row,79,0x0700|row);}
+ scroll_call(&mut p,6,1,0x07,0x0000,0xffff).unwrap();for row in 0..24{assert_eq!(cell(&p,0,row,79),0x0700|(row+1));}assert_eq!(cell(&p,0,24,79),0x0720);
+ for (from,to) in [(0x0500,0x0400),(0x0005,0x1804)]{let old=p.clone();scroll_call(&mut p,6,1,0x70,from,to).unwrap();assert_eq!(p.ram,old.ram);}
+}
+#[test]
+fn bios_scroll_faults_and_bad_active_page_change_nothing(){
+ let mut p=load(&[0xcd,0x10],"scroll.com").unwrap();p.ram.protect(0xb8000+(6*80+5)*2+1,1).unwrap();
+ let old=p.clone();assert!(scroll_call(&mut p,6,1,0x1f,0x0203,0x0605).is_err());assert_eq!(p.ram,old.ram);
+ let mut p=load(&[0xcd,0x10],"scroll.com").unwrap();p.ram.store(0x462,MemWidth::Byte,8).unwrap();
+ let old=p.clone();assert!(scroll_call(&mut p,7,1,0x1f,0,0x184f).is_err());assert_eq!(p.ram,old.ram);assert_eq!(p.cpu.regs[0],0xabcd0701);
+}
+#[test]
+fn bios_mode_page_and_query_services_use_bda_state(){
+ let mut p=load(&[0xcd,0x10],"mode.com").unwrap();
+ p.cpu.regs[0]=0xabcd0f00;p.cpu.regs[3]=0x12345678;service(&mut p,0x10,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[0],p.cpu.regs[3]),(0xabcd5003,0x12340078));
+ for page in 0..8u32{
+  p.cpu.regs[0]=0xabcd0500|page;service(&mut p,0x10,&mut vec![]).unwrap();
+  assert_eq!(p.ram.load(0x462,MemWidth::Byte).unwrap(),page);assert_eq!(p.ram.load(0x44e,MemWidth::Word).unwrap(),page*4096);
+  p.cpu.regs[0]=0xabcd0f00;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[3],0x12340078|(page<<8));
+ }
+ p.cpu.regs[0]=0x0508;let old=p.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);
+ p.ram.store(0x462,MemWidth::Byte,9).unwrap();p.cpu.regs[0]=0x0f00;let old=p.cpu.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.cpu,old);
+}
+#[test]
+fn bios_set_mode_three_resets_bda_and_clears_unless_bit7(){
+ for keep in [false,true]{
+  let mut p=load(&[0xcd,0x10],"mode.com").unwrap();
+  for page in 0..8{put(&mut p,page,24,79,0x4e41);p.ram.store(0x450+page*2,MemWidth::Word,0x0102).unwrap();}
+  for (at,value) in [(0x44e,0x3000),(0x460,0x2000)]{p.ram.store(at,MemWidth::Word,value).unwrap();}p.ram.store(0x462,MemWidth::Byte,3).unwrap();
+  p.cpu.regs[0]=0xabcd0003|if keep{0x80}else{0};let regs=p.cpu.clone();service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu,regs);
+  for page in 0..8{assert_eq!(cell(&p,page,24,79),if keep{0x4e41}else{0x0720});assert_eq!(p.ram.load(0x450+page*2,MemWidth::Word).unwrap(),0);}
+  for (at,w,value) in [(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,80),(0x44c,MemWidth::Word,4096),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,24)]{assert_eq!(p.ram.load(at,w).unwrap(),value);}
+ }
+ for al in [0u32,1,2,7,0x13,0x87]{let mut p=load(&[0xcd,0x10],"mode.com").unwrap();p.cpu.regs[0]=al;let old=p.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);}
+ let mut p=load(&[0xcd,0x10],"mode.com").unwrap();p.ram.protect(0xbef9f,1).unwrap();p.cpu.regs[0]=3;let old=p.clone();
+ assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);
+}
