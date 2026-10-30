@@ -31,6 +31,8 @@ const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
 mod services;
 #[path="dos_console.rs"]
 mod console;
+#[path="dos_session.rs"]
+pub mod session;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}

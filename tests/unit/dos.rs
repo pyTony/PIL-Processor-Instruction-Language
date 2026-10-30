@@ -883,3 +883,17 @@ fn list_of_lists_leads_to_the_real_mcb_chain_and_indos_is_clear(){
  let at=u32::from(r.loaded.selectors[SegmentRegister::Es.index()])*16+(r.loaded.cpu.regs[3]&0xffff);
  assert_eq!((r.loaded.ram.load(at,MemWidth::Byte).unwrap(),r.loaded.ram.load(at-1,MemWidth::Byte).unwrap()),(0,0));
 }
+#[test]
+fn session_commands_run_queue_keys_and_report_the_screen(){
+ // MOV AH,0; INT 16; MOV AH,4C; INT 21: waits for one key, exits with AL.
+ let mut s=session::Session::new(load(&[0xb4,0x00,0xcd,0x16,0xb4,0x4c,0xcd,0x21],"key.com").unwrap());
+ let (reply,quit)=s.command(1,"run 100").unwrap();assert!(!quit);
+ assert!(reply.contains("\"status\":\"waiting_input\""),"{reply}");assert!(reply.contains("\"columns\":80"));
+ assert!(reply.contains(&format!("\"screen\":\"{}\"","2007".repeat(80*25))),"blank page is space on attribute 7");
+ // The ring holds 15 keys; the 16th is refused without stopping the session.
+ for n in 0..15{assert!(s.key(b'a'+n,0x1e).unwrap());}assert!(!s.key(b'z',0x2c).unwrap());
+ let (reply,_)=s.command(2,"key 1 2").unwrap();assert!(reply.contains("\"ok\":false")&&reply.contains("buffer full"),"{reply}");
+ let (reply,_)=s.command(3,"run 100").unwrap();assert!(reply.contains("\"status\":\"exit\"")&&reply.contains("exit code 97"),"{reply}");
+ for (n,bad) in ["run 0","run x","key 300 1","dance"].iter().enumerate(){let (reply,_)=s.command(4+n as u64,bad).unwrap();assert!(reply.contains("\"ok\":false"),"{bad}: {reply}");}
+ assert!(s.command(9,"quit").unwrap().1);
+}
