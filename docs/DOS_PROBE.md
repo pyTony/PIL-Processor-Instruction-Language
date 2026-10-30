@@ -1,3 +1,31 @@
+# Host clock and copy/paste in the DOS terminal — 30 October 2026
+
+The Tk terminal now runs DOS time on this computer's clock, so FreeCOM's
+`PROMPT $D $T` and `TIME` show the local date and time and can time a
+command. A new session command, `clock OFFSET` (seconds east of UTC),
+switches the clock to host time: INT 1Ah AH=00h returns the local time of
+day at 1193180/65536 ticks a second (rollover set when midnight passed),
+AH2C follows it, and AH2A returns the local date and day of the week. The
+terminal sends it at start with the local offset, daylight saving included.
+Without it, as in the probe and the tests, the clock stays deterministic from
+midnight on 1 January 1980.
+
+The terminal also copies and pastes: Ctrl+Shift+C copies the selection, or
+the whole screen with trailing blanks dropped; Ctrl+Shift+V or Shift+Insert
+types the clipboard as keystrokes (line ends as Enter, tabs as Tab, other
+characters through code page 437, those it lacks left out). Both are on the
+right-click menu, and a selection survives screen redraws. Plain Ctrl+C and
+Ctrl+V still reach DOS.
+
+Limitations: setting the date or time (AH2B, AH2D) still stops the run; the
+BIOS tick count at 0040:006C changes only when a program asks for the time.
+
+Verification: 417 Rust tests passed on Linux (one new host-clock test); the
+GUI tests pass (paste keystrokes and the `clock` command). FreeCOM 0.86 in
+the terminal under Xvfb showed `PROMPT $D $T` as the local date and time,
+and a pasted `ECHO pasted äö` and `PROMPT $T $P$G` ran; Ctrl+Shift+C copied
+the screen.
+
 # MANDBBC.COM: the BBC BASIC Mandelbrot — 30 October 2026
 
 `programs/dos/MANDBBC.COM` draws the classic BBC BASIC benchmark Mandelbrot:

@@ -54,7 +54,7 @@ impl Session{
         Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\",\"beeps\":{beeps},\"tone\":{tone},\"output\":{}}}",
             quote(text),quote(&detail),self.steps,quote(&String::from_utf8_lossy(output))))
     }
-    /// One protocol command: `run N`, `key ASCII SCAN`, `snapshot` or `quit`.
+    /// One protocol command: `run N`, `key ASCII SCAN`, `clock OFFSET`, `snapshot` or `quit`.
     pub fn command(&mut self,seq:u64,line:&str)->Result<(String,bool),String>{
         let words:Vec<&str>=line.split_whitespace().collect();
         let mut output=Vec::new();
@@ -67,6 +67,11 @@ impl Session{
             ["key",a,s]=>match(a.parse::<u8>(),s.parse::<u8>()){
                 (Ok(a),Ok(s))=>if self.key(a,s)?{(true,String::new(),false)}else{(false,"BIOS keyboard buffer full".into(),false)},
                 _=>(false,"key needs ASCII and scan code bytes".into(),false),
+            },
+            // `clock OFFSET`: run the clock on host time, OFFSET seconds east of UTC.
+            ["clock",offset]=>match offset.parse::<i64>(){
+                Ok(offset) if offset.abs()<=14*3600=>{self.loaded.as_mut().ok_or("session state lost")?.clock_offset=Some(offset);(true,String::new(),false)},
+                _=>(false,"clock needs a UTC offset in seconds (-50400..50400)".into(),false),
             },
             ["quit"]=>(true,String::new(),true),
             _=>(false,format!("unknown command: {line}"),false),

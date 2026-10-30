@@ -28,6 +28,10 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('section', '§'), (0x15, 0x29))
         self.assertEqual(term.key_code('eacute', 'é'), (0x82, 0))
 
+    def test_pasted_text_becomes_keystrokes(self):
+        self.assertEqual(term.paste_keys('Dir\r\nä\t€x'),
+                         [(0x44, 0x20), (0x69, 0x17), (0x72, 0x13), (13, 0x1c), (0x84, 0x28), (9, 0x0f), (0x78, 0x2d)])
+
     def test_screen_rows_decode_cp437_characters_and_attributes(self):
         cells = bytearray(b' \x07' * 80 * 25)
         cells[0:6] = b'\xc9\x1fA\x1fB\x4e'
@@ -54,6 +58,8 @@ class DosTerminalTests(unittest.TestCase):
                 reply = session.send('run 1000')
                 self.assertEqual(reply['status'], 'waiting_input')
                 self.assertEqual(term.screen_rows(reply)[0][0].rstrip(), 'Name?')
+                self.assertTrue(session.send(f'clock {term.local_offset()}')['ok'])
+                self.assertFalse(session.send('clock 99999')['ok'])
                 for ascii_code, scan in [term.key_code('h', 'h'), term.key_code('i', 'i')]:
                     self.assertTrue(session.send(f'key {ascii_code} {scan}')['ok'])
                 reply = session.send('run 1000')

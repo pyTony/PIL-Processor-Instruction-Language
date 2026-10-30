@@ -73,6 +73,10 @@ pub struct Loaded{
     pub psp:u16,exec:Vec<exec::Frame>,pub return_code:u16,con_pending:Vec<u8>,
     /// The PC speaker behind ports 42h, 43h and 61h.
     pub speaker:ports::Speaker,
+    /// The host's local time, as seconds east of UTC, for the clock (INT 1Ah
+    /// AH00, AH2A, AH2C); None keeps the deterministic clock from midnight
+    /// on 1 January 1980.
+    pub clock_offset:Option<i64>,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -219,7 +223,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}

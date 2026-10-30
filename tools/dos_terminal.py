@@ -11,8 +11,12 @@ screen contents all come from the engine; this file only displays them.
 An image becomes read-only drive C:; --mount adds a host folder as the next
 drive (D: after an image), which DOS programs can write: files they create,
 change, delete or rename change in the host folder itself.
-Z: is a drive held in memory for the session, with TEMP=Z:\ so that pipes
+Z: is a drive held in memory for the session, with TEMP=Z:\\ so that pipes
 work from any drive; what is written there is gone when the session ends.
+
+DOS date and time follow this computer's clock. Ctrl+Shift+C copies the
+selection (or the whole screen), Ctrl+Shift+V or Shift+Insert types the
+clipboard; both are also on the right-click menu.
 """
 import argparse
 import json
@@ -75,6 +79,22 @@ def key_code(keysym, char, control=False):
     return ord(char), scan or 0
 
 
+def paste_keys(text):
+    """Keystrokes that type `text`: line ends as Enter, tabs as Tab; characters
+    code page 437 cannot hold are left out."""
+    keys = []
+    for char in text.replace('\r\n', '\n').replace('\r', '\n'):
+        if char == '\n':
+            keys.append(SPECIAL['Return'])
+        elif char == '\t':
+            keys.append((9, 0x0f))
+        else:
+            code = key_code(char, char)
+            if code:
+                keys.append(code)
+    return keys
+
+
 def screen_rows(reply):
     """Rows of (text, attributes) from a session reply's character/attribute bytes."""
     cells = bytes.fromhex(reply['screen'])
@@ -122,6 +142,12 @@ class Session:
             self.process.kill()
 
 
+def local_offset():
+    """Seconds east of UTC of local time now, daylight saving included."""
+    import time
+    return time.localtime().tm_gmtoff
+
+
 def make_app(root, engine, program, mount=None):
     import tkinter as tk
     from tkinter import font as tkfont
@@ -137,12 +163,33 @@ def make_app(root, engine, program, mount=None):
         text.tag_configure(f'a{attr}', foreground=PALETTE[attr & 15], background=PALETTE[(attr >> 4) & 7])
     text.tag_configure('cursor', underline=True)
     session = Session(engine, program, mount)
+    # DOS date and time come from this computer's clock in local time.
+    session.send(f'clock {local_offset()}')
     keys = []
     beeps = [session.last.get('beeps', 0)]
 
+    drawn = [None]
+
     def draw(reply):
-        text.configure(state='normal')
-        text.delete('1.0', 'end')
+        shown = (reply['screen'], tuple(reply['cursor']))
+        if shown != drawn[0]:
+            drawn[0] = shown
+            # Keep a selection being copied across the redraw.
+            selection = text.tag_ranges('sel')
+            text.configure(state='normal')
+            text.delete('1.0', 'end')
+            fill(reply)
+            if selection:
+                text.tag_add('sel', *selection)
+            text.configure(state='disabled')
+        detail = f" — {reply['detail']}" if reply['detail'] else ''
+        status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}")
+        # The program switched the PC speaker on: sound the host's bell.
+        if reply.get('beeps', 0) > beeps[0]:
+            beeps[0] = reply['beeps']
+            root.bell()
+
+    def fill(reply):
         for r, (chars, attrs) in enumerate(screen_rows(reply)):
             start = 0
             for c in range(1, len(chars) + 1):
@@ -153,15 +200,32 @@ def make_app(root, engine, program, mount=None):
                 text.insert('end', '\n')
         row, column = reply['cursor']
         text.tag_add('cursor', f'{row + 1}.{column}')
-        text.configure(state='disabled')
-        detail = f" — {reply['detail']}" if reply['detail'] else ''
-        status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}")
-        # The program switched the PC speaker on: sound the host's bell.
-        if reply.get('beeps', 0) > beeps[0]:
-            beeps[0] = reply['beeps']
-            root.bell()
+
+    def copy(event=None):
+        """The selection, or the whole screen without trailing blanks."""
+        if text.tag_ranges('sel'):
+            chosen = text.get('sel.first', 'sel.last')
+        else:
+            chosen = '\n'.join(line.rstrip() for line in text.get('1.0', 'end-1c').split('\n')).rstrip('\n')
+        root.clipboard_clear()
+        root.clipboard_append(chosen)
+        return 'break'
+
+    def paste(event=None):
+        try:
+            keys.extend(paste_keys(root.clipboard_get()))
+        except tk.TclError:
+            pass  # nothing text-like on the clipboard
+        return 'break'
 
     def on_key(event):
+        # Ctrl+Shift+C and Ctrl+Shift+V (and Shift+Insert) copy and paste; plain
+        # Ctrl+C and Ctrl+V still go to DOS.
+        control, shift = bool(event.state & 0x4), bool(event.state & 0x1)
+        if control and shift and event.keysym.lower() in ('c', 'v'):
+            return copy() if event.keysym.lower() == 'c' else paste()
+        if shift and event.keysym == 'Insert':
+            return paste()
         code = key_code(event.keysym, event.char, bool(event.state & 0x4))
         if code:
             keys.append(code)
@@ -189,6 +253,10 @@ def make_app(root, engine, program, mount=None):
         root.destroy()
 
     root.bind('<Key>', on_key)
+    menu = tk.Menu(root, tearoff=0)
+    menu.add_command(label='Copy (Ctrl+Shift+C)', command=copy)
+    menu.add_command(label='Paste (Ctrl+Shift+V)', command=paste)
+    text.bind('<Button-3>', lambda event: menu.tk_popup(event.x_root, event.y_root))
     root.protocol('WM_DELETE_WINDOW', close)
     draw(session.last)
     root.after(10, tick)

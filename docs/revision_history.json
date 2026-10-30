@@ -2087,6 +2087,18 @@
       "limitations": [
         "MANDBBC needs a 386: it uses 32-bit registers in real mode"
       ]
+    },
+    {
+      "date": "2026-10-30",
+      "name": "Host clock and copy/paste in the DOS terminal",
+      "base": "dev after #64",
+      "verification": {
+        "linux_rust_tests": 417
+      },
+      "limitations": [
+        "setting the date or time (AH2B, AH2D) still stops",
+        "the BIOS tick count at 0040:006C changes only when a program asks for the time"
+      ]
     }
   ],
   "development_increments": [
