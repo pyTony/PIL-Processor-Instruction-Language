@@ -82,12 +82,16 @@ fn malformed_mz_headers_and_relocations_are_rejected(){
     assert!(load(&[0x90],"bad.EXE").is_err());assert!(load(&[],"empty.com").is_err());assert!(load(&vec![0;MAX_FILE+1],"big.com").is_err());
 }
 #[test]
-fn mz_allocation_and_stack_are_bounded_and_trailing_bytes_are_not_loaded(){
+fn mz_allocation_and_stack_are_bounded_and_bytes_past_the_last_page_are_not_loaded(){
     let good=exe(&[0x90;32],&[]);
     for(min,max,ss,sp)in [(0xffff,0xffff,0,0),(2,1,0,0),(0,0,0,0),(0,1,0x9000,0),(0,1,0,0xfffe)]{
         let mut b=good.clone();put_word(&mut b,10,min);put_word(&mut b,12,max);put_word(&mut b,14,ss);put_word(&mut b,16,sp);assert!(load(&b,"bad.exe").is_err());
     }
-    let mut b=good;put_word(&mut b,12,1);put_word(&mut b,16,0x20);b.extend([0xcc;8]);let p=load(&b,"extra.exe").unwrap();assert_eq!(p.trailing_bytes,8);assert_eq!(p.module_bytes,32);assert_eq!(p.allocated_end,u32::from(LOAD)*16+48);
+    // DOS loads the whole last page, not just its declared byte count (BBC
+    // BASIC checksums 10 bytes past it); bytes past the last page stay unloaded.
+    let mut b=good;put_word(&mut b,12,1);put_word(&mut b,16,0x20);b.extend([0xcc;8]);let p=load(&b,"extra.exe").unwrap();assert_eq!((p.trailing_bytes,p.module_bytes),(0,40));assert_eq!(p.allocated_end,u32::from(LOAD)*16+64);
+    assert_eq!(p.ram.load(u32::from(LOAD)*16+32,MemWidth::Byte).unwrap(),0xcc);
+    b.resize(520,0xcc);let p=load(&b,"overlay.exe").unwrap();assert_eq!((p.trailing_bytes,p.module_bytes),(8,480));
     let mut full=vec![0x90;512];full[..32].copy_from_slice(&exe(&[0x90],&[])[..32]);put_word(&mut full,2,0);put_word(&mut full,4,1);assert_eq!(load(&full,"page.exe").unwrap().module_bytes,480);
 }
 #[test]
@@ -746,8 +750,11 @@ fn true_version_default_drive_and_handle_count_answers(){
  // MOV AX,3306; MOV BX,FFFF; MOV DX,FFFF; INT 21: BX=true version 6.22, DX=0.
  let r=run(load(&[0xb8,0x06,0x33,0xbb,0xff,0xff,0xba,0xff,0xff,0xcd,0x21,0xfa,0xf4],"truever.com").unwrap(),10).unwrap();
  assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[2]&0xffff,r.loaded.cpu.regs[0]&0xffff),(0x1606,0,0x3306));assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
- // Other AH33 subfunctions are not answered yet.
- let r=run(load(&[0xb8,0x00,0x33,0xcd,0x21,0xfa,0xf4],"break.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ // BREAK: AL=0 reads DL=0 (off), AL=1 sets it from DL bit 0, AL=2 swaps; AL=3 is not answered.
+ let mut p=load(&[0xcd,0x21],"break.com").unwrap();
+ let mut ah33=|p:&mut Loaded,al:u32,dl:u32|{p.cpu.regs[0]=0x3300|al;p.cpu.regs[2]=0xff00|dl;service(p,0x21,&mut vec![]).map(|_|p.cpu.regs[2]&0xffff)};
+ assert_eq!(ah33(&mut p,0,0x55),Ok(0xff00));assert_eq!(ah33(&mut p,1,1),Ok(0xff01));assert!(p.break_check);
+ assert_eq!(ah33(&mut p,2,0),Ok(0xff01));assert!(!p.break_check);assert!(ah33(&mut p,3,0).is_err());
  // MOV AX,19FF; INT 21: AL=0 (A:).
  let r=run(load(&[0xb8,0xff,0x19,0xcd,0x21,0xfa,0xf4],"drive.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x1900);
  // MOV AH,67; MOV BX,20; STC; INT 21: 20 handles fit the PSP table (CF=0).
@@ -1288,4 +1295,23 @@ fn command_line_goes_to_the_psp_tail_as_command_com_passes_it(){
     assert!(set_command_tail(&mut p,&"x".repeat(126)).is_err());
     assert!(set_command_tail(&mut p,"\u{e4}").is_err());
     set_command_tail(&mut p,&"x".repeat(125)).unwrap();assert_eq!(read(&p,1),[126]);assert_eq!(read(&p,128)[127],0x0d);
+}
+#[test]
+fn no_mouse_driver_and_cmos_reads_as_an_at_with_640k(){
+ // INT 33h AX=0: AX=0 (no driver) and BX=0; other mouse calls are not answered.
+ let mut p=load(&[0xcd,0x21],"mouse.com").unwrap();p.cpu.regs[0]=0;p.cpu.regs[3]=0x1234;service(&mut p,0x33,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff),(0,0));p.cpu.regs[0]=3;assert!(service(&mut p,0x33,&mut vec![]).is_err());
+ // OUT 70h,AL then IN AL,71h for registers 15h, 16h (640K), 17h (no extended
+ // memory), 0Bh (24-hour BCD), 09h, 32h (1980) and 06h (Tuesday); CLI; HLT.
+ let mut code=Vec::new();
+ for reg in [0x15,0x16,0x17,0x0b,0x09,0x32,0x06]{code.extend([0xb0,reg,0xe6,0x70,0xe4,0x71,0x50]);}
+ code.extend([0xfa,0xf4]);
+ let r=run(load(&code,"cmos.com").unwrap(),40).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ let sp=r.loaded.cpu.regs[4];let base=u32::from(PSP)*16;
+ let pushed:Vec<u32>=(0..7).rev().map(|i|r.loaded.ram.load(base+sp+i*2,MemWidth::Byte).unwrap()).collect();
+ assert_eq!(pushed,[0x80,0x02,0x00,0x02,0x80,0x19,0x03]);
+ // Writing the data port and reading the index port stop the run.
+ for code in [&[0xb0,0x0b,0xe6,0x70,0xe6,0x71,0xfa,0xf4][..],&[0xe4,0x70,0xfa,0xf4]]{
+  let r=run(load(code,"cmosw.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ }
 }

@@ -1,7 +1,8 @@
 //! The PC speaker ports, answered on the host as INT services are: PIT
 //! channel 2 (count at 42h, mode at 43h) sets the tone and port 61h bits 0
-//! and 1 gate it to the speaker. Byte IN and OUT only; any other port, a word
-//! access or a PIT read stops the run.
+//! and 1 gate it to the speaker. The CMOS clock and setup bytes read through
+//! ports 70h (index) and 71h (data). Byte IN and OUT only; any other port, a
+//! word access, a PIT read or a CMOS write stops the run.
 use super::*;
 /// PIT input clock in Hz.
 const PIT_HZ:u32=1_193_182;
@@ -38,6 +39,18 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     };
     let input=first&2==0;
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
+    if port==0x71{
+        if !input{return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index));}
+        let value=cmos(p,p.cmos_index)?;
+        p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+        return Ok(Some(length));
+    }
+    if port==0x70{
+        if input{return Err("IN from port 70h is not modelled (the index register is write-only)".into());}
+        // Bit 7 masks NMI, which nothing raises here; the index is 6 bits.
+        p.cmos_index=p.cpu.regs[0]as u8&0x3f;
+        return Ok(Some(length));
+    }
     let s=&mut p.speaker;
     if input{
         let value=match port{
@@ -64,4 +77,35 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         }
     }
     Ok(Some(length))
+}
+/// One CMOS byte as an AT with no diskette or hard disk, 640 KiB base memory
+/// and no extended memory would hold it. The clock registers are BCD in 24-hour
+/// form: the host's local time with the session clock, else midnight on
+/// Tuesday 1 January 1980, as INT 21h AH2A/AH2C give. Bit 7 of register 0Ah
+/// (update in progress) stays clear, so a read never has to wait.
+fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
+    let bcd=|n:u32|((n/10)<<4|n%10)as u8;
+    let(year,month,day,weekday,seconds)=match p.clock_offset{
+        Some(offset)=>{
+            let(days,ms)=services::local_now(offset);
+            let(_,date)=files::stamp(Some(std::time::UNIX_EPOCH+std::time::Duration::from_secs(days*86400)));
+            (1980+u32::from(date>>9),u32::from(date>>5&15),u32::from(date&31),((days+4)%7)as u32+1,(ms/1000)as u32)
+        },
+        None=>(1980,1,1,3,0),
+    };
+    Ok(match index{
+        0x00=>bcd(seconds%60),0x02=>bcd(seconds/60%60),0x04=>bcd(seconds/3600),
+        // Alarm registers: no alarm set.
+        0x01|0x03|0x05=>0,
+        0x06=>bcd(weekday),0x07=>bcd(day),0x08=>bcd(month),0x09=>bcd(year%100),0x32=>bcd(year/100),
+        // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
+        0x0a=>0x26,0x0b=>0x02,0x0c=>0x00,0x0d=>0x80,
+        // Diagnostics passed, normal shutdown, no diskette, no hard disk.
+        0x0e|0x0f|0x10|0x11|0x12|0x13=>0,
+        // Equipment: CGA 80 columns, no diskette, no coprocessor.
+        0x14=>0x20,
+        0x15=>0x80,0x16=>0x02,
+        0x17|0x18|0x30|0x31=>0,
+        _=>return Err(format!("CMOS register {index:02x}h is not modelled")),
+    })
 }

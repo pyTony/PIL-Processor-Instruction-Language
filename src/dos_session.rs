@@ -68,6 +68,17 @@ impl Session{
                 (Ok(a),Ok(s))=>if self.key(a,s)?{(true,String::new(),false)}else{(false,"BIOS keyboard buffer full".into(),false)},
                 _=>(false,"key needs ASCII and scan code bytes".into(),false),
             },
+            // `shift FLAGS`: the shift keys held now, as BIOS 0040:0017 bits 0-3
+            // (right Shift, left Shift, Ctrl, Alt); the toggle bits are kept.
+            ["shift",flags]=>match flags.parse::<u8>(){
+                Ok(flags) if flags<16=>{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    let old=p.ram.load(0x417,MemWidth::Byte).map_err(|e|format!("keyboard flags: {e:?}"))?as u8;
+                    p.ram.store(0x417,MemWidth::Byte,u32::from(old&0xf0|flags)).map_err(|e|format!("keyboard flags: {e:?}"))?;
+                    (true,String::new(),false)
+                },
+                _=>(false,"shift needs flags 0..15".into(),false),
+            },
             // `clock OFFSET`: run the clock on host time, OFFSET seconds east of UTC.
             ["clock",offset]=>match offset.parse::<i64>(){
                 Ok(offset) if offset.abs()<=14*3600=>{self.loaded.as_mut().ok_or("session state lost")?.clock_offset=Some(offset);(true,String::new(),false)},

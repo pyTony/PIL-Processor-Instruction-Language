@@ -30,6 +30,11 @@ class DosTerminalTests(unittest.TestCase):
         self.assertIsNone(term.key_code('EuroSign', '€'))
         self.assertEqual(term.key_code('section', '§'), (0x15, 0x29))
         self.assertEqual(term.key_code('eacute', 'é'), (0x82, 0))
+        self.assertEqual(term.key_code('f', 'f', alt=True), (0, 0x21))
+        self.assertEqual(term.key_code('F', 'F', alt=True), (0, 0x21))
+        self.assertEqual(term.key_code('1', '1', alt=True), (0, 0x78))
+        self.assertEqual(term.key_code('F10', '', alt=True), (0, 0x71))
+        self.assertIsNone(term.key_code('Return', '\r', alt=True))
 
     def test_utc_offsets_parse_as_hours_or_hours_and_minutes(self):
         self.assertEqual([term.parse_offset(t) for t in ('2', '-5', '5.5', '+02:00', '-03:30', '0')],
@@ -69,6 +74,9 @@ class DosTerminalTests(unittest.TestCase):
                 self.assertEqual(term.screen_rows(reply)[0][0].rstrip(), 'Name?')
                 self.assertTrue(session.send(f'clock {term.local_offset()}')['ok'])
                 self.assertFalse(session.send('clock 99999')['ok'])
+                self.assertTrue(session.send('shift 8')['ok'])
+                self.assertFalse(session.send('shift 16')['ok'])
+                self.assertTrue(session.send('shift 0')['ok'])
                 for ascii_code, scan in [term.key_code('h', 'h'), term.key_code('i', 'i')]:
                     self.assertTrue(session.send(f'key {ascii_code} {scan}')['ok'])
                 reply = session.send('run 1000')
