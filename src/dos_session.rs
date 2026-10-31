@@ -44,14 +44,17 @@ impl Session{
             Stop::Monitor(m)=>("stopped",format!("monitor stop: {m}")),
         }
     }
-    fn reply(&self,seq:u64,ok:bool,text:&str,output:&[u8])->Result<String,String>{
+    /// The reply line; it hands the frontend what the program sent to COM1
+    /// since the last reply.
+    fn reply(&mut self,seq:u64,ok:bool,text:&str,output:&[u8])->Result<String,String>{
+        let com1:String=self.loaded.as_mut().and_then(|p|p.com1.as_mut()).map_or(Vec::new(),|s|std::mem::take(&mut s.tx)).iter().map(|b|format!("{b:02x}")).collect();
         let(cells,columns,(row,column))=self.screen()?;let(status,detail)=self.status();
         let hex:String=cells.iter().map(|b|format!("{b:02x}")).collect();
         let cs=self.loaded.as_ref().map(|p|p.selectors[SegmentRegister::Cs.index()]).unwrap_or(0);
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
-        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\",\"beeps\":{beeps},\"tone\":{tone},\"output\":{}}}",
+        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\",\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,quote(&String::from_utf8_lossy(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `clock OFFSET`, `snapshot` or `quit`.
@@ -89,6 +92,14 @@ impl Session{
                 Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.country=code;(true,String::new(),false)},
                 _=>(false,"country needs 1 or 358".into(),false),
             },
+            // `com1 HEX`: bytes arriving at COM1 from the host terminal.
+            ["com1",hex]=>match(0..hex.len()).step_by(2).map(|i|hex.get(i..i+2).and_then(|b|u8::from_str_radix(b,16).ok())).collect::<Option<Vec<u8>>>(){
+                Some(bytes) if !bytes.is_empty()=>match self.loaded.as_mut().and_then(|p|p.com1.as_mut()){
+                    Some(port)=>{port.rx.extend(bytes);(true,String::new(),false)},
+                    None=>(false,"COM1 is not attached".into(),false),
+                },
+                _=>(false,"com1 needs bytes in hex".into(),false),
+            },
             ["quit"]=>(true,String::new(),true),
             _=>(false,format!("unknown command: {line}"),false),
         };
@@ -122,6 +133,7 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>)->Result<(),String>{
     drives.push(Source::Memory(MemDir::default()));
     let mut loaded=load_with_drives(&bytes,path,drives,inner)?;
     if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
+    serial::attach(&mut loaded)?;
     let mut session=Session::new(loaded);
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;

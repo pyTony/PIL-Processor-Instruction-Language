@@ -103,6 +103,35 @@ class DosTerminalTests(unittest.TestCase):
             finally:
                 session.close()
 
+    def test_com1_bytes_are_code_page_437_with_cr_for_enter(self):
+        self.assertEqual(term.to_cp437('dir\nä€'), b'dir\r\x84')
+        self.assertEqual(term.from_cp437(b'\x1b[1m\xc9\xcd'), '\x1b[1m╔═')
+
+    def test_tcp_port_passes_bytes_both_ways(self):
+        import socket
+        import time
+        port = term.TcpPort(0)
+        try:
+            client = socket.create_connection(port.server.getsockname())
+            client.settimeout(5)
+            for _ in range(500):
+                if port._accept():
+                    break
+                time.sleep(0.01)
+            port.write(b'C:\\>')
+            self.assertEqual(client.recv(16), b'C:\\>')
+            client.sendall(b'VER\r\n')
+            data = b''
+            for _ in range(500):
+                data += port.read()
+                if data:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(data, b'VER\r')
+            client.close()
+        finally:
+            port.server.close()
+
 
 if __name__ == '__main__':
     unittest.main()

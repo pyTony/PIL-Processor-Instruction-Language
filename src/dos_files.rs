@@ -390,6 +390,9 @@ fn open(p:&mut Loaded)->Result<(),String>{
     let mode=(p.cpu.regs[0]&7)as u8;
     if mode>2{fail(p,0x0c);return Ok(());}
     let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
+    if serial::is_device(p,&raw){return device(p,3);}
+    // CON opens the console, as handles 0..2 hold it (CTTY CON).
+    if p.com1.is_some()&&serial::device_name(&raw,b"CON"){return device(p,1);}
     let own=!raw.is_empty()&&base_name(&raw)==p.own_name;
     let(data,drive,loc,stamp)=if own{
         // The program's own file opens by its name from any directory.
@@ -408,6 +411,14 @@ fn open(p:&mut Loaded)->Result<(),String>{
         }
     };
     install(p,OpenFile{sft:0,data,pos:0,drive,loc,mode,written:false,stamp})
+}
+/// Gives a device (system file 0..4) the lowest free handle, as opening a
+/// device name does; error 4 when none is free.
+fn device(p:&mut Loaded,sft:u8)->Result<(),String>{
+    let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
+    let Some(handle)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
+    p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
+    p.open_handles|=1<<handle;set_ax(p,u32::from(handle));ok(p);Ok(())
 }
 /// Gives an open file the lowest free handle and system file number, and
 /// returns the handle in AX; error 4 when either runs out.
@@ -507,6 +518,8 @@ fn create(p:&mut Loaded,ah:u8)->Result<(),String>{
     let dx=p.cpu.regs[2]&0xffff;
     let mut raw=asciiz(p,dx)?;
     if raw.is_empty(){fail(p,3);return Ok(());}
+    // Creating a device name opens the device (AH5Bh fails: it exists).
+    if ah!=0x5a&&serial::is_device(p,&raw){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,3);}
     if ah==0x5a{
         if !matches!(raw.last(),Some(b'\\'|b'/'|b':')){raw.push(b'\\');}
         let(drive,path)=match components(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
@@ -802,7 +815,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             // bit 6 (not at end of input) set as FreeDOS opens devices, and a
             // file's drive, bit 6 set until it is written.
             let info=match system_file(p,(p.cpu.regs[3]&0xffff)as u16)?{
-                Some(0..=2)=>Some(0xc3),Some(3|4)=>Some(0xc0),
+                Some(0..=2)=>Some(0xc3),Some(3) if p.com1.is_some()=>p.com1.as_ref().map(|s|u32::from(s.info)),Some(3|4)=>Some(0xc0),
                 Some(sft)=>p.drive.files.iter().find(|f|f.sft==sft).map(|f|if f.written{0}else{0x40}|u32::from(f.drive-b'A')),
                 None=>None,
             };

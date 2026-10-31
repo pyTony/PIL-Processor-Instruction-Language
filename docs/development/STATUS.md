@@ -1,3 +1,37 @@
+# COM1 to a host terminal — 31 October 2026
+
+Tony asked for the DOS COM port on a host ANSI terminal. A DOS session now
+has COM1 at 3F8h, listed in the BIOS data area and equipment word:
+
+- INT 14h for COM1: AH00 init, AH01 send, AH02 receive (a timeout at once
+  when nothing has arrived, the BIOS answer without its wait), AH03 status.
+- The 8250 registers at 3F8h-3FFh, polled: data, divisor latch, line and
+  modem control, line and modem status, scratch. Enabling UART interrupts
+  stops the run, as no IRQ 4 is delivered.
+- DOS: handle 3 (AUX), and COM1 or AUX opened or created by name, write to
+  the port and read what arrived (a read waits while nothing has).
+  AX=4400h/4401h keep the AUX device information. After `CTTY COM1` the DOS
+  console calls (AH01, 06, 07, 08, 0A, 0B, 0C input; 02, 06, 09 output) use
+  the port; AH0A edits with Backspace. CON opens by name, so `CTTY CON`
+  returns; setting the console's unchanged information is taken, raw mode
+  on the console is not.
+- Session protocol: replies carry `com1` (hex bytes sent since the last
+  reply), and `com1 HEX` delivers bytes from the host.
+- `tools/dos_terminal.py --com1 console` connects COM1 to the console the
+  terminal was started from (keys typed there go to COM1; arrows and
+  editing keys as VT100 sequences; Windows consoles get VT processing on),
+  and `--com1 tcp:2323` to a localhost TCP port for telnet or PuTTY (Raw).
+
+The probe keeps no serial port, as before.
+
+Verification: unit tests for INT 14h, the polled 8250, AUX and COM1
+handles and CTTY COM1 line input; GUI tests for the code page 437 helpers
+and a TCP round trip; 422 Rust tests pass. With FD14LITE.img (local only):
+`ECHO hello >COM1` reached the port; after `CTTY COM1`, VER and DIR ran over
+the port and `CTTY CON` brought the shell back to the screen; through the Tk
+terminal, `--com1 tcp:2323` and `--com1 console` (on a pty) both carried
+VER, and ANSI escapes passed through unchanged.
+
 # Finnish dates and times in the DOS terminal — 31 October 2026
 
 Tony found the US date format confusing. Dine now has country 358

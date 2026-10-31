@@ -39,6 +39,10 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     };
     let input=first&2==0;
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
+    if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
+        if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
+        return Ok(Some(length));
+    }
     if port==0x71{
         if !input{return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index));}
         let value=cmos(p,p.cmos_index)?;
