@@ -34,7 +34,11 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('F', 'F', alt=True), (0, 0x21))
         self.assertEqual(term.key_code('1', '1', alt=True), (0, 0x78))
         self.assertEqual(term.key_code('F10', '', alt=True), (0, 0x71))
-        self.assertIsNone(term.key_code('Return', '\r', alt=True))
+        self.assertEqual(term.key_code('Return', '\r', alt=True), (13, 0x1c))
+        # AltGr on a Finnish layout: the characters, not Alt codes.
+        self.assertEqual(term.key_code('backslash', '\\', True, True), (0x5c, 0x2b))
+        self.assertEqual(term.key_code('at', '@', True, True), (0x40, 0x03))
+        self.assertEqual(term.key_code('braceleft', '{', True, True), (0x7b, 0x1a))
 
     def test_utc_offsets_parse_as_hours_or_hours_and_minutes(self):
         self.assertEqual([term.parse_offset(t) for t in ('2', '-5', '5.5', '+02:00', '-03:30', '0')],

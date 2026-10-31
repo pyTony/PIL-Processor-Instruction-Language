@@ -24,6 +24,12 @@ has COM1 at 3F8h, listed in the BIOS data area and equipment word:
 
 The probe keeps no serial port, as before.
 
+Also in this change: AltGr characters (\\ @ { } [ ] on a Finnish layout)
+type again in the Tk terminal. Since the Alt keys change, AltGr (Ctrl+Alt on
+Windows) was taken for Alt and its characters dropped; now only Alt with a
+letter, digit or F-key sends an Alt code, and other keys type their
+character.
+
 Verification: unit tests for INT 14h, the polled 8250, AUX and COM1
 handles and CTTY COM1 line input; GUI tests for the code page 437 helpers
 and a TCP round trip; 422 Rust tests pass. With FD14LITE.img (local only):

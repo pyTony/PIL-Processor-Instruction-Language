@@ -69,7 +69,9 @@ _NATIONAL = {'å': 0x1a, 'ä': 0x28, 'ö': 0x27, 'æ': 0x28, 'ø': 0x27, '§': 0
 
 def key_code(keysym, char, control=False, alt=False):
     """Map a Tk key event to (ascii, scan), or None for keys DOS never sees."""
-    if alt:
+    # AltGr (Ctrl+Alt on Windows) types characters such as \\ @ { } on
+    # national layouts: only Alt with a letter, digit or F-key is an Alt code.
+    if alt and alt_code(keysym):
         return alt_code(keysym)
     if keysym in SPECIAL:
         return SPECIAL[keysym]
