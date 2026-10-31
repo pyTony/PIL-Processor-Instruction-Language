@@ -1,3 +1,14 @@
+# Executable renamed to pil — 31 October 2026
+
+Tony chose `pil` as the executable's new name; `pil-proof` was the project's
+old name. The crate is now `pil` (Cargo.toml and Cargo.lock), so builds
+produce `target/release/pil` and `target/debug/pil` (`pil.exe` on Windows).
+The build, debug, bench, compare and Mandelbrot scripts, the debugger and
+DOS terminal engine lookup, the packaging and runtime export, CI and the
+current documentation use the new name; the packaged folder is `pil/`.
+Dated history entries keep the old name. A `pil-proof` binary left in an
+existing target folder is no longer used by the scripts and can be deleted.
+
 # AltGr characters in the terminal on Windows — 31 October 2026
 
 Tony reported that `\` (AltGr + the `+` key on a Finnish layout) still did
@@ -810,17 +821,17 @@ first missing CPU encodings across a collection of programs.
 After `sh tools/build.sh` on Termux/Linux, create the supplied examples:
 
 ```sh
-./target/debug/pil-proof --write-dos-hello com target/dos-hello.com
-./target/debug/pil-proof --write-dos-hello exe target/dos-hello.exe
-./target/debug/pil-proof --dos-probe target/dos-hello.com target/dos-hello.exe
+./target/debug/pil --write-dos-hello com target/dos-hello.com
+./target/debug/pil --write-dos-hello exe target/dos-hello.exe
+./target/debug/pil --dos-probe target/dos-hello.com target/dos-hello.exe
 ```
 
 PowerShell, after `.\tools\build.ps1`:
 
 ```powershell
-.\target\debug\pil-proof.exe --write-dos-hello com target/dos-hello.com
-.\target\debug\pil-proof.exe --write-dos-hello exe target/dos-hello.exe
-.\target\debug\pil-proof.exe --dos-probe target/dos-hello.com target/dos-hello.exe
+.\target\debug\pil.exe --write-dos-hello com target/dos-hello.com
+.\target\debug\pil.exe --write-dos-hello exe target/dos-hello.exe
+.\target\debug\pil.exe --dos-probe target/dos-hello.com target/dos-hello.exe
 ```
 
 Expected: both produce `OUTPUT (escaped bytes): Hello, DOS!\r\n`, stop with
@@ -833,8 +844,8 @@ can run before segment-register move instructions are implemented.
 ## Build profile and executable path
 
 The default build helpers create debug binaries: `sh tools/build.sh` builds
-`target/debug/pil-proof`; `.\tools\build.ps1` builds
-`target/debug/pil-proof.exe`. They do not refresh an existing release binary.
+`target/debug/pil`; `.\tools\build.ps1` builds
+`target/debug/pil.exe`. They do not refresh an existing release binary.
 Run the path reported by the build helper, as in the examples above.
 
 For an optimized build, use `sh tools/build.sh --release` or
@@ -850,7 +861,7 @@ by that old fallback demonstration.
 ## Import your programs
 
 ```sh
-./target/debug/pil-proof --dos-probe --steps 10000 program.com program.exe
+./target/debug/pil --dos-probe --steps 10000 program.com program.exe
 ```
 
 Use quoted paths for filenames containing spaces. The optional step budget must

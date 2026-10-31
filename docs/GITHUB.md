@@ -16,7 +16,7 @@
 
 The repository was renamed from pyTony/pil_proof to
 pyTony/PIL-Processor-Instruction-Language on 30 October 2026; old URLs redirect.
-Local checkout folders such as ~/pil_proof and the crate and binary names are unchanged.
+Local checkout folders such as ~/pil_proof are unchanged. Since v0.35 the crate and executable are named `pil` (formerly `pil-proof`).
 
 The private repository https://github.com/pyTony/PIL-Processor-Instruction-Language now exists. The user
 pushed main and configured origin/main tracking. The inspected baseline for

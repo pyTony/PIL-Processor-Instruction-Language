@@ -78,12 +78,12 @@ provides the map to all language, design, verification and planning documents.
 After a release build, start it directly in PowerShell:
 
 ```powershell
-.\target\release\pil-proof.exe --repl
+.\target\release\pil.exe --repl
 ```
 
 If you built with `$env:CARGO_TARGET_DIR = "target/windows"`, use
-`.\target\windows\release\pil-proof.exe --repl` instead. Linux/Termux:
-`./target/release/pil-proof --repl`. For a debug build, replace `release` with
+`.\target\windows\release\pil.exe --repl` instead. Linux/Termux:
+`./target/release/pil --repl`. For a debug build, replace `release` with
 `debug`. These commands start the existing binary without rebuilding.
 
 At the `pil>` prompt, enter one command per line:
@@ -248,8 +248,8 @@ sh tools/bench.sh 10000 5
 Windows: `./tools/bench.ps1 -Iterations 10000 -Samples 5`.
 The report identifies build profile, version and host OS/architecture. Compare
 runs on the same host/profile; CPU scheduling and phone power state affect time.
-`pil-proof --numeric-test` runs small automatic correctness checks.
-`pil-proof --stress 100` runs the factorial stress test from the shell.
+`pil --numeric-test` runs small automatic correctness checks.
+`pil --stress 100` runs the factorial stress test from the shell.
 
 The build also writes factorials.bin and loop.bin in target/programs. Their
 instruction listings are in programs/. Native archives include those binaries
@@ -350,7 +350,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 39-case compiled-Rust/interpreter
+`pil --verify-backends` runs the 39-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.

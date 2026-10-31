@@ -17,7 +17,7 @@
 
 Use `sh tools/debug.sh` (Termux/Linux) or `./tools/debug.ps1` (Windows) to
 build and load programs/selftest.bin. To choose another raw binary, supply its
-path to the script. The CLI equivalent is `pil-proof --repl --load PATH`.
+path to the script. The CLI equivalent is `pil --repl --load PATH`.
 `demo selftest` loads the same built-in image without a file. `load PATH`
 replaces the current image only after the entire file is read and validated.
 
@@ -35,7 +35,7 @@ serial tx
 The selftest stops with DX=600D on success or DX=DEAD at an inline failed
 check. It waits at IN for RX if none is queued. `check` verifies the success
 stop, four RAM signatures and successful serial output history. It stays valid
-after `serial tx` drains bytes. `pil-proof --selftest` injects 41, executes,
+after `serial tx` drains bytes. `pil --selftest` injects 41, executes,
 checks the result and exits nonzero on failure. It is a smoke test for the
 implemented pipeline, not a replacement for unit/generated-code comparisons.
 
@@ -297,8 +297,8 @@ sh tools/bench.sh 10000 5
 Windows: `./tools/bench.ps1 -Iterations 10000 -Samples 5`.
 The report identifies build profile, version and host OS/architecture. Compare
 runs on the same host/profile; CPU scheduling and phone power state affect time.
-`pil-proof --numeric-test` runs small automatic correctness checks.
-`pil-proof --stress 100` runs the factorial stress test from the shell.
+`pil --numeric-test` runs small automatic correctness checks.
+`pil --stress 100` runs the factorial stress test from the shell.
 
 The build also writes factorials.bin and loop.bin in target/programs. Their
 instruction listings are in programs/. Native archives include those binaries
@@ -359,7 +359,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 39-case compiled-Rust/interpreter
+`pil --verify-backends` runs the 39-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -544,7 +544,7 @@ Relative branches now include0F80..8F near Jcc rel16/32 and EB/E9 JMP rel8/16/32
 
 ## Full-image backend comparison from the shell
 
-Use `pil-proof --compare-mandelbrot [SIZE] [ITERATIONS]`, default256/32;
+Use `pil --compare-mandelbrot [SIZE] [ITERATIONS]`, default256/32;
 Windows helper `./tools/mandelbrot.ps1 -Compare`, shell helper
 `sh tools/mandelbrot.sh --compare 256 32`. This requires rustc and first runs the
 39-case per-instruction verifier. The full image checks every pixel and CPU/RAM/

@@ -1,3 +1,14 @@
+# Executable renamed to pil — 31 October 2026
+
+Tony chose `pil` as the executable's new name; `pil-proof` was the project's
+old name. The crate is now `pil` (Cargo.toml and Cargo.lock), so builds
+produce `target/release/pil` and `target/debug/pil` (`pil.exe` on Windows).
+The build, debug, bench, compare and Mandelbrot scripts, the debugger and
+DOS terminal engine lookup, the packaging and runtime export, CI and the
+current documentation use the new name; the packaged folder is `pil/`.
+Dated history entries keep the old name. A `pil-proof` binary left in an
+existing target folder is no longer used by the scripts and can be deleted.
+
 # AltGr characters in the terminal on Windows — 31 October 2026
 
 Tony reported that `\` (AltGr + the `+` key on a Finnish layout) still did

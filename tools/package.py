@@ -5,11 +5,11 @@ import hashlib,os,platform,re,subprocess,sys,tempfile,zipfile
 root=Path(__file__).resolve().parents[1]
 build=Path(os.environ.get('CARGO_TARGET_DIR',root/'target'))
 if not build.is_absolute():build=root/build
-binary=build/'release'/('pil-proof.exe' if os.name=='nt' else 'pil-proof')
+binary=build/'release'/('pil.exe' if os.name=='nt' else 'pil')
 subprocess.run([str(binary),'--selftest'],check=True)
 subprocess.run([str(binary),'--numeric-test'],check=True)
 version=re.search(r'^version = "([^"]+)"', (root/'Cargo.toml').read_text(),re.M)[1]
-name=f'pil-proof-{version}-{platform.system().lower()}-{platform.machine().lower()}'
+name=f'pil-{version}-{platform.system().lower()}-{platform.machine().lower()}'
 dist=root/'dist';dist.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory() as temp:
     image=Path(temp)/'selftest.bin'
@@ -26,12 +26,12 @@ with tempfile.TemporaryDirectory() as temp:
     with zipfile.ZipFile(dist/(name+'.zip'),'w',zipfile.ZIP_DEFLATED) as archive:
         manifest=[]
         for source,target in files.items():
-            archive.write(source,'pil-proof/'+target)
+            archive.write(source,'pil/'+target)
             manifest.append(hashlib.sha256(source.read_bytes()).hexdigest()+'  '+target)
-        archive.writestr('pil-proof/SHA256SUMS','\n'.join(sorted(manifest))+'\n')
+        archive.writestr('pil/SHA256SUMS','\n'.join(sorted(manifest))+'\n')
     unpacked=Path(temp)/'unpacked'
     with zipfile.ZipFile(dist/(name+'.zip')) as archive:archive.extractall(unpacked)
-    delivery=unpacked/'pil-proof';exe=delivery/binary.name
+    delivery=unpacked/'pil';exe=delivery/binary.name
     exe.chmod(0o755) # Python extractall does not restore ZIP Unix permissions.
     subprocess.run([sys.executable,str(root/'tools/verify_debug_service.py'),'--engine',str(exe),'--frontend',str(delivery/'pil_debugger.py')],cwd=delivery,check=True)
     subprocess.run([str(exe),'--selftest'],cwd=delivery,check=True)

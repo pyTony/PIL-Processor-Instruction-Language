@@ -48,6 +48,6 @@ Reproduce from repository root:
 
 ```powershell
 .\tools\build.ps1 -Release
-.\target\release\pil-proof.exe --dos-probe --steps 100000 .\images\FD14LITE.img > .\target\freedos-services.txt
+.\target\release\pil.exe --dos-probe --steps 100000 .\images\FD14LITE.img > .\target\freedos-services.txt
 cargo test --locked dos::tests
 ```

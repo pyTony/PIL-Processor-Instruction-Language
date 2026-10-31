@@ -567,7 +567,7 @@ def find_engine(explicit=None):
         if not path.is_file():
             raise FileNotFoundError(f'PIL executable not found: {path}')
         return path
-    name = 'pil-proof.exe' if sys.platform == 'win32' else 'pil-proof'
+    name = 'pil.exe' if sys.platform == 'win32' else 'pil'
     found = []
     for root in [Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent]:
         for path in [root / name, root / 'target/release' / name, root / 'target/debug' / name]:
@@ -1297,7 +1297,7 @@ def make_app(root, engine, raw_path=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--engine', help='path to built pil-proof executable')
+    parser.add_argument('--engine', help='path to built pil executable')
     parser.add_argument('--load', metavar='RAW_BINARY', help='raw monitor image; DOS loading is not yet in this window')
     args = parser.parse_args(argv)
     try:

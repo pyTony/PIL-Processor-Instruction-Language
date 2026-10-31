@@ -113,7 +113,7 @@ between two emulators does not establish original 386 hardware correctness.
 From the development repository, choose a new output directory for every run:
 
 ```powershell
-python tools/verify_dosbox_cpu.py --engine target/release/pil-proof.exe --dosbox C:/DOSBox-X/dosbox-x.exe --out target/dosbox-cpu/run-001
+python tools/verify_dosbox_cpu.py --engine target/release/pil.exe --dosbox C:/DOSBox-X/dosbox-x.exe --out target/dosbox-cpu/run-001
 ```
 
 The tool preserves the COM, case manifest, isolated DOSBox configuration,

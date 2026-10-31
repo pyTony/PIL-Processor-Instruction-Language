@@ -477,7 +477,7 @@ fn main() {
 #[test]
 fn generated_rust_matches_interpreter() {
     use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
-    let dir=std::env::temp_dir().join(format!("pil-proof-{}-{}",std::process::id(),
+    let dir=std::env::temp_dir().join(format!("pil-{}-{}",std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     fs::create_dir(&dir).unwrap();
     let mut source=String::new();

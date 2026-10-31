@@ -198,8 +198,8 @@ sh tools/bench.sh 10000 5
 Windows: `./tools/bench.ps1 -Iterations 10000 -Samples 5`.
 The report identifies build profile, version and host OS/architecture. Compare
 runs on the same host/profile; CPU scheduling and phone power state affect time.
-`pil-proof --numeric-test` runs small automatic correctness checks.
-`pil-proof --stress 100` runs the factorial stress test from the shell.
+`pil --numeric-test` runs small automatic correctness checks.
+`pil --stress 100` runs the factorial stress test from the shell.
 
 The build also writes factorials.bin and loop.bin in target/programs. Their
 instruction listings are in programs/. Native archives include those binaries
@@ -335,7 +335,7 @@ and [Microsoft WSL filesystems](https://learn.microsoft.com/en-us/windows/wsl/fi
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 39-case compiled-Rust/interpreter
+`pil --verify-backends` runs the 39-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -520,7 +520,7 @@ Relative branches now include0F80..8F near Jcc rel16/32 and EB/E9 JMP rel8/16/32
 
 ## Full-image backend comparison from the shell
 
-Use `pil-proof --compare-mandelbrot [SIZE] [ITERATIONS]`, default256/32;
+Use `pil --compare-mandelbrot [SIZE] [ITERATIONS]`, default256/32;
 Windows helper `./tools/mandelbrot.ps1 -Compare`, shell helper
 `sh tools/mandelbrot.sh --compare 256 32`. This requires rustc and first runs the
 39-case per-instruction verifier. The full image checks every pixel and CPU/RAM/
