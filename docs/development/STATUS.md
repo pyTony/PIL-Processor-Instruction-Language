@@ -1,3 +1,17 @@
+# AltGr characters in the terminal on Windows — 31 October 2026
+
+Tony reported that `\` (AltGr + the `+` key on a Finnish layout) still did
+not type in tools/dos_terminal.py on Windows. Windows sends AltGr as Ctrl and
+Alt together, and the key event can then carry the Ctrl form of the
+character (FS 1Ch for `\`, ESC for `{`, nothing for `@`), which DOS took as a
+control key. With Ctrl and Alt both down, the terminal now types the
+character the key's Tk name gives (`\ @ { } [ ] | $ ~ < > # ^ £ µ` and the grave accent); plain
+Ctrl+`\` is still FS, and Alt with a letter, digit or F-key is still an Alt
+code. On Windows the shift flags no longer show Ctrl+Alt while AltGr is
+down. `--keylog` prints each key event (name, character, state) to the
+console, for checking what a host keyboard sends. The Dine side was checked:
+FreeCOM and BBC BASIC take `\` with Ctrl+Alt held. Not yet run on Windows.
+
 # COM1 to a host terminal — 31 October 2026
 
 Tony asked for the DOS COM port on a host ANSI terminal. A DOS session now

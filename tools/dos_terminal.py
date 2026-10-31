@@ -67,8 +67,13 @@ TYPED = {c: n for n, c in enumerate(GLYPHS) if n >= 0x80 or n in range(0x14, 0x1
 _NATIONAL = {'å': 0x1a, 'ä': 0x28, 'ö': 0x27, 'æ': 0x28, 'ø': 0x27, '§': 0x29, '½': 0x29}
 
 
-def key_code(keysym, char, control=False, alt=False):
-    """Map a Tk key event to (ascii, scan), or None for keys DOS never sees."""
+def key_code(keysym, char, control=False, alt=False, altgr=False):
+    """Map a Tk key event to (ascii, scan), or None for keys DOS never sees.
+    `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
+    # Windows can hand over the Ctrl form of an AltGr character (FS for \\,
+    # ESC for {, nothing for @): the key's name says which character it typed.
+    if altgr and keysym in KEYSYM_CHARS:
+        char, control, alt = KEYSYM_CHARS[keysym], False, False
     # AltGr (Ctrl+Alt on Windows) types characters such as \\ @ { } on
     # national layouts: only Alt with a letter, digit or F-key is an Alt code.
     if alt and alt_code(keysym):
@@ -94,6 +99,12 @@ def key_code(keysym, char, control=False, alt=False):
     return ord(char), scan or 0
 
 
+# Tk names of the characters national layouts put on AltGr.
+KEYSYM_CHARS = {'backslash': '\\', 'at': '@', 'braceleft': '{', 'braceright': '}', 'bracketleft': '[',
+                'bracketright': ']', 'bar': '|', 'dollar': '$', 'asciitilde': '~', 'less': '<', 'greater': '>',
+                'numbersign': '#', 'asciicircum': '^', 'grave': '`', 'sterling': '£', 'mu': 'µ'}
+
+
 def alt_code(keysym):
     """Alt with a letter, digit or F-key, as the BIOS stores it: ASCII 0 and
     the key's scan code (78h-83h for the top row's 1-0, -, =; 68h-71h for F1-F10)."""
@@ -106,6 +117,8 @@ def alt_code(keysym):
     return None
 
 
+# Windows reports AltGr as Control_L and Alt_R pressed together.
+ALTGR_IS_CTRL_ALT = sys.platform == 'win32'
 # Modifier keys as their BIOS shift-flag bits at 0040:0017.
 MODIFIERS = {'Shift_R': 0x01, 'Shift_L': 0x02, 'Control_L': 0x04, 'Control_R': 0x04, 'Alt_L': 0x08, 'Alt_R': 0x08}
 
@@ -332,7 +345,7 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -412,6 +425,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         return 'break'
 
     def on_key(event):
+        if keylog:
+            print(f'key {event.keysym!r} char {event.char!r} state {event.state:#x} keycode {event.keycode}'
+                  f' held {sorted(held)}', file=sys.stderr, flush=True)
         # Ctrl+Shift+C and Ctrl+Shift+V (and Shift+Insert) copy and paste; plain
         # Ctrl+C and Ctrl+V still go to DOS.
         control, shift = bool(event.state & 0x4), bool(event.state & 0x1)
@@ -424,12 +440,15 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             return shift_changed()
         # Alt_R with Ctrl is AltGr on Windows: it types the character it makes.
         alt = 'Alt_L' in held or ('Alt_R' in held and not control)
-        code = key_code(event.keysym, event.char, control, alt)
+        altgr = control and ('Alt_L' in held or 'Alt_R' in held)
+        code = key_code(event.keysym, event.char, control, alt, altgr)
         if code:
             keys.append(key_command(code))
         return 'break'
 
     def on_release(event):
+        if keylog:
+            print(f'release {event.keysym!r} state {event.state:#x}', file=sys.stderr, flush=True)
         held.discard(event.keysym)
         return shift_changed()
 
@@ -437,6 +456,13 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         flags = 0
         for name in held:
             flags |= MODIFIERS[name]
+        # Windows sends AltGr as Control_L with Alt_R. DOS never saw that Ctrl,
+        # and a program reading the shift flags would take the character typed
+        # with AltGr for a Ctrl+Alt key: report neither while AltGr is down.
+        if ALTGR_IS_CTRL_ALT and {'Control_L', 'Alt_R'} <= held:
+            flags &= ~0x0c
+            if 'Control_R' in held:
+                flags |= 0x04
         if flags != state['shift']:
             state['shift'] = flags
             keys.append(f'shift {flags}')
@@ -508,13 +534,15 @@ def main(argv=None):
     parser.add_argument('--com1', metavar='console|tcp:PORT',
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
     parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
+    parser.add_argument('--keylog', action='store_true',
+                        help='print each key event the window gets (name, character, state) to the console')
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
     com1 = open_com1(args.com1) if args.com1 else None
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog)
     root.mainloop()
 
 
