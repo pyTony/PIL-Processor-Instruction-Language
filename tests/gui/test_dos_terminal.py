@@ -39,6 +39,14 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('backslash', '\\', True, True), (0x5c, 0x2b))
         self.assertEqual(term.key_code('at', '@', True, True), (0x40, 0x03))
         self.assertEqual(term.key_code('braceleft', '{', True, True), (0x7b, 0x1a))
+        # Windows may give the Ctrl form of an AltGr character, or none.
+        self.assertEqual(term.key_code('backslash', '\x1c', True, False, True), (0x5c, 0x2b))
+        self.assertEqual(term.key_code('braceleft', '\x1b', True, True, True), (0x7b, 0x1a))
+        self.assertEqual(term.key_code('at', '', True, False, True), (0x40, 0x03))
+        self.assertEqual(term.key_code('mu', '', True, False, True), (0xe6, 0))
+        # Ctrl+\ alone stays FS, and Ctrl+Alt+letter is still an Alt code.
+        self.assertEqual(term.key_code('backslash', '\x1c', True), (0x1c, 0))
+        self.assertEqual(term.key_code('e', '\x05', True, True, True), (0, 0x12))
 
     def test_utc_offsets_parse_as_hours_or_hours_and_minutes(self):
         self.assertEqual([term.parse_offset(t) for t in ('2', '-5', '5.5', '+02:00', '-03:30', '0')],
