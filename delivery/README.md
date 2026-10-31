@@ -54,8 +54,8 @@ Guest output also appears automatically as `serial output: 41 | A`.
 `break 0x100`, `step`, `run`, `regs`, `flags`, `mem 0x500 8`, and `list` help
 inspect execution. See DEBUGGER.md for commands and the monitor profile.
 
-For an automatic check, run `./pil-proof --selftest` (Linux) or
-`./pil-proof.exe --selftest` (Windows). Exit status zero means pass.
+For an automatic check, run `./pil --selftest` (Linux) or
+`./pil.exe --selftest` (Windows). Exit status zero means pass.
 
 This is an early 386 monitor, not a bootable PC emulator. Only the documented
 instruction subset is decoded. The IN/OUT debug port 0xe9 connects to a mock
@@ -145,8 +145,8 @@ sh tools/bench.sh 10000 5
 Windows: `./tools/bench.ps1 -Iterations 10000 -Samples 5`.
 The report identifies build profile, version and host OS/architecture. Compare
 runs on the same host/profile; CPU scheduling and phone power state affect time.
-`pil-proof --numeric-test` runs small automatic correctness checks.
-`pil-proof --stress 100` runs the factorial stress test from the shell.
+`pil --numeric-test` runs small automatic correctness checks.
+`pil --stress 100` runs the factorial stress test from the shell.
 
 Source builds write factorials.bin and loop.bin in target/programs. Their
 instruction listings are in programs/. Native archives include those binaries
@@ -211,8 +211,8 @@ See [feature matrix](FEATURE_MATRIX.md) for the supported, partial and planned
 areas in 0.10.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
-Native delivery: run `./pil-proof --compare-backends 10000 5` on Linux or
-`./pil-proof.exe --compare-backends 10000 5` on Windows.
+Native delivery: run `./pil --compare-backends 10000 5` on Linux or
+`./pil.exe --compare-backends 10000 5` on Windows.
 The command emits Rust from the validated PIL of fixed guest images, compiles
 it with rustc -O, and runs it as a separate executable. Rustc must be installed.
 The ordinary debugger remains the cached PIL interpreter.
@@ -242,7 +242,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 39-case compiled-Rust/interpreter
+`pil --verify-backends` runs the 39-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -318,11 +318,11 @@ its original ADD/SUB algorithm even though IMUL is now available.
 Render the original 256x256 fixed-point guest using the packaged binary:
 
 ```powershell
-.\pil-proof.exe --mandelbrot 256 32
+.\pil.exe --mandelbrot 256 32
 Invoke-Item .\target\mandelbrot\256x256-i32\mandelbrot.bmp
 ```
 
-Linux: `./pil-proof --mandelbrot 256 32`. Rendering needs no Rust compiler.
+Linux: `./pil --mandelbrot 256 32`. Rendering needs no Rust compiler.
 The binary accepts `--mandelbrot SIZE ITERATIONS`. Use powers of two 2..256 and 1..64
 iterations; default 256/32. Smaller example: `--mandelbrot 64 16`. Output stays
 under CARGO_TARGET_DIR (default target)/mandelbrot/SIZExSIZE-iITERATIONS/:
@@ -365,8 +365,8 @@ helper to handle draining automatically.
 
 ## Full-image generated Rust comparison
 
-With rustc installed, run `./pil-proof --compare-mandelbrot 256 32`
-(Windows: `.\pil-proof.exe --compare-mandelbrot 256 32`). The command first gates
+With rustc installed, run `./pil --compare-mandelbrot 256 32`
+(Windows: `.\pil.exe --compare-mandelbrot 256 32`). The command first gates
 with the 39-case per-instruction verifier, then checks every image pixel against
 the mathematical reference and full state at each serial drain/halt boundary.
 Instruction counts and TX retry counts must also agree. Artifacts go under

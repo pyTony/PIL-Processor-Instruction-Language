@@ -83,7 +83,7 @@ The PIL IDE adapts this tripartite structure for low-level systems and CPU devel
 ## 3. Concurrency and Process Model
 
 1. **Host-Independent Engine Client (`EngineClient`)**:
-   - The UI communicates with `pil-proof --debug-service` over stdio using line-delimited JSON.
+   - The UI communicates with `pil --debug-service` over stdio using line-delimited JSON.
    - A dedicated worker thread manages the subprocess, ensuring the Tk main thread never blocks on execution or I/O.
 2. **Bounded Communication Queues**:
    - Outgoing commands queue: `maxsize=1` (at most one command in flight at a time).

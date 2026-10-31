@@ -34,9 +34,9 @@ jobs:
       - run: python tools/verify_direction_flag.py
       - run: python tools/verify_dos_probe.py
       - if: runner.os == 'Linux'
-        run: python tools/verify_dos_console.py --engine target/debug/pil-proof --out target/console-fixtures
+        run: python tools/verify_dos_console.py --engine target/debug/pil --out target/console-fixtures
       - if: runner.os == 'Windows'
-        run: python tools/verify_dos_console.py --engine target/debug/pil-proof.exe --out target/console-fixtures
+        run: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures
       - if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x
       - if: runner.os == 'Linux'
@@ -44,8 +44,8 @@ jobs:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: |
-          python tools/verify_dosbox_cpu.py --engine target/debug/pil-proof --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
-          python tools/verify_dosbox_cpu.py --engine target/debug/pil-proof --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
+          python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
+          python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
       - run: python tools/verify_containers.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check
@@ -84,7 +84,7 @@ jobs:
       - run: python tools/package.py
       - uses: actions/upload-artifact@v6
         with:
-          name: pil-proof-${{ matrix.os }}
+          name: pil-${{ matrix.os }}
           path: |
             dist/*.zip
             target/host-cpu-oracle/run-*/report.txt

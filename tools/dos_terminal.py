@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tk text-mode screen for a PIL DOS session (Python 3.10+).
 
-Runs `pil-proof --dos-session PROGRAM`, draws the B800 text page it reports
+Runs `pil --dos-session PROGRAM`, draws the B800 text page it reports
 and sends key presses as BIOS keystrokes. Execution, DOS services and the
 screen contents all come from the engine; this file only displays them.
 
@@ -507,7 +507,7 @@ def main(argv=None):
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
-    parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
+    parser.add_argument('--engine', help='pil executable (default: newest build)')
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)

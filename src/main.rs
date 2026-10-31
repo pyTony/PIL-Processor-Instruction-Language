@@ -2024,12 +2024,12 @@ result
 fn main() -> R<()> {
     let dos_args:Vec<_>=std::env::args().collect();
     if dos_args.get(1).map(String::as_str)==Some("--dos-list"){
-        if dos_args.len()<3||dos_args.len()>4{return Err("usage: pil-proof --dos-list [--all] IMAGE.img|ARCHIVE.zip".into());}
+        if dos_args.len()<3||dos_args.len()>4{return Err("usage: pil --dos-list [--all] IMAGE.img|ARCHIVE.zip".into());}
         let(all,path)=if dos_args[2]=="--all"{(true,dos_args.get(3).ok_or("missing image path")?)}else{(false,&dos_args[2])};
         println!("{}",if all{containers::listing_all(std::path::Path::new(path))?}else{containers::listing(std::path::Path::new(path))?});return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-read"){
-        if dos_args.len()<4||dos_args.len()>5{return Err("usage: pil-proof --dos-read IMAGE.img|ARCHIVE.zip INNER_PATH [DEST]".into());}
+        if dos_args.len()<4||dos_args.len()>5{return Err("usage: pil --dos-read IMAGE.img|ARCHIVE.zip INNER_PATH [DEST]".into());}
         let bytes=containers::read_entry(std::path::Path::new(&dos_args[2]),&dos_args[3])?;
         if let Some(dest)=dos_args.get(4){
             use std::io::Write;
@@ -2040,18 +2040,18 @@ fn main() -> R<()> {
         }return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-extract"){
-        if dos_args.len()!=4{return Err("usage: pil-proof --dos-extract IMAGE.img|ARCHIVE.zip NEW_DIRECTORY".into());}
+        if dos_args.len()!=4{return Err("usage: pil --dos-extract IMAGE.img|ARCHIVE.zip NEW_DIRECTORY".into());}
         println!("{}",containers::extract(std::path::Path::new(&dos_args[2]),std::path::Path::new(&dos_args[3]))?);return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--write-dos-hello"){
-        if dos_args.len()!=4{return Err("usage: pil-proof --write-dos-hello com|exe PATH (new file only)".into());}
+        if dos_args.len()!=4{return Err("usage: pil --write-dos-hello com|exe PATH (new file only)".into());}
         let bytes=dos::hello(&dos_args[2])?;
         use std::io::Write;
         let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
         f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
-        let usage="usage: pil-proof --dos-session [--mount HOST_FOLDER] [--args COMMAND_LINE] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        let usage="usage: pil --dos-session [--mount HOST_FOLDER] [--args COMMAND_LINE] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
         let(mut mount,mut tail,mut rest)=(None,None,&dos_args[2..]);
         while let[flag,value,more@..]=rest{
             match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),_=>break}
@@ -2071,30 +2071,30 @@ fn main() -> R<()> {
 
     let args: Vec<_> = std::env::args().collect();
     if matches!(args.get(1).map(String::as_str),Some("--mandelbrot"|"--compare-mandelbrot")) {
-        if args.len()>4{return Err("usage: pil-proof --mandelbrot|--compare-mandelbrot [size 2..256 power of two] [iterations 1..64]".into());}
+        if args.len()>4{return Err("usage: pil --mandelbrot|--compare-mandelbrot [size 2..256 power of two] [iterations 1..64]".into());}
         let parse=|i:usize,default:u32|->R<u32>{if let Some(x)=args.get(i){u32::try_from(number(x.as_str())?).map_err(|_|"parameter out of range".into())}else{Ok(default)}};
         let (size,iterations)=(parse(2,256)?,parse(3,32)?);
         println!("{}",if args[1]=="--compare-mandelbrot"{native::compare_mandelbrot(size,iterations)?}else{mandelbrot::render_files(size,iterations)?});return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--verify-backends") {
-        if args.len()!=2{return Err("usage: pil-proof --verify-backends".into());}
+        if args.len()!=2{return Err("usage: pil --verify-backends".into());}
         println!("{}",native::verify()?);return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--cpu-bench") {
-        if args.len()>4{return Err("usage: pil-proof --cpu-bench [iterations] [samples]".into());}
+        if args.len()>4{return Err("usage: pil --cpu-bench [iterations] [samples]".into());}
         let n=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{10000};
         let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{5};
         println!("{}",native::cpu_benchmark(n,samples)?);return Ok(());
     }
     if matches!(args.get(1).map(String::as_str),Some("--compare-backends"|"--emit-suite-rust")) {
-        if args.len()>4{return Err("usage: pil-proof --compare-backends|--emit-suite-rust [iterations] [samples]".into());}
+        if args.len()>4{return Err("usage: pil --compare-backends|--emit-suite-rust [iterations] [samples]".into());}
         let n=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{10000};
         let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{5};
         if args[1]=="--emit-suite-rust"{print!("{}",native::emit_suite(n,samples)?);}else{println!("{}",native::compare(n,samples)?);}
         return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--write-factorials") || args.get(1).map(String::as_str)==Some("--write-loop") {
-        let path=args.get(2).ok_or("usage: pil-proof --write-factorials|--write-loop PATH")?;
+        let path=args.get(2).ok_or("usage: pil --write-factorials|--write-loop PATH")?;
         let bytes=if args[1]=="--write-factorials"{guest::factorial_bytes()?}else{guest::loop_bytes(guest::LOOP_ITERATIONS)?};
         std::fs::write(path,bytes).map_err(|e|e.to_string())?;return Ok(());
     }
@@ -2104,34 +2104,34 @@ fn main() -> R<()> {
         for arg in &args[2..] {
             if arg=="--uncached" && cached {cached=false;}else{counts.push(arg);}
         }
-        if counts.len()>2{return Err("usage: pil-proof --bench [iterations] [samples] [--uncached]".into());}
+        if counts.len()>2{return Err("usage: pil --bench [iterations] [samples] [--uncached]".into());}
         let n=if let Some(x)=counts.first(){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{1000};
         let samples=if let Some(x)=counts.get(1){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{3};
         println!("{}",debugger::benchmark_mode(n,samples,cached)?);return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--stress") {
-        if args.len()>3{return Err("usage: pil-proof --stress [passes]".into());}
+        if args.len()>3{return Err("usage: pil --stress [passes]".into());}
         let passes=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"passes out of range")?}else{25};
         println!("{}",debugger::factorial_stress(passes)?);return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--write-hello") {
-        let path=args.get(2).ok_or("usage: pil-proof --write-hello PATH")?;
+        let path=args.get(2).ok_or("usage: pil --write-hello PATH")?;
         std::fs::write(path,guest::hello_bytes()?).map_err(|e|e.to_string())?;return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--write-selftest") {
-        let path=args.get(2).ok_or("usage: pil-proof --write-selftest PATH")?;
+        let path=args.get(2).ok_or("usage: pil --write-selftest PATH")?;
         std::fs::write(path,guest::selftest_bytes()?).map_err(|e|e.to_string())?;return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--selftest") {
         return debugger::selftest();
     }
     if args.get(1).map(String::as_str)==Some("--debug-service") {
-        let path=match args.len(){2=>None,4 if args[2]=="--load"=>Some(args[3].as_str()),_=>return Err("usage: pil-proof --debug-service [--load RAW_BINARY]".into())};
+        let path=match args.len(){2=>None,4 if args[2]=="--load"=>Some(args[3].as_str()),_=>return Err("usage: pil --debug-service [--load RAW_BINARY]".into())};
         return debugger::serve(std::io::stdin().lock(),std::io::stdout().lock(),path).map_err(|e|e.to_string());
     }
     if args.get(1).map(String::as_str)==Some("--repl") {
         if args.len()>2 {
-            if args.len()!=4 || args[2]!="--load" {return Err("usage: pil-proof --repl [--load PATH]".into());}
+            if args.len()!=4 || args[2]!="--load" {return Err("usage: pil --repl [--load PATH]".into());}
             return debugger::repl_image(std::io::stdin().lock(),std::io::stdout().lock(),&args[3]).map_err(|e|e.to_string());
         }
         return debugger::repl(std::io::stdin().lock(),std::io::stdout().lock()).map_err(|e|e.to_string());
@@ -2147,7 +2147,7 @@ fn main() -> R<()> {
         return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("--emit-rust") {
-        let w = args.get(2).ok_or("usage: pil-proof --emit-rust 8|16|32 [description]")?;
+        let w = args.get(2).ok_or("usage: pil --emit-rust 8|16|32 [description]")?;
         let w = width(w)?;
         let name = args.get(3).map(String::as_str).unwrap_or("add");
         let p = compile(&instantiate(description(name)?,w),w)?;
