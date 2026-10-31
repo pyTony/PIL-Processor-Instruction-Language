@@ -81,6 +81,8 @@ pub struct Loaded{
     pub break_check:bool,
     /// The CMOS register that port 71h reads, as port 70h last chose it.
     pub cmos_index:u8,
+    /// The DOS country code (001 or 358) for AH38 and AH65.
+    pub country:u16,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -149,6 +151,7 @@ fn environment(path:&[u8],drive:u8,temp:Option<u8>)->Vec<u8>{
     env
 }
 pub use files::{MemDir,Source};
+use nls::COUNTRIES;
 /// Puts `text` in the PSP command tail at 80h as COMMAND.COM passes it: a
 /// count, a leading space, the text and CR. Printable ASCII only, up to 125
 /// characters, so that the tail fits its 127 bytes.
@@ -240,7 +243,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:nls::CODE,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -334,7 +337,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001, code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE); INT33 reset finds no mouse driver; CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE); INT33 reset finds no mouse driver; CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{

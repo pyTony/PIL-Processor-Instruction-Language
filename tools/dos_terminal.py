@@ -12,6 +12,7 @@ screen contents all come from the engine; this file only displays them.
 An image becomes read-only drive C:; --mount adds a host folder as the next
 drive (D: after an image), which DOS programs can write: files they create,
 change, delete or rename change in the host folder itself.
+--country 358 gives Finnish dates and times (31.10.2026, 14.27.05).
 --args gives the program its command line; for COMMAND.COM, /K runs a batch
 file or command and then stays at the prompt.
 Z: is a drive held in memory for the session, with TEMP=Z:\\ so that pipes
@@ -193,7 +194,7 @@ def parse_offset(text):
     return sign * seconds
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -215,6 +216,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None):
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
+    if country:
+        session.send(f'country {country}')
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
     held, state = set(), {'shift': 0, 'settle': 0}
@@ -354,13 +357,15 @@ def main(argv=None):
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
     parser.add_argument('--args', metavar='COMMAND_LINE',
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
+    parser.add_argument('--country', type=int, choices=[1, 358],
+                        help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country)
     root.mainloop()
 
 

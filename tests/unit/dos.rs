@@ -1315,3 +1315,19 @@ fn no_mouse_driver_and_cmos_reads_as_an_at_with_640k(){
   let r=run(load(code,"cmosw.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  }
 }
+#[test]
+fn finland_358_gives_day_month_year_and_a_24_hour_clock(){
+ let mut p=load(&[0xcd,0x21],"fi.com").unwrap();let psp=u32::from(PSP)*16;let mut out=vec![];
+ let bytes=|p:&Loaded,at:u32,n:u32|->Vec<u8>{(0..n).map(|i|p.ram.load(at+i,MemWidth::Byte).unwrap()as u8).collect()};
+ // AH38 AL=FFh BX=358 DX=FFFFh sets the country; AL=0 then reads it: AL=FFh (code over 254), BX=358.
+ p.cpu.regs[0]=0x38ff;p.cpu.regs[3]=358;p.cpu.regs[2]=0xffff;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.country,358);
+ p.cpu.regs[0]=0x3800;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.eflags&1),(0xff,358,0));
+ let info=bytes(&p,psp+0x200,24);assert_eq!(&info[..18],b"\x01\0EUR\0\0 \0,\0.\0.\0\x03\x02\x01");assert_eq!(info[22],b';');
+ // AX=6501 with DX=358 gives the same record after country 358 and code page 437.
+ p.cpu.regs[0]=0x6501;p.cpu.regs[3]=437;p.cpu.regs[2]=358;p.cpu.regs[1]=0x40;p.cpu.regs[7]=0x300;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!(bytes(&p,psp+0x300,7),[1,0x1c,0,0x66,1,0xb5,1]);assert_eq!(bytes(&p,psp+0x307,24),info);
+ // Asking for 001 still answers with the US record; an unknown country stops.
+ p.cpu.regs[0]=0x3801;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();assert_eq!(bytes(&p,psp+0x202,1),b"$");
+ p.cpu.regs[0]=0x3831;p.cpu.regs[2]=0x200;assert!(service(&mut p,0x21,&mut out).is_err());
+}

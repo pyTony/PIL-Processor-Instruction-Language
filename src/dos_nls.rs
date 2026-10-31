@@ -1,6 +1,6 @@
-//! Country information for country 001 (United States), code page 437, the
-//! only country Dine has: AH38, the AH65 information and upper-case calls, and
-//! the far case-map routine their records point to.
+//! Country information for 001 (United States, the default) and 358
+//! (Finland), both in code page 437: AH38, the AH65 information and upper-case
+//! calls, and the far case-map routine their records point to.
 use super::*;
 /// Offsets in DOSDATA of the case-map routine, its 128-byte table (with the
 /// size word before it, as AH65 points at it) and an empty DBCS table.
@@ -37,12 +37,23 @@ pub(super) fn install(ram:&mut Ram)->Result<(),String>{
     ram.write_bytes(base+u32::from(COLLATING)-2,&order).map_err(|e|format!("DOS collating table: {e:?}"))?;
     ram.write_bytes(base+u32::from(TERMINATORS),&TERMINATOR_TABLE).map_err(|e|format!("DOS case map: {e:?}"))
 }
-/// The AH38 record: date format USA, "$", ",", ".", "-", ":", symbol before the
-/// amount, 2 decimals, 12-hour clock, the case-map routine and list separator ",".
-fn country_info()->[u8;24]{
+/// The countries Dine has.
+pub(super) const COUNTRIES:[u16;2]=[1,358];
+/// The AH38 record. 001: month-day-year, "$" before the amount, "," for
+/// thousands, "." for decimals, "-" in dates, ":" in times, 12-hour clock,
+/// list separator ",". 358 (Finland, after the Finnish standard SFS 4175):
+/// day.month.year, "EUR" after the amount and a space, a space for thousands,
+/// "," for decimals, "." in dates and times, 24-hour clock, list separator ";".
+/// Both have 2 decimals and the same case-map routine.
+fn country_info(country:u16)->[u8;24]{
     let mut info=[0u8;24];
-    info[2]=b'$';info[7]=b',';info[9]=b'.';info[11]=b'-';info[13]=b':';info[16]=2;
-    info[18..20].copy_from_slice(&CASE_MAP.to_le_bytes());info[20..22].copy_from_slice(&DOSDATA.to_le_bytes());info[22]=b',';
+    if country==358{
+        info[0]=1;info[2..5].copy_from_slice(b"EUR");info[7]=b' ';info[9]=b',';info[11]=b'.';info[13]=b'.';info[15]=3;info[17]=1;info[22]=b';';
+    }else{
+        info[2]=b'$';info[7]=b',';info[9]=b'.';info[11]=b'-';info[13]=b':';info[22]=b',';
+    }
+    info[16]=2;
+    info[18..20].copy_from_slice(&CASE_MAP.to_le_bytes());info[20..22].copy_from_slice(&DOSDATA.to_le_bytes());
     info
 }
 fn ok(p:&mut Loaded){p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;}
@@ -64,17 +75,19 @@ fn load(p:&Loaded,offset:u32)->Result<u8,String>{
 pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
     let(al,bx,cx,dx)=(p.cpu.regs[0]as u8,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
     if ah==0x38{
-        let country=if al==0xff{bx}else{u32::from(al)};
-        if !matches!(country,0|1){return Err(format!("DOS country {country} is not modelled (only 001)"));}
-        if dx!=0xffff{store(p,SegmentRegister::Ds,dx,&country_info())?;}
-        p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|1;ok(p);
+        let asked=if al==0xff{bx}else{u32::from(al)};
+        let country=if asked==0{p.country}else{asked as u16};
+        if !COUNTRIES.contains(&country){return Err(format!("DOS country {country} is not modelled (only 001 and 358)"));}
+        // DX=FFFFh sets the country; otherwise DS:DX receives its record.
+        if dx==0xffff{p.country=country;}else{store(p,SegmentRegister::Ds,dx,&country_info(country))?;}
+        p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(country.min(0xff));p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(country);ok(p);
         return Ok(());
     }
-    if matches!(al,1..=7)&&(!matches!(bx,437|0xffff)||!matches!(dx,1|0xffff)){return Err(format!("DOS country {dx} code page {bx} is not modelled (only 001/437)"));}
+    if matches!(al,1..=7)&&(!matches!(bx,437|0xffff)||!(dx==0xffff||dx==u32::from(p.country))){return Err(format!("DOS country {dx} code page {bx} is not modelled (only {:03}/437)",p.country));}
     match al{
         0x01=>{
             // Info ID 1, size 1Ch, country, code page, then the AH38 record.
-            let mut record=vec![1,0x1c,0,1,0,0xb5,0x01];record.extend_from_slice(&country_info());
+            let mut record=vec![1,0x1c,0];record.extend(p.country.to_le_bytes());record.extend(437u16.to_le_bytes());record.extend_from_slice(&country_info(p.country));
             if cx<record.len()as u32{fail(p,1);return Ok(());}
             store(p,SegmentRegister::Es,p.cpu.regs[7]&0xffff,&record)?;p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|record.len()as u32;ok(p);
         },
