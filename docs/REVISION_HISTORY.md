@@ -1,3 +1,34 @@
+# FreeDOS EDIT, MEM and BBC BASIC run in the DOS terminal — 31 October 2026
+
+Tony's runs stopped in three programs; each now runs in the terminal.
+
+- EDIT: INT 33h AX=0 (mouse reset) answers AX=0 and BX=0, which means no
+  mouse driver, and INT 21h AH=33h AL=00h-02h get and set the BREAK flag
+  (kept, not acted on). EDIT opens a file, takes typing and saves it.
+- Alt keys: the session takes `shift FLAGS` (BIOS 0040:0017 bits 0-3), the
+  terminal sends Shift, Ctrl and Alt as they go down and up, and Alt with a
+  letter, digit or F-key sends its BIOS Alt code. A shift change waits until
+  the program has run 10 slices after the key before it, so Alt+F opens
+  EDIT's File menu instead of opening and closing it.
+- MEM: ports 70h/71h read the CMOS as an AT with 640K base memory, no
+  extended memory, no diskette or hard disk and CGA, and its clock as
+  INT 21h AH2A/AH2C give it (BCD, 24-hour). CMOS writes stop the run.
+- BBC BASIC 4.82: it checksums its code up to its stack segment, 10 bytes
+  past the size its MZ header declares. DOS loads whole 512-byte pages to the
+  end of the file, and Dine now does the same (first program and EXEC);
+  bytes past the last page are still not loaded.
+
+ZIP.EXE is not in this change: it runs the PMODE/W extender, which switches
+to protected mode itself (LIDT, LGDT, CR0).
+
+Verification: 419 Rust tests and the GUI tests pass, with new tests for the
+mouse reset, BREAK flag, CMOS reads and refusals, whole-page MZ loading,
+Alt codes and the `shift` command. With FD14LITE.img (local only): EDIT
+opened D:\NOTE.TXT, took text, saved it through the File menu, and Alt+F
+opened the menu in the Tk terminal under Xvfb; MEM printed its memory table;
+BBCBASIC.EXE (Tony's copy, not in the repo) printed its banner, `PRINT 6*7`
+gave 42 and a FOR loop printed 1 2 3.
+
 # Startup command line for the DOS terminal — 30 October 2026
 
 `--dos-session` takes `--args COMMAND_LINE` and puts it in the PSP command

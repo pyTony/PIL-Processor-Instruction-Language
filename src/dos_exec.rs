@@ -36,7 +36,9 @@ fn parse(bytes:&[u8])->Option<Program>{
     let header=usize::from(header)*16;
     if header<28||header>=declared||declared>bytes.len()||min>max{return None;}
     let relocations=(0..usize::from(count)).map(|i|Some((w(usize::from(table)+i*4+2)?,w(usize::from(table)+i*4)?))).collect::<Option<Vec<_>>>()?;
-    Some(Program{module:bytes[header..declared].to_vec(),relocations,min,max,entry:Some((cs,ip,ss,sp))})
+    // Whole pages up to the end of the file, as the first program loads.
+    let loaded=(usize::from(pages)*512).min(bytes.len());
+    Some(Program{module:bytes[header..loaded].to_vec(),relocations,min,max,entry:Some((cs,ip,ss,sp))})
 }
 pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]as u8;

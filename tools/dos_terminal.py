@@ -20,7 +20,9 @@ work from any drive; what is written there is gone when the session ends.
 DOS date and time follow this computer's clock in its time zone, or in the
 one --utc-offset gives (hours, such as 2 or -5:30); the status line shows it. Ctrl+Shift+C copies the
 selection (or the whole screen), Ctrl+Shift+V or Shift+Insert types the
-clipboard; both are also on the right-click menu.
+clipboard; both are also on the right-click menu. Shift, Ctrl and Alt reach
+the BIOS shift flags, and Alt with a letter, digit or F-key sends its Alt code,
+so F10 or Alt+F opens a menu in EDIT.
 """
 import argparse
 import json
@@ -33,6 +35,8 @@ from pil_debugger import find_engine  # noqa: E402
 
 MAX_REPLY = 65536
 SLICE = 20000
+# Slices a program runs after a key before it sees a shift key change.
+SETTLE = 10
 # CGA palette for the 16 text attributes.
 PALETTE = ['#000000', '#0000aa', '#00aa00', '#00aaaa', '#aa0000', '#aa00aa', '#aa5500', '#aaaaaa',
            '#555555', '#5555ff', '#55ff55', '#55ffff', '#ff5555', '#ff55ff', '#ffff55', '#ffffff']
@@ -60,8 +64,10 @@ TYPED = {c: n for n, c in enumerate(GLYPHS) if n >= 0x80 or n in range(0x14, 0x1
 _NATIONAL = {'å': 0x1a, 'ä': 0x28, 'ö': 0x27, 'æ': 0x28, 'ø': 0x27, '§': 0x29, '½': 0x29}
 
 
-def key_code(keysym, char, control=False):
+def key_code(keysym, char, control=False, alt=False):
     """Map a Tk key event to (ascii, scan), or None for keys DOS never sees."""
+    if alt:
+        return alt_code(keysym)
     if keysym in SPECIAL:
         return SPECIAL[keysym]
     if not char or len(char) != 1:
@@ -83,6 +89,22 @@ def key_code(keysym, char, control=False):
     return ord(char), scan or 0
 
 
+def alt_code(keysym):
+    """Alt with a letter, digit or F-key, as the BIOS stores it: ASCII 0 and
+    the key's scan code (78h-83h for the top row's 1-0, -, =; 68h-71h for F1-F10)."""
+    if len(keysym) == 1 and keysym.lower() in SCAN and keysym.lower().isalpha():
+        return 0, SCAN[keysym.lower()]
+    if len(keysym) == 1 and keysym in '1234567890-=':
+        return 0, 0x78 + '1234567890-='.index(keysym)
+    if keysym in SPECIAL and keysym.startswith('F'):
+        return 0, SPECIAL[keysym][1] + 0x2d
+    return None
+
+
+# Modifier keys as their BIOS shift-flag bits at 0040:0017.
+MODIFIERS = {'Shift_R': 0x01, 'Shift_L': 0x02, 'Control_L': 0x04, 'Control_R': 0x04, 'Alt_L': 0x08, 'Alt_R': 0x08}
+
+
 def paste_keys(text):
     """Keystrokes that type `text`: line ends as Enter, tabs as Tab; characters
     code page 437 cannot hold are left out."""
@@ -97,6 +119,10 @@ def paste_keys(text):
             if code:
                 keys.append(code)
     return keys
+
+
+def key_command(code):
+    return 'key {} {}'.format(*code)
 
 
 def screen_rows(reply):
@@ -191,6 +217,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None):
     session.send(f'clock {offset}')
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
+    held, state = set(), {'shift': 0, 'settle': 0}
     beeps = [session.last.get('beeps', 0)]
 
     drawn = [None]
@@ -238,7 +265,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None):
 
     def paste(event=None):
         try:
-            keys.extend(paste_keys(root.clipboard_get()))
+            keys.extend(map(key_command, paste_keys(root.clipboard_get())))
         except tk.TclError:
             pass  # nothing text-like on the clipboard
         return 'break'
@@ -251,20 +278,51 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None):
             return copy() if event.keysym.lower() == 'c' else paste()
         if shift and event.keysym == 'Insert':
             return paste()
-        code = key_code(event.keysym, event.char, bool(event.state & 0x4))
+        if event.keysym in MODIFIERS:
+            held.add(event.keysym)
+            return shift_changed()
+        # Alt_R with Ctrl is AltGr on Windows: it types the character it makes.
+        alt = 'Alt_L' in held or ('Alt_R' in held and not control)
+        code = key_code(event.keysym, event.char, control, alt)
         if code:
-            keys.append(code)
+            keys.append(key_command(code))
         return 'break'
+
+    def on_release(event):
+        held.discard(event.keysym)
+        return shift_changed()
+
+    def shift_changed():
+        flags = 0
+        for name in held:
+            flags |= MODIFIERS[name]
+        if flags != state['shift']:
+            state['shift'] = flags
+            keys.append(f'shift {flags}')
+        return 'break'
+
+    def lost_focus(event):
+        held.clear()
+        shift_changed()
 
     def tick():
         try:
             reply = session.last
+            sent = False
+            state['settle'] = max(0, state['settle'] - 1)
             while keys and reply['status'] in ('running', 'waiting_input'):
-                ascii_code, scan = keys[0]
-                reply = session.send(f'key {ascii_code} {scan}')
+                # A change of the shift keys waits until the program has run a
+                # while after the keys before it, so that EDIT reads Alt+F
+                # before it sees Alt go up, as it would at a person's pace.
+                if keys[0].startswith('shift') and (sent or state['settle']):
+                    break
+                reply = session.send(keys[0])
                 if not reply['ok']:
                     break
-                keys.pop(0)
+                sent = keys.pop(0)
+                if sent.startswith('shift'):
+                    break
+                state['settle'] = SETTLE
             if reply['status'] in ('running', 'waiting_input'):
                 reply = session.send(f'run {SLICE}')
             draw(reply)
@@ -278,6 +336,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None):
         root.destroy()
 
     root.bind('<Key>', on_key)
+    root.bind('<KeyRelease>', on_release)
+    root.bind('<FocusOut>', lost_focus)
     menu = tk.Menu(root, tearoff=0)
     menu.add_command(label='Copy (Ctrl+Shift+C)', command=copy)
     menu.add_command(label='Paste (Ctrl+Shift+V)', command=paste)

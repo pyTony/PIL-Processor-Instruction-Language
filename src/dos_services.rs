@@ -57,6 +57,14 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[1]&=0xffff0000;
             Ok(None)
         },
+        (0x21,0x33) if p.cpu.regs[0]as u8<=2=>{
+            // BREAK flag: AL=0 gets it in DL, AL=1 sets it from DL, AL=2 does
+            // both. It is only kept: Dine checks Ctrl-Break on no DOS call.
+            let new=p.cpu.regs[2]&1!=0;let old=p.break_check;
+            if p.cpu.regs[0]as u8!=0{p.break_check=new;}
+            if p.cpu.regs[0]as u8!=1{p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(old);}
+            Ok(None)
+        },
         (0x21,0x33) if p.cpu.regs[0]as u8==5=>{
             // Boot drive: the first drive Dine has (C: for an image or a
             // mounted folder, A: when there is neither), as DL=1 for A:.
@@ -168,6 +176,13 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
+        (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
+            // No mouse driver is loaded: the reset reports AX=0 (not installed)
+            // and BX=0 buttons, as MOUSE.COM-less DOS does where INT 33h points
+            // at an IRET and callers have zeroed AX.
+            p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;
+            Ok(None)
+        },
         (0x1a,0x00)=>{
             let (ticks,rollover)=bios_ticks(p)?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|rollover;
@@ -277,7 +292,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
 }
 /// Days since 1970-01-01 and milliseconds into the day, in the host's local
 /// time `offset` seconds east of UTC.
-fn local_now(offset:i64)->(u64,u64){
+pub(super) fn local_now(offset:i64)->(u64,u64){
     let ms=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.as_millis()as i64)+offset*1000;
     let ms=ms.max(0)as u64;(ms/86_400_000,ms%86_400_000)
 }
