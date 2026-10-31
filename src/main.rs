@@ -2241,3 +2241,7 @@ mod exchange_memory_tests;
 #[cfg(test)]
 #[path = "../tests/unit/les.rs"]
 mod les_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/sst80386.rs"]
+mod sst80386_tests;
