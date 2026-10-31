@@ -12,6 +12,8 @@ screen contents all come from the engine; this file only displays them.
 An image becomes read-only drive C:; --mount adds a host folder as the next
 drive (D: after an image), which DOS programs can write: files they create,
 change, delete or rename change in the host folder itself.
+--com1 console connects COM1 to the console this was started from (CTTY COM1
+runs the shell there), --com1 tcp:2323 to a TCP port for telnet or PuTTY.
 --country 358 gives Finnish dates and times (31.10.2026, 14.27.05).
 --args gives the program its command line; for COMMAND.COM, /K runs a batch
 file or command and then stays at the prompt.
@@ -67,7 +69,9 @@ _NATIONAL = {'å': 0x1a, 'ä': 0x28, 'ö': 0x27, 'æ': 0x28, 'ø': 0x27, '§': 0
 
 def key_code(keysym, char, control=False, alt=False):
     """Map a Tk key event to (ascii, scan), or None for keys DOS never sees."""
-    if alt:
+    # AltGr (Ctrl+Alt on Windows) types characters such as \\ @ { } on
+    # national layouts: only Alt with a letter, digit or F-key is an Alt code.
+    if alt and alt_code(keysym):
         return alt_code(keysym)
     if keysym in SPECIAL:
         return SPECIAL[keysym]
@@ -146,6 +150,7 @@ class Session:
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.seq = 0
+        self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
 
     def _read(self):
@@ -155,6 +160,7 @@ class Session:
         reply = json.loads(line)
         if reply.get('protocol') != 1 or reply.get('seq') != self.seq:
             raise RuntimeError('unexpected reply from PIL DOS session')
+        self.com1_out += bytes.fromhex(reply.get('com1', ''))
         return reply
 
     def send(self, command):
@@ -194,7 +200,139 @@ def parse_offset(text):
     return sign * seconds
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None):
+# Keys a host console reports without a character, as the VT100 sequences a
+# serial terminal sends (Windows msvcrt codes after 00h or E0h).
+_VT_KEYS = {'H': b'\x1b[A', 'P': b'\x1b[B', 'M': b'\x1b[C', 'K': b'\x1b[D', 'G': b'\x1b[H', 'O': b'\x1b[F',
+            'S': b'\x7f', 'R': b'\x1b[2~', 'I': b'\x1b[5~', 'Q': b'\x1b[6~'}
+
+
+def to_cp437(text):
+    """Host characters as the code page 437 bytes a DOS program reads; Enter is CR."""
+    return text.replace('\r\n', '\r').replace('\n', '\r').encode('cp437', errors='ignore')
+
+
+def from_cp437(data):
+    """COM1 bytes for a host terminal: code page 437 text, control and escape
+    bytes passed through, so ANSI sequences reach the terminal unchanged."""
+    return data.decode('cp437')
+
+
+class ConsolePort:
+    """COM1 on the console this terminal was started from: what the program
+    sends is printed there (an ANSI terminal draws its escape sequences), and
+    keys typed there go to the program."""
+
+    def __init__(self):
+        import queue
+        import threading
+        if not sys.stdin or not sys.stdin.isatty():
+            raise RuntimeError('--com1 console needs the terminal started from a console window')
+        self.input = queue.Queue()
+        if sys.platform == 'win32':
+            self._enable_vt()
+            reader = self._read_windows
+        else:
+            reader = self._read_posix
+        threading.Thread(target=reader, daemon=True).start()
+
+    @staticmethod
+    def _enable_vt():
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+
+    def _read_windows(self):
+        import msvcrt
+        while True:
+            char = msvcrt.getwch()
+            if char in ('\x00', '\xe0'):
+                self.input.put(_VT_KEYS.get(msvcrt.getwch(), b''))
+            else:
+                self.input.put(to_cp437(char))
+
+    def _read_posix(self):
+        import atexit
+        import os
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+        atexit.register(termios.tcsetattr, fd, termios.TCSADRAIN, saved)
+        tty.setraw(fd)
+        while True:
+            data = os.read(fd, 64)
+            if not data:
+                return
+            self.input.put(to_cp437(data.decode('utf-8', errors='ignore')))
+
+    def write(self, data):
+        # In raw mode a bare LF only moves down; DOS sends CR LF itself.
+        sys.stdout.write(from_cp437(data))
+        sys.stdout.flush()
+
+    def read(self):
+        data = b''
+        while not self.input.empty():
+            data += self.input.get_nowait()
+        return data
+
+
+class TcpPort:
+    """COM1 on a TCP port of this computer, for telnet or PuTTY (Raw): one
+    client at a time; bytes pass both ways unchanged."""
+
+    def __init__(self, port, host='127.0.0.1'):
+        import socket
+        self.server = socket.create_server((host, port))
+        self.server.setblocking(False)
+        self.client = None
+
+    def _accept(self):
+        if self.client is None:
+            try:
+                self.client, _ = self.server.accept()
+                self.client.setblocking(False)
+            except BlockingIOError:
+                pass
+        return self.client
+
+    def write(self, data):
+        client = self._accept()
+        if client is not None:
+            try:
+                client.sendall(data)
+            except OSError:
+                self.client = None
+
+    def read(self):
+        client = self._accept()
+        if client is None:
+            return b''
+        try:
+            data = client.recv(4096)
+        except BlockingIOError:
+            return b''
+        except OSError:
+            data = b''
+        if not data:
+            self.client = None
+        return data.replace(b'\r\n', b'\r').replace(b'\r\x00', b'\r')
+
+
+def open_com1(spec):
+    """`console`, or `tcp:PORT` (localhost) or `tcp:HOST:PORT`."""
+    if spec == 'console':
+        return ConsolePort()
+    if spec.startswith('tcp:'):
+        host, _, port = spec[4:].rpartition(':')
+        return TcpPort(int(port), host or '127.0.0.1')
+    raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
+
+
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -326,8 +464,16 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 if sent.startswith('shift'):
                     break
                 state['settle'] = SETTLE
+            if com1:
+                incoming = com1.read()
+                for at in range(0, len(incoming), 100):
+                    if reply['status'] in ('running', 'waiting_input'):
+                        reply = session.send('com1 ' + incoming[at:at + 100].hex())
             if reply['status'] in ('running', 'waiting_input'):
                 reply = session.send(f'run {SLICE}')
+            if com1 and session.com1_out:
+                com1.write(session.com1_out)
+                session.com1_out = b''
             draw(reply)
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
@@ -359,13 +505,16 @@ def main(argv=None):
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
     parser.add_argument('--country', type=int, choices=[1, 358],
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
+    parser.add_argument('--com1', metavar='console|tcp:PORT',
+                        help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
     parser.add_argument('--engine', help='pil-proof executable (default: newest build)')
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
+    com1 = open_com1(args.com1) if args.com1 else None
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1)
     root.mainloop()
 
 

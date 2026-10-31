@@ -34,7 +34,11 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('F', 'F', alt=True), (0, 0x21))
         self.assertEqual(term.key_code('1', '1', alt=True), (0, 0x78))
         self.assertEqual(term.key_code('F10', '', alt=True), (0, 0x71))
-        self.assertIsNone(term.key_code('Return', '\r', alt=True))
+        self.assertEqual(term.key_code('Return', '\r', alt=True), (13, 0x1c))
+        # AltGr on a Finnish layout: the characters, not Alt codes.
+        self.assertEqual(term.key_code('backslash', '\\', True, True), (0x5c, 0x2b))
+        self.assertEqual(term.key_code('at', '@', True, True), (0x40, 0x03))
+        self.assertEqual(term.key_code('braceleft', '{', True, True), (0x7b, 0x1a))
 
     def test_utc_offsets_parse_as_hours_or_hours_and_minutes(self):
         self.assertEqual([term.parse_offset(t) for t in ('2', '-5', '5.5', '+02:00', '-03:30', '0')],
@@ -102,6 +106,35 @@ class DosTerminalTests(unittest.TestCase):
                 self.assertEqual((reply['status'], term.screen_rows(reply)[0][0].rstrip()), ('exit', ' /K D:\\START.BAT'))
             finally:
                 session.close()
+
+    def test_com1_bytes_are_code_page_437_with_cr_for_enter(self):
+        self.assertEqual(term.to_cp437('dir\nä€'), b'dir\r\x84')
+        self.assertEqual(term.from_cp437(b'\x1b[1m\xc9\xcd'), '\x1b[1m╔═')
+
+    def test_tcp_port_passes_bytes_both_ways(self):
+        import socket
+        import time
+        port = term.TcpPort(0)
+        try:
+            client = socket.create_connection(port.server.getsockname())
+            client.settimeout(5)
+            for _ in range(500):
+                if port._accept():
+                    break
+                time.sleep(0.01)
+            port.write(b'C:\\>')
+            self.assertEqual(client.recv(16), b'C:\\>')
+            client.sendall(b'VER\r\n')
+            data = b''
+            for _ in range(500):
+                data += port.read()
+                if data:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(data, b'VER\r')
+            client.close()
+        finally:
+            port.server.close()
 
 
 if __name__ == '__main__':

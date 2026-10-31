@@ -35,6 +35,8 @@ fn next(n:u32)->u32{if n==0x3c{0x1e}else{n+2}}
 /// wait, so resuming after a key arrives does not discard that key.
 pub(super) fn waiting(p:&mut Loaded,vector:u8)->Result<bool,String>{
     let(ah,al)=((p.cpu.regs[0]>>8)as u8,p.cpu.regs[0]as u8);
+    // With standard input on COM1 the service itself waits for the port.
+    if vector==0x21&&super::services::stdin_aux(p){return Ok(false);}
     match(vector,ah){
         (0x16,0)=>{let(head,tail)=ring(p)?;Ok(head==tail)},
         (0x21,1|7|8)=>Ok(!dos_available(p)?),

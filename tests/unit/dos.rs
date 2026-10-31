@@ -1331,3 +1331,46 @@ fn finland_358_gives_day_month_year_and_a_24_hour_clock(){
  p.cpu.regs[0]=0x3801;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();assert_eq!(bytes(&p,psp+0x202,1),b"$");
  p.cpu.regs[0]=0x3831;p.cpu.regs[2]=0x200;assert!(service(&mut p,0x21,&mut out).is_err());
 }
+#[test]
+fn com1_takes_bios_calls_uart_registers_and_dos_aux_handles(){
+ let mut p=load(&[0xcd,0x21],"com.com").unwrap();let psp=u32::from(PSP)*16;
+ // Without a session there is no port: INT 14h stops, and COM1 is a plain name.
+ p.cpu.regs[0]=0x0300;p.cpu.regs[2]=0;assert!(service(&mut p,0x14,&mut vec![]).is_err());
+ serial::attach(&mut p).unwrap();
+ assert_eq!((p.ram.load(0x400,MemWidth::Word).unwrap(),p.ram.load(0x410,MemWidth::Word).unwrap()&0x0e00),(0x3f8,0x0200));
+ // AH01 sends, AH03 reports empty transmitter and CTS/DSR/DCD, AH02 times out at once.
+ let mut int14=|p:&mut Loaded,ax:u32|{p.cpu.regs[0]=ax;p.cpu.regs[2]=0;service(p,0x14,&mut vec![]).unwrap();p.cpu.regs[0]&0xffff};
+ assert_eq!(int14(&mut p,0x0141),0x6041);assert_eq!(int14(&mut p,0x0300),0x60b0);assert_eq!(int14(&mut p,0x0200)&0x8000,0x8000);
+ p.com1.as_mut().unwrap().rx.extend(b"hi");assert_eq!(int14(&mut p,0x0300),0x61b0);assert_eq!(int14(&mut p,0x0200),u32::from(b'h'));
+ // The 8250 registers, polled: LSR shows the waiting byte, RBR takes it, THR sends; IER interrupts stop.
+ let code=[0xba,0xfd,0x03,0xec,0x88,0xc3,0xba,0xf8,0x03,0xec,0x88,0xc7,0xb0,0x21,0xee,0xfa,0xf4];
+ let mut q=load(&code,"uart.com").unwrap();serial::attach(&mut q).unwrap();q.com1.as_mut().unwrap().rx.push_back(b'z');
+ let r=run(q,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.com1.as_ref().unwrap().tx.clone()),(0x7a61,vec![0x21]));
+ let mut q=load(&[0xba,0xf9,0x03,0xb0,0x01,0xee,0xfa,0xf4],"ier.com").unwrap();serial::attach(&mut q).unwrap();
+ assert!(matches!(run(q,20).unwrap().stop,Stop::Service(_)));
+ // Handle 3 (AUX) and COM1 opened by name write to the port and read what arrived.
+ p.com1.as_mut().unwrap().tx.clear();p.com1.as_mut().unwrap().rx.clear();
+ p.ram.write_bytes(psp+0x200,b"ok").unwrap();p.cpu.regs[0]=0x4000;p.cpu.regs[3]=3;p.cpu.regs[1]=2;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.com1.as_ref().unwrap().tx,b"ok");
+ let (h,cf)=call(&mut p,0x3d02,0,b"C:\\DEV\\COM1.TXT");assert_eq!(cf,0);
+ p.cpu.regs[0]=0x3f00;p.cpu.regs[3]=h;p.cpu.regs[1]=8;p.cpu.regs[2]=0x300;service(&mut p,0x21,&mut vec![]).unwrap();assert!(p.input_wait,"no byte yet: the read waits");p.input_wait=false;
+ p.com1.as_mut().unwrap().rx.extend(b"abc");service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.ram.load(psp+0x300,MemWidth::Word).unwrap()),(3,u32::from_le_bytes([b'a',b'b',0,0])));
+}
+#[test]
+fn ctty_com1_moves_dos_console_input_and_output_to_the_port(){
+ let mut p=load(&[0xcd,0x21],"ctty.com").unwrap();let psp=u32::from(PSP)*16;serial::attach(&mut p).unwrap();
+ // Handles 0 and 1 on AUX, as CTTY COM1 leaves them.
+ for h in [0,1]{p.ram.store(psp+0x18+h,MemWidth::Byte,3).unwrap();}
+ let mut out=vec![];
+ p.cpu.regs[0]=0x0b00;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,0);
+ p.cpu.regs[0]=0x0100;service(&mut p,0x21,&mut out).unwrap();assert!(p.input_wait);p.input_wait=false;
+ p.com1.as_mut().unwrap().rx.extend(b"xDIX\x08R\r");
+ p.cpu.regs[0]=0x0100;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,u32::from(b'x'));
+ // AH0A: Backspace edits, CR ends; echo goes to the port, nothing to the screen output.
+ p.ram.write_bytes(psp+0x200,&[10]).unwrap();p.cpu.regs[0]=0x0a00;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((0..6).map(|i|p.ram.load(psp+0x201+i,MemWidth::Byte).unwrap()as u8).collect::<Vec<_>>(),b"\x03DIR\r\0");
+ p.cpu.regs[0]=0x0200;p.cpu.regs[2]=u32::from(b'!');service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!(p.com1.as_ref().unwrap().tx,b"xDIX\x08 \x08R\r!");assert!(out.is_empty());
+}

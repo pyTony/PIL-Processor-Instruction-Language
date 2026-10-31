@@ -3,6 +3,7 @@ use super::*;
 use crate::host_io::Output;
 use std::time::{SystemTime,UNIX_EPOCH};
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
+    if vector==0x21&&aux_console(p)?{return Ok(None);}
     match(vector,(p.cpu.regs[0]>>8)as u8){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
         (0x21,0x02)=>{console::dos_break_check(p)?;put_char(p,out,p.cpu.regs[2]as u8)?;Ok(None)},
@@ -121,6 +122,36 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x21,0x3f) if console_handle(p)=>{console_read(p,out)?;Ok(None)},
+        (0x21,0x3f) if aux_handle(p)=>{
+            let(offset,wanted)=(p.cpu.regs[2]&0xffff,p.cpu.regs[1]&0xffff);
+            if offset+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
+            if wanted==0{p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(None);}
+            match serial::read(p,wanted as usize)?{
+                None=>p.input_wait=true,
+                Some(bytes)=>{
+                    let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+                    for(n,&b)in bytes.iter().enumerate(){
+                        let addr=context.translate(offset+n as u32,MemWidth::Byte,true,p.cpu.eip).map_err(|e|format!("DOS read buffer access: {e:?}"))?;
+                        p.ram.store(addr,MemWidth::Byte,u32::from(b)).map_err(|e|format!("DOS read buffer write: {e:?}"))?;
+                    }
+                    p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|bytes.len()as u32;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+                },
+            }
+            Ok(None)
+        },
+        (0x14,ah) if p.com1.is_some()=>{serial::bios(p,ah)?;Ok(None)},
+        (0x21,0x44) if p.cpu.regs[0]as u8==1&&console_handle(p)=>{
+            // The console keeps its cooked mode: setting the information it
+            // already has (C3h, as CTTY CON does) is taken, raw mode is not.
+            if p.cpu.regs[2]&0xffff|0x80!=0xc3{return Err(format!("DOS console device information {:04x}h (raw mode) is not modelled",p.cpu.regs[2]&0xffff));}
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
+        (0x21,0x44) if p.cpu.regs[0]as u8==1&&aux_handle(p)=>{
+            // Set device information: DH must be 0; the device bit stays set.
+            if p.cpu.regs[2]&0xff00!=0{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;return Ok(None);}
+            if let Some(port)=p.com1.as_mut(){port.info=p.cpu.regs[2]as u8|0x80;}
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
             let offset=p.cpu.regs[2]&0xffff;let mut text=Vec::new();
@@ -334,7 +365,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|6;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
         return Ok(());
     };
-    if (3..5).contains(&sft){return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
+    if sft==4||(sft==3&&p.com1.is_none()){return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
     let offset=p.cpu.regs[2]&0xffff;let count=p.cpu.regs[1]&0xffff;
     if offset+count>0x10000{return Err("DOS write buffer exceeds segment end".into());}
     if sft<3&&count as usize>out.remaining(){return Err("DOS output limit reached before handle write".into());}
@@ -343,6 +374,10 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     for n in offset..offset+count{
         let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS write buffer access: {e:?}"))?;
         text.push(p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS write buffer RAM access: {e:?}"))?as u8);
+    }
+    if sft==3{
+        let written=serial::write(p,&text)?;
+        p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|written;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(());
     }
     if sft>=5{
         match files::write(p,sft,&text)?{
@@ -360,6 +395,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
 /// AH02/06/09 output goes to the file handle 1 was redirected to, if any.
 /// DOS has no error return there, so a failed write stops the run.
 fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
+    if p.com1.is_some()&&files::system_file(p,1)?==Some(3){serial::write(p,bytes)?;return Ok(true);}
     let Some(sft)=files::redirected_output(p)? else{return Ok(false)};
     match files::write(p,sft,bytes)?{Ok(n) if n as usize==bytes.len()=>Ok(true),Ok(_)=>Err("DOS console output to redirected handle 1 found the drive full".into()),Err(code)=>Err(format!("DOS console output to redirected handle 1 failed with error {code}"))}
 }
@@ -509,6 +545,73 @@ fn line_edit(p:&mut Loaded,out:&mut impl Output,at:&dyn Fn(u32)->Result<u32,Stri
     }
 }
 /// Handles on CON: system files 0..2, also through AH45/46 copies.
+/// Whether standard input is the AUX device on COM1, as after CTTY COM1.
+pub(super) fn stdin_aux(p:&Loaded)->bool{
+    p.com1.is_some()&&matches!(files::system_file(p,0),Ok(Some(3)))
+}
+/// The DOS console input calls while standard input is COM1 (after CTTY
+/// COM1): they read the bytes the host terminal sent, echo to standard output
+/// where DOS echoes, and wait while none have come. AH0A edits with Backspace
+/// only. Returns false for every other call.
+fn aux_console(p:&mut Loaded)->Result<bool,String>{
+    let(ah,al,dl)=((p.cpu.regs[0]>>8)as u8,p.cpu.regs[0]as u8,p.cpu.regs[2]as u8);
+    if !stdin_aux(p)||!matches!(ah,0x01|0x06|0x07|0x08|0x0a|0x0b|0x0c){return Ok(false);}
+    if ah==0x06&&dl!=0xff{return Ok(false);}
+    let(ah,dx)=if ah==0x0c{
+        if !matches!(al,0x01|0x06|0x07|0x08|0x0a){p.cpu.regs[0]&=!255;return Ok(true);}
+        // AH0C empties the input, then reads as AL says.
+        if !p.flushed{if let Some(port)=p.com1.as_mut(){port.rx.clear();}p.flushed=true;}
+        (al,p.cpu.regs[2]&0xffff)
+    }else{(ah,p.cpu.regs[2]&0xffff)};
+    let set_al=|p:&mut Loaded,v:u8|p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(v);
+    let take=|p:&mut Loaded|p.com1.as_mut().and_then(|s|s.rx.pop_front());
+    match ah{
+        0x0b=>{let ready=p.com1.as_ref().is_some_and(|s|!s.rx.is_empty());set_al(p,if ready{0xff}else{0});},
+        0x06=>match take(p){
+            Some(b)=>{set_al(p,b);p.cpu.eflags&=!0x40;},
+            None=>{set_al(p,0);p.cpu.eflags|=0x40;},
+        },
+        0x01|0x07|0x08=>match take(p){
+            Some(b)=>{set_al(p,b);if ah==1{to_file(p,&[b])?;}p.flushed=false;},
+            None=>p.input_wait=true,
+        },
+        _=>{
+            // AH0A: DS:DX holds the size, then the count and the line.
+            let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
+            let eip=p.cpu.eip;
+            let at=|n:u32|->Result<u32,String>{
+                if dx+n>0xffff{return Err("DOS line buffer exceeds segment end".into());}
+                context.translate(dx+n,MemWidth::Byte,true,eip).map_err(|e|format!("DOS line buffer access: {e:?}"))
+            };
+            let size=p.ram.load(at(0)?,MemWidth::Byte).map_err(|e|format!("DOS line buffer read: {e:?}"))?as usize;
+            if size==0{return Ok(true);}
+            at(1+size as u32)?;
+            let mut line=p.line.take().map_or(Vec::new(),|(line,_,_)|line);
+            loop{
+                let Some(b)=take(p)else{p.line=Some((line,0,false));p.input_wait=true;return Ok(true)};
+                match b{
+                    b'\r'=>{
+                        to_file(p,b"\r")?;
+                        let mut bytes=vec![line.len()as u8];bytes.extend(&line);bytes.push(b'\r');
+                        for(n,&v)in bytes.iter().enumerate(){p.ram.store(at(1+n as u32)?,MemWidth::Byte,u32::from(v)).map_err(|e|format!("DOS line buffer write: {e:?}"))?;}
+                        break;
+                    },
+                    8|0x7f=>if line.pop().is_some(){to_file(p,b"\x08 \x08")?;},
+                    // A full line takes only CR, as DOS rings the bell.
+                    _ if line.len()+1>=size=>{to_file(p,b"\x07")?;},
+                    b'\n'=>{},
+                    _=>{line.push(b);to_file(p,&[b])?;},
+                }
+            }
+            p.flushed=false;
+        },
+    }
+    Ok(true)
+}
+/// A handle on the AUX device (system file 3) while COM1 is attached.
+fn aux_handle(p:&Loaded)->bool{
+    p.com1.is_some()&&matches!(files::system_file(p,(p.cpu.regs[3]&0xffff)as u16),Ok(Some(3)))
+}
 fn console_handle(p:&Loaded)->bool{
     matches!(files::system_file(p,(p.cpu.regs[3]&0xffff)as u16),Ok(Some(0..=2)))
 }
