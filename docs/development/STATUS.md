@@ -1,3 +1,21 @@
+# Finnish dates and times in the DOS terminal — 31 October 2026
+
+Tony found the US date format confusing. Dine now has country 358
+(Finland) next to 001 (USA, still the default), both in code page 437:
+day.month.year, "." in dates and times, a 24-hour clock, "," for decimals,
+a space for thousands, "EUR" after the amount and ";" as the list
+separator, following the Finnish standard SFS 4175. INT 21h AH38 reads the
+current country (AL=FFh and BX for codes over 254), gives either record on
+request, and sets the country with DX=FFFFh; AH65 information records carry
+the current country. The session takes `country 358`, and
+`tools/dos_terminal.py --country 358` sends it at start.
+
+Verification: unit test for the 358 record, setting and reading the country
+and the AH65 record; GUI test for the session command; 420 Rust tests pass.
+With FD14LITE.img (local only) and country 358, FreeCOM's `PROMPT $D $T`
+showed "Sat 31.10.2026  3.16.42,44", DIR listed "46 256  02.04.25 14.22",
+and DATE asked for "dd.mm.[cc]yy".
+
 # FreeDOS EDIT, MEM and BBC BASIC run in the DOS terminal — 31 October 2026
 
 Tony's runs stopped in three programs; each now runs in the terminal.

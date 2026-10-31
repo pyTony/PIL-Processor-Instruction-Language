@@ -84,6 +84,11 @@ impl Session{
                 Ok(offset) if offset.abs()<=14*3600=>{self.loaded.as_mut().ok_or("session state lost")?.clock_offset=Some(offset);(true,String::new(),false)},
                 _=>(false,"clock needs a UTC offset in seconds (-50400..50400)".into(),false),
             },
+            // `country CODE`: the DOS country, as AH38 with DX=FFFFh would set it.
+            ["country",code]=>match code.parse::<u16>(){
+                Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.country=code;(true,String::new(),false)},
+                _=>(false,"country needs 1 or 358".into(),false),
+            },
             ["quit"]=>(true,String::new(),true),
             _=>(false,format!("unknown command: {line}"),false),
         };
