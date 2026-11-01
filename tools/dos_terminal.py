@@ -123,6 +123,18 @@ ALTGR_IS_CTRL_ALT = sys.platform == 'win32'
 MODIFIERS = {'Shift_R': 0x01, 'Shift_L': 0x02, 'Control_L': 0x04, 'Control_R': 0x04, 'Alt_L': 0x08, 'Alt_R': 0x08}
 
 
+def event_key_code(keysym, char, state, held):
+    """Translate a key using both Tk state and tracked modifier presses."""
+    # Windows sometimes clears state and retains the unmodified keysym (7),
+    # while char already contains the AltGr text ({). Trust the held pair.
+    if ALTGR_IS_CTRL_ALT and {'Control_L', 'Alt_R'} <= held:
+        return key_code(keysym, char, altgr=True)
+    control = bool(state & 0x4)
+    alt = 'Alt_L' in held or ('Alt_R' in held and not control)
+    altgr = control and ('Alt_L' in held or 'Alt_R' in held)
+    return key_code(keysym, char, control, alt, altgr)
+
+
 def paste_keys(text):
     """Keystrokes that type `text`: line ends as Enter, tabs as Tab; characters
     code page 437 cannot hold are left out."""
@@ -438,10 +450,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         if event.keysym in MODIFIERS:
             held.add(event.keysym)
             return shift_changed()
-        # Alt_R with Ctrl is AltGr on Windows: it types the character it makes.
-        alt = 'Alt_L' in held or ('Alt_R' in held and not control)
-        altgr = control and ('Alt_L' in held or 'Alt_R' in held)
-        code = key_code(event.keysym, event.char, control, alt, altgr)
+        code = event_key_code(event.keysym, event.char, event.state, held)
         if code:
             keys.append(key_command(code))
         return 'break'
