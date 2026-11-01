@@ -1,3 +1,25 @@
+# COM1 line input keys — 1 November 2026
+
+Tony's `--com1 console` run showed the Up arrow breaking the next command:
+the console sent the VT sequence ESC [ A, DOS line input over COM1 stored the
+ESC and echoed it raw (the host terminal moved its cursor up), and FreeCOM got
+`[Actty` as the command. AH0A over AUX now edits as the FreeDOS kernel's
+read_line does on any device: ESC cancels the line (a backslash, then a new
+line indented to the start column, which DOS output on the port now tracks),
+control characters echo as `^X` and erase with two backspaces, a tab erases
+back to its column, LF after the first key starts a new line and is not
+stored, and a 00h key pair is read as an extended key (template keys stay
+unmodelled, as on CON). The terminal's `--com1 console` no longer sends
+cursor, editing or function keys at all: a DOS line over a serial line has no
+use for VT sequences. On POSIX consoles ESC [ ... and ESC O x sequences are
+removed; a lone Esc is kept and cancels the line. `--com1 tcp:PORT` still
+passes what the client sends. Checked with FD14LITE.img (SHA256
+f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36) in a
+cloud session: `CTTY COM1`, `dir` + ESC [ A + two Backspaces + `ctty con`
+cancelled the line, ran CTTY CON and brought the prompt back to the screen.
+PROMPT `$e[` escapes still show raw on the DOS screen: no ANSI driver is
+loaded, as in DOS without ANSI.SYS. One Rust test and one GUI test added.
+
 # Executable renamed to pil — 31 October 2026
 
 Tony chose `pil` as the executable's new name; `pil-proof` was the project's
