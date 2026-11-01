@@ -1,3 +1,26 @@
+# TIMEIT.COM times a command — 1 November 2026
+
+Tony's TIMEIT.BAT is a Windows cmd.exe script. Under Dine, FreeCOM 0.86 runs
+it as FreeCOM and MS-DOS 6.22 would: `%time%` is empty, `SETLOCAL` is "Bad
+command or filename", `CALL :label` is a missing program, and `SET /A` is
+"Invalid switch". These are command-interpreter features that DOS lacks, not
+Dine gaps. programs/dos/TIMEIT.COM (original, NASM, 8086 only) does the same
+job in DOS: `TIMEIT command [arguments]` runs `COMSPEC /C command`. As a
+result, internal commands, batch files and PATH programs all work. TIMEIT then
+prints the start, end and elapsed times read with INT 21h AH=2Ch. They use the
+country's separators (AH=38h: `23.10.42,53` for 358), and a run over midnight
+counts forward. TIMEIT exits with the command's AH4D code, so `IF ERRORLEVEL`
+sees it. In the terminal, the clock is host time at 1/18.2 s resolution. In
+the probe and unit tests, the deterministic clock advances one tick per read.
+
+Verification: a new unit test runs TIMEIT against a stand-in COMMAND.COM. It
+checks the tail, the output for countries 001 and 358, midnight wrap, usage,
+an over-long line and the missing-COMSPEC error. 433 Rust tests passed on
+Linux (local). In a local `--dos-session` with FD14LITE.img (SHA256
+f539d456…0718d36) and FreeCOM 0.86, `TIMEIT FACTOR 10`, `TIMEIT DIR /W`,
+`TIMEIT MANDEL`, nested `TIMEIT TIMEIT FACTOR 2` and ERRORLEVEL 3 passing
+through all worked. TIMEIT avoids AAM (D4), which PIL does not implement yet.
+
 # Ctrl-C and Ctrl-Break call INT 23h — 1 November 2026
 
 Tony's terminal session stopped with "DOS Ctrl-C break handling (INT23) is
