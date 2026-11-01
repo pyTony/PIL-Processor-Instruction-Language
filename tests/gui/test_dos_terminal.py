@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('dos_terminal', Path(__file__).resolve().parents[2] / 'tools/dos_terminal.py')
 term = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(term)
@@ -47,6 +48,24 @@ class DosTerminalTests(unittest.TestCase):
         # Ctrl+\ alone stays FS, and Ctrl+Alt+letter is still an Alt code.
         self.assertEqual(term.key_code('backslash', '\x1c', True), (0x1c, 0))
         self.assertEqual(term.key_code('e', '\x05', True, True, True), (0, 0x12))
+
+    def test_windows_altgr_with_cleared_state_and_base_keysym(self):
+        # Actual Windows Finnish keylog: held Ctrl_L/Alt_R, state 0,
+        # keysyms 7/8/9/0 but correctly translated characters {/[ /]/}.
+        held = {'Control_L', 'Alt_R'}
+        with patch.object(term, 'ALTGR_IS_CTRL_ALT', True):
+            for symbol, char, expected in [('7', '{', (123, 26)), ('8', '[', (91, 26)),
+                                           ('9', ']', (93, 27)), ('0', '}', (125, 27))]:
+                for state in (0, 0x2000c):
+                    with self.subTest(symbol=symbol, state=state):
+                        self.assertEqual(term.event_key_code(symbol, char, state, held), expected)
+            # Unsupported euro must not become Alt+E (BBC BASIC's ELSE macro).
+            self.assertIsNone(term.event_key_code('e', '€', 0, held))
+            self.assertEqual(term.event_key_code('braceleft', '\x1b', 0, held), (123, 26))
+            self.assertEqual(term.event_key_code('e', 'e', 0x8, {'Alt_L'}), (0, 18))
+            self.assertEqual(term.event_key_code('7', '', 0x8, {'Alt_L'}), (0, 126))
+            self.assertEqual(term.event_key_code('c', '\x03', 0x4, {'Control_L'}), (3, 46))
+            self.assertEqual(term.event_key_code('7', '7', 0, set()), (55, 8))
 
     def test_utc_offsets_parse_as_hours_or_hours_and_minutes(self):
         self.assertEqual([term.parse_offset(t) for t in ('2', '-5', '5.5', '+02:00', '-03:30', '0')],
