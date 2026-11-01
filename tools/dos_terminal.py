@@ -25,7 +25,8 @@ one --utc-offset gives (hours, such as 2 or -5:30); the status line shows it. Ct
 selection (or the whole screen), Ctrl+Shift+V or Shift+Insert types the
 clipboard; both are also on the right-click menu. Shift, Ctrl and Alt reach
 the BIOS shift flags, and Alt with a letter, digit or F-key sends its Alt code,
-so F10 or Alt+F opens a menu in EDIT.
+so F10 or Alt+F opens a menu in EDIT. Ctrl+C and Ctrl+Break reach DOS, which
+echoes ^C and calls the program's INT 23h handler (the default one ends it).
 """
 import argparse
 import json
@@ -72,7 +73,9 @@ def key_code(keysym, char, control=False, alt=False, altgr=False):
     `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
     # Windows can hand over the Ctrl form of an AltGr character (FS for \\,
     # ESC for {, nothing for @): the key's name says which character it typed.
-    if altgr and keysym in KEYSYM_CHARS:
+    # A printable character is already the right one (Finnish AltGr+< gives
+    # keysym `less` with char `|`).
+    if altgr and keysym in KEYSYM_CHARS and not (len(char) == 1 and char.isprintable()):
         char, control, alt = KEYSYM_CHARS[keysym], False, False
     # AltGr (Ctrl+Alt on Windows) types characters such as \\ @ { } on
     # national layouts: only Alt with a letter, digit or F-key is an Alt code.
@@ -149,6 +152,11 @@ def paste_keys(text):
             if code:
                 keys.append(code)
     return keys
+
+
+def is_ctrl_break(keysym, control):
+    """Whether a key event is Ctrl+Break, which goes to the session as `break`."""
+    return keysym in ('Cancel', 'Break') or (control and keysym == 'Pause')
 
 
 def key_command(code):
@@ -470,6 +478,10 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         if event.keysym in MODIFIERS:
             held.add(event.keysym)
             return shift_changed()
+        # Ctrl+Break: Windows names it Cancel, X11 Break (or Ctrl with Pause).
+        if is_ctrl_break(event.keysym, control):
+            keys.append('break')
+            return 'break'
         code = event_key_code(event.keysym, event.char, event.state, held)
         if code:
             keys.append(key_command(code))

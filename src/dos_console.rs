@@ -199,12 +199,18 @@ pub(super) fn dos_take(p:&Loaded)->Result<(u8,Writes,Option<u8>),String>{
     let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
     if key&255==0{Ok((0,writes,Some((key>>8)as u8)))}else{Ok((key as u8,writes,None))}
 }
-/// Ctrl-C at the head of input would run DOS break handling (INT23), which
-/// this shim does not model; stop before any effect instead of ignoring it.
+/// The error a DOS call stops with, before any effect, when it finds Ctrl-C:
+/// the run loop then echoes ^C and calls INT 23h (see dos_break.rs).
+pub(super) const BREAK:&str="DOS Ctrl-C break";
+/// FreeDOS check_handle_break on CON: Ctrl-Break pressed (0040:0071 bit 7) or
+/// Ctrl-C (03h) at the head of the keyboard buffer. While standard input is
+/// COM1 (CTTY), the keyboard is not the console and is not checked.
 pub(super) fn dos_break_check(p:&Loaded)->Result<(),String>{
+    if super::services::stdin_aux(p){return Ok(());}
+    if byte(p,0x471)?&0x80!=0{return Err(BREAK.into());}
     if p.pending_scan.is_some(){return Ok(());}
     let(head,tail)=ring(p)?;
-    if head!=tail&&read(p,0x400+head)?&255==3{return Err("DOS Ctrl-C break handling (INT23) is not modeled".into());}
+    if head!=tail&&read(p,0x400+head)?&255==3{return Err(BREAK.into());}
     Ok(())
 }
 pub(super) fn dos_flush_writes(p:&Loaded)->Result<Writes,String>{

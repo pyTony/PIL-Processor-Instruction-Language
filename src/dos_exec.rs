@@ -5,7 +5,7 @@
 use super::*;
 /// What the parent needs back when its child ends.
 #[derive(Clone,Debug)]
-pub struct Frame{cpu:Cpu,selectors:[u16;6],image:Image,open_handles:u32,dta:(u16,u16),psp:u16}
+pub struct Frame{cpu:Cpu,selectors:[u16;6],pub(super) image:Image,open_handles:u32,dta:(u16,u16),psp:u16}
 /// Nesting limit for programs started by programs.
 const MAX_DEPTH:usize=8;
 fn fail(p:&mut Loaded,code:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|code;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;}
@@ -125,6 +125,14 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
 /// The child ended with `code` (`kind` 0 normal, 3 resident): free what it
 /// owned, close its files and resume the parent after its INT 21.
 pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
+    // The ending program's PSP gives back the INT 22h/23h/24h vectors its
+    // parent had, as FreeDOS return_user does.
+    let child=u32::from(p.psp)*16;
+    for(at,vector)in [(0x0a,0x22u32),(0x0e,0x23),(0x12,0x24)]{
+        let saved=p.ram.load(child+at,MemWidth::Dword).map_err(|e|format!("terminate PSP read: {e:?}"))?;
+        p.ram.store(vector*4,MemWidth::Dword,saved).map_err(|e|format!("terminate vector write: {e:?}"))?;
+    }
+    brk::drop_program(p);
     let frame=p.exec.pop().ok_or("terminate without a parent")?;
     let keep=p.resident.take().map(|_|p.psp);
     p.arena.release(&mut p.ram,p.psp,keep)?;

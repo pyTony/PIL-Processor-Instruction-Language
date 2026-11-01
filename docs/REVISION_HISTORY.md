@@ -1,3 +1,43 @@
+# Ctrl-C and Ctrl-Break call INT 23h — 1 November 2026
+
+Tony's terminal session stopped with "DOS Ctrl-C break handling (INT23) is
+not modeled" at FreeCOM's 1010:2BCF after Ctrl+C. Dine now handles the break
+as FreeDOS break.c and procsupt.asm (spawn_int23) do. INT 21h checks CON for
+Ctrl-C on entry to AH01-05 and AH08-0B, on every call while BREAK is on
+(AH33), and in AH0A, AH09/AH40 output and CON reads, as before; Ctrl-Break is
+bit 7 of 0040:0071. A break echoes `^C` CR LF to the screen, empties the
+keyboard buffer, clears the flag, and calls INT 23h through the vector table
+with the registers the program passed to INT 21h and CF clear (IF and TF
+clear in the handler). The call comes from an `INT 23h` at 0070:0076; Dine
+watches the return point after it. A handler that returns with IRET or
+RETF 2 leaves SP unchanged, and the interrupted INT 21h call runs again with
+the registers the handler left. Any other SP (a plain RETF) ends the program
+as AH00 would: return code 0, termination type 1 for AH4D. The echo, flush
+and the three stack words are checked before any of them is written.
+
+INT 23h starts at Dine's own handler, STC; RETF at 0070:0074, which ends the
+program, as COMMAND.COM's and FreeCOM's handler for external programs do;
+the first PSP records it at 0Eh. A program that ends gives back the INT 22h,
+23h and 24h vectors saved in its PSP (FreeDOS return_user), so a child's
+handler does not outlive it. A handler in a parent's block (FreeCOM's, used
+while it runs a program) runs with that block as the fetch window until it
+returns. The session's `break` command is Ctrl+Break as the BIOS and DOS's
+INT 1Bh handler take it (buffer emptied, one 0000h key, the flag set); a
+program that hooked INT 1Bh is refused rather than skipped. The terminal
+sends Ctrl+Break (Cancel or Break, or Ctrl+Pause) as `break`.
+
+Checked locally on FD14LITE.img (SHA256 f539d456...): FreeCOM's DIR /S stops
+listing at ^C, and a COM program on D: reading with AH01 ends at ^C back to
+the prompt. FreeCOM handles Ctrl+C at its own prompt without DOS. Typing
+ahead of a ^C that DOS catches mid-line can leave FreeCOM's line editor
+moving the cursor to column 255, which the 80x25 BIOS profile refuses; that
+is a separate BIOS policy question. Seven Rust tests and one terminal test
+added; no probe-report change is expected (the probe types no keys).
+
+Tony found that AltGr+< (`|` on a Finnish keyboard) typed `<` on Windows:
+the event names the `less` key but carries `|`. The terminal now keeps a
+printable AltGr character as it comes and uses the key's name only for a
+control code or an empty character.
 # COM1 line input keys — 1 November 2026
 
 Tony's `--com1 console` run showed the Up arrow breaking the next command:

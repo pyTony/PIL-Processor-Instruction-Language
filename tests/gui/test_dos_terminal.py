@@ -59,6 +59,10 @@ class DosTerminalTests(unittest.TestCase):
                 for state in (0, 0x2000c):
                     with self.subTest(symbol=symbol, state=state):
                         self.assertEqual(term.event_key_code(symbol, char, state, held), expected)
+            # AltGr+< on a Finnish layout: keysym less, character |.
+            for state in (0, 0x2000c):
+                self.assertEqual(term.event_key_code('less', '|', state, held), (0x7c, 0x2b))
+            self.assertEqual(term.event_key_code('less', '<', 0, set()), (0x3c, 0x33))
             # Unsupported euro must not become Alt+E (BBC BASIC's ELSE macro).
             self.assertIsNone(term.event_key_code('e', '€', 0, held))
             self.assertEqual(term.event_key_code('braceleft', '\x1b', 0, held), (123, 26))
@@ -121,6 +125,28 @@ class DosTerminalTests(unittest.TestCase):
                 self.assertFalse(session.send('run 0')['ok'])
             finally:
                 session.close()
+
+    def test_ctrl_break_keys_and_ctrl_c_ends_a_program_without_a_handler(self):
+        self.assertTrue(term.is_ctrl_break('Cancel', True))
+        self.assertTrue(term.is_ctrl_break('Pause', True))
+        self.assertFalse(term.is_ctrl_break('Pause', False))
+        self.assertFalse(term.is_ctrl_break('c', True))
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as d:
+            program = Path(d) / 'ask.com'
+            program.write_bytes(ASK)
+            for key in (f'key {3} {0x2e}', 'break'):
+                with self.subTest(key=key):
+                    session = term.Session(engine, program)
+                    try:
+                        self.assertEqual(session.send('run 1000')['status'], 'waiting_input')
+                        self.assertTrue(session.send(key)['ok'])
+                        reply = session.send('run 1000')
+                        self.assertEqual((reply['status'], reply['detail']), ('exit', 'exit code 0'))
+                        self.assertEqual(term.screen_rows(reply)[0][0].rstrip(), 'Name? ^C')
+                        self.assertEqual(reply['cursor'], [1, 0])
+                    finally:
+                        session.close()
 
     def test_args_reach_the_program_command_line(self):
         engine = term.find_engine()
