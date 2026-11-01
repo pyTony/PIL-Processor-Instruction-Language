@@ -164,6 +164,11 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.to_cp437('dir\nä€'), b'dir\r\x84')
         self.assertEqual(term.from_cp437(b'\x1b[1m\xc9\xcd'), '\x1b[1m╔═')
 
+    def test_console_com1_drops_vt_key_sequences_but_keeps_esc(self):
+        self.assertEqual(term.strip_vt_keys(b'dir\x1b[A\x1b[1;5C\x1bOP\x1b[2~x'), b'dirx')
+        self.assertEqual(term.strip_vt_keys(b'\x1b'), b'\x1b')
+        self.assertEqual(term.strip_vt_keys(b'ab\x1bc\r'), b'ab\x1bc\r')
+
     def test_tcp_port_passes_bytes_both_ways(self):
         import socket
         import time

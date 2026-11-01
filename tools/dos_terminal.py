@@ -233,10 +233,30 @@ def parse_offset(text):
     return sign * seconds
 
 
-# Keys a host console reports without a character, as the VT100 sequences a
-# serial terminal sends (Windows msvcrt codes after 00h or E0h).
-_VT_KEYS = {'H': b'\x1b[A', 'P': b'\x1b[B', 'M': b'\x1b[C', 'K': b'\x1b[D', 'G': b'\x1b[H', 'O': b'\x1b[F',
-            'S': b'\x7f', 'R': b'\x1b[2~', 'I': b'\x1b[5~', 'Q': b'\x1b[6~'}
+# Cursor, editing and function keys reach DOS from a console COM1 as nothing.
+# A VT terminal would send them as ESC [ A and the like, but DOS line input over
+# a serial line knows no such sequences: its ESC cancels the line and the rest
+# is typed as text. Only keys that give a character (Enter, Backspace, Esc,
+# Tab, Ctrl+letter) are sent. --com1 tcp:PORT passes what the client sends.
+
+
+def strip_vt_keys(data):
+    """Host terminal input without its VT key sequences (ESC [ ... final byte,
+    ESC O x); a lone ESC, as the Esc key gives, is kept."""
+    out = bytearray()
+    at = 0
+    while at < len(data):
+        byte = data[at]
+        if byte == 0x1b and at + 1 < len(data) and data[at + 1] in b'[O':
+            end = at + 2
+            if data[at + 1] == ord('['):
+                while end < len(data) and not 0x40 <= data[end] <= 0x7e:
+                    end += 1
+            at = end + 1
+            continue
+        out.append(byte)
+        at += 1
+    return bytes(out)
 
 
 def to_cp437(text):
@@ -282,7 +302,7 @@ class ConsolePort:
         while True:
             char = msvcrt.getwch()
             if char in ('\x00', '\xe0'):
-                self.input.put(_VT_KEYS.get(msvcrt.getwch(), b''))
+                msvcrt.getwch()  # the key's code: a cursor or function key, sent as nothing
             else:
                 self.input.put(to_cp437(char))
 
@@ -299,7 +319,7 @@ class ConsolePort:
             data = os.read(fd, 64)
             if not data:
                 return
-            self.input.put(to_cp437(data.decode('utf-8', errors='ignore')))
+            self.input.put(strip_vt_keys(to_cp437(data.decode('utf-8', errors='ignore'))))
 
     def write(self, data):
         # In raw mode a bare LF only moves down; DOS sends CR LF itself.
