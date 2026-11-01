@@ -22,6 +22,9 @@ pub struct Serial{
     /// a device, not at end of input; CTTY sets bits 0-1 (console input and
     /// output) and bit 5 (raw).
     pub info:u8,
+    /// The column DOS output on AUX has reached, as the FreeDOS kernel's
+    /// scr_pos counts it: line input there starts a cancelled line below it.
+    pub column:usize,
 }
 impl Serial{
     fn lsr(&self)->u8{LSR_EMPTY|u8::from(!self.rx.is_empty())}
@@ -80,7 +83,13 @@ pub(super) fn io(p:&mut Loaded,port_number:u16,input:bool,value:u8)->Result<Opti
     }))
 }
 /// DOS write to the AUX device: all bytes go out.
-pub(super) fn write(p:&mut Loaded,bytes:&[u8])->Result<u32,String>{port(p)?.tx.extend_from_slice(bytes);Ok(bytes.len()as u32)}
+pub(super) fn write(p:&mut Loaded,bytes:&[u8])->Result<u32,String>{
+    let s=port(p)?;s.tx.extend_from_slice(bytes);
+    for &b in bytes{
+        s.column=match b{13=>0,8=>s.column.saturating_sub(1),10|7=>s.column,9=>(s.column+8)&!7,_=>s.column+1};
+    }
+    Ok(bytes.len()as u32)
+}
 /// DOS read from the AUX device: the bytes received so far, up to `wanted`;
 /// with none yet the read waits for the frontend, as a device read waits.
 pub(super) fn read(p:&mut Loaded,wanted:usize)->Result<Option<Vec<u8>>,String>{

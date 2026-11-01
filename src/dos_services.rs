@@ -551,8 +551,9 @@ pub(super) fn stdin_aux(p:&Loaded)->bool{
 }
 /// The DOS console input calls while standard input is COM1 (after CTTY
 /// COM1): they read the bytes the host terminal sent, echo to standard output
-/// where DOS echoes, and wait while none have come. AH0A edits with Backspace
-/// only. Returns false for every other call.
+/// where DOS echoes, and wait while none have come. AH0A edits as the FreeDOS
+/// kernel's read_line does on any device: Backspace and DEL erase, ESC cancels
+/// the line, control characters echo as ^X. Returns false for every other call.
 fn aux_console(p:&mut Loaded)->Result<bool,String>{
     let(ah,al,dl)=((p.cpu.regs[0]>>8)as u8,p.cpu.regs[0]as u8,p.cpu.regs[2]as u8);
     if !stdin_aux(p)||!matches!(ah,0x01|0x06|0x07|0x08|0x0a|0x0b|0x0c){return Ok(false);}
@@ -586,9 +587,23 @@ fn aux_console(p:&mut Loaded)->Result<bool,String>{
             let size=p.ram.load(at(0)?,MemWidth::Byte).map_err(|e|format!("DOS line buffer read: {e:?}"))?as usize;
             if size==0{return Ok(true);}
             at(1+size as u32)?;
-            let mut line=p.line.take().map_or(Vec::new(),|(line,_,_)|line);
+            let column=p.com1.as_ref().map_or(0,|s|s.column);
+            let(mut line,cu_pos,mut first)=p.line.take().unwrap_or((Vec::new(),column,true));
             loop{
-                let Some(b)=take(p)else{p.line=Some((line,0,false));p.input_wait=true;return Ok(true)};
+                let Some(b)=take(p)else{p.line=Some((line,cu_pos,first));p.input_wait=true;return Ok(true)};
+                // 00h starts a two-byte key, as from the keyboard; template
+                // keys are not modelled here either, other extended keys do nothing.
+                if b==0{
+                    let Some(scan)=take(p)else{
+                        if let Some(s)=p.com1.as_mut(){s.rx.push_front(0);}
+                        p.line=Some((line,cu_pos,first));p.input_wait=true;return Ok(true)
+                    };
+                    if matches!(scan,0x3b..=0x3f|0x4d|0x52|0x53){
+                        p.line=Some((line,cu_pos,first));
+                        return Err(format!("DOS line template key {scan:02x} is not modelled"));
+                    }
+                    first=false;continue;
+                }
                 match b{
                     b'\r'=>{
                         to_file(p,b"\r")?;
@@ -596,12 +611,33 @@ fn aux_console(p:&mut Loaded)->Result<bool,String>{
                         for(n,&v)in bytes.iter().enumerate(){p.ram.store(at(1+n as u32)?,MemWidth::Byte,u32::from(v)).map_err(|e|format!("DOS line buffer write: {e:?}"))?;}
                         break;
                     },
-                    8|0x7f=>if line.pop().is_some(){to_file(p,b"\x08 \x08")?;},
+                    // LF is never stored; after the first key it starts a new line.
+                    b'\n'=>if !first{to_file(p,b"\r\n")?;},
+                    6=>{},
+                    // Backspace or DEL takes back the last character, a control
+                    // character shown as ^X with two, a tab back to its column.
+                    8|0x7f=>if let Some(last)=line.pop(){
+                        let n=if last==9{
+                            let mut col=cu_pos;
+                            for &c in line.iter(){col=if c==9{(col+8)&!7}else if c<32{col+2}else{col+1};}
+                            p.com1.as_ref().map_or(0,|s|s.column).saturating_sub(col).max(1)
+                        }else if last<32{2}else{1};
+                        to_file(p,&b"\x08 \x08".repeat(n))?;
+                    },
+                    // ESC cancels the line: a backslash, and the next line indented
+                    // to where this one started.
+                    27=>{
+                        let mut e=b"\\\r\n".to_vec();e.extend(std::iter::repeat_n(b' ',cu_pos));
+                        to_file(p,&e)?;line.clear();
+                    },
                     // A full line takes only CR, as DOS rings the bell.
                     _ if line.len()+1>=size=>{to_file(p,b"\x07")?;},
-                    b'\n'=>{},
-                    _=>{line.push(b);to_file(p,&[b])?;},
+                    _=>{
+                        line.push(b);
+                        if b<32&&b!=9{to_file(p,&[b'^',b+64])?;}else{to_file(p,&[b])?;}
+                    },
                 }
+                first=false;
             }
             p.flushed=false;
         },

@@ -1359,6 +1359,30 @@ fn com1_takes_bios_calls_uart_registers_and_dos_aux_handles(){
  assert_eq!((p.cpu.regs[0]&0xffff,p.ram.load(psp+0x300,MemWidth::Word).unwrap()),(3,u32::from_le_bytes([b'a',b'b',0,0])));
 }
 #[test]
+fn com1_line_input_cancels_on_esc_and_shows_control_keys_as_freedos_read_line(){
+ let mut p=load(&[0xcd,0x21],"ctty.com").unwrap();let psp=u32::from(PSP)*16;serial::attach(&mut p).unwrap();
+ for h in [0,1]{p.ram.store(psp+0x18+h,MemWidth::Byte,3).unwrap();}
+ let mut out=vec![];
+ // The prompt puts the port at column 4; the line starts there.
+ p.ram.write_bytes(psp+0x300,b"C:\\>$").unwrap();p.cpu.regs[0]=0x0900;p.cpu.regs[2]=0x300;service(&mut p,0x21,&mut out).unwrap();
+ // A VT Up arrow (ESC [ A) arrives in two parts: ESC cancels what was typed.
+ p.com1.as_mut().unwrap().rx.extend(b"dir\x1b");
+ p.ram.write_bytes(psp+0x200,&[10]).unwrap();p.cpu.regs[0]=0x0a00;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();
+ assert!(p.input_wait);p.input_wait=false;
+ // The rest is ordinary text; Backspace takes it, then Ctrl+A shows as ^A and erases with two.
+ p.com1.as_mut().unwrap().rx.extend(b"[A\x08\x08\x01\x08\nver\r");
+ p.cpu.regs[0]=0x0a00;service(&mut p,0x21,&mut out).unwrap();assert!(!p.input_wait);
+ assert_eq!((0..5).map(|i|p.ram.load(psp+0x201+i,MemWidth::Byte).unwrap()as u8).collect::<Vec<_>>(),b"\x03ver\r");
+ assert_eq!(p.com1.as_ref().unwrap().tx,b"C:\\>dir\\\r\n    [A\x08 \x08\x08 \x08^A\x08 \x08\x08 \x08\r\nver\r".to_vec());
+ assert!(out.is_empty());
+ // A 00h key pair: template keys stay unmodelled, others are ignored.
+ p.com1.as_mut().unwrap().rx.extend(b"\0\x48a\r");p.com1.as_mut().unwrap().tx.clear();
+ p.cpu.regs[0]=0x0a00;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.ram.load(psp+0x201,MemWidth::Word).unwrap(),p.com1.as_ref().unwrap().tx.clone()),(u32::from_le_bytes([1,b'a',0,0]),b"a\r".to_vec()));
+ p.com1.as_mut().unwrap().rx.extend(b"\0\x3d");
+ p.cpu.regs[0]=0x0a00;assert!(service(&mut p,0x21,&mut out).unwrap_err().contains("template key 3d"));
+}
+#[test]
 fn ctty_com1_moves_dos_console_input_and_output_to_the_port(){
  let mut p=load(&[0xcd,0x21],"ctty.com").unwrap();let psp=u32::from(PSP)*16;serial::attach(&mut p).unwrap();
  // Handles 0 and 1 on AUX, as CTTY COM1 leaves them.
