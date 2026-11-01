@@ -4,7 +4,11 @@ use crate::host_io::Output;
 use std::time::{SystemTime,UNIX_EPOCH};
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     if vector==0x21&&aux_console(p)?{return Ok(None);}
-    match(vector,(p.cpu.regs[0]>>8)as u8){
+    // DOS checks for Ctrl-C on entry to the character calls, and to every
+    // call while BREAK is on (FreeDOS int21_service).
+    let ah=(p.cpu.regs[0]>>8)as u8;
+    if vector==0x21&&(p.break_check||matches!(ah,1..=5|8..=0x0b)){console::dos_break_check(p)?;}
+    match(vector,ah){
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
         (0x21,0x02)=>{console::dos_break_check(p)?;put_char(p,out,p.cpu.regs[2]as u8)?;Ok(None)},
         (0x21,ah @ (0x01|0x07|0x08))=>{read_char(p,out,ah)?;Ok(None)},
@@ -60,7 +64,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         },
         (0x21,0x33) if p.cpu.regs[0]as u8<=2=>{
             // BREAK flag: AL=0 gets it in DL, AL=1 sets it from DL, AL=2 does
-            // both. It is only kept: Dine checks Ctrl-Break on no DOS call.
+            // both. While it is on, every INT 21h call checks for Ctrl-C.
             let new=p.cpu.regs[2]&1!=0;let old=p.break_check;
             if p.cpu.regs[0]as u8!=0{p.break_check=new;}
             if p.cpu.regs[0]as u8!=1{p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(old);}

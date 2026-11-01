@@ -57,7 +57,7 @@ impl Session{
         Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\",\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,quote(&String::from_utf8_lossy(output))))
     }
-    /// One protocol command: `run N`, `key ASCII SCAN`, `clock OFFSET`, `snapshot` or `quit`.
+    /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
     pub fn command(&mut self,seq:u64,line:&str)->Result<(String,bool),String>{
         let words:Vec<&str>=line.split_whitespace().collect();
         let mut output=Vec::new();
@@ -99,6 +99,11 @@ impl Session{
                     None=>(false,"COM1 is not attached".into(),false),
                 },
                 _=>(false,"com1 needs bytes in hex".into(),false),
+            },
+            // `break`: Ctrl+Break, as the BIOS and DOS's INT 1Bh handler take it.
+            ["break"]=>match self.loaded.as_mut().ok_or("session state lost")?.ctrl_break(){
+                Ok(())=>(true,String::new(),false),
+                Err(message)=>(false,message,false),
             },
             ["quit"]=>(true,String::new(),true),
             _=>(false,format!("unknown command: {line}"),false),
