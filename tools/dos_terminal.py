@@ -73,7 +73,9 @@ def key_code(keysym, char, control=False, alt=False, altgr=False):
     `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
     # Windows can hand over the Ctrl form of an AltGr character (FS for \\,
     # ESC for {, nothing for @): the key's name says which character it typed.
-    if altgr and keysym in KEYSYM_CHARS:
+    # A printable character is already the right one (Finnish AltGr+< gives
+    # keysym `less` with char `|`).
+    if altgr and keysym in KEYSYM_CHARS and not (len(char) == 1 and char.isprintable()):
         char, control, alt = KEYSYM_CHARS[keysym], False, False
     # AltGr (Ctrl+Alt on Windows) types characters such as \\ @ { } on
     # national layouts: only Alt with a letter, digit or F-key is an Alt code.

@@ -34,6 +34,11 @@ moving the cursor to column 255, which the 80x25 BIOS profile refuses; that
 is a separate BIOS policy question. Seven Rust tests and one terminal test
 added; no probe-report change is expected (the probe types no keys).
 
+Tony found that AltGr+< (`|` on a Finnish keyboard) typed `<` on Windows:
+the event names the `less` key but carries `|`. The terminal now keeps a
+printable AltGr character as it comes and uses the key's name only for a
+control code or an empty character.
+
 # Executable renamed to pil — 31 October 2026
 
 Tony chose `pil` as the executable's new name; `pil-proof` was the project's

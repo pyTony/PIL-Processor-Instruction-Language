@@ -59,6 +59,10 @@ class DosTerminalTests(unittest.TestCase):
                 for state in (0, 0x2000c):
                     with self.subTest(symbol=symbol, state=state):
                         self.assertEqual(term.event_key_code(symbol, char, state, held), expected)
+            # AltGr+< on a Finnish layout: keysym less, character |.
+            for state in (0, 0x2000c):
+                self.assertEqual(term.event_key_code('less', '|', state, held), (0x7c, 0x2b))
+            self.assertEqual(term.event_key_code('less', '<', 0, set()), (0x3c, 0x33))
             # Unsupported euro must not become Alt+E (BBC BASIC's ELSE macro).
             self.assertIsNone(term.event_key_code('e', '€', 0, held))
             self.assertEqual(term.event_key_code('braceleft', '\x1b', 0, held), (123, 26))
