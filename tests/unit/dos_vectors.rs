@@ -181,3 +181,29 @@ fn ascii_adjust_instructions_match_the_sdm_and_aam_zero_faults(){
     let mut p=load(&[0xd4,0x00,0xf4],"z.com").unwrap();p.cpu.regs[0]=0x55;let cpu=p.cpu.clone();
     let r=run(p,5).unwrap();assert!(matches!(r.stop,Stop::Fault(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu,cpu);
 }
+#[test]
+fn parent_interrupt_handler_can_be_called_by_child_program(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    use super::super::load_with_drives;
+    use super::super::files::Source;
+    let dir=std::env::temp_dir().join(format!("pil-inthook-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // CHILD.COM: MOV AX, 0xD44D; INT 2Fh; MOV AH, 4Ch; INT 21h
+    std::fs::write(dir.join("child.com"),[0xb8,0x4d,0xd4,0xcd,0x2f,0xb4,0x4c,0xcd,0x21]).unwrap();
+    let mut parent=vec![
+        0xbb,0x00,0x01,0xb4,0x4a,0xcd,0x21, // AH4A resize to 100h paras
+        0xba,0x70,0x01,0xb8,0x2f,0x25,0xcd,0x21, // AH25 hook INT 2Fh to 170h
+        0x8c,0x0e,0x44,0x01,0x8c,0x0e,0x48,0x01,0x8c,0x0e,0x4c,0x01, // CS into exec block
+        0xba,0x60,0x01,0xbb,0x40,0x01,0xb8,0x00,0x4b,0xcd,0x21, // AH4B EXEC CHILD.COM
+        0xb4,0x4d,0xcd,0x21,0x89,0xc6,0xfa,0xf4, // AH4D get return code into SI; HLT
+    ];
+    parent.resize(0x40,0);parent.extend([0,0,0x50,0x01,0,0,0x50,0x01,0,0,0x50,0x01,0,0]);
+    parent.resize(0x50,0);parent.extend([0,0x0d]);
+    parent.resize(0x60,0);parent.extend(b"CHILD.COM\0");
+    parent.resize(0x70,0);parent.extend([0x3d,0x4d,0xd4,0x75,0x02,0xb0,0x77,0xcf,0xcf]);
+    let p=load_with_drives(&parent,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
+    let r=run(p,200).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu.regs[6]&0xffff,0x77,"child called parent INT 2Fh and exited with 77h");
+    assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
+    std::fs::remove_dir_all(dir).unwrap();
+}

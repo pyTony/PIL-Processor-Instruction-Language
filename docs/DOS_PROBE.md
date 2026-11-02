@@ -1,3 +1,17 @@
+# Parent interrupt handlers across EXEC — 2 November 2026
+
+When a parent program starts a child program with INT 21h AH=4Bh (EXEC), the
+parent remains waiting in memory with any interrupt vectors it hooked (such as
+INT 2Fh multiplex). The child's execution image now records its parent programs'
+memory blocks in `Image.system`, permitting interrupt handlers and callbacks
+located in parent blocks to be delivered, executed, and return via IRET to the
+child.
+
+With this general execution window tracking, the 4DOS 8.00 installer's automated
+installation procedure (`Proceed with installation (Y/N)? y`) starts its temporary
+child 4DOS instance, answers its installation check (INT 2Fh AX=D44Dh), and runs
+through the interactive installation procedure. 443 Rust tests pass on Windows.
+
 # 4DOS 8.00 runs: program interrupt handlers, PIT timer reads, AAA-AAD — 2 November 2026
 
 Tony asked whether 4DOS runs under Dine. The free JP Software 4DOS 8.00
