@@ -375,6 +375,24 @@ def cases():
             value, flags = decimal_adjust(al, cf, af, name == 'das')
             add(f'{name}_{index}', 8, al, 0, bytes([opcode]), value, flags,
                 flag_mask=(ARITH & ~0x800) | DF, incoming=cf | (af << 4))
+    # AAA/AAS (286+ form: AX +/- 106h), AAM/AAD with base 10 and 7, from the
+    # Intel SDM pseudocode. AAA/AAS define only AF and CF; AAM/AAD only SF,
+    # ZF and PF.
+    for name, opcode in [('aaa', 0x37), ('aas', 0x3f)]:
+        for index, (ax, af) in enumerate([(0x0109, 0), (0x020a, 0), (0x00fb, 0), (0x0303, 1), (0x0405, 0)]):
+            adjust = (ax & 0x0f) > 9 or af
+            value = (ax + (0x106 if name == 'aaa' else -0x106)) & 0xffff if adjust else ax
+            add(f'{name}_{index}', 16, ax, 0, bytes([opcode]), value & 0xff0f, 0x11 if adjust else 0,
+                flag_mask=0x11 | DF, incoming=af << 4)
+    for base in (10, 7):
+        for index, ax in enumerate([0x0000, 0x0063, 0x12ff, 0x0045]):
+            al = ax & 0xff
+            value = (al // base) << 8 | al % base
+            add(f'aam{base}_{index}', 16, ax, 0, bytes([0xd4, base]), value, parity_flags(value & 0xff, 8) & 0xc4,
+                flag_mask=0xc4 | DF)
+            al = (ax + (ax >> 8) * base) & 0xff
+            add(f'aad{base}_{index}', 16, ax, 0, bytes([0xd5, base]), al, parity_flags(al, 8) & 0xc4,
+                flag_mask=0xc4 | DF)
     # PUSHA/POPA round trip, and the first popped slot is DI/EDI.
     add('pusha16_popa', 16, 0x1234, 0x5678, bytes.fromhex('6031c031c961'), 0x1234, 0, flag_mask=DF)
     add('pusha16_order', 16, 0x1234, 0, bytes.fromhex('605883c40e'), 0x7788, 0, flag_mask=DF)

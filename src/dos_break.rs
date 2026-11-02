@@ -51,7 +51,7 @@ pub(super) fn start(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let target=u32::from(segment)*16+offset;
     let image=&p.image;
     let inside=|base:u32,start:u32,end:u32|target>=base+start&&target<base+end;
-    let window=if inside(image.fetch_base,image.start,image.end)||(target>=image.system.0&&target<image.system.1){None}
+    let window=if inside(image.fetch_base,image.start,image.end)||image.system.iter().any(|&(s,e)|target>=s&&target<e){None}
         else{p.exec.iter().rev().map(|f|&f.image).find(|i|inside(i.fetch_base,i.start,i.end)).map(|i|(i.fetch_base,i.start,i.end))};
     let frame=Frame{cs:p.selectors[SegmentRegister::Cs.index()],eip:p.cpu.eip,sp:sp as u16,depth:p.exec.len(),
         window:window.map(|_|(p.image.fetch_base,p.image.start,p.image.end))};
@@ -84,7 +84,7 @@ pub(super) fn drop_program(p:&mut Loaded){let depth=p.exec.len();p.breaks.retain
 /// of 0040:0071 is set for DOS to see at its next break check. A program's own
 /// INT 1Bh handler is not called, so a hooked INT 1Bh is refused.
 pub(super) fn ctrl_break(p:&mut Loaded)->Result<(),String>{
-    if p.ram.load(0x1b*4,MemWidth::Dword).map_err(|e|format!("INT 1Bh vector read: {e:?}"))?!=0{
+    if !vectors::answered(p,0x1b)?{
         return Err("the program hooked INT 1Bh; calling it for Ctrl+Break is not modelled".into());
     }
     // The flush makes head equal tail; the 0000h word goes in at tail.

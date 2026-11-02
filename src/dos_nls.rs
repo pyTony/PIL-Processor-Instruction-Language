@@ -74,6 +74,18 @@ fn load(p:&Loaded,offset:u32)->Result<u8,String>{
 }
 pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
     let(al,bx,cx,dx)=(p.cpu.regs[0]as u8,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
+    if ah==0x66{
+        // Global code page: 437 is both the active and the system code page.
+        // Selecting 437 again changes nothing; another page would need its
+        // tables (NLSFUNC and a code-page file), which are not modelled.
+        match al{
+            1=>{p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|437;p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|437;ok(p);},
+            2 if bx==437=>ok(p),
+            2=>return Err(format!("DOS code page {bx} is not modelled (only 437)")),
+            _=>fail(p,1),
+        }
+        return Ok(());
+    }
     if ah==0x38{
         let asked=if al==0xff{bx}else{u32::from(al)};
         let country=if asked==0{p.country}else{asked as u16};

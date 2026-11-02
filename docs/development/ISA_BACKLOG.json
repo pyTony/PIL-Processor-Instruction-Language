@@ -394,7 +394,7 @@
         "DAS"
       ],
       "status": "partial",
-      "remaining": "DAA/DAS implemented from SDM pseudocode (OF undefined); AAA/AAS/AAM/AAD remain",
+      "remaining": "DAA/DAS and AAA/AAS (286+ AX+/-106h form) implemented from SDM pseudocode; SingleStepTests/80386 37 and 3F pass all 5,000 cases; LOCK #UD delivery remains",
       "modern_user_mode_oracle": "legacy_only",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },
@@ -405,8 +405,8 @@
         "AAD",
         "AAM"
       ],
-      "status": "planned",
-      "remaining": "Immediate bases incl0,implicit registers and#DE",
+      "status": "partial",
+      "remaining": "AAM/AAD imm8 implemented (AAM 0 faults with no change); SingleStepTests/80386 D4/D5 pass every case except #DE/#UD delivery, which is not modelled",
       "modern_user_mode_oracle": "legacy_only",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

@@ -1,3 +1,18 @@
+# 4DOS 8.00 under Dine — 2 November 2026
+
+Tony asked whether 4DOS runs. 4dos800.zip (SHA256 732915f4...a4d5f, Tony's
+copy; not on FD14LITE.img, not in repo/CI) now reaches its prompt in
+--dos-session: DIR, TIMER (hundredths from the host clock), %_time, batch
+files, external programs, EXIT back to FreeCOM. Added: program interrupt
+handlers through the IVT (answered vectors point at INT n/IRET entries at
+F000:F000+3n; chaining back to an entry returns the service's status flags),
+PIT channel 0 latch/read, BIOS tick at 0040:006C with the host clock and IF=1,
+AAA/AAS/AAM/AAD in PIL, NUL device, AX=4452h/6601h/4409h, AH2B invalid dates,
+AH50, INT 28h/2Ah IRET, more INT 2Fh not-installed checks. Local Linux: 441
+Rust tests, SST80386 37/3F/D4/D5 all pass except exception delivery,
+DOSBox-X 548/548. Probe exits 71 -> 72. No IRQs beyond the timer tick, no
+exception delivery, no EMS/XMS.
+
 # PIL 0.34.0-alpha.1
 
 - Add bounded DOS INT21/AH02 character output. Preserve flags and registers

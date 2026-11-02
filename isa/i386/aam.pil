@@ -1,0 +1,29 @@
+# AAM imm8: ASCII adjust AX after multiply (Intel SDM pseudocode, 386).
+# AH = AL / imm8 and AL = AL mod imm8. A zero imm8 is a divide error (#DE):
+# the instruction faults and changes nothing. SF, ZF and PF follow the new
+# AL; OF, AF and CF are undefined. Bound to AX by the decoder; the decoder
+# replaces the base read with the instruction's immediate byte.
+read ax dst 16
+trunc al ax 8
+read base src 8
+zero base_zero base
+not base_ok base_zero
+require base_ok
+div q al base
+rem r al base
+zext q_wide q 16
+zext r_wide r 16
+const shift 16 8
+shl high q_wide shift
+or result high r_wide
+write dst result
+bit sf r 7
+zero zf r
+parity pf r
+flag SF sf
+flag ZF zf
+flag PF pf
+undef_flag OF
+undef_flag AF
+undef_flag CF
+retire

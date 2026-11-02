@@ -1,0 +1,26 @@
+# AAS: ASCII adjust AL after subtraction (Intel SDM pseudocode for the
+# 286 and later). When AL's low nibble is above 9 or AF is set:
+# AX = AX - 106h (AL - 6 with its borrow, then AH - 1) and AF = CF = 1; otherwise AF = CF = 0. Then AL keeps only its low
+# nibble. OF, SF, ZF and PF are undefined. Bound to AX by the decoder.
+read ax dst 16
+read_flag old_af AF
+trunc al ax 8
+const low_mask 8 15
+and low al low_mask
+const nine 8 9
+ult big nine low
+or adjust big old_af
+const step 16 262
+const none 16 0
+select amount adjust step none
+sub adjusted ax amount
+const keep 16 65295
+and result adjusted keep
+write dst result
+flag AF adjust
+flag CF adjust
+undef_flag OF
+undef_flag SF
+undef_flag ZF
+undef_flag PF
+retire

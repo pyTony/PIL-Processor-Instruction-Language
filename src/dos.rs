@@ -47,6 +47,8 @@ mod ports;
 mod serial;
 #[path="dos_break.rs"]
 mod brk;
+#[path="dos_vectors.rs"]
+mod vectors;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
@@ -129,6 +131,7 @@ fn rom(ram:&mut Ram)->Result<(),String>{
     top[5..13].copy_from_slice(b"01/10/84");top[13]=0;top[14]=0xfc;top[15]=0;
     ram.write_bytes(0xc0000,&vec![0xff;0x3fff0]).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(0xffff0,&top).map_err(|e|format!("{e:?}"))?;
+    vectors::install(ram)?;
     ram.protect(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
 }
 pub fn hello(format:&str)->Result<Vec<u8>,String>{
@@ -261,7 +264,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     ram.store(0x460,MemWidth::Word,0x0607).map_err(|e|format!("BIOS cursor initialization: {e:?}"))?;
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1),segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system:[(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1),(vectors::ENTRIES,vectors::END)],segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -303,8 +306,25 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             },
             Err(message)=>break Stop::Service(message),
         }
+        // The host clock is checked every 256 steps (about 0.1 ms of work here).
+        if execution_steps%256==0{if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}}
+        match vectors::leave(&mut p){
+            Ok(true)=>{execution_steps+=1;completed+=1;*instructions.entry("IRET (Dine interrupt entry)".into()).or_insert(0)+=1;continue;},
+            Ok(false)=>{},
+            Err(message)=>break Stop::Service(message),
+        }
         if let Ok(encoded)=bytes_at(&p,2){if encoded[0]==0xcd{
-            let vector=encoded[1];let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
+            let vector=encoded[1];
+            match vectors::answered(&p,vector){
+                Ok(true)=>{},
+                Ok(false) if vectors::at_entry(&p)=>{},
+                Ok(false)=>match vectors::deliver(&mut p,vector){
+                    Ok(())=>{execution_steps+=1;completed+=1;*instructions.entry(format!("INT {vector:02x}h to the program's handler")).or_insert(0)+=1;continue;},
+                    Err(message)=>break Stop::Service(message),
+                },
+                Err(message)=>break Stop::Service(message),
+            }
+            let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
             match console::waiting(&mut p,vector){
                 Ok(true)=>break Stop::WaitingForInput,
                 Err(message)=>break Stop::Service(message),
@@ -370,7 +390,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; HLT with IF=1 idles one timer tick; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{

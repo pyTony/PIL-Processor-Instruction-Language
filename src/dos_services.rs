@@ -227,20 +227,51 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
-        (0x21,ah @ (0x38|0x65))=>{nls::service(p,ah)?;Ok(None)},
-        (0x21,0x44) if p.cpu.regs[0]as u8==0=>{files::service(p,0x44)?;Ok(None)},
+        (0x21,ah @ (0x38|0x65|0x66))=>{nls::service(p,ah)?;Ok(None)},
+        (0x21,0x44) if matches!(p.cpu.regs[0]as u8,0|9)=>{files::service(p,0x44)?;Ok(None)},
+        (0x21,0x44) if p.cpu.regs[0]as u8>0x11=>{
+            // IOCTL subfunctions end at 11h in DOS 6.22 and FreeDOS
+            // (ioctl.c default case): others fail with CF=1, AX=0001h
+            // (invalid function). AX=4452h is the DR-DOS version query, so
+            // this is how a non-DR-DOS kernel answers it.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
         (0x21,ah @ (0x0e|0x19|0x29|0x36|0x45|0x46|0x39|0x3a|0x3b|0x3c|0x3d|0x3e|0x3f|0x41|0x42|0x43|0x47|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x60|0x69|0x73))=>{files::service(p,ah)?;Ok(None)},
+        (0x21,0x50)=>{
+            // Set the current PSP to BX (DOS 2+, no checks in DOS or FreeDOS).
+            // Dine reads the handle table and exit vectors through it, so only
+            // a segment that holds a PSP (INT 20h at offset 0) is taken.
+            let segment=(p.cpu.regs[3]&0xffff)as u16;
+            let at=u32::from(segment)*16;
+            let signature=p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS PSP read: {e:?}"))?;
+            if signature!=0x20cd{return Err(format!("DOS set PSP to {segment:04x}h, which holds no PSP, is not modelled"));}
+            p.psp=segment;
+            Ok(None)
+        },
         (0x21,0x51|0x62)=>{
             // DOS 3+: AH51 and AH62 both return the current PSP segment.
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
             Ok(None)
         },
-        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1100|0x1600|0x1680|0x1687|0x1a00|0x4300|0xae00|0xb700|0xb710)=>{
+        (0x28|0x2a,_)=>{
+            // DOS idle (28h) and the network hook (2Ah) end in the kernel's
+            // IRET when nothing has hooked them (FreeDOS kernel.asm): no
+            // redirector or network software is present.
+            Ok(None)
+        },
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x1680|0x1687|0x168f|0x1a00|0x4300|0x4680|0xae00|0xb700|0xb706|0xb710|0xd44d|0xd44e)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
             // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS or
             // XMS driver, and no installable command claims AX=AE00h (AL stays 00h).
-            // AX=1680h leaves AL=80h (time slice not released).
+            // AX=1680h leaves AL=80h (time slice not released). D44Dh is the
+            // 4DOS installation check (no resident 4DOS answers 44DDh) and
+            // 4680h the Windows 3.0 real/standard-mode check (AX=0 if running);
+            // D44Eh is the 4DOS awaiting-input broadcast, which nothing takes.
+            // B706h (APPEND state) keeps BX: no APPEND, so no functions on.
+            // 1500h/150Bh keep BX (not ADADh): no MSCDEX, no CD-ROM drives.
+            // 1000h keeps AL=00h: SHARE is not installed.
             Ok(None)
         },
         (0x10,0x10|0x11|0x12|0x1a|0x1b|0x1c|0x4f)=>{
@@ -298,6 +329,19 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|weekday;
             Ok(None)
         },
+        (0x21,0x2b)=>{
+            // Set date: FreeDOS DosSetDate rejects a year outside 1980..2099,
+            // a month outside 1..12 or a day outside the month with AL=FFh and
+            // changes nothing. That is also the DESQview/TopView installation
+            // check (CX='DE', DX='SQ'): no DESQview answers it. A valid date
+            // would change the DOS clock, which is not modelled, so it stops.
+            let year=p.cpu.regs[1]&0xffff;let(month,day)=((p.cpu.regs[2]>>8)&255,p.cpu.regs[2]&255);
+            let leap=year%4==0&&(year%100!=0||year%400==0);
+            let days=match month{1|3|5|7|8|10|12=>31,4|6|9|11=>30,2 if leap=>29,2=>28,_=>0};
+            if (1980..=2099).contains(&year)&&day>=1&&day<=days{return Err("DOS set date (a valid date) is not modelled: the DOS clock cannot be changed".into());}
+            p.cpu.regs[0]|=0xff;
+            Ok(None)
+        },
         (0x21,0x58)=>{
             let al=p.cpu.regs[0]as u8;let bl=p.cpu.regs[3]as u8;
             match al{
@@ -331,6 +375,29 @@ pub(super) fn local_now(offset:i64)->(u64,u64){
     let ms=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.as_millis()as i64)+offset*1000;
     let ms=ms.max(0)as u64;(ms/86_400_000,ms%86_400_000)
 }
+/// The timer interrupt's effect while time runs on the host clock: when IF=1
+/// and the host tick count has moved on, the BIOS INT 08h handler stores it
+/// at 0040:006C and sets 0040:0070 if midnight passed, so programs that poll
+/// that word see time pass. Only the BIOS handlers are modelled: with a
+/// program's handler in the INT 08h or 1Ch vector the run stops instead. The
+/// deterministic clock (no host clock) moves only when it is read, as before.
+pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
+    let Some(offset)=p.clock_offset else{return Ok(())};
+    if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0{return Ok(());}
+    let(_,ms)=local_now(offset);let now=((ms*1_193_180)/(65_536*1000))as u32;
+    if now==p.timer_ticks{return Ok(());}
+    for vector in [0x08u8,0x1c]{
+        if !vectors::answered(p,vector)?{
+            return Err(format!("timer interrupt (IRQ0) through a program's INT {vector:02x}h handler is not modelled"));
+        }
+    }
+    p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
+    p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
+    p.ram.store(0x046c,MemWidth::Dword,now).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
+    if now<p.timer_ticks{p.ram.store(0x0470,MemWidth::Byte,1).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;}
+    p.timer_ticks=now;
+    Ok(())
+}
 /// One INT 1Ah AH=00h read. With the host clock, the count is the host's
 /// local time of day at 1193180/65536 ticks a second, and rollover is set when
 /// midnight passed since the last read. Otherwise it is the current count,
@@ -340,7 +407,10 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
     let(ticks,next_ticks,rollover)=match p.clock_offset{
         Some(offset)=>{
             let(_,ms)=local_now(offset);let now=((ms*1_193_180)/(65_536*1000))as u32;
-            (now,now,u32::from(now<p.timer_ticks))
+            // Midnight passed since the last read, or a delivered tick set
+            // the BIOS rollover byte.
+            let flagged=p.ram.load(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover read: {e:?}"))?!=0;
+            (now,now,u32::from(now<p.timer_ticks||flagged))
         },
         None=>{
             let ticks=p.timer_ticks;let next=ticks+1;
@@ -370,6 +440,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
         return Ok(());
     };
     if sft==4||(sft==3&&p.com1.is_none()){return Err(format!("DOS write to handle {handle} (AUX/PRN) is not modelled"));}
+    if sft==files::NUL{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(p.cpu.regs[1]&0xffff);p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(());}
     let offset=p.cpu.regs[2]&0xffff;let count=p.cpu.regs[1]&0xffff;
     if offset+count>0x10000{return Err("DOS write buffer exceeds segment end".into());}
     if sft<3&&count as usize>out.remaining(){return Err("DOS output limit reached before handle write".into());}
@@ -383,7 +454,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
         let written=serial::write(p,&text)?;
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|written;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(());
     }
-    if sft>=5{
+    if sft>files::NUL{
         match files::write(p,sft,&text)?{
             Ok(written)=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|written;p.cpu.eflags&=!1;},
             Err(code)=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(code);p.cpu.eflags|=1;},
@@ -400,6 +471,8 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
 /// DOS has no error return there, so a failed write stops the run.
 fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
     if p.com1.is_some()&&files::system_file(p,1)?==Some(3){serial::write(p,bytes)?;return Ok(true);}
+    // Standard output on NUL: the characters are taken and dropped.
+    if files::system_file(p,1)?==Some(files::NUL){return Ok(true);}
     let Some(sft)=files::redirected_output(p)? else{return Ok(false)};
     match files::write(p,sft,bytes)?{Ok(n) if n as usize==bytes.len()=>Ok(true),Ok(_)=>Err("DOS console output to redirected handle 1 found the drive full".into()),Err(code)=>Err(format!("DOS console output to redirected handle 1 failed with error {code}"))}
 }
