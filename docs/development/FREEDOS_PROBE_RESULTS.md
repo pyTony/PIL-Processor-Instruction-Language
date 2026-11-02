@@ -365,3 +365,21 @@ remain. Main service blockers are AH02(20), INT10/AH08(17), AH37(16).
 LES C4 is the largest instruction blocker(6). This is user-supplied evidence;
 the user confirmed100000 steps per program, matching the earlier v0.32 budget.
 No new local corpus run or independent binary/image identity is established.
+
+## 4DOS increment: program interrupt handlers — 2 November 2026
+
+Local Linux run of the development build, FD14LITE.img SHA256
+f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36, 100000 steps
+per program, compared with report 52: imports 151/156, exits 71 -> 72.
+Changed first stops (all others identical):
+
+| Program | Report 52 | Now |
+|---|---|---|
+| ASSIGN.COM | INT 2Fh AH=06 | exits 0 (its own INT 2Fh handler answers; INT 2Ah is the kernel IRET) |
+| APPEND.EXE | exits 0 | exits 0 through its own INT 21h handler |
+| CWSDSTUB.EXE, CWSDSTR0.EXE, FDNPKG.EXE | Budget | Boundary at 1Bxx:0117: CWSDPMI is found through its INT 2Fh 1687h handler, then the stub jumps into code it copied to an AH48h block |
+| SHARE.COM | exits 0 | exits 0 (INT 2Fh 1000h now reaches Dine through the hook) |
+
+4DOS 8.00 itself (4dos800.zip, SHA256 732915f4a9b3f32c00f17854649c85f502925846f309cff10d180190161a4d5f)
+is not on the image; it was run from a host folder in `--dos-session` and
+reaches its prompt, DIR, TIMER and batch files (see STATUS.md).

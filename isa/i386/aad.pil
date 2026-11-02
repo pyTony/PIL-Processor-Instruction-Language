@@ -1,0 +1,24 @@
+# AAD imm8: ASCII adjust AX before division (Intel SDM pseudocode, 386).
+# AL = (AL + AH * imm8) mod 256 and AH = 0. SF, ZF and PF follow the new AL;
+# OF, AF and CF are undefined. Bound to AX by the decoder; the decoder
+# replaces the base read with the instruction's immediate byte.
+read ax dst 16
+trunc al ax 8
+const shift 16 8
+lshr ah_wide ax shift
+trunc ah ah_wide 8
+read base src 8
+mul product ah base
+add r al product
+zext result r 16
+write dst result
+bit sf r 7
+zero zf r
+parity pf r
+flag SF sf
+flag ZF zf
+flag PF pf
+undef_flag OF
+undef_flag AF
+undef_flag CF
+retire

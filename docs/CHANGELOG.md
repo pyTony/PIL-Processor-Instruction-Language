@@ -1,3 +1,82 @@
+# 4DOS 8.00 runs: program interrupt handlers, PIT timer reads, AAA-AAD — 2 November 2026
+
+Tony asked whether 4DOS runs under Dine. The free JP Software 4DOS 8.00
+(`4dos800.zip`, SHA256 732915f4a9b3f32c00f17854649c85f502925846f309cff10d180190161a4d5f,
+from Tony's own copy; not in the repository, CI or FD14LITE.img) now starts in
+`--dos-session`, initialises disk swapping to `C:\4DOSSWAP.000`, prints its
+banner and prompt, and runs DIR, DIR /W, VER, MEMORY, TIMER (on and off,
+elapsed time in hundredths from the host clock), `echo %_time %_date`, batch
+files (its first-run installer `_4INST.BTM`, which renames itself when
+declined) and external programs (FACTOR, MANDEL). Started from FreeCOM as
+`D:\4DOS\4DOS`, EXIT returns to FreeCOM. Its first blockers, in order, and
+what Dine now does:
+
+- INT 21h AX=4452h (the DR-DOS check): IOCTL subfunctions above 11h fail
+  with CF=1, AX=0001h, as in DOS 6.22 and FreeDOS ioctl.c.
+- AH2Bh with CX='DE', DX='SQ' (the DESQview check): an invalid date gives
+  AL=FFh and changes nothing (FreeDOS DosSetDate limits 1980-2099, month and
+  day). A valid date would set the DOS clock, which is not modelled, so it
+  still stops.
+- INT 2Fh 168Fh, 4680h, D44Dh, D44Eh, B706h, 1000h, 1500h and 150Bh: nothing
+  is installed, so AX and BX come back unchanged (no Windows, 4DOS resident
+  part, APPEND state, SHARE or MSCDEX).
+- PIT channel 0: the counter latch (43h command 00h), byte reads of port
+  40h and the BIOS mode (2 or 3, binary, count 0 = 18.2 Hz). With the host
+  clock the count is the phase of the host time within the current tick, as
+  INT 1Ah's ticks are; without it, time moves a whole tick at a time and the
+  count reads 0. Another count or channel 1 still stops.
+- The timer tick at 0040:006Ch: while the session has the host clock and
+  IF=1, the BIOS INT 08h handler's work (the tick count, and 0040:0070h at
+  midnight) is done every 256 steps, so programs that wait for the word to
+  change see time pass. A program's own INT 08h or 1Ch handler is not called;
+  the run stops instead. The probe's deterministic clock is unchanged.
+- Programs' own interrupt handlers: 4DOS hooks INT 2Fh and then calls it.
+  The vectors Dine answers (08h, 10h-17h, 1Ah-1Ch, 20h, 21h, 28h, 29h, 2Ah,
+  2Fh) now hold F000:F000+3n, where the read-only BIOS area has
+  `INT n; IRET`. While a vector holds its entry (or 0), INT n is answered on
+  the spot as before. When a program has put its own handler there, INT n
+  pushes FLAGS, CS and IP, clears IF and TF and runs the handler. A handler
+  that chains to the address it saved reaches the entry; Dine answers there
+  and returns to the caller with the caller's IF, TF, DF and IOPL and the
+  status flags the service set (as RETF 2 does). The frame and the target
+  are checked before anything changes; a handler outside the running
+  program's window stops.
+- INT 28h and 2Ah end in the kernel's IRET (no network software).
+- AX=6601h: code page 437 is the active and system page; 6602h accepts 437.
+- AX=4409h: every drive is local and not substituted (DX=0); an unknown drive
+  is error 0Fh.
+- AAA, AAS (286 and later: AX +/- 106h), AAM imm8 and AAD imm8 in shared PIL
+  (`isa/i386/aaa.pil`, `aas.pil`, `aam.pil`, `aad.pil`). AAM 0 is a divide
+  error and changes nothing.
+- AH50h sets the current PSP to a segment that holds one.
+- NUL: opening or creating NUL (any directory or extension) gives the device
+  (system file 5); writes are taken, reads return 0 bytes, AH4400h reports
+  C4h, and console output to a standard output on NUL is dropped. `>nul` and
+  `>& nul` work in batch files.
+
+Verification (local Linux): 441 Rust tests passed, with 10 new tests in
+tests/unit/dos_vectors.rs and two new generated-Rust cases (254 native
+cases). SingleStepTests/80386 37, 3F, D4 and D5 (10,000 real 386 cases):
+every case passes except the 140 that need exception delivery (#DE for
+AAM 0, #UD for LOCK), which is not modelled. The DOSBox-X comparison COM
+has 26 new AAA/AAS/AAM/AAD cases: 548/548 pass on DOSBox-X 2024.03.01 and on
+PIL. FreeDOS probe on FD14LITE.img (SHA256 f539d456...), 100000 steps:
+151/156 imports, exits 71 -> 72 (ASSIGN now installs and exits). APPEND's TSR
+exit now goes through its own INT 21h handler. CWSDSTUB, CWSDSTR0 and
+FDNPKG now start CWSDPMI, find it through its INT 2Fh 1687h handler, and
+stop at Boundary when they jump into code copied to an AH48h block (the
+fetch window), instead of running out of budget.
+
+Not done: hardware interrupts other than the BIOS timer tick (no keyboard
+IRQ, no program INT 08h/1Ch handlers), exception delivery, EMS/XMS (4DOS
+swaps to disk), INT 2Fh 4310h, AH44h subfunctions 02h-11h other than 09h.
+
+Merged with dev's TIMEIT changes (bd53189): docs only conflicted. 442 Rust
+tests passed on Windows (local). With Tony's driveD 4DOS folder mounted as D:
+and FreeCOM from FD14LITE.img, `pause > NUL` no longer fails, and an AUTOEXEC
+that switches to D: before `cd \4DOS` starts 4DOS, its first-run installer,
+DIR /W and FACTOR.
+
 # TIMEIT repeats the command — 2 November 2026
 
 At Tony's request, TIMEIT's summary now starts with a `Command  MANDBBC` line

@@ -2,7 +2,9 @@
 //! channel 2 (count at 42h, mode at 43h) sets the tone and port 61h bits 0
 //! and 1 gate it to the speaker. The CMOS clock and setup bytes read through
 //! ports 70h (index) and 71h (data). Byte IN and OUT only; any other port, a
-//! word access, a PIT read or a CMOS write stops the run.
+//! word access, a CMOS write or a PIT use other than these stops the run.
+//! PIT channel 0 (40h) can be latched and read, and set to the BIOS mode with
+//! its 18.2 Hz count.
 use super::*;
 /// PIT input clock in Hz.
 const PIT_HZ:u32=1_193_182;
@@ -16,6 +18,10 @@ pub struct Speaker{
     access:u8,count:u16,high_next:bool,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
+    /// Channel 0 (the 18.2 Hz system timer): bytes of a new mode's count
+    /// still to come (2, 1 or 0), the low byte written, a latched count and
+    /// whether its high byte is read next.
+    timer_load:u8,timer_low:u8,latch:Option<u16>,latch_high:bool,
 }
 impl Speaker{
     /// The tone the speaker plays now in Hz, or 0 when it is off.
@@ -59,6 +65,17 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     if input{
         let value=match port{
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
+            0x40 if s.timer_load!=0=>return Err("IN from PIT channel 0 while its count is being written is not modelled".into()),
+            0x40=>{
+                // Low then high byte, of the latched count when one is held
+                // (the latch is released after its high byte), else of the
+                // live count.
+                let count=match s.latch{Some(c)=>c,None=>timer_count(p.clock_offset)};
+                let s=&mut p.speaker;
+                let byte=if s.latch_high{(count>>8)as u8}else{count as u8};
+                if s.latch_high&&s.latch.is_some(){s.latch=None;}
+                s.latch_high=!s.latch_high;byte
+            },
             _=>return Err(format!("IN from port {port:02x}h is not modelled")),
         };
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
@@ -71,7 +88,19 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             },
             // Channel 2 mode: access in bits 5..4; the counting mode is not timed.
             0x43 if value>>6==2&&value&0x30!=0=>{s.access=value>>4&3;s.high_next=s.access==2;},
-            0x43=>return Err(format!("PIT command {value:02x}h (other than a channel 2 mode) is not modelled")),
+            // Channel 0 counter latch: holds the count until both bytes are read.
+            0x43 if value&0xf0==0=>{if s.latch.is_none(){s.latch=Some(timer_count(p.clock_offset));p.speaker.latch_high=false;}},
+            // Channel 0 mode 2 or 3 (rate generator or square wave), binary,
+            // low then high byte: as the BIOS programs it. Only its count 0
+            // (65536, 18.2 Hz) is taken, so the timer rate never changes.
+            0x43 if value>>6==0&&value&0x30==0x30&&matches!(value>>1&7,2|3|6|7)&&value&1==0=>{s.timer_load=2;s.latch=None;s.latch_high=false;},
+            0x43=>return Err(format!("PIT command {value:02x}h (other than a channel 2 mode, a channel 0 latch or the BIOS channel 0 mode) is not modelled")),
+            0x40 if s.timer_load==2=>{s.timer_low=value;s.timer_load=1;},
+            0x40 if s.timer_load==1=>{
+                s.timer_load=0;
+                if s.timer_low!=0||value!=0{return Err(format!("PIT channel 0 count {:04x}h is not modelled (only 0, the BIOS 18.2 Hz rate)",u16::from(value)<<8|u16::from(s.timer_low)));}
+            },
+            0x40=>return Err("PIT channel 0 count written before its mode".into()),
             0x42 if s.access==0=>return Err("PIT channel 2 count written before its mode".into()),
             0x42=>{
                 if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
@@ -81,6 +110,19 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         }
     }
     Ok(Some(length))
+}
+/// The channel 0 count now: it counts down from 65536 once a timer tick.
+/// With the host clock it is the phase of the host's local time within the
+/// current tick (to the nanosecond, at 1193182 Hz); the tick count INT 1Ah
+/// gives uses the same clock. Reprogramming the BIOS mode keeps that phase
+/// rather than restarting it. Without the host clock, time moves only a whole
+/// tick at a time, so the count is always at the start of a tick (0, which
+/// is 65536).
+fn timer_count(clock:Option<i64>)->u16{
+    let Some(offset)=clock else{return 0};
+    let ns=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_nanos()as i128)+i128::from(offset)*1_000_000_000;
+    let clocks=ns.rem_euclid(86_400_000_000_000)*1_193_180/1_000_000_000;
+    (65536-clocks%65536)as u16
 }
 /// One CMOS byte as an AT with no diskette or hard disk, 640 KiB base memory
 /// and no extended memory would hold it. The clock registers are BCD in 24-hour

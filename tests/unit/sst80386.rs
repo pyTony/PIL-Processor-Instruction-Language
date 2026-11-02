@@ -86,7 +86,7 @@ struct Actual{fault:Option<String>,regs:[u32;8],eflags:u32,undefined:u32,eip:u32
 struct Prepared{image:guest::Image,cpu:Cpu,decoded:Result<guest::Decoded,guest::GuestError>,readback:Vec<u32>}
 fn prepare(c:&Case,ram:&mut Ram)->Prepared{
     let mut selectors=[0u16;6];for (i,s) in SEG.iter().enumerate(){selectors[*s]=c.init[10+i] as u16;}
-    let image=guest::Image{fetch_base:0,start:0,end:RAM_SIZE as u32,system:(0,0),segments:selectors.map(address::SegmentCache::real_mode),selectors,msw:c.init[0] as u16,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
+    let image=guest::Image{fetch_base:0,start:0,end:RAM_SIZE as u32,system:[(0,0);2],segments:selectors.map(address::SegmentCache::real_mode),selectors,msw:c.init[0] as u16,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
     let mut regs=[0;8];for (i,r) in GPR.iter().enumerate(){regs[*r]=c.init[2+i];}
     let cpu=Cpu{regs,eflags:c.init[17],undefined_flags:0,eip:c.init[16]};
     for (a,v) in &c.ram{ram.write_bytes(*a,&[*v]).unwrap();}
