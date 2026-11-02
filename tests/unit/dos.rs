@@ -1400,3 +1400,37 @@ fn ctty_com1_moves_dos_console_input_and_output_to_the_port(){
  p.cpu.regs[0]=0x0200;p.cpu.regs[2]=u32::from(b'!');service(&mut p,0x21,&mut out).unwrap();
  assert_eq!(p.com1.as_ref().unwrap().tx,b"xDIX\x08 \x08R\r!");assert!(out.is_empty());
 }
+#[test]
+fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-timeit-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ std::fs::create_dir_all(&dir).unwrap();
+ // A stand-in COMMAND.COM: writes its command tail with AH40, then exits with the tail's length.
+ std::fs::write(dir.join("command.com"),[0xb4,0x40,0xbb,0x01,0x00,0x8a,0x0e,0x80,0x00,0x32,0xed,0xba,0x81,0x00,0xcd,0x21,0xa0,0x80,0x00,0xb4,0x4c,0xcd,0x21]).unwrap();
+ let timeit=|tail:&[u8],country:u16,ticks:u32|{
+  let mut p=load_with_drives(include_bytes!("../../programs/dos/TIMEIT.COM"),"TIMEIT.COM",vec![Source::Host(dir.clone())],None).unwrap();
+  let mut psp_tail=vec![tail.len()as u8];psp_tail.extend(tail);psp_tail.push(13);
+  p.ram.write_bytes(u32::from(PSP)*16+0x80,&psp_tail).unwrap();p.country=country;p.timer_ticks=ticks;
+  let r=run(p,20_000).unwrap();(r.stop,String::from_utf8(r.output).unwrap(),r.loaded)
+ };
+ // Each AH2C read advances the deterministic clock one tick (5 hundredths).
+ let (stop,text,p)=timeit(b"  FACTOR 3",1,0);
+ assert!(matches!(stop,Stop::Exit(12)),"the command's exit code: {stop:?}");
+ assert_eq!(text," /C FACTOR 3Command  FACTOR 3\r\nStart    0:00:00.00\r\nEnd      0:00:00.05\r\nElapsed  0:00:00.05\r\n");
+ assert_eq!((p.psp,p.exec.len()),(PSP,0));
+ // Finnish separators, and a run over midnight still counts forward.
+ let (stop,text,_)=timeit(b" DIR",358,0x0018_00af);
+ assert!(matches!(stop,Stop::Exit(7)),"{stop:?}");
+ assert_eq!(text," /C DIRCommand  DIR\r\nStart    23.59.59,94\r\nEnd      0.00.00,00\r\nElapsed  0.00.00,06\r\n");
+ // No command: usage and exit code 1, without running anything.
+ let (stop,text,_)=timeit(b"   ",1,0);
+ assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert!(text.starts_with("Runs a command"),"{text}");
+ // A command line that would not fit after " /C ".
+ let (stop,text,_)=timeit(&[b'x';123],1,0);
+ assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert_eq!(text,"TIMEIT: the command line is too long\r\n");
+ std::fs::remove_file(dir.join("command.com")).unwrap();
+ // COMSPEC names a file that is not there: the DOS error is reported.
+ let (stop,text,_)=timeit(b" X",1,0);
+ assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert_eq!(text,"TIMEIT: cannot run COMSPEC, DOS error 2\r\n");
+ std::fs::remove_dir_all(dir).unwrap();
+}

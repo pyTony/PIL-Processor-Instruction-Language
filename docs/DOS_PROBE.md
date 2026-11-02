@@ -71,6 +71,43 @@ Not done: hardware interrupts other than the BIOS timer tick (no keyboard
 IRQ, no program INT 08h/1Ch handlers), exception delivery, EMS/XMS (4DOS
 swaps to disk), INT 2Fh 4310h, AH44h subfunctions 02h-11h other than 09h.
 
+Merged with dev's TIMEIT changes (bd53189): docs only conflicted. 442 Rust
+tests passed on Windows (local). With Tony's driveD 4DOS folder mounted as D:
+and FreeCOM from FD14LITE.img, `pause > NUL` no longer fails, and an AUTOEXEC
+that switches to D: before `cd \4DOS` starts 4DOS, its first-run installer,
+DIR /W and FACTOR.
+
+# TIMEIT repeats the command — 2 November 2026
+
+At Tony's request, TIMEIT's summary now starts with a `Command  MANDBBC` line
+above Start, End and Elapsed. The four lines can then be saved as one run
+record. The unit test checks the line for both countries. 433 Rust tests
+passed on Linux (local), and it was also checked in a local `--dos-session`
+with FreeCOM on FD14LITE.img (SHA256 f539d456…0718d36).
+
+# TIMEIT.COM times a command — 1 November 2026
+
+Tony's TIMEIT.BAT is a Windows cmd.exe script. Under Dine, FreeCOM 0.86 runs
+it as FreeCOM and MS-DOS 6.22 would: `%time%` is empty, `SETLOCAL` is "Bad
+command or filename", `CALL :label` is a missing program, and `SET /A` is
+"Invalid switch". These are command-interpreter features that DOS lacks, not
+Dine gaps. programs/dos/TIMEIT.COM (original, NASM, 8086 only) does the same
+job in DOS: `TIMEIT command [arguments]` runs `COMSPEC /C command`. As a
+result, internal commands, batch files and PATH programs all work. TIMEIT then
+prints the start, end and elapsed times read with INT 21h AH=2Ch. They use the
+country's separators (AH=38h: `23.10.42,53` for 358), and a run over midnight
+counts forward. TIMEIT exits with the command's AH4D code, so `IF ERRORLEVEL`
+sees it. In the terminal, the clock is host time at 1/18.2 s resolution. In
+the probe and unit tests, the deterministic clock advances one tick per read.
+
+Verification: a new unit test runs TIMEIT against a stand-in COMMAND.COM. It
+checks the tail, the output for countries 001 and 358, midnight wrap, usage,
+an over-long line and the missing-COMSPEC error. 433 Rust tests passed on
+Linux (local). In a local `--dos-session` with FD14LITE.img (SHA256
+f539d456…0718d36) and FreeCOM 0.86, `TIMEIT FACTOR 10`, `TIMEIT DIR /W`,
+`TIMEIT MANDEL`, nested `TIMEIT TIMEIT FACTOR 2` and ERRORLEVEL 3 passing
+through all worked. TIMEIT avoids AAM (D4), which PIL does not implement yet.
+
 # Ctrl-C and Ctrl-Break call INT 23h — 1 November 2026
 
 Tony's terminal session stopped with "DOS Ctrl-C break handling (INT23) is
