@@ -1,5 +1,6 @@
 ; TIMEIT.COM - runs a command and prints its start time, end time and the
 ; time it took:  TIMEIT command [arguments]
+; The summary repeats the command, so the four lines can be saved as a record.
 ; The command goes to COMMAND.COM /C (from COMSPEC), so programs on the PATH,
 ; batch files and internal commands such as DIR all work. Times come from
 ; INT 21h AH=2Ch, so they follow the DOS clock and its 1/18.2 s resolution.
@@ -81,6 +82,21 @@
         mov [stop_cx],cx
         mov [stop_dx],dx
 
+        mov dx,msg_command      ; the command as typed, for saving with the times
+        mov ah,9
+        int 21h
+        mov si,tail+5
+        mov cl,[tail]
+        sub cl,4
+        xor ch,ch
+.cmd:   lodsb
+        mov dl,al
+        call put
+        loop .cmd
+        mov dl,13
+        call put
+        mov dl,10
+        call put
         mov dx,msg_start
         mov cx,[start_cx]
         mov bx,[start_dx]
@@ -268,6 +284,7 @@ exit:   mov ah,4ch
 name        db 'COMSPEC='
 time_sep    db ':'
 dec_sep     db '.'
+msg_command db 'Command  $'
 msg_start   db 'Start    $'
 msg_end     db 'End      $'
 msg_elapsed db 'Elapsed  $'

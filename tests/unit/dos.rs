@@ -1414,12 +1414,12 @@ fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
  // Each AH2C read advances the deterministic clock one tick (5 hundredths).
  let (stop,text,p)=timeit(b"  FACTOR 3",1,0);
  assert!(matches!(stop,Stop::Exit(12)),"the command's exit code: {stop:?}");
- assert_eq!(text," /C FACTOR 3Start    0:00:00.00\r\nEnd      0:00:00.05\r\nElapsed  0:00:00.05\r\n");
+ assert_eq!(text," /C FACTOR 3Command  FACTOR 3\r\nStart    0:00:00.00\r\nEnd      0:00:00.05\r\nElapsed  0:00:00.05\r\n");
  assert_eq!((p.psp,p.exec.len()),(PSP,0));
  // Finnish separators, and a run over midnight still counts forward.
  let (stop,text,_)=timeit(b" DIR",358,0x0018_00af);
  assert!(matches!(stop,Stop::Exit(7)),"{stop:?}");
- assert_eq!(text," /C DIRStart    23.59.59,94\r\nEnd      0.00.00,00\r\nElapsed  0.00.00,06\r\n");
+ assert_eq!(text," /C DIRCommand  DIR\r\nStart    23.59.59,94\r\nEnd      0.00.00,00\r\nElapsed  0.00.00,06\r\n");
  // No command: usage and exit code 1, without running anything.
  let (stop,text,_)=timeit(b"   ",1,0);
  assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert!(text.starts_with("Runs a command"),"{text}");

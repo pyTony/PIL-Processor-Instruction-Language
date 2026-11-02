@@ -7,7 +7,7 @@ use 8086 instructions and DOS output only (AH02/AH09), and end with AH4C.
 |---|---|
 | `FACTOR.COM [n]` | Prints 0! to n! (n up to 99, default 25) as exact decimal numbers. |
 | `MANDEL.COM` | Draws the Mandelbrot set in 79x24 text characters, using 8.8 fixed point. |
-| `TIMEIT.COM command [arguments]` | Runs the command through `COMMAND.COM /C` (from COMSPEC), then prints its start time, end time and elapsed time from the DOS clock (INT 21h AH=2Ch, 1/18.2 s steps), with the country's separators (`14.27.05,32` for 358). Ends with the command's exit code, so `IF ERRORLEVEL` still works. |
+| `TIMEIT.COM command [arguments]` | Runs the command through `COMMAND.COM /C` (from COMSPEC), then prints the command with its start time, end time and elapsed time from the DOS clock (INT 21h AH=2Ch, 1/18.2 s steps), with the country's separators (`14.27.05,32` for 358). Ends with the command's exit code, so `IF ERRORLEVEL` still works. |
 | `MANDBBC.COM` | Draws the classic BBC BASIC benchmark Mandelbrot (79x25, 16 iterations, shades `.,'~=+:;*%&$OXB#@`) with the same characters as its floating-point version, using 32-bit integers with 20 fraction bits. Needs a 386. |
 
 The `.COM` files are built from the `.asm` sources with NASM:
