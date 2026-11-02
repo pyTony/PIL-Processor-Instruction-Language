@@ -1,3 +1,19 @@
+# Video status register 1 (ports 3DAh/3BAh) — 2 November 2026
+
+4DOS's help viewer (`4HELP.EXE`) implements CGA snow prevention by reading the
+video status register at port 3DAh (color) or 3BAh (monochrome) before writing
+to video RAM: it checks bit 3 (vertical retrace) and bit 0 (horizontal
+retrace / display blanking).
+
+Ports 3DAh and 3BAh now return CGA status register 1:
+- Bit 3 (vertical retrace) cycles active (~1/8 of the time), allowing VSYNC wait
+  loops to advance and terminate.
+- Bit 0 (display blanking) is active during vertical blank and toggles on each
+  read during active scan, allowing CGA snow-prevention wait loops to proceed
+  without stalling.
+
+445 Rust tests pass on Windows.
+
 # Character device seek and DESQview shadow buffer probe — 2 November 2026
 
 Two standard DOS/BIOS behaviors encountered when installing and running 4DOS 8.00:

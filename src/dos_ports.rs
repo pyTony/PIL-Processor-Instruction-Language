@@ -4,7 +4,7 @@
 //! ports 70h (index) and 71h (data). Byte IN and OUT only; any other port, a
 //! word access, a CMOS write or a PIT use other than these stops the run.
 //! PIT channel 0 (40h) can be latched and read, and set to the BIOS mode with
-//! its 18.2 Hz count.
+//! its 18.2 Hz count. Port 3DAh (and 3BAh) reports the video status register.
 use super::*;
 /// PIT input clock in Hz.
 const PIT_HZ:u32=1_193_182;
@@ -22,6 +22,9 @@ pub struct Speaker{
     /// still to come (2, 1 or 0), the low byte written, a latched count and
     /// whether its high byte is read next.
     timer_load:u8,timer_low:u8,latch:Option<u16>,latch_high:bool,
+    /// Counter for video status register 1 (port 3DAh/3BAh): toggles horizontal
+    /// blanking and cycles vertical retrace so snow-check and sync loops advance.
+    retrace:u32,
 }
 impl Speaker{
     /// The tone the speaker plays now in Hz, or 0 when it is off.
@@ -65,6 +68,12 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     if input{
         let value=match port{
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
+            0x3da|0x3ba=>{
+                s.retrace=s.retrace.wrapping_add(1);
+                let vblank=(s.retrace&0x3f)>=56;
+                let hblank=vblank||(s.retrace&1)!=0;
+                (if hblank{1}else{0})|(if vblank{8}else{0})
+            },
             0x40 if s.timer_load!=0=>return Err("IN from PIT channel 0 while its count is being written is not modelled".into()),
             0x40=>{
                 // Low then high byte, of the latched count when one is held

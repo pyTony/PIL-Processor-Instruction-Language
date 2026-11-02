@@ -1223,6 +1223,37 @@ fn speaker_ports_take_watcoms_sound_and_nosound(){
  let code=[0xe4,0x61,0x88,0xc3,0xe4,0x61,0x24,0xfc,0xe6,0x61,0xe4,0x61,0xfa,0xf4];
  let r=run(load(&code,"nosound.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!((r.loaded.cpu.regs[3]&255,r.loaded.cpu.regs[0]&255,r.loaded.speaker.tone()),(0x10,0x10,0));
+}
+#[test]
+fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
+ // Ports 3DAh (color) and 3BAh (monochrome): bit 3 is vertical retrace,
+ // bit 0 is horizontal retrace/blanking. Reading port 3DAh in a CGA snow-check
+ // loop or vsync-wait loop must advance and exit.
+ for port in [0x03dau16, 0x03ba] {
+  let [lo, hi] = port.to_le_bytes();
+  let code = [0xba, lo, hi, 0xec, 0x88, 0xc3, 0xec, 0x88, 0xc7, 0xfa, 0xf4];
+  let r = run(load(&code, "vstat.com").unwrap(), 20).unwrap();
+  assert!(matches!(r.stop, Stop::Monitor(_)), "{:?}", r.stop);
+  let first = r.loaded.cpu.regs[3] & 0xff;
+  let second = (r.loaded.cpu.regs[3] >> 8) & 0xff;
+  assert_ne!(first & 1, second & 1, "bit 0 toggles between reads on port {port:04x}h");
+ }
+ // 4HELP.EXE CGA snow check: wait until horizontal blank ends, then wait until blank begins.
+ let snow_code = [
+  0xba, 0xda, 0x03, 0xec, 0xa8, 0x08, 0x75, 0x09, 0xd0, 0xe8, 0x72, 0xf7,
+  0xec, 0xd0, 0xe8, 0x73, 0xfb, 0xfa, 0xf4,
+ ];
+ let r = run(load(&snow_code, "snow.com").unwrap(), 50).unwrap();
+ assert!(matches!(r.stop, Stop::Monitor(_)), "{:?}", r.stop);
+ // Standard game/demo vertical retrace wait: wait for vblank end, then wait for vblank start.
+ let vsync_code = [
+  0xba, 0xda, 0x03,
+  0xec, 0xa8, 0x08, 0x75, 0xfb,
+  0xec, 0xa8, 0x08, 0x74, 0xfb,
+  0xfa, 0xf4,
+ ];
+ let r = run(load(&vsync_code, "vsync.com").unwrap(), 200).unwrap();
+ assert!(matches!(r.stop, Stop::Monitor(_)), "{:?}", r.stop);
  // Other ports, word accesses, channel 2 reads, channel 1 and a channel 0
  // rate other than the BIOS one stop the run.
  for code in [&[0xe4,0x41,0xfa,0xf4][..],&[0xe5,0x61,0xfa,0xf4],&[0xba,0x42,0x00,0xec,0xfa,0xf4],&[0xb0,0x76,0xe6,0x43,0xfa,0xf4],
