@@ -801,6 +801,10 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             p.drive.files[i].pos+=count as u32;set_ax(p,count as u32);ok(p);
         },
         0x42=>{
+            let handle=(p.cpu.regs[3]&0xffff)as u16;
+            if let Some(sft)=system_file(p,handle)?{
+                if sft<=NUL{set_ax(p,0);p.cpu.regs[2]&=0xffff0000;ok(p);return Ok(());}
+            }
             let Some(i)=open_file(p,"seek on")? else{return Ok(())};
             let distance=i64::from(((p.cpu.regs[1]&0xffff)<<16|(p.cpu.regs[2]&0xffff))as i32);
             let file=&p.drive.files[i];

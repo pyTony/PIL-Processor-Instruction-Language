@@ -1110,11 +1110,30 @@ fn demo_programs_print_exact_factorials_and_a_text_mandelbrot(){
 }
 #[test]
 fn ega_and_vga_video_functions_return_unchanged_on_the_cga_bios(){
- // AX=1130h (font info), 1A00h (display combination), 1003h (blink), 1B00h, 1C00h, 1210h (EGA info).
- for ax in [0x1130u32,0x1a00,0x1003,0x1b00,0x1c00,0x1210]{
+ // AX=1130h (font info), 1A00h (display combination), 1003h (blink), 1B00h, 1C00h, 1210h (EGA info),
+ // FE00h/FF00h (TopView/DESQview shadow buffers).
+ for ax in [0x1130u32,0x1a00,0x1003,0x1b00,0x1c00,0x1210,0xfe00,0xff00]{
   let mut p=load(&[0xcd,0x10],"vga.com").unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=0x0010;p.cpu.regs[2]=0x1234;p.cpu.regs[1]=0x5678;
   let before=p.cpu.clone();service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs,before.regs,"AX={ax:04x}");assert_eq!(p.cpu.eflags,before.eflags);
  }
+}
+#[test]
+fn seek_on_character_device_succeeds_at_position_zero(){
+ // Ralf Brown INT 21h AH=42h: for character devices (handles 0..4, NUL),
+ // lseek succeeds returning position 0 (DX:AX=0, CF=0).
+ let mut p=load(&[0xcd,0x21],"seekdev.com").unwrap();
+ for handle in [0u32,1,2,3,4]{
+  p.cpu.regs[0]=0x4200;p.cpu.regs[3]=handle;p.cpu.regs[1]=0x1234;p.cpu.regs[2]=0x5678;
+  service(&mut p,0x21,&mut vec![]).unwrap();
+  assert_eq!(p.cpu.regs[0]&0xffff,0,"handle {handle} AX");
+  assert_eq!(p.cpu.regs[2]&0xffff,0,"handle {handle} DX");
+  assert_eq!(p.cpu.eflags&1,0,"handle {handle} CF");
+ }
+ // An unopened handle returns error 6 (invalid handle) and CF=1.
+ p.cpu.regs[0]=0x4200;p.cpu.regs[3]=5;p.cpu.regs[1]=0;p.cpu.regs[2]=0;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[0]&0xffff,6);
+ assert_eq!(p.cpu.eflags&1,1);
 }
 #[test]
 fn duplicated_handles_share_the_file_position_and_close_independently(){

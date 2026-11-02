@@ -1,3 +1,19 @@
+# Character device seek and DESQview shadow buffer probe — 2 November 2026
+
+Two standard DOS/BIOS behaviors encountered when installing and running 4DOS 8.00:
+
+- INT 21h AH=42h (LSEEK) on character devices (handles 0..4, including PRN and
+  NUL): per Ralf Brown's Interrupt List and FreeDOS, seeking on character
+  devices succeeds, returning position DX:AX=0 and CF=0. The 4DOS installer
+  runtime error-handling path seeks handle 4 (PRN) without failing.
+- INT 10h AH=FEh/FFh (TopView / DESQview "Get Shadow Buffer"): on standard
+  BIOS without TopView/DESQview, unhandled functions return with registers
+  (including ES:DI) unchanged, signaling that no shadow buffer or multitasker
+  is present. 4HELP.EXE's video initialization checks AH=FEh and proceeds
+  smoothly.
+
+444 Rust tests pass on Windows.
+
 # Parent interrupt handlers across EXEC — 2 November 2026
 
 When a parent program starts a child program with INT 21h AH=4Bh (EXEC), the
