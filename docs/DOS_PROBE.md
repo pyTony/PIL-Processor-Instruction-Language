@@ -1,3 +1,11 @@
+# TIMEIT repeats the command — 2 November 2026
+
+At Tony's request, TIMEIT's summary now starts with a `Command  MANDBBC` line
+above Start, End and Elapsed. The four lines can then be saved as one run
+record. The unit test checks the line for both countries. 433 Rust tests
+passed on Linux (local), and it was also checked in a local `--dos-session`
+with FreeCOM on FD14LITE.img (SHA256 f539d456…0718d36).
+
 # TIMEIT.COM times a command — 1 November 2026
 
 Tony's TIMEIT.BAT is a Windows cmd.exe script. Under Dine, FreeCOM 0.86 runs
