@@ -1,3 +1,13 @@
+# WinOldAp clipboard probe on INT 2Fh AH=17h — 2 November 2026
+
+4DOS probes `INT 2Fh AX=1700h` (WinOldAp / Windows clipboard identify) to test
+whether the Windows clipboard is available. On standard DOS without Windows,
+calls to `INT 2Fh AH=17h` reach the default multiplex handler and return with
+registers unchanged (`AX=1700h`), signaling that the clipboard is not present.
+
+`INT 2Fh` now covers `0x1700..=0x17ff`, leaving `AX` unchanged as the real DOS
+multiplex chain does. 445 Rust tests pass on Windows.
+
 # Video status register 1 (ports 3DAh/3BAh) — 2 November 2026
 
 4DOS's help viewer (`4HELP.EXE`) implements CGA snow prevention by reading the

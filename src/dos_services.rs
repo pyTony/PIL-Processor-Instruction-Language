@@ -260,7 +260,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             // redirector or network software is present.
             Ok(None)
         },
-        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x1680|0x1687|0x168f|0x1a00|0x4300|0x4680|0xae00|0xb700|0xb706|0xb710|0xd44d|0xd44e)=>{
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x160a|0x1680..=0x168f|0x1700..=0x17ff|0x1a00|0x4300|0x4680|0x4a10|0x4a11|0x4a33|0xae00|0xb700|0xb706|0xb707|0xb710|0xd44d|0xd44e|0xd44f)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
             // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS or
@@ -268,7 +268,8 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             // AX=1680h leaves AL=80h (time slice not released). D44Dh is the
             // 4DOS installation check (no resident 4DOS answers 44DDh) and
             // 4680h the Windows 3.0 real/standard-mode check (AX=0 if running);
-            // D44Eh is the 4DOS awaiting-input broadcast, which nothing takes.
+            // D44Eh/D44Fh are 4DOS broadcasts, which nothing takes.
+            // 1700h leaves AX=1700h: Windows clipboard (WinOldAp) is not supported.
             // B706h (APPEND state) keeps BX: no APPEND, so no functions on.
             // 1500h/150Bh keep BX (not ADADh): no MSCDEX, no CD-ROM drives.
             // 1000h keeps AL=00h: SHARE is not installed.

@@ -735,7 +735,7 @@ fn handle_write_psp_query_and_absent_extensions(){
  // MOV AH,51; INT 21 and MOV AH,62; INT 21 both return the PSP in BX.
  for ah in [0x51,0x62]{let r=run(load(&[0xb4,ah,0xcd,0x21,0xfa,0xf4],"psp.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&0xffff,u32::from(r.loaded.selectors[SegmentRegister::Ds.index()]));}
  // INT 2F installation checks find nothing: AX comes back unchanged.
- for ax in [0x0100u16,0x1100,0x1600,0x1680,0x1687,0x1a00,0x4300,0xb710]{
+ for ax in [0x0100u16,0x1100,0x1600,0x1680,0x1687,0x1700,0x1a00,0x4300,0x4a11,0xb710]{
   let [lo,hi]=ax.to_le_bytes();let r=run(load(&[0xb8,lo,hi,0xcd,0x2f,0xfa,0xf4],"mux.com").unwrap(),10).unwrap();
   assert_eq!(r.loaded.cpu.regs[0]&0xffff,u32::from(ax));assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  }
