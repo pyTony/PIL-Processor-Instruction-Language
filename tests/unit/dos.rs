@@ -752,7 +752,7 @@ fn true_version_default_drive_and_handle_count_answers(){
  assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[2]&0xffff,r.loaded.cpu.regs[0]&0xffff),(0x1606,0,0x3306));assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  // BREAK: AL=0 reads DL=0 (off), AL=1 sets it from DL bit 0, AL=2 swaps; AL=3 is not answered.
  let mut p=load(&[0xcd,0x21],"break.com").unwrap();
- let mut ah33=|p:&mut Loaded,al:u32,dl:u32|{p.cpu.regs[0]=0x3300|al;p.cpu.regs[2]=0xff00|dl;service(p,0x21,&mut vec![]).map(|_|p.cpu.regs[2]&0xffff)};
+ let ah33=|p:&mut Loaded,al:u32,dl:u32|{p.cpu.regs[0]=0x3300|al;p.cpu.regs[2]=0xff00|dl;service(p,0x21,&mut vec![]).map(|_|p.cpu.regs[2]&0xffff)};
  assert_eq!(ah33(&mut p,0,0x55),Ok(0xff00));assert_eq!(ah33(&mut p,1,1),Ok(0xff01));assert!(p.break_check);
  assert_eq!(ah33(&mut p,2,0),Ok(0xff01));assert!(!p.break_check);assert!(ah33(&mut p,3,0).is_err());
  // MOV AX,19FF; INT 21: AL=0 (A:).
@@ -1141,7 +1141,7 @@ fn duplicated_handles_share_the_file_position_and_close_independently(){
  let dir=std::env::temp_dir().join(format!("pil-dup-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
  std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("text.txt"),b"abcdef").unwrap();
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(dir.clone())],None).unwrap();let psp=u32::from(PSP)*16;
- let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32|->(u32,u32){p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ let svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32|->(u32,u32){p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
  let (file,cf)=call(&mut p,0x3d00,0,b"text.txt");assert_eq!((file,cf),(5,0));
  // AH45 takes the lowest free handle; reads through either handle advance one position.
  assert_eq!(svc(&mut p,0x4500,file,0),(6,0));
@@ -1168,7 +1168,7 @@ fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
  let dir=std::env::temp_dir().join(format!("pil-write-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
  std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("old.txt"),b"abcdef").unwrap();
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(dir.clone())],None).unwrap();let psp=u32::from(PSP)*16;
- let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ let svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
  // FreeCOM's redirection: close handle 1, then AH3C takes it; AH02 and AH40 on handle 1 reach the file.
  assert_eq!(svc(&mut p,0x3e00,1,0,b"").1,0);
  assert_eq!(call(&mut p,0x3c00,0,b"out.txt"),(1,0));
@@ -1265,7 +1265,7 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
 fn memory_drive_is_z_with_temp_and_keeps_files_for_the_session(){
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Memory(MemDir::default())],None).unwrap();let psp=u32::from(PSP)*16;
  let env:Vec<u8>=(0..33).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(env,b"COMSPEC=A:\\COMMAND.COM\0TEMP=Z:\\\0\0");
- let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ let svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
  // Create, write, close, reopen and read back; seek and truncate.
  let (h,cf)=call(&mut p,0x3c00,0,b"Z:\\PIPE.TMP");assert_eq!(cf,0);assert_eq!(svc(&mut p,0x4000,h,5,b"hello"),(5,0));assert_eq!(svc(&mut p,0x3e00,h,0,b"").1,0);
  let (h,_)=call(&mut p,0x3d02,0,b"z:pipe.tmp");assert_eq!(svc(&mut p,0x3f00,h,9,b""),(5,0));
@@ -1391,7 +1391,7 @@ fn com1_takes_bios_calls_uart_registers_and_dos_aux_handles(){
  serial::attach(&mut p).unwrap();
  assert_eq!((p.ram.load(0x400,MemWidth::Word).unwrap(),p.ram.load(0x410,MemWidth::Word).unwrap()&0x0e00),(0x3f8,0x0200));
  // AH01 sends, AH03 reports empty transmitter and CTS/DSR/DCD, AH02 times out at once.
- let mut int14=|p:&mut Loaded,ax:u32|{p.cpu.regs[0]=ax;p.cpu.regs[2]=0;service(p,0x14,&mut vec![]).unwrap();p.cpu.regs[0]&0xffff};
+ let int14=|p:&mut Loaded,ax:u32|{p.cpu.regs[0]=ax;p.cpu.regs[2]=0;service(p,0x14,&mut vec![]).unwrap();p.cpu.regs[0]&0xffff};
  assert_eq!(int14(&mut p,0x0141),0x6041);assert_eq!(int14(&mut p,0x0300),0x60b0);assert_eq!(int14(&mut p,0x0200)&0x8000,0x8000);
  p.com1.as_mut().unwrap().rx.extend(b"hi");assert_eq!(int14(&mut p,0x0300),0x61b0);assert_eq!(int14(&mut p,0x0200),u32::from(b'h'));
  // The 8250 registers, polled: LSR shows the waiting byte, RBR takes it, THR sends; IER interrupts stop.
