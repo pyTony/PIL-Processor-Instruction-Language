@@ -1,0 +1,323 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+
+<HTML>
+
+<HEAD>
+<TITLE>R. T. Russell: BBC BASIC (86) Manual</TITLE>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=us-ascii">
+<LINK HREF="index.html" REL="index" TITLE="Table of Contents">
+<LINK HREF="bbcfile4.html" REL="prev" TITLE="Indexed Files">
+<LINK HREF="annexb.html" REL="next" TITLE="Mathematical Functions">
+<LINK HREF="http://www.rtrussell.co.uk/index.html" REL="home" TITLE="Homepage">
+<LINK HREF="mailto:richard&#64;rtrussell.co.uk" REL="author" TITLE="Mail the author">
+</HEAD>
+
+<BODY BACKGROUND="rtrtile.gif">
+<IMG SRC="rtrlogo.gif" ALIGN=left ALT="RTR logo" WIDTH=190 HEIGHT=140>
+<BR>
+<H1 ALIGN=center>R. T. RUSSELL</H1>
+<H2 ALIGN=center>BBC BASIC (86) Manual</H2>
+<BR CLEAR=ALL>
+<HR>
+<H1 ALIGN=center>Table of ASCII Codes</H1>
+
+<H4 ALIGN=right>Annex A to<BR>BBCBASIC(86)</H4>
+
+<TABLE>
+<TR><TH ALIGN=left>Binary</TH>
+<TH ALIGN=left>Hex&nbsp;</TH>
+<TH ALIGN=left>Dec&nbsp;</TH>
+<TH ALIGN=left>Char</TH><TH>&nbsp;</TH></TR>
+
+<TR><TD><TT>00000000&nbsp;</TT></TD><TD><TT>00</TT></TD><TD><TT>0</TT></TD>
+<TD><TT>^@</TT></TD><TD><TT>NUL</TT></TD></TR>
+<TR><TD><TT>00000001</TT></TD><TD><TT>01</TT></TD><TD><TT>1</TT></TD>
+<TD><TT>^A</TT></TD><TD><TT>SOH Start of Heading</TT></TD></TR>
+<TR><TD><TT>00000010</TT></TD><TD><TT>02</TT></TD><TD><TT>2</TT></TD>
+<TD><TT>^B</TT></TD><TD><TT>STX Start of Text</TT></TD></TR>
+<TR><TD><TT>00000011</TT></TD><TD><TT>03</TT></TD><TD><TT>3</TT></TD>
+<TD><TT>^C</TT></TD><TD><TT>ETX End of Text</TT></TD></TR>
+<TR><TD><TT>00000100</TT></TD><TD><TT>04</TT></TD><TD><TT>4</TT></TD>
+<TD><TT>^D</TT></TD><TD><TT>EOT End of Transmit</TT></TD></TR>
+<TR><TD><TT>00000101</TT></TD><TD><TT>05</TT></TD><TD><TT>5</TT></TD>
+<TD><TT>^E</TT></TD><TD><TT>ENQ Enquiry</TT></TD></TR>
+<TR><TD><TT>00000110</TT></TD><TD><TT>06</TT></TD><TD><TT>6</TT></TD>
+<TD><TT>^F</TT></TD><TD><TT>ACK Acknowledge</TT></TD></TR>
+<TR><TD><TT>00000111</TT></TD><TD><TT>07</TT></TD><TD><TT>7</TT></TD>
+<TD><TT>^G</TT></TD><TD><TT>BEL Bell - Audible Signal</TT></TD></TR>
+<TR><TD><TT>00001000</TT></TD><TD><TT>08</TT></TD><TD><TT>8</TT></TD>
+<TD><TT>^H</TT></TD><TD><TT>BS Back Space</TT></TD></TR>
+<TR><TD><TT>00001001</TT></TD><TD><TT>09</TT></TD><TD><TT>9</TT></TD>
+<TD><TT>^I</TT></TD><TD><TT>HT Horizontal Tab</TT></TD></TR>
+<TR><TD><TT>00001010</TT></TD><TD><TT>0A</TT></TD><TD><TT>10</TT></TD>
+<TD><TT>^J</TT></TD><TD><TT>LF Line Feed</TT></TD></TR>
+<TR><TD><TT>00001011</TT></TD><TD><TT>0B</TT></TD><TD><TT>11</TT></TD>
+<TD><TT>^K</TT></TD><TD><TT>VT Vertical Tab</TT></TD></TR>
+<TR><TD><TT>00001100</TT></TD><TD><TT>0C</TT></TD><TD><TT>12</TT></TD>
+<TD><TT>^L</TT></TD><TD><TT>FF Form Feed</TT></TD></TR>
+<TR><TD><TT>00001101</TT></TD><TD><TT>0D</TT></TD><TD><TT>13</TT></TD>
+<TD><TT>^M</TT></TD><TD><TT>CR Carriage Return</TT></TD></TR>
+<TR><TD><TT>00001110</TT></TD><TD><TT>0E</TT></TD><TD><TT>14</TT></TD>
+<TD><TT>^N</TT></TD><TD><TT>SO Shift Out</TT></TD></TR>
+<TR><TD><TT>00001111</TT></TD><TD><TT>0F</TT></TD><TD><TT>15</TT></TD>
+<TD><TT>^O</TT></TD><TD><TT>SI Shift In</TT></TD></TR>
+<TR><TD><TT>00010000</TT></TD><TD><TT>10</TT></TD><TD><TT>16</TT></TD>
+<TD><TT>^P</TT></TD><TD><TT>DLE Data Link Escape</TT></TD></TR>
+<TR><TD><TT>00010001</TT></TD><TD><TT>11</TT></TD><TD><TT>17</TT></TD>
+<TD><TT>^Q</TT></TD><TD><TT>DC1 X On</TT></TD></TR>
+<TR><TD><TT>00010010</TT></TD><TD><TT>12</TT></TD><TD><TT>18</TT></TD>
+<TD><TT>^R</TT></TD><TD><TT>DC2 Aux On</TT></TD></TR>
+<TR><TD><TT>00010011</TT></TD><TD><TT>13</TT></TD><TD><TT>19</TT></TD>
+<TD><TT>^S</TT></TD><TD><TT>DC3 X Off</TT></TD></TR>
+<TR><TD><TT>00010100</TT></TD><TD><TT>14</TT></TD><TD><TT>20</TT></TD>
+<TD><TT>^T</TT></TD><TD><TT>DC4 Aux Off</TT></TD></TR>
+<TR><TD><TT>00010101</TT></TD><TD><TT>15</TT></TD><TD><TT>21</TT></TD>
+<TD><TT>^U</TT></TD><TD><TT>NAK Negative Acknowledge</TT></TD></TR>
+<TR><TD><TT>00010110</TT></TD><TD><TT>16</TT></TD><TD><TT>22</TT></TD>
+<TD><TT>^V</TT></TD><TD><TT>SYN Synchronous File</TT></TD></TR>
+<TR><TD><TT>00010111</TT></TD><TD><TT>17</TT></TD><TD><TT>23</TT></TD>
+<TD><TT>^W</TT></TD><TD><TT>ETB End of Transmitted Block</TT></TD></TR>
+<TR><TD><TT>00011000</TT></TD><TD><TT>18</TT></TD><TD><TT>24</TT></TD>
+<TD><TT>^X</TT></TD><TD><TT>CAN Cancel</TT></TD></TR>
+<TR><TD><TT>00011001</TT></TD><TD><TT>19</TT></TD><TD><TT>25</TT></TD>
+<TD><TT>^Y</TT></TD><TD><TT>EM End of Medium</TT></TD></TR>
+<TR><TD><TT>00011010</TT></TD><TD><TT>1A</TT></TD><TD><TT>26</TT></TD>
+<TD><TT>^Z</TT></TD><TD><TT>SUB Substitute</TT></TD></TR>
+<TR><TD><TT>00011011</TT></TD><TD><TT>1B</TT></TD><TD><TT>27</TT></TD>
+<TD><TT>^[</TT></TD><TD><TT>ESC Escape</TT></TD></TR>
+<TR><TD><TT>00011100</TT></TD><TD><TT>1C</TT></TD><TD><TT>28</TT></TD>
+<TD><TT>^\</TT></TD><TD><TT>FS File Separator</TT></TD></TR>
+<TR><TD><TT>00011101</TT></TD><TD><TT>1D</TT></TD><TD><TT>29</TT></TD>
+<TD><TT>^]</TT></TD><TD><TT>GS Group Separator</TT></TD></TR>
+<TR><TD><TT>00011110</TT></TD><TD><TT>1E</TT></TD><TD><TT>30</TT></TD>
+<TD><TT>^^</TT></TD><TD><TT>RS Record Separator</TT></TD></TR>
+<TR><TD><TT>00011111</TT></TD><TD><TT>1F</TT></TD><TD><TT>31</TT></TD>
+<TD><TT>^_</TT></TD><TD><TT>US Unit Separator</TT></TD></TR>
+</TABLE>
+<P>
+<TABLE>
+<TR><TH ALIGN=left>Binary</TH>
+<TH ALIGN=left>Hex&nbsp;</TH>
+<TH ALIGN=left>Dec&nbsp;</TH>
+<TH ALIGN=left>Char</TH></TR>
+
+<TR><TD><TT>00100000&nbsp;</TT></TD><TD><TT>20</TT></TD><TD><TT>32</TT></TD>
+<TD><TT>Space</TT></TD></TR>
+<TR><TD><TT>00100001</TT></TD><TD><TT>21</TT></TD><TD><TT>33</TT></TD>
+<TD><TT>!</TT></TD></TR>
+<TR><TD><TT>00100010</TT></TD><TD><TT>22</TT></TD><TD><TT>34</TT></TD>
+<TD><TT>"</TT></TD></TR>
+<TR><TD><TT>00100011</TT></TD><TD><TT>23</TT></TD><TD><TT>35</TT></TD>
+<TD><TT>#</TT></TD></TR>
+<TR><TD><TT>00100100</TT></TD><TD><TT>24</TT></TD><TD><TT>36</TT></TD>
+<TD><TT>$</TT></TD></TR>
+<TR><TD><TT>00100101</TT></TD><TD><TT>25</TT></TD><TD><TT>37</TT></TD>
+<TD><TT>%</TT></TD></TR>
+<TR><TD><TT>00100110</TT></TD><TD><TT>26</TT></TD><TD><TT>38</TT></TD>
+<TD><TT>&amp;</TT></TD></TR>
+<TR><TD><TT>00100111</TT></TD><TD><TT>27</TT></TD><TD><TT>39</TT></TD>
+<TD><TT>'</TT></TD></TR>
+<TR><TD><TT>00101000</TT></TD><TD><TT>28</TT></TD><TD><TT>40</TT></TD>
+<TD><TT>(</TT></TD></TR>
+<TR><TD><TT>00101001</TT></TD><TD><TT>29</TT></TD><TD><TT>41</TT></TD>
+<TD><TT>)</TT></TD></TR>
+<TR><TD><TT>00101010</TT></TD><TD><TT>2A</TT></TD><TD><TT>42</TT></TD>
+<TD><TT>*</TT></TD></TR>
+<TR><TD><TT>00101011</TT></TD><TD><TT>2B</TT></TD><TD><TT>43</TT></TD>
+<TD><TT>+</TT></TD></TR>
+<TR><TD><TT>00101100</TT></TD><TD><TT>2C</TT></TD><TD><TT>44</TT></TD>
+<TD><TT>,</TT></TD></TR>
+<TR><TD><TT>00101101</TT></TD><TD><TT>2D</TT></TD><TD><TT>45</TT></TD>
+<TD><TT>-</TT></TD></TR>
+<TR><TD><TT>00101110</TT></TD><TD><TT>2E</TT></TD><TD><TT>46</TT></TD>
+<TD><TT>.</TT></TD></TR>
+<TR><TD><TT>00101111</TT></TD><TD><TT>2F</TT></TD><TD><TT>47</TT></TD>
+<TD><TT>/</TT></TD></TR>
+<TR><TD><TT>00110000</TT></TD><TD><TT>30</TT></TD><TD><TT>48</TT></TD>
+<TD><TT>0</TT></TD></TR>
+<TR><TD><TT>00110001</TT></TD><TD><TT>31</TT></TD><TD><TT>49</TT></TD>
+<TD><TT>1</TT></TD></TR>
+<TR><TD><TT>00110010</TT></TD><TD><TT>32</TT></TD><TD><TT>50</TT></TD>
+<TD><TT>2</TT></TD></TR>
+<TR><TD><TT>00110011</TT></TD><TD><TT>33</TT></TD><TD><TT>51</TT></TD>
+<TD><TT>3</TT></TD></TR>
+<TR><TD><TT>00110100</TT></TD><TD><TT>34</TT></TD><TD><TT>52</TT></TD>
+<TD><TT>4</TT></TD></TR>
+<TR><TD><TT>00110101</TT></TD><TD><TT>35</TT></TD><TD><TT>53</TT></TD>
+<TD><TT>5</TT></TD></TR>
+<TR><TD><TT>00110110</TT></TD><TD><TT>36</TT></TD><TD><TT>54</TT></TD>
+<TD><TT>6</TT></TD></TR>
+<TR><TD><TT>00110111</TT></TD><TD><TT>37</TT></TD><TD><TT>55</TT></TD>
+<TD><TT>7</TT></TD></TR>
+<TR><TD><TT>00111000</TT></TD><TD><TT>38</TT></TD><TD><TT>56</TT></TD>
+<TD><TT>8</TT></TD></TR>
+<TR><TD><TT>00111001</TT></TD><TD><TT>39</TT></TD><TD><TT>57</TT></TD>
+<TD><TT>9</TT></TD></TR>
+<TR><TD><TT>00111010</TT></TD><TD><TT>3A</TT></TD><TD><TT>58</TT></TD>
+<TD><TT>:</TT></TD></TR>
+<TR><TD><TT>00111011</TT></TD><TD><TT>3B</TT></TD><TD><TT>59</TT></TD>
+<TD><TT>;</TT></TD></TR>
+<TR><TD><TT>00111100</TT></TD><TD><TT>3C</TT></TD><TD><TT>60</TT></TD>
+<TD><TT>&lt;</TT></TD></TR>
+<TR><TD><TT>00111101</TT></TD><TD><TT>3D</TT></TD><TD><TT>61</TT></TD>
+<TD><TT>=</TT></TD></TR>
+<TR><TD><TT>00111110</TT></TD><TD><TT>3E</TT></TD><TD><TT>62</TT></TD>
+<TD><TT>&gt;</TT></TD></TR>
+<TR><TD><TT>00111111</TT></TD><TD><TT>3F</TT></TD><TD><TT>63</TT></TD>
+<TD><TT>?</TT></TD></TR>
+</TABLE>
+<P>
+<TABLE>
+<TR><TH ALIGN=left>Binary</TH>
+<TH ALIGN=left>Hex&nbsp;</TH>
+<TH ALIGN=left>Dec&nbsp;</TH>
+<TH ALIGN=left>Char&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</TH>
+<TH ALIGN=left>Binary</TH>
+<TH ALIGN=left>Hex&nbsp;</TH>
+<TH ALIGN=left>Dec&nbsp;</TH>
+<TH ALIGN=left>Char</TH></TR>
+
+<TR><TD><TT>01000000&nbsp;</TT></TD><TD><TT>40</TT></TD><TD><TT>64</TT></TD>
+<TD><TT>@</TT></TD>
+<TD><TT>01100000&nbsp;</TT></TD><TD><TT>60</TT></TD><TD><TT>96</TT></TD>
+<TD><TT>`</TT></TD></TR>
+<TR><TD><TT>01000001</TT></TD><TD><TT>41</TT></TD><TD><TT>65</TT></TD>
+<TD><TT>A</TT></TD>
+<TD><TT>01100001</TT></TD><TD><TT>61</TT></TD><TD><TT>97</TT></TD>
+<TD><TT>a</TT></TD></TR>
+<TR><TD><TT>01000010</TT></TD><TD><TT>42</TT></TD><TD><TT>66</TT></TD>
+<TD><TT>B</TT></TD>
+<TD><TT>01100010</TT></TD><TD><TT>62</TT></TD><TD><TT>98</TT></TD>
+<TD><TT>b</TT></TD></TR>
+<TR><TD><TT>01000011</TT></TD><TD><TT>43</TT></TD><TD><TT>67</TT></TD>
+<TD><TT>C</TT></TD>
+<TD><TT>01100011</TT></TD><TD><TT>63</TT></TD><TD><TT>99</TT></TD>
+<TD><TT>c</TT></TD></TR>
+<TR><TD><TT>01000100</TT></TD><TD><TT>44</TT></TD><TD><TT>68</TT></TD>
+<TD><TT>D</TT></TD>
+<TD><TT>01100100</TT></TD><TD><TT>64</TT></TD><TD><TT>100</TT></TD>
+<TD><TT>d</TT></TD></TR>
+<TR><TD><TT>01000101</TT></TD><TD><TT>45</TT></TD><TD><TT>69</TT></TD>
+<TD><TT>E</TT></TD>
+<TD><TT>01100101</TT></TD><TD><TT>65</TT></TD><TD><TT>101</TT></TD>
+<TD><TT>e</TT></TD></TR>
+<TR><TD><TT>01000110</TT></TD><TD><TT>46</TT></TD><TD><TT>70</TT></TD>
+<TD><TT>F</TT></TD>
+<TD><TT>01100110</TT></TD><TD><TT>66</TT></TD><TD><TT>102</TT></TD>
+<TD><TT>f</TT></TD></TR>
+<TR><TD><TT>01000111</TT></TD><TD><TT>47</TT></TD><TD><TT>71</TT></TD>
+<TD><TT>G</TT></TD>
+<TD><TT>01100111</TT></TD><TD><TT>67</TT></TD><TD><TT>103</TT></TD>
+<TD><TT>g</TT></TD></TR>
+<TR><TD><TT>01001000</TT></TD><TD><TT>48</TT></TD><TD><TT>72</TT></TD>
+<TD><TT>H</TT></TD>
+<TD><TT>01101000</TT></TD><TD><TT>68</TT></TD><TD><TT>104</TT></TD>
+<TD><TT>h</TT></TD></TR>
+<TR><TD><TT>01001001</TT></TD><TD><TT>49</TT></TD><TD><TT>73</TT></TD>
+<TD><TT>I</TT></TD>
+<TD><TT>01101001</TT></TD><TD><TT>69</TT></TD><TD><TT>105</TT></TD>
+<TD><TT>i</TT></TD></TR>
+<TR><TD><TT>01001010</TT></TD><TD><TT>4A</TT></TD><TD><TT>74</TT></TD>
+<TD><TT>J</TT></TD>
+<TD><TT>01101010</TT></TD><TD><TT>6A</TT></TD><TD><TT>106</TT></TD>
+<TD><TT>j</TT></TD></TR>
+<TR><TD><TT>01001011</TT></TD><TD><TT>4B</TT></TD><TD><TT>75</TT></TD>
+<TD><TT>K</TT></TD>
+<TD><TT>01101011</TT></TD><TD><TT>6B</TT></TD><TD><TT>107</TT></TD>
+<TD><TT>k</TT></TD></TR>
+<TR><TD><TT>01001100</TT></TD><TD><TT>4C</TT></TD><TD><TT>76</TT></TD>
+<TD><TT>L</TT></TD>
+<TD><TT>01101100</TT></TD><TD><TT>6C</TT></TD><TD><TT>108</TT></TD>
+<TD><TT>l</TT></TD></TR>
+<TR><TD><TT>01001101</TT></TD><TD><TT>4D</TT></TD><TD><TT>77</TT></TD>
+<TD><TT>M</TT></TD>
+<TD><TT>01101101</TT></TD><TD><TT>6D</TT></TD><TD><TT>109</TT></TD>
+<TD><TT>m</TT></TD></TR>
+<TR><TD><TT>01001110</TT></TD><TD><TT>4E</TT></TD><TD><TT>78</TT></TD>
+<TD><TT>N</TT></TD>
+<TD><TT>01101110</TT></TD><TD><TT>6E</TT></TD><TD><TT>110</TT></TD>
+<TD><TT>n</TT></TD></TR>
+<TR><TD><TT>01001111</TT></TD><TD><TT>4F</TT></TD><TD><TT>79</TT></TD>
+<TD><TT>O</TT></TD>
+<TD><TT>01101111</TT></TD><TD><TT>6F</TT></TD><TD><TT>111</TT></TD>
+<TD><TT>o</TT></TD></TR>
+<TR><TD><TT>01010000</TT></TD><TD><TT>50</TT></TD><TD><TT>80</TT></TD>
+<TD><TT>P</TT></TD>
+<TD><TT>01110000</TT></TD><TD><TT>70</TT></TD><TD><TT>112</TT></TD>
+<TD><TT>p</TT></TD></TR>
+<TR><TD><TT>01010001</TT></TD><TD><TT>51</TT></TD><TD><TT>81</TT></TD>
+<TD><TT>Q</TT></TD>
+<TD><TT>01110001</TT></TD><TD><TT>71</TT></TD><TD><TT>113</TT></TD>
+<TD><TT>q</TT></TD></TR>
+<TR><TD><TT>01010010</TT></TD><TD><TT>52</TT></TD><TD><TT>82</TT></TD>
+<TD><TT>R</TT></TD>
+<TD><TT>01110010</TT></TD><TD><TT>72</TT></TD><TD><TT>114</TT></TD>
+<TD><TT>r</TT></TD></TR>
+<TR><TD><TT>01010011</TT></TD><TD><TT>53</TT></TD><TD><TT>83</TT></TD>
+<TD><TT>S</TT></TD>
+<TD><TT>01110011</TT></TD><TD><TT>73</TT></TD><TD><TT>115</TT></TD>
+<TD><TT>s</TT></TD></TR>
+<TR><TD><TT>01010100</TT></TD><TD><TT>54</TT></TD><TD><TT>84</TT></TD>
+<TD><TT>T</TT></TD>
+<TD><TT>01110100</TT></TD><TD><TT>74</TT></TD><TD><TT>116</TT></TD>
+<TD><TT>t</TT></TD></TR>
+<TR><TD><TT>01010101</TT></TD><TD><TT>55</TT></TD><TD><TT>85</TT></TD>
+<TD><TT>U</TT></TD>
+<TD><TT>01110101</TT></TD><TD><TT>75</TT></TD><TD><TT>117</TT></TD>
+<TD><TT>u</TT></TD></TR>
+<TR><TD><TT>01010110</TT></TD><TD><TT>56</TT></TD><TD><TT>86</TT></TD>
+<TD><TT>V</TT></TD>
+<TD><TT>01110110</TT></TD><TD><TT>76</TT></TD><TD><TT>118</TT></TD>
+<TD><TT>v</TT></TD></TR>
+<TR><TD><TT>01010111</TT></TD><TD><TT>57</TT></TD><TD><TT>87</TT></TD>
+<TD><TT>W</TT></TD>
+<TD><TT>01110111</TT></TD><TD><TT>77</TT></TD><TD><TT>119</TT></TD>
+<TD><TT>w</TT></TD></TR>
+<TR><TD><TT>01011000</TT></TD><TD><TT>58</TT></TD><TD><TT>88</TT></TD>
+<TD><TT>X</TT></TD>
+<TD><TT>01111000</TT></TD><TD><TT>78</TT></TD><TD><TT>120</TT></TD>
+<TD><TT>x</TT></TD></TR>
+<TR><TD><TT>01011001</TT></TD><TD><TT>59</TT></TD><TD><TT>89</TT></TD>
+<TD><TT>Y</TT></TD>
+<TD><TT>01111001</TT></TD><TD><TT>79</TT></TD><TD><TT>121</TT></TD>
+<TD><TT>y</TT></TD></TR>
+<TR><TD><TT>01011010</TT></TD><TD><TT>5A</TT></TD><TD><TT>90</TT></TD>
+<TD><TT>Z</TT></TD>
+<TD><TT>01111010</TT></TD><TD><TT>7A</TT></TD><TD><TT>122</TT></TD>
+<TD><TT>z</TT></TD></TR>
+<TR><TD><TT>01011011</TT></TD><TD><TT>5B</TT></TD><TD><TT>91</TT></TD>
+<TD><TT>[</TT></TD>
+<TD><TT>01111011</TT></TD><TD><TT>7B</TT></TD><TD><TT>123</TT></TD>
+<TD><TT>{</TT></TD></TR>
+<TR><TD><TT>01011100</TT></TD><TD><TT>5C</TT></TD><TD><TT>92</TT></TD>
+<TD><TT>\</TT></TD>
+<TD><TT>01111100</TT></TD><TD><TT>7C</TT></TD><TD><TT>124</TT></TD>
+<TD><TT>|</TT></TD></TR>
+<TR><TD><TT>01011101</TT></TD><TD><TT>5D</TT></TD><TD><TT>93</TT></TD>
+<TD><TT>]</TT></TD>
+<TD><TT>01111101</TT></TD><TD><TT>7D</TT></TD><TD><TT>125</TT></TD>
+<TD><TT>}</TT></TD></TR>
+<TR><TD><TT>01011110</TT></TD><TD><TT>5E</TT></TD><TD><TT>94</TT></TD>
+<TD><TT>^</TT></TD>
+<TD><TT>01111110</TT></TD><TD><TT>7E</TT></TD><TD><TT>126</TT></TD>
+<TD><TT>~</TT></TD></TR>
+<TR><TD><TT>01011111</TT></TD><TD><TT>5F</TT></TD><TD><TT>95</TT></TD>
+<TD><TT>_</TT></TD>
+<TD><TT>01111111</TT></TD><TD><TT>7F</TT></TD><TD><TT>127</TT></TD>
+<TD><TT>DEL Delete</TT></TD></TR>
+</TABLE>
+
+<P>
+<TABLE WIDTH="100%">
+<TR><TD><H3><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15>
+<A HREF="index.html">CONTENTS</A></H3></TD>
+<TD ALIGN=right><H3><A HREF="annexb.html">CONTINUE</A>
+<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></H3></TD></TR></TABLE>
+<HR>
+<A href="http://www.anybrowser.org/"><img border=0 align=left src="logoab8.gif" alt="Best viewed with Any Browser" height=31 width=88></A>
+<A href="http://validator.w3.org/"><img border=0 align=right src="vh32.gif" alt="Valid HTML 3.2!" height=31 width=88></A>
+<CENTER>&copy; Doug Mounter and 
+<A HREF="mailto:richard&#64;rtrussell.co.uk">Richard Russell</A> 1999</CENTER>
+</BODY>
+
+</HTML>

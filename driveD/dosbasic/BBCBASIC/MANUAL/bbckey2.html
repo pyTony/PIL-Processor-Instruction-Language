@@ -1,0 +1,2341 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+
+<HTML>
+
+<HEAD>
+<TITLE>R. T. Russell: BBC BASIC (86) Manual</TITLE>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=us-ascii">
+<LINK HREF="index.html" REL="index" TITLE="Table of Contents">
+<LINK HREF="bbckey1.html" REL="prev" TITLE="ABS to ENVELOPE">
+<LINK HREF="bbckey3.html" REL="next" TITLE="MID$ to PRINT">
+<LINK HREF="http://www.rtrussell.co.uk/index.html" REL="home" TITLE="Homepage">
+<LINK HREF="mailto:richard&#64;rtrussell.co.uk" REL="author" TITLE="Mail the author">
+</HEAD>
+
+<BODY BACKGROUND="rtrtile.gif">
+<IMG SRC="rtrlogo.gif" ALIGN=left ALT="RTR logo" WIDTH=190 HEIGHT=140>
+<BR>
+<H1 ALIGN=center>R. T. RUSSELL</H1>
+<H2 ALIGN=center>BBC BASIC (86) Manual</H2>
+<BR CLEAR=ALL>
+<HR>
+<H2><A NAME="eof">EOF#</A></H2>
+
+A function which will return -1 (<A HREF="bbckey4.html#true">TRUE</A>)
+if the data file whose 
+file handle is the argument is at, or beyond, its end.  In other words, 
+when <A HREF="bbckey4.html#ptr">PTR#</A> points beyond the current
+end of the file.  When reading a serial file, EOF# would go true when the
+last byte of the file had been read.
+<P>
+EOF# is only true if PTR# is set beyond the last byte written to the file.  It 
+will NOT be true if an attempt has been made to read from an empty 
+block of a sparse random access file.  Because of this, it is difficult 
+to tell which records of a random access file have had data written 
+to them.  These files need to be initialised and the unused records 
+marked as empty.
+<P>
+Writing to a byte beyond the current end of file updates the file 
+length immediately, whether the record is physically written to the 
+disk at that time or not.  However, the file must be closed in order 
+to ensure that all the data written to it is physically written to 
+the disk.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=EOF#(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#openin">OPENIN</A>,
+<A HREF="bbckey3.html#openup">OPENUP</A>,
+<A HREF="bbckey3.html#openout">OPENOUT</A>,
+<A HREF="bbckey1.html#close">CLOSE#</A>,
+<A HREF="bbckey4.html#print">PRINT#</A>,
+<A HREF="bbckey2.html#inputhash">INPUT#</A>,
+<A HREF="bbckey1.html#bput">BPUT#</A>,
+<A HREF="#ext">EXT#</A>,
+<A HREF="bbckey4.html#ptr">PTR#</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="eor">EOR</A></H2>
+
+The operation of bitwise integer logical exclusive-or between two items.  The 
+two operands are internally converted to 4 byte integers before the 
+EOR operation.  EOR will return a non-zero result if the two items are 
+different.
+
+<BLOCKQUOTE>
+<PRE>
+X=B EOR 4
+IF A=2 EOR B=3 THEN 110
+</PRE>
+</BLOCKQUOTE>
+
+You can use EOR as a logical operator or as a 'bit-by-bit' (bitwise) 
+operator.  The operands can be boolean (logical) or numeric.
+<P>
+Unfortunately, BBC BASIC 
+does not have true boolean variables; it uses numeric variables and 
+assigns the value 0 for <A HREF="#false">FALSE</A> and -1 for
+<A HREF="bbckey4.html#true">TRUE</A>.  This can lead 
+to confusion at times.  (See <A HREF="bbckey3.html#not">NOT</A> for more details.)
+<P>
+In the example below, the operands are boolean (logical) and the result 
+of the tests (IF) A=2 and (IF) B=3 is either TRUE or FALSE.
+<P>
+The result of this example will be FALSE if A=2 and B=3 or A&lt;&gt;2 and 
+B&lt;&gt;3.  In other words, the answer will only be TRUE if the results 
+of the two tests are different.
+
+<BLOCKQUOTE>
+<PRE>
+answer=(A=2 EOR B=3)
+</PRE>
+</BLOCKQUOTE>
+
+The brackets are not necessary, they have been included to make the 
+example easier to follow.
+<P>
+The last example uses EOR in a similar fashion to the numeric operators 
+(+, -, etc).
+
+<BLOCKQUOTE>
+<PRE>
+A=X EOR 11
+</PRE>
+</BLOCKQUOTE>
+
+Suppose X was -20, the EOR operation would be:
+
+<BLOCKQUOTE>
+<PRE>
+11111111 11111111 11111111 11101100
+<U>00000000 00000000 00000000 00001011</U>
+11111111 11111111 11111111 11100111  = -25
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt=&lt;numeric&gt; EOR &lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#not">NOT</A>,
+<A HREF="bbckey1.html#and">AND</A>,
+<A HREF="bbckey3.html#or">OR</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="erl">ERL</A></H2>
+
+A function returning the line number of the line where the last error 
+occurred.
+
+<BLOCKQUOTE>
+<PRE>
+X=ERL
+</PRE>
+</BLOCKQUOTE>
+
+If there was an error in a procedure call, the line number 
+of the calling line would be returned, not the line number of the 
+definition.
+<P>
+The number returned by ERL is the line number printed out when BBCBASIC(86) 
+reports an error.
+<P>
+See the <A HREF="bbc2.html#errorhandling">Error Handling</A> sub-section for more
+information on error handling and correction.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ERL
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#onerror">ON ERROR GOTO</A>,
+<A HREF="bbckey3.html#onerror">ON ERROR OFF</A>,
+<A HREF="bbckey4.html#report">REPORT</A>,
+<A HREF="#err">ERR</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="err">ERR</A></H2>
+
+A function returning the error code number of the last error which 
+occurred (see the Annex entitled <A HREF="annexc.html">Error Messages and Codes</A>).
+
+<BLOCKQUOTE>
+<PRE>
+X=ERR
+</PRE>
+</BLOCKQUOTE>
+
+Once you have assumed responsibility for error handling 
+using the <A HREF="bbckey3.html#onerror">ON ERROR</A>
+statement, you can use this function to discover which error occurred.
+<P>
+See the <A HREF="bbc2.html#errorhandling">Error Handling</A>
+sub-section for more information on error handling and correction.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ERR
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#onerror">ON ERROR GOTO</A>,
+<A HREF="bbckey3.html#onerror">ON ERROR OFF</A>,
+<A HREF="#erl">ERL</A>,
+<A HREF="bbckey4.html#report">REPORT</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="eval">EVAL</A></H2></TD>
+<TD ALIGN=right><H2>EV.</H2></TD></TR></TABLE>
+
+A function which applies the interpreter's expression evaluation program 
+to the characters held in the argument string.
+
+<BLOCKQUOTE>
+<PRE>
+X=EVAL("X^Q+Y^P")
+X=EVAL"A$+B$"
+X$=EVAL(A$)
+</PRE>
+</BLOCKQUOTE>
+
+In effect, you pass the string to BBCBASIC(86)'s evaluation program 
+and say 'work this out'.
+<P>
+You can use this function to accept and evaluate an expression, such 
+as a mathematical equation, whilst the program is running.  You could, 
+for instance, use it in a 'calculator' program to accept and evaluate 
+the calculation you wished to perform.  Another use would be in a 
+graph plotting program to accept the mathematical equation you wished 
+to plot.
+<P>
+The example below is a 'bare bones' calculator program which evaluates 
+the expression typed in by the user. 
+
+<BLOCKQUOTE>
+<PRE>
+10 PRINT "This program evaluates the expression"
+20 PRINT "you type in and prints the answer"
+30 REPEAT
+40   INPUT "Enter an expression" exp$
+50   IF exp$&lt;&gt;"END" PRINT EVAL exp$
+60 UNTIL exp$="END" 
+70 END
+</PRE>
+</BLOCKQUOTE>
+
+You can only use EVAL to work out functions (like <A HREF="bbckey4.html#sin">SIN</A>,
+<A HREF="bbckey1.html#cos">COS</A>, etc).  It 
+won't execute statements like <A HREF="bbckey3.html#mode">MODE 0</A>,
+<A HREF="bbckey3.html#print">PRINT</A>, etc.  
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=EVAL(&lt;str&gt;)
+&lt;s-var&gt;=EVAL(&lt;str&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#str">STR$</A>,
+<A HREF="bbckey4.html#val">VAL</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="exp">EXP</A></H2>
+
+A function returning 'e' to the power of the argument.  The argument 
+must be &lt; 88.7228392.  The 'natural' number, 'e', is approximately 2.71828183.
+
+<BLOCKQUOTE>
+<PRE>
+Y=EXP(Z)
+</PRE>
+</BLOCKQUOTE>
+
+This function 
+can be used as the 'anti-log' of a natural logarithm.  Logarithms 
+are 'traditionally' used for multiplication (by adding the logarithms) 
+and division (by subtracting the logarithms).  For example,
+
+<BLOCKQUOTE>
+<PRE>
+10 log1=LN(2.5)
+20 log2=LN(2)
+30 log3=log1+log2
+40 answer=EXP(log3)
+50 PRINT answer
+</PRE>
+</BLOCKQUOTE>
+
+will calculate 2.5*2 by adding their natural logarithms 
+and print the answer.  
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=EXP(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#ln">LN</A>,
+<A HREF="#log">LOG</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="ext">EXT#</A></H2>
+
+A function which returns the total length of the file whose file handle 
+is its argument.
+
+<BLOCKQUOTE>
+<PRE>
+length=EXT#f_num
+</PRE>
+</BLOCKQUOTE>
+
+In the case of a sparse random-access file, the value returned is 
+the complete file length from byte zero to the last byte written.  This 
+may well be greater than the actual amount of data on the disk, but 
+it is the amount of disk space allocated to the file by MS-DOS (PC 
+DOS).
+<P>
+The file must have been opened before EXT# can be used to find its 
+length.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=EXT#(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#openin">OPENIN</A>,
+<A HREF="bbckey3.html#openup">OPENUP</A>,
+<A HREF="bbckey3.html#openout">OPENOUT</A>,
+<A HREF="bbckey1.html#close">CLOSE#</A>,
+<A HREF="bbckey4.html#print">PRINT#</A>,
+<A HREF="#inputhash">INPUT#</A>,
+<A HREF="bbckey1.html#bput">BPUT#</A>,
+<A HREF="bbckey1.html#bget">BGET#</A>, 
+<A HREF="bbckey4.html#ptr">PTR#</A>,
+<A HREF="#eof">EOF#</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="false">FALSE</A></H2></TD>
+<TD ALIGN=right><H2>FA.</H2></TD></TR></TABLE>
+
+A function returning the value zero.
+
+<BLOCKQUOTE>
+<PRE>
+10 flag=FALSE
+20 ...
+150 IF flag ...
+</PRE>
+</BLOCKQUOTE>
+
+BBCBASIC(86) 
+does not have true Boolean variables.  Instead, numeric variables 
+are used and their value is interpreted in a 'logical' manner.
+<P>
+A value of zero is interpreted as FALSE and <A HREF="bbckey3.html#not">NOT</A>
+FALSE (in other words, 
+NOT 0) is interpreted as TRUE.  In practice, any value other than 
+zero is considered TRUE.
+<P>
+You can use FALSE in a
+<A HREF="bbckey4.html#repeat">REPEAT</A>....<A HREF="bbckey4.html#until">UNTIL</A> 
+loop to make the loop repeat for ever.  Consider the following example.
+
+<BLOCKQUOTE>
+<PRE>
+10 terminator=10
+20 REPEAT
+30 PRINT "An endless loop"
+40 UNTIL terminator=0
+</PRE>
+</BLOCKQUOTE>
+
+Since 'terminator' will never be zero, the result of the test 'terminator=0' 
+will always be FALSE.  Thus, the following example has the same effect 
+as the previous one.
+
+<BLOCKQUOTE>
+<PRE>
+10 REPEAT
+20 PRINT "An endless loop"
+30 UNTIL FALSE
+</PRE>
+</BLOCKQUOTE>
+
+Similarly, since FALSE=0, the following example will also have the 
+same effect, but its meaning is less clear.
+
+<BLOCKQUOTE>
+<PRE>
+10 REPEAT
+20 PRINT "An endless loop"
+30 UNTIL 0
+</PRE>
+</BLOCKQUOTE>
+
+See the keyword <A HREF="bbckey1.html#and">AND</A> for logical tests and their results.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=FALSE
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#true">TRUE</A>,
+<A HREF="#eor">EOR</A>,
+<A HREF="bbckey3.html#or">OR</A>,
+<A HREF="bbckey1.html#and">AND</A>,
+<A HREF="bbckey3.html#not">NOT</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="fn">FN</A></H2>
+
+A keyword used at the start of all user declared 
+functions.  The first character of the function name can be an underline 
+(or a number)
+<P>
+If there are  spaces between the function name and the opening bracket 
+of the parameter list (if any) they must be present both in the definition 
+and the call.  It's safer not to have spaces between the function 
+name and the opening bracket.
+<P>
+A function may be 
+defined with any number of parameters of any type, and may return 
+(using =) a string or numeric result.  It does not have to be defined 
+before it is used.
+<P>
+A function definition is terminated by '=' 
+used in the statement position.
+<P>
+The following examples show the '=' as part of a program line and 
+at the start of a line.  The first two examples are single line function 
+definitions.
+
+<BLOCKQUOTE>
+<PRE>
+DEF FN_mean(Q1,Q2,Q3,Q4)=(Q1+Q2+Q3+Q4)/4
+
+DEF FN_fact(N) IF N&lt;2 =1 ELSE =N*FN_fact(N-1)
+
+DEF FN_reverse(A$)
+LOCAL B$,Z%
+FOR Z%=1 TO LEN(A$)
+  B$=MID$(A$,Z%,1)+B$
+NEXT
+=B$
+</PRE>
+</BLOCKQUOTE>
+
+Functions are re-entrant and the parameters (arguments) are passed 
+by value.
+<P>
+You can write single line, multi statement functions so long 
+as you have a colon after the definition statement.
+<P>
+The following function sets the print control variable to the parameter 
+passed and returns a null string.  It may be used in a 
+<A HREF="bbckey3.html#print">PRINT</A> command 
+to change the print control variable (@%) within a print list.
+
+<BLOCKQUOTE>
+<PRE>
+DEF FN_pformat(N):@%=N:=""
+</PRE>
+</BLOCKQUOTE>
+
+Functions have to return an answer, but the value returned by this 
+function is a null string.  Consequently, its only effect is to change 
+the print control variable.  Thus the PRINT statement
+
+<BLOCKQUOTE>
+<PRE>
+PRINT FN_pformat(&amp;90A) X FN_pformat(&amp;2020A) Y
+</PRE>
+</BLOCKQUOTE>
+
+will print X in G9z10 format and Y in F2z10 format.  See 
+the keyword <A HREF="bbckey3.html#print">PRINT</A> for print format details.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;|&lt;s-var&gt;=FN&lt;name&gt;[(&lt;exp&gt;{,&lt;exp&gt;})]
+DEF FN&lt;name&gt;[(&lt;n-var&gt;|&lt;s-var&gt;{,&lt;n-var&gt;|&lt;s-var&gt;})]
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey1.html#endproc">ENDPROC</A>,
+<A HREF="bbckey1.html#def">DEF</A>,
+<A HREF="#local">LOCAL</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="for">FOR</A></H2></TD>
+<TD ALIGN=right><H2>F.</H2></TD></TR></TABLE>
+
+A statement initialising a FOR...NEXT loop.  The loop is executed 
+at least once.
+
+<BLOCKQUOTE>
+<PRE>
+FOR temperature%=0 TO 9
+FOR A(2,3,1)=9 TO 1 STEP -0.3
+</PRE>
+</BLOCKQUOTE>
+
+The FOR...NEXT loop is a way of repeating a section of program a set 
+number of times.  For example, the two programs below perform identically, 
+but the second is easier to understand.
+
+<BLOCKQUOTE>
+<PRE>
+10 start=4: end=20: step=2
+20 counter=start
+30 PRINT counter," ",counter^2
+40 counter=counter+step
+50 IF counter&lt;=end THEN 30
+60 ...
+
+10 start=4: end=20: step=2
+20 FOR counter=start TO end STEP step
+30   PRINT counter," ",counter^2
+40 NEXT
+50 ...
+</PRE>
+</BLOCKQUOTE>
+
+You can <A HREF="#goto">GOTO</A>
+anywhere within one FOR...NEXT loop, but not outside it.  This 
+means you can't exit the loop with a GOTO.  You can force a premature 
+end to the loop by setting the control variable to a value equal to 
+or greater than the end value (assuming a positive
+<A HREF="bbckey4.html#step">STEP</A>).
+
+<BLOCKQUOTE>
+<PRE>
+110 FOR I=1 TO 20
+120   X=A^I
+130   IF X&gt;1000 THEN I=20: GOTO 150
+140   PRINT I,X
+150 NEXT
+</PRE>
+</BLOCKQUOTE>
+
+It is not necessary to declare the loop variable 
+as an integer type in order to take advantage of fast integer arithmetic.  If 
+it is an integer, then fast integer arithmetic is used automatically.  See 
+<A HREF="annexe.html">Annex E</A> for an explanation of how
+BBCBASIC(86) recognises an integer value of a real variable.
+<P>
+Any numeric assignable 
+item may be used as the control variable. In particular, a byte variable 
+(?X) may act as the control variable and only one byte of memory will 
+be used.  See the <A HREF="bbc2.html#indirection">Indirection</A>
+sub-section for details of the indirection operators.
+
+<BLOCKQUOTE>
+<PRE>
+FOR ?X=0 TO 16: PRINT ~?X: NEXT
+FOR !X=0 TO 16 STEP 4: PRINT ~!X: NEXT
+</PRE>
+</BLOCKQUOTE>
+
+Because a single stack is used, you cannot use a FOR...NEXT loop to 
+set array elements to <A HREF="#local">LOCAL</A> in a procedure or function.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+FOR &lt;n-var&gt;=&lt;numeric&gt; TO &lt;numeric&gt; [STEP &lt;numeric&gt;]
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#to">TO</A>,
+<A HREF="bbckey4.html#step">STEP</A>,
+<A HREF="bbckey3.html#next">NEXT</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="gcol">GCOL</A></H2></TD>
+<TD ALIGN=right><H2>GC.</H2></TD></TR></TABLE>
+
+A statement which sets the graphics foreground or background logical 
+colour to be used in all subsequent graphics operations.
+
+<BLOCKQUOTE>
+<PRE>
+GCOL mode,colour
+</PRE>
+</BLOCKQUOTE>
+
+You can use the GCOL (or <A HREF="vdu.html#vdu18">VDU 18</A>)
+command to set the graphics foreground 
+and background colours.  The colour referenced by this command is 
+the logical colour.  The relationship between logical and physical 
+colours (the <A HREF="graphics.html#palette">palette</A>) is explained in the
+<A HREF="graphics.html">Graphics and Colours</A> section.
+<P>
+The GCOL command also specifies how the colour is to be plotted on 
+the screen.  It can be plotted directly, ANDed, ORed or Exclusive-ORed 
+with the colour already there, or the existing colour can be inverted.
+
+<BLOCKQUOTE>
+<PRE>
+GCOL mode,colour
+VDU 18,mode,colour
+</PRE>
+</BLOCKQUOTE>
+
+The first argument specifies the 
+mode of action; the second specifies the logical colour.  If the colour 
+is greater than 127, then it defines the graphics background colour.
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=8>
+<TR><TD><TT>mode=0&nbsp;&nbsp;</TT></TD>
+<TD>Plot the colour specified.</TD></TR>
+<TR><TD><TT>mode=1</TT></TD>
+<TD>OR the specified colour with the colour that is already there.</TD></TR>
+<TR><TD><TT>mode=2</TT></TD>
+<TD>AND the specified colour with the colour that is already there.</TD></TR>
+<TR><TD><TT>mode=3</TT></TD>
+<TD>Exclusive-OR the specified colour with the colour that is already there.</TD></TR>
+<TR><TD><TT>mode=4</TT></TD>
+<TD>Invert the colour that is already there.</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+Generally, you will not notice a change in the graphics background 
+colour until you clear the graphics screen with a
+<A HREF="bbckey1.html#clg">CLG</A> command.
+<P>
+The logical colours available 
+for each mode and their default physical colours are listed below.  You 
+can use the <A HREF="vdu.html#vdu19">VDU 19</A> command to
+change the physical to logical colour mapping
+(<A HREF="bbc2.html#palette">palette</A>).
+
+<H3><A NAME="twogcol">Two Colour Graphics</A></H3>
+
+<H4>Modes 0 and 15</H4>
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TH ALIGN=left>Foreground&nbsp;&nbsp;</TH><TH ALIGN=left>Background</TH><TH ALIGN=left>Colour</TH></TR>
+<TR><TD>GCOL 0,0</TD><TD>GCOL 0,128&nbsp;&nbsp;</TD><TD>Black</TD></TR>
+<TR><TD>GCOL 0,1</TD><TD>GCOL 0,129</TD><TD>White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+<H3><A NAME="fourgcol">Four Colour Graphics</A></H3>
+
+<H4>Modes 1, 2, 4 &amp; 5</H4>
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TH ALIGN=left>Foreground&nbsp;&nbsp;</TH><TH ALIGN=left>Background</TH><TH ALIGN=left>Colour</TH></TR>
+<TR><TD>GCOL 0,0</TD><TD>GCOL 0,128&nbsp;&nbsp;</TD><TD>Black</TD></TR>
+<TR><TD>GCOL 0,1</TD><TD>GCOL 0,129</TD><TD>Magenta</TD></TR>
+<TR><TD>GCOL 0,2</TD><TD>GCOL 0,130</TD><TD>Cyan</TD></TR>
+<TR><TD>GCOL 0,3</TD><TD>GCOL 0,131</TD><TD>White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+<H3><A NAME="sixteengcol">Sixteen Colour Graphics</A></H3>
+
+<H4>Modes 8, 9, 10, 12, 13, 16 and 18</H4>
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TH ALIGN=left>Foreground</TH><TH ALIGN=left>Background</TH><TH ALIGN=left>Colour</TH></TR>
+<TR><TD>GCOL 0,0</TD><TD>GCOL 0,128&nbsp;&nbsp;</TD><TD>Black</TD></TR>
+<TR><TD>GCOL 0,1</TD><TD>GCOL 0,129</TD><TD>Red</TD></TR>
+<TR><TD>GCOL 0,2</TD><TD>GCOL 0,130</TD><TD>Green</TD></TR>
+<TR><TD>GCOL 0,3</TD><TD>GCOL 0,131</TD><TD>Yellow</TD></TR>
+<TR><TD>GCOL 0,4</TD><TD>GCOL 0,132</TD><TD>Blue</TD></TR>
+<TR><TD>GCOL 0,5</TD><TD>GCOL 0,133</TD><TD>Magenta</TD></TR>
+<TR><TD>GCOL 0,6</TD><TD>GCOL 0,134</TD><TD>Cyan</TD></TR>
+<TR><TD>GCOL 0,7</TD><TD>GCOL 0,135</TD><TD>White</TD></TR>
+<TR><TD>GCOL 0,8</TD><TD>GCOL 0,136</TD><TD>Intensified Black</TD></TR>
+<TR><TD>GCOL 0,9</TD><TD>GCOL 0,137</TD><TD>Intensified Red</TD></TR>
+<TR><TD>GCOL 0,10</TD><TD>GCOL 0,138</TD><TD>Intensified Green</TD></TR>
+<TR><TD>GCOL 0,11</TD><TD>GCOL 0,139</TD><TD>Intensified Yellow</TD></TR>
+<TR><TD>GCOL 0,12</TD><TD>GCOL 0,140</TD><TD>Intensified Blue</TD></TR>
+<TR><TD>GCOL 0,13</TD><TD>GCOL 0,141</TD><TD>Intensified Magenta</TD></TR>
+<TR><TD>GCOL 0,14</TD><TD>GCOL 0,142</TD><TD>Intensified Cyan</TD></TR>
+<TR><TD>GCOL 0,15&nbsp;&nbsp;</TD><TD>GCOL 0,143</TD><TD>Intensified White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+GCOL &lt;numeric&gt;,&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey1.html#cls">CLS</A>,
+<A HREF="bbckey1.html#clg">CLG</A>,
+<A HREF="bbckey3.html#mode">MODE</A>,
+<A HREF="bbckey1.html#colour">COLOUR</A>,
+<A HREF="bbckey3.html#plot">PLOT</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="get">GET/GET$</A></H2>
+
+A function and compatible string function that reads the next character 
+from the keyboard buffer (it waits for the character).
+
+<BLOCKQUOTE>
+<PRE>
+N=GET
+N$=GET$
+</PRE>
+</BLOCKQUOTE>
+
+GET and GET$ wait for a 'key' (character) to be present in the keyboard 
+buffer and then return the ASCII number of the key
+(see <A HREF="annexa.html">Annex A</A>) or 
+a string containing the character of the key.  If there are any characters 
+in the keyboard buffer when a GET is issued, then a character will 
+be returned immediately.  See the keyword <A HREF="#inkey">INKEY</A>
+for a way of emptying the keyboard buffer before issuing a GET.
+<P>
+GET and GET$ do not echo the pressed key to the screen.  If you want 
+to display the character for the pressed key, you must
+<A HREF="bbckey3.html#print">PRINT</A> it.
+<P>
+If the function and cursor keys have been redefined using the
+<A HREF="opsys1.html#key">*KEY</A> 
+command, pressing them will load the keyboard buffer with their currently 
+defined character string.  Since GET and GET$ remove characters from 
+the keyboard buffer, one character will be returned every time a GET 
+is issued.  A single GET will return the first character and leave 
+the rest in the keyboard buffer.
+<P>
+You can use GET and GET$ whenever 
+you want your program to wait for a reply before continuing.  For 
+example, you may wish to display several screens of instructions and 
+allow the user to decide when he has read each screen.
+
+<BLOCKQUOTE>
+<PRE>
+REM First screen of instructions
+CLS
+PRINT .......
+PRINT .......
+PRINT "Press any key to continue ";
+temp=GET
+REM Second screen of instructions
+CLS
+PRINT ....... etc
+</PRE>
+</BLOCKQUOTE>
+
+The default values returned by the function and cursor control keys 
+are listed below.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR>
+<TD>128&nbsp;</TD><TD>Ctrl/<IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15></TD>
+<TD>151&nbsp;</TD><TD>F7</TD>
+<TD>177&nbsp;</TD><TD>Ctrl/F1</TD></TR>
+<TR>
+<TD>129</TD><TD>Ctrl/<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></TD>
+<TD>152</TD><TD>F8</TD>
+<TD>178</TD><TD>Ctrl/F2</TD></TR>
+<TR>
+<TD>130</TD><TD>Home</TD>
+<TD>153</TD><TD>F9</TD>
+<TD>179</TD><TD>Ctrl/F3</TD></TR>
+<TR>
+<TD>131</TD><TD>End	</TD>
+<TD>154</TD><TD>F10</TD>
+<TD>180</TD><TD>Ctrl/F4</TD></TR>
+<TR>
+<TD>132</TD><TD>PgUp</TD>
+<TD>155</TD><TD>Shift/Tab</TD>
+<TD>181</TD><TD>Ctrl/F5</TD></TR>
+<TR>
+<TD>133</TD><TD>PgDn</TD>
+<TD>156</TD><TD>Ctrl/Home&nbsp;&nbsp;&nbsp;</TD>
+<TD>182</TD><TD>Ctrl/F6</TD></TR>
+<TR>
+<TD>134</TD><TD>Ins</TD>
+<TD>157</TD><TD>Ctrl/End</TD>
+<TD>183</TD><TD>Ctrl/F7</TD></TR>
+<TR>
+<TD>135</TD><TD>Del</TD>
+<TD>158</TD><TD>Ctrl/PgUp</TD>
+<TD>184</TD><TD>Ctrl/F8</TD></TR>
+<TR>
+<TD>136</TD><TD><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15></TD>
+<TD>159</TD><TD>Ctrl/PgDn	</TD>
+<TD>185</TD><TD>Ctrl/F9</TD></TR>
+<TR>
+<TD>137</TD><TD><IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></TD>
+<TD>&nbsp;</TD><TD>&nbsp;</TD>
+<TD>186</TD><TD>Ctrl/F10</TD></TR>
+<TR>
+<TD>138</TD><TD><IMG SRC="darr.gif" ALT="Down" WIDTH=15 HEIGHT=15></TD>
+<TD>161</TD><TD>Shift/F1</TD>
+<TD>193</TD><TD>Alt/F1</TD></TR>
+<TR>
+<TD>139</TD><TD><IMG SRC="uarr.gif" ALT="Up" WIDTH=15 HEIGHT=15></TD>
+<TD>162</TD><TD>Shift/F2</TD>
+<TD>194</TD><TD>Alt/F2</TD></TR>
+<TR>
+<TD>&nbsp;</TD><TD>&nbsp;</TD>
+<TD>163</TD><TD>Shift/F3</TD>
+<TD>195</TD><TD>Alt/F3</TD></TR>
+<TR>
+<TD>144</TD><TD>Ctrl/@&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</TD>
+<TD>164</TD><TD>Shift/F4</TD>
+<TD>196</TD><TD>Alt/F4</TD></TR>
+<TR>
+<TD>145</TD><TD>F1</TD>
+<TD>165</TD><TD>Shift/F5	</TD>
+<TD>197</TD><TD>Alt/F5</TD></TR>
+<TR>
+<TD>146</TD><TD>F2</TD>
+<TD>166</TD><TD>Shift/F6	</TD>
+<TD>198</TD><TD>Alt/F6</TD></TR>
+<TR>
+<TD>147</TD><TD>F3</TD>
+<TD>167</TD><TD>Shift/F7	</TD>
+<TD>199</TD><TD>Alt/F7</TD></TR>
+<TR>
+<TD>148</TD><TD>F4</TD>
+<TD>168</TD><TD>Shift/F8	</TD>
+<TD>200</TD><TD>Alt/F8</TD></TR>
+<TR>
+<TD>149</TD><TD>F5</TD>
+<TD>169</TD><TD>Shift/F9	</TD>
+<TD>201</TD><TD>Alt/F9</TD></TR>
+<TR>
+<TD>150</TD><TD>F6</TD>
+<TD>170</TD><TD>Shift/F10</TD>
+<TD>202</TD><TD>Alt/F10</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+GET can also be used to 
+input data from an I/O port. Full 16-bit port addressing is available.
+
+<BLOCKQUOTE>
+<PRE>
+N=GET(X) :REM input from port X
+</PRE>
+</BLOCKQUOTE>
+
+This extension of the language has not been approved by Acorn and 
+cannot be guaranteed to remain unchanged in future releases.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=GET
+&lt;n-var&gt;=GET(&lt;numeric&gt;)
+&lt;s-var&gt;=GET$
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#put">PUT</A>,
+<A HREF="#inkey">INKEY</A>,
+<A HREF="#inkey">INKEY$</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="gosub">GOSUB</A></H2>
+
+A statement which calls a section of a program (which is a subroutine) 
+at a specified line number.  One subroutine may call another subroutine 
+(or itself).
+
+<BLOCKQUOTE>
+<PRE>
+GOSUB 400
+GOSUB (4*answer+6)
+</PRE>
+</BLOCKQUOTE>
+
+The only limit placed on the depth of nesting is the room available 
+for the stack.
+<P>
+You may calculate the line number.  However, if you do, 
+the program should not be <A HREF="bbckey4.html#renumber">RENUMBER</A>ed.
+A calculated value must be placed in brackets.
+<P>
+Very often you need to use the same group of program instructions 
+at several different places within your program.  It is tedious and 
+wasteful to repeat this group of instructions every time you wish 
+to use them.  You can separate this group of instructions into a small 
+sub-program.  This sub-program is called a subroutine.  The subroutine 
+can be 'called' by the main program every time it is needed by using 
+the GOSUB statement.  At the end of the subroutine, the
+<A HREF="bbckey4.html#return">RETURN</A> statement 
+causes the program to return to the statement after the GOSUB statement.
+<P>
+Subroutines are similar to <A HREF="bbckey4.html#proc">PROC</A>edures,
+but they are called by line number not 
+by name.  This can make the program difficult to read because you 
+have no idea what the subroutine does until you have followed it through. 
+You will probably find that PROCedures offer you all the facilities 
+of subroutines and, by choosing their names carefully, you can make 
+your programs much more readable.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+GOSUB &lt;l-num&gt;
+GOSUB (&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#return">RETURN</A>,
+<A HREF="bbckey3.html#on">ON</A>,
+<A HREF="bbckey4.html#proc">PROC</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="goto">GOTO</A></H2></TD>
+<TD ALIGN=right><H2>G.</H2></TD></TR></TABLE>
+
+A statement which transfers program control to a line with a specified 
+or calculated line number.
+
+<BLOCKQUOTE>
+<PRE>
+GOTO 100
+GOTO (X*10)
+</PRE>
+</BLOCKQUOTE>
+
+You may not GOTO a line which is outside the current
+<A HREF="#for">FOR</A>...<A HREF="bbckey3.html#next">NEXT</A>,
+<A HREF="bbckey4.html#repeat">REPEAT</A>...<A HREF="bbckey4.html#until">UNTIL</A>
+or <A HREF="#gosub">GOSUB</A> loop.
+<P>
+If a calculated value is used, the program should not be
+<A HREF="bbckey4.html#renumber">RENUMBER</a>ed.  A 
+calculated value must be placed in brackets.
+<P>
+The GOTO statement makes BBCBASIC(86) jump to a specified line number 
+rather than continuing with the next statement in the program.
+<P>
+You should use GOTO with care.  Uninhibited 
+use will make your programs almost impossible to understand (and hence, 
+debug).  If you use REPEAT....UNTIL and FOR....NEXT loops you will 
+not need to use many GOTO statements.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+GOTO &lt;l-num&gt;
+GOTO (&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#gosub">GOSUB</A>,
+<A HREF="bbckey3.html#on">ON</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="himem">HIMEM</A></H2>
+
+A pseudo-variable which contains the address of the first byte that 
+BBCBASIC(86) will not use.
+<P>
+HIMEM must not be changed within a subroutine, procedure, function,
+<A HREF="#for">FOR</A>...<A HREF="bbckey3.html#next">NEXT</A>,
+<A HREF="bbckey4.html#repeat">REPEAT</A>...<A HREF="bbckey4.html#until">UNTIL</A>
+or <A HREF="#gosub">GOSUB</A> loop.
+
+<BLOCKQUOTE>
+<PRE>
+HIMEM=HIMEM-40
+</PRE>
+</BLOCKQUOTE>
+
+BBCBASIC(86) uses the computer's memory to 
+store your program and the variables that your program uses.  When 
+BBCBASIC is first loaded and run it checks to find the highest memory 
+address it can use.  If this is in excess of &amp;10000 bytes, HIMEM is 
+set to &amp;10000.  Otherwise, HIMEM is set to the maximum available address.
+<P>
+If you want to use a machine code subroutine 
+or store some data for use by a CHAINed program, you can move HIMEM 
+down.  This protects the area above HIMEM from being overwritten by 
+BBCBASIC(86).  See the <A HREF="bbc3.html">Assembler</A> section and
+the keyword <A HREF="bbckey1.html#chain">CHAIN</A> for details.
+<P>
+If you want to change HIMEM, you should do so early in your program.  Once 
+it has been changed it will stay at its new value until set to another 
+value.  Thus, if you wish to load a machine code subroutine for use 
+by several programs, you only have to change HIMEM and load the subroutine 
+once.
+<P>
+USE WITH CARE.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+HIMEM=&lt;numeric&gt;
+&lt;n-var&gt;=HIMEM
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#lomem">LOMEM</A>,
+<A HREF="bbckey3.html#page">PAGE</A>,
+<A HREF="bbckey4.html#top">TOP</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="if">IF</A></H2>
+
+A statement which sets up a test condition which can be used to control 
+the subsequent flow of the program.  It is part of the
+IF....<A HREF="bbckey4.html#then">THEN</A>....<A HREF="bbckey1.html#else">ELSE</A> 
+structure.
+
+<BLOCKQUOTE>
+<PRE>
+IF length=5 THEN 110
+IF A&lt;C OR A&gt;D GOTO 110
+IF A&gt;C AND C&gt;=D THEN GOTO 110 ELSE PRINT "BBC"
+IF A&gt;Q PRINT"IT IS GREATER":A=1:GOTO 120
+</PRE>
+</BLOCKQUOTE>
+
+The word <A HREF="bbckey4.html#then">THEN</A> is optional under most circumstances.
+<P>
+The IF statement is the primary decision making statement.  The testable 
+condition (A=B, etc) is evaluated and the answer is either
+<A HREF="bbckey4.html#true">TRUE</A> or <A HREF="#false">FALSE</A>.
+If the answer is TRUE, the rest of the line (up to the
+<A HREF="bbckey1.html#else">ELSE</A> clause if there is one) is executed.
+<P>
+The '=' sign has two meanings.  It can be used to 
+assign a value to a variable or as part of a test.  The example shows 
+the two uses in one program line.
+
+<BLOCKQUOTE>
+<PRE>
+A=B=C
+</PRE>
+</BLOCKQUOTE>
+
+In English this reads "A becomes equal to the result of the test B=C".  Thus 
+if B does equal C, A will be set to TRUE (-1).  However, if B 
+does not equal C, A will be set to FALSE (0).  The example below is 
+similar, but A will be set to TRUE (-1) if 'age' is less than 21.
+
+<BLOCKQUOTE>
+<PRE>
+A=age&lt;21
+</PRE>
+</BLOCKQUOTE>
+
+Since the IF statement evaluates the testable condition and acts on 
+the result, you can use a previously set variable name in place of 
+the test.
+<P>
+The two examples below will print 'Under 21' if the value of 'age' is 
+less than 21.
+
+<BLOCKQUOTE>
+<PRE>
+IF age&lt;21 THEN PRINT "Under 21"
+
+flag=age&lt;21
+IF flag THEN PRINT "Under 21"
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+IF &lt;t-cond&gt; THEN &lt;stmt&gt;{:&lt;stmt&gt;} [ELSE &lt;stmt&gt;{:&lt;stmt&gt;}]
+IF &lt;exp&gt; THEN &lt;stmt&gt;{:&lt;stmt&gt;} [ELSE &lt;stmt&gt;{:&lt;stmt&gt;}]
+IF &lt;t-cond&gt; GOTO &lt;l-num&gt; [ELSE &lt;l-num&gt;]
+IF &lt;exp&gt; GOTO &lt;l-num&gt; [ELSE &lt;l-num&gt;]
+IF &lt;t-cond&gt; THEN &lt;l-num&gt; [ELSE &lt;l-num&gt;]
+IF &lt;exp&gt; THEN &lt;l-num&gt; [ELSE &lt;l-num&gt;]
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#then">THEN</A>,
+<A HREF="bbckey1.html#else">ELSE</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="inkey">INKEY/INKEY$</A></H2>
+
+A function and compatible string function which 
+does a <A HREF="#get">GET/GET$</A>, waiting for a maximum of
+'num' clock ticks of 10ms each. If no key is pressed in the time limit,
+INKEY will return -1 and INKEY$ will return a null string.
+The INKEY function will return 
+the ASCII value of the key pressed.  A table of ASCII values is included 
+at <A HREF="annexa.html">Annex A</A> and the values returned by the
+function and other special keys are tabulated below.
+
+<BLOCKQUOTE>
+<PRE>
+key=INKEY(num)
+N=INKEY(0)
+N$=INKEY$(100)
+</PRE>
+</BLOCKQUOTE>
+
+If the function and cursor keys have been redefined using the 
+<A HREF="opsys1.html#key">*KEY</A> command, pressing them
+will load the keyboard buffer with their 
+currently defined character string.  Since INKEY and INKEY$ remove 
+characters from the keyboard buffer, one character will be returned 
+every time an INKEY is issued.  A single INKEY will return the first 
+character and leave the rest in the keyboard buffer.
+<P>
+You can use this function to wait for a specified time for a key to 
+be pressed.  A key can be pressed at any time before INKEY is used.
+<P>
+Pressed keys are stored in an input buffer.  Since INKEY and INKEY$ 
+get a character from the normal input stream, you may need to empty 
+the input buffer before you use them.  You can do this with the following 
+program line.
+
+<BLOCKQUOTE>
+<PRE>
+REPEAT UNTIL INKEY(0)=-1
+</PRE>
+</BLOCKQUOTE>
+
+The number in brackets is the number of 'ticks' (one hundredths of 
+a second) which BBCBASIC(86) will wait for a key to be pressed.  After 
+this time, BBCBASIC(86) will give up and return -1 or a null string.  The 
+number of 'ticks' may have any value between 0 and 32767.
+<P>
+PC compatible computers are provided with a number of differing keyboard 
+configurations.  As a consequence, the codes for some of the function 
+and special purpose keys may be different.  Because of this, it has 
+not been possible to implement the use INKEY with a negative argument 
+to directly test the keyboard for a key being pressed at the moment 
+the INKEY function is called.
+<P>
+A utility program to perform this function is provided on the distribution 
+disk.  This utility is configured for a 'standard' PC keyboard and 
+the configuration may need altering for other keyboards.  This utility 
+does not work on the Amstrad 1500 series computers.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TH COLSPAN=6>Function and Special Key Values</TH></TR>
+<TR>
+<TD>128&nbsp;</TD><TD>Ctrl/<IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15></TD>
+<TD>151&nbsp;</TD><TD>F7</TD>
+<TD>177&nbsp;</TD><TD>Ctrl/F1</TD></TR>
+<TR>
+<TD>129</TD><TD>Ctrl/<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></TD>
+<TD>152</TD><TD>F8</TD>
+<TD>178</TD><TD>Ctrl/F2</TD></TR>
+<TR>
+<TD>130</TD><TD>Home</TD>
+<TD>153</TD><TD>F9</TD>
+<TD>179</TD><TD>Ctrl/F3</TD></TR>
+<TR>
+<TD>131</TD><TD>End	</TD>
+<TD>154</TD><TD>F10</TD>
+<TD>180</TD><TD>Ctrl/F4</TD></TR>
+<TR>
+<TD>132</TD><TD>PgUp</TD>
+<TD>155</TD><TD>Shift/Tab</TD>
+<TD>181</TD><TD>Ctrl/F5</TD></TR>
+<TR>
+<TD>133</TD><TD>PgDn</TD>
+<TD>156</TD><TD>Ctrl/Home&nbsp;&nbsp;&nbsp;</TD>
+<TD>182</TD><TD>Ctrl/F6</TD></TR>
+<TR>
+<TD>134</TD><TD>Ins</TD>
+<TD>157</TD><TD>Ctrl/End</TD>
+<TD>183</TD><TD>Ctrl/F7</TD></TR>
+<TR>
+<TD>135</TD><TD>Del</TD>
+<TD>158</TD><TD>Ctrl/PgUp</TD>
+<TD>184</TD><TD>Ctrl/F8</TD></TR>
+<TR>
+<TD>136</TD><TD><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15></TD>
+<TD>159</TD><TD>Ctrl/PgDn	</TD>
+<TD>185</TD><TD>Ctrl/F9</TD></TR>
+<TR>
+<TD>137</TD><TD><IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></TD>
+<TD>&nbsp;</TD><TD>&nbsp;</TD>
+<TD>186</TD><TD>Ctrl/F10</TD></TR>
+<TR>
+<TD>138</TD><TD><IMG SRC="darr.gif" ALT="Down" WIDTH=15 HEIGHT=15></TD>
+<TD>161</TD><TD>Shift/F1</TD>
+<TD>193</TD><TD>Alt/F1</TD></TR>
+<TR>
+<TD>139</TD><TD><IMG SRC="uarr.gif" ALT="Up" WIDTH=15 HEIGHT=15></TD>
+<TD>162</TD><TD>Shift/F2</TD>
+<TD>194</TD><TD>Alt/F2</TD></TR>
+<TR>
+<TD>&nbsp;</TD><TD>&nbsp;</TD>
+<TD>163</TD><TD>Shift/F3</TD>
+<TD>195</TD><TD>Alt/F3</TD></TR>
+<TR>
+<TD>144</TD><TD>Ctrl/@&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</TD>
+<TD>164</TD><TD>Shift/F4</TD>
+<TD>196</TD><TD>Alt/F4</TD></TR>
+<TR>
+<TD>145</TD><TD>F1</TD>
+<TD>165</TD><TD>Shift/F5	</TD>
+<TD>197</TD><TD>Alt/F5</TD></TR>
+<TR>
+<TD>146</TD><TD>F2</TD>
+<TD>166</TD><TD>Shift/F6	</TD>
+<TD>198</TD><TD>Alt/F6</TD></TR>
+<TR>
+<TD>147</TD><TD>F3</TD>
+<TD>167</TD><TD>Shift/F7	</TD>
+<TD>199</TD><TD>Alt/F7</TD></TR>
+<TR>
+<TD>148</TD><TD>F4</TD>
+<TD>168</TD><TD>Shift/F8	</TD>
+<TD>200</TD><TD>Alt/F8</TD></TR>
+<TR>
+<TD>149</TD><TD>F5</TD>
+<TD>169</TD><TD>Shift/F9	</TD>
+<TD>201</TD><TD>Alt/F9</TD></TR>
+<TR>
+<TD>150</TD><TD>F6</TD>
+<TD>170</TD><TD>Shift/F10</TD>
+<TD>202</TD><TD>Alt/F10</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=INKEY(&lt;numeric&gt;)
+&lt;s-var&gt;=INKEY$(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#get">GET</A>,
+<A HREF="#get">GET$</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="input">INPUT</A></H2>
+
+A statement to input values from the console input channel (usually 
+keyboard).
+
+<BLOCKQUOTE>
+<PRE>
+INPUT A,B,C,D$,"WHO ARE YOU",W$,"NAME"R$
+</PRE>
+</BLOCKQUOTE>
+
+If items are not immediately preceded 
+by a printable prompt string (even if null) then a '?' will be printed 
+as a prompt.  If the variable is not separated from the prompt string 
+by a comma, the '?' is not printed.  In other words: no comma - no 
+question mark.
+<P>
+Items A, B, C, D$ in the above example can have their answers returned 
+on one to four lines, separate items being separated by commas.  Extra 
+items will be ignored.  
+<P>
+Then WHO ARE YOU? is printed (the question mark comes from the comma) 
+and W$ is input, then NAME is printed and R$ is input (no comma - 
+no '? ').
+<P>
+When the &lt;Enter&gt; key is pressed to complete an entry,
+a new-line is generated.  BBCBASIC has no facility for suppressing this
+new-line, but the <A HREF="bbckey4.html#tab">TAB</A> function 
+can be used to reposition the cursor.  For example,
+
+<BLOCKQUOTE>
+<PRE>
+INPUT TAB(0,5) "Name ? " N$,TAB(20,5) "Age ? " A
+</PRE>
+</BLOCKQUOTE>
+
+will position the cursor at column 0 of line 5 and print 
+the prompt Name ?.  After the name has been entered the cursor will 
+be positioned at column 20 on the same line and Age ? will be printed. 
+When the age has been entered the cursor will move to the next line.
+<P>
+The statement
+
+<BLOCKQUOTE>
+<PRE>
+INPUT A
+</PRE>
+</BLOCKQUOTE>
+
+is exactly equivalent to
+
+<BLOCKQUOTE>
+<PRE>
+INPUT A$: A=VAL(A$)
+</PRE>
+</BLOCKQUOTE>
+
+Leading spaces will be removed from the input line, but 
+not trailing spaces.  If the input string is not completely numeric, 
+it will make the best it can of what it is given.  If the first character 
+is not numeric, 0 will be returned.  Neither of these two cases will 
+produce an error indication.  Consequently, your program will not 
+abort back to the command mode if a bad number is input.  You may 
+use the <A HREF="#eval">EVAL</A> function to convert a string input
+to a numeric and report an error if the string is not a proper number
+or you can include your own validation checks.
+
+<BLOCKQUOTE>
+<PRE>
+INPUT A$
+A=EVAL(A$)
+</PRE>
+</BLOCKQUOTE>
+
+Strings in quoted form 
+are taken as they are, with a possible error occurring for a missing 
+closing quote.
+<P>
+A semicolon following a prompt 
+string is an acceptable alternative to a comma.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+INPUT [TAB(X[,Y])][SPC(&lt;numeric&gt;)]['][&lt;s-const&gt;[,|;]]
+                    &lt;n-var&gt;|&lt;s-var&gt;{,&lt;n-var&gt;|&lt;s-var&gt;}
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#inputline">INPUT LINE</A>,
+<A HREF="#inputhash">INPUT#</A>,
+<A HREF="#get">GET</A>,
+<A HREF="#inkey">INKEY</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="inputline">INPUT LINE</A></H2>
+
+A statement of identical syntax to
+<A HREF="#input">INPUT</A> which uses a new line for 
+each item to be input.  The item input is taken as is, including commas, 
+quotes and leading spaces.
+
+<BLOCKQUOTE>
+<PRE>
+INPUT LINE A$
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+INPUT LINE[TAB(X[,Y])][SPC(&lt;numeric&gt;)]['][&lt;s-const&gt;[,|;]]
+                        &lt;s-var&gt;{,&lt;s-var&gt;}
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#input">INPUT</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="inputhash">INPUT#</A></H2>
+
+A statement which reads data in internal format from a file and puts 
+them in the specified variables.  INPUT# is normally used with a file or device 
+opened with <A HREF="bbckey3.html#openin">OPENIN</A>,
+<A HREF="bbckey3.html#openup">OPENUP</A> or
+<A HREF="bbckey3.html#openout">OPENOUT</A>,
+but may alternatively be used with the AUX device (usually a serial port)
+which has the 'permanently open' handle = 3.
+
+<BLOCKQUOTE>
+<PRE>
+INPUT #E,A,B,C,D$,E$,F$
+INPUT #3,aux$
+</PRE>
+</BLOCKQUOTE>
+
+It is possible to read past the 
+end-of-file without an error being reported.  You should always include 
+some form of check for the end of the file.
+<P>
+<A HREF="bbckey4.html#readhash">READ#</A> can be used as an alternative 
+to INPUT#.
+<P>
+See the <A HREF="bbcfile1.html">Disk Files</A> section for more details
+and numerous examples of the use of INPUT#.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+INPUT #&lt;numeric&gt;,&lt;n-var&gt;|&lt;s-var&gt;{,&lt;n-var&gt;|&lt;s-var&gt;}
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#input">INPUT</A>,
+<A HREF="bbckey3.html#openin">OPENIN</A>,
+<A HREF="bbckey3.html#openup">OPENUP</A>,
+<A HREF="bbckey3.html#openout">OPENOUT</A>,
+<A HREF="bbckey1.html#close">CLOSE#</A>,
+<A HREF="bbckey4.html#print">PRINT#</A>,
+<A HREF="bbckey1.html#bput">BPUT#</A>,
+<A HREF="bbckey1.html#bget">BGET#</A>,
+<A HREF="#ext">EXT#</A>,
+<A HREF="bbckey4.html#ptr">PTR#</A>,
+<A HREF="#eof">EOF#</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="instr">INSTR</A></H2>
+
+A function which returns the position of a sub-string within a string, 
+optionally starting the search at a specified place in the string.  The 
+leftmost character position is 1.  If the sub-string is not found, 
+0 is returned.
+<P>
+The first string is searched for any occurrence of the second string.
+<P>
+There must not be any spaces between INSTR and the opening bracket.
+
+<BLOCKQUOTE>
+<PRE>
+X=INSTR(A$,B$)
+position=INSTR(word$,guess$)
+Y=INSTR(A$,B$,Z%) :REM START AT POSITION Z%
+</PRE>
+</BLOCKQUOTE>
+
+You can use this function for validation 
+purposes.  If you wished to test A$ to see if was one of the set 'FRED 
+BERT JIM JOHN', you could use the following:
+
+<BLOCKQUOTE>
+<PRE>
+set$="FRED BERT JIM JOHN"
+IF INSTR(set$,A$) PROC_valid ELSE PROC_invalid
+</PRE>
+</BLOCKQUOTE>
+
+The character used to separate the items in the set must be excluded 
+from the characters possible in A$.  One way to do this is to make 
+the separator an unusual character, say CHR$(127).
+
+<BLOCKQUOTE>
+<PRE>
+z$=CHR$(127)
+set$="FRED"+z$+"BERT"+z$+"JIM"+z$+"JOHN"
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=INSTR(&lt;str&gt;,&lt;str&gt;[,&lt;numeric&gt;])
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#left">LEFT$</A>,
+<A HREF="bbckey3.html#mid">MID$</A>,
+<A HREF="bbckey4.html#right">RIGHT$</A>,
+<A HREF="#len">LEN</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="int">INT</A></H2>
+
+A function truncating a real number to the lower integer.
+
+<BLOCKQUOTE>
+<PRE>
+X=INT(Y)
+
+INT(99.8)	=99
+INT(-12)	=-12
+INT(-12.1)	=-13
+</PRE>
+</BLOCKQUOTE>
+
+This function converts a real number (one with a decimal part) to 
+the nearest integer (whole number) less than the number supplied.  Thus,
+
+<BLOCKQUOTE>
+<PRE>
+INT(14.56)
+</PRE>
+</BLOCKQUOTE>
+
+gives 14, whereas
+
+<BLOCKQUOTE>
+<PRE>
+INT(-14.5)
+</PRE>
+</BLOCKQUOTE>
+
+gives -15.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=INT&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+None
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="left">LEFT$</A></H2>
+
+A string function which returns the left 'num' characters of the string.  If 
+there are insufficient characters in the source string, all the characters 
+are returned.
+<P>
+There must not be any spaces between LEFT$ and the opening bracket.
+
+<BLOCKQUOTE>
+<PRE>
+newstring$=LEFT$(A$,num)
+A$=LEFT$(A$,2)
+A$=LEFT$(RIGHT$(A$,3),2)
+</PRE>
+</BLOCKQUOTE>
+
+For example,
+
+<BLOCKQUOTE>
+<PRE>
+10 name$="BBCBASIC(86)"
+20 FOR i=3 TO 13
+30   PRINT LEFT$(name$,i)
+40 NEXT
+50 END
+</PRE>
+</BLOCKQUOTE>
+
+would print
+
+<BLOCKQUOTE>
+<PRE>
+BBC
+BBCB
+BBCBA
+BBCBAS
+BBCBASI
+BBCBASIC
+BBCBASIC(
+BBCBASIC(8
+BBCBASIC(86
+BBCBASIC(86)
+BBCBASIC(86)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;s-var&gt;=LEFT$(&lt;str&gt;,&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#right">RIGHT$</A>,
+<A HREF="bbckey3.html#mid">MID$</A>,
+<A HREF="#len">LEN</A>,
+<A HREF="#instr">INSTR</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="len">LEN</A></H2>
+
+A function which returns the length of the argument string.
+
+<BLOCKQUOTE>
+<PRE>
+X=LEN"fred"
+X=LENA$
+X=LEN(A$+B$)
+</PRE>
+</BLOCKQUOTE>
+
+This function 'counts' the number of characters in a string.  For 
+example,
+
+<BLOCKQUOTE>
+<PRE>
+length=LEN("BBCBASIC(86)   ")
+</PRE>
+</BLOCKQUOTE>
+
+would set 'length' to 15 since the string consists of the 12 characters 
+of BBCBASIC(86) followed by three spaces.
+<P>
+LEN is often used with a
+<A HREF="#for">FOR</A>....<A HREF="bbckey3.html#next">NEXT</A>
+loop to 'work down' a string 
+doing something with each letter in the string.  For example, the 
+following program looks at each character in a string and checks that 
+it is a valid hexadecimal numeric character.
+
+<BLOCKQUOTE>
+<PRE>
+ 10 valid$="0123456789ABCDEF"
+ 20 REPEAT
+ 30   INPUT "Type in a HEX number" hex$
+ 40   flag=TRUE
+ 50   FOR i=1 TO LEN(hex$)
+ 60     IF INSTR(valid$,MID$(hex$,i,1))=0 flag=FALSE
+ 80   NEXT
+ 90   IF NOT flag THEN PRINT "Bad HEX"
+100 UNTIL flag
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=LEN(&lt;str&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#left">LEFT$</A>,
+<A HREF="bbckey3.html#mid">MID$</A>,
+<A HREF="bbckey4.html#right">RIGHT$</A>,
+<A HREF="#instr">INSTR</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="let">LET</A></H2>
+
+LET is an optional assignment statement.
+<P>
+LET is not permitted in the assignment of the pseudo-variables
+<A HREF="#lomem">LOMEM</A>,
+<A HREF="#himem">HIMEM</A>,
+<A HREF="bbckey3.html#page">PAGE</A>,
+<A HREF="bbckey4.html#ptr">PTR#</A> and
+<A HREF="bbckey4.html#time">TIME</A>.
+<P>
+LET was mandatory in early versions of BASIC.  Its use emphasised 
+that when we write
+
+<BLOCKQUOTE>
+<PRE>
+X=X+4
+</PRE>
+</BLOCKQUOTE>
+
+we don't mean to state that X equals X+4 - it can't be, 
+but rather 'let X become equal to what it was plus 4':
+
+<BLOCKQUOTE>
+<PRE>
+LET X=X+4
+</PRE>
+</BLOCKQUOTE>
+
+Most modern versions of BASIC allow you to drop the 'LET' statement.  However, 
+if you are writing a program for a novice, the use of LET makes it 
+more understandable.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+[LET] &lt;var&gt;=&lt;exp&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+None
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="list">LIST</A></H2></TD>
+<TD ALIGN=right><H2>L.</H2></TD></TR></TABLE>
+
+A command which causes lines of the current program to be listed out 
+to the currently selected output stream (see <A HREF="opsys1.html#opt">*OPT</A>)
+with the automatic formatting options specified by
+<A HREF="#listo">LISTO</A>. 
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TD><TT>LIST</TT></TD><TD>lists the entire program</TD></TR>
+<TR><TD><TT>LIST ,111</TT></TD><TD>lists up to line 111</TD></TR>
+<TR><TD><TT>LIST 111,</TT></TD><TD>lists from line 111 to the end</TD></TR>
+<TR><TD><TT>LIST 111,222&nbsp;</TT></TD><TD>lists lines 111 to 222 inclusive</TD></TR>
+<TR><TD><TT>LIST 100</TT></TD><TD>lists line 100 only</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+A hyphen is an acceptable alternative to a comma.
+<P>
+When using the normal screen output 
+(<A HREF="opsys1.html#opt">*OPT 0</A>),
+the listing may be paused by pressing the &lt;Ctrl&gt; and &lt;Shift&gt; 
+keys together.  You can also set the output to paged mode by typing 
+^N (<A HREF="vdu.html#vdu14">VDU 14</A>).  In this mode, the screen
+output will halt at the end 
+of each page until the &lt;Shift&gt; key is pressed.  Paged mode may be 
+turned off by typing ^O (<A HREF="vdu.html#vdu15">VDU 15</A>).
+<P>
+Escape will abort the listing.
+<P>
+You can cause the listing to 
+be printed by pressing ^P.  Printing can be stopped by pushing ^P 
+a second time (it's a 'toggle' action).
+<P>
+LIST may be included within a program, 
+but it will exit to the command mode on completion of the listing.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+LIST
+LIST &lt;n-const&gt;
+LIST &lt;n-const&gt;,
+LIST ,&lt;n-const&gt;
+LIST &lt;n-const&gt;,&lt;n-const&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#listif">LIST IF</A>,
+<A HREF="#listo">LISTO</A>,
+<A HREF="bbckey3.html#old">OLD</A>,
+<A HREF="bbckey3.html#new">NEW</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="listif">LIST IF</A></H2>
+
+A command which causes lines of the current program which contain 
+the specified string to be listed to the currently selected output 
+stream (see <A HREF="opsys1.html#opt">*OPT</A>). 
+
+<BLOCKQUOTE>
+<PRE>
+LIST IF *FX
+LIST IF Please press &lt;ENTER&gt; to continue
+</PRE>
+</BLOCKQUOTE>
+
+You can specify the range of line numbers to be listed in a similar 
+manner to LIST.  For example,
+
+<BLOCKQUOTE>
+<PRE>
+LIST 100,2500 IF DEF
+</PRE>
+</BLOCKQUOTE>
+
+Will list all the lines between 100 and 2500 which contain the keyword 
+'DEF'
+<P>
+Keywords are tokenised before the search begins.  Consequently, you 
+can use LIST IF to find lines with particular commands in them.
+
+<BLOCKQUOTE>
+<PRE>
+LIST IF PROC
+LIST IF DEF
+</PRE>
+</BLOCKQUOTE>
+
+LIST IF is very useful for locating the lines in a program which define 
+or use functions or procedures.
+
+<H3><A NAME="limitations">Limitations</A></H3>
+
+Because keywords are tokenised wherever they occur in the command 
+line, you cannot use LIST IF to search for a string (including a star 
+command) which contains a keyword.  For example, the following will 
+not work:
+
+<BLOCKQUOTE>
+<PRE>
+LIST IF *LOAD
+LIST IF DO YOU WANT TO PRINT THE RESULTS?
+</PRE>
+</BLOCKQUOTE>
+
+You cannot search for the 'left' form of those pseudo-variables which 
+have two forms (
+<A HREF="bbckey4.html#ptr">PTR#=</A>,
+<A HREF="bbckey3.html#page">PAGE=</A>,
+<A HREF="bbckey4.html#time">TIME=</A>,
+<A HREF="bbckey4.html#times">TIME$=</A>,
+<A HREF="#lomem">LOMEM=</A>,
+<A HREF="#himem">HIMEM=</A>) because 
+the 'right' form is assumed when the name is tokenised.  Consequently,
+
+<BLOCKQUOTE>
+<PRE>
+LIST IF TIME
+</PRE>
+</BLOCKQUOTE>
+
+will find line 20 but not line 10 in the following program 
+segment
+
+<BLOCKQUOTE>
+<PRE>
+10 TIME=20
+20 now=TIME
+</PRE>
+</BLOCKQUOTE>
+
+You cannot search for 'keywords' which are not tokenised in the context 
+of the program.  For example,
+
+<BLOCKQUOTE>
+<PRE>
+LIST IF LOAD
+</PRE>
+</BLOCKQUOTE>
+
+will not list lines containing
+
+<BLOCKQUOTE>
+<PRE>
+ZLOAD=1
+PROCLOAD
+FNLOAD
+"LOAD"
+REM LOAD
+
+etc
+</PRE>
+</BLOCKQUOTE>
+
+because <A HREF="#load">LOAD</A> is not tokenised in any of these lines.
+<P>
+The internal format of line numbers (<A HREF="#goto">GOTO</A> 1000,
+for example) may spuriously 
+match a search string of three characters or less.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+LIST IF &lt;string&gt;
+LIST &lt;n-const&gt; IF &lt;string&gt;
+LIST &lt;n-const&gt;, IF &lt;string&gt;
+LIST ,&lt;n-const&gt; IF &lt;string&gt;
+LIST &lt;n-const&gt;,&lt;n-const&gt; IF &lt;string&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#list">LIST</A>,
+<A HREF="bbckey3.html#old">OLD</A>,
+<A HREF="bbckey3.html#new">NEW</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="listo">LISTO</A></H2>
+
+A command which controls the appearance of a 
+<A HREF="#list">LIST</A>ed program.  The 
+command controls the setting of the three least significant bits of the 
+format control byte which can, therefore, be set to an integer 0 to 
+7 (0=all three bits 0, 7=all three bits 1).
+
+<H3><A NAME="settings">Bit Settings</A></H3>
+
+<H4>Bit 0 (LSB)</H4>
+
+If Bit 0 is set, a space will be printed between the line number and 
+the remainder of the line.  (All leading spaces are stripped when 
+the line is originally entered.)
+
+<H4>Bit 1</H4>
+
+If Bit 1 is set, two extra spaces will be printed out on lines between 
+<A HREF="#for">FOR</A> and <A HREF="bbckey3.html#next">NEXT</A>.
+Two extra spaces will be printed for each depth of nesting.
+
+<H4>Bit 2</H4>
+
+If Bit 2 is set two extra spaces will be printed out on lines between 
+<A HREF="bbckey4.html#repeat">REPEAT</A> and <A HREF="bbckey4.html#until">UNTIL</A>.
+Two extra spaces will be printed for each depth of nesting.
+<P>
+The default setting of LISTO is 7.  This will give a properly formatted 
+listing.  The indentation of the FOR..NEXT and REPEAT..UNTIL lines 
+is done in the correct manner, in that the NEXT is aligned with the 
+FOR and the REPEAT with the UNTIL.
+
+<BLOCKQUOTE>
+<PRE>
+LISTO 7
+</PRE>
+</BLOCKQUOTE>
+
+will give
+
+<BLOCKQUOTE>
+<PRE>
+ 10 A=20
+ 20 TEST$="FRED"
+ 30 FOR I=1 TO A
+ 40   Z=2^I
+ 50   PRINT I,Z
+ 60   REPEAT
+ 70     PRINT TEST$
+ 80     TEST$=LEFT$(TEST$,LEN(TEST$)-1)
+ 90   UNTIL LEN(TEST$)=0
+100 NEXT
+110 END
+</PRE>
+</BLOCKQUOTE>
+
+at the other extreme
+
+<BLOCKQUOTE>
+<PRE>
+LISTO 0
+</PRE>
+</BLOCKQUOTE>
+
+will give
+
+<BLOCKQUOTE>
+<PRE>
+ 10A=20
+ 20TEST$="FRED"
+ 30FOR I=1 TO A
+ 40Z=2^I
+ 50PRINT I,Z
+ 60REPEAT
+ 70PRINT TEST$
+ 80TEST$=LEFT$(TEST$,LEN(TEST$)-1)
+ 90UNTIL LEN(TEST$)=0
+100NEXT
+110END
+</PRE>
+</BLOCKQUOTE>
+
+and
+
+<BLOCKQUOTE>
+<PRE>
+LISTO 2
+</PRE>
+</BLOCKQUOTE>
+
+will give
+
+<BLOCKQUOTE>
+<PRE>
+ 10A=20
+ 20TEST$="FRED"
+ 30FOR I=1 TO A
+ 40  Z=2^Z
+ 50  PRINT I,Z
+ 60  REPEAT
+ 70  PRINT TEST$
+ 80  TEST$=LEFT$(TEST$,LEN(TEST$)-1)
+ 90  UNTIL LEN(TEST$)=0
+100NEXT
+110END
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+LISTO &lt;n-const&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#list">LIST</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="ln">LN</A></H2>
+
+A function giving the natural logarithm of its argument.
+
+<BLOCKQUOTE>
+<PRE>
+X=LN(Y)
+</PRE>
+</BLOCKQUOTE>
+
+This function gives the logarithm to the base 'e' of its argument.  The 
+'natural' number, 'e', is approximately 2.71828183.
+<P>
+Logarithms 
+are 'traditionally' used for multiplication (by adding the logarithms) 
+and division (by subtracting the logarithms).  For example,
+
+<BLOCKQUOTE>
+<PRE>
+10 log1=LN(2.5)
+20 log2=LN(2)
+30 log3=log1+log2
+40 answer=EXP(log3)
+50 PRINT answer
+</PRE>
+</BLOCKQUOTE>
+
+will calculate 2.5*2 by adding their natural logarithms 
+and print the answer.  
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=LN&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#log">LOG</A>,
+<A HREF="#exp">EXP</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="load">LOAD</A></H2></TD>
+<TD ALIGN=right><H2>LO.</H2></TD></TR></TABLE>
+
+A command which loads a new program from 
+a file and <A HREF="bbckey1.html#clear">CLEAR</A>s the
+variables of the old program.  The program file 
+must be in 'internal' (tokenised) format.
+
+<BLOCKQUOTE>
+<PRE>
+LOAD "PROG1"
+LOAD A$
+</PRE>
+</BLOCKQUOTE>
+
+File names must conform to the standard MS-DOS format.  However, if 
+no extension is given, .BBC is assumed.  If no disk and/or path are 
+given, the current disk and/or path are assumed.  See the
+<A HREF="opsys0.html">Operating System Interface</A>
+section for a more detailed description of valid file names.
+<P>
+You use LOAD to bring a program in a disk file into memory.  The keyword 
+LOAD should be followed by the name of the program file.  If the program 
+file is in the current directory, only the file name needs to be given.  If 
+the program is not in the current directory, its full drive, path 
+and file name must be specified.  For example:
+
+<BLOCKQUOTE>
+<PRE>
+LOAD "a:\bbcprogs\demo"
+</PRE>
+</BLOCKQUOTE>
+
+would load the program 'demo.bbc' from the directory 
+'bbcprogs' on drive a:.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+LOAD &lt;str&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#save">SAVE</A>,
+<A HREF="bbckey1.html#chain">CHAIN</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="local">LOCAL</A></H2>
+
+A statement to declare variables for local use inside a function
+(<A HREF="#fn">FN</A>) or procedure
+(<A HREF="bbckey4.html#proc">PROC</A>).
+A null list of variables is not permitted.
+
+<BLOCKQUOTE>
+<PRE>
+LOCAL A$,X,Y%
+</PRE>
+</BLOCKQUOTE>
+
+LOCAL saves the values of its arguments in such a way that they will 
+be restored at '=' or <A HREF="bbckey1.html#endproc">ENDPROC</A>.
+<P>
+If a function or a procedure is used recursively, the LOCAL variables 
+will be preserved at each level.
+<P>
+The LOCAL variables are initialised 
+to zero/null.
+<P>
+See the keyword <A HREF="bbckey3.html#onerrorlocal">ON ERROR LOCAL</A>
+for details of local error trapping.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+LOCAL &lt;n-var&gt;|&lt;s-var&gt;{,&lt;n-var&gt;|&lt;s-var&gt;}
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey1.html#def">DEF</A>,
+<A HREF="bbckey1.html#endproc">ENDPROC</A>,
+<A HREF="#fn">FN</A>,
+<A HREF="bbckey4.html#proc">PROC</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="log">LOG</A></H2>
+
+A function giving the base-10 logarithm of its argument.
+
+<BLOCKQUOTE>
+<PRE>
+X = LOG(Y)
+</PRE>
+</BLOCKQUOTE>
+
+This function calculates the common 
+(base 10) logarithm of its argument.  Inverse logarithms (anti-logs) 
+can be calculated by raising 10 to the power of the logarithm.
+For example, if <TT>x=LOG(y)</TT> then <TT>y=10^x</TT>.
+<P>
+Logarithms 
+are 'traditionally' used for multiplication (by adding the logarithms) 
+and division (by subtracting the logarithms).  For example,
+
+<BLOCKQUOTE>
+<PRE>
+10 log1=LOG(2.5)
+20 log2=LOG(2)
+30 log3=log1+log2
+40 answer=10^log3
+50 PRINT answer
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=LOG&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#ln">LN</A>,
+<A HREF="#exp">EXP</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="lomem">LOMEM</A></H2>
+
+A pseudo-variable which controls where in memory the dynamic data 
+structures are to be placed.  The default is <A HREF="bbckey4.html#top">TOP</A>,
+the first free address after the end of the program.
+
+<BLOCKQUOTE>
+<PRE>
+LOMEM=LOMEM+100
+PRINT ~LOMEM :REM The ~ makes it print in HEX.
+</PRE>
+</BLOCKQUOTE>
+
+Normally, dynamic variables are stored in memory immediately after 
+your program.  (See the Annex entitled <A HREF="annexd.html">Format
+of Program and Variables in Memory</A>.) You can change the address
+where BBCBASIC(86) starts to store these variables by changing LOMEM.
+<P>
+USE WITH CARE.  Changing LOMEM in the middle of a program causes BBCBASIC(86) 
+to lose track of all the variables you are using.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+LOMEM=&lt;numeric&gt;
+&lt;n-var&gt;=LOMEM
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#himem">HIMEM</A>,
+<A HREF="bbckey4.html#top">TOP</A>,
+<A HREF="bbckey3.html#page">PAGE</A>
+</TT>
+</BLOCKQUOTE>
+
+<P>
+<TABLE WIDTH="100%">
+<TR><TD><H3><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15>
+<A HREF="index.html">CONTENTS</A></H3></TD>
+<TD ALIGN=right><H3><A HREF="bbckey3.html">CONTINUE</A>
+<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></H3></TD></TR></TABLE>
+<HR>
+<A href="http://www.anybrowser.org/"><img border=0 align=left src="logoab8.gif" alt="Best viewed with Any Browser" height=31 width=88></A>
+<A href="http://validator.w3.org/"><img border=0 align=right src="vh32.gif" alt="Valid HTML 3.2!" height=31 width=88></A>
+<CENTER>&copy; Doug Mounter and 
+<A HREF="mailto:richard&#64;rtrussell.co.uk">Richard Russell</A></CENTER>
+</BODY>
+
+</HTML>

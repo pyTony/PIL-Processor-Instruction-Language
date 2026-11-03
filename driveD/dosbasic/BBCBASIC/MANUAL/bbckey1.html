@@ -1,0 +1,2184 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+
+<HTML>
+
+<HEAD>
+<TITLE>R. T. Russell: BBC BASIC (86) Manual</TITLE>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=us-ascii">
+<LINK HREF="index.html" REL="index" TITLE="Table of Contents">
+<LINK HREF="bbckey0.html" REL="prev" TITLE="Statements and Functions">
+<LINK HREF="bbckey2.html" REL="next" TITLE="EOF# to LOMEM">
+<LINK HREF="http://www.rtrussell.co.uk/index.html" REL="home" TITLE="Homepage">
+<LINK HREF="mailto:richard&#64;rtrussell.co.uk" REL="author" TITLE="Mail the author">
+</HEAD>
+
+<BODY BACKGROUND="rtrtile.gif">
+<IMG SRC="rtrlogo.gif" ALIGN=left ALT="RTR logo" WIDTH=190 HEIGHT=140>
+<BR>
+<H1 ALIGN=center>R. T. RUSSELL</H1>
+<H2 ALIGN=center>BBC BASIC (86) Manual</H2>
+<BR CLEAR=ALL>
+<HR>
+<H2><A NAME="abs">ABS</A></H2>
+
+A function giving the absolute value of its argument.
+
+<BLOCKQUOTE>
+<PRE>
+X&nbsp;=&nbsp;ABS(deficit)
+length&nbsp;=&nbsp;ABS(X1-X2)
+</PRE>
+</BLOCKQUOTE>
+
+This function converts negative numbers into positive ones.  It can 
+be used to give the difference between two numbers without regard to 
+the sign of the answer.  
+<P>
+It is particularly useful when you want to know the difference between 
+two values, but you don't know which is the larger.  For instance, if 
+X=6 and Y=10 then the following examples would give the same result.
+
+<BLOCKQUOTE>
+<PRE>
+difference&nbsp;=&nbsp;ABS(X-Y)
+difference&nbsp;=&nbsp;ABS(Y-X)
+</PRE>
+</BLOCKQUOTE>
+
+You can use this function to check that a calculated answer is within 
+certain limits of a specified value.  For example, suppose you wanted 
+to check that 'answer' was equal to 'ideal' plus or minus (up to) 
+0.5.  One way would be:
+
+<BLOCKQUOTE>
+<PRE>
+IF answer&gt;ideal-0.5 AND answer&lt;ideal+0.5 THEN....
+</PRE>
+</BLOCKQUOTE>
+
+However, the following example would be a more elegant solution.
+
+<BLOCKQUOTE>
+<PRE>
+IF ABS(answer-ideal)&lt;0.5 THEN....
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ABS(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+
+<BLOCKQUOTE>
+<PRE>
+<A HREF="bbckey4.html#sgn">SGN</A>
+</PRE>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="acs">ACS</A></H2>
+
+A function giving the arc cosine of its argument in radians.  The 
+permitted range of the argument is -1 to +1.
+<P>
+If you know the cosine of the angle, this function 
+will tell you the angle (in radians).  Unfortunately, you cannot do 
+this with complete certainty because two angles within the range +/- 
+PI (+/- 180 degrees) can have the same cosine.  This means that one 
+cosine has two associated angles.
+<P>
+The following diagram illustrates the problem:
+
+<CENTER>
+<IMG SRC="acs.gif" ALT="Arc cosine" WIDTH=352 HEIGHT=236>
+</CENTER>
+
+Within the four quadrants, there are two angles which 
+have the same cosine, two with the same sine and two with the same tangent.  When 
+you are working back from the cosine, sine or tangent you don't know 
+which of the two possible angles is correct.
+<P>
+By convention, ACS gives a result in the top two quadrants (0 to PI 
+- 0 to 180 degrees) and <A HREF="#asn">ASN</A> and <A HREF="#atn">ATN</A>
+in the right-hand two quadrants (-PI/2 to +PI/2 - -90 to + 90 degrees).
+<P>
+In the example below, 'radian_angle' becomes equal to the angle (in 
+radians) whose cosine is 'y'.
+
+<BLOCKQUOTE>
+<PRE>
+radian_angle=ACS(y)
+</PRE>
+</BLOCKQUOTE>
+
+You can convert the answer to degrees by using the 
+<A HREF="#deg">DEG</A> function (or multiplying by 180/PI).  
+
+<BLOCKQUOTE>
+<PRE>
+degree_angle=DEG(ACS(y))
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ACS(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+
+<BLOCKQUOTE>
+<TT>
+<A HREF="#asn">ASN</A>,
+<A HREF="#atn">ATN</A>,
+<A HREF="bbckey4.html#sin">SIN</A>,
+<A HREF="#cos">COS,</A>
+<A HREF="bbckey4.html#tan">TAN</A>,
+<A HREF="bbckey4.html#rad">RAD</A>,
+<A HREF="#deg">DEG</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="adval">ADVAL</A></H2>
+
+This function returns information about the analogue to digital converter 
+channels on the Games Adapter card (if fitted).  The information returned 
+depends upon the argument passed to ADVAL.
+
+<H3><A NAME="advalplus">Positive Argument (1 to 4)</A></H3>
+
+If the argument is positive (1 to 4), 
+ADVAL returns a value proportional to the resistance of the joysticks 
+or games paddles.  The value is scaled to the range 0 to 65280.  However, 
+the value returned depends on the processor clock frequency and its 
+absolute value cannot be relied upon.
+
+<BLOCKQUOTE>
+<PRE>
+adcval=ADVAL(3)
+level=ADVAL(chnumber)
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="advalzero">Zero Argument</A></H3>
+
+ADVAL(0) returns a value in the 
+range 0 to 15 corresponding to the state of the four fire buttons.  Zero 
+is returned if no buttons are pressed and 15 is returned if all four 
+buttons are pressed.
+
+<H3><A NAME="advalminus">Negative Argument (-6)</A></H3>
+
+ADVAL(-6) returns the number 
+of free spaces in the sound queue.  If the sound queue is empty, ADVAL(-6) 
+will return 14.  If the queue is (nearly) full, ADVAL(-6) will 
+return 0.
+<P>
+In BBCBASIC(86), ADVAL with <B>any</B> negative number 
+will return the number of free spaces in the sound queue; you should 
+use -6 to maximise compatibility with the BBC Micro.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ADVAL(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#sound">SOUND</A>,
+<A HREF="bbckey2.html#input">INPUT</A>,
+<A HREF="bbckey2.html#get">GET</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD ALIGN=left><H2><A NAME="and">AND</A></H2></TD>
+<TD ALIGN=right><H2>A.</H2></TD></TR></TABLE>
+
+The operation of integer bitwise logical AND between two items.  The 
+2 operands are internally converted to four byte integers before the 
+AND operation.
+
+<BLOCKQUOTE>
+<PRE>
+answer=num1 AND num2
+char=byte AND &amp;7F
+
+IF (num AND &amp;F0)
+
+test=(count=3 AND total=5)
+</PRE>
+</BLOCKQUOTE>
+
+You can use AND as a logical operator or as a 'bit-by-bit' (bitwise) 
+operator.  The operands can be boolean (logical) or numeric.
+<P>
+In the following example program segment, AND is used as a bitwise 
+operator to remove the most significant bit of a byte read from a 
+file before writing it to another file.  This is useful for converting 
+some word-processor files into standard <A HREF="annexa.html">ASCII</A> format.
+
+<BLOCKQUOTE>
+<PRE>
+210 byte=BGET#infile AND &amp;7F
+220 BPUT#outfile,byte
+</PRE>
+</BLOCKQUOTE>
+
+Unfortunately, 
+BBCBASIC does not have true boolean variables; it uses numeric variables 
+and assigns the value 0 for <A HREF="bbckey2.html#false">FALSE</A> and -1 for <A HREF="bbckey4.html#true">TRUE</A>.  This can lead 
+to confusion at times.  (See <A HREF="bbckey3.html#not">NOT</A> for more details.)
+
+In the example below, the operands are boolean (logical).  In other 
+words, the result of the tests (IF) A=2 and (IF) B=3 is either TRUE 
+or FALSE.  The result of this example will be TRUE if A=2 and B=3.  
+
+<BLOCKQUOTE>
+<PRE>
+answer=(A=2 AND B=3)
+</PRE>
+</BLOCKQUOTE>
+
+The brackets are not necessary, they have been included to make the 
+example easier to follow.
+<P>
+The second example is similar to the first, but in the more familiar 
+surroundings of an IF statement.  
+
+<BLOCKQUOTE>
+<PRE>
+IF A=2 AND B=3 THEN 110
+</PRE>
+</BLOCKQUOTE>
+
+or
+
+<BLOCKQUOTE>
+<TT>
+answer= A=2 AND B=3		</TT>(without brackets this time)<TT><BR>
+IF answer THEN 110		
+</TT>
+</BLOCKQUOTE>
+
+The final example, uses the AND in a similar fashion to the numeric 
+operators (+, -, etc).
+
+<BLOCKQUOTE>
+<TT>A=X AND 11</TT>
+</BLOCKQUOTE>
+
+Suppose X was -20, the AND operation would be:
+
+<BLOCKQUOTE>
+<PRE>
+11111111 11111111 11111111 11101100
+<U>00000000 00000000 00000000 00001011</U>
+00000000 00000000 00000000 00001000  = 8
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=&lt;numeric&gt; AND &lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey2.html#eor">EOR</A>,
+<A HREF="bbckey3.html#or">OR</A>,
+<A HREF="bbckey2.html#false">FALSE</A>,
+<A HREF="bbckey4.html#true">TRUE</A>,
+<A HREF="bbckey3.html#not">NOT</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="asc">ASC</A></H2>
+
+A function returning the ASCII character value of the first character 
+of the argument string.  If the string is null then -1 will be 
+returned.
+<P>
+A computer only understands numbers.  In order to deal with characters, 
+each character is assigned a code number.  For example (in the <A HREF="annexa.html">ASCII 
+code table</A>) the character 'A' is given the code number 65 (decimal).  A 
+part of the computer generates special electronic signals which cause 
+the characters to be displayed on the screen.  The signals generated 
+vary according to the code number.
+<P>
+Different types of computer use different numbers for the characters.  The 
+codes used for PC Compatible computers are those defined by the American 
+Standard Code for Information Interchange (ASCII).  A list of the 
+ASCII codes is at <A HREF="annexa.html">Annex A</A>.
+<P>
+You could use this function to convert ASCII codes to some other coding 
+scheme.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TD><TT>ascii_code=ASC("H")</TT></TD>
+<TD>Result would be 72</TD></TR>
+<TR><TD><TT>X=ASC("HELLO")</TT></TD>
+<TD>Result would be 72</TD></TR>
+<TR></TR>
+<TR><TD><TT>name$="FRED"</TT></TD></TR>
+<TR><TD><TT>ascii_code=ASC(name$)</TT></TD>
+<TD>Result would be 70</TD></TR>
+<TR><TD><TT>X=ASC"e"</TT></TD>
+<TD>Result would be 101</TD></TR>
+<TR></TR>
+<TR><TD><TT>X=ASC(MID$(A$,position))</TT></TD>
+<TD>Result depends on A$ and position.</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+ASC is the complement of <A HREF="#chr">CHR$</A>.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ASC(&lt;str&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+
+<BLOCKQUOTE>
+<TT>
+<A HREF="#chr">CHR$</A>,
+<A HREF="bbckey4.html#str">STR$</A>,
+<A HREF="bbckey4.html#val">VAL</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="asn">ASN</A></H2>
+
+A function giving the arc sine of its argument in radians.  The permitted 
+range of the argument is -1 to +1.
+<P>
+By convention, the result will be in the range -PI/2 to +PI/2 
+(-90 to +90 degrees).
+<P>
+If you know the sine of the angle, this function will tell you the 
+angle (in radians).  Unfortunately, you cannot do this with complete 
+certainty because one sine has two associated angles. (See <A HREF="#acs">ACS</A> for details.)
+<P>
+In the example below, 'radian_angle' becomes equal to the angle (in 
+radians) whose sine is 'y'.
+
+<BLOCKQUOTE>
+<PRE>
+radian_angle=ASN(y)
+</PRE>
+</BLOCKQUOTE>
+
+You can convert the answer to degrees by using the <A HREF="#deg">DEG</A> function.  (The 
+DEG function is equivalent to multiplying by 180/PI.) The example 
+below is similar to the first one, but the angle is in degrees.
+
+<BLOCKQUOTE>
+<PRE>
+degree_angle=DEG(ASN(y))
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ASN(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+
+<BLOCKQUOTE>
+<TT>
+<A HREF="#acs">ACS</A>,
+<A HREF="#atn">ATN</A>,
+<A HREF="bbckey4.html#sin">SIN</A>,
+<A HREF="#cos">COS</A>,
+<A HREF="bbckey4.html#tan">TAN</A>,
+<A HREF="bbckey4.html#rad">RAD</A>,
+<A HREF="#deg">DEG</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="atn">ATN</A></H2>
+
+A function giving the arc tangent of its argument in radians.  The 
+permitted range of the argument is from - to + infinity.
+<P>
+By convention, the result will be in the range -PI/2 to +PI/2 
+(-90 to +90 degrees).
+<P>
+If you know the tangent of the angle, this function will tell you 
+the angle (in radians).
+<P>
+As the magnitude of the argument (tangent) becomes very large (approaches 
++ or - infinity) the accuracy diminishes.
+<P>
+In the example below, 'radian_angle' becomes equal to the angle (in 
+radians) whose tangent is 'y'.
+
+<BLOCKQUOTE>
+<PRE>
+radian_angle=ATN(y)
+</PRE>
+</BLOCKQUOTE>
+
+You can convert the answer to degrees by using the <A HREF="#deg">DEG</A> function.  (The 
+DEG function is equivalent to multiplying by 180/PI.) The example 
+below is similar to the first one, but the angle is in degrees.
+
+<BLOCKQUOTE>
+<PRE>
+degree_angle=DEG(ATN(y))
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=ATN(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#acs">ACS</A>,
+<A HREF="#asn">ASN</A>,
+<A HREF="bbckey4.html#sin">SIN</A>,
+<A HREF="#cos">COS</A>,
+<A HREF="bbckey4.html#tan">TAN</A>,
+<A HREF="bbckey4.html#rad">RAD</A>,
+<A HREF="#deg">DEG</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD ALIGN=left><H2><A NAME="auto">AUTO</A></H2></TD>
+<TD ALIGN=right><H2>AU.</H2></TD></TR></TABLE>
+
+A command allowing the user to enter lines without first typing in 
+the number of the line.  The line numbers are preceded by the usual 
+prompt (&gt;).
+<P>
+You can use this command to tell the computer to type the line numbers 
+automatically for you when you are entering a program (or part of 
+a program).
+<P>
+If AUTO is used on its own, the line numbers will start at 10 and 
+go up by 10 for each line.  However, you can specify the start number 
+and the value by which the line numbers will increment.  The step 
+size can be in the range 1 to 255.
+<P>
+You cannot use the AUTO command within a program or a multi-statement 
+command line.
+<P>
+You can leave the AUTO mode by pressing the escape key.
+
+<BLOCKQUOTE>
+<TT>AUTO start_number,step_size</TT>
+</BLOCKQUOTE>
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TD><TT>AUTO</TT></TD>
+<TD>offers line numbers 10, 20, 30 ...</TD></TR>
+<TR><TD><TT>AUTO 100</TT></TD>
+<TD>starts at 100 with step 10</TD></TR>
+<TR><TD><TT>AUTO 100,1</TT></TD>
+<TD>starts at 100 with step 1</TD></TR>
+<TR><TD><TT>AUTO ,2</TT></TD>
+<TD>starts at 10 with step 2</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+A hyphen is an acceptable alternative to a comma.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+AUTO [&lt;n-const&gt; [,&lt;n-const&gt;]]
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+None
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="bget">BGET#</A></H2></TD>
+<TD ALIGN=right><H2>B.#</H2></TD></TR></TABLE>
+
+A function which gets a byte from the file whose file handle 
+is its argument.  The file pointer is incremented after the byte has 
+been read. 
+
+<BLOCKQUOTE>
+<PRE>
+E=BGET#n
+aux=BGET#3
+</PRE>
+</BLOCKQUOTE>
+
+You must normally have opened a file using <A HREF="bbckey3.html#openout">OPENOUT</A>,
+<A HREF="bbckey3.html#openin">OPENIN</A> or <A HREF="bbckey3.html#openup">OPENUP</A> before 
+you use this statement.  (See these keywords and the <A HREF="bbcfile1.html">BBCBASIC(86) 
+Disk Files</A> section for details.)  BGET# may alternatively be used with the AUX device
+(usually a serial port) which has the 'permanently open' handle = 3.
+
+<P>
+You can use BGET# to read single bytes 
+from a disk file.  This enables you to read back small integers which 
+have been 'packed' into fewer than 5 bytes (see <A HREF="#bput">BPUT#</A>).  It is also 
+very useful if you need to perform some conversion operation on a 
+file.  Each byte read is numeric, but you can use <A HREF="#chr">CHR$</A>(BGET#n) to 
+convert it to a string.
+<P>
+The input file in the example below is a text file produced by a word-processor.
+<P>
+Words to be underlined are 'bracketed' with ^S.  The program produces 
+an output file suitable for a printer which expects such words to 
+be bracketed by ^Y.  You could, of course, perform several such translations 
+in one program.  
+
+<BLOCKQUOTE>
+<PRE>
+ 10 REM Open i/p and o/p files. End if error.
+ 20 infile=OPENIN "WSFILE.DOC"
+ 30 IF infile=0 THEN END
+ 40 outfile=OPENOUT "BROTH.DOC"
+ 50 IF outfile=0 THEN END
+ 60 :
+ 70 REM Process file, converting ^S to ^Y
+ 80 REPEAT
+ 90   temp=BGET#infile :REM Read byte
+100    IF temp=&amp;13 THEN temp=&amp;19 :REM Convert ^S
+110    BPUT#outfile,temp :REM Write byte
+120 UNTIL temp=&amp;1A :REM ^Z
+130 CLOSE#0 :REM Close all files
+140 END
+</PRE>
+</BLOCKQUOTE>
+
+To make the program  more useful, it could ask for the names 
+of the input and output files at 'run time':
+
+<BLOCKQUOTE>
+<PRE>
+ 10INPUT "Enter name of INPUT file " infile$
+ 20 INPUT "Enter name of OUTPUT file " outfile$
+ 30 REM Open i/p and o/p files. End if error.
+ 40 infile=OPENIN(infile$)
+ 50 IF infile=0 THEN END
+ 60 outfile=OPENOUT(outfile$)
+ 70 IF outfile=0 THEN END
+ 80 :
+ 90 REM Process file, converting ^S to ^Y
+100 REPEAT
+110    temp=BGET#infile :REM Read byte
+120    IF temp=&amp;13 THEN temp=&amp;19 :REM Convert ^S
+130    BPUT#outfile,temp :REM Write byte
+140 UNTIL temp=&amp;1A :REM ^Z
+150 CLOSE#0 :REM Close all files
+160 END
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=BGET#&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#openin">OPENIN</A>,
+<A HREF="bbckey3.html#openup">OPENUP</A>,
+<A HREF="bbckey3.html#openout">OPENOUT</A>,
+<A HREF="#close">CLOSE#</A>,
+<A HREF="bbckey4.html#print">PRINT#</A>,
+<A HREF="bbckey2.html#inputhash">INPUT#</A>,
+<A HREF="#bget">BGET#</A>,
+<A HREF="bbckey2.html#ext">EXT#</A>,
+<A HREF="bbckey4.html#ptr">PTR#</A>,
+<A HREF="bbckey2.html#eof">EOF#</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="bput">BPUT#</A></H2></TD>
+<TD ALIGN=right><H2>BP.#</H2></TD></TR></TABLE>
+
+A statement which puts a byte to the data file whose file handle is 
+the first argument.  The second argument's least significant byte 
+is written to the file.  The file pointer is incremented after the 
+byte has been written.
+
+<BLOCKQUOTE>
+<PRE>
+BPUT#E,32
+BPUT#staff_file,A/256
+BPUT#4,prn
+</PRE>
+</BLOCKQUOTE>
+
+Before you use this statement you must normally have opened a file for output 
+using <A HREF="bbckey3.html#openout">OPENOUT</A> or <A HREF="bbckey3.html#openup">OPENUP</A>.  (See these keywords and the <A HREF="bbcfile1.html">BBCBASIC(86) Disk Files</A> section for details.)
+BPUT# may alternatively be used with the AUX device
+(usually a serial port), which has the 'permanently open' handle = 3, or the PRN
+device (usually a parallel port) which has the 'permanently open' handle = 4.
+<P>
+You can use this statement to write single 
+bytes to a disk file.  The number that is sent to the file is in the 
+range 0 to 255.  Real numbers are converted internally to integers 
+and the top three bytes are 'masked off'.  Each byte written is numeric, 
+but you can use <A HREF="#asc">ASC</A>(character$) to convert (the first character of) 
+'character$' to a number.
+<P>
+The example below is a program segment that 'packs' an integer number 
+between 0 and 65535 (&amp;FFFF) into two bytes, least significant byte first.  The 
+file must have already been opened for output and the file handle 
+stored in 'fnum'.  The integer variable number% contains the value 
+to be written to the file.
+
+<BLOCKQUOTE>
+<PRE>
+100 BPUT#fnum,number% MOD 256
+110 BPUT#fnum,number% DIV 256
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+BPUT#&lt;numeric&gt;,&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#openin">OPENIN</A>,
+<A HREF="bbckey3.html#openup">OPENUP</A>,
+<A HREF="bbckey3.html#openout">OPENOUT</A>,
+<A HREF="#close">CLOSE#</A>,
+<A HREF="bbckey4.html#print">PRINT#</A>,
+<A HREF="bbckey2.html#inputhash">INPUT#</A>,
+<A HREF="#bget">BGET#</A>,
+<A HREF="bbckey2.html#ext">EXT#</A>,
+<A HREF="bbckey4.html#ptr">PTR#</A>,
+<A HREF="bbckey2.html#eof">EOF#</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="call">CALL</A></H2></TD>
+<TD ALIGN=right><H2>CA.</H2></TD></TR></TABLE>
+
+A statement to call a machine code subroutine.
+
+<BLOCKQUOTE>
+<PRE>
+CALL Muldiv,A,B,C,D
+CALL &amp;FFE3
+CALL 12340,A$,M,J$
+</PRE>
+</BLOCKQUOTE>
+
+There are significant differences between BBCBASIC and <A HREF="annexg.html">BIGBASIC</A>.
+<P>
+The processor's AX, BX, CX and DX 
+registers are initialised to the least significant words of A%, B%, 
+C% and D% respectively (see also <A HREF="bbckey4.html#usr">USR</A>).
+FLAGS is initialised to the 
+least significant word of F%.  However, you cannot disable interrupts 
+nor enter single-step mode by setting F% to an appropriate value because 
+this could be dangerous.
+<P>
+The four segment 
+registers (CS, DS, SS and ES) are all set to the address of BBCBASIC's 
+data segment.  (Not BIGBASIC)
+<P>
+Your machine-code routine MUST return to BBCBASIC(86) with a far return 
+(RETF), not a simple RET instruction.
+
+<H3><A NAME="callopsys">Operating System Interface</A></H3>
+
+CALL and USR operate differently when addresses in the range &amp;FF00 
+to &amp;FFFF are used.  See the <A HREF="opsys0.html">Operating System Interface</A> section for more details and an example of the use of CALL.
+
+<H3><A NAME="callparms">Parameter Table</A></H3>
+
+CALL sets up a table in RAM containing details of the parameters.  The 
+base pointer (BP) is set to the address of this parameter table.
+<P>
+Variables included in the parameter list need not have been declared 
+before the CALL statement.
+<P>
+The parameter types are:
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=8>
+<TR><TH>Code No</TH><TH>Parameter Type</TH></TR>
+
+<TR><TD ALIGN=right>0:</TD><TD>byte (8 bits)</TD><TD>eg ?A%</TD></TR>
+<TR><TD ALIGN=right>4:</TD><TD>word (32 bits)</TD><TD>eg !A% or A%</TD></TR>
+<TR><TD ALIGN=right>5:</TD><TD>real (40 bits)</TD><TD>eg A</TD></TR>
+<TR><TD ALIGN=right>128:</TD><TD>fixed string</TD><TD>eg $A%</TD></TR>
+<TR><TD ALIGN=right>129:	</TD><TD>movable string</TD><TD>eg A$</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+On entry to the subroutine the parameter table contains the following 
+values (Not <A HREF="annexg.html">BIGBASIC</A>):
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=8>
+<TR><TD>Number of parameters</TD><TD>1 byte (at BP)</TD></TR>
+<TR><TD> </TD></TR>
+<TR><TD>Parameter type</TD><TD>1 byte (at BP+1)</TD></TR>
+<TR><TD>Parameter address</TD><TD>2 bytes (at BP+2 BP+3 LSB first)</TD></TR>
+<TR><TD> </TD></TR>
+<TR><TD>Parameter type</TD><TD>)repeated as often as necessary.</TD></TR>
+<TR><TD>Parameter address</TD><TD>)</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+Except in the case of a movable string (normal string variable), the 
+parameter address given is the absolute address at which the item 
+is stored.  In the case of movable strings (type 129), it is the address 
+of a parameter block containing the current length, the maximum length 
+and the start address of the string, in that order
+
+<H3><A NAME="callformats">Parameter Formats</A></H3>
+
+Integer variables are stored in 
+twos complement format with their least significant byte first.
+<P>
+Fixed 
+strings are stored as the characters of the string followed by a carriage 
+return (&amp;0D).
+<P>
+Floating 
+point variables are stored in binary floating point format with their 
+least significant byte first.  The fifth byte is the exponent.  The 
+mantissa is stored as a binary fraction in sign and magnitude format.  Bit 
+7 of the most significant byte is the sign bit and, for the purposes 
+of calculating the magnitude of the number, this bit is assumed to 
+be set to one.  The exponent is stored as a positive integer in excess 
+127 format.  (To find the exponent subtract 127 from the value in 
+the fifth byte.)
+<P>
+If the exponent of a floating point number is zero, the number is 
+stored in integer format in the mantissa.  If the exponent is not 
+zero, then the variable has a floating point value.  Thus, an integer 
+can be stored in two different formats in a real variable.  For example, 
+5 can be stored as
+
+<BLOCKQUOTE>
+<TT>&amp; 00 00 00 05 00 &nbsp; </TT>Integer 5
+</BLOCKQUOTE>
+or
+<BLOCKQUOTE>
+<TT>&amp; 20 00 00 00 82 &nbsp; </TT>(.5+.125) * 2^3 = 5
+</BLOCKQUOTE>
+
+(the <TT>&amp;20</TT> becomes <TT>&amp;A0</TT> because the MSB is always assumed)
+
+<P>
+In the case of a movable string (normal string variable), the parameter 
+address points to the 'string descriptor'.  This descriptor gives 
+the current length of the string, the number of bytes allocated to 
+the string (the maximum length of the string) and the address of the 
+start of the string (LSB first).
+
+<H4><A NAME="calleg">Example</A></H4>
+
+The following segment of code is taken from the inventory 
+program in the <A HREF="bbcfile1.html">BBCBASIC(86) Disk Files</A> section.
+There are no native 
+clear-to-end-of-line or clear-to-end-of-screen functions.  These two 
+functions are provided by the program segment below which makes use 
+of the standard MS-DOS (PC DOS) INT&amp;10 routine.  The machine code 
+element is limited to line PROC_assemble which starts at line 3610.  (See 
+the MS-DOS Programmers' Guide for details of the action of INT&amp;10.)
+<P>
+This program segment makes room for the simple assembly language routine 
+which is called by the clear to end of line/screen procedures and 
+then assembles the routine.  Only one pass is needed because there 
+are no forward references.  (See the 'Assembler' section for details.)
+
+<BLOCKQUOTE>
+<PRE>
+2080 DIM code 3
+2090 PROC_assemble
+</PRE>
+</BLOCKQUOTE>
+
+The two following 
+procedures rely on <A HREF="bbckey3.html#mode">MODE</A> 3 being selected.
+They will not work 
+properly if a graphics mode has been selected or if some characters 
+on the screen have attributes set.
+
+<BLOCKQUOTE>
+<PRE>
+3450 DEF PROC_cteol
+3460 LOCAL x
+3470 x=POS
+3480 A%=&amp;A20:B%=0:C%=80-x:D%=0
+</PRE>
+</BLOCKQUOTE>
+
+(Write space character 80-x times from the current cursor position.)
+
+<BLOCKQUOTE>
+<PRE>
+3490 CALL int10
+3500 ENDPROC
+3510 :
+3520 :
+3530 DEF PROC_cteos
+3540 LOCAL x,y
+3550 x=POS:y=VPOS
+3560 A%=&amp;A20:B%=0:C%=80-x+(24-y)*80:D%=0
+</PRE>
+</BLOCKQUOTE>
+
+(Write space character 80-x + (24-y)*80 times from the current 
+cursor position.)
+
+<BLOCKQUOTE>
+<PRE>
+3570 CALL int10
+3580 ENDPROC
+3590 :
+3600 :
+3610 DEF PROC_assemble
+3620 P%=code
+3630 [OPT 2
+3640 .int10 INT &amp;10
+3650 RETF:]
+3660 ENDPROC
+</PRE>
+</BLOCKQUOTE>
+
+You could perform a similar function by setting the text window to 
+the area of the screen you wished to clear and then issuing the CLS 
+command.  This would have the advantage of being less dependent on 
+the computer's hardware interface.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+CALL &lt;numeric&gt;{,&lt;n-var&gt;|&lt;s-var&gt;}
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#usr">USR</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="chain">CHAIN</A></H2></TD>
+<TD ALIGN=right><H2>CH.</H2></TD></TR></TABLE>
+
+A statement which loads and runs the program whose name is specified 
+in the argument.
+
+<BLOCKQUOTE>
+<PRE>
+CHAIN "GAME1"
+CHAIN A$
+</PRE>
+</BLOCKQUOTE>
+
+The program file must be in tokenised format.
+<P>
+All but the static variables @% to Z% are <A HREF="#clear">CLEAR</A>ed.
+<P>
+CHAIN sets ON ERROR OFF before chaining the specified program.
+<P>
+<A HREF="bbckey4.html#run">RUN</A> may be used as an alternative to CHAIN.
+<P>
+You can use CHAIN (or RUN) to link program modules together.  This 
+allows you to write modular programs which would, if written in one 
+piece, be too large for the memory available.
+<P>
+Passing 
+data between CHAINed programs can be a bit of a problem because COMMON 
+variables cannot be declared and all but the static variables are 
+cleared by CHAIN.
+<P>
+If you wish to pass large amounts of data between CHAINed programs, 
+you should use a data file.  However, if the amount of data to be 
+passed is small and you do not wish to suffer the time penalty of 
+using a data file, you can pass data to the CHAINed program by using 
+the indirection operators to store them at known addresses.  The safest 
+way to do this is to move <A HREF="bbckey2.html#himem">HIMEM</A> down
+and store common data at the top of memory.
+<P>
+The following sample program segment moves HIMEM down 100 bytes and 
+stores the input and output file names in the memory above HIMEM.  There 
+is, of course, still plenty of room for other data in this area.
+
+<BLOCKQUOTE>
+<PRE>
+100 HIMEM=HIMEM-100
+110 $HIMEM=in_file$
+120 $(HIMEM+13)=out_file$
+130 CHAIN "NEXTPROG"
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+CHAIN &lt;str&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey2.html#load">LOAD</A>,
+<A HREF="bbckey4.html#run">RUN</A>,
+<A HREF="bbckey4.html#save">SAVE</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="chr">CHR$</A></H2>
+
+A function which returns a string of length 1 containing the ASCII 
+character specified by the least significant byte of the numeric argument.
+
+<BLOCKQUOTE>
+<PRE>
+A$=CHR$(72)
+B$=CHR$(12)
+C$=CHR$(A/200)
+</PRE>
+</BLOCKQUOTE>
+
+CHR$ generates an ASCII character 
+(symbol, letter, number character, control character, etc) from the 
+number given.  The number specifies the position of the generated 
+character in the ASCII table (See <A HREF="annexa.html">Annex A</A>).
+For example:
+
+<BLOCKQUOTE>
+<PRE>
+char$=CHR$(65)
+</PRE>
+</BLOCKQUOTE>
+
+will set char$ equal to the character 'A'.
+
+You can use CHR$ to send a special 
+character to the terminal or printer.  (Generally, <A HREF="bbckey4.html#vdu">VDU</A>
+is better for sending characters to the screen.) For example,
+
+<BLOCKQUOTE>
+<PRE>
+CHR$(7)
+</PRE>
+</BLOCKQUOTE>
+
+will generate the ASCII character ^G.  So,
+
+<BLOCKQUOTE>
+<PRE>
+PRINT "ERROR"+CHR$(7)
+</PRE>
+</BLOCKQUOTE>
+
+will print the message 'ERROR' and sound the PC's 'bell'.
+<P>
+CHR$ is the complement of <A HREF="#asc">ASC</A>.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;s-var&gt;=CHR$(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#asc">ASC</A>,
+<A HREF="bbckey4.html#str">STR$</A>,
+<A HREF="bbckey4.html#val">VAL</A>,
+<A HREF="bbckey4.html#vdu">VDU</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="clear">CLEAR</A></H2></TD>
+<TD ALIGN=right><H2>CL.</H2></TD></TR></TABLE>
+
+A statement which clears all the dynamically declared variables, including 
+strings.  CLEAR does not affect the static variables.
+<P>
+The CLEAR command tells BBCBASIC(86) to 'forget' about ALL the dynamic 
+variables used so far.  This includes strings and arrays, but the 
+static variables (@% to Z%) are not altered.
+<P>
+You can use the <A HREF="bbc2.html#indirection">indirection</A>
+operators to store integers and strings at known addresses 
+and these will not be affected by CLEAR.  However, you will need to 
+'protect' the area of memory used.  The easiest way to do this is 
+to move <A HREF="bbckey2.html#himem">HIMEM</A> down.
+See <A HREF="#chain">CHAIN</A> for an example.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+CLEAR
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+None
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="close">CLOSE#</A></H2></TD>
+<TD ALIGN=right><H2>CLO.#</H2></TD></TR></TABLE>
+
+A statement used to close a data file.  CLOSE #0 will close all data 
+files.
+
+<BLOCKQUOTE>
+<PRE>
+CLOSE#file_num
+CLOSE#0
+</PRE>
+</BLOCKQUOTE>
+
+You use CLOSE# to tell BBCBASIC(86) that you have completely finished 
+with a data file for this phase of the program.  Any data still in 
+the file buffer is written to the file before the file is closed.
+<P>
+You can open and close a file several times within one program, but 
+it is generally considered 'better form' not to close a file until 
+you have finally finished with it.  However, if you wish to <A HREF="#clear">CLEAR</A> 
+the variables, it is simpler if you close the data files first.
+<P>
+You should also close data files before chaining 
+another program.  <A HREF="#chain">CHAIN</A> does not automatically close data files, but 
+it does clear the variables in which the file handles were stored.  You 
+can still access the open file if you have used one of the static 
+variables (A% to Z%) to store the file handle.  Alternatively, you 
+could reserve an area of memory (by moving <A HREF="bbckey2.html#himem">HIMEM</A>
+down for example) and use the byte indirection operator to store the file handle.  (See 
+the keyword <A HREF="#chain">CHAIN</A> for more details.)
+<P>
+<A HREF="#end">END</A> or 'dropping 
+off' the end of a program will also close all open data files.  However, 
+<A HREF="bbckey4.html#stop">STOP</A> does not close data files.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+CLOSE#&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#openin">OPENIN</A>,
+<A HREF="bbckey3.html#openup">OPENUP</A>,
+<A HREF="bbckey3.html#openout">OPENOUT</A>,
+<A HREF="bbckey4.html#print">PRINT#</A>,
+<A HREF="bbckey2.html#inputhash">INPUT#</A>,
+<A HREF="#bput">BPUT#</A>,
+<A HREF="#bget">BGET#</A>,
+<A HREF="bbckey2.html#ext">EXT#</A>, 
+<A HREF="bbckey4.html#ptr">PTR#</A>,
+<A HREF="bbckey2.html#eof">EOF#</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="clg">CLG</A></H2>
+
+A statement which clears the graphics area of the screen and sets 
+it to the currently selected graphics background colour using the 
+current background plotting action (set by <A HREF="bbckey2.html#gcol">GCOL</A>).
+The position of the graphics cursor is unchanged.
+<P>
+See the <A HREF="graphics.html">Graphics and Colours</A> section
+or <A HREF="bbckey2.html#gcol">GCOL</A> for more information 
+on graphics colours.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+CLG
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#cls">CLS</A>,
+<A HREF="bbckey2.html#gcol">GCOL</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="cls">CLS</A></H2>
+
+A statement which clears the text area of the screen and sets it to 
+the currently selected text background colour.  The text cursor is 
+moved to the 'home' position (0,0) at the top left-hand corner of 
+the text area.
+<P>
+See the <A HREF="graphics.html">Graphics and Colours</A> section
+or <A HREF="#colour">COLOUR</A> for more information on text colours.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+CLS
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#clg">CLG</A>,
+<A HREF="#colour">COLOUR</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="colour">COLOUR</A> <SMALL>(COLOR)</SMALL></H2></TD>
+<TD ALIGN=right><H2>C.</H2></TD></TR></TABLE>
+
+You can set the text foreground and background colours with the COLOUR 
+(or <A HREF="vdu.html#vdu17">VDU 17</A>) command.
+<P>
+The keyword COLOUR is followed by a number.  If the number 
+is less than 128, the colour of the text is set.  If the number is 
+128 or greater, the colour of the background is set.
+<P>
+There are up to 16 logical colours, but the 
+number available varies with the mode.  The logical colour numbers 
+available to each mode are listed below with the physical colours 
+allocated to them on power-up.
+
+<H3><A NAME="colour2">Two Colour Graphics Mode</A></H3>
+
+<H4>Mode 0</H4>
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=8>
+<TR><TH>Foreground</TH><TH>Background</TH><TH ALIGN=left>Colour</TH></TR>
+<TR><TD>COLOUR 0</TD><TD>COLOUR 128</TD><TD>Black</TD></TR>
+<TR><TD>COLOUR 1</TD><TD>COLOUR 129</TD><TD>White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+You can change the physical to logical colour mapping 
+(palette) using the <A HREF="vdu.html#vdu19">VDU 19</A> command.
+
+<H3><A NAME="colour4">Four Colour Graphics Modes</A></H3>
+
+<H4>Modes 1, 2, 4 &amp; 5</H4>
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=8>
+<TR><TH>Foreground</TH><TH>Background</TH><TH ALIGN=left>Colour</TH></TR>
+<TR><TD>COLOUR 0</TD><TD>COLOUR 128</TD><TD>Black</TD></TR>
+<TR><TD>COLOUR 1</TD><TD>COLOUR 129</TD><TD>Magenta</TD></TR>
+<TR><TD>COLOUR 2</TD><TD>COLOUR 130</TD><TD>Cyan</TD></TR>
+<TR><TD>COLOUR 3</TD><TD>COLOUR 131</TD><TD>White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+You can change the physical to logical colour mapping (palette) using 
+the <A HREF="vdu.html#vdu19">VDU 19</A> command.
+
+<H3><A NAME="colour16">Sixteen Colour Graphics Modes</A></H3>
+
+<H4>Modes 8, 9, 10, 12, 13, 16 and 18</H4>
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=8>
+<TR><TH>Foreground</TH><TH>Background</TH><TH ALIGN=left>Colour</TH></TR>
+<TR><TD>COLOUR 0</TD><TD>COLOUR 128</TD><TD>Black</TD></TR>
+<TR><TD>COLOUR 1</TD><TD>COLOUR 129</TD><TD>Red</TD></TR>
+<TR><TD>COLOUR 2</TD><TD>COLOUR 130</TD><TD>Green</TD></TR>
+<TR><TD>COLOUR 3</TD><TD>COLOUR 131</TD><TD>Yellow</TD></TR>
+<TR><TD>COLOUR 4</TD><TD>COLOUR 132</TD><TD>Blue</TD></TR>
+<TR><TD>COLOUR 5</TD><TD>COLOUR 133</TD><TD>Magenta</TD></TR>
+<TR><TD>COLOUR 6</TD><TD>COLOUR 134</TD><TD>Cyan</TD></TR>
+<TR><TD>COLOUR 7</TD><TD>COLOUR 135</TD><TD>White</TD></TR>
+<TR><TD>COLOUR 8</TD><TD>COLOUR 136</TD><TD>Intensified Black</TD></TR>
+<TR><TD>COLOUR 9</TD><TD>COLOUR 137</TD><TD>Intensified Red</TD></TR>
+<TR><TD>COLOUR 10</TD><TD>COLOUR 138</TD><TD>Intensified Green</TD></TR>
+<TR><TD>COLOUR 11</TD><TD>COLOUR 139</TD><TD>Intensified Yellow</TD></TR>
+<TR><TD>COLOUR 12</TD><TD>COLOUR 140</TD><TD>Intensified Blue</TD></TR>
+<TR><TD>COLOUR 13</TD><TD>COLOUR 141</TD><TD>Intensified Magenta</TD></TR>
+<TR><TD>COLOUR 14</TD><TD>COLOUR 142</TD><TD>Intensified Cyan</TD></TR>
+<TR><TD>COLOUR 15</TD><TD>COLOUR 143</TD><TD>Intensified White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+You can change the physical to logical colour mapping 
+(palette) using the <A HREF="vdu.html#vdu19">VDU 19</A> command.
+
+<H3><A NAME="colourtext">Text Only Modes</A></H3>
+
+<H4>Modes 3, 6, 11 &amp; 14</H4>
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=8>
+<TR><TH>Foreground</TH><TH>Background</TH><TH ALIGN=left>Colour</TH></TR>
+<TR><TD>COLOUR 0</TD><TD>COLOUR 128</TD><TD>Black</TD></TR>
+<TR><TD>COLOUR 1</TD><TD>COLOUR 129</TD><TD>Red</TD></TR>
+<TR><TD>COLOUR 2</TD><TD>COLOUR 130</TD><TD>Green</TD></TR>
+<TR><TD>COLOUR 3</TD><TD>COLOUR 131</TD><TD>Yellow</TD></TR>
+<TR><TD>COLOUR 4</TD><TD>COLOUR 132</TD><TD>Blue</TD></TR>
+<TR><TD>COLOUR 5</TD><TD>COLOUR 133</TD><TD>Magenta</TD></TR>
+<TR><TD>COLOUR 6</TD><TD>COLOUR 134</TD><TD>Cyan</TD></TR>
+<TR><TD>COLOUR 7</TD><TD>COLOUR 135</TD><TD>White</TD></TR>
+<TR><TD>COLOUR 8</TD><TD> </TD><TD>Intensified Black</TD></TR>
+<TR><TD>COLOUR 9</TD><TD> </TD><TD>Intensified Red</TD></TR>
+<TR><TD>COLOUR 10</TD><TD> </TD><TD>Intensified Green</TD></TR>
+<TR><TD>COLOUR 11</TD><TD> </TD><TD>Intensified Yellow</TD></TR>
+<TR><TD>COLOUR 12</TD><TD> </TD><TD>Intensified Blue</TD></TR>
+<TR><TD>COLOUR 13</TD><TD> </TD><TD>Intensified Magenta</TD></TR>
+<TR><TD>COLOUR 14</TD><TD> </TD><TD>Intensified Cyan</TD></TR>
+<TR><TD>COLOUR 15</TD><TD> </TD><TD>Intensified White</TD></TR>
+<TR><TD>COLOUR 16</TD><TD> </TD><TD>Black</TD></TR>
+<TR><TD>COLOUR 17</TD><TD> </TD><TD>Flashing red</TD></TR>
+<TR><TD>COLOUR 18</TD><TD> </TD><TD>Flashing green</TD></TR>
+<TR><TD>COLOUR 19</TD><TD> </TD><TD>Flashing yellow</TD></TR>
+<TR><TD>COLOUR 20</TD><TD> </TD><TD>Flashing blue</TD></TR>
+<TR><TD>COLOUR 21</TD><TD> </TD><TD>Flashing magenta</TD></TR>
+<TR><TD>COLOUR 22</TD><TD> </TD><TD>Flashing cyan</TD></TR>
+<TR><TD>COLOUR 23</TD><TD> </TD><TD>Flashing white</TD></TR>
+<TR><TD>COLOUR 24</TD><TD> </TD><TD>Intensified Flashing black</TD></TR>
+<TR><TD>COLOUR 25</TD><TD> </TD><TD>Intensified Flashing red</TD></TR>
+<TR><TD>COLOUR 26</TD><TD> </TD><TD>Intensified Flashing green</TD></TR>
+<TR><TD>COLOUR 27</TD><TD> </TD><TD>Intensified Flashing yellow</TD></TR>
+<TR><TD>COLOUR 28</TD><TD> </TD><TD>Intensified Flashing blue</TD></TR>
+<TR><TD>COLOUR 29</TD><TD> </TD><TD>Intensified Flashing magenta</TD></TR>
+<TR><TD>COLOUR 30</TD><TD> </TD><TD>Intensified Flashing cyan</TD></TR>
+<TR><TD>COLOUR 31</TD><TD> </TD><TD>Intensified Flashing white</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+Flashing colours 
+alternate between the specified colour and the current background 
+colour.  You can only use the 'normal' colours for the background.
+<P>
+There is no normal palette in modes 3, 6, 11 and 14.  However, you 
+can change the physical to logical colour mapping with the 
+<A HREF="vdu.html#vdu19">VDU 19</A> command if you use the enhanced palette.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+COLOUR&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#vdu">VDU</A>,
+<A HREF="bbckey2.html#gcol">GCOL</A>,
+<A HREF="bbckey3.html#mode">MODE</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="cos">COS</A></H2>
+
+A function giving the cosine of its radian argument.
+
+<BLOCKQUOTE>
+<PRE>
+X=COS(angle)
+</PRE>
+</BLOCKQUOTE>
+
+This function returns the cosine of an angle.  The angle must be expressed 
+in radians, not degrees.
+<P>
+Whilst the computer is quite 
+happy dealing with angles expressed in radians, you may prefer to 
+express angles in degrees.  You can use the <A HREF="bbckey4.html#rad">RAD</A>
+function to convert an angle from degrees to radians.
+<P>
+The example below sets Y to the cosine of the angle 'degree_angle' 
+expressed in degrees.
+
+<BLOCKQUOTE>
+<PRE>
+Y=COS(RAD(degree_angle))
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=COS(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#sin">SIN</A>,
+<A HREF="bbckey4.html#tan">TAN</A>,
+<A HREF="#acs">ACS</A>,
+<A HREF="#asn">ASN</A>,
+<A HREF="#atn">ATN</A>,
+<A HREF="#deg">DEG</A>,
+<A HREF="bbckey4.html#rad">RAD</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="count">COUNT</A></H2></TD>
+<TD ALIGN=right><H2>COU.</H2></TD></TR></TABLE>
+
+A function returning the number of characters sent to the output stream 
+(VDU or printer) since the last new line.
+
+<BLOCKQUOTE>
+<PRE>
+char_count=COUNT
+</PRE>
+</BLOCKQUOTE>
+
+Characters with an <A HREF="annexa.html">ASCII</A> value of 
+less than 13 (carriage return/new-line/enter) have no effect on COUNT.
+<P>
+Because control characters above 13 are included in COUNT, 
+you cannot reliably use it to find the position of the cursor on the 
+screen.  If you need to know the cursor's horizontal position use 
+the <A HREF="bbckey3.html#pos">POS</A> function.
+<P>
+Count is NOT set to zero 
+if the output stream is changed using the <A HREF="opsys1.html#opt">*OPT</A> command.
+<P>
+The example below prints strings from the string array 'words$'.  The 
+strings are printed on the same line until the line length exceeds 
+65.  When the line length is in excess of 65, a new-line is printed.
+
+<BLOCKQUOTE>
+<PRE>
+ 90 ....
+100 PRINT
+110 FOR i=1 TO 1000
+120 PRINT words$(i);
+130 IF COUNT&gt;65 THEN PRINT
+140 NEXT
+150 ....
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=COUNT
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#pos">POS</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="data">DATA</A></H2></TD>
+<TD ALIGN=right><H2>D.</H2></TD></TR></TABLE>
+
+A program object which must precede all lists of data for use by the 
+<A HREF="bbckey4.html#read">READ</A> statement.
+<P>
+As for <A HREF="bbckey2.html#input">INPUT</A>, string values may
+be quoted or unquoted.  However, 
+quotes need to be used if the string contains commas or leading spaces.
+<P>
+Numeric values may include calculation so long as there are no keywords.
+<P>
+Data items in the list should be separated by a comma.
+
+<BLOCKQUOTE>
+<PRE>
+DATA 10.7,2,HELLO," THIS IS A COMMA,",1/3,PRINT
+DATA " This is a string with leading spaces."
+</PRE>
+</BLOCKQUOTE>
+
+You can use DATA in conjunction with <A HREF="bbckey4.html#read">READ</A> to 
+include data in your program which you may need to change from time 
+to time, but which does not need to be different every time you run 
+the program.
+<P>
+The following example program segment reads through a list of names 
+looking for the name in 'name$'.  If the name is found, the name and 
+age are printed.  If not, an error message is printed.
+
+<BLOCKQUOTE>
+<PRE>
+100 DATA FRED,17,BILL,21,ALLISON,21,NOEL,32
+110 DATA JOAN,26,JOHN,19,WENDY,35,ZZZZ,0
+120 REPEAT
+130 READ list$,age
+140 IF list$=name$ THEN PRINT name$,age
+150 UNTIL list$=name$ OR list$="ZZZZ"
+160 IF list$="ZZZZ" PRINT "Name not in list"
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+DATA &lt;s-const&gt;|&lt;n-const&gt;{,&lt;s-const&gt;|&lt;n-const&gt;}
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#read">READ</A>,
+<A HREF="bbckey4.html#restore">RESTORE</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="def">DEF</A></H2>
+
+A program object which must precede declaration of a user defined 
+function (<A HREF="bbckey2.html#fn">FN</A>) or procedure (<A HREF="bbckey4.html#proc">PROC</A>).  DEF must be used at the start 
+of a program line.
+<P>
+If DEF is encountered 
+during execution, the rest of the line is ignored.  As a consequence, 
+single line definitions can be put anywhere in the program.
+<P>
+Multi-line 
+definitions must not be executed.  The safest place to put multi-line 
+definitions is at the end of the main program after the <A HREF="#end">END</A> statement.
+<P>
+There is no speed advantage to be gained by placing function or procedure 
+definitions at the start of the program.
+
+<BLOCKQUOTE>
+<PRE>
+DEF FNMEAN ....
+DEF PROCJIM ....
+</PRE>
+</BLOCKQUOTE>
+
+In order to make the text more readable (always a GOOD THING) 
+the function or procedure name may start with an underline.
+
+<BLOCKQUOTE>
+<PRE>
+DEF FN_mean ....
+DEF PROC_Jim$ ....
+</PRE>
+</BLOCKQUOTE>
+
+Function and procedure names may end with a '$'.  This is not compulsory 
+for functions which return strings.
+<P>
+A procedure 
+definition is terminated by the statement <A HREF="#endproc">ENDPROC</A>.
+<P>
+A function definition is terminated by a statement which starts with 
+an equals (=) sign.  The function returns the value of the expression 
+to the right of the equals sign.
+<P>
+For examples of function and procedure declarations, see
+<A HREF="bbckey2.html#fn">FN</A> and <A HREF="bbckey4.html#proc">PROC</A>.  For 
+a general explanation of functions and procedures, refer to the
+<A HREF="bbc2.html#procedures">Procedures and Functions</A> sub-section in the
+<A HREF="bbc2.html">General Information</A> section.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+DEF PROC&lt;name&gt;[(&lt;s-var&gt;|&lt;n-var&gt;{,&lt;s-var&gt;|&lt;n-var&gt;})]
+DEF FN&lt;name&gt;[(&lt;s-var&gt;|&lt;n-var&gt;{,&lt;s-var&gt;|&lt;n-var&gt;})]
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#endproc">ENDPROC</A>,
+<A HREF="bbckey2.html#fn">FN</A>,
+<A HREF="bbckey4.html#proc">PROC</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="deg">DEG</A></H2>
+
+A function which converts radians to degrees.
+
+<BLOCKQUOTE>
+<PRE>
+degree_angle=DEG(PI/2)
+X=DEG(ATN(1))
+</PRE>
+</BLOCKQUOTE>
+
+You can use this function to convert an angle expressed in radians 
+to degrees.  One radian is approximately 57 degrees (actually 180/PI).  PI/2 
+radians is 90 degrees and <A HREF="bbckey3.html#pi">PI</A> radians is 180 degrees.
+<P>
+Using DEG is equivalent to multiplying the radian value by 180/PI, 
+but the result is calculated internally to a greater accuracy.
+<P>
+See <A HREF="#acs">ACS</A>, <A HREF="#asn">ASN</A> and
+<A HREF="#atn">ATN</A> for further examples of the use of DEG.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=DEG(&lt;numeric&gt;)
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#rad">RAD</A>,
+<A HREF="bbckey4.html#sin">SIN</A>,
+<A HREF="#cos">COS</A>,
+<A HREF="bbckey4.html#tan">TAN</A>,
+<A HREF="#acs">ACS</A>,
+<A HREF="#asn">ASN</A>,
+<A HREF="#atn">ATN</A>,
+<A HREF="bbckey3.html#pi">PI</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="delete">DELETE</A></H2></TD>
+<TD ALIGN=right><H2>DEL.</H2></TD></TR></TABLE>
+
+A command which deletes a group of lines from the program.  Both start 
+and end lines of the group will be deleted.
+<P>
+You can use DELETE to remove a number of lines from your program.  To 
+delete a single line, just type the line number followed by &lt;Enter&gt;.
+<P>
+The example below deletes all the lines between line 10 and 15 (inclusive).
+
+<BLOCKQUOTE>
+<PRE>
+DELETE 10,15
+</PRE>
+</BLOCKQUOTE>
+
+To delete up to a line from the beginning of the program, use 0 as 
+the first line number.  The following example deletes all the lines 
+up to (and including) line 120.
+
+<BLOCKQUOTE>
+<PRE>
+DELETE 0,120
+</PRE>
+</BLOCKQUOTE>
+
+To delete from a given line to the end of the program, use 65535 as 
+the last line number.  To delete from line 2310 to the end of the 
+program, type:
+
+<BLOCKQUOTE>
+<PRE>
+DELETE 2310,65535
+</PRE>
+</BLOCKQUOTE>
+
+A hyphen is an acceptable alternative to a comma.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+DELETE &lt;n-const&gt;,&lt;n-const&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#edit">EDIT</A>,
+<A HREF="bbckey2.html#list">LIST</A>,
+<A HREF="bbckey3.html#old">OLD</A>,
+<A HREF="bbckey3.html#new">NEW</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="dim">DIM</A></H2>
+
+There are two quite different uses for the DIM statement: the first 
+dimensions an array and the second reserves an area of memory for 
+special applications.
+
+<H3><A NAME="dimarrays">Dimensioning Arrays</A></H3>
+
+The DIM statement is used to declare arrays.  Arrays must be pre-declared 
+before use and they must not be re-dimensioned.  Both numeric and 
+string arrays may be multi dimensional.
+
+<BLOCKQUOTE>
+<PRE>
+DIM A(2),Ab(2,3),A$(2,3,4),A%(3,4,5,6)
+</PRE>
+</BLOCKQUOTE>
+
+After DIM, all elements in the array are 0/null.
+<P>
+The subscript 
+base is 0, so <TT>DIM X(12)</TT> defines an array of 13 elements.
+<P>
+Arrays are like lists or tables.  A list of 
+names is a single dimension array.  In other words, there is only 
+one column - the names.  Its single dimension in a DIM statement would 
+be the maximum number of names you expected in the table less 1. 
+<P>
+If you wanted to describe the position of the pieces on a chess board 
+you could use a two dimensional array.  The two dimensions would represent 
+the row (numbered 0 to 7) and the column (also numbered 0 to 7).  The 
+contents of each 'cell' of the array would indicate the presence (if 
+any) of a piece and its value.
+
+<BLOCKQUOTE>
+<PRE>
+DIM chess_board(7,7)
+</PRE>
+</BLOCKQUOTE>
+
+Such an array would only represent the chess board at one moment of 
+play.  If you wanted to represent a series of board positions you 
+would need to use a three dimensional array.  The third dimension would 
+represent the 'move number'.  Each move would use about 320 bytes 
+of memory, so you could record 40 moves in about 12.5k bytes.
+
+<BLOCKQUOTE>
+<PRE>
+DIM chess_game(7,7,40)
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="dimreserving">Reserving an Area of Memory</A></H3>
+
+A DIM statement is used to reserve an area of memory which the interpreter 
+will not then use.  The variable in the DIM statement is set by BBCBASIC(86) 
+to the start address of this memory area.  This reserved area can 
+be used by the indirection operators, machine code, etc.
+<P>
+The example below reserves 68 bytes of memory and sets A% equal to the address of the first byte.  Thus A%?0 to A%?67 are free for use by the program (68 bytes in all):
+
+<BLOCKQUOTE>
+<PRE>
+DIM A% 67
+</PRE>
+</BLOCKQUOTE>
+
+A '<A HREF="annexc.html#dimspace">DIM space</A>' error will 
+occur if a size of less than -1 is used 
+(DIM P% -2).  DIM P%-1 is a special case; it reserves zero 
+bytes of memory.  This is of more use than you might think, since 
+it tells you the limit of the dynamic variable allocation. Thus,
+
+<BLOCKQUOTE>
+<PRE>
+DIM P% -1
+PRINT HIMEM-P%
+</PRE>
+</BLOCKQUOTE>
+
+is the equivalent of PRINT FREE(0) in some other versions of BASIC.
+
+See the <A HREF="bbc3.html">Assembler</A> section for a more detailed description of the 
+use of DIM for reserving memory for machine code programs.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+DIM &lt;n-var&gt;|&lt;s-var&gt;(&lt;numeric&gt;{,&lt;numeric&gt;})
+DIM &lt;n-var&gt; &lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#clear">CLEAR</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="div">DIV</A></H2>
+
+A binary operation giving the integer quotient of two items.  The 
+result is always an integer.
+
+<BLOCKQUOTE>
+<PRE>
+X=A DIV B
+y=(top+bottom+1) DIV 2
+</PRE>
+</BLOCKQUOTE>
+
+You can use this function to give the 'whole number' part of the answer 
+to a division.  For example,
+
+<BLOCKQUOTE>
+<PRE>
+21 DIV 4
+</PRE>
+</BLOCKQUOTE>
+
+would give 5 (with a 'remainder' of 1).  
+<P>
+Whilst it is possible to use DIV 
+with real numbers, it is really intended for use with integers.  If 
+you do use real numbers, BBCBASIC(86) converts them to integers by 
+truncation before DIViding them.  
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+&lt;n-var&gt;=&lt;numeric&gt; DIV &lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#mod">MOD</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="draw">DRAW</A></H2>
+
+A statement which draws a line on the screen in the graphics modes.  The 
+statement is followed by the X and Y coordinates of the end of the 
+line.
+<P>
+The start of the line is either the end of the last line drawn or 
+a point specified by a MOVE statement.  
+<P>
+The graphics origin (X=0, Y=0) is normally the bottom left of the 
+screen.  The origin can be changed using the <A HREF="vdu.html#vdu29">VDU29</A>
+command (graphics modes only).
+See the <A HREF="graphics.html">Graphics and Colours</A> section for more details.
+<P>
+The line is drawn in the current graphics foreground colour.  This 
+colour can be changed using the <A HREF="bbckey2.html#gcol">GCOL</A> statement.
+
+<BLOCKQUOTE>
+<PRE>
+DRAW x,y
+
+MOVE 200,300
+DRAW 640,800
+</PRE>
+</BLOCKQUOTE>
+
+This statement is identical to <A HREF="bbckey3.html#plot">PLOT</A> 5.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+DRAW &lt;numeric&gt;,&lt;numeric&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey3.html#mode">MODE</A>,
+<A HREF="bbckey3.html#plot">PLOT</A>,
+<A HREF="bbckey3.html#move">MOVE</A>,
+<A HREF="#clg">CLG</A>,
+<A HREF="bbckey4.html#vdu">VDU</A>,
+<A HREF="bbckey2.html#gcol">GCOL</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="edit">EDIT</A></H2></TD>
+<TD ALIGN=right><H2>E.</H2></TD></TR></TABLE>
+
+A command to edit or concatenate and edit the specified program line(s).  The 
+specified lines (including their line numbers) are listed as a single 
+line.  By changing only the line number, you can also use EDIT to 
+duplicate a line.
+
+<BLOCKQUOTE>
+<PRE>
+EDIT 230
+EDIT 200,230
+</PRE>
+</BLOCKQUOTE>
+
+The following control 
+functions are active in both the immediate and edit modes.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TD><IMG SRC="uarr.gif" ALT="Up" WIDTH=15 HEIGHT=15></TD><TD>Move the cursor up.</TD></TR>
+<TR><TD><IMG SRC="darr.gif" ALT="Down" WIDTH=15 HEIGHT=15></TD><TD>Move the cursor down.</TD></TR>
+<TR><TD><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15></TD><TD>Move the cursor left one character.</TD></TR>
+<TR><TD><IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></TD><TD>Move the cursor right one character.</TD></TR>
+<TR><TD>Ctrl/<IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15></TD><TD>Move the cursor to the start of the line.</TD></TR>
+<TR><TD>Ctrl/<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></TD><TD>Move the cursor to the end of the line.</TD></TR>
+<TR><TD>BackSpace</TD><TD>Backspace and delete</TD></TR>
+<TR><TD>Delete</TD><TD>Delete the character at the cursor.</TD></TR>
+<TR><TD>Insert</TD><TD>Toggle between the insert and overwrite modes. In the insert mode, the cursor is an underline; in the overwrite mode it fills the character cell.</TD></TR>
+<TR><TD>Ctrl/U</TD><TD>Clear line to the left of the cursor.</TD></TR>
+<TR><TD>Ctrl/Enter</TD><TD>Clear the line to the right of the cursor.</TD></TR>
+<TR><TD>Enter</TD><TD>Enter the line and exit the edit mode.</TD></TR>
+<TR><TD>Esc</TD><TD>Abort and leave the line unchanged.</TD></TR>
+<TR><TD>Ctrl/P</TD><TD>Toggle the output to the printer.</TD></TR>
+<TR><TD>Tab</TD><TD>Copy key. See the <A HREF="bbc2.html#editing">Editing</A> sub-section of the <A HREF="bbc2.html">General Information</A> section for more details.</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+To abort the edit and leave the line unchanged, press &lt;Esc&gt;.
+<P>
+You can use this command to edit and join (concatenate) program lines.  When 
+you use it to join lines, remember to delete any unwanted ones.  The 
+following example concatenates lines 120 to 150.
+
+<BLOCKQUOTE>
+<PRE>
+EDIT 120,150
+</PRE>
+</BLOCKQUOTE>
+
+EDIT on its own will start at the beginning of the program and concatenate 
+as many lines as it can.  This process will stop when the concatenated 
+line length exceeds 255.
+<P>
+A screen editor is also provided.  See the <A HREF="bbc2.html#editing">Editing</A>
+sub-section in the <A HREF="bbc2.html">General Information</A> section and the command
+<A HREF="opsys1.html#edit">*EDIT</A> in the <A HREF="opsys0.html">Operating 
+System Interface</A> section for details.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+EDIT &lt;l-num&gt;
+EDIT &lt;l-num&gt;,&lt;l-num&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#delete">DELETE</A>,
+<A HREF="bbckey2.html#list">LIST</A>,
+<A HREF="bbckey3.html#old">OLD</A>,
+<A HREF="bbckey3.html#new">NEW</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<TABLE WIDTH="100%">
+<TR><TD><H2><A NAME="else">ELSE</A></H2></TD>
+<TD ALIGN=right><H2>EL.</H2></TD></TR></TABLE>
+
+A statement delimiter which provides an alternative course of action 
+in <A HREF="bbckey2.html#if">IF</A>...<A HREF="bbckey4.html#then">THEN</A>, <A HREF="bbckey3.html#on">ON...GOSUB</A>, <A HREF="bbckey3.html#on">ON...GOTO</A>
+and <A HREF="bbckey3.html#on">ON...PROC</A> statements.
+<P>
+In an <A HREF="bbckey2.html#if">IF</A> statement, if the test is 
+<A HREF="bbckey2.html#false">FALSE</A>, the statements after ELSE will be executed.
+This makes the following work:
+
+<BLOCKQUOTE>
+<PRE>
+IF A=B THEN B=C ELSE B=D
+IF A=B THEN B=C:PRINT"WWW" ELSE B=D:PRINT"QQQ"
+IF A=B THEN B=C ELSE IF A=C THEN...............
+</PRE>
+</BLOCKQUOTE>
+
+In a multi statement line 
+containing more than one <A HREF="bbckey2.html#if">IF</A>,
+the statement(s) after the ELSE delimiter 
+will be actioned if ANY of the tests fail.  For instance, the example 
+below would print the error message '<TT>er$</TT>' if 'x' did not equal 
+3 OR if 'a' did not equal 'b'.
+
+<BLOCKQUOTE>
+<PRE>
+IF x=3 THEN IF a=b THEN PRINT a$ ELSE PRINT er$
+</PRE>
+</BLOCKQUOTE>
+
+If you want to 'nest' the tests, you should use 
+a procedure call.  The following example, would print 'Bad' ONLY if 
+x was equal to 3 AND 'a' was not equal to 'b'.
+
+<BLOCKQUOTE>
+<PRE>
+IF x=3 THEN PROC_ab_test
+....
+
+....
+DEF PROC_ab_test
+IF a=b THEN PRINT a$ ELSE PRINT er$
+ENDPROC
+</PRE>
+</BLOCKQUOTE>
+
+You can use ELSE with <A HREF="bbckey3.html#on">ON...GOSUB</A>,
+<A HREF="bbckey3.html#on">ON...GOTO</A> and <A HREF="bbckey3.html#on">ON...PROC</A>
+statements to prevent an out of range control variable causing an 
+'<A HREF="annexc.html#onrange">ON range</A>' error.
+
+<BLOCKQUOTE>
+<PRE>
+ON action GOTO 100, 200, 300 ELSE PRINT "Error"
+ON number GOSUB 100,200,300 ELSE PRINT "Error"
+ON value PROCa,PROCb,PROCc ELSE PRINT "Error"
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+IF &lt;t-cond&gt; THEN &lt;stmt&gt; ELSE &lt;stmt&gt;
+ON &lt;n-var&gt; GOTO &lt;l-num&gt;{,&lt;l-num&gt;} ELSE &lt;stmt&gt;
+ON &lt;n-var&gt; GOSUB &lt;l-num&gt;{,&lt;l-num&gt;} ELSE &lt;stmt&gt;
+ON &lt;n-var&gt; PROC&lt;name&gt;{,PROC&lt;name&gt;} ELSE &lt;stmt&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords:</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey2.html#if">IF</A>,
+<A HREF="bbckey4.html#then">THEN</A>,
+<A HREF="bbckey3.html#on">ON</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="end">END</A></H2>
+
+A statement causing the interpreter to return to direct mode. There 
+can be any number (&gt;=0) of END statements anywhere in a program.  END 
+closes all open data files.
+<P>
+END tells BBCBASIC(86) that it has reached the end of the program.  You 
+don't have to use END, just 'running out of program' will have the 
+same effect, but it's a bit messy.
+<P>
+You can use END within, for instance, an <A HREF="bbckey2.html#if">IF</A>...<A HREF="bbckey4.html#then">THEN</A>...<A HREF="#else">ELSE</A> statement 
+to stop your program if certain conditions are satisfied.  You should 
+also use END to stop BBCBASIC(86) 'running into' any procedure or 
+function definitions at the end of your program.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+END
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#stop">STOP</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="endproc">ENDPROC</A></H2>
+
+A statement denoting the end of a procedure.
+<P>
+All local variables and the dummy arguments are restored at 
+ENDPROC and the program returns to the statement after the calling 
+statement.
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<PRE>
+ENDPROC
+</PRE>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="#def">DEF</A>,
+<A HREF="bbckey2.html#fn">FN</A>,
+<A HREF="bbckey4.html#proc">PROC</A>,
+<A HREF="bbckey2.html#local">LOCAL</A>
+</TT>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="envelope">ENVELOPE</A></H2>
+
+A statement which is used, in conjunction with the <A HREF="bbckey4.html#sound">SOUND</A>
+statement, to control the pitch of a sound whilst it is playing.
+<P>
+During its 'life' the volume and 
+pitch of a sound may change.  The variation of volume with time is 
+called the amplitude envelope and the variation of pitch with time 
+is called the pitch envelope.  In BBC BASIC, there are four phases of 
+loudness (the attack phase, the decay phase, the sustain phase and 
+the release phase) and three phases of pitch.  The four amplitude phases 
+and the three pitch phases are defined separately based on a common 'step' 
+duration.
+<P>
+Because of hardware limitations, 
+the ENVELOPE statement in PC BBCBASIC(86) is restricted.  It is implemented 
+to the same extent as on the Acorn Electron.  That is, the pitch envelope 
+is implemented, but the amplitude envelope is not.
+<P>
+You may use the ENVELOPE statement to define up to 12 different pitch 
+envelopes.  Envelopes 1 to 4 may be freely used.  Envelopes 5 to 12 
+may be used provided no file-related operations (including star commands) 
+are performed.  If a file operation is performed, it will work correctly, 
+but the envelope data may be corrupted.
+<P>
+The envelopes are referred to by number in the <A HREF="bbckey4.html#sound">SOUND</A>
+statement.
+<P>
+The ENVELOPE statement has 14 parameters.  The syntax of the ENVELOPE 
+statement is:
+
+<BLOCKQUOTE>
+<PRE>
+ENVELOPE &lt;parameter list&gt;
+</PRE>
+</BLOCKQUOTE>
+
+The parameter list has the format shown below.  All the 
+parameters must be supplied, but because only the pitch envelope is 
+implemented, the last 6 parameters of the ENVELOPE statement are ignored. 
+
+<BLOCKQUOTE>
+<PRE>
+N,T,PI1,PI2,PI3,PN1,PN2,PN3,AA,AD,AS,AR,ALA,ALD
+</PRE>
+</BLOCKQUOTE>
+
+For compatibility with the BBC Micro, the last 6 parameters are best set to 126, 0, 
+0, -126, 126 and 126.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TH ALIGN=left>Param</TH><TH ALIGN=left>Range</TH><TH ALIGN=left>Function</TH></TR>
+<TR><TD>N</TD><TD>1 to 4(12)</TD><TD>Envelope number.</TD></TR>
+<TR><TD>T(bits 0-6)&nbsp;</TD><TD>0 to 127</TD><TD>Length of each step in hundredths
+of a second.</TD></TR>
+<TR><TD>T(bit 7)</TD><TD>0 or 1</TD><TD>0=Auto repeat the pitch envelope.<BR>
+1=Don't auto repeat.</TD></TR>
+<TR><TD>PI1</TD><TD>-128 to 127&nbsp;</TD><TD>Change of pitch per step in section 1.</TD></TR>
+<TR><TD>PI2</TD><TD>-128 to 127</TD><TD>Change of pitch per step in section 2.</TD></TR>
+<TR><TD>PI3</TD><TD>-128 to 127</TD><TD>Change of pitch per step in section 3.</TD></TR>
+<TR><TD>PN1</TD><TD>0 to 255</TD><TD>Number of steps in section 1.</TD></TR>
+<TR><TD>PN2</TD><TD>0 to 255</TD><TD>Number of steps in section 2.</TD></TR>
+<TR><TD>PN3</TD><TD>0 to 255</TD><TD>Number of steps in section 3.</TD></TR>
+<TR><TD COLSPAN="3">The following parameters have no effect in BBCBASIC(86):</TD></TR>
+<TR><TD>AA</TD><TD>Set to 126</TD><TD>Change of amplitude per step during the attack phase.</TD></TR>
+<TR><TD>AD</TD><TD>Set to 0</TD><TD>Change of amplitude per step during the decay phase.</TD></TR>
+<TR><TD>AS</TD><TD>Set to 0</TD><TD>Change of amplitude per step during the sustain phase.</TD></TR>
+<TR><TD>AR</TD><TD>Set to -126</TD><TD>Change of amplitude per step during the release phase.</TD></TR>
+<TR><TD>ALA</TD><TD>Set to 126</TD><TD>Target of level at the end of the attack phase.</TD></TR>
+<TR><TD>ALD</TD><TD>Set to 126</TD><TD>Target of level at the end of decay phase.</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+<H3>Syntax</H3>
+<BLOCKQUOTE>
+<TT>
+ENVELOPE &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;, &lt;numeric&gt;
+</TT>
+</BLOCKQUOTE>
+
+<H3>Associated Keywords</H3>
+<BLOCKQUOTE>
+<TT>
+<A HREF="bbckey4.html#sound">SOUND</A>
+</TT>
+</BLOCKQUOTE>
+
+<P>
+<TABLE WIDTH="100%">
+<TR><TD><H3><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15>
+<A HREF="index.html">CONTENTS</A></H3></TD>
+<TD ALIGN=right><H3><A HREF="bbckey2.html">CONTINUE</A>
+<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></H3></TD></TR></TABLE>
+<HR>
+<A href="http://www.anybrowser.org/"><img border=0 align=left src="logoab8.gif" alt="Best viewed with Any Browser" height=31 width=88></A>
+<A href="http://validator.w3.org/"><img border=0 align=right src="vh32.gif" alt="Valid HTML 3.2!" height=31 width=88></A>
+<CENTER>&copy; Doug Mounter and 
+<A HREF="mailto:richard&#64;rtrussell.co.uk">Richard Russell</A></CENTER>
+</BODY>
+
+</HTML>

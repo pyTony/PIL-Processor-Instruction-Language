@@ -47,18 +47,16 @@ pub enum Operation {
 }
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
-pub const SYSTEM_RANGES:usize=10;
 #[derive(Clone,Debug,PartialEq,Eq)]
-/// `fetch_base+start..fetch_base+end` is the program; `system` holds host-provided
-/// code ranges (such as Dine's case-map routine and interrupt entries) and waiting
-/// parent programs in EXEC that may run interrupt handlers.
-pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>}
+/// `fetch_base+start..fetch_base+end` is the program; `system` is one more linear
+/// range of host-provided code (such as Dine's case-map routine) that may run.
+pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:(u32,u32),pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>}
 impl Image {
     // Keep the imported physical code window fixed when CS changes.
     pub fn contains_offset(&self,offset:u32)->bool{
         let at=u64::from(self.segments[1].base)+u64::from(offset);
         (at>=u64::from(self.fetch_base)+u64::from(self.start)&&at<u64::from(self.fetch_base)+u64::from(self.end))
-            ||self.system.iter().any(|&(s,e)|at>=u64::from(s)&&at<u64::from(e))
+            ||(at>=u64::from(self.system.0)&&at<u64::from(self.system.1))
     }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
     pub fn segment_state(&self)->SegmentState{SegmentState{msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,flag_checkpoint:self.flag_checkpoint}}
@@ -73,7 +71,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:(0,0),segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -88,7 +86,7 @@ impl Image {
             SegmentAccess::Code{readable}=>readable,
             _=>false,
         };
-        if readable && last_off<=u64::from(cs.limit) && ((lin_start>=img_start && lin_end<=img_end)||self.system.iter().any(|&(s,e)|lin_start>=u64::from(s)&&lin_end<=u64::from(e))) && lin_end<=0x1_0000_0000 {
+        if readable && last_off<=u64::from(cs.limit) && ((lin_start>=img_start && lin_end<=img_end)||(lin_start>=u64::from(self.system.0)&&lin_end<=u64::from(self.system.1))) && lin_end<=0x1_0000_0000 {
             if let Some(slice)=ram.bytes().get(lin_start as usize..lin_end as usize) {
                 let mut bytes=[0u8;15];
                 bytes[..length as usize].copy_from_slice(slice);
@@ -285,7 +283,7 @@ impl Image {
             }
             0xc6|0xc7=>{
                 if opcode==0xc6{w=8;}
-                let m=r.byte()?;if (m>>3)&7!=0{return Err(GuestError::Decode("MOV immediate requires group extension0".into()));}
+                let m=r.byte()?;if (m>>3)&7!=0{return Err(GuestError::Decode("MOV immediate requires group extension 0".into()));}
                 dst=view((m&7)as usize,w);src=dst;
                 let memory=m>>6!=3;
                 if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});}
@@ -475,18 +473,6 @@ impl Image {
                 let name=if opcode==0x27{"daa"}else{"das"};
                 (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
             }
-            0x37|0x3f=>{
-                w=16;dst=view(0,w);src=dst;
-                let name=if opcode==0x37{"aaa"}else{"aas"};
-                (name.to_ascii_uppercase(),compile(&description(name).map_err(GuestError::Decode)?,w))
-            }
-            0xd4|0xd5=>{
-                // AAM/AAD imm8 (D4 0A and D5 0A are the decimal forms).
-                w=16;dst=view(0,w);src=dst;
-                let base=r.byte()?;let name=if opcode==0xd4{"aam"}else{"aad"};
-                let text=description(name).map_err(GuestError::Decode)?.replace("read base src 8",&format!("const base 8 {base}"));
-                (format!("{} 0x{base:02x}",name.to_ascii_uppercase()),compile(&text,w))
-            }
             0x9e|0x9f=>{
                 w=8;dst=view(4,w);src=dst;
                 let name=if opcode==0x9f{"lahf"}else{"sahf"};
@@ -585,7 +571,7 @@ impl Image {
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
         if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe0..=0xe3|0x0f) {disp_bits=32;}
-        if opcode==0x0f && disp==0 && disp_bits==8 {disp_bits=32;}
+        if (opcode==0x0f && disp==0 && disp_bits==8) || call_indirect.is_some() {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
     }

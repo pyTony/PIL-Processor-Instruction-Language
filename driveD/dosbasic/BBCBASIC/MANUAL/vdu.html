@@ -1,0 +1,1033 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+
+<HTML>
+
+<HEAD>
+<TITLE>R. T. Russell: BBC BASIC (86) Manual</TITLE>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=us-ascii">
+<LINK HREF="index.html" REL="index" TITLE="Table of Contents">
+<LINK HREF="bbckey4.html" REL="prev" TITLE="PRINT# to WIDTH">
+<LINK HREF="opsys0.html" REL="next" TITLE="Operating System Interface">
+<LINK HREF="http://www.rtrussell.co.uk/index.html" REL="home" TITLE="Homepage">
+<LINK HREF="mailto:richard&#64;rtrussell.co.uk" REL="author" TITLE="Mail the author">
+</HEAD>
+
+<BODY BACKGROUND="rtrtile.gif">
+<IMG SRC="rtrlogo.gif" ALIGN=left ALT="RTR logo" WIDTH=190 HEIGHT=140>
+<BR>
+<H1 ALIGN=center>R. T. RUSSELL</H1>
+<H2 ALIGN=center>BBC BASIC (86) Manual</H2>
+<BR CLEAR=ALL>
+<HR>
+<H1 ALIGN=center>VDU Emulation</H1>
+
+<H2><A NAME="introduction">Introduction</A></H2>
+
+The VDU commands on the BBC Micro perform a number of important actions, 
+particularly involving the screen display and graphics.  Although 
+not strictly part of BASIC, most of these commands have been emulated 
+by BBCBASIC(86).
+<P>
+When the default output stream is selected 
+(<A HREF="opsys1.html#opt">*OPT 0</A>),
+all the console output is passed to a software emulator 
+of the BBC Micro's VDU driver.  In this mode, the VDU codes perform 
+a function which is as similar as possible to those of the BBC Micro.  Inevitably, 
+the difference in hardware imposes limitations on this emulation.  The 
+effect of the various VDU codes is described below, with particular 
+emphasis on the differences between the emulation and the BBC Micro.
+<P>
+The VDU statement takes a list of numeric arguments (constants or 
+variables) and sends their least significant bytes as characters to 
+the currently selected output stream.
+<P>
+A 16 bit value (word) can be sent if the value is followed by a semi-colon.  It 
+is sent as a pair of characters, the least significant byte first.
+<P>
+See the keyword <A HREF="bbckey4.html#vdu">VDU</A> 
+for other uses of the VDU command.
+<P>
+
+<HR>
+<H2><A NAME="summary">VDU Code Summary</A></H2>
+
+<TABLE>
+<TR><TH>Number</TH><TH ALIGN=left>Meaning</TH></TR>
+
+<TR><TD ALIGN=center><A HREF="#vdu0">0</A></TD>
+<TD>Null - it does nothing.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu1">1</A></TD>
+<TD>Send the next character to the printer ONLY.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu2">2</A></TD>
+<TD>Enable the printer.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu3">3</A></TD>
+<TD>Disable the printer.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu4">4</A></TD>
+<TD>Write text at the text cursor position.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu5">5</A></TD>
+<TD>Write text at the graphics cursor position.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu6">6</A></TD>
+<TD>Enable output to the screen.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu7">7</A></TD>
+<TD>Bell - make a short 'beep'.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu8">8</A></TD>
+<TD>Move the text cursor backwards one character.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu9">9</A></TD>
+<TD>Move the text cursor forwards one character.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu10">10</A></TD>
+<TD>Move the text cursor down one line.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu11">11</A></TD>
+<TD>Move the text cursor up one line.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu12">12</A></TD>
+<TD>Clear the text area - identical to <A HREF="bbckey1.html#cls">CLS</A>.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu13">13</A></TD>
+<TD>Move the text cursor to the start of the current line.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu14">14</A></TD>
+<TD>Enable the auto-paging mode.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu15">15</A></TD>
+<TD>Disable the auto-paging mode.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu16">16</A></TD>
+<TD>Clear the graphics area - identical to <A HREF="bbckey1.html#clg">CLG</A>.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu17">17</A></TD>
+<TD>Define a text colour - identical to
+<A HREF="bbckey1.html#colour">COLOUR</A>.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu18">18</A></TD>
+<TD>Define a graphics colour - identical to 
+<A HREF="bbckey2.html#gcol">GCOL</A>.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu19">19</A></TD>
+<TD>Select a colour palette.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu20">20</A></TD>
+<TD>Restore the default logical colours.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu21">21</A></TD>
+<TD>Disable output to the screen.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu22">22</A></TD>
+<TD>Select the screen mode - identical to 
+<A HREF="bbckey3.html#mode">MODE</A>.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu23">23</A></TD>
+<TD>Program characters and control the cursor.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu24">24</A></TD>
+<TD>Define a graphics window.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu25">25</A></TD>
+<TD>Identical to <A HREF="bbckey3.html#plot">PLOT</A>.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu26">26</A></TD>
+<TD>Restore the default text and graphics windows.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu27">27</A></TD>
+<TD>Send the next character to the screen.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu28">28</A></TD>
+<TD>Define a text window.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu29">29</A></TD>
+<TD>Set the graphics origin.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu30">30</A></TD>
+<TD>Home the text cursor to the top left of the screen.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu31">31</A></TD>
+<TD>Move the text cursor - identical to <A HREF="bbckey4.html#tab">TAB(x,y)</A>.</TD></TR>
+<TR><TD ALIGN=center><A HREF="#vdu127">127</A></TD>
+<TD>Backspace and delete.</TD></TR>
+</TABLE>
+<P>
+
+<HR>
+<H2><A NAME="description">Description of VDU Codes</A></H2>
+
+<H3><A NAME="vdu0">VDU 0</A></H3>
+
+Does nothing.  In other words, it is ignored.
+
+<H3><A NAME="vdu1">VDU 1</A></H3>
+
+Provided the printer has been enabled (with VDU 2), the next character 
+(byte) is sent to the printer and not to the screen.  If the printer 
+is not enabled, the character is 'ditched'.  Any 8-bit value (0 to 
+255) can be sent.
+<P>
+VDU 1 provides a simple way of sending control characters to the printer 
+(see <A HREF="#vdu2">VDU 2</A>).  It works whether the VDU has been disabled with the 
+<A HREF="#vdu21">VDU 21</A> command or not.  
+
+<H3><A NAME="vdu2">VDU 2</A></H3>
+
+VDU 2 enables the printer.  It causes all subsequent output to be 
+sent to both the screen and the printer.
+<P>
+The only control characters sent 
+to the printer are BS (8), HT (9), LF (10), VT (11), FF (12) and CR 
+(13).  Other control characters are NOT sent to the printer.
+<P>
+Bytes which are parameters for VDU commands are not sent to the printer.  For 
+example,
+
+<BLOCKQUOTE>
+<PRE>
+VDU 17,65
+</PRE>
+</BLOCKQUOTE>
+
+does not send 'A' to the printer.  <A HREF="#vdu1">VDU 1</A> 
+must be used to send control characters to the printer.
+
+<H3><A NAME="vdu3">VDU 3</A></H3>
+
+VDU 3 disables the printer.  It cancels the effect of 
+<A HREF="#vdu2">VDU 2</A> so that 
+subsequent output to the screen is not also sent to the printer.
+<P>
+Typing ^P has the effect of alternately 
+selecting VDU 2 and VDU 3 (it toggles the printer on and off).
+
+<H3><A NAME="vdu4">VDU 4</A></H3>
+
+<H4>Text at Text Cursor</H4>
+
+VDU 4 causes text to be written at the text cursor position in the 
+normal way.  This is the default mode.
+<P>
+The characters are 'opaque' and they can be positioned only at text 
+coordinates within the text window.  The text within the window scrolls 
+as necessary.
+<P>
+User defined characters may only be written at the text cursor position 
+if a CGA mode (mode &lt; 8) is selected.
+
+<H3><A NAME="vdu5">VDU 5</A></H3>
+
+<H4>Text at Graphics Cursor</H4>
+
+VDU 5 causes text to be written at the graphics cursor position.  It 
+works only in the graphics modes.
+<P>
+As explained in the 
+<A HREF="graphics.html">Colours and Graphics</A> section, if an EGA or VGA 
+mode is selected (mode &gt; 7) user defined characters may only be written 
+at the graphics cursor position.  If a CGA mode is selected, user 
+defined characters may be written at either the graphics or text cursor 
+position.
+<P>
+The characters have a 'transparent' background and they are plotted 
+according to the current foreground 
+<A HREF="bbckey2.html#gcol">GCOL</A> rules and colour.  
+<A HREF="#vdu127">VDU 127</A> 
+(DEL) is an exception; it backspaces and deletes just as it does in 
+the normal text mode, using the current background 
+<A HREF="bbckey2.html#gcol">GCOL</A> rules and 
+colour.
+<P>
+In the graphics modes, characters may be positioned at any graphics 
+coordinate within the graphics window.  The top left of the character 
+cell is the reference point.  Characters are clipped to the limits 
+of the graphics window if necessary.  No scrolling takes place.
+
+<H3><A NAME="vdu6">VDU 6</A></H3>
+
+VDU 6 enables output to the VDU screen.  It cancels the effect of 
+<A HREF="#vdu21">VDU 21</A>.
+
+<H3><A NAME="vdu7">VDU 7</A></H3>
+
+VDU 7 causes a short 'beep' from the speaker.
+
+<H3><A NAME="vdu8">VDU 8</A></H3>
+
+VDU 8 moves the text cursor one character to the left.  If the cursor 
+was at the start of a line, it moves to the end of the previous line 
+(right edge of the text window).  If it was also at the top line of 
+the text window, the window scrolls down (except in the 
+<A HREF="#vdu5">VDU 5</A> mode).
+<P>
+If a text window has been defined, the cursor is constrained to remain 
+within the window.
+
+<H3><A NAME="vdu9">VDU 9</A></H3>
+
+VDU 9 moves the text cursor one character to the right.  If the cursor 
+was at the end of a line, it moves to the start of the next line (left 
+edge of the text window).  If the cursor was also at the bottom of 
+the text window, the window scrolls up (except in the 
+<A HREF="#vdu5">VDU 5</A> mode).
+<P>
+If a text window has been defined, the cursor is constrained to remain 
+within the window.
+
+<H3><A NAME="vdu10">VDU 10</A></H3>
+
+VDU 10 moves the text cursor down one line.  If the cursor was on 
+the bottom line of the text window, the window scrolls up (except 
+in 
+<A HREF="#vdu5">VDU 5</A> mode).
+Scrolling is inhibited if &lt;Ctrl&gt; and &lt;Shift&gt; are held down together.
+<P>
+If a text window has been defined, the cursor is constrained to remain 
+within the window.
+
+<H3><A NAME="vdu11">VDU 11</A></H3>
+
+VDU 11 moves the text cursor up one line.  If the cursor was on the 
+top line of the text window, the window scrolls down (except in 
+<A HREF="#vdu5">VDU 5</A> mode).
+<P>
+If a text window has been defined, the cursor is constrained to remain 
+within the window.
+
+<H3><A NAME="vdu12">VDU 12</A></H3>
+
+VDU 12 clears the text window to the current text background colour 
+and moves the text cursor to the top left corner of the text window; 
+it is identical to <A HREF="bbckey1.html#cls">CLS</A>.
+
+<H3><A NAME="vdu13">VDU 13</A></H3>
+
+VDU 13 moves the text cursor to the left edge of the text window, 
+but does not move it vertically.
+<P>
+If a text window has been defined, the cursor is constrained to remain 
+within the window.
+
+<H3><A NAME="vdu14">VDU 14</A></H3>
+
+VDU 14 enables auto-paging mode.  Scrolling will stop after each page.  When 
+the text window has been filled, output is paused until &lt;Shift&gt; is 
+pressed.
+
+<H3><A NAME="vdu15">VDU 15</A></H3>
+
+VDU 15 disables auto-paging mode.  This is the default condition.
+
+<H3><A NAME="vdu16">VDU 16</A></H3>
+
+VDU 16 only works in graphics modes.  It clears the graphics window 
+using the current background 
+<A HREF="bbckey2.html#gcol">GCOL</A> action and colour.  It does not 
+move the graphics cursor.  VDU 16 is identical to 
+<A HREF="bbckey1.html#clg">CLG</A>.
+
+<H3><A NAME="vdu17">VDU 17</A></H3>
+
+VDU 17 is identical to 
+<A HREF="bbckey1.html#colour">COLOUR</A>.  The next byte determines the text 
+colour.  See 
+<A HREF="bbckey1.html#colour">COLOUR</A> for more details.  The example below sets the 
+text colour to red in the text mode and magenta in any of the 4 colour 
+graphics modes.  (Assuming that 
+<A HREF="#vdu19">VDU 19</A> has not been used to change 
+the default logical to physical colour assignments.)
+
+<BLOCKQUOTE>
+<PRE>
+VDU 17,1
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="vdu18">VDU 18</A></H3>
+
+VDU 18 is identical to 
+<A HREF="bbckey2.html#gcol">GCOL</A>.  It takes the next two characters as the 
+plotting mode and graphics colour respectively.  Thus,
+
+<BLOCKQUOTE>
+<PRE>
+VDU 18,mode,colour
+</PRE>
+</BLOCKQUOTE>
+
+and
+
+<BLOCKQUOTE>
+<PRE>
+GCOL mode,colour
+</PRE>
+</BLOCKQUOTE>
+
+have the same effect.  See the <A HREF="graphics.html">Graphics and Colours</A> 
+section for more details.
+
+<H3><A NAME="vdu19">VDU 19</A></H3>
+
+<H4>The Palette</H4>
+
+In BBCBASIC(86) colours are allocated by number and, depending upon 
+the chosen display mode, up to 16 logical colours are available.
+<P>
+You can (with certain limitations) set the actual colour displayed 
+by a colour number to any one of the physical colours available.  You 
+could, if you wished, set all the colour numbers to the same physical 
+colour.  Because you can change the actual colour displayed by a colour 
+number to any one of the physical colours available to you, these 
+numbers are called <B>logical</B> colours.
+<P>
+It may help you to visualise the logical colours as an artist's palette 
+with up to 16 numbered areas where colours may be placed.  You could 
+place any of the colours available to you in any one of the areas 
+on the palette.  Once the colours were in place on the palette, you 
+could 'paint by numbers'.
+<P>
+As explained in the 
+<A HREF="graphics.html">Graphics and Colours</A> section, the number of 
+logical colours available depends upon the chosen display mode.
+
+<H4><A NAME="physical">Physical Colours</A></H4>
+
+The physical colours are also referred to by numbers.  However, a 
+physical colour number always refers to the same colour.  Depending 
+upon the graphics adapter fitted to your computer, up to 64 physical 
+colours are available.  If a VGA is fitted, an 'analogue' colour palette 
+is also available.
+
+<H4><A NAME="palettesavailable">Palettes Available</A></H4>
+
+As explained in the 
+<A HREF="graphics.html">Graphics and Colours</A> section, two palettes are 
+available.  The normal palette provides maximum compatibility with 
+the BBC Micro and the enhanced palette provides access to all the 
+colours available with an EGA or VGA.
+
+<H4><A NAME="setting">Setting the Palette</A></H4>
+
+VDU 19 sets the physical to logical colour mapping (the palette).  It 
+takes the next five characters as parameters.  The first parameter 
+is the logical colour to be set and the second is the physical colour 
+that it is to be set to.  The next three parameters are used by the 
+VGA enhanced palette.  If a CGA or an EGA is used, they must still 
+be present, but they are ignored (set them to 0).
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,logical,physical,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+<H4><A NAME="coloursavailable">Colours Available</A></H4>
+
+The colours available depend on the graphics adapter fitted and the 
+type of display connected to it.
+
+<UL>
+<LI>If a VGA is used, 64 colours and an 'analogue' colour palette are available.
+<P>
+<LI>If an EGA and a 6 input monitor are used, 64 colours are available.
+<P>
+<LI>If an EGA and a 4 input monitor are used, 16 colours are available.
+<P>
+<LI>If an EGA and a monochrome monitor are used only 2 colours 
+are available.  In addition, you may only use modes 7 and 15.
+<P>
+<LI>If a CGA is used, 16 colours 
+are available in the text modes and 4 colours are available in the 
+graphics modes.  However, hardware limitations constrain the combination 
+of colours that may be used in the graphics modes and a full normal 
+palette of colours is not available.
+</UL>
+
+<H4><A NAME="normalcga">Normal Palette - CGA Modes</A></H4>
+
+The colours available (depending on the mode) are listed below.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TH>Colour Number&nbsp;&nbsp;</TH><TH ALIGN=left>Physical Colour</TH></TR>
+<TR><TD ALIGN=center>0</TD><TD>Black (normal background)</TD></TR>
+<TR><TD ALIGN=center>1</TD><TD>Red</TD></TR>
+<TR><TD ALIGN=center>2</TD><TD>Green</TD></TR>
+<TR><TD ALIGN=center>3</TD><TD>Yellow (Brown)</TD></TR>
+<TR><TD ALIGN=center>4</TD><TD>Blue</TD></TR>
+<TR><TD ALIGN=center>5</TD><TD>Magenta (blue-red)</TD></TR>
+<TR><TD ALIGN=center>6</TD><TD>Cyan (blue-green)</TD></TR>
+<TR><TD ALIGN=center>7</TD><TD>White (normal foreground)</TD></TR>
+<TR><TD ALIGN=center>8</TD><TD>Intensified Black (grey)</TD></TR>
+<TR><TD ALIGN=center>9</TD><TD>Intensified Red</TD></TR>
+<TR><TD ALIGN=center>10</TD><TD>Intensified Green</TD></TR>
+<TR><TD ALIGN=center>11</TD><TD>Intensified Yellow</TD></TR>
+<TR><TD ALIGN=center>12</TD><TD>Intensified Blue</TD></TR>
+<TR><TD ALIGN=center>13</TD><TD>Intensified Magenta</TD></TR>
+<TR><TD ALIGN=center>14</TD><TD>Intensified Cyan</TD></TR>
+<TR><TD ALIGN=center>15</TD><TD>Intensified White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+It is not possible to provide a true 
+palette when a CGA is used because of limitations imposed by the hardware.  The 
+facilities available depend upon the mode used.
+
+<H4>CGA 2-Colour Mode</H4>
+
+<H4>Mode 0</H4>
+
+Most EGA cards do not emulate the (peculiar) CGA  MODE 0 characteristic.
+Consequently, the action of the VDU 19 command  differs 
+between a CGA and an EGA in 
+<A HREF="bbckey3.html#mode">MODE</A> 0.  Some EGA cards come with a software 
+utility which improves their CGA emulation.
+<P>
+With a CGA, the foreground colour (logical colour 1) 
+can be set to any colour between 0 and 15.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>1</B>,physical,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+and the background colour (logical colour 0) cannot 
+be changed from black.  Thus,
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>0</B>,physical,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+has no effect.
+<P>
+With an 
+EGA, the palette for mode 0 behaves in a peculiar manner.  Instead 
+of altering the foreground colour, setting logical colour 1 alters 
+the background colour and the foreground colour is set to cyan.
+
+<H4>CGA 4-Colour Modes</H4>
+
+<H4>Modes 1, 2, 4 and 5</H4>
+
+In Modes 1, 2, 4 and 5, the logical foreground colours can be set 
+to one of two different palettes and the logical background colour can 
+be set to any physical colour between 0 and 15.
+<P>
+If the logical colour number is greater than 0 (a foreground logical 
+colour), the VDU 19 command
+selects which of two foreground colour palettes 
+will be used depending on the value of the physical colour number.  It 
+is not possible to change the foreground colours independently and 
+logical colour numbers between 1 and 3 have the same effect.
+<P>
+The physical colour number selects which of the two palettes are to 
+be used for the foreground colours.  If the physical colour number 
+is 0, 1, 2 or 3, then palette No 1 is selected.  If the physical colour 
+number is 4, 5, 6 or 7, then palette No 2 is selected.  The colours 
+of the two palettes are listed below.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TH>&nbsp;</TH><TH ALIGN=left>Palette 1</TH><TH ALIGN=left>Palette 2</TH></TR>
+<TR><TH>Logical Colour&nbsp;&nbsp;</TH><TH>Physical Colour&nbsp;&nbsp;</TH><TH>Physical Colour</TH></TR>
+<TR><TD ALIGN=center>1</TD><TD>Red</TD><TD>Magenta</TD></TR>
+<TR><TD ALIGN=center>2</TD><TD>Green</TD><TD>Cyan</TD></TR>
+<TR><TD ALIGN=center>3</TD><TD>Yellow</TD><TD>White</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+The first example below selects palette No 1 and the second selects 
+palette No 2.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>1</B>,<B>2</B>,0,0,0
+
+VDU 19,<B>3</B>,<B>4</B>,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+By specifying a logical colour of 0, the background/border colour 
+can be set to any colour between 0 and 15.  The example below sets 
+logical colour 0 to blue.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>0</B>,<B>4</B>,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+<H4><A NAME="egavga">Normal Palette - EGA/VGA Colour Modes</A></H4>
+
+<H4>Modes 8, 9, 10, 12,13, 16 and 18</H4>
+
+In the EGA and VGA colour graphics modes 16 physical colours are available 
+with the  normal palette.  These colours are the same as those available 
+in the CGA modes.
+<P>
+For example,
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>1</B>,<B>4</B>,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+would set logical colour 1 to blue.
+
+<H4><A NAME="normaltext">Normal Palette - Text Only Modes</A></H4>
+
+<H4>Modes 3, 6, 11 and 14</H4>
+
+You cannot change the physical to logical colour number 
+mapping with the normal palette in the text-only modes
+(modes 3, 6, 11 and 14).
+
+<H4><A NAME="enhanced">Enhanced Palette</A></H4>
+
+If an EGA or VGA is available, you may use the enhanced palette in 
+any of the colour display modes.
+
+<H4>Enhanced Palette - Graphics Modes</H4>
+
+<H4>Modes 0, 1, 2, 4, 5, 8, 9, 10, 12, 13, 15, 16 and 18</H4>
+
+If bit 7 of the logical colour number is set (values 
+128 to 143), then the enhanced palette is used and the physical colour 
+is taken to be the IBM colour value.
+<P>
+Unfortunately, this is not as straightforward as it might seem.  The 
+actual colours depend upon the mode in use, whether the monitor has 
+4 or 6 inputs and how it is adjusted.
+<P>
+A 6 input monitor has 2 blue, 2 green and 2 red inputs.  A 4 input 
+monitor has a blue, green, red and intensity input.  The former is 
+capable of displaying 64 colours and the latter 16 colours.  If the 
+monitor is truly IBM compatible, it will only act as a 6 input monitor 
+in mode 16.  In all other modes, it will act as a 4 input monitor.  This 
+restriction is imposed by the monitor and not by the graphics adapter.
+<P>
+The colour number on  a 6 input monitor (in mode 16) is made up as 
+shown below.
+<P>
+<TABLE BORDER=1 CELLSPACING=0>
+<TR><TD WIDTH=64 ALIGN=center>Not Used</TD>
+<TD WIDTH=64 ALIGN=center>Not Used</TD>
+<TD WIDTH=64 ALIGN=center>Red'</TD>
+<TD WIDTH=64 ALIGN=center>Green'</TD>
+<TD WIDTH=64 ALIGN=center>Blue'</TD>
+<TD WIDTH=64 ALIGN=center>Red</TD>
+<TD WIDTH=64 ALIGN=center>Green</TD>
+<TD WIDTH=64 ALIGN=center>Blue</TD></TR>
+</TABLE>
+<TABLE WIDTH=512>
+<TR><TD ALIGN=left>MSB</TD><TD ALIGN=right>LSB</TD></TR>
+</TABLE>
+<P>
+Thus, colour 18 would give you a combination of Green' and Green; 
+in other words, bright green, and colour 17 would give you a combination 
+of Green' and Blue. 
+<P>
+The colour number on a 4 input monitor (or an IBM compatible  6 input 
+monitor in modes other than 16) is made up in a similar manner as 
+shown below.
+<P>
+<TABLE BORDER=1 CELLSPACING=0>
+<TR><TD WIDTH=64 ALIGN=center>Not Used</TD>
+<TD WIDTH=64 ALIGN=center>Not Used</TD>
+<TD WIDTH=64 ALIGN=center>Not used</TD>
+<TD WIDTH=64 ALIGN=center>Intensity</TD>
+<TD WIDTH=64 ALIGN=center>Not Used</TD>
+<TD WIDTH=64 ALIGN=center>Red</TD>
+<TD WIDTH=64 ALIGN=center>Green</TD>
+<TD WIDTH=64 ALIGN=center>Blue</TD></TR>
+</TABLE>
+<TABLE WIDTH=512>
+<TR><TD ALIGN=left>MSB</TD><TD ALIGN=right>LSB</TD></TR>
+</TABLE>
+<P>
+With a 4 input monitor, the colour 18 will still give bright green 
+(Intensity and Green), but colour 17 gives bright blue (Intensity and 
+Blue).
+<P>
+Consequently, the colours displayed on a 4 input monitor are only 
+the same as those displayed on a 6 input monitor for physical colours 
+0 to 7 (plus some other odd numbers).  Thus, you need to know the 
+type of monitor you are programming for.
+<P>
+For example,
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>129</B>,<B>27</B>,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+would set logical colour 1 to bright cyan with either 
+a 4 or 6 input monitor (27 is binary 00011011),
+<P>
+and
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>130</B>,<B>26</B>,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+would set logical colour 2 to a combination of Green', 
+Green and Blue on a 6 input monitor and bright green 
+on a 4 input monitor (26 is binary 00011010).
+<P>
+Whilst a 4 input monitor only displays 16 colours, the 
+colour numbers in the enhanced palette differ from the normal palette 
+because the normal palette numbers have been translated to maximise 
+compatibility with the BBC Micro.
+<P>
+The enhanced (IBM) colour numbers are not contiguous.  With 
+a 4 input VDU, colours 8 to 15, 32 to 39 and 40 to 47  are the same 
+as the 'normal' colours 0 to 7 and colours 24 to 31, 48 to 55 and 
+56 to 63 are the same as the intensified colours 16 to 23.  On the 
+other hand, the enhanced palette colours are in ascending order of 
+luminance and they display as a grey scale on a colour-input-compatible 
+monochrome monitor.
+
+<H4>Enhanced Palette - Text Only Modes</H4>
+
+<H4>Modes 3, 6, 11 and 14</H4>
+
+If bit 7 of the logical colour number is set (values 
+128 to 143), then the enhanced palette is used and the physical colour 
+is taken to be the IBM colour value.
+<P>
+For example, the following command will set logical colour 
+1 to green.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,129,2,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+The text enhanced palette is the same as the graphics enhanced palette.
+
+<H4><A NAME="enhancedvga">Enhanced Palette - VGA</A></H4>
+
+The VGA enhanced palette has two modes.  The first offers identical 
+features to the EGA enhanced palette and it is set in an identical 
+manner.
+<P>
+The alternative mode provides an 'analogue' palette by allowing you 
+to set the Red, Green and Blue intensities to any value between 0 
+and 63.  The format of the VGA 'analogue' colour palette command is 
+shown below.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,logical,<B>-1</B>,red,green,blue
+</PRE>
+</BLOCKQUOTE>
+
+As before, bit 7 of the logical colour needs to be set in order to 
+indicate that an enhanced palette is to be used.  In addition, the 
+'physical' colour is set to <B>-1</B> to indicate that the following 
+3 numbers specify the Red,  Green and Blue intensities respectively.  These 
+may be set to any value between 0 and 63.
+<P>
+The following example sets colour 0 to a dull blue.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>128</B>,<B>-1</B>,0,0,10
+</PRE>
+</BLOCKQUOTE>
+
+<H4><A NAME="border">Border Colour</A></H4>
+
+With most colour adapters it is possible to change the border colour 
+independently in the CGA text modes 3 and 6, all the EGA modes and 
+the VGA mode.  Only the enhanced palette is available.
+<P>
+The border is specified by using <B>-1</B> as the <B>logical</B> 
+colour number.
+<P>
+The following example sets the border colour to green.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 19,<B>-1</B>,<B>2</B>,0,0,0
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="vdu20">VDU 20</A></H3>
+
+<H4>Default Colour Setting</H4>
+
+The VDU 20 command performs two distinct actions:
+
+<UL>
+<LI>It sets the text and graphics foreground and background 
+to their default logical colours and plotting modes.  This action 
+is the same as issuing the commands:
+
+<BLOCKQUOTE>
+<PRE>
+COLOUR 7
+COLOUR 128
+GCOL 0,7
+GCOL 0,128
+</PRE>
+</BLOCKQUOTE>
+
+<LI>It sets up the default palette for the display mode (see 
+<A HREF="#vdu19">The Palette</A> sub-section for details).
+</UL>
+
+Most EGA cards do not emulate the (peculiar) CGA mode 0 characteristics 
+and the VDU 20 command acts in an apparently unusual manner in this 
+mode if an EGA or VGA is used.  This is because the EGA/VGA default 
+palette for mode 0 is cyan for logical colour 1 and white for logical 
+colour 0.
+<P>
+Some EGA cards come with a software utility which improves their CGA 
+emulation.
+
+<H3><A NAME="vdu21">VDU 21</A></H3>
+
+VDU 21 disables the VDU until a 
+<A HREF="#vdu6">VDU 6</A> is received.  All VDU commands 
+except 1 and 6 are ignored.  If the printer is enabled, VDU commands 
+8 to 13 will still be sent to the printer.
+
+<H3><A NAME="vdu22">VDU 22</A></H3>
+
+VDU 22 is identical to 
+<A HREF="bbckey3.html#mode">MODE</A>, except that MODE zeros the value of 
+<A HREF="bbckey1.html#count">COUNT</A> 
+whereas VDU 22 does not.  The mode is set according to the value of 
+the byte following the VDU 22 command.  The example below sets mode 3.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 22,3
+</PRE>
+</BLOCKQUOTE>
+
+VDU 22 also resets all the screen driver variables (colour, palette, 
+windows, cursor position, graphics origin, etc).  In particular, VDU 
+22 performs the actions of 
+<A HREF="#vdu4">VDU 4</A>, <A HREF="#vdu12">VDU 12</A>,
+<A HREF="#vdu20">VDU 20</A> and <A HREF="#vdu26">VDU 26</A>.
+<P>
+See the <A HREF="graphics.html">Graphics and Colours</A>
+section or the keyword <A HREF="bbckey3.html#mode">MODE</A> for further 
+details.
+
+<H3><A NAME="vdu23">VDU 23</A></H3>
+
+<H4>User Defined Characters</H4>
+
+Characters from &amp;80 to &amp;FF (128 to 255) may be programmed using the 
+VDU 23 command.  The programmable characters are only available in 
+the graphics modes (0, 1, 2, 4, 5, 8, 9, 10, 12, 13, 15, 16 and 18).
+<P>
+In the EGA  and VGA modes (8, 9, 10, 12, 13, 15, 16 and 18), user 
+defined characters programmed with VDU 23 are active only in the 
+<A HREF="#vdu5">VDU 5</A> mode (plot character at graphics cursor position).  In 
+<A HREF="#vdu4">VDU 4</A> 
+mode, the standard ROM font is used for characters 128 to 255.
+<P>
+The format of the VDU 23 command is;
+
+<BLOCKQUOTE>
+<PRE>
+VDU 23,char_no,r1,r2,r3,r4,r5,r6,r7,r8
+</PRE>
+</BLOCKQUOTE>
+
+'Char_no' is the character number to be programmed and 'r1' to 'r8' 
+are the values of the bytes which define the character, top to bottom.  For 
+example, the character illustrated below is defined as character 130 
+by the following VDU 23 command.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 23,130,24,36,66,255,24,24,24,255
+
+. . . <B>* *</B> . . .     r1 = 24
+. . <B>*</B> . . <B>*</B> . .     r2 = 36
+. <B>*</B> . . . . <B>*</B> .     r3 = 66
+<B>* * * * * * * *</B>     r4 = 255
+. . . <B>* *</B> . . .     r5 = 24
+. . . <B>* *</B> . . .     r6 = 24
+. . . <B>* *</B> . . .     r7 = 24
+<B>* * * * * * * *</B>     r8 = 255
+</PRE>
+</BLOCKQUOTE>
+
+Because of hardware limitations, characters up to &amp;7F (127) are not 
+re-programmable. 
+<P>
+Since user defined characters occupy a 'cell' which is 8 pixels by 
+8 pixels, the number of rows of user defined text which may be displayed 
+on the screen depends upon the vertical resolution of the display 
+mode in use.
+<P>
+In all modes other than modes 16 and 18, 25 lines of 'VDU 5' text 
+may be displayed.  In mode 16, 43 lines of 'VDU 5' text may be displayed.  In 
+mode 18, 60 lines of 'VDU 5' text may be displayed.
+
+<H4><A NAME="cursor">Enable/Disable Cursor</A></H4>
+
+The text cursor may be disabled and enabled using the VDU 
+23 command as shown below.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 23,1,0;0;0;0; Disable cursor
+
+VDU 23,1,1;0;0;0; Enable cursor
+</PRE>
+</BLOCKQUOTE>
+
+<H4><A NAME="prog6845">Programming the 6845 CRT Controller</A></H4>
+
+<B>UNLESS YOU UNDERSTAND HOW THE 6845 CONTROLLER WORKS, YOU 
+SHOULD NOT USE THIS COMMAND</B>
+<P>
+The VDU 23 command may be used to write to the control registers 
+of the 6845 CRT controller.  The command
+
+<BLOCKQUOTE>
+<PRE>
+VDU 23,0,reg,value,0;0;0;
+</PRE>
+</BLOCKQUOTE>
+
+writes 'value' to register number 'reg' of the 6845 CRT 
+controller.
+
+<H3><A NAME="vdu24">VDU 24</A></H3>
+
+In the graphics modes, VDU 24 defines a graphics window.  The following 
+4 words (pairs of bytes) are the X &amp; Y coordinates of the bottom left 
+corner of the window and the X &amp; Y coordinates of the top right corner 
+of the window, in that order.  The coordinates are with respect to 
+the current graphics origin.
+<P>
+If any of the edges of the new graphics window would be off the screen, 
+the command is ignored.  It is particularly easy to select invalid 
+window limits if the graphics origin has been moved.  It is advisable, 
+therefore, to precede a VDU 24 command with a 
+<A HREF="#vdu26">VDU 26</A> command to reset 
+the windows and the graphics origin.
+<P>
+The following example defines a graphics window with the bottom left 
+corner at 200,100 (X,Y) and the top right corner at 500,300 (X,Y).
+
+<BLOCKQUOTE>
+<PRE>
+VDU 24,200;100;500;300;
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="vdu25">VDU 25</A></H3>
+
+VDU 25 is identical to the 
+<A HREF="bbckey3.html#plot">PLOT</A> command.  It is ignored in 
+the text only modes.  See the the 
+<A HREF="graphics.html">Graphics and Colours</A> section or 
+the keyword <A HREF="bbckey3.html#plot">PLOT</A> for more details.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 25,mode,x_coord;y_coord;
+</PRE>
+</BLOCKQUOTE>
+
+The following example draws a line in the current foreground colour 
+to the point 350,525 (X,Y).
+
+<BLOCKQUOTE>
+<PRE>
+VDU 25,5,350;525;
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="vdu26">VDU 26</A></H3>
+
+VDU 26 resets the text and graphics windows to their default positions 
+(filling the whole screen), homes the text cursor to the top left 
+of the screen (0,0), resets the graphics origin to the bottom left 
+of the screen (0,0) and homes the graphics cursor to the graphics 
+origin.
+
+<H3><A NAME="vdu27">VDU 27</A></H3>
+
+VDU 27 sends the next byte to the screen without interpreting it as 
+a control character.  It allows graphics characters corresponding 
+to VDU 0 to VDU 31 and VDU 127 to be displayed.  It acts for characters 
+sent to the screen in a similar manner to the way 
+<A HREF="#vdu1">VDU 1</A> does for characters sent to the printer.
+
+<H3><A NAME="vdu28">VDU 28</A></H3>
+
+VDU 28 defines a text window.  The following 4 bytes are the X &amp; Y 
+coordinates of the bottom left corner of the window and the X &amp; Y 
+coordinates of the top right corner of the window, in that order.  The 
+coordinates are with respect to the text origin (top left) and are 
+measured in 'character positions'.
+<P>
+If the text cursor is outside the new window, it is moved to the new 
+home position (top left of the window).  If it is inside the new window, 
+it is not moved.
+<P>
+If any of the edges of the new text window would be off the screen, 
+the command is ignored.
+<P>
+The following example defines a text window with the bottom left corner 
+at 0,15 (X across, Y down) and the top right corner at 30,3 (X across, 
+Y down).
+
+<BLOCKQUOTE>
+<PRE>
+VDU 28,0,15,30,3
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="vdu29">VDU 29</A></H3>
+
+In the graphics modes, VDU 29 moves the graphics origin to the coordinates 
+specified by the following two words (pairs of bytes).  The first word 
+specifies the X coordinate of the new origin and the second specifies 
+the Y coordinate.  Subsequent graphics commands operate with respect 
+to this origin.
+<P>
+The following example sets the graphics origin to the centre of the 
+screen (except for modes 16 and 18).
+
+<BLOCKQUOTE>
+<PRE>
+VDU 29,640;400; 
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="vdu30">VDU 30</A></H3>
+
+In <A HREF="#vdu4">VDU 4</A> mode, VDU 30 homes the text cursor to the top left corner 
+of the text window.  In <A HREF="#vdu5">VDU 5</A> mode, VDU 30 homes the graphics cursor 
+to the top left corner of the graphics window.
+
+<H3><A NAME="vdu31">VDU 31</A></H3>
+
+VDU 31 is identical to 
+<A HREF="bbckey3.html#print">PRINT</A>
+<A HREF="bbckey4.html#tab">TAB(x,y)</A>.  It positions the text cursor 
+according to the following two bytes.  The coordinates are measured 
+in character positions with respect to the top left of the current 
+text window.  The example below positions the text cursor 15 characters 
+in and 10 lines down in the current text window.
+
+<BLOCKQUOTE>
+<PRE>
+VDU 31,15,10
+</PRE>
+</BLOCKQUOTE>
+
+See the keyword <A HREF="bbckey4.html#tab">TAB</A> for further details.
+
+<H3><A NAME="vdu127">VDU 127</A></H3>
+
+Delete the character to the left of the cursor and backspace the cursor 
+and all the characters on the line to the right of the cursor.  This 
+has the same effect as the sequence backspace-space-backspace (VDU 
+8,32,8) when in <A HREF="#vdu4">VDU 4</A> mode.
+<P>
+<TABLE WIDTH="100%">
+<TR><TD><H3><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15>
+<A HREF="index.html">CONTENTS</A></H3></TD>
+<TD ALIGN=right><H3><A HREF="opsys0.html">CONTINUE</A>
+<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></H3></TD></TR></TABLE>
+<HR>
+<A href="http://www.anybrowser.org/"><img border=0 align=left src="logoab8.gif" alt="Best viewed with Any Browser" height=31 width=88></A>
+<A href="http://validator.w3.org/"><img border=0 align=right src="vh32.gif" alt="Valid HTML 3.2!" height=31 width=88></A>
+<CENTER>&copy; Doug Mounter and
+<A HREF="mailto:richard&#64;rtrussell.co.uk">Richard Russell</A></CENTER>
+</BODY>
+
+</HTML>

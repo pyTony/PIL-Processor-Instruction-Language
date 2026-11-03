@@ -1,0 +1,499 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+
+<HTML>
+
+<HEAD>
+<TITLE>R. T. Russell: BBC BASIC (86) Manual</TITLE>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=us-ascii">
+<LINK HREF="index.html" REL="index" TITLE="Table of Contents">
+<LINK HREF="annexf.html" REL="prev" TITLE="BBCRUN/BIGRUN">
+<LINK HREF="annexh.html" REL="next" TITLE="Teletext Mode 7">
+<LINK HREF="http://www.rtrussell.co.uk/index.html" REL="home" TITLE="Homepage">
+<LINK HREF="mailto:richard&#64;rtrussell.co.uk" REL="author" TITLE="Mail the author">
+</HEAD>
+
+<BODY BACKGROUND="rtrtile.gif">
+<IMG SRC="rtrlogo.gif" ALIGN=left ALT="RTR logo" WIDTH=190 HEIGHT=140>
+<BR>
+<H1 ALIGN=center>R. T. RUSSELL</H1>
+<H2 ALIGN=center>BBC BASIC (86) Manual</H2>
+<BR CLEAR=ALL>
+<HR>
+<H1 ALIGN=center>BIGBASIC</H1>
+
+<H4 ALIGN=right>Annex G to<BR>BBCBASIC(86)</H4>
+
+<H2><A NAME="introduction">Introduction</A></H2>
+
+BIGBASIC is a 'large memory model' version of BBCBASIC(86) which allows 
+the 'heap' (where BBCBASIC(86) stores its variables and arrays) to 
+exceed 64 Kbytes.  A BIGBASIC program can therefore store and manipulate, 
+in memory, an amount of data limited only by the RAM capacity of the 
+computer (and the MS DOS limit of 640 Kbytes).
+<P>
+BIGBASIC incorporates all the features of BBCBASIC, but it is in no 
+sense a replacement for BBCBASIC because, despite its advantages, 
+it:
+
+<UL>
+<LI>Is not 100% compatible with BBCBASIC.  (The minor differences 
+are discussed later.)
+<P>
+<LI>Runs slightly more slowly than BBCBASIC when performing 
+the same operations.
+<P>
+<LI>Uses up more code and data memory than BBCBASIC for the 
+same BASIC program.
+</UL>
+
+Consequently, whilst BIGBASIC offers advantages over BBCBASIC, the 
+latter is still the better choice when your program and data combined 
+do not exceed 64 Kbytes in size.
+<P>
+BIGBASIC appears to work just the same as BBCBASIC and 
+only in rare circumstances will you need to be aware of the differences.  The 
+most obvious distinction is that 
+<A HREF="bbckey2.html#himem">HIMEM</A>, and the addresses returned by 
+<A HREF="bbckey1.html#dim">DIM</A>, may well have values in excess of 
+&amp;FFFF.  HIMEM is typically about &amp;79000 on a 640 Kbyte computer.
+<P>
+You do not need to understand the segmented architecture of the 8086 
+(80?86) processor's address space.  In the same way that BBCBASIC 
+presents the user with a virtual address space from &amp;0000 to &amp;FFFF, 
+BIGBASIC provides a virtual address space from &amp;00000 to a maximum 
+of about &amp;89000 in a 640 Kbyte computer.  The exact value of the highest 
+address depends on the version of MS DOS, what memory-resident programs 
+are installed, etc.
+<P>
+Apart from the values of 
+<A HREF="bbckey3.html#page">PAGE</A>, 
+<A HREF="bbckey4.html#top">TOP</A>, 
+<A HREF="bbckey2.html#lomem">LOMEM</A> and 
+<A HREF="bbckey2.html#himem">HIMEM</A>, the only occasions 
+when you need to be aware of the (virtual) addresses within the data 
+area are when you have reserved a block of memory with 
+<A HREF="bbckey1.html#dim">DIM</A>.  Locations 
+within this block may be subsequently accessed by the 
+<A HREF="bbc2.html#indirection">indirection</A> operators (?, ! and $), 
+<A HREF="opsys1.html#load">*LOAD</A> and 
+<A HREF="opsys1.html#save">*SAVE</A> and by the 
+<A HREF="bbc3.html">assembler</A>.
+<P>
+This annex discusses the differences between BIGBASIC and BBCBASIC.  You 
+should refer to the main body of the manual for general information 
+on the topics discussed here.
+<P>
+
+<HR>
+<H2><A NAME="general">General Information</A></H2>
+
+<H3><A NAME="memory">Memory Used</A></H3>
+
+When run BIGBASIC by default reserves all but 64 Kbyte of 
+the computer's memory.  The 64 Kbyte is left so that 'external' commands 
+can be run from within BIGBASIC.  For example, *COPY to copy a file.  The 
+amount of memory reserved may be controlled by an optional switch 
+in the command line.  For example:
+
+<BLOCKQUOTE>
+<PRE>
+ = BIGBASIC /128
+</PRE>
+</BLOCKQUOTE>
+
+will try to reserve 128 Kbytes for the data area.  (This 
+is in addition to the memory needed for the interpreter's code.)  If 
+successful, this will result in 
+<A HREF="bbckey2.html#himem">HIMEM</A> being set to &amp;20000.  If insufficient 
+memory is available, all of the computer's memory will be taken leaving 
+nothing for external commands.  The command:
+
+<BLOCKQUOTE>
+<PRE>
+ = BIGBASIC /999
+</PRE>
+</BLOCKQUOTE>
+
+will result in the maximum possible amount of memory 
+being reserved for BIGBASIC's use, since there will never be 999 Kbytes 
+of memory free under MS DOS.
+
+<H3><A NAME="stack">Stack</A></H3>
+
+BIGBASIC's stack, which grows down from 
+<A HREF="bbckey2.html#himem">HIMEM</A>, cannot exceed 64 Kbytes 
+in size.  This limits the depth of nesting of 
+<A HREF="bbckey2.html#for">FOR</A>...<A HREF="bbckey3.html#next">NEXT</A>,
+<A HREF="bbckey4.html#repeat">REPEAT</A>...<A HREF="bbckey4.html#until">UNTIL</A>,
+<A HREF="bbckey2.html#gosub">GOSUB</A>...<A HREF="bbckey4.html#return">RETURN</A>,
+<A HREF="bbc2.html#procedures">functions and procedures</A>.  However, the limit is a 
+large one and is only likely to be encountered in deeply recursive 
+programs.  Using up all the available stack will result in an untrappable 
+'No room' error.
+
+<H3><A NAME="variables">Variables and Arrays</A></H3>
+
+Variables and arrays created by a BIGBASIC program, and the areas 
+of memory reserved with 
+<A HREF="bbckey1.html#dim">DIM</A> for assembler routines etc, can use all 
+of the available memory between 
+<A HREF="bbckey2.html#lomem">LOMEM</A> and the bottom of the stack.  This 
+is in excess of about 500,000 bytes on a 640 Kbyte computer.  If this 
+space is filled, an untrappable '<A HREF="annexc.html#noroom">No room</A>' 
+error occurs.
+<P>
+Very large arrays can be created, although the total number of elements 
+cannot exceed 65536 (however many dimensions) and individual subscripts 
+cannot exceed 65535.  For example DIM A(65535) and DIM B(255,255) 
+each create an array occupying &amp;50000 (327680) bytes of memory.  If 
+there is insufficient space for the array, or the maximum subscript/number 
+of dimensions is exceeded, a 
+'<A HREF="annexc.html#dimspace">DIM space</A>' error occurs.
+
+<H3><A NAME="indirection">Indirection</A></H3>
+
+The <A HREF="bbc2.html#indirection">indirection</A> operators will accept 
+20-bit addresses in the range 
+&amp;00000 to &amp;FFFFF.  It must be emphasised that these are virtual addresses 
+(offsets from the base of BIGBASIC's data area) rather than true machine 
+addresses.
+
+<H3><A NAME="bigrun">BIGRUN</A></H3>
+
+A 'run only' version of BIGBASIC called BIGRUN is provided on the 
+distribution disk.  It shares all the attributes of BIGBASIC, including 
+the optional command-line switch.  In all other respects it is similar 
+to BBCRUN and you should refer to the Annex entitled 
+<A HREF="annexf.html">BBCRUN/BIGRUN</A> for further details.
+<P>
+
+<HR>
+<H2><A NAME="assembler">Assembler</A></H2>
+
+<H3><A NAME="assintro">Introduction</A></H3>
+
+There are differences in the use of the assembler and the interfacing 
+of assembly language routines with BIGBASIC 
+(<A HREF="bbckey1.html#call">CALL</A> and 
+<A HREF="bbckey4.html#usr">USR</A>).  These 
+are discussed below.
+<P>
+Since the assembler necessarily works with 64K segments (the processor's 
+instruction pointer is only 16 bits), BIGBASIC's data space is considered 
+for this purpose as consisting of consecutive 64K regions (&amp;00000 
+to &amp;0FFFF, &amp;10000 to &amp;1FFFF, etc).
+
+<H3><A NAME="programcounter">Program Counter</A></H3>
+
+The assembler uses P% as the program counter (as usual) and the least 
+significant 16 bits are assumed to be the value in the processor's 
+instruction pointer.  If, when assembling, the program counter attempts 
+to cross the boundary between two 64K segments (in other words, if 
+the least significant word of P% increments from &amp;FFFF to &amp;0000), 
+a '<A HREF="annexc.html#wrap">Wrap</A>' error (code 98) occurs.
+
+<H3><A NAME="calling">Calling Assembler Code Routines</A></H3>
+
+When a <A HREF="bbckey1.html#call">CALL</A> or 
+<A HREF="bbckey4.html#usr">USR</A> is done, the least significant 16-bits of the address 
+become the program counter (IP register) and the most significant 
+16-bits are converted into a segment value selecting the appropriate 
+64K region.
+<P>
+Addresses 
+&amp;0FF?? are still used to access the emulated BBC Micro Operating System 
+calls to 
+<A HREF="opsys0.html#osword">OSWORD</A> and 
+<A HREF="opsys0.html#osbyte">OSBYTE</A> ('read character at cursor position' - 
+&amp;FFF4 and 'read character dot pattern' - &amp;FFF1). Unlike BBCBASIC, 
+these addresses are entirely possible as true assembly language entry 
+points and must therefore be avoided when using the assembler.  This 
+problem may be circumvented by using 
+<A HREF="bbckey1.html#call">CALL</A> with at least one parameter 
+(in addition to the address) which will call an assembler language 
+routine even if its address is in the range &amp;0FF00 to &amp;0FFFF.
+<P>
+When an assembly 
+language program uses absolutely-addressed RAM locations for temporary 
+storage, these are best defined using DB, DW or DD within the assembler 
+code itself.  This will result in the locations being in the 'code 
+segment' and their contents can then be accessed using a CS: segment 
+override.  For example:
+
+<BLOCKQUOTE>
+<PRE>
+mov cs:[savesp],sp  ; Temp save of stack pointer
+    ........        ; Some code
+    ........
+mov sp,cs:[savesp]  ; Restore the stack pointer
+    ........        ; Some more code
+    ........
+retf                ; Make sure you terminate
+                    ; your program
+.savesp DW 0        ; Define storage location.
+</PRE>
+</BLOCKQUOTE>
+
+The alternative of reserving the storage space outside of the assembler 
+(using <A HREF="bbckey1.html#dim">DIM</A>), 
+which is acceptable for the 'small model' BBCBASIC, creates 
+the problem of determining which segment it is in. If the storage 
+location's address is in the bottom 64K (less than &amp;10000) then it 
+will be in DS:, but this is an undesirable restriction.
+
+<H3><A NAME="segment">Segment Registers</A></H3>
+
+The segment registers are set up by 
+<A HREF="bbckey1.html#call">CALL</A> and 
+<A HREF="bbckey4.html#usr">USR</A> as follows:
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=12>
+<TR><TD VALIGN=top>CS:<TT>&nbsp;&nbsp;&nbsp;</TT></TD>
+<TD>The code segment of the assembler routine.  If in the 
+bottom 64K of BIGBASIC's data space, this will be the same as DS:, 
+if in the next 64K region, is will be DS:+&amp;1000, and so on.</TD></TR>
+
+<TR><TD VALIGN=top>DS:</TD>
+<TD>BIGBASIC's primary data segment (corresponding to the 
+bottom 64K of the data space).  BIGBASIC's private workspace is from 
+DS:0000 to DS:03FF.  
+<A HREF="bbckey3.html#page">PAGE</A>, 
+<A HREF="bbckey4.html#top">TOP</A> and 
+<A HREF="bbckey2.html#lomem">LOMEM</A> are always in this segment, 
+as is CALL's parameter block.</TD></TR>
+
+<TR><TD VALIGN=top>ES:</TD>
+<TD>The segment value of the first item in 
+<A HREF="bbckey1.html#call">CALL</A>'s parameter 
+list (if any).  This simplifies the task of writing an assembly language 
+routine which is compatible with both BBCBASIC and BIGBASIC, so long 
+as CALL has only one parameter (other than a string variable).
+<BR>
+If there are no parameters to CALL (apart from the call 
+address) the ES: register is set to the value if DS:</TD></TR>
+
+<TR><TD VALIGN=top>SS:</TD>
+<TD>BIGBASIC's stack segment (the 64K segment containing 
+HIMEM).  The assembly language routine can safely use a few tens of 
+bytes of stack below SS:SP.</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+The SI register is set to &amp;FFFF on entry to the assembler language 
+routine.  This allows the routine to test whether it was called from 
+BBCBASIC or BIGBASIC, since BBCBASIC always sets SI to a value other 
+than &amp;FFFF on entry.  Using this, it is possible to write assembly 
+language library routines which run with both BBCBASIC and BIGBASIC.
+
+<H3><A NAME="osword">OSWORD Parameter Block</A></H3>
+
+The parameter block used by 
+<A HREF="opsys0.html#osword">OSWORD</A> (CALL &amp;FFF1) is addressed by a 
+16-bit number (high byte in Y% and low byte in X%) for compatibility 
+with the BBC Micro.  Consequently, it must be in the bottom 64K of 
+the data area.  The best way to achieve this (assuming that 
+<A HREF="bbckey2.html#lomem">LOMEM</A> 
+does not exceed &amp;0FFFF7) is to ensure that it is reserved using 
+<A HREF="bbckey1.html#dim">DIM</A> 
+at the very beginning of the program, before any variables or other 
+heap items are created.  A 'resident' integer variable should be used 
+(DIM X% 8, for example) otherwise the variable name itself will use 
+up some heap space below the parameter block.
+<P>
+
+<HR>
+<H2><A NAME="keywords">Keywords</A></H2>
+
+<H3><A NAME="call">CALL</A></H3>
+
+<H4><A NAME="table">Parameter Table</A></H4>
+
+Because a 16-bit pointer is inadequate to locate a variable within 
+BIGBASIC's extended address space the parameter table built by 
+<A HREF="bbckey1.html#call">CALL</A> 
+is structured differently.  The first byte is the number of parameters, 
+as before, and each parameter item consists of 5 bytes (not 3 as with 
+BBCBASIC) as follows:
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=12>
+<TR><TD VALIGN=top>Byte 0</TD>
+<TD>The variable 'type', exactly as with BBCBASIC.</TD></TR>
+
+<TR><TD VALIGN=top>Bytes 1,2</TD>
+<TD>The offset value of the variable or string descriptor.</TD></TR>
+
+<TR><TD VALIGN=top>Bytes 3,4<TT>&nbsp;&nbsp;</TT></TD>
+<TD>The segment value of the variable or string descriptor.</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+<H4><A NAME="formats">Parameter Formats</A></H4>
+
+The 
+contents of the (4-byte) string descriptor differ from BBCBASIC in 
+that the 16-bit pointer (bytes 2 and 3 of the descriptor) are the 
+segment address of the string, which always lies on a paragraph boundary 
+(offset = &amp;0000).  The example below may help to make this clear.
+
+<H4>Example</H4>
+
+The following segment of assembler code locates the start of a string 
+variable which is given as the second parameter of a CALL (CALL code, 
+junk, string$).  The string address is returned in es:bx and its length 
+in cl.
+
+<BLOCKQUOTE>
+<PRE>
+mov bx,ds:[bp+7]    ; Get string descriptor offset
+                    ;(note use of ds:)
+mov es,ds:[bp+9]    ; Get string descriptor segment
+                    ;(note use of ds:)
+mov cl,es:[bx+0]    ; Get string length
+mov es,es:[bx+2]    ; Get string segment
+mov bx,0            ; Set string offset
+</PRE>
+</BLOCKQUOTE>
+
+Compare this with the equivalent routine for BBCBASIC
+
+<BLOCKQUOTE>
+<PRE>
+mov bx,[bp+5]       ; Get string descriptor offset
+mov cl,[bx+0]       ; Get string length
+mov bx,[bx+2]       ; Get string offset
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="eval">EVAL</A></H3>
+
+The 
+<A HREF="bbckey2.html#eval">EVAL</A> function is more restricted in 
+its use than with BBCBASIC. 
+In particular, EVAL will not operate correctly if it attempts to activate 
+any of the statements 
+<A HREF="bbckey2.html#input">INPUT</A>, 
+<A HREF="bbckey4.html#read">READ</A> or 
+<A HREF="bbckey1.html#call">CALL</A> via a user-defined function.  For 
+example, the following program will not work correctly.
+
+<BLOCKQUOTE>
+<PRE>
+100 PRINT EVAL("FNget*3")
+110 END
+120 :
+130 DEF FNget
+140 LOCAL A
+140 INPUT "Enter a number ",A
+150 = A
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="himem">HIMEM</A></H3>
+
+The default value of <A HREF="bbckey2.html#himem">HIMEM</A> 
+depends on the amount of memory available. 
+It is automatically set to the maximum possible value when BIGBASIC 
+is run.
+<P>
+Although you are not prevented from doing so, attempting to set HIMEM 
+higher than its initial value will probably crash the system. 
+<P>
+HIMEM cannot be changed whilst BIGBASIC's stack is in use.  In other 
+words, from within a loop, subroutine, function or procedure.  Any 
+attempt to do so will result in a '<A HREF="annexc.html#mistake">Mistake</A>' error.
+
+<H3><A NAME="lomem">LOMEM and PAGE</A></H3>
+
+<A HREF="bbckey2.html#lomem">LOMEM</a> and 
+<A HREF="bbckey3.html#page">PAGE</A> must be in the range 
+&amp;00400 to &amp;0FFFF (in other words, 
+the bottom 64 Kbytes of the virtual address space).  Attempting to 
+set PAGE or LOMEM to a larger value will result in a 
+'<A HREF="annexc.html#toobig">Too big</A>' error.
+
+<H3><A NAME="top">TOP</A></H3>
+
+The value of 
+<A HREF="bbckey4.html#top">TOP</A> (the first free byte above the user's BIGBASIC program) 
+cannot exceed &amp;0FFFF.  Consequently, with page set to its default 
+value of &amp;900, your program cannot exceed &amp;F6FF (63231) bytes in length.  Attempting 
+to load a program which would cause TOP to exceed &amp;FFFF will result 
+in a '<A HREF="annexc.html#noroom">No room</A>' error.
+
+<H3><A NAME="usr">USR</A></H3>
+
+See the keyword <A HREF="#call">CALL</A> in this annex for details.
+<P>
+
+<HR>
+<H2><A NAME="osinterface">Operating System Interface</A></H2>
+
+<H3><A NAME="loadsave">*LOAD and *SAVE</A></H3>
+
+<A HREF="opsys1.html#load">*LOAD</A> and 
+<A HREF="opsys1.html#save">*SAVE</A> will accept 20-bit 
+(5 digit) virtual addresses.  As 
+with BBCBASIC, specifying a full eight digits for the address causes 
+the first four digits to be interpreted as the segment value and the 
+last four as the offset, overriding the virtual address mapping.
+<P>
+The maximum size of a *LOAD or *SAVE file is &amp;FFFF (64K or 65535) 
+bytes.  If you try to *LOAD a file which is longer than this, only 
+the first 65535 bytes of the file will be loaded.  If you try to *SAVE 
+a file longer than 65535 bytes, the length will be evaluated MOD 65536.  In 
+neither case will any error messages be displayed.
+<P>
+
+<HR>
+<H2><A NAME="datastructure">Data Structure Format</A></H2>
+
+<H3><A NAME="intreal">Integers and Reals</A></H3>
+
+The format of data structures within BIGBASIC's heap is different 
+from that of BBCBASIC.  A program which peeks this area (hopefully, 
+no programs poke it!) will not work correctly without alteration, 
+The main difference is that all items are at paragraph-aligned addresses 
+(integer multiples of 16 bytes) and all 16-bit pointers to heap items 
+are the segment value; the offset is zero.
+<P>
+As described in the Annex entitled 
+<A HREF="annexd.html">Format of Program and Variables 
+in Memory</A>, the smallest amount of space taken up by an integer or 
+real variable is 8 bytes (descriptor and value).  However, as mentioned 
+above, heap space is allocated in 16 byte 'paragraphs'.  The first 
+character of a variable's name is held in the index of variable names 
+and not in the variable descriptor.  Consequently, you can use a variable 
+name of up to 9 characters without increasing the amount of heap memory 
+allocated to the variable.
+
+<H3><A NAME="strings">Strings</A></H3>
+
+The contents of the (4-byte) string descriptor differ from BBCBASIC 
+in that the 16-bit pointer (bytes 2 and 3 of the descriptor) are the 
+segment address of the string, which always lies on a paragraph boundary 
+(offset = &amp;0000).  Thus, space for strings is allocated in 'paragraphs' 
+of 16 bytes and the initial space allocated for a string is never 
+less than a paragraph.  Consequently, it may not be necessary to initialise 
+string variables as described in the Annex entitled 
+<A HREF="annexd.html">Format of Program and Variables in Memory</A> 
+in order to prevent the generation of 'garbage'.
+<P>
+See the keyword <A HREF="#call">CALL</A> in this Annex for details of how  to find the 
+start address of a string in assembler code.
+
+<P>
+<TABLE WIDTH="100%">
+<TR><TD><H3><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15>
+<A HREF="index.html">CONTENTS</A></H3></TD>
+<TD ALIGN=right><H3><A HREF="annexh.html">CONTINUE</A>
+<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></H3></TD></TR></TABLE>
+<HR>
+<A href="http://www.anybrowser.org/"><img border=0 align=left src="logoab8.gif" alt="Best viewed with Any Browser" height=31 width=88></A>
+<A href="http://validator.w3.org/"><img border=0 align=right src="vh32.gif" alt="Valid HTML 3.2!" height=31 width=88></A>
+<CENTER>&copy; Doug Mounter and 
+<A HREF="mailto:richard&#64;rtrussell.co.uk">Richard Russell</A> 1999</CENTER>
+</BODY>
+
+</HTML>

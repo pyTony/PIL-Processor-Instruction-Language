@@ -1,0 +1,56 @@
+                   MODE7.COM - A Viewdata screen emulator
+
+MODE7.COM  is  a  resident utility which  implements  a  Viewdata-compatible 
+display,  such as is used by Prestel and Teletext, consisting of 25 rows  of 
+40  characters.   Display  attributes  in this  mode,  such  as  colour  and 
+graphics,  are controlled by embedded character codes which occupy space  on 
+the  display  and affect the rest of the row in which  they  are  contained.  
+This  mode  is activated when an attempt is made to select mode 7  (this  is 
+normally  the  IBM  Monochrome mode, which is not available  when  a  colour 
+display is attached).
+
+MODE7.COM  requires  an  EGA, VGA or SVGA, with at least 128K  of  RAM.   To 
+install it, simply type MODE7 <RETURN>; it uses up about 3K of memory  which 
+will  be  released only on re-booting DOS.  The Viewdata display  mode  will 
+usually  be activated from an applications program (e.g. BBC BASIC) but  may 
+be  selected for test purposes etc. by entering SETMODE7 <RETURN>;  you  can 
+return to the normal mode by typing MODE CO80 <RETURN>.
+
+MODE7.COM emulates the SAA5050 chip as used in the BBC Micro,  and the level 
+of  functionality is approximately the same as the BBC Micro's MODE 7.   For 
+example,  the  START  BOX  and END BOX codes are not  recognised  (they  are 
+intended  for  inserting  text into a TV picture) and  there  is  no  REVEAL 
+command.   To reveal concealed text, an applications program must change all 
+CONCEAL characters to something innocuous (e.g. ESC or NUL).
+
+To  obtain  double-height  text or graphics,  two consecutive  display  rows 
+should  contain  identical data;  the characters in the first  row  are  not 
+automatically   duplicated  in  the  second  as  would  be  the  case  in  a 
+conventional hardware implementation.   Again,  this is the same as the  BBC 
+Micro  and is what BBC BASIC expects - it does allow special effects such as 
+the  top  and bottom halves of double-height characters being  in  different 
+colours.  Software drivers for Prestel or Teletext must take account of this 
+feature and carry out the duplication themselves.
+
+All  other  Viewdata  display features are provided,  as  specified  in  the 
+Broadcast  Teletext  Specification (September 1976).   These include  colour 
+text and graphics (contiguous and separated),  background colour,  flashing, 
+double-height (text and graphics) and held-graphics (allowing abrupt  colour 
+changes).
+
+The  full Viewdata (UK) character set is supported;  note particularly  that 
+the code normally corresponding to backslash (and used by DOS as a directory 
+delimiter) displays as the fraction 1/2.   As with the BBC Micro MODE 7, the 
+ASCII  codes for # (hash)   (pound) and _ (underscore) are "shuffled" so  as 
+to  display  as  expected (underscore actually displaying  as  "wide  bar"), 
+rather than using the Viewdata codes.  To force use of the standard Viewdata 
+codes  (such as would be required for displaying a Prestel or Teletext page) 
+set bit 7 of the stored characters.
+
+To  see  a demonstration of MODE7.COM, enter MODE7 <RETURN> to  install  the 
+emulator, then BBCBASIC MODE7DEM <RETURN>.  This cycles through a number  of 
+Prestel pages illustrating various features of the Viewdata display.
+  
+Note:  MODE7 is known to be incompatible with some SVGA cards, e.g. the  ATI 
+3D-Xpression.  A patched version is available for this card on request.
+

@@ -1,0 +1,328 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+
+<HTML>
+
+<HEAD>
+<TITLE>R. T. Russell: BBC BASIC (86) Manual</TITLE>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=us-ascii">
+<LINK HREF="index.html" REL="index" TITLE="Table of Contents">
+<LINK HREF="vdu.html" REL="prev" TITLE="VDU Emulation">
+<LINK HREF="opsys1.html" REL="next" TITLE="Resident Star Commands">
+<LINK HREF="http://www.rtrussell.co.uk/index.html" REL="home" TITLE="Homepage">
+<LINK HREF="mailto:richard&#64;rtrussell.co.uk" REL="author" TITLE="Mail the author">
+</HEAD>
+
+<BODY BACKGROUND="rtrtile.gif">
+<IMG SRC="rtrlogo.gif" ALIGN=left ALT="RTR logo" WIDTH=190 HEIGHT=140>
+<BR>
+<H1 ALIGN=center>R. T. RUSSELL</H1>
+<H2 ALIGN=center>BBC BASIC (86) Manual</H2>
+<BR CLEAR=ALL>
+<HR>
+<H1 ALIGN=center>Operating System Interface</H1>
+
+<H2><A NAME="introduction">Introduction</A></H2>
+
+As with the BBC micro computer, the star (*) commands 
+provide access to the operating system.  Since the BBC operating system 
+is completely different to MS-DOS (PC DOS) there are a number of differences 
+in the star commands.
+<P>
+When a star command is issued, BBCBASIC(86) first checks to see if 
+it is one of the resident star commands.  If it is not a resident 
+command, it is passed to MS-DOS (PC DOS) for action.  MS-DOS then 
+treats it as if it had been entered in the operating system command 
+mode in the normal way.
+
+<H3><A NAME="specifiers">File Specifiers</A></H3>
+
+File specifiers must comply with the standard MS-DOS (PC DOS) conventions.
+
+<BLOCKQUOTE>
+<PRE>
+[drive:][\][path\]filename.extension
+</PRE>
+
+<TABLE CELLSPACING=12>
+<TR><TD VALIGN=top><TT>drive:</TT></TD>
+<TD>The single letter name (A to P) of the drive where the 
+file will be found.  The colon is mandatory.  If the drive name is 
+omitted, the currently logged-on drive is assumed.</TD></TR>
+
+<TR><TD VALIGN=top><TT>path</TT></TD>
+<TD>The list of directories which must be followed in order 
+to find the specified file.  The names of each directory in the path 
+must be separated by the backslash character.  If the path is omitted, 
+the current directory on the specified drive is assumed.</TD></TR>
+
+<TR><TD VALIGN=top><TT>filename</TT></TD>
+<TD>The name of the file.  The length of the name must not 
+exceed 8 characters.</TD></TR>
+
+<TR><TD VALIGN=top><TT>extension</TT></TD>
+<TD>The optional extension of the file.  If an extension 
+is used it must be separated from the filename by a full-stop.  If 
+the extension is omitted, .BBC is assumed.</TD></TR>
+
+</TABLE>
+</BLOCKQUOTE>
+
+Drives 
+A: to P: are accepted in file specifications.  Filenames in star commands 
+may optionally be enclosed in quotes; unmatched quotes will cause a 
+'<A HREF="annexc.html#badstring">Bad string</A>' error.  
+The standard MS-DOS (PC DOS) 'wild-cards' may 
+be used when an ambiguous file specifier is acceptable.
+
+<BLOCKQUOTE>
+<TABLE CELLSPACING=12>
+
+<TR><TD VALIGN=top><TT>?&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</TT></TD>
+<TD>Allow any single character in this position.  If this 
+is used as the last character in the name, a null character will be 
+accepted.</TD></TR>
+
+<TR><TD VALIGN=top><TT>*</TT></TD>
+<TD>Allow any character (including a null) from the position 
+of the '*' to the end of the name or extension.</TD></TR>
+
+</TABLE>
+</BLOCKQUOTE>
+
+<H3><A NAME="symbols">Symbols</A></H3>
+
+The following symbols and abbreviations are used as part of the explanation 
+of the operating system commands.
+
+<P>
+<TABLE>
+<TR><TD VALIGN=top>{}</TD>
+<TD>The enclosed items may be repeated 0 or more times.</TD></TR>
+<TR><TD VALIGN=top>[]</TD>
+<TD>The items enclosed are optional, they may occur zero 
+or one time.</TD></TR>
+<TR><TD>num</TD>
+<TD>A numeric constant.</TD></TR>
+<TR><TD>str</TD>
+<TD>A string constant.</TD></TR>
+<TR><TD>&lt;num&gt;&nbsp;&nbsp;&nbsp;</TD>
+<TD>A numeric variable.</TD></TR>
+<TR><TD>&lt;str&gt;</TD>
+<TD>A string variable.</TD></TR>
+<TR><TD>afsp</TD>
+<TD>An ambiguous file specifier.</TD></TR>
+<TR><TD>ufsp</TD>
+<TD>An unambiguous file specifier.</TD></TR>
+<TR><TD>d:</TD>
+<TD>A disk drive name.</TD></TR>
+<TR><TD>dir</TD>
+<TD>A directory name.</TD></TR>
+<TR><TD>pth</TD>
+<TD>A directory path ( <TT>\dir\dir\etc</TT> ).</TD></TR>
+</TABLE>
+<P>
+
+<HR>
+<H2><A NAME="accessing">Accessing Star Commands</A></H2>
+
+The star commands 
+may be accessed directly or via the 
+<A HREF="bbckey3.html#oscli">OSCLI</A> statement.  The two examples 
+below both access the <A HREF="opsys1.html#help">HELP</A> command.
+
+<BLOCKQUOTE>
+<PRE>
+*HELP
+
+OSCLI("HELP")
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="syntax">Syntax</A></H3>
+
+A star command must be the last (or only) command on a program line 
+and its argument may not be a variable.  If you need to use one of 
+these commands with a variable as the argument, use the 
+<A HREF="bbckey3.html#oscli">OSCLI</A> statement.  Examples 
+of the use of the OSCLI statement are given below in the 
+<A HREF="opsys1.html">Resident Star Commands</A> sub-section.
+
+<H3><A NAME="nonresident">Non Resident Star Commands</A></H3>
+
+If a star command is not one of the resident commands, it is passed 
+to COMMAND.COM for execution.  This will only work if BBCBASIC(86) 
+can find a copy of COMMAND.COM  and there is sufficient RAM.  BBCBASIC(86) 
+uses the COMSPEC parameter in the MS-DOS environment area to locate 
+COMMAND.COM.  This parameter is automatically set by MS-DOS at boot 
+up.
+<P>
+The appropriate .EXE or .COM file will be loaded and executed by COMMAND.COM.
+<P>
+For example, you can copy files by using the *COPY command, which 
+will be processed by COMMAND.COM.
+
+<BLOCKQUOTE>
+<PRE>
+*COPY source-afsp dest-afsp /V
+
+*COPY ADDRESS.DTA B:
+</PRE>
+</BLOCKQUOTE>
+
+Unlike the resident commands, commands passed to COMMAND.COM do NOT 
+assume an extension of .BBC if the extension is omitted.
+
+<H3><A NAME="similar">Similarly Named Star Commands</A></H3>
+
+If you wish to execute a command with the same name as a resident 
+command, precede it with a second star.  For example,
+
+<BLOCKQUOTE>
+<PRE>
+*DIR
+</PRE>
+</BLOCKQUOTE>
+
+will execute BBCBASIC(86)'s resident directory listing command, (only 
+.BBC files in this case) but
+
+<BLOCKQUOTE>
+<PRE>
+**DIR
+</PRE>
+</BLOCKQUOTE>
+
+will pass the command to COMMAND.COM and you will get the standard 
+MS-DOS (PC DOS) directory listing (all the files plus date/time stamps, 
+etc).
+
+<H3><A NAME="errors">Errors in Star Commands</A></H3>
+
+If the command passed to COMMAND.COM does not exist, the MS-DOS 'Bad 
+command or file name' error will occur.  This error cannot be detected 
+or trapped by BBCBASIC(86), and execution of the BBCBASIC(86) program 
+will continue.  For this reason, the 
+<A HREF="opsys1.html#fx">*FX</A> (with the exception of *FX 15) and 
+<A HREF="opsys1.html#tv">*TV</A> commands are trapped and ignored
+(they are not passed 
+to COMMAND.COM).  These two star commands are commonly found in programs 
+for the BBC Micro, but they have no counterpart in MS-DOS.
+
+<H3><A NAME="case">Case Conversion</A></H3>
+
+Star commands and their associated qualifiers are converted from lower-case 
+to upper-case if necessary.  For example, *del wombat is converted 
+to *DEL WOMBAT.  This is in keeping with the general MS-DOS (PC DOS) 
+philosophy and the BBC Micro's machine operating system (MOS).
+
+<H3><A NAME="special">Special Characters</A></H3>
+
+Control characters, lower-case characters, DEL and quotation marks 
+may be incorporated in filenames by using the 'escape' character '|'.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TD>|A&nbsp;&nbsp;</TD><TD>gives ^A.</TD></TR>
+<TR><TD>|a</TD><TD>gives lower-case A.</TD></TR>
+<TR><TD>|?</TD><TD>gives Del.</TD></TR>
+<TR><TD>|"</TD><TD>gives the quote marks ".</TD></TR>
+<TR><TD>||</TD><TD>gives the escape character |.</TD></TR>
+<TR><TD>|!</TD><TD>sets bit 7 of the following character.</TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+<HR>
+<H2><A NAME="additional">Additional OS Interfaces</A></H2>
+
+In addition to the facilities already described, the operating system 
+interface provides very limited emulation of 
+<A HREF="#osbyte">OSBYTE</A> and <A HREF="#osword">OSWORD</A>.  Currently, 
+this emulation is limited to reading the character at the current 
+text cursor position (OSBYTE function &amp;87) and reading the dot pattern 
+of a given font character (OSWORD call &amp;A).
+<P>
+OSBYTE and OSWORD are accessed in the same way as on a BBC Micro by 
+USR to addresses &amp;FFF4 (OSBYTE) and CALL to address &amp;FFF1 (OSWORD).
+<P>
+Because a call to either of these addresses only provides a single 
+function, it is not strictly necessary to pass the OSBYTE or OSWORD 
+function number in A%, but it is best to do so to ensure compatibility 
+with any future enhancements to BBCBASIC(86).
+
+<H3><A NAME="osbyte">Current Character - OSBYTE Call</A></H3>
+
+The character at the current text cursor position is returned and 
+assigned to a variable called 'char' by the following program segment.
+
+<BLOCKQUOTE>
+<PRE>
+A%=&amp;87
+char=(USR(&amp;FFF4) AND &amp;FF00) DIV 256
+</PRE>
+</BLOCKQUOTE>
+
+<H3><A NAME="osword">Character Dot Pattern - OSWORD Call</A></H3>
+
+The dot pattern of a character can be read as follows:
+
+<BLOCKQUOTE>
+<PRE>
+DIM pattern 8
+?pattern=character
+A%=&amp;A
+X%=pattern MOD 256:Y%=pattern DIV 256
+CALL &amp;FFF1
+</PRE>
+</BLOCKQUOTE>
+
+The character is loaded into byte zero of the 9 byte table called 
+'pattern' and the pattern is returned in the 8 bytes 'pattern?1' to 
+'pattern?8.  As with the BBC Micro, the address of the table 'pattern' 
+is passed in X% and Y%.  The least significant byte is passed in X% 
+and the most significant in Y%
+
+<H3><A NAME="osrdch">OSRDCH, OSWRCH, OSKEY and OSCLI Calls</A></H3>
+
+Your <A HREF="bbc3.html">machine code</A> 
+programs may access the OSRDCH, OSWRCH, OSKEY and 
+OSCLI routines via vectors provided in page 3 as shown below.
+
+<BLOCKQUOTE>
+<TABLE>
+<TR><TD VALIGN=top><TT>OSRDCH:</TT></TD>
+<TD VALIGN=top><TT>CALLF&nbsp;[&amp;300]</TT></TD>
+<TD><TT>;Waits for and returns a char in the al register.</TT></TD></TR>
+
+<TR><TD VALIGN=top><TT>OSWRCH:</TT></TD>
+<TD VALIGN=top><TT>CALLF&nbsp;[&amp;304]</TT></TD>
+<TD><TT>;Sends the char in the al register to the VDU driver.</TT></TD></TR>
+
+<TR><TD VALIGN=top><TT>OSKEY:</TT></TD>
+<TD VALIGN=top><TT>CALLF&nbsp;[&amp;308]</TT></TD>
+<TD><TT>;With the time limit set in the ax register.  Returns a
+character in the al register.  The carry flag is set to zero if a
+timeout has occurred.</TT></TD></TR>
+
+<TR><TD VALIGN=top><TT>OSCLI:</TT></TD>
+<TD VALIGN=top><TT>CALLF&nbsp;[&amp;30C]</TT></TD>
+<TD><TT>;With the dx register set to the address of the command
+string.  The string must be terminated by a CR.</TT></TD></TR>
+</TABLE>
+</BLOCKQUOTE>
+
+See the program INKEY.BBC for an example of the use of OSKEY.
+
+<P>
+<TABLE WIDTH="100%">
+<TR><TD><H3><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15>
+<A HREF="index.html">CONTENTS</A></H3></TD>
+<TD ALIGN=right><H3><A HREF="opsys1.html">CONTINUE</A>
+<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></H3></TD></TR></TABLE>
+<HR>
+<A href="http://www.anybrowser.org/"><img border=0 align=left src="logoab8.gif" alt="Best viewed with Any Browser" height=31 width=88></A>
+<A href="http://validator.w3.org/"><img border=0 align=right src="vh32.gif" alt="Valid HTML 3.2!" height=31 width=88></A>
+<CENTER>&copy; Doug Mounter and 
+<A HREF="mailto:richard&#64;rtrussell.co.uk">Richard Russell</A> 1999</CENTER>
+</BODY>
+
+</HTML>

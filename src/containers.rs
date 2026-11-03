@@ -61,7 +61,7 @@ fn zip(data:&[u8])->Result<Archive,String>{
         let payload=local.checked_add(30+ln+le).ok_or("ZIP local offset overflow")?;
         if payload.checked_add(compressed).is_none_or(|end|end>start){return Err("ZIP payload crosses directory boundary".into());}
         let input=range(data,payload,compressed)?;
-        let bytes=match method{0=>{if compressed!=size{return Err("ZIP stored-size mismatch".into());}input.to_vec()},8=>super::inflate::decode(input,size)?,_=>return Err(format!("ZIP compression method{method} is unsupported (use stored/deflate)"))};
+        let bytes=match method{0=>{if compressed!=size{return Err("ZIP stored-size mismatch".into());}input.to_vec()},8=>super::inflate::decode(input,size)?,_=>return Err(format!("ZIP compression method {method} is unsupported (use stored/deflate)"))};
         if crc32(&bytes)!=crc{return Err(format!("ZIP CRC32 mismatch: {name}"));}archive.add(name,bytes)?;
     }
     if at!=eocd{return Err("ZIP central directory size mismatch".into());}Ok(archive)
@@ -123,7 +123,7 @@ fn fat_volume(data:&[u8])->Result<(Fat<'_>,usize,usize,usize),String>{
 }
 fn fat16(data:&[u8])->Result<Archive,String>{
     let(mut fs,root_start,root_len,base)=fat_volume(data)?;
-    fs.walk(range(data,root_start,root_len)?,"",0)?;fs.archive.notes.push(format!("FAT16 volume atLBA{};{} files before package expansion",base/512,fs.archive.files.len()));Ok(fs.archive)
+    fs.walk(range(data,root_start,root_len)?,"",0)?;fs.archive.notes.push(format!("FAT16 volume at LBA {}; {} files before package expansion",base/512,fs.archive.files.len()));Ok(fs.archive)
 }
 /// One directory entry of a FAT volume as DOS returns it from a search.
 #[derive(Clone,Debug)]
@@ -165,10 +165,10 @@ pub fn fat16_tree(data:&[u8])->Result<FatTree,String>{
 /// Reads an image file whole, within the container input limit.
 pub fn read_image(path:&Path)->Result<Vec<u8>,String>{
     let file=std::fs::File::open(path).map_err(|e|e.to_string())?;let mut data=Vec::new();file.take((MAX_INPUT+1)as u64).read_to_end(&mut data).map_err(|e|e.to_string())?;
-    if data.len()>MAX_INPUT{return Err("container exceeds64MiB input limit".into());}Ok(data)
+    if data.len()>MAX_INPUT{return Err("container exceeds 64 MiB input limit".into());}Ok(data)
 }
 pub fn parse(data:&[u8],is_zip:bool)->Result<Archive,String>{
-    if data.len()>MAX_INPUT{return Err("container exceeds64MiB input limit".into());}
+    if data.len()>MAX_INPUT{return Err("container exceeds 64 MiB input limit".into());}
     let mut archive=if is_zip{zip(data)?}else{fat16(data)?};
     // Exactly one nested package level. Keep original ZIP bytes as well.
     let originals=archive.files.len();

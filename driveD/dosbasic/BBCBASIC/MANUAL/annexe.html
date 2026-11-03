@@ -1,0 +1,412 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+
+<HTML>
+
+<HEAD>
+<TITLE>R. T. Russell: BBC BASIC (86) Manual</TITLE>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=us-ascii">
+<LINK HREF="index.html" REL="index" TITLE="Table of Contents">
+<LINK HREF="annexd.html" REL="prev" TITLE="Format of Program and Variables">
+<LINK HREF="annexf.html" REL="next" TITLE="BBCRUN/BIGRUN">
+<LINK HREF="http://www.rtrussell.co.uk/index.html" REL="home" TITLE="Homepage">
+<LINK HREF="mailto:richard&#64;rtrussell.co.uk" REL="author" TITLE="Mail the author">
+</HEAD>
+
+<BODY BACKGROUND="rtrtile.gif">
+<IMG SRC="rtrlogo.gif" ALIGN=left ALT="RTR logo" WIDTH=190 HEIGHT=140>
+<BR>
+<H1 ALIGN=center>R. T. RUSSELL</H1>
+<H2 ALIGN=center>BBC BASIC (86) Manual</H2>
+<BR CLEAR=ALL>
+<HR>
+<H1 ALIGN=center>Utility Routines</H1>
+
+<H4 ALIGN=right>Annex E to<BR>BBCBASIC(86)</H4>
+
+<H2><A NAME="introduction">Introduction</A></H2>
+
+There are four utility programs included on the distribution disk.
+<P>
+The first converts programs and some data files from the Acorn BBC 
+Micro format to BBCBASIC(86) format.  This program is called FCONVERT.BBC.
+<P>
+The second is called RX.BBC.  It is a program for receiving files 
+sent from a BBC Micro via the RS423 port by the program TX.
+<P>
+The third in a program called COMIO.BBC.  This program provides support 
+for serial I/O via COM1: or COM2:.
+<P>
+Finally, PEEK.BBC provides read/write access to any byte within the 
+address space of the computer.
+<P>
+
+<HR>
+<H2><A NAME="conversion">Program and Data Format Conversion</A></H2>
+
+<H3><A NAME="transferring">Transferring the Files</A></H3>
+
+Before converting the files, you need to transfer them from your Acorn 
+DFS formatted disks to MS-DOS formatted disks.  If you don't have 
+access to a BBC Micro, you will need to have the files copied by one 
+of the professional file copy services.
+
+<H4><A NAME="preparation">Preparation</A></H4>
+
+If you have access to a BBC Micro, you can copy the files to your 
+MS-DOS computer via the serial port on the BBC Micro and either COM1: 
+or COM2: on your MS-DOS computer.  In order to do this you will need:
+
+<UL>
+<LI>A lead to connect the BBC Micro's serial port to one of 
+the serial ports on your MS-DOS computer.  The appropriate connections 
+for 25 way and 9 way D-Type connectors are shown below.
+<P>
+<TABLE>
+<TR><TH COLSPAN=2>BBC Micro</TH><TH COLSPAN=2> MS-DOS Computer</TH>
+<TH>&nbsp;</TH></TR>
+<TR><TH ALIGN=left COLSPAN=2>DIN Plug</TH><TH>D25 Socket&nbsp;</TH>
+<TH>D9 Socket</TH><TH>&nbsp;</TH></TR>
+
+<TR><TD>1</TD><TD>&nbsp;</TD><TD>7</TD><TD>5</TD><TD>Signal ground</TD></TR>
+<TR><TD>2</TD><TD>&nbsp;</TD><TD>2</TD><TD>3</TD><TD>Signal from MS-DOS 
+computer to BBC Micro.</TD></TR>
+<TR><TD>3</TD><TD>} Connect</TD><TD COLSPAN=3>&nbsp;</TD></TR>
+<TR><TD>4</TD><TD>} Together</TD><TD COLSPAN=3>&nbsp;</TD></TR>
+<TR><TD>5</TD><TD>&nbsp;</TD><TD>3</TD><TD>2</TD><TD>Signal from BBC Micro
+to MS-DOS computer.</TD></TR>
+<TR><TD>&nbsp;</TD><TD ALIGN=right>Connect {</TD><TD>4</TD><TD>7</TD>
+<TD>Request to send</TD></TR>
+<TR><TD>&nbsp;</TD><TD ALIGN=right>Together {</TD><TD>5</TD><TD>8</TD>
+<TD>Clear to send</TD></TR>
+<TR><TD>&nbsp;</TD><TD ALIGN=right>Connect {</TD><TD>6</TD><TD>6</TD>
+<TD>Data set ready</TD></TR>
+<TR><TD>&nbsp;</TD><TD ALIGN=right>| &nbsp; {</TD><TD>8</TD><TD>1</TD>
+<TD>Carrier detect</TD></TR>
+<TR><TD>&nbsp;</TD><TD ALIGN=right>Together {</TD><TD>20</TD><TD>4</TD>
+<TD>Data terminal ready</TD></TR>
+</TABLE>
+<P>
+<LI>The program listed below needs to be transferred to (or 
+typed into) your BBC Micro.  (Save the program to a DFS formatted 
+disk once you have transferred it or typed it in.)
+</UL>
+
+<H4><A NAME="commsprog">Transferring the Comms Program</A></H4>
+
+To transfer the comms program from your PC to a BBC Micro, 
+carry out the following steps.
+
+<UL>
+<LI>Connect your PC and BBC Micro together using the lead previously 
+described.  The following instructions assume that you have plugged 
+it into COM1:.
+<P>
+<LI>Place your BBCBASIC(86) master disk into drive A: and issue 
+the commands:
+
+<BLOCKQUOTE>
+<PRE>
+A:&lt;RETURN&gt;
+CD \BBCBASIC&lt;RETURN&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<LI>Set up COM1: to 1200 baud, no parity, 8 data bits and one 
+stop bit with the following command:
+
+<BLOCKQUOTE>
+<PRE>
+MODE COM1:1200,N,8,1&lt;RETURN&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<LI>Enter the following command on your BBC Micro:
+
+<BLOCKQUOTE>
+<PRE>
+*KEY1 NEW|M*FX7,4|M*FX2,1|M&lt;RETURN&gt;
+</PRE>
+</BLOCKQUOTE>
+
+This clears the BBC's program memory, sets the RS423 port 
+to 1200 baud and selects the serial input stream.
+<P>
+<LI>Press &lt;f1&gt; on the BBC Micro.
+<P>
+<LI>Issue the command:
+
+<BLOCKQUOTE>
+<PRE>
+COPY TX.BAS COM1:&lt;RETURN&gt;
+</PRE>
+</BLOCKQUOTE>
+
+on your PC.  You will see the program TX being 'typed' 
+in on the BBC Micro.
+<P>
+<LI>When you get a message on the PC telling you that the file 
+has been copied,
+
+<BLOCKQUOTE>
+<PRE>
+Press &lt;BREAK&gt;
+</PRE>
+</BLOCKQUOTE>
+
+on the BBC Micro, followed by:
+
+<BLOCKQUOTE>
+<PRE>
+OLD&lt;RETURN&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<LI>Save the file to a DFS formatted DISK on the BBC Micro with 
+the command:
+
+<BLOCKQUOTE>
+<PRE>
+SAVE "TX"&lt;RETURN&gt;
+</PRE>
+</BLOCKQUOTE>
+
+<LI>Change to MODE 3 and list the program to check that it looks 
+identical to TX.BAS on the PC. For your convenience, the program is 
+also listed below:
+</UL>
+
+<BLOCKQUOTE>
+<PRE>
+ 10 REM TX V2.00 1 OCT 88
+ 20 :
+ 30 REM Send a file byte by byte via
+ 40 REM the serial port.
+ 50 :
+ 60 :
+ 70 CLS
+ 80 PRINT "Run RX on your IBM PC BEFORE pressing"
+ 90 PRINT "                      ******"
+100 PRINT "&lt;RETURN following the file name."''
+110 INPUT "Name of file to send ? "name$
+120 :
+130 x=OPENIN(name$)
+140 IF x=0 PRINT "File does not exist":END
+150 byte=BGET#x
+160 IF EOF#x PRINT "File is empty":END
+170 ON ERROR GOTO 440
+180 PRINT "Sending file ";name$
+190 *FX3,7
+200 *FX8,7
+210 *FX7,7
+220 *FX2,1
+230 *FX21,1
+240 *FX21,2
+250 IF INKEY(3000)&lt;&gt;17 THEN 540
+260 REPEAT
+270   IF INKEY(0)=19 PROC_xoff
+280   VDU byte
+290   byte=BGET#x
+300 UNTIL EOF#x
+310 VDU byte 320 CLOSE#0
+330 *FX3,0
+340 *FX2,0
+350 VDU 7
+360 PRINT '"File ";name$;" sent to serial port"
+370 PRINT "Press the &lt;Esc&gt; key on your"
+380 PRINT "MS-DOS computer to terminate"
+390 PRINT "the transfer and close the"
+400 PRINT "file."
+410 END
+420 :
+430 : 440 ON ERROR OFF
+450 *FX3,0
+460 *FX2,0
+470 CLOSE#0
+480 PRINT:REPORT:PRINT " at line ";ERL
+490 PRINT '"Transmission aborted"
+500 END
+510 : 520 DEF PROC_xoff
+530 IF INKEY(3000)=17 ENDPROC
+540 *FX3,0 550 *FX2,0 560 PRINT '"PC not ready - Program aborting"
+570 CLOSE#0
+580 END
+</PRE>
+</BLOCKQUOTE>
+
+<H4><A NAME="transfile">Transferring a File</A></H4>
+
+<UL>
+<LI>Connect COM1: (or COM2: - change the program RX.BBC) and 
+the RS423 port on the BBC Micro with the connecting lead.  The DIN 
+plug at the BBC Micro end can go in two different ways. The correct 
+way is with the locating 'slot' towards the centre of the BBC Micro 
+(if you have a lead with a cut-out it should be at the bottom).  The 
+top of the plug should also be marked with a 'T'.
+<P>
+<LI>Make sure that the program RX.BBC and FCONVERT.BBC are in 
+the working directory and that BBCBASIC.EXE is somewhere in the current 
+MS-DOS 'PATH' (see the MS-DOS 'PATH' command).  Load and run the RX.BBC 
+program by typing:
+
+<BLOCKQUOTE>
+<PRE>
+BBCBASIC RX&lt;ENTER&gt;
+</PRE>
+</BLOCKQUOTE>
+
+from the MS-DOS prompt.
+<P>
+<LI>Load the program TX (listed above) onto the BBC Micro.  Make 
+sure that the program/data files you wish to transfer are available 
+in one of the BBC Micro's disk drives and RUN the program TX.BBC.
+<P>
+<LI>Enter the name of the DFS file to be transferred in answer 
+to the question on the BBC Micro.  Read the explanation displayed 
+by RX.BBC on the screen of your MS-DOS computer and then enter the 
+name of the MS-DOS DFS file you wish to create.  We suggest that you 
+use an extension of .DFS so that you don't mistake the file for a 
+BBCBASIC(86) program/data file.  If you are transferring an ASCII 
+format file (see later), use an extension of .BAS or .TXT
+<P>
+<LI>When transfer is complete, the BBC Micro will 'beep' and 
+display a prompt.  Press the &lt;ESC&gt; key on the MS-DOS computer to terminate 
+the program and close the MS-DOS file.
+<P>
+<LI>Repeat the process by re-RUNning the two programs again for 
+every file you wish to transfer.
+</UL>
+
+<P>
+You can carry out a similar process using a cassette recorder, but 
+in this case you should enable the tape filing system by issuing the 
+*TAPE command.
+
+<H3><A NAME="fconvert">Converting the Files Using FCONVERT.BBC</A></H3>
+
+Once you have transferred your files to an MS-DOS formatted disk, 
+you can use the FCONVERT utility to convert them to BBCBASIC(86) format.  To 
+do this (assuming you are running BBCBASIC(86)on your MS-DOS computer), 
+type:
+
+<BLOCKQUOTE>
+<PRE>
+CHAIN FCONVERT&lt;ENTER&gt;
+</PRE>
+</BLOCKQUOTE>
+
+and answer the questions displayed.  Re-RUN FCONVERT.BBC 
+for every file you want to convert.
+
+<H4><A NAME="progfiles">Program Files</A></H4>
+
+Unless you are very unlucky, your program should transfer without 
+error.  If you have any data statements in your program which contain 
+the value &amp;1A or &amp;0D you will get errors reported, but you will probably 
+find that the program is nearly correct.  Try loading and listing 
+the program and see if you can correct the errors.
+
+<H4><A NAME="datafiles">Data Files</A></H4>
+
+You should transfer the data files to an MS-DOS formatted disk as 
+previously described and then try using the FCONVERT utility to convert 
+them.
+<P>
+For best results, the data files should have been written using 
+<A HREF="bbckey4.html#print">PRINT#</A> rather than 
+<A HREF="bbckey1.html#bput">BPUT#</A>.  
+If a file has been written ENTIRELY with BPUT# 
+it will not, of course, need converting.
+<P>
+Mixed data files are a nuisance.  It may be possible to convert them, 
+but you will get a number of 'Bad data' errors reported and you may 
+confuse the utility.  If this happens, you will need to write a data 
+conversion program and in order to do this you will need to know the 
+structure of the data file and the way data is stored by the Acorn 
+DFS.
+
+<P>
+<HR>
+<H2><A NAME="serialio">Serial I/O</A></H2>
+
+BBCBASIC(86) relies on the operating system for all its I/O functions.  Consequently, 
+support for the serial ports is constrained to that provided by MS-DOS.  You can
+initialise a serial port using the MS-DOS <B>MODE</B> command, open a channel to
+"COM1" (the first serial port) or to "COM2" (the second serial port) using the 
+<A HREF="bbckey3.html#openin">OPENIN</A> or
+<A HREF="bbckey3.html#openout">OPENOUT</A>
+functions, and then transfer data using the <A HREF="bbckey1.html#bget">BGET#</A>,
+<A HREF="bbckey1.html#bput">BPUT#</A>, <A HREF="bbckey2.html#inputhash">INPUT#</A>
+or <A HREF="bbckey4.html#print">PRINT#</A> statements.  However, MS-DOS is not
+very good at dealing with serial I/O and at high baud rates and/or with a slow
+computer there is a danger that incoming data will be lost (a
+'<A HREF="annexc.html#devicefault">Device fault</A>' error will occur in these
+circumstances).  Another problem is that there is no
+'time out' mechanism built into MS-DOS, so if your BASIC program is waiting for input
+from the serial port, and no data arrives, if will wait forever (not even the Escape key
+will work).
+<P>
+To overcome these problems the file COMIO.BBC on the distribution disk contains
+interrupt-driven assembly-language routines to enable you to use COM1 or COM2 for
+sending and receiving data.  The program COMDEMO.BBC demonstrates the use of
+these comms routines to provide a very simple terminal emulation program.
+<P>
+Don't worry if if you can't understand the assembly code 'bits' of 
+the program.  Look at the examples (COMDEMO.BBC and RX.BBC) and follow 
+the instructions for each of the routines.
+<P>
+The maximum 'safe' speed for the '_com_get' routine depends on how 
+much BBCBASIC programming goes on between getting each character.  For 
+simple programs you should try 1200 baud as the starting point.  If 
+you want to run faster than this, you may need to implement handshaking.  In 
+order to keep the routines simple, hardware handshaking has not been 
+used.  You will, therefore, need to include some form of handshaking 
+in your program.  The program RX.BBC sends a character back to the 
+program TX.BBC every time an incoming character has been processed 
+successfully.  This allows the serial data speed to be set to 9600 
+baud.  Because of the handshaking, the real rate of data transfer 
+is lower than this, but still faster than the 'safe' speed of 1200 
+baud.
+<P>
+
+<HR>
+<H2><A NAME="dma">Direct Memory Access</A></H2>
+
+The program PEEK.BBC contains two assembly code routines, a function 
+and a procedure for directly accessing any byte in the computer's 
+address space.  The assembly code routines access the memory using 
+the computer's 'natural' addressing mode of paragraph and address.  The 
+function and procedure are passed the absolute memory addresses of 
+the byte to be accessed.  This address is then converted into paragraph 
+and address before the assembly code routines are called.
+<P>
+Be very careful when using the POKE procedures.  You can write to 
+memory which is outside the control of BBCBASIC(86) and this may cause 
+all sorts of problems.  Make sure you know where all the 'bits' of 
+the operating system, spooler programs, etc are. Do not change any 
+of these areas unless you are SURE you know what you are doing.
+<P>
+You can use these routines to directly access the screen memory areas.  The 
+monochrome/character screen memory starts at address &amp;B0000 and ends 
+at address &amp;B7FFF.  The colour/graphics screen memory starts at address 
+&amp;B8000 and ends at address &amp;BFFFF.
+<P>
+If you want to save and re-load screen images, you may find the 
+<A HREF="opsys1.html#save">*SAVE</A> and 
+<A HREF="opsys1.html#load">*LOAD</A> 
+commands will do what you want more efficiently than reading/writing 
+the memory area byte-by-byte.
+
+<P>
+<TABLE WIDTH="100%">
+<TR><TD><H3><IMG SRC="larr.gif" ALT="Left" WIDTH=15 HEIGHT=15>
+<A HREF="index.html">CONTENTS</A></H3></TD>
+<TD ALIGN=right><H3><A HREF="annexf.html">CONTINUE</A>
+<IMG SRC="rarr.gif" ALT="Right" WIDTH=15 HEIGHT=15></H3></TD></TR></TABLE>
+<HR>
+<A href="http://www.anybrowser.org/"><img border=0 align=left src="logoab8.gif" alt="Best viewed with Any Browser" height=31 width=88></A>
+<A href="http://validator.w3.org/"><img border=0 align=right src="vh32.gif" alt="Valid HTML 3.2!" height=31 width=88></A>
+<CENTER>&copy; Doug Mounter and 
+<A HREF="mailto:richard&#64;rtrussell.co.uk">Richard Russell</A> 1999</CENTER>
+</BODY>
+
+</HTML>

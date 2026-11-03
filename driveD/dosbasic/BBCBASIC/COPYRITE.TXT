@@ -1,0 +1,30 @@
+                            BBC BASIC (86) Plus
+
+                       IBM PC Compatible Version 4.82
+
+                    Copyright (C) R.T.Russell 1985-1999
+
+Please  feel  free  to  make a back-up copy of your  BBC  BASIC  (86)  disk.  
+However, we ask you to use it only on one machine at a time and not to  give 
+or  'lend' a copy to anybody else.  "Why not?" you may ask  yourself,  "What 
+have  I  got  to lose?".  We have all 'borrowed' software at  some  time  or 
+another and, at the time, we can see no harm in it.
+
+Think  of  the programmer who wrote the program.  He isn't like  a  painter; 
+damp and draughty garrets don't give him inspiration - they give him a  pain 
+in  the  neck.  He, like you, doesn't expect to get a fortune  for  a  day's 
+work,  just a fair reward for his efforts.  Considering the time it took  to 
+write, BBC BASIC (86) is not an expensive program; it's ridiculously cheap.
+
+We  must sell a considerable number of copies of BBC BASIC (86)  before  the 
+programmer  can  afford the rent on centrally heated lodgings.   Every  copy 
+that is given away means one more day in the garret.  If things get too bad, 
+our programmer may write only one-off programs for customers who can  afford 
+them.  Who, then, will write the programs for you to rip off?
+
+In case the above plea has not reached you, please note:
+
+BBC  BASIC  (86)  is the Copyright (C) 1982-1999 of R. T.  Russell.   It  is 
+supplied  for  use  on  one computer only.   Neither  the  program  nor  its 
+accompanying  documentation  may  be  copied for  simultaneous  use  by  the 
+purchaser nor for use by anyone other than the purchaser.

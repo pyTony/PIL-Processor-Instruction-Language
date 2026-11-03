@@ -603,6 +603,7 @@ impl Debugger {
                 let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
                 let data:Result<Vec<u8>,String>=bytes.iter().map(|text|u8::from_str_radix(text.strip_prefix("0x").unwrap_or(text),16).map_err(|_|"each token must be a hex byte".into())).collect();
                 let data=data?;self.ram.write_bytes(address,&data).map_err(|f|format!("RAM write rejected: {f:?}"))?;
+                self.cache.clear();self.pil_cursor=None;
                 format!("wrote {} bytes at {address:08x}",data.len())
             }
             ["protect",addr,count]=>{
@@ -626,7 +627,7 @@ impl Debugger {
                     "eflags"=>{self.cpu.eflags=value;self.cpu.undefined_flags=0;}
                     _=>{let i=REGS.iter().position(|r|*r==name.as_str()).ok_or("unknown register")?;self.cpu.regs[i]=value;}
                 }
-                self.stopped_at_break=None;format!("{name}={value:08x}")
+                self.stopped_at_break=None;self.pil_cursor=None;format!("{name}={value:08x}")
             }
             ["break",addr]=>{
                 let ip=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;

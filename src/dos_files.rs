@@ -126,8 +126,9 @@ fn fail(p:&mut Loaded,code:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::fr
 fn set_ax(p:&mut Loaded,ax:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(ax&0xffff);}
 fn ds()->SegmentRegister{SegmentRegister::Ds}
 /// ASCIIZ path at DS:offset, at most 128 bytes before the NUL.
-pub(super) fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{
-    let context=MemoryContext{segment:ds(),cache:p.image.segments[ds().index()]};
+pub(super) fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{asciiz_in(p,ds(),offset)}
+pub(super) fn asciiz_in(p:&Loaded,segment:SegmentRegister,offset:u32)->Result<Vec<u8>,String>{
+    let context=MemoryContext{segment,cache:p.image.segments[segment.index()]};
     let mut path=Vec::new();
     for i in 0..128u32{
         let Some(at)=offset.checked_add(i).filter(|&a|a<=0xffff)else{return Err("DOS path exceeds segment end before NUL terminator".into());};
@@ -386,15 +387,10 @@ fn read_entry(d:&Drive,entry:&Entry)->Result<Arc<Vec<u8>>,String>{
         _=>Err("DOS open of a directory entry that is not a file".into()),
     }
 }
-/// System file number of the NUL device: writes are taken and dropped,
-/// reads find end of file at once. Files take the numbers above it.
-pub(super) const NUL:u8=5;
 fn open(p:&mut Loaded)->Result<(),String>{
     let mode=(p.cpu.regs[0]&7)as u8;
     if mode>2{fail(p,0x0c);return Ok(());}
     let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
-    // NUL, in any directory and with any extension, is the device (FreeDOS).
-    if serial::device_name(&raw,b"NUL"){return device(p,NUL);}
     if serial::is_device(p,&raw){return device(p,3);}
     // CON opens the console, as handles 0..2 hold it (CTTY CON).
     if p.com1.is_some()&&serial::device_name(&raw,b"CON"){return device(p,1);}
@@ -431,8 +427,8 @@ fn install(p:&mut Loaded,mut file:OpenFile)->Result<(),String>{
     let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
     // FreeCOM redirects by closing handle 0 or 1 and opening: the file takes it.
     let Some(handle)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
-    // System file numbers 0..5 are the devices; files take the lowest free one above.
-    let Some(sft)=(NUL+1..=0xfeu8).find(|n|!p.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};
+    // System file numbers 0..4 are the devices; files take the lowest free one above.
+    let Some(sft)=(5..=0xfeu8).find(|n|!p.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};
     p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
     file.sft=sft;p.open_handles|=1<<handle;p.drive.files.push(file);
     set_ax(p,u32::from(handle));ok(p);Ok(())
@@ -525,7 +521,6 @@ fn create(p:&mut Loaded,ah:u8)->Result<(),String>{
     if raw.is_empty(){fail(p,3);return Ok(());}
     // Creating a device name opens the device (AH5Bh fails: it exists).
     if ah!=0x5a&&serial::is_device(p,&raw){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,3);}
-    if ah!=0x5a&&serial::device_name(&raw,b"NUL"){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,NUL);}
     if ah==0x5a{
         if !matches!(raw.last(),Some(b'\\'|b'/'|b':')){raw.push(b'\\');}
         let(drive,path)=match components(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
@@ -568,13 +563,16 @@ pub(super) fn write(p:&mut Loaded,sft:u8,bytes:&[u8])->Result<Result<u32,u16>,St
             // The drive is full: nothing is written, as DOS reports a full disk.
             let used=p.drive.memory(*drive).map_or(0,MemDir::clusters);
             let clusters=|n:usize|(n as u32).div_ceil(MEMORY_CLUSTER);
-            if used-clusters(file.data.len())+clusters(length)>MEMORY_BYTES/MEMORY_CLUSTER{return Ok(Ok(0));}
+            if used.saturating_sub(clusters(file.data.len()))+clusters(length)>MEMORY_BYTES/MEMORY_CLUSTER{return Ok(Ok(0));}
         },
     }
     let file=&mut p.drive.files[i];
     let data=Arc::make_mut(&mut file.data);
     data.resize(length,0);data[pos..end].copy_from_slice(bytes);
     file.pos=end as u32;file.written=true;let data=file.data.clone();
+    for other in &mut p.drive.files{
+        if other.sft!=sft&&other.loc.as_ref()==Some(&loc){other.data=data.clone();}
+    }
     if let Loc::Memory(drive,path)=&loc{
         let(dir,name)=p.drive.memory_parent(*drive,path).map_err(|_|"DOS write to a memory file that was removed is not modelled".to_string())?;
         let(time,date)=now();dir.entries.insert(name,MemNode::File{data,time,date});
@@ -583,7 +581,7 @@ pub(super) fn write(p:&mut Loaded,sft:u8,bytes:&[u8])->Result<Result<u32,u16>,St
 }
 /// The open file standard output (handle 1) refers to, when it is a file.
 pub(super) fn redirected_output(p:&Loaded)->Result<Option<u8>,String>{
-    Ok(system_file(p,1)?.filter(|&sft|sft>NUL&&p.drive.files.iter().any(|f|f.sft==sft)))
+    Ok(system_file(p,1)?.filter(|&sft|sft>=5&&p.drive.files.iter().any(|f|f.sft==sft)))
 }
 /// AH41 deletes a file, AH56 renames a file or directory (DS:DX to ES:DI on
 /// the same drive), AH39 makes and AH3A removes an empty directory.
@@ -607,10 +605,7 @@ fn change(p:&mut Loaded,ah:u8)->Result<(),String>{
             p.drive.remove(&loc,false)
         }),
         _=>{
-            let es=SegmentRegister::Es;
-            let saved=p.image.segments[ds().index()];p.image.segments[ds().index()]=p.image.segments[es.index()];
-            let to=asciiz(p,p.cpu.regs[7]&0xffff);p.image.segments[ds().index()]=saved;
-            let to=to?;
+            let to=asciiz_in(p,SegmentRegister::Es,p.cpu.regs[7]&0xffff)?;
             lookup(&p.drive,&raw).and_then(|(drive,entry)|{
                 let from=entry.loc(drive).filter(|_|entry.attr&0x0d==0).ok_or(5u16)?;
                 let(to_drive,to,_,existing)=place(&p.drive,&to)?;
@@ -627,7 +622,7 @@ fn open_file(p:&mut Loaded,service:&str)->Result<Option<usize>,String>{
     let handle=(p.cpu.regs[3]&0xffff)as u16;
     let Some(sft)=system_file(p,handle)? else{fail(p,6);return Ok(None)};
     if let Some(i)=p.drive.files.iter().position(|f|f.sft==sft){return Ok(Some(i));}
-    if sft<=NUL{return Err(format!("DOS {service} handle {handle} (device {sft}) is not modelled"));}
+    if sft<5{return Err(format!("DOS {service} handle {handle} (device {sft}) is not modelled"));}
     fail(p,6);Ok(None)
 }
 /// The file an EXEC path names and its full path (`C:\DIR\NAME.EXT`), or a
@@ -789,7 +784,6 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             }
         },
         0x3d=>open(p)?,
-        0x3f if system_file(p,(p.cpu.regs[3]&0xffff)as u16)?==Some(NUL)=>{set_ax(p,0);ok(p);},
         0x3f=>{
             let Some(i)=open_file(p,"read from")? else{return Ok(())};
             if p.drive.files[i].mode==1{fail(p,5);return Ok(());}
@@ -801,10 +795,6 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             p.drive.files[i].pos+=count as u32;set_ax(p,count as u32);ok(p);
         },
         0x42=>{
-            let handle=(p.cpu.regs[3]&0xffff)as u16;
-            if let Some(sft)=system_file(p,handle)?{
-                if sft<=NUL{set_ax(p,0);p.cpu.regs[2]&=0xffff0000;ok(p);return Ok(());}
-            }
             let Some(i)=open_file(p,"seek on")? else{return Ok(())};
             let distance=i64::from(((p.cpu.regs[1]&0xffff)<<16|(p.cpu.regs[2]&0xffff))as i32);
             let file=&p.drive.files[i];
@@ -821,21 +811,12 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
                 p.open_handles&=!(1u32<<handle);drop_unreferenced(p)?;ok(p);
             }else{fail(p,6);}
         },
-        0x44 if al==9=>{
-            // AL=09 is the drive remote: no drive is a network or SUBST drive,
-            // and none has a block device header whose attributes to report,
-            // so DX=0 (local, not substituted). Unknown drive: error 15.
-            let Some(_)=p.drive.number(p.cpu.regs[3]as u8)else{fail(p,0x0f);return Ok(())};
-            p.cpu.regs[2]&=0xffff0000;ok(p);
-        },
         0x44=>{
             // AL=00 device information: CON for 0..2, AUX/PRN for 3..4, with
             // bit 6 (not at end of input) set as FreeDOS opens devices, and a
             // file's drive, bit 6 set until it is written.
             let info=match system_file(p,(p.cpu.regs[3]&0xffff)as u16)?{
-                Some(0..=2)=>Some(0xc3),
-                // NUL: a character device (bit 7) that is the NUL device (bit 2).
-                Some(NUL)=>Some(0xc4),Some(3) if p.com1.is_some()=>p.com1.as_ref().map(|s|u32::from(s.info)),Some(3|4)=>Some(0xc0),
+                Some(0..=2)=>Some(0xc3),Some(3) if p.com1.is_some()=>p.com1.as_ref().map(|s|u32::from(s.info)),Some(3|4)=>Some(0xc0),
                 Some(sft)=>p.drive.files.iter().find(|f|f.sft==sft).map(|f|if f.written{0}else{0x40}|u32::from(f.drive-b'A')),
                 None=>None,
             };
