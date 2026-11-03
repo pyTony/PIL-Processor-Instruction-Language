@@ -16,6 +16,7 @@ import threading
 MAX_REPLY = 262144
 MAX_MONITOR_BYTES = 3840
 MAX_HEX_TEXT_BYTES = 65536
+NO_WINDOW_FLAGS = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 STATUSES = {'ready', 'stepped', 'budget', 'breakpoint', 'waiting_rx', 'tx_blocked',
             'halt', 'fault', 'decode', 'missing_instruction', 'error'}
 
@@ -358,6 +359,17 @@ def format_memory_cell_value(effect) -> str:
     )
 
 
+def _hex_base_col(line: str) -> int:
+    """Find the starting column of the first hex byte after the address prefix."""
+    colon_idx = line.find(':')
+    if colon_idx < 0:
+        return 10
+    idx = colon_idx + 1
+    while idx < len(line) and line[idx] == ' ':
+        idx += 1
+    return idx
+
+
 def find_memory_highlight_spans(dump_text: str, effect):
     """Return Tk text index spans [(start, end), ...] for both hex bytes and ASCII chars of the affected cell."""
     if not isinstance(effect, dict) or not dump_text:
@@ -379,10 +391,11 @@ def find_memory_highlight_spans(dump_text: str, effect):
         hi = min(row_addr + 16, cell_end)
         if lo >= hi:
             continue
+        base_col = _hex_base_col(line)
         start_col = lo - row_addr
         end_col = hi - row_addr
-        hex_start = 10 + start_col * 3
-        hex_end = 10 + (end_col - 1) * 3 + 2
+        hex_start = base_col + start_col * 3
+        hex_end = base_col + (end_col - 1) * 3 + 2
         spans.append((f'{row}.{hex_start}', f'{row}.{hex_end}'))
         pipe_idx = line.find('|')
         if pipe_idx >= 0:
@@ -404,7 +417,8 @@ def find_changed_memory_spans(prev_dump: str, curr_dump: str):
             row_addr = int(line.split(':', 1)[0].strip(), 16)
         except ValueError:
             continue
-        hex_part = line[10:57].split()
+        base_col = _hex_base_col(line)
+        hex_part = line[base_col:base_col + 47].split()
         if len(hex_part) == 16:
             prev_rows[row_addr] = hex_part
     spans = []
@@ -417,14 +431,15 @@ def find_changed_memory_spans(prev_dump: str, curr_dump: str):
             continue
         if row_addr not in prev_rows:
             continue
+        base_col = _hex_base_col(line)
         old_bytes = prev_rows[row_addr]
-        new_bytes = line[10:57].split()
+        new_bytes = line[base_col:base_col + 47].split()
         if len(new_bytes) != 16:
             continue
         pipe_idx = line.find('|')
         for col in range(16):
             if old_bytes[col] != new_bytes[col]:
-                spans.append((f'{row}.{10 + col * 3}', f'{row}.{10 + col * 3 + 2}'))
+                spans.append((f'{row}.{base_col + col * 3}', f'{row}.{base_col + col * 3 + 2}'))
                 if pipe_idx >= 0:
                     spans.append((f'{row}.{pipe_idx + 1 + col}', f'{row}.{pipe_idx + 2 + col}'))
     return spans
@@ -471,7 +486,7 @@ class EngineClient:
                 [*map(str, argv), '--debug-service', *(['--load', str(raw_path)] if raw_path else [])],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr,
                 text=True, encoding='utf-8', errors='strict', bufsize=1,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                creationflags=NO_WINDOW_FLAGS)
         except Exception:
             self.stderr.close()
             raise
@@ -485,7 +500,7 @@ class EngineClient:
 
     def request(self, command):
         if '\n' in command or '\r' in command or len(command.encode('utf-8')) > 4095:
-            raise ValueError('Enter one command, at most4095 UTF-8 bytes')
+            raise ValueError('Enter one command, at most 4095 UTF-8 bytes')
         with self._lock:
             if self.closed.is_set():
                 raise RuntimeError('Debugger session is closed')
@@ -587,7 +602,7 @@ def make_app(root, engine, raw_path=None):
             self.root, self.engine = root, engine
             self.client = None
             self.busy, self.running, self.closing = True, False, False
-            self.state, self.previous, self.guest = {}, {}, bytearray()
+            self.state, self.previous, self.prev_memory, self.guest = {}, {}, '', bytearray()
             self.history = CommandHistory()
             self.jobs = AsyncJobRunner()
             self.cases = []
@@ -879,7 +894,7 @@ def make_app(root, engine, raw_path=None):
             try:
                 at = int(self.bp.get().strip(), 0) if self.bp.get().strip() else self.state['eip']
             except (ValueError, KeyError):
-                self.status.set('Enter an address such as0x100')
+                self.status.set('Enter an address such as 0x100')
                 return
             self.send(('delete' if at in self.state.get('breakpoints', []) else 'break') + f' 0x{at:x}')
 
@@ -1053,6 +1068,7 @@ def make_app(root, engine, raw_path=None):
                         subprocess.run(
                             [str(self.engine), '--dos-read', str(img_path), sel, tmp.name],
                             capture_output=True, text=True, check=True, timeout=10,
+                            creationflags=NO_WINDOW_FLAGS,
                         )
                         size = Path(tmp.name).stat().st_size
                         if not 1 <= size <= MAX_MONITOR_BYTES:
@@ -1092,6 +1108,7 @@ def make_app(root, engine, raw_path=None):
                     res = subprocess.run(
                         [str(self.engine), '--dos-probe', f'{img_path}::{sel}'],
                         capture_output=True, text=True, check=True, timeout=15,
+                        creationflags=NO_WINDOW_FLAGS,
                     )
                     return res.stdout
 
@@ -1119,6 +1136,7 @@ def make_app(root, engine, raw_path=None):
                     subprocess.run(
                         [str(self.engine), '--dos-read', str(img_path), sel, dest],
                         capture_output=True, text=True, check=True, timeout=10,
+                        creationflags=NO_WINDOW_FLAGS,
                     )
                     return dest
 
@@ -1146,11 +1164,13 @@ def make_app(root, engine, raw_path=None):
                 proc = subprocess.run(
                     [str(self.engine), '--dos-list', '--all', str(img_path)],
                     capture_output=True, text=True, timeout=10,
+                    creationflags=NO_WINDOW_FLAGS,
                 )
                 if proc.returncode != 0:
                     proc = subprocess.run(
                         [str(self.engine), '--dos-list', str(img_path)],
                         capture_output=True, text=True, timeout=10,
+                        creationflags=NO_WINDOW_FLAGS,
                     )
                 if proc.returncode != 0:
                     raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or f'Exit status {proc.returncode}')
@@ -1287,6 +1307,7 @@ def make_app(root, engine, raw_path=None):
 
         def close(self):
             self.closing, self.running = True, False
+            self.jobs.drain()
             if self.client:
                 self.client.close()
             self._cleanup_temp()

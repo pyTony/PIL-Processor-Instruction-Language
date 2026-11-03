@@ -186,17 +186,15 @@ impl LazyFlags {
     #[inline]
     pub fn flush_cf_only(&mut self, eflags: &mut u32, undefined_flags: &mut u32) {
         match *self {
-            Self::Add { a, b, w, ref mut write_cf, .. } if *write_cf => {
+            Self::Add { a, b, w, write_cf: true, .. } => {
                 let cf = (((a + b) >> w) & 1) as u32;
                 *undefined_flags &= !1;
                 *eflags = (*eflags & !1) | cf;
-                *write_cf = false;
             }
-            Self::Sub { a, b, ref mut write_cf, .. } if *write_cf => {
+            Self::Sub { a, b, write_cf: true, .. } => {
                 let cf = u32::from(a < b);
                 *undefined_flags &= !1;
                 *eflags = (*eflags & !1) | cf;
-                *write_cf = false;
             }
             Self::Logic { .. } => {
                 *undefined_flags &= !1;
@@ -204,6 +202,7 @@ impl LazyFlags {
             }
             _ => {}
         }
+        *self = Self::None;
     }
     #[inline]
     pub fn eval_jcc(&mut self, cond: u8, eflags: &mut u32, undefined_flags: &mut u32) -> bool {
@@ -948,13 +947,13 @@ fn width(s: &str) -> R<u8> {
     let w = number(s)?;
     if (1..=64).contains(&w) { Ok(w as u8) } else { Err("width must be 1..64".into()) }
 }
-fn slot(names: &HashMap<&str, usize>, s: &str) -> R<usize> {
+fn slot(names: &HashMap<String, usize>, s: &str) -> R<usize> {
     names.get(s).copied().ok_or_else(|| format!("undefined value: {s}"))
 }
-fn define<'a>(names: &mut HashMap<&'a str, usize>, widths: &mut Vec<u8>, s: &'a str, w: u8) -> R<usize> {
+fn define(names: &mut HashMap<String, usize>, widths: &mut Vec<u8>, s: &str, w: u8) -> R<usize> {
     if names.contains_key(s) { return Err(format!("duplicate value: {s}")); }
     let id = widths.len();
-    widths.push(w); names.insert(s, id); Ok(id)
+    widths.push(w); names.insert(s.to_owned(), id); Ok(id)
 }
 fn compile(source: &str, operand_width: u8) -> R<Program> {
     if ![8,16,32].contains(&operand_width) { return Err("operand width must be 8,16,32".into()); }
@@ -1067,7 +1066,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["read_gpr", out, register, bits] => {
                     let reg=number(register)? as usize;let w=width(bits)?;
-                    if reg>=8 || ![8,16,32].contains(&w){return Err("read_gpr needs register 0..7 and width 8/16/32".into());}
+                    if reg>=8 || ![8,16,32].contains(&w){return Err("read_gpr needs register 0..7 and width8/16/32".into());}
                     Token::ReadGpr(define(&mut names,&mut widths,out,w)?,reg,w)
                 }
                 ["write_gpr", register, input] => {
@@ -1078,14 +1077,14 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 ["load_segment", out, register, address, bits]=>{
                     if stored{return Err("loads after a staged store are not supported".into());}
                     let segment=number(register)?;let a=slot(&names,address)?;let w=width(bits)?;
-                    if segment>=6||widths[a]!=32{return Err("load_segment needs segment 0..5 and bv32 offset".into());}
-                    let mem=MemWidth::from_bits(w).ok_or("memory width must be 8/16/32")?;
+                    if segment>=6||widths[a]!=32{return Err("load_segment needs segment0..5 and bv32 offset".into());}
+                    let mem=MemWidth::from_bits(w).ok_or("memory width must be8/16/32")?;
                     Token::LoadSegment(define(&mut names,&mut widths,out,w)?,a,mem,segment as usize)
                 }
                 ["store_segment", register, address, input]=>{
                     let segment=number(register)?;let a=slot(&names,address)?;let v=slot(&names,input)?;
-                    if segment>=6||widths[a]!=32||store_count>=MAX_STORES{return Err("at most eight stores with segment 0..5 and bv32 offset required".into());}
-                    let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be 8/16/32")?;stored=true;store_count+=1;Token::StoreSegment(a,v,mem,segment as usize)
+                    if segment>=6||widths[a]!=32||store_count>=MAX_STORES{return Err("at most eight stores with segment0..5 and bv32 offset required".into());}
+                    let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be8/16/32")?;stored=true;store_count+=1;Token::StoreSegment(a,v,mem,segment as usize)
                 }
                 ["retire_if", predicate]=>{
                     let c=slot(&names,predicate)?;
@@ -1101,7 +1100,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["read_address_after", out, register, input]=>{
                     let reg=number(register)?;let a=slot(&names,input)?;
-                    if reg>=8||widths[a]!=32{return Err("read_address_after requires register 0..7 and bv32 replacement".into());}
+                    if reg>=8||widths[a]!=32{return Err("read_address_after requires register0..7 and bv32 replacement".into());}
                     Token::ReadAddressAfter(define(&mut names,&mut widths,out,32)?,reg as usize,a)
                 }
                 ["read_address", out] => Token::ReadAddress(define(&mut names,&mut widths,out,32)?),
@@ -1131,7 +1130,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["check_segment", register, offset, bytes]=>{
                     let reg=number(register)?;let a=slot(&names,offset)?;let n=number(bytes)?;
-                    if reg>=6||widths[a]!=64||n==0||n>u32::MAX as u64{return Err("check_segment requires segment 0..5, bv64 offset, positive u32 byte count".into());}
+                    if reg>=6||widths[a]!=64||n==0||n>u32::MAX as u64{return Err("check_segment requires segment0..5,bv64 offset,positive u32 byte count".into());}
                     Token::CheckSegment(reg as usize,a,n as u32)
                 }
                 ["far_branch", selector, offset]=>{
@@ -1426,7 +1425,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;MAX_STORES]=[None;MAX_STORES];let mut store_index=0;
     let mut probed:Option<ProbedMemoryAccess>=None;
     // Keep ordinary instructions on the stack without restricting valid PIL programs.
-    let mut value_stack = [Value { bits: 0, width: 0 }; 24];
+    let mut value_stack = [Value { bits: 0, width: 0 }; 64];
     let mut value_heap;
     let values:&mut [Value]=if p.widths.len()<=value_stack.len(){&mut value_stack}else{
         value_heap=vec![Value{bits:0,width:0};p.widths.len()];&mut value_heap
@@ -1570,7 +1569,6 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             PackedOp::Flags5NoCf { pf, af, zf, sf, of } => {
                 pending_lazy.flush_cf_only(&mut pending_flags, &mut pending_undefined);
-                pending_lazy = LazyFlags::None;
                 const NO_CF: u32 = ARITH_FLAGS & !1;
                 pending_undefined &= !NO_CF;
                 pending_flags = (pending_flags & !NO_CF)
@@ -1852,6 +1850,10 @@ fn description(name: &str) -> R<String> {
         "ror" => Some(include_str!("../isa/i386/ror.pil")),
         "rcl" => Some(include_str!("../isa/i386/rcl.pil")),
         "daa" => Some(include_str!("../isa/i386/daa.pil")),
+        "aam" => Some(include_str!("../isa/i386/aam.pil")),
+        "aaa" => Some(include_str!("../isa/i386/aaa.pil")),
+        "aas" => Some(include_str!("../isa/i386/aas.pil")),
+        "aad" => Some(include_str!("../isa/i386/aad.pil")),
         "das" => Some(include_str!("../isa/i386/das.pil")),
         "rcr" => Some(include_str!("../isa/i386/rcr.pil")),
         "clc" => Some(include_str!("../isa/i386/clc.pil")),

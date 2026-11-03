@@ -25,10 +25,10 @@ one --utc-offset gives (hours, such as 2 or -5:30); the status line shows it. Ct
 selection (or the whole screen), Ctrl+Shift+V or Shift+Insert types the
 clipboard; both are also on the right-click menu. Shift, Ctrl and Alt reach
 the BIOS shift flags, and Alt with a letter, digit or F-key sends its Alt code,
-so F10 or Alt+F opens a menu in EDIT. Ctrl+C and Ctrl+Break reach DOS, which
-echoes ^C and calls the program's INT 23h handler (the default one ends it).
+so F10 or Alt+F opens a menu in EDIT.
 """
 import argparse
+import codecs
 import json
 from pathlib import Path
 import subprocess
@@ -73,9 +73,7 @@ def key_code(keysym, char, control=False, alt=False, altgr=False):
     `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
     # Windows can hand over the Ctrl form of an AltGr character (FS for \\,
     # ESC for {, nothing for @): the key's name says which character it typed.
-    # A printable character is already the right one (Finnish AltGr+< gives
-    # keysym `less` with char `|`).
-    if altgr and keysym in KEYSYM_CHARS and not (len(char) == 1 and char.isprintable()):
+    if altgr and keysym in KEYSYM_CHARS:
         char, control, alt = KEYSYM_CHARS[keysym], False, False
     # AltGr (Ctrl+Alt on Windows) types characters such as \\ @ { } on
     # national layouts: only Alt with a letter, digit or F-key is an Alt code.
@@ -126,18 +124,6 @@ ALTGR_IS_CTRL_ALT = sys.platform == 'win32'
 MODIFIERS = {'Shift_R': 0x01, 'Shift_L': 0x02, 'Control_L': 0x04, 'Control_R': 0x04, 'Alt_L': 0x08, 'Alt_R': 0x08}
 
 
-def event_key_code(keysym, char, state, held):
-    """Translate a key using both Tk state and tracked modifier presses."""
-    # Windows sometimes clears state and retains the unmodified keysym (7),
-    # while char already contains the AltGr text ({). Trust the held pair.
-    if ALTGR_IS_CTRL_ALT and {'Control_L', 'Alt_R'} <= held:
-        return key_code(keysym, char, altgr=True)
-    control = bool(state & 0x4)
-    alt = 'Alt_L' in held or ('Alt_R' in held and not control)
-    altgr = control and ('Alt_L' in held or 'Alt_R' in held)
-    return key_code(keysym, char, control, alt, altgr)
-
-
 def paste_keys(text):
     """Keystrokes that type `text`: line ends as Enter, tabs as Tab; characters
     code page 437 cannot hold are left out."""
@@ -152,11 +138,6 @@ def paste_keys(text):
             if code:
                 keys.append(code)
     return keys
-
-
-def is_ctrl_break(keysym, control):
-    """Whether a key event is Ctrl+Break, which goes to the session as `break`."""
-    return keysym in ('Cancel', 'Break') or (control and keysym == 'Pause')
 
 
 def key_command(code):
@@ -209,7 +190,18 @@ class Session:
                 self.send('quit')
             except (OSError, RuntimeError, ValueError):
                 pass
-            self.process.kill()
+            if self.process.poll() is None:
+                self.process.kill()
+            try:
+                self.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+        for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+            if stream:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
 
 def local_offset():
@@ -228,35 +220,16 @@ def parse_offset(text):
         seconds = int(hours) * 3600 + int(minutes) * 60
     else:
         seconds = round(float(body) * 3600)
-    if seconds > 14 * 3600:
-        raise ValueError(f'UTC offset {text} is beyond 14 hours')
-    return sign * seconds
+    signed_seconds = sign * seconds
+    if not (-12 * 3600 <= signed_seconds <= 14 * 3600):
+        raise ValueError(f'UTC offset {text} is outside -12:00..+14:00')
+    return signed_seconds
 
 
-# Cursor, editing and function keys reach DOS from a console COM1 as nothing.
-# A VT terminal would send them as ESC [ A and the like, but DOS line input over
-# a serial line knows no such sequences: its ESC cancels the line and the rest
-# is typed as text. Only keys that give a character (Enter, Backspace, Esc,
-# Tab, Ctrl+letter) are sent. --com1 tcp:PORT passes what the client sends.
-
-
-def strip_vt_keys(data):
-    """Host terminal input without its VT key sequences (ESC [ ... final byte,
-    ESC O x); a lone ESC, as the Esc key gives, is kept."""
-    out = bytearray()
-    at = 0
-    while at < len(data):
-        byte = data[at]
-        if byte == 0x1b and at + 1 < len(data) and data[at + 1] in b'[O':
-            end = at + 2
-            if data[at + 1] == ord('['):
-                while end < len(data) and not 0x40 <= data[end] <= 0x7e:
-                    end += 1
-            at = end + 1
-            continue
-        out.append(byte)
-        at += 1
-    return bytes(out)
+# Keys a host console reports without a character, as the VT100 sequences a
+# serial terminal sends (Windows msvcrt codes after 00h or E0h).
+_VT_KEYS = {'H': b'\x1b[A', 'P': b'\x1b[B', 'M': b'\x1b[C', 'K': b'\x1b[D', 'G': b'\x1b[H', 'O': b'\x1b[F',
+            'S': b'\x7f', 'R': b'\x1b[2~', 'I': b'\x1b[5~', 'Q': b'\x1b[6~'}
 
 
 def to_cp437(text):
@@ -302,7 +275,7 @@ class ConsolePort:
         while True:
             char = msvcrt.getwch()
             if char in ('\x00', '\xe0'):
-                msvcrt.getwch()  # the key's code: a cursor or function key, sent as nothing
+                self.input.put(_VT_KEYS.get(msvcrt.getwch(), b''))
             else:
                 self.input.put(to_cp437(char))
 
@@ -315,11 +288,17 @@ class ConsolePort:
         saved = termios.tcgetattr(fd)
         atexit.register(termios.tcsetattr, fd, termios.TCSADRAIN, saved)
         tty.setraw(fd)
+        decoder = codecs.getincrementaldecoder('utf-8')('ignore')
         while True:
             data = os.read(fd, 64)
             if not data:
+                tail = decoder.decode(b'', final=True)
+                if tail:
+                    self.input.put(to_cp437(tail))
                 return
-            self.input.put(strip_vt_keys(to_cp437(data.decode('utf-8', errors='ignore'))))
+            decoded = decoder.decode(data, final=False)
+            if decoded:
+                self.input.put(to_cp437(decoded))
 
     def write(self, data):
         # In raw mode a bare LF only moves down; DOS sends CR LF itself.
@@ -332,6 +311,9 @@ class ConsolePort:
             data += self.input.get_nowait()
         return data
 
+    def close(self):
+        pass
+
 
 class TcpPort:
     """COM1 on a TCP port of this computer, for telnet or PuTTY (Raw): one
@@ -343,8 +325,16 @@ class TcpPort:
         self.server.setblocking(False)
         self.client = None
 
+    def _close_client(self):
+        if self.client is not None:
+            try:
+                self.client.close()
+            except OSError:
+                pass
+            self.client = None
+
     def _accept(self):
-        if self.client is None:
+        if self.client is None and self.server is not None:
             try:
                 self.client, _ = self.server.accept()
                 self.client.setblocking(False)
@@ -358,7 +348,7 @@ class TcpPort:
             try:
                 client.sendall(data)
             except OSError:
-                self.client = None
+                self._close_client()
 
     def read(self):
         client = self._accept()
@@ -371,8 +361,17 @@ class TcpPort:
         except OSError:
             data = b''
         if not data:
-            self.client = None
+            self._close_client()
         return data.replace(b'\r\n', b'\r').replace(b'\r\x00', b'\r')
+
+    def close(self):
+        self._close_client()
+        if self.server is not None:
+            try:
+                self.server.close()
+            except OSError:
+                pass
+            self.server = None
 
 
 def open_com1(spec):
@@ -413,21 +412,28 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     keys = []
     held, state = set(), {'shift': 0, 'settle': 0}
     beeps = [session.last.get('beeps', 0)]
-
-    drawn = [None]
+    geom = [80, 25]
+    drawn = [None, None, None]  # [screen_hex, cursor_tuple, rows_list]
 
     def draw(reply):
-        shown = (reply['screen'], tuple(reply['cursor']))
-        if shown != drawn[0]:
-            drawn[0] = shown
+        screen_hex = reply['screen']
+        cursor = tuple(reply['cursor'])
+        cols = reply.get('columns', 80)
+        if screen_hex != drawn[0] or cols != geom[0]:
             # Keep a selection being copied across the redraw.
             selection = text.tag_ranges('sel')
             text.configure(state='normal')
-            text.delete('1.0', 'end')
-            fill(reply)
+            fill(reply, drawn[2])
             if selection:
                 text.tag_add('sel', *selection)
             text.configure(state='disabled')
+            drawn[0] = screen_hex
+            drawn[1] = cursor
+        elif cursor != drawn[1]:
+            text.tag_remove('cursor', '1.0', 'end')
+            row, column = cursor
+            text.tag_add('cursor', f'{row + 1}.{column}')
+            drawn[1] = cursor
         detail = f" — {reply['detail']}" if reply['detail'] else ''
         status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}   clock {zone}")
         # The program switched the PC speaker on: sound the host's bell.
@@ -435,15 +441,33 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             beeps[0] = reply['beeps']
             root.bell()
 
-    def fill(reply):
-        for r, (chars, attrs) in enumerate(screen_rows(reply)):
-            start = 0
-            for c in range(1, len(chars) + 1):
-                if c == len(chars) or attrs[c] != attrs[start]:
-                    text.insert('end', chars[start:c], f'a{attrs[start]}')
-                    start = c
-            if r < 24:
-                text.insert('end', '\n')
+    def insert_row(r, chars, attrs, at_end=False):
+        start = 0
+        for c in range(1, len(chars) + 1):
+            if c == len(chars) or attrs[c] != attrs[start]:
+                target = 'end' if at_end else f'{r + 1}.{start}'
+                text.insert(target, chars[start:c], f'a{attrs[start]}')
+                start = c
+
+    def fill(reply, prev_rows):
+        rows = screen_rows(reply)
+        cols = reply.get('columns', 80)
+        nrows = len(rows) or 25
+        if [cols, nrows] != geom or prev_rows is None or len(prev_rows) != len(rows):
+            geom[:] = [cols, nrows]
+            text.configure(width=cols, height=nrows)
+            text.delete('1.0', 'end')
+            for r, (chars, attrs) in enumerate(rows):
+                insert_row(r, chars, attrs, at_end=True)
+                if r < len(rows) - 1:
+                    text.insert('end', '\n')
+        else:
+            text.tag_remove('cursor', '1.0', 'end')
+            for r, row_data in enumerate(rows):
+                if row_data != prev_rows[r]:
+                    text.delete(f'{r + 1}.0', f'{r + 1}.end')
+                    insert_row(r, row_data[0], row_data[1], at_end=False)
+        drawn[2] = rows
         row, column = reply['cursor']
         text.tag_add('cursor', f'{row + 1}.{column}')
 
@@ -478,11 +502,10 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         if event.keysym in MODIFIERS:
             held.add(event.keysym)
             return shift_changed()
-        # Ctrl+Break: Windows names it Cancel, X11 Break (or Ctrl with Pause).
-        if is_ctrl_break(event.keysym, control):
-            keys.append('break')
-            return 'break'
-        code = event_key_code(event.keysym, event.char, event.state, held)
+        # Alt_R with Ctrl is AltGr on Windows: it types the character it makes.
+        alt = 'Alt_L' in held or ('Alt_R' in held and not control)
+        altgr = control and ('Alt_L' in held or 'Alt_R' in held)
+        code = key_code(event.keysym, event.char, control, alt, altgr)
         if code:
             keys.append(key_command(code))
         return 'break'
@@ -548,6 +571,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         root.after(15 if session.last['status'] == 'running' else 40, tick)
 
     def close():
+        if com1 and hasattr(com1, 'close'):
+            com1.close()
         session.close()
         root.destroy()
 
