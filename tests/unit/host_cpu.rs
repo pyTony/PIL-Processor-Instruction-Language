@@ -138,8 +138,8 @@ fn hardware(op:usize,w:u8,mut a:u64,mut b:u64,mut d:u64)->Hardware{
     }Hardware{a,b,d,g0,g1,input_flags,output_flags}
 }
 fn has_byte_flags()->bool{
-    let max=unsafe{std::arch::x86_64::__cpuid(0x80000000)}.eax;
-    max>=0x80000001 && unsafe{std::arch::x86_64::__cpuid(0x80000001)}.ecx&1!=0
+    let max=std::arch::x86_64::__cpuid(0x80000000).eax;
+    max>=0x80000001 && std::arch::x86_64::__cpuid(0x80000001).ecx&1!=0
 }
 fn changed_flags(op:usize,w:u8,b:u64)->u32{let p=case_policy(op,w,b as u32);p.defined|p.undefined}
 fn check_hardware(h:&Hardware,op:usize,w:u8,a:u64,b:u64,d:u64)->Result<(),String>{

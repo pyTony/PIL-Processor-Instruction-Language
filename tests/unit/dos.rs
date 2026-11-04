@@ -1499,11 +1499,11 @@ fn run_test386_rom_image() {
     assert_eq!(rom_data.len(), 65536, "ROM image size must be exactly 64 KB");
 
     // 1. Create a Loaded base with a 1-byte stub program (NOP = 0x90)
-    let mut p = dos::load(&[0x90], "test386.com").expect("Pohjan alustus epäonnistui");
+    let mut p = dos::load(&[0x90], "test386.com").expect("Base initialization failed");
 
     // 2. Initialize a clean, write‑protected‑free 1 MiB RAM and load the ROM at 0xF0000
     let mut ram = Ram::new(0x100000);
-    ram.write_bytes(0xF0000, &rom_data).expect("ROM-kuvan kirjoitus epäonnistui");
+    ram.write_bytes(0xF0000, &rom_data).expect("Writing ROM image failed");
     p.ram = ram;
 
     // 3. Open the code search window to cover the entire 1 MiB address space
@@ -1534,11 +1534,11 @@ fn run_test386_rom_image() {
         result.loaded.cpu.eip
     );
     println!(
-        "Seuraavat tavut:        {}",
+        "Next bytes:        {}",
         result.stop_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
     );
     println!(
-        "Rekisterit:             EAX={:08X} EBX={:08X} ECX={:08X} EDX={:08X} ESP={:08X} EBP={:08X}",
+        "Registers:             EAX={:08X} EBX={:08X} ECX={:08X} EDX={:08X} ESP={:08X} EBP={:08X}",
         result.loaded.cpu.regs[0],
         result.loaded.cpu.regs[3],
         result.loaded.cpu.regs[1],
@@ -1546,8 +1546,8 @@ fn run_test386_rom_image() {
         result.loaded.cpu.regs[4],
         result.loaded.cpu.regs[5],
     );
-    println!("\nSuoritetut käskytyypit:");
+    println!("\nExecuted instruction types:");
     for (opcode, count) in &result.instructions {
-        println!("  {:20} : {}", kasky, maara);
+        println!("  {:20} : {}", opcode, count);
     }
 }

@@ -116,9 +116,8 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
                 if s.access==3{s.high_next=!s.high_next;}
             },
-            // ---> LISÄÄ TÄHÄN (else-haaran matchin loppuun): <---
             0x80 | 0x190 => {
-                println!("  [POST] Vaihe 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
+                println!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
             },
             0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
             _=>return Err(format!("OUT to port {port:02x}h is not modelled")),
