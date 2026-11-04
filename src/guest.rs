@@ -308,11 +308,20 @@ impl Image {
                 let m=r.byte()?;let segment=((m>>3)&7)as usize;
                 if segment>=6 || (opcode==0x8e&&segment==1){return Err(GuestError::Decode("invalid segment MOV encoding".into()));}
                 if opcode==0x8e&&!self.real_mode{return Err(GuestError::Decode("segment loads require real-mode context".into()));}
-                if opcode==0x8c&&wide&&m>>6==3{return Err(GuestError::Decode("386 MOV r32,Sreg upper-half policy is not admitted".into()));}
-                w=16;dst=view((m&7)as usize,w);src=dst;
+                let reg_dest_32 = opcode==0x8c && wide && m>>6==3;
+                w = if reg_dest_32 { 32 } else { 16 };
+                dst = view((m&7)as usize, w);
+                src = dst;
                 let seg=["ES","CS","SS","DS","FS","GS"][segment];
-                let mut text=if opcode==0x8c{format!("read_segment selector {segment}\nwrite dst selector\npreserve_flags all\nretire")}
-                    else{format!("read selector src 16\nwrite_segment {segment} selector\npreserve_flags all\nretire")};
+                let mut text=if opcode==0x8c{
+                    if reg_dest_32 {
+                        format!("read_segment selector {segment}\nzext selector_32 selector 32\nwrite dst selector_32\npreserve_flags all\nretire")
+                    } else {
+                        format!("read_segment selector {segment}\nwrite dst selector\npreserve_flags all\nretire")
+                    }
+                } else {
+                    format!("read selector src 16\nwrite_segment {segment} selector\npreserve_flags all\nretire")
+                };
                 if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
                     text=if opcode==0x8c{text.replace("write dst selector","read_address addr\nstore addr selector")}else{text.replace("read selector src 16","read_address addr\nload selector addr 16")};}
                 let operand=operand_name(dst,address);
@@ -423,6 +432,17 @@ impl Image {
                     if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});src=reg;}
                     let text=operand_text("imul",w,address.is_some(),true,None)?;
                     (format!("IMUL {},{}",register_name(dst),operand_name(src,address)),compile(&text,w))
+                }else if matches!(second,0xb2|0xb4|0xb5){
+                    let name=match second{0xb2=>"LSS",0xb4=>"LFS",_=>"LGS"};
+                    if !self.real_mode{return Err(GuestError::Decode(format!("{name} requires real-mode context")));}
+                    let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode(format!("{name} requires a memory far pointer")));}
+                    dst=view(((m>>3)&7)as usize,w);src=dst;
+                    let effective=r.effective(m,addr32)?;
+                    let segment=effective.resolve(&[0;8],override_segment)?.segment.index();
+                    address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                    let dest_reg=match second{0xb2=>"2",0xb4=>"4",_=>"5"};
+                    let text=include_str!("../isa/i386/les.pil").replace("$SEG",&segment.to_string()).replace("$SPAN",&(w/8+2).to_string()).replace("$BYTES",&(w/8).to_string()).replace("$DEST",dest_reg);
+                    (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
                 }else{
                 if !(0x90..=0x9f).contains(&second) {return Err(GuestError::Decode(format!("unsupported opcode 0f {second:02x}")));}
                 let m=r.byte()?;

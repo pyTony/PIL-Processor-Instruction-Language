@@ -67,6 +67,9 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     let s=&mut p.speaker;
     if input{
         let value=match port{
+            0x00..=0x0f=>0xff,
+            0x21|0xa1=>0x00,
+            0x81..=0x8f=>0xff,
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
             0x3da|0x3ba=>{
                 s.retrace=s.retrace.wrapping_add(1);
@@ -92,6 +95,9 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     }else{
         let value=p.cpu.regs[0]as u8;
         match port{
+            0x00..=0x0f=>{},
+            0x20|0x21|0xa0|0xa1=>{},
+            0x81..=0x8f=>{},
             0x61=>{
                 let was=s.tone()!=0;s.control=value&0x0f;
                 if !was&&s.tone()!=0{s.beeps+=1;}

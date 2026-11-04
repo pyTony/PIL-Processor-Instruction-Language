@@ -8,4 +8,5 @@ __pycache__/
 *~
 /.pil-patch-*/
 /dist/
+/test386.asm/
 

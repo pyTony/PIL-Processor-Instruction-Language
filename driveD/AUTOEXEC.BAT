@@ -4,7 +4,7 @@ echo NOTICE: Please read the license agreement in 4DOS\LICENSE.TXT before contin
 echo         Press any key to proceed.
 pause > NUL
 PATH C:\FREEDOS\BIN;D:\ 
-PROMPT $D $T$_$P$G 
+PROMPT $D$_$P$G 
 d:
 cd 4DOS
 @echo on

@@ -2072,6 +2072,19 @@ fn main() -> R<()> {
         }
         println!("{}",dos::report(&dos_args[at..],budget)?);return Ok(());
     }
+    if dos_args.get(1).map(String::as_str)==Some("--run-rom"){
+        if dos_args.len()<3||dos_args.len()>5{return Err("usage: pil --run-rom PATH [--steps N]".into());}
+        let rom_path=std::path::Path::new(&dos_args[2]);
+        let mut budget=dos::MAX_STEPS;
+        if dos_args.len()==5&&dos_args[3]=="--steps"{
+            budget=usize::try_from(number(&dos_args[4])?).map_err(|_|"budget out of range")?;
+        }else if dos_args.len()!=3{
+            return Err("usage: pil --run-rom PATH [--steps N]".into());
+        }
+        let probe=dos::run_rom(rom_path,budget)?;
+        print!("{}",dos::format_rom_report(&probe));
+        return Ok(());
+    }
 
     let args: Vec<_> = std::env::args().collect();
     if matches!(args.get(1).map(String::as_str),Some("--mandelbrot"|"--compare-mandelbrot")) {

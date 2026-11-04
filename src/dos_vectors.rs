@@ -54,6 +54,13 @@ fn stack(p:&Loaded,offset:u32,write:bool)->Result<u32,String>{
 /// INT n at CS:IP (length 2) to a program's handler. All three stack words
 /// and the target are checked before anything changes.
 pub(super) fn deliver(p:&mut Loaded,n:u8)->Result<(),String>{
+    deliver_at(p,n,(p.cpu.eip+2)&0xffff)
+}
+/// Fault/exception delivery (such as #UD, vector 06h) with the faulting EIP.
+pub(super) fn deliver_fault(p:&mut Loaded,n:u8,fault_ip:u32)->Result<(),String>{
+    deliver_at(p,n,fault_ip&0xffff)
+}
+fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
     if p.cpu.regs[4]&0xffff<6&&p.cpu.regs[4]&0xffff!=0{return Err("interrupt frame would wrap the stack segment".into());}
     let vector=p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?;
     let(segment,offset)=((vector>>16)as u16,vector&0xffff);
@@ -62,7 +69,7 @@ pub(super) fn deliver(p:&mut Loaded,n:u8)->Result<(),String>{
         ||image.system.iter().any(|&(start,end)|target>=start&&target<end);
     if !fetchable{return Err(format!("INT {n:02x}h handler at {segment:04x}:{offset:04x} is outside the running program"));}
     let sp=p.cpu.regs[4]&0xffff;
-    let values=[(2,p.cpu.eflags&0xffff),(4,u32::from(p.selectors[SegmentRegister::Cs.index()])),(6,(p.cpu.eip+2)&0xffff)];
+    let values=[(2,p.cpu.eflags&0xffff),(4,u32::from(p.selectors[SegmentRegister::Cs.index()])),(6,return_ip)];
     let mut writes=Vec::new();
     for(k,value)in values{writes.push((stack(p,sp.wrapping_sub(k),true)?,value));}
     for(at,_)in &writes{p.ram.check_write(*at,MemWidth::Word).map_err(|e|format!("interrupt stack write: {e:?}"))?;}

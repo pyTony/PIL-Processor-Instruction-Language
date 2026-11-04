@@ -1486,68 +1486,14 @@ fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
 }
 #[test]
 fn run_test386_rom_image() {
-    use std::fs;
     use std::path::Path;
-    use crate::address::SegmentCache;
     use crate::dos::{self, MAX_STEPS};
-    use crate::memory::Ram;
 
     let bin_path = Path::new("test386.asm/test386.bin");
-    assert!(bin_path.exists(), "Compiled test386.bin file not found!");
-
-    let rom_data = fs::read(bin_path).unwrap();
-    assert_eq!(rom_data.len(), 65536, "ROM image size must be exactly 64 KB");
-
-    // 1. Create a Loaded base with a 1-byte stub program (NOP = 0x90)
-    let mut p = dos::load(&[0x90], "test386.com").expect("Base initialization failed");
-
-    // 2. Initialize a clean, write‑protected‑free 1 MiB RAM and load the ROM at 0xF0000
-    let mut ram = Ram::new(0x100000);
-    ram.write_bytes(0xF0000, &rom_data).expect("Writing ROM image failed");
-    p.ram = ram;
-
-    // 3. Open the code search window to cover the entire 1 MiB address space
-    p.image.fetch_base = 0;
-    p.image.start = 0;
-    p.image.end = 0x100000;
-
-    // 4. Set the x86 Real Mode reset vector: CS = 0xF000, EIP = 0xFFF0
-    let selectors = [0x0000, 0xF000, 0x0000, 0x0000, 0x0000, 0x0000]; // ES, CS, SS, DS, FS, GS
-    p.selectors = selectors;
-    p.image.selectors = selectors;
-    p.image.segments = selectors.map(SegmentCache::real_mode);
-    p.cpu.eip = 0xFFF0;
-    p.cpu.eflags = 0x0002;
-
-    println!("Starting test386.asm execution at F000:FFF0...");
-
-    // 5. Run the execution engine
-    let result = dos::run(p, MAX_STEPS).expect("Execution engine returned an error");
-
-    println!("\n=== TEST386.ASM EXECUTION REPORT ===");
-    println!("Stop reason: {:?}", result.stop);
-    println!("Executed instructions: {}", result.completed);
-    println!("PIL steps:           {}", result.pil_steps);
-    println!(
-        "Final CS:IP:       {:04X}:{:04X}",
-        result.loaded.selectors[1],
-        result.loaded.cpu.eip
-    );
-    println!(
-        "Next bytes:        {}",
-        result.stop_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
-    );
-    println!(
-        "Registers:             EAX={:08X} EBX={:08X} ECX={:08X} EDX={:08X} ESP={:08X} EBP={:08X}",
-        result.loaded.cpu.regs[0],
-        result.loaded.cpu.regs[3],
-        result.loaded.cpu.regs[1],
-        result.loaded.cpu.regs[2],
-        result.loaded.cpu.regs[4],
-        result.loaded.cpu.regs[5],
-    );
-    println!("\nExecuted instruction types:");
-    for (opcode, count) in &result.instructions {
-        println!("  {:20} : {}", opcode, count);
+    if !bin_path.exists() {
+        return;
     }
+
+    let result = dos::run_rom(bin_path, MAX_STEPS).expect("Execution engine returned an error");
+    println!("{}", dos::format_rom_report(&result));
 }

@@ -359,7 +359,20 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         }
         let decoded=match cache.fetch(&p.image,&p.ram,p.cpu.eip){
             Ok(d)=>d,Err(GuestError::Execution(e))=>break Stop::Fault(format!("{e:?}")),
-            Err(GuestError::Decode(detail))=>break if detail.starts_with("fetch outside loaded image"){Stop::Boundary(detail)}else{Stop::MissingEncoding{key:opcode_key(&site_bytes(&p)),detail}},
+            Err(GuestError::Decode(detail))=>{
+                if !detail.starts_with("fetch outside loaded image") && vectors::answered(&p,6)==Ok(false) {
+                    let fault_eip=p.cpu.eip;
+                    match vectors::deliver_fault(&mut p,6,fault_eip){
+                        Ok(())=>{
+                            execution_steps+=1;completed+=1;
+                            *instructions.entry("#UD (vector 06h)".into()).or_insert(0)+=1;
+                            continue;
+                        },
+                        Err(message)=>break Stop::Service(message),
+                    }
+                }
+                break if detail.starts_with("fetch outside loaded image"){Stop::Boundary(detail)}else{Stop::MissingEncoding{key:opcode_key(&site_bytes(&p)),detail}};
+            }
         };
         let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
         let result=match &decoded.operation{
@@ -446,6 +459,51 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     report.push_str("Budget counts execution steps (including REP elements);completed counts fully retired instructions.\nStops at the first blocker per program; no skipping unknown bytes or static scanning of data. This is not whole-program coverage or a full DOS/BIOS implementation.\n");
     Ok(report)
 }
+
+pub fn run_rom(rom_path: &Path, budget: usize) -> Result<Probe, String> {
+    if !rom_path.exists() {
+        return Err(format!("ROM file not found: {}", rom_path.display()));
+    }
+    let rom_data = std::fs::read(rom_path).map_err(|e| format!("failed to read ROM: {e}"))?;
+    if rom_data.len() != 65536 {
+        return Err(format!("ROM image size must be exactly 64 KB (got {} bytes)", rom_data.len()));
+    }
+    let mut p = load(&[0x90], "test386.com")?;
+    let mut ram = Ram::new(0x100000);
+    ram.write_bytes(0xF0000, &rom_data).map_err(|e| format!("ROM write failed: {e:?}"))?;
+    p.ram = ram;
+    p.image.fetch_base = 0;
+    p.image.start = 0;
+    p.image.end = 0x100000;
+    let selectors = [0x0000, 0xF000, 0x0000, 0x0000, 0x0000, 0x0000];
+    p.selectors = selectors;
+    p.image.selectors = selectors;
+    p.image.segments = selectors.map(SegmentCache::real_mode);
+    p.cpu.eip = 0xFFF0;
+    p.cpu.eflags = 0x0002;
+    println!("Starting {} execution at F000:FFF0...", rom_path.display());
+    run(p, budget)
+}
+
+pub fn format_rom_report(result: &Probe) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    writeln!(out, "\n=== ROM EXECUTION REPORT ===").unwrap();
+    writeln!(out, "Stop reason: {:?}", result.stop).unwrap();
+    writeln!(out, "Executed instructions: {}", result.completed).unwrap();
+    writeln!(out, "PIL steps:           {}", result.pil_steps).unwrap();
+    writeln!(out, "Final CS:IP:       {:04X}:{:04X}", result.loaded.selectors[1], result.loaded.cpu.eip).unwrap();
+    writeln!(out, "Next bytes:        {}", result.stop_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")).unwrap();
+    writeln!(out, "Registers:             EAX={:08X} EBX={:08X} ECX={:08X} EDX={:08X} ESP={:08X} EBP={:08X}",
+        result.loaded.cpu.regs[0], result.loaded.cpu.regs[3], result.loaded.cpu.regs[1],
+        result.loaded.cpu.regs[2], result.loaded.cpu.regs[4], result.loaded.cpu.regs[5]).unwrap();
+    writeln!(out, "\nExecuted instruction types:").unwrap();
+    for (opcode, count) in &result.instructions {
+        writeln!(out, "  {:20} : {}", opcode, count).unwrap();
+    }
+    out
+}
+
 #[cfg(test)]
 #[path="../tests/unit/dos.rs"]
 mod tests;
