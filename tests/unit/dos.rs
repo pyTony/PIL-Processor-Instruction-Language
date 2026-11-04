@@ -1484,3 +1484,70 @@ fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
  assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert_eq!(text,"TIMEIT: cannot run COMSPEC, DOS error 2\r\n");
  std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn aja_test386_rom_kuva() {
+    use std::fs;
+    use std::path::Path;
+    use crate::address::SegmentCache;
+    use crate::dos::{self, MAX_STEPS};
+    use crate::memory::Ram;
+
+    let bin_polku = Path::new("test386.asm/test386.bin");
+    assert!(bin_polku.exists(), "Käännettyä test386.bin -tiedostoa ei löydy!");
+
+    let rom_data = fs::read(bin_polku).unwrap();
+    assert_eq!(rom_data.len(), 65536, "ROM-kuvan koon täytyy olla tasan 64 KB");
+
+    // 1. Luodaan Loaded-pohja 1-tavuisella tynkäohjelmalla (NOP = 0x90)
+    let mut p = dos::load(&[0x90], "test386.com").expect("Pohjan alustus epäonnistui");
+
+    // 2. Alustetaan puhdas, kirjoitussuojaamaton 1 MB RAM ja ladataan ROM osoitteeseen 0xF0000
+    let mut ram = Ram::new(0x100000);
+    ram.write_bytes(0xF0000, &rom_data).expect("ROM-kuvan kirjoitus epäonnistui");
+    p.ram = ram;
+
+    // 3. Avataan koodin hakuikkuna kattamaan koko 1 MB muistiavaruus
+    p.image.fetch_base = 0;
+    p.image.start = 0;
+    p.image.end = 0x100000;
+
+    // 4. Asetetaan x86 Real Moden Reset Vector: CS = 0xF000, EIP = 0xFFF0
+    let selectors = [0x0000, 0xF000, 0x0000, 0x0000, 0x0000, 0x0000]; // ES, CS, SS, DS, FS, GS
+    p.selectors = selectors;
+    p.image.selectors = selectors;
+    p.image.segments = selectors.map(SegmentCache::real_mode);
+    p.cpu.eip = 0xFFF0;
+    p.cpu.eflags = 0x0002;
+
+    println!("Aloitetaan test386.asm suoritus osoitteesta F000:FFF0...");
+
+    // 5. Ajetaan suoritinta
+    let tulos = dos::run(p, MAX_STEPS).expect("Suoritusmoottori palautti virheen");
+
+    println!("\n=== TEST386.ASM SUORITUSRAPORTTI ===");
+    println!("Pysähdyksen syy (Stop): {:?}", tulos.stop);
+    println!("Suoritetut käskyt:      {}", tulos.completed);
+    println!("PIL-askeleet:           {}", tulos.pil_steps);
+    println!(
+        "Lopullinen CS:IP:       {:04X}:{:04X}",
+        tulos.loaded.selectors[1],
+        tulos.loaded.cpu.eip
+    );
+    println!(
+        "Seuraavat tavut:        {}",
+        tulos.stop_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
+    );
+    println!(
+        "Rekisterit:             EAX={:08X} EBX={:08X} ECX={:08X} EDX={:08X} ESP={:08X} EBP={:08X}",
+        tulos.loaded.cpu.regs[0],
+        tulos.loaded.cpu.regs[3],
+        tulos.loaded.cpu.regs[1],
+        tulos.loaded.cpu.regs[2],
+        tulos.loaded.cpu.regs[4],
+        tulos.loaded.cpu.regs[5],
+    );
+    println!("\nSuoritetut käskytyypit:");
+    for (kasky, maara) in &tulos.instructions {
+        println!("  {:20} : {}", kasky, maara);
+    }
+}
