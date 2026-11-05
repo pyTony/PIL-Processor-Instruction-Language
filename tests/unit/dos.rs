@@ -1234,7 +1234,9 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
  for port in [0x03dau16, 0x03ba] {
   let [lo, hi] = port.to_le_bytes();
   let code = [0xba, lo, hi, 0xec, 0x88, 0xc3, 0xec, 0x88, 0xc7, 0xfa, 0xf4];
-  let r = run(load(&code, "vstat.com").unwrap(), 20).unwrap();
+  let mut loaded = load(&code, "vstat.com").unwrap();
+  if port==0x03ba { loaded.vga.io(0x3c2,false,0x66).unwrap().unwrap(); }
+  let r = run(loaded, 20).unwrap();
   assert!(matches!(r.stop, Stop::Monitor(_)), "{:?}", r.stop);
   let first = r.loaded.cpu.regs[3] & 0xff;
   let second = (r.loaded.cpu.regs[3] >> 8) & 0xff;
@@ -1542,4 +1544,26 @@ fn vga_word_io_roundtrips_and_direct_display_start_is_visible(){
 fn vga_unimplemented_word_data_access_is_atomic(){
     let mut p=load(&[0xef],"crtc.com").unwrap();p.cpu.regs[2]=0x3d5;p.cpu.regs[0]=0x1234;
     let before=p.cpu.clone();let r=run(p,1).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu,before);
+}
+
+#[test]
+fn inactive_mono_word_probe_returns_ff_and_preserves_active_crtc(){
+    let p=load(&[0xba,0xb4,3,0xb8,0x0f,0x55,0xef,0xed,0xf4],"mono.com").unwrap();
+    assert_eq!(p.ram.load(0x463,MemWidth::Word).unwrap(),0x3d4);
+    let r=run(p,4).unwrap();assert!(matches!(r.stop,Stop::Budget));
+    assert_eq!(r.loaded.cpu.regs[0]&65535,0xffff);assert_eq!(r.loaded.vga.cursor(),0);
+}
+#[test]
+fn mono_word_access_uses_selected_bank(){
+    let mut p=load(&[0xba,0xb4,3,0xb8,0x0f,0x55,0xef,0xed,0xf4],"mono.com").unwrap();
+    p.vga.io(0x3c2,false,0x66).unwrap();let r=run(p,4).unwrap();
+    assert_eq!(r.loaded.cpu.regs[0]&65535,0x550f);assert_eq!(r.loaded.vga.cursor(),0x55);
+}
+
+#[test]
+fn bios_mode_three_restores_color_io_selection_and_bda(){
+    let mut p=load(&[0xf4],"mode.com").unwrap();p.vga.io(0x3c2,false,0x66).unwrap();
+    p.ram.store(0x463,MemWidth::Word,0x3b4).unwrap();p.cpu.regs[0]=3;
+    console::display(&mut p,0).unwrap();assert!(p.vga.color_io());
+    assert_eq!(p.ram.load(0x463,MemWidth::Word).unwrap(),0x3d4);
 }

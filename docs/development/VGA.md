@@ -1,7 +1,7 @@
 # VGA device module
 
 `src/dos_vga.rs` owns the color-text CRTC register state. The DOS port adapter
-routes byte accesses and index/data word accesses at 3D4h to it. Port 3D5h is
+routes byte accesses and index/data word accesses at 3B4h/3D4h to it. Port 3B5h/3D5h is
 the data register. Word reads combine index in AL and data in AH; word writes
 send AL to the index then AH to data. Failed word operations leave state intact.
 
@@ -13,7 +13,32 @@ remains writable). Unlocked timing/mode changes stop explicitly. Extended
 register reads return FFh; unsupported extended writes stop.
 
 This increment does not implement planar graphics, VGA palettes, sequencer,
-attribute/graphics controllers, monochrome decoding or hardware scan timing.
+attribute/graphics controllers, monochrome text modes or hardware scan timing.
 It does not yet advertise VGA BIOS capabilities. Existing status-port polling
 remains a deterministic approximation. Landmark must be rerun to determine its
 next requirement; a full successful benchmark is not claimed.
+
+## CRTC address selection and adapter probes
+
+The miscellaneous output register (write 3C2h, read 3CCh) starts at 67h.
+Bit 0 selects the color (3D4h/3D5h, status 3DAh) or monochrome-address
+(3B4h/3B5h, status 3BAh) bank of the same CRTC. Inactive bank writes are
+ignored; reads return FFh, including both bytes of a word read. This is the
+profile's unconnected-bus response, not an additional MDA device. Changes to
+other miscellaneous-output bits remain unsupported, with no partial update.
+Changing I/O selection alone does not select a framebuffer or enable mode 7.
+
+The BIOS data area at 0040:0063 now reports 3D4h for the color-text profile.
+Setting BIOS mode 3 restores that value and color I/O selection. Direct hardware
+I/O selection does not rewrite the BIOS data area, matching their separate roles.
+The inactive status port reads FFh; active status timing remains synthetic.
+
+Reference: [FreeVGA external registers](https://www.scs.stanford.edu/10wi-cs140/pintos/specs/freevga/vga/extreg.htm), I/O Address Select.
+
+The Windows launcher forwards terminal options, for example:
+
+```powershell
+wscript.exe .\PILdos.vbs --ignore-unassigned-out
+```
+
+This flag only ignores unassigned OUT ports; recognized video devices retain explicit unsupported-operation stops.

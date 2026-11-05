@@ -1,5 +1,5 @@
 //! Bounded mode-3 BIOS console. Video RAM and the BIOS keyboard ring are authoritative.
-//! No VGA ports, IRQ1, ANSI driver or host UI is modeled here.
+//! VGA port state lives in dos_vga; IRQ1, ANSI and host UI are outside this module.
 use super::*;
 const VIDEO:u32=0xb8000;
 const PAGE:u32=4096;
@@ -10,6 +10,7 @@ fn read(p:&Loaded,at:u32)->Result<u32,String>{
 fn commit(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,width,_) in writes{p.ram.check_write(at,width).map_err(|e|format!("BIOS console write: {e:?}"))?;}
     for &(at,width,value) in writes{p.ram.store(at,width,value).map_err(|e|format!("BIOS console write: {e:?}"))?;}
+    if writes.iter().any(|(at,_,_)|*at==0x449){p.vga.select_color();}
     if writes.iter().any(|(at,_,_)|matches!(*at,0x44e|0x450..=0x45f|0x460|0x462)){
         let start=read(p,0x44e)?/2;let page=byte(p,0x462)?&7;let cursor=read(p,0x450+page*2)?;
         let cols=read(p,0x44a)?.clamp(1,80);
@@ -24,7 +25,7 @@ pub(super) fn initialize(ram:&mut Ram)->Result<(),String>{
     }}
     ram.write_bytes(VIDEO,&bytes).map_err(|e|format!("video initialization: {e:?}"))?;
     for (at,width,value) in [(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,80),
-        (0x44c,MemWidth::Word,PAGE),(0x484,MemWidth::Byte,24),
+        (0x463,MemWidth::Word,0x3d4),(0x44c,MemWidth::Word,PAGE),(0x484,MemWidth::Byte,24),
         (0x41a,MemWidth::Word,0x1e),(0x41c,MemWidth::Word,0x1e)]{
         ram.store(at,width,value).map_err(|e|format!("console initialization: {e:?}"))?;
     }Ok(())
@@ -237,7 +238,7 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
     if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the 80x25 colour text profile",al&0x7f));}
     let mut writes=vec![(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
-        (0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1)];
+        (0x463,MemWidth::Word,0x3d4),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1)];
     writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
     if al&0x80==0{
         writes.extend((0..8).flat_map(|page|(0..CELLS).map(move|cell|(VIDEO+page*PAGE+cell*2,MemWidth::Word,0x0720))));
