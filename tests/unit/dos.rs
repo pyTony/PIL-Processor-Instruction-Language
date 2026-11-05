@@ -752,7 +752,7 @@ fn true_version_default_drive_and_handle_count_answers(){
  assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[2]&0xffff,r.loaded.cpu.regs[0]&0xffff),(0x1606,0,0x3306));assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  // BREAK: AL=0 reads DL=0 (off), AL=1 sets it from DL bit 0, AL=2 swaps; AL=3 is not answered.
  let mut p=load(&[0xcd,0x21],"break.com").unwrap();
- let mut ah33=|p:&mut Loaded,al:u32,dl:u32|{p.cpu.regs[0]=0x3300|al;p.cpu.regs[2]=0xff00|dl;service(p,0x21,&mut vec![]).map(|_|p.cpu.regs[2]&0xffff)};
+ let ah33=|p:&mut Loaded,al:u32,dl:u32|{p.cpu.regs[0]=0x3300|al;p.cpu.regs[2]=0xff00|dl;service(p,0x21,&mut vec![]).map(|_|p.cpu.regs[2]&0xffff)};
  assert_eq!(ah33(&mut p,0,0x55),Ok(0xff00));assert_eq!(ah33(&mut p,1,1),Ok(0xff01));assert!(p.break_check);
  assert_eq!(ah33(&mut p,2,0),Ok(0xff01));assert!(!p.break_check);assert!(ah33(&mut p,3,0).is_err());
  // MOV AX,19FF; INT 21: AL=0 (A:).
@@ -1141,7 +1141,7 @@ fn duplicated_handles_share_the_file_position_and_close_independently(){
  let dir=std::env::temp_dir().join(format!("pil-dup-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
  std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("text.txt"),b"abcdef").unwrap();
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(dir.clone())],None).unwrap();let psp=u32::from(PSP)*16;
- let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32|->(u32,u32){p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ let svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32|->(u32,u32){p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
  let (file,cf)=call(&mut p,0x3d00,0,b"text.txt");assert_eq!((file,cf),(5,0));
  // AH45 takes the lowest free handle; reads through either handle advance one position.
  assert_eq!(svc(&mut p,0x4500,file,0),(6,0));
@@ -1168,7 +1168,7 @@ fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
  let dir=std::env::temp_dir().join(format!("pil-write-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
  std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("old.txt"),b"abcdef").unwrap();
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Host(dir.clone())],None).unwrap();let psp=u32::from(PSP)*16;
- let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ let svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
  // FreeCOM's redirection: close handle 1, then AH3C takes it; AH02 and AH40 on handle 1 reach the file.
  assert_eq!(svc(&mut p,0x3e00,1,0,b"").1,0);
  assert_eq!(call(&mut p,0x3c00,0,b"out.txt"),(1,0));
@@ -1186,6 +1186,8 @@ fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
  let (read,_)=call(&mut p,0x3d00,0,b"old.txt");assert_eq!(svc(&mut p,0x4000,read,1,b"q"),(5,1));
  let (wo,_)=call(&mut p,0x3d01,0,b"old.txt");assert_eq!(svc(&mut p,0x3f00,wo,1,b""),(5,1));assert_eq!(svc(&mut p,0x4000,wo,2,b"AB"),(2,0));
  assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(),b"ABcdef");
+ assert_eq!(svc(&mut p,0x3f00,read,6,b""),(6,0));
+ assert_eq!((0..6).map(|i|p.ram.load(psp+0x400+i,MemWidth::Byte).unwrap()as u8).collect::<Vec<_>>(),b"ABcdef");
  assert_eq!(call(&mut p,0x3c00,0,b"old.txt").1,0);assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(),b"");
  // AH5A appends a new eight-digit name to the path and creates the file.
  let (_,cf)=call(&mut p,0x5a00,0,b"\\");assert_eq!(cf,0);
@@ -1265,7 +1267,7 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
 fn memory_drive_is_z_with_temp_and_keeps_files_for_the_session(){
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Memory(MemDir::default())],None).unwrap();let psp=u32::from(PSP)*16;
  let env:Vec<u8>=(0..33).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(env,b"COMSPEC=A:\\COMMAND.COM\0TEMP=Z:\\\0\0");
- let mut svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
+ let svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
  // Create, write, close, reopen and read back; seek and truncate.
  let (h,cf)=call(&mut p,0x3c00,0,b"Z:\\PIPE.TMP");assert_eq!(cf,0);assert_eq!(svc(&mut p,0x4000,h,5,b"hello"),(5,0));assert_eq!(svc(&mut p,0x3e00,h,0,b"").1,0);
  let (h,_)=call(&mut p,0x3d02,0,b"z:pipe.tmp");assert_eq!(svc(&mut p,0x3f00,h,9,b""),(5,0));
@@ -1391,7 +1393,7 @@ fn com1_takes_bios_calls_uart_registers_and_dos_aux_handles(){
  serial::attach(&mut p).unwrap();
  assert_eq!((p.ram.load(0x400,MemWidth::Word).unwrap(),p.ram.load(0x410,MemWidth::Word).unwrap()&0x0e00),(0x3f8,0x0200));
  // AH01 sends, AH03 reports empty transmitter and CTS/DSR/DCD, AH02 times out at once.
- let mut int14=|p:&mut Loaded,ax:u32|{p.cpu.regs[0]=ax;p.cpu.regs[2]=0;service(p,0x14,&mut vec![]).unwrap();p.cpu.regs[0]&0xffff};
+ let int14=|p:&mut Loaded,ax:u32|{p.cpu.regs[0]=ax;p.cpu.regs[2]=0;service(p,0x14,&mut vec![]).unwrap();p.cpu.regs[0]&0xffff};
  assert_eq!(int14(&mut p,0x0141),0x6041);assert_eq!(int14(&mut p,0x0300),0x60b0);assert_eq!(int14(&mut p,0x0200)&0x8000,0x8000);
  p.com1.as_mut().unwrap().rx.extend(b"hi");assert_eq!(int14(&mut p,0x0300),0x61b0);assert_eq!(int14(&mut p,0x0200),u32::from(b'h'));
  // The 8250 registers, polled: LSR shows the waiting byte, RBR takes it, THR sends; IER interrupts stop.
@@ -1483,4 +1485,47 @@ fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
  let (stop,text,_)=timeit(b" X",1,0);
  assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert_eq!(text,"TIMEIT: cannot run COMSPEC, DOS error 2\r\n");
  std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn run_test386_rom_image() {
+    use std::path::Path;
+    use crate::dos::{self, MAX_STEPS};
+
+    let bin_path = Path::new("test386.asm/test386.bin");
+    if !bin_path.exists() {
+        return;
+    }
+
+    let result = dos::run_rom(bin_path, MAX_STEPS).expect("Execution engine returned an error");
+    println!("{}", dos::format_rom_report(&result));
+}
+
+#[test]
+fn session_cache_survives_slices_and_rechecks_changed_code(){
+ let p=load(&[0xeb,0xfe],"loop.com").unwrap();
+ let first=run(p,1).unwrap();
+ assert_eq!(first.loaded.cache.stats().misses,1);
+ let mut second=run(first.loaded,1).unwrap();
+ assert_eq!(second.loaded.cache.stats().hits,1);
+ second.loaded.ram.write_bytes(u32::from(PSP)*16+0x100,&[0x90]).unwrap();
+ let third=run(second.loaded,1).unwrap();
+ assert_eq!(third.loaded.cpu.eip,0x101);
+ assert!(third.loaded.cache.stats().invalidations>0);
+}
+
+#[test]
+fn rom_code_at_dos_stub_addresses_is_executed_as_rom(){
+ let path=std::env::temp_dir().join(format!("pil-rom-{}.bin",std::process::id()));
+ let mut bytes=vec![0;65536];
+ bytes[0xfff0..0xfff5].copy_from_slice(&[0xea,0x02,0xf0,0x00,0xf0]);
+ bytes[0xf002..0xf006].copy_from_slice(&[0xb8,0x34,0x12,0xf4]);
+ std::fs::write(&path,bytes).unwrap();
+ let result=run_rom(&path,10);
+ std::fs::remove_file(&path).unwrap();
+ let r=result.unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!(r.loaded.cpu.regs[0],0x1234);
+ assert_eq!((r.loaded.selectors[1],r.loaded.cpu.eip),(0xf000,0xf005));
+ assert!(!r.instructions.contains_key("IRET (Dine interrupt entry)"));
+ assert!(r.loaded.ram.check_write(0xff002,MemWidth::Byte).is_err());
 }

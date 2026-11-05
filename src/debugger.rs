@@ -603,7 +603,7 @@ impl Debugger {
                 let address=u32::try_from(number(addr)?).map_err(|_|"address must fit 32 bits")?;
                 let data:Result<Vec<u8>,String>=bytes.iter().map(|text|u8::from_str_radix(text.strip_prefix("0x").unwrap_or(text),16).map_err(|_|"each token must be a hex byte".into())).collect();
                 let data=data?;self.ram.write_bytes(address,&data).map_err(|f|format!("RAM write rejected: {f:?}"))?;
-                self.cache.clear();self.pil_cursor=None;
+                self.pil_cursor=None;
                 format!("wrote {} bytes at {address:08x}",data.len())
             }
             ["protect",addr,count]=>{

@@ -53,10 +53,12 @@ fn faulting_segment_memory_and_pop_leave_all_state_unchanged(){
 }
 #[test]
 fn invalid_encodings_modes_and_missing_machine_context_are_explicit(){
-    for bytes in [vec![0x8e,0xc8],vec![0x8e,0xf0],vec![0x8c,0xf8],vec![0x66,0x8c,0xc0],vec![0xf0,0x8e,0xd8]]{let (image,ram,_)=setup(&bytes);assert!(image.decode(&ram,0x100).is_err());}
+    for bytes in [vec![0x8e,0xc8],vec![0x8e,0xf0],vec![0x8c,0xf8],vec![0xf0,0x8e,0xd8]]{let (image,ram,_)=setup(&bytes);assert!(image.decode(&ram,0x100).is_err());}
     let (mut image,ram,_)=setup(&[0x8e,0xd8]);image.real_mode=false;assert!(image.decode(&ram,0x100).is_err());
     for text in ["const x 16 0\nwrite_segment 1 x\npreserve_flags all\nretire","read_segment x 6\npreserve_flags all\nretire"]{assert!(compile(text,16).is_err());}
     let p=compile("read_segment x 3\nwrite dst x\npreserve_flags all\nretire",16).unwrap();let v=View{register:0,low:0,width:16};let mut c=Cpu::default();assert!(execute(&p,&mut c,v,v).is_err());
+    let (mut image,mut ram,mut c)=setup(&[0x66,0x8c,0xc0]);image.selectors[0]=0x1234;
+    step(&mut image,&mut ram,&mut c).unwrap();assert_eq!(c.regs[0],0x1234);assert_eq!(c.eip,0x103);
 }
 #[test]
 fn generated_segment_writes_have_independent_full_state_expectations(){

@@ -4,3 +4,4 @@ version = "0.35.0-alpha.1"
 edition = "2021"
 
 [dependencies]
+thiserror = "1.0"

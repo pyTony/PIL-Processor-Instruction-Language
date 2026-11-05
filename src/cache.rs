@@ -7,8 +7,9 @@ use super::memory::Ram;
 pub const CAPACITY:usize=256;
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
 pub struct Stats {pub hits:u64,pub misses:u64,pub invalidations:u64,pub evictions:u64}
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 struct Entry {image:Image,signature:[u8;15],decoded:Rc<Decoded>}
+#[derive(Clone,Debug)]
 pub struct DecodeCache {enabled:bool,entries:BTreeMap<u32,Entry>,fast:Box<[Option<(u32,Entry)>;CAPACITY]>,stats:Stats}
 impl Default for DecodeCache {
     fn default()->Self {Self{enabled:true,entries:BTreeMap::new(),fast:Box::new(std::array::from_fn(|_|None)),stats:Stats::default()}}

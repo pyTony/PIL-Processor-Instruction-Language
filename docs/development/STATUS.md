@@ -1,3 +1,34 @@
+# PR 82 restorations and ROM checks — 4 November 2026
+
+The PR keeps the instruction additions and `--run-rom` path while restoring
+AltGr/Ctrl+Break input, coherent reads through separately opened DOS handles,
+debugger edit invalidation, indirect CALL flow context, persistent DOS decode
+caching and lazy flags. Pending arithmetic flags are materialized at DOS,
+interrupt, fault and slice boundaries. Raw ROM execution bypasses synthetic
+DOS interrupt stubs, including when ROM instructions occupy F000:F000 onward.
+POST diagnostics go to stderr.
+
+Validation: 449 Rust tests passed, one ignored; 27 Python frontend tests
+passed; the release FreeDOS COMMAND.COM probe reaches WaitingForInput at
+its prompt after 32,559 instructions (budget 100,000).
+
+The user's local 64 KiB test386 ROM remains runnable without importing it:
+
+```powershell
+cargo run --release --locked -- --run-rom test386.asm/test386.bin --steps 1000000
+```
+
+That ROM reached POST 08 and its error handler's HLT at F000:FE89 after
+793,776 instructions. This is not a complete test386 pass: stage 08 begins
+descriptor-table setup and entry to protected mode. The exact failing
+instruction still needs diagnosis. A synthetic regression verifies that ROM
+instructions at DOS stub addresses execute normally and the ROM is read-only.
+
+The default DriveD AUTOEXEC.BAT now prepares PATH/PROMPT and stays in
+COMMAND.COM at D:\. Run `START4` to show the license notice and start 4DOS;
+`EXIT` returns to COMMAND.COM. This avoids forcing 4DOS startup on every
+terminal launch; no shell performance comparison is claimed.
+
 # 4DOS 8.00 runs: program interrupt handlers, PIT timer reads, AAA-AAD — 2 November 2026
 
 Tony asked whether 4DOS runs under Dine. The free JP Software 4DOS 8.00

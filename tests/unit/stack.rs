@@ -1,6 +1,6 @@
 //! Independent stack values, alias ordering, size separation and precise faults.
 use super::*;
-use address::{SegmentAccess,SegmentRegister};
+use address::SegmentAccess;
 fn step(image:&guest::Image,ram:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{
     let d=image.decode(ram,c.eip).unwrap();
     if let guest::Operation::Pil{program,dst,src,flow,address:Some(a)}=d.operation{

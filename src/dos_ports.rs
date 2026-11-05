@@ -67,6 +67,9 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     let s=&mut p.speaker;
     if input{
         let value=match port{
+            0x00..=0x0f=>0xff,
+            0x21|0xa1=>0x00,
+            0x81..=0x8f=>0xff,
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
             0x3da|0x3ba=>{
                 s.retrace=s.retrace.wrapping_add(1);
@@ -85,12 +88,16 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 if s.latch_high&&s.latch.is_some(){s.latch=None;}
                 s.latch_high=!s.latch_high;byte
             },
+                        0x378..=0x37a | 0x278..=0x27a => 0x80,
             _=>return Err(format!("IN from port {port:02x}h is not modelled")),
         };
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
     }else{
         let value=p.cpu.regs[0]as u8;
         match port{
+            0x00..=0x0f=>{},
+            0x20|0x21|0xa0|0xa1=>{},
+            0x81..=0x8f=>{},
             0x61=>{
                 let was=s.tone()!=0;s.control=value&0x0f;
                 if !was&&s.tone()!=0{s.beeps+=1;}
@@ -115,6 +122,10 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
                 if s.access==3{s.high_next=!s.high_next;}
             },
+            0x80 | 0x190 => {
+                eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
+            },
+            0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
             _=>return Err(format!("OUT to port {port:02x}h is not modelled")),
         }
     }
