@@ -1346,3 +1346,45 @@ including the default budget when --steps is omitted. Keep the supplied v0.33
   - **INT 21h (AH=3Eh):** Close file; returns success stub with `CF=0`.
 - Probe report progress: clean exits increased from 11 to 14, FreeCOM shells advance through initialization loops without crashing on missing equipment/video queries, and memory utilities (such as MEMSTAT) calculate and display formatted decimal output using `DIV`.
 
+
+## Absent numerics coprocessor
+
+The default DOS/ROM machine has **no 80387 installed**. This is an absent
+hardware backend, not floating-point emulation. INT 11h and CMOS equipment
+bit 1 both report absence.
+
+`src/fpu.rs` owns the coprocessor instruction envelope and the `Fpu` backend
+alias, currently `AbsentFpu`. Each loaded machine owns its backend; cloning
+and resuming a session preserves it. The runner passes the full instruction
+bytes, CPU, RAM and segment image to `execute`. A future stateful backend can
+replace the alias and implementation, including register-stack and exception
+state, without adding x87 arithmetic to the DOS runner. Keep the backend's
+`available`, `equipment`, `name` and `execute` interface when replacing it.
+
+With EM/TS clear, ESC instructions D8h..DFh produce no numerics effects.
+FNINIT, FNSTCW and FNSTSW therefore leave probe memory and AX unchanged, so
+programs can detect absent hardware from their sentinel values. WAIT (9Bh)
+completes immediately: an absent coprocessor has no pending error or busy
+signal. WAIT remains a separate instruction even before an ESC instruction.
+ESC envelopes consume ModR/M, SIB and displacement bytes with the supported
+16/32-bit address prefixes; they do not access a coprocessor operand.
+
+ESC with EM or TS set raises #NM (vector 07h). WAIT raises #NM only when
+both MP and TS are set. The real-mode guest handler receives the faulting
+prefix IP. Without a guest handler, the diagnostic reports
+"80387 unavailable", vector 07h, CS:IP, MSW and instruction bytes. No #UD is
+substituted and a faulted ESC is not counted as retired.
+
+This slice is wired into DOS probes, interactive DOS sessions and the ROM
+runner that shares that execution loop. The monitor decoder and generated
+integer backend do not gain x87 execution. Protected-mode #NM delivery and
+coprocessor operand protection checks remain outside this absent backend.
+No Landmark or other external benchmark compatibility pass is claimed.
+
+Regression coverage in `tests/unit/fpu.rs` checks envelope lengths, every
+ModR/M value, truncation, EM/MP/TS combinations, untouched CPU/RAM,
+probe-to-DOS-exit behavior, #NM diagnostics and guest fault frames, BIOS
+absence and session resumption. Run `cargo test --locked fpu`, then the normal
+development checks.
+
+Reference: [Intel 80386 Programmer's Reference Manual, sections 11.1.2–11.1.4](https://www.css.csail.mit.edu/6.858/2014/readings/i386/s11_01.htm).

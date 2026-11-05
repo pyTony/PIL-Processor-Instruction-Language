@@ -169,7 +169,7 @@ fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         // Diagnostics passed, normal shutdown, no diskette, no hard disk.
         0x0e|0x0f|0x10|0x11|0x12|0x13=>0,
         // Equipment: CGA 80 columns, no diskette, no coprocessor.
-        0x14=>0x20,
+        0x14=>p.fpu.equipment(0x20) as u8,
         0x15=>0x80,0x16=>0x02,
         0x17|0x18|0x30|0x31=>0,
         _=>return Err(format!("CMOS register {index:02x}h is not modelled")),

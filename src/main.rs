@@ -10,6 +10,7 @@ mod host_io;
 mod debugger;
 mod guest;
 mod dos;
+mod fpu;
 mod containers;
 mod inflate;
 mod cache;

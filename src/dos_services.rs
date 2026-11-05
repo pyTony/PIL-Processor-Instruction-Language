@@ -197,7 +197,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             Ok(None)
         },
         (0x11,_)=>{
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0025;
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.fpu.equipment(0x0025));
             Ok(None)
         },
         (0x12,_)=>{
