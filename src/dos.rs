@@ -96,6 +96,8 @@ pub struct Loaded{
     pub cache:super::cache::DecodeCache,
     /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
     rom_mode:bool,
+    /// Replaceable coprocessor state, preserved between session slices.
+    pub fpu:super::fpu::Fpu,
 }
 impl Clone for Loaded{
     fn clone(&self)->Self{Self{
@@ -107,7 +109,7 @@ impl Clone for Loaded{
         own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,
+        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),
     }}
 }
 impl std::fmt::Debug for Loaded{
@@ -286,7 +288,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     let mut system=[(0,0);SYSTEM_RANGES];
     system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
     system[1]=(vectors::ENTRIES,vectors::END);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -383,6 +385,48 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Ok(None)=>{},
             Err(message)=>break Stop::Service(message),
         }
+        // Numerics are a replaceable device, separate from integer PIL semantics.
+        // Decode afresh so self-modifying code and changes to EM/TS are visible.
+        let numerics=super::fpu::decode(|offset|{
+            let bytes=p.image.fetch_signature(&p.ram,p.cpu.eip,offset+1)?;
+            Ok::<u8,GuestError>(bytes[offset as usize])
+        });
+        match numerics {
+            Ok(Some(instruction))=>{
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                match p.fpu.execute(&instruction,&mut p.cpu,&mut p.ram,&p.image){
+                    super::fpu::Outcome::Completed=>{
+                        p.cpu.eip=(p.cpu.eip+instruction.length)&0xffff;
+                        p.image.retired();completed+=1;execution_steps+=1;
+                        *instructions.entry(p.fpu.name().into()).or_insert(0)+=1;
+                        continue;
+                    },
+                    super::fpu::Outcome::NotAvailable=>{
+                        let fault_ip=p.cpu.eip;
+                        match vectors::answered(&p,7){
+                            Ok(false) if p.image.real_mode=>{
+                                match vectors::deliver_fault(&mut p,7,fault_ip){
+                                    Ok(())=>{
+                                        execution_steps+=1;
+                                        *instructions.entry("#NM (vector 07h)".into()).or_insert(0)+=1;
+                                        continue;
+                                    },
+                                    Err(message)=>break Stop::Fault(message),
+                                }
+                            },
+                            Err(message)=>break Stop::Fault(message),
+                            _=>break Stop::Fault(format!(
+                                "{}; #NM (vector 07h); CS:IP={:04x}:{:04x}; MSW={:04x}; bytes={}",
+                                p.fpu.name(),p.selectors[1],fault_ip,p.image.msw,
+                                instruction.bytes[..instruction.length as usize].iter()
+                                    .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" "))),
+                        }
+                    },
+                }
+            },
+            // The ordinary decoder retains ownership of malformed/non-x87 fetches.
+            Ok(None)|Err(_)=>{},
+        }
         let decoded=match p.cache.fetch(&p.image,&p.ram,p.cpu.eip){
             Ok(d)=>d,Err(GuestError::Execution(e))=>break Stop::Fault(format!("{e:?}")),
             Err(GuestError::Decode(detail))=>{
@@ -438,7 +482,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; 80387 unavailable (no coprocessor installed); PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{
