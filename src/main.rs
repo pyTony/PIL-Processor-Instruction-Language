@@ -61,6 +61,8 @@ enum Token {
     ReadAddress(usize),
     ReadAddressAfter(usize,usize,usize),
     ReadMsw(usize),
+    ReadControl(usize,usize),
+    WriteControl(usize,usize),
     WriteTable(usize,usize,usize),
     Require(usize),
     LoadSegment(usize,usize,MemWidth,usize),
@@ -286,6 +288,7 @@ fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         |Token::WriteSegment(_,a)|Token::InterruptShadowIf(a)|Token::RetireIf(a)
         |Token::ResumeIf(a)|Token::Require(a)|Token::CheckSegment(_,a,_)
         |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
+        Token::WriteControl(_,a)=>used(a),
         Token::WriteTable(_,a,b)=>used(a)||used(b),
         Token::Binary(_,_,a,b)|Token::Shift(_,_,a,b)|Token::Less(_,a,b)
         |Token::BranchIf(a,b)|Token::FarBranch(a,b)|Token::Store(a,b,_)
@@ -607,6 +610,8 @@ impl Program {
             Token::ReadAddress(v) => format!("v{v} = read_address"),
             Token::ReadAddressAfter(v, r, a) => format!("v{v} = read_address_after r{r} v{a}"),
             Token::WriteTable(t,l,b) => format!("write_table {t} v{l} v{b}"),
+            Token::ReadControl(v,r)=>format!("v{v} = read_control {r}"),
+            Token::WriteControl(r,v)=>format!("write_control {r} v{v}"),
             Token::ReadMsw(v) => format!("v{v} = read_msw"),
             Token::Require(c) => format!("require v{c}"),
             Token::LoadSegment(v, a, m, s) => format!("v{v} = load_segment [v{a}] {} (seg {s})", m.bytes() * 8),
@@ -674,7 +679,7 @@ impl Program {
                     _ if machine.is_none() && matches!(t,
                         Token::CheckpointFlags | Token::RequireRealMode | Token::InterruptShadowIf(..)
                         | Token::LoadSegment(..) | Token::StoreSegment(..) | Token::ReadSegment(..)
-                        | Token::WriteSegment(..) | Token::ReadMsw(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::FarBranch(..)) => {
+                        | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::FarBranch(..)) => {
                         early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
                     }
                     Token::RequireRealMode => {
@@ -754,6 +759,8 @@ impl Program {
                     Token::WriteGpr(reg, a, _) => {
                         note = format!("; stage r{reg} <- 0x{:x} ({})", values[a].bits, values[a].bits);
                     }
+                    Token::ReadControl(o,r)=>{match machine.unwrap().read_control(r,cpu.eflags,cpu.eip){Ok(v)=>values[o]=value(v as u64,32),Err(e)=>{early_stop=Some(idx);note=format!("; FAULT {e:?}");}}}
+                    Token::WriteControl(r,v)=>{if let Err(e)=machine.unwrap().validate_control(r,values[v].bits as u32,cpu.eflags,cpu.eip){early_stop=Some(idx);note=format!("; FAULT {e:?}");}else{note="; stage control register".into();}}
                     Token::WriteTable(..) => { note = "; stage descriptor table".into(); }
                     Token::ReadMsw(o) => {
                         if let Some(m) = machine {
@@ -1095,7 +1102,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["retire_if", predicate]=>{
                     let c=slot(&names,predicate)?;
-                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
+                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
                     Token::RetireIf(c)
                 }
                 ["resume_if", predicate]=>{
@@ -1106,6 +1113,8 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if t>1||widths[l]!=16||widths[b]!=32||tokens.iter().any(|x|matches!(x,Token::WriteTable(..))){return Err("write_table needs table 0..1, bv16 limit and bv32 base, once".into());}
                     Token::WriteTable(t,l,b)
                 }
+                ["read_control",out,register]=>{let r=number(register)? as usize;if !matches!(r,0|2|3){return Err("read_control needs CR0, CR2 or CR3".into());}Token::ReadControl(define(&mut names,&mut widths,out,32)?,r)}
+                ["write_control",register,input]=>{let r=number(register)? as usize;let v=slot(&names,input)?;if !matches!(r,0|2|3)||widths[v]!=32||tokens.iter().any(|t|matches!(t,Token::WriteControl(..))){return Err("write_control needs CR0, CR2 or CR3 and bv32, once".into());}Token::WriteControl(r,v)}
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
                 ["require", predicate]=>{
                     let c=slot(&names,predicate)?;if widths[c]!=1{return Err("require needs bv1 predicate".into());}Token::Require(c)
@@ -1238,7 +1247,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadMsw(..)|Token::WriteTable(..)|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::WriteTable(..)|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
@@ -1372,6 +1381,8 @@ fn probe_program_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContex
             Token::RetireIf(c)=>if values[c].bits!=0{return found;},
             Token::ReadSegment(o,reg)=>values[o]=value(machine?.selectors[reg] as u64,16),
             Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
+            Token::WriteControl(..)=>{},
+            Token::ReadControl(o,r)=>values[o]=value(machine?.read_control(r,cpu.eflags,cpu.eip).ok()? as u64,32),
             Token::WriteTable(..)=>{},
             Token::ReadMsw(o)=>values[o]=value(machine?.machine_status() as u64,16),
             Token::Require(c)=>if values[c].bits==0{return found;},
@@ -1434,6 +1445,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_eip=context.next_eip;
     let mut pending_resume=false;
     let mut pending_interrupt_shadow=false;
+    let mut pending_control:Option<(usize,u32)>=None;
     let mut pending_table:Option<(usize,u16,u32)>=None;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;MAX_STORES]=[None;MAX_STORES];let mut store_index=0;
@@ -1690,6 +1702,8 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
             Token::WriteGpr(reg,a,w)=>{pending_registers[reg_count]=(View{register:reg,low:0,width:w},values[a]);reg_count+=1;},
+            Token::ReadControl(o,r)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.read_control(r,cpu.eflags,cpu.eip)? as u64,32),
+            Token::WriteControl(r,v)=>{let x=values[v].bits as u32;machine.as_deref().ok_or(ExecError::InvalidContext)?.validate_control(r,x,cpu.eflags,cpu.eip)?;pending_control=Some((r,x));},
             Token::WriteTable(t,l,b)=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some((t,values[l].bits as u16,values[b].bits as u32));},
             Token::ReadMsw(o)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64,16),
             Token::Require(c)=>if values[c].bits==0{return Err(ExecError::InvalidContext);},
@@ -1805,6 +1819,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 *lazy = pending_lazy;
                 cpu.eip = pending_eip;
                 if let Some(m)=machine.as_deref_mut(){
+                    if let Some((r,v))=pending_control{m.commit_control(r,v);}
                     if let Some((t,l,b))=pending_table{m.tables[t]=(l,b);}
                     if !pending_resume{m.retired();}if pending_interrupt_shadow{m.sti_shadow=1;}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
                 }
@@ -1944,6 +1959,7 @@ fn emit_rust_functions(p:&Program)->String {
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + {}u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
          if {} && ram.is_none() {{ return Err(ExecError::InvalidContext); }}\n\
+         let mut pending_control: Option<(usize,u32)> = None;\n\
          let mut pending_table: Option<(usize,u16,u32)> = None;\n\
          let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
          let mut pending_stores: [Option<(u32,MemWidth,u32)>;8] = [None;8];let mut store_index=0;\n\
@@ -1973,6 +1989,8 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSegment(reg,a)=>format!("if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode {{return Err(ExecError::InvalidContext);}} pending_segment=Some(({reg},v{a} as u16,address::SegmentCache::real_mode(v{a} as u16)));"),
             Token::ReadGpr(o,reg,w)=>format!("let v{o}: u64 = (regs[{reg}] as u64) & {}u64;",mask(w)),
             Token::WriteGpr(reg,a,w)=>format!("pending_registers.push(({reg},{w},v{a}));"),
+            Token::ReadControl(o,r)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.read_control({r},*flags,*eip)? as u64;"),
+            Token::WriteControl(r,v)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?.validate_control({r},v{v} as u32,*flags,*eip)?;pending_control=Some(({r},v{v} as u32));"),
             Token::WriteTable(t,l,b)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some(({t},v{l} as u16,v{b} as u32));"),
             Token::ReadMsw(o)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64;"),
             Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
@@ -2021,7 +2039,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
@@ -2334,3 +2352,7 @@ mod les_tests;
 #[path = "../tests/unit/sst80386.rs"]
 mod sst80386_tests;
 
+
+#[cfg(test)]
+#[path="../tests/unit/control_registers.rs"]
+mod control_register_tests;

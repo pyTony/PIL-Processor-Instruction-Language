@@ -142,7 +142,8 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
     p.arena.release(&mut p.ram,p.psp,keep)?;
     p.return_code=u16::from(kind)<<8|u16::from(code);
     p.cpu=frame.cpu;p.cpu.eip=(p.cpu.eip+2)&0xffff;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
-    p.selectors=frame.selectors;p.image=frame.image;p.image.retired();
+    let (msw,controls)=(p.image.msw,p.image.controls);
+    p.selectors=frame.selectors;p.image=frame.image;p.image.msw=msw;p.image.controls=controls;p.image.retired();
     p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.psp;
     // Files only the child's handles referred to are closed with it.
     files::drop_unreferenced(p)

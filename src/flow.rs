@@ -13,6 +13,7 @@ pub enum ExecError {
     StackSegment { eip: u32, error_code: u16 },
     InvalidBinding,
     InvalidContext,
+    UnsupportedControl { eip:u32, register:u8, value:u32 },
     GeneralProtection { eip: u32, error_code: u16 },
 }
 

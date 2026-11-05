@@ -1044,7 +1044,10 @@ fn exec_runs_a_com_and_a_relocated_exe_and_returns_their_codes(){
  let dir=std::env::temp_dir().join(format!("pil-exec-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
  std::fs::create_dir_all(&dir).unwrap();
  // CHILD.COM: MOV AL,[80h]; MOV AH,4C; INT 21 (exits with its tail length).
- std::fs::write(dir.join("child.com"),[0xa0,0x80,0x00,0xb4,0x4c,0xcd,0x21]).unwrap();
+ // Control registers belong to the CPU, so the parent retains child changes.
+ std::fs::write(dir.join("child.com"),[0x66,0xb8,0x1e,0,0,0,0x0f,0x22,0xc0,
+  0x66,0xb8,0x78,0x56,0x34,0x12,0x0f,0x22,0xd0,
+  0x66,0xb8,0,0x40,0,0,0x0f,0x22,0xd8,0xa0,0x80,0x00,0xb4,0x4c,0xcd,0x21]).unwrap();
  // CHILD.EXE: one relocation (MOV AX,seg), then exits with the byte 7 from that segment.
  let mut exe=vec![0x4d,0x5a,0x2d,0x00,0x01,0x00,0x01,0x00,0x02,0x00,0x00,0x00,0xff,0xff,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x1c,0x00,0x00,0x00,0x01,0x00,0x00,0x00];
  exe.extend([0xb8,0x00,0x00,0x8e,0xd8,0xa0,0x0c,0x00,0xb4,0x4c,0xcd,0x21,0x07]);std::fs::write(dir.join("child.exe"),exe).unwrap();
@@ -1058,6 +1061,7 @@ fn exec_runs_a_com_and_a_relocated_exe_and_returns_their_codes(){
  let regs=&r.loaded.cpu.regs;assert_eq!((regs[6]&0xffff,regs[7]&0xffff,regs[5]&0xffff),(3,7,2));
  // Back in the parent: its PSP again, the children's blocks free, no frames left.
  assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
+ assert_eq!((r.loaded.image.msw,r.loaded.image.controls),(0x1e,[0x12345678,0x4000]));
  let mut again=r.loaded;again.cpu.regs[0]=0x4800;again.cpu.regs[3]=0xffff;service(&mut again,0x21,&mut vec![]).unwrap();
  assert_eq!(again.cpu.regs[3]&0xffff,u32::from(again.arena.free()));assert!(again.arena.free()>0x8000);
  std::fs::remove_dir_all(dir).unwrap();
