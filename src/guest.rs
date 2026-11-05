@@ -605,7 +605,7 @@ impl Image {
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
         if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe0..=0xe3|0x0f) {disp_bits=32;}
-        if opcode==0x0f && disp==0 && disp_bits==8 {disp_bits=32;}
+        if (opcode==0x0f && disp==0 && disp_bits==8) || call_indirect.is_some() {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
     }
