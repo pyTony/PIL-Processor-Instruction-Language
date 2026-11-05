@@ -125,7 +125,7 @@ impl AddressContext {
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct SegmentState {
     pub segments:[SegmentCache;6],pub selectors:[u16;6],
-    pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub flag_checkpoint:Option<(u32,u32,u32)>,
+    pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub flag_checkpoint:Option<(u32,u32,u32)>,
 }
 impl SegmentState {
     // The mode bit is coherent with the existing normalized mode state.

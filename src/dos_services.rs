@@ -3,6 +3,7 @@ use super::*;
 use crate::host_io::Output;
 use std::time::{SystemTime,UNIX_EPOCH};
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
+    let _span=crate::profile::span("dos_bios_service");
     if vector==0x21&&aux_console(p)?{return Ok(None);}
     // DOS checks for Ctrl-C on entry to the character calls, and to every
     // call while BREAK is on (FreeDOS int21_service).
@@ -758,3 +759,4 @@ fn console_read(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|n as u32;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     Ok(())
 }
+

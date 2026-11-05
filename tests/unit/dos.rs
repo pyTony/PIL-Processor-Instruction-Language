@@ -1529,3 +1529,17 @@ fn rom_code_at_dos_stub_addresses_is_executed_as_rom(){
  assert!(!r.instructions.contains_key("IRET (Dine interrupt entry)"));
  assert!(r.loaded.ram.check_write(0xff002,MemWidth::Byte).is_err());
 }
+
+#[test]
+fn vga_word_io_roundtrips_and_direct_display_start_is_visible(){
+    // MOV DX,3D4; MOV AX,010D; OUT DX,AX; IN AX,DX; HLT
+    let mut p=load(&[0xba,0xd4,3,0xb8,0x0d,1,0xef,0xed,0xf4],"crtc.com").unwrap();
+    p.ram.write_bytes(0xb8002,&[b'V',7]).unwrap();
+    let r=run(p,4).unwrap();assert!(matches!(r.stop,Stop::Budget));assert_eq!(r.loaded.cpu.regs[0]&65535,0x010d);
+    let s=session::Session::new(r.loaded);let (cells,_,_)=s.screen().unwrap();assert_eq!(cells[0],b'V');
+}
+#[test]
+fn vga_unimplemented_word_data_access_is_atomic(){
+    let mut p=load(&[0xef],"crtc.com").unwrap();p.cpu.regs[2]=0x3d5;p.cpu.regs[0]=0x1234;
+    let before=p.cpu.clone();let r=run(p,1).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu,before);
+}

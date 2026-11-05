@@ -27,7 +27,7 @@ fn pil_trace_stops_at_the_same_mode_segment_and_branch_checks_as_execution(){
         let p=compile(source,16).unwrap();
         let mut cpu=Cpu{regs:[0;8],eflags:flags,undefined_flags:0,eip:128};
         let mut ram=Ram::new(0x20000);
-        let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0,real_mode:mode.unwrap_or(true),ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
+        let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0,real_mode:mode.unwrap_or(true),ss_shadow:0,sti_shadow:0,tables:[(0,0);2],flag_checkpoint:None};
         let view=View{register:0,low:0,width:16};
         let context=FlowContext{next_eip:130,displacement:0,displacement_bits:8,code_limit:limit};
         let old_cpu=cpu.clone();let old_ram=ram.clone();let old_machine=machine;

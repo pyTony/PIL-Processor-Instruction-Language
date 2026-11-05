@@ -1,6 +1,7 @@
 //! PIL proof: text -> validated typed tokens -> register/flag interpreter.
 //! Token interpreter, small 386 decoder and Rust-source emitter; no external crates.
 use std::collections::HashMap;
+mod profile;
 mod flow;
 mod memory;
 mod address;
@@ -60,6 +61,7 @@ enum Token {
     ReadAddress(usize),
     ReadAddressAfter(usize,usize,usize),
     ReadMsw(usize),
+    WriteTable(usize,usize,usize),
     Require(usize),
     LoadSegment(usize,usize,MemWidth,usize),
     StoreSegment(usize,usize,MemWidth,usize),
@@ -284,6 +286,7 @@ fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         |Token::WriteSegment(_,a)|Token::InterruptShadowIf(a)|Token::RetireIf(a)
         |Token::ResumeIf(a)|Token::Require(a)|Token::CheckSegment(_,a,_)
         |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
+        Token::WriteTable(_,a,b)=>used(a)||used(b),
         Token::Binary(_,_,a,b)|Token::Shift(_,_,a,b)|Token::Less(_,a,b)
         |Token::BranchIf(a,b)|Token::FarBranch(a,b)|Token::Store(a,b,_)
         |Token::StoreSegment(a,b,_,_)|Token::WriteIf(a,b)|Token::WriteSourceIf(a,b)=>used(a)||used(b),
@@ -603,6 +606,7 @@ impl Program {
             Token::InterruptShadowIf(c) => format!("interrupt_shadow_if v{c}"),
             Token::ReadAddress(v) => format!("v{v} = read_address"),
             Token::ReadAddressAfter(v, r, a) => format!("v{v} = read_address_after r{r} v{a}"),
+            Token::WriteTable(t,l,b) => format!("write_table {t} v{l} v{b}"),
             Token::ReadMsw(v) => format!("v{v} = read_msw"),
             Token::Require(c) => format!("require v{c}"),
             Token::LoadSegment(v, a, m, s) => format!("v{v} = load_segment [v{a}] {} (seg {s})", m.bytes() * 8),
@@ -670,7 +674,7 @@ impl Program {
                     _ if machine.is_none() && matches!(t,
                         Token::CheckpointFlags | Token::RequireRealMode | Token::InterruptShadowIf(..)
                         | Token::LoadSegment(..) | Token::StoreSegment(..) | Token::ReadSegment(..)
-                        | Token::WriteSegment(..) | Token::ReadMsw(..) | Token::CheckSegment(..) | Token::FarBranch(..)) => {
+                        | Token::WriteSegment(..) | Token::ReadMsw(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::FarBranch(..)) => {
                         early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
                     }
                     Token::RequireRealMode => {
@@ -750,6 +754,7 @@ impl Program {
                     Token::WriteGpr(reg, a, _) => {
                         note = format!("; stage r{reg} <- 0x{:x} ({})", values[a].bits, values[a].bits);
                     }
+                    Token::WriteTable(..) => { note = "; stage descriptor table".into(); }
                     Token::ReadMsw(o) => {
                         if let Some(m) = machine {
                             values[o] = value(m.machine_status() as u64, 16);
@@ -1090,11 +1095,16 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["retire_if", predicate]=>{
                     let c=slot(&names,predicate)?;
-                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
+                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
                     Token::RetireIf(c)
                 }
                 ["resume_if", predicate]=>{
                     let c=slot(&names,predicate)?;if widths[c]!=1||branched{return Err("one resume/branch effect with bv1 required".into());}branched=true;Token::ResumeIf(c)
+                }
+                ["write_table", table, limit, base]=>{
+                    let t=number(table)? as usize;let l=slot(&names,limit)?;let b=slot(&names,base)?;
+                    if t>1||widths[l]!=16||widths[b]!=32||tokens.iter().any(|x|matches!(x,Token::WriteTable(..))){return Err("write_table needs table 0..1, bv16 limit and bv32 base, once".into());}
+                    Token::WriteTable(t,l,b)
                 }
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
                 ["require", predicate]=>{
@@ -1228,7 +1238,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadMsw(..)|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadMsw(..)|Token::WriteTable(..)|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
@@ -1362,6 +1372,7 @@ fn probe_program_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContex
             Token::RetireIf(c)=>if values[c].bits!=0{return found;},
             Token::ReadSegment(o,reg)=>values[o]=value(machine?.selectors[reg] as u64,16),
             Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
+            Token::WriteTable(..)=>{},
             Token::ReadMsw(o)=>values[o]=value(machine?.machine_status() as u64,16),
             Token::Require(c)=>if values[c].bits==0{return found;},
             Token::ReadAddressAfter(o,reg,a)=>{
@@ -1423,6 +1434,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_eip=context.next_eip;
     let mut pending_resume=false;
     let mut pending_interrupt_shadow=false;
+    let mut pending_table:Option<(usize,u16,u32)>=None;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;MAX_STORES]=[None;MAX_STORES];let mut store_index=0;
     let mut probed:Option<ProbedMemoryAccess>=None;
@@ -1678,6 +1690,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::ReadGpr(o,reg,w)=>values[o]=value(cpu.regs[reg] as u64,w),
             Token::WriteGpr(reg,a,w)=>{pending_registers[reg_count]=(View{register:reg,low:0,width:w},values[a]);reg_count+=1;},
+            Token::WriteTable(t,l,b)=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some((t,values[l].bits as u16,values[b].bits as u32));},
             Token::ReadMsw(o)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64,16),
             Token::Require(c)=>if values[c].bits==0{return Err(ExecError::InvalidContext);},
             Token::ReadAddressAfter(o,reg,a)=>{
@@ -1792,6 +1805,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 *lazy = pending_lazy;
                 cpu.eip = pending_eip;
                 if let Some(m)=machine.as_deref_mut(){
+                    if let Some((t,l,b))=pending_table{m.tables[t]=(l,b);}
                     if !pending_resume{m.retired();}if pending_interrupt_shadow{m.sti_shadow=1;}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
                 }
                 return Ok(probed);
@@ -1930,6 +1944,7 @@ fn emit_rust_functions(p:&Program)->String {
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + {}u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
          if {} && ram.is_none() {{ return Err(ExecError::InvalidContext); }}\n\
+         let mut pending_table: Option<(usize,u16,u32)> = None;\n\
          let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
          let mut pending_stores: [Option<(u32,MemWidth,u32)>;8] = [None;8];let mut store_index=0;\n\
          let mut pending_eip = context.next_eip;\n\
@@ -1958,6 +1973,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSegment(reg,a)=>format!("if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode {{return Err(ExecError::InvalidContext);}} pending_segment=Some(({reg},v{a} as u16,address::SegmentCache::real_mode(v{a} as u16)));"),
             Token::ReadGpr(o,reg,w)=>format!("let v{o}: u64 = (regs[{reg}] as u64) & {}u64;",mask(w)),
             Token::WriteGpr(reg,a,w)=>format!("pending_registers.push(({reg},{w},v{a}));"),
+            Token::WriteTable(t,l,b)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some(({t},v{l} as u16,v{b} as u32));"),
             Token::ReadMsw(o)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64;"),
             Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
             Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
@@ -2005,7 +2021,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
@@ -2028,8 +2044,60 @@ result
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
     out.push_str("}\n// Compatibility helper: discards diagnostic undefined-flag metadata.\npub fn execute(regs: &mut [u32;8], flags: &mut u32, dst: (usize,u8), src: (usize,u8)) -> Result<(), &'static str> {\nlet mut undefined = 0; execute_with_metadata(regs,flags,&mut undefined,dst,src)\n}\n"); out
 }
+const CLI_HELP:&str = "PIL - Processor Instruction Language
+Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
+
+DOS and ROM:
+  --dos-session [--mount DIR] [--args TEXT] PROGRAM
+      Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
+  --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
+  --run-rom PATH [--steps N]          Run a 64 KiB ROM
+  --dos-list [--all] IMAGE|ZIP        List container entries
+  --dos-read IMAGE|ZIP INNER [DEST]   Read/extract one entry
+  --dos-extract IMAGE|ZIP NEW_DIR     Extract a container
+
+Debugger and checks:
+  --repl [--load PATH]               Interactive debugger
+  --debug-service [--load PATH]      JSON debugger service
+  --selftest                        Run built-in execution checks
+  --numeric-test                    Check numeric instructions
+  --verify-backends                 Compare execution backends
+  --compare-backends [N] [SAMPLES]   Compare and benchmark backends
+  --bench [N] [SAMPLES] [--uncached] Interpreter benchmark
+  --cpu-bench [N] [SAMPLES]          Native CPU benchmark
+  --stress [PASSES]                 Factorial stress check
+  --mandelbrot [SIZE] [ITERATIONS]   Render Mandelbrot
+  --compare-mandelbrot [SIZE] [ITERATIONS]
+
+Code generation and examples:
+  --emit-rust 8|16|32 [DESCRIPTION]  Emit a Rust instruction implementation
+  --emit-suite-rust [N] [SAMPLES]    Emit backend verification suite
+  --write-selftest PATH             Write a raw example
+  --write-hello PATH                Write a raw hello example
+  --write-factorials PATH           Write a factorial example
+  --write-loop PATH                 Write a loop example
+  --write-dos-hello com|exe PATH     Write a DOS hello (new file only)
+  --demo-branch                     Show a conditional branch example
+
+Options (before COMMAND):
+  --profile JSON_PATH               Write DOS host timings on normal exit
+  --ignore-unassigned-out           Ignore/log unassigned OUT ports
+  --help, -h                        Show this help
+
+For a DOS window use: python tools/dos_terminal.py --help
+";
 fn main() -> R<()> {
-    let dos_args:Vec<_>=std::env::args().collect();
+    let mut dos_args:Vec<_>=std::env::args().collect();
+    if dos_args.len()==1 || matches!(dos_args.get(1).map(String::as_str),Some("--help"|"-h")){
+        if dos_args.len()>2{return Err("--help accepts no arguments".into());}
+        print!("{CLI_HELP}");return Ok(());
+    }
+    let mut _profile=None;
+    loop {match dos_args.get(1).map(String::as_str){
+        Some("--profile")=>{if _profile.is_some(){return Err("duplicate --profile".into());}let path=dos_args.get(2).ok_or("--profile requires an output JSON path")?;_profile=Some(profile::start(path)?);dos_args.drain(1..3);},
+        Some("--ignore-unassigned-out")=>{dos::ports::IGNORE_UNASSIGNED_OUT.store(true,std::sync::atomic::Ordering::Relaxed);dos_args.remove(1);},
+        _=>break,
+    }}
     if dos_args.get(1).map(String::as_str)==Some("--dos-list"){
         if dos_args.len()<3||dos_args.len()>4{return Err("usage: pil --dos-list [--all] IMAGE.img|ARCHIVE.zip".into());}
         let(all,path)=if dos_args[2]=="--all"{(true,dos_args.get(3).ok_or("missing image path")?)}else{(false,&dos_args[2])};
@@ -2089,7 +2157,7 @@ fn main() -> R<()> {
         return Ok(());
     }
 
-    let args: Vec<_> = std::env::args().collect();
+    let args = dos_args;
     if matches!(args.get(1).map(String::as_str),Some("--mandelbrot"|"--compare-mandelbrot")) {
         if args.len()>4{return Err("usage: pil --mandelbrot|--compare-mandelbrot [size 2..256 power of two] [iterations 1..64]".into());}
         let parse=|i:usize,default:u32|->R<u32>{if let Some(x)=args.get(i){u32::try_from(number(x.as_str())?).map_err(|_|"parameter out of range".into())}else{Ok(default)}};
@@ -2173,12 +2241,7 @@ fn main() -> R<()> {
         let p = compile(&instantiate(description(name)?,w),w)?;
         print!("{}",emit_rust(&p)); return Ok(());
     }
-    let p = compile(&instantiate(ADD,16),16)?;
-    let mut cpu = Cpu::default(); cpu.regs[0] = 0x1234_7fff; cpu.regs[1] = 1;
-    execute(&p,&mut cpu,View{register:0,low:0,width:16},View{register:1,low:0,width:16})?;
-    println!("AX=0x{:04x}; EAX=0x{:08x}; flags=0x{:04x}; {} typed tokens",
-        cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
-    Ok(())
+    Err(format!("unknown command or option: {}. Use pil --help for usage.",args.get(1).map(String::as_str).unwrap_or("(missing command)")))
 }
 
 #[cfg(test)]
@@ -2265,3 +2328,4 @@ mod les_tests;
 #[cfg(test)]
 #[path = "../tests/unit/sst80386.rs"]
 mod sst80386_tests;
+
