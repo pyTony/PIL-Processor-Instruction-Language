@@ -2080,6 +2080,7 @@ Code generation and examples:
   --demo-branch                     Show a conditional branch example
 
 Options (before COMMAND):
+  --stop-log PATH                   Append DOS-session/ROM diagnostics (default: PILdos-stops.jsonl)
   --profile JSON_PATH               Write DOS host timings on normal exit
   --ignore-unassigned-out           Ignore/log unassigned OUT ports
   --help, -h                        Show this help
@@ -2093,7 +2094,10 @@ fn main() -> R<()> {
         print!("{CLI_HELP}");return Ok(());
     }
     let mut _profile=None;
+    let mut stop_log=String::from("PILdos-stops.jsonl");
+    let mut log_given=false;
     loop {match dos_args.get(1).map(String::as_str){
+        Some("--stop-log")=>{if log_given{return Err("duplicate --stop-log".into());}stop_log=dos_args.get(2).ok_or("--stop-log requires a path (empty disables logging)")?.clone();log_given=true;dos_args.drain(1..3);},
         Some("--profile")=>{if _profile.is_some(){return Err("duplicate --profile".into());}let path=dos_args.get(2).ok_or("--profile requires an output JSON path")?;_profile=Some(profile::start(path)?);dos_args.drain(1..3);},
         Some("--ignore-unassigned-out")=>{dos::ports::IGNORE_UNASSIGNED_OUT.store(true,std::sync::atomic::Ordering::Relaxed);dos_args.remove(1);},
         _=>break,
@@ -2133,7 +2137,7 @@ fn main() -> R<()> {
             rest=more;
         }
         let[program]=rest else{return Err(usage.into())};
-        return dos::session::serve(program,mount,tail).map_err(Into::into);
+        return dos::session::serve(program,mount,tail,&stop_log).map_err(Into::into);
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;
@@ -2153,6 +2157,7 @@ fn main() -> R<()> {
             return Err("usage: pil --run-rom PATH [--steps N]".into());
         }
         let probe=dos::run_rom(rom_path,budget)?;
+        dos::stoplog::Logger::new(&stop_log,&dos_args[2]).record(&probe.loaded,match probe.stop{dos::Stop::Budget=>"running",dos::Stop::WaitingForInput=>"waiting_input",dos::Stop::Exit(_)=>"exit",_=>"stopped"},&format!("{:?}",probe.stop),probe.completed,&probe.exceptions,probe.exception_count);
         print!("{}",dos::format_rom_report(&probe));
         return Ok(());
     }

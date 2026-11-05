@@ -196,12 +196,9 @@ class Session:
 
     def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
         options = (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
-        self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
+        self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        self.stop_log = stop_log
-        self._last_stop = None
-        self.program = str(program)
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
@@ -214,21 +211,6 @@ class Session:
         if reply.get('protocol') != 1 or reply.get('seq') != self.seq:
             raise RuntimeError('unexpected reply from PIL DOS session')
         self.com1_out += bytes.fromhex(reply.get('com1', ''))
-        if reply.get('status') == 'stopped':
-            key = (reply.get('cs'), reply.get('eip'), reply.get('steps'), reply.get('detail'))
-            if self.stop_log and key != self._last_stop:
-                from datetime import datetime, timezone
-                record = {k: reply.get(k) for k in ('status', 'detail', 'steps', 'cs', 'eip', 'instruction_bytes', 'registers', 'selectors', 'eflags', 'msw')}
-                record.update(time=datetime.now(timezone.utc).isoformat(), program=self.program,
-                              location=f"{reply.get('cs', 0):04X}:{reply.get('eip', 0):04X}")
-                try:
-                    with open(self.stop_log, 'a', encoding='utf-8') as log:
-                        log.write(json.dumps(record, ensure_ascii=False) + '\n')
-                except OSError as exc:
-                    print(f"Cannot write stop log {self.stop_log}: {exc}", file=sys.stderr)
-            self._last_stop = key
-        else:
-            self._last_stop = None
         return reply
 
     def send(self, command):

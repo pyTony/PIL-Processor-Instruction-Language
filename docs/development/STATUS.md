@@ -1,3 +1,35 @@
+# Engine-owned ROM and DOS stop diagnostics
+
+`pil --run-rom test386.asm/test386.bin --steps 1000000` now appends its final
+state to `PILdos-stops.jsonl` in the current host directory. DOS terminal and
+direct `--dos-session` stops use the same Rust logger; Python no longer writes
+a duplicate record. Repeated session snapshots do not append duplicate stops.
+
+Use `pil --stop-log target/rom-stops.jsonl --run-rom ...` to choose another
+file. `--stop-log ""` disables logging. Options precede the command. The DOS
+terminal forwards its existing `--stop-log` option to the engine.
+
+Records contain the program, final CS:IP, instruction bytes, registers,
+selectors, EFLAGS, MSW, step count, stop detail and UTC Unix milliseconds
+(`time_unix_ms`). ROM budget exhaustion is recorded with status `running`;
+it is not a test pass. Files are appended, not replaced.
+
+The first 64 delivered decoder #UD exceptions are captured before handler
+entry, including their original CS:IP, instruction bytes, decoder reason and
+register state. `exception_count` includes omitted events. ROM text reports
+also list these sites, so a later handler HLT does not hide the original
+unsupported instruction. This is decoder #UD tracing, not a general hardware
+exception tracer. Recording a #UD does not imply the instruction is invalid on
+an actual 386. Log failures warn on stderr and leave execution/protocol intact.
+
+Local verification: 470 Rust tests passed (one external-data test skipped),
+27 GUI tests passed, release build and expanded diagnostics verifier passed.
+The user's local test386 ROM reproduced the same 793,778-instruction HLT at
+F000:FE89. Recorded #UD sites: F000:062E (8E CA), F000:06A1 (8E 0E 00 00),
+and F000:2670 (0F 22 DE, MOV CR3,ESI). The first two try loading CS through
+MOV; the third is the current unsupported control-register instruction.
+No CPU semantics changed and no complete test386 pass is claimed.
+
 # PR 82 restorations and ROM checks — 4 November 2026
 
 The PR keeps the instruction additions and `--run-rom` path while restoring
