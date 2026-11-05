@@ -51,7 +51,7 @@ pub(super) fn start(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let target=u32::from(segment)*16+offset;
     let image=&p.image;
     let inside=|base:u32,start:u32,end:u32|target>=base+start&&target<base+end;
-    let window=if inside(image.fetch_base,image.start,image.end)||image.system.iter().any(|&(s,e)|target>=s&&target<e){None}
+    let window=if inside(image.fetch_base,image.start,image.end)||(target>=image.system.0&&target<image.system.1){None}
         else{p.exec.iter().rev().map(|f|&f.image).find(|i|inside(i.fetch_base,i.start,i.end)).map(|i|(i.fetch_base,i.start,i.end))};
     let frame=Frame{cs:p.selectors[SegmentRegister::Cs.index()],eip:p.cpu.eip,sp:sp as u16,depth:p.exec.len(),
         window:window.map(|_|(p.image.fetch_base,p.image.start,p.image.end))};

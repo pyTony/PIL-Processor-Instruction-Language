@@ -59,7 +59,7 @@ pub(super) fn deliver(p:&mut Loaded,n:u8)->Result<(),String>{
     let(segment,offset)=((vector>>16)as u16,vector&0xffff);
     let target=u32::from(segment)*16+offset;let image=&p.image;
     let fetchable=(target>=image.fetch_base+image.start&&target<image.fetch_base+image.end)
-        ||image.system.iter().any(|&(start,end)|target>=start&&target<end);
+        ||(target>=image.system.0&&target<image.system.1);
     if !fetchable{return Err(format!("INT {n:02x}h handler at {segment:04x}:{offset:04x} is outside the running program"));}
     let sp=p.cpu.regs[4]&0xffff;
     let values=[(2,p.cpu.eflags&0xffff),(4,u32::from(p.selectors[SegmentRegister::Cs.index()])),(6,(p.cpu.eip+2)&0xffff)];

@@ -104,11 +104,7 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     }
     p.ram.write_bytes(u32::from(load)*16,&module).map_err(|e|format!("EXEC module: {e:?}"))?;
     // Save the parent, then enter the child with DS=ES=PSP.
-    let parent_window=(p.image.fetch_base+p.image.start,p.image.fetch_base+p.image.end);
     p.exec.push(Frame{cpu:p.cpu.clone(),selectors:p.selectors,image:p.image.clone(),open_handles:p.open_handles,dta:p.dta,psp:p.psp});
-    let mut system=p.image.system;
-    if let Some(slot)=system.iter_mut().find(|(s,e)|*s==0&&*e==0){*slot=parent_window;}
-    p.image.system=system;
     let(cs,ip,ss,sp)=match program.entry{
         Some((cs,ip,ss,sp))=>(load.wrapping_add(cs),ip,load.wrapping_add(ss),sp),
         None=>{
