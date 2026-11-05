@@ -709,3 +709,64 @@ registers and source caches, including an ES override; the full pointer must fit
 the source segment and RAM. GPR and ES selector/cache commit together. Flags
 are preserved. No protected/V86 load, descriptor lookup or other full-pointer
 load instruction is added. Pointer segment-end wrap is rejected by this profile.
+
+## Desktop debugger (0.35)
+
+Build PIL, then run `python tools/pil_debugger.py`. In a native package run
+`python pil_debugger.py` beside the executable. Optional `--engine PATH`
+selects a custom build; `--load RAW_BINARY` starts a raw monitor image.
+Python3.10+ with Tk and a graphical desktop is required only for the window.
+The existing CLI and DOS batch commands remain independent of Python/Tk.
+
+F7 steps, F5 runs, F6 pauses after the current bounded quantum, and F9 toggles
+a breakpoint at the address field (default current EIP). Double-click a code
+line to select/toggle its breakpoint. Registers changed since the previous
+snapshot are highlighted. Memory/stack views use physical RAM addresses.
+Flags, undefined markers, segments and cache status appear in the Inspector.
+
+Guest serial output and the debugger Listener are separate panes/channels.
+Binary/control bytes are escaped in the guest view; this is not an ANSI/CP437
+terminal or a BIOS text-screen emulation. Use the Guest RX hex field for input
+bytes, including00; text in the command Listener is never guest input.
+Select selftest, inject RX41, Run, then type `check` for the diagnostic example.
+The displayed guest history retains the most recent64KiB; authoritative backend
+history is capped at64KiB and then requests Reset/demo selection before more
+execution. Host TX queues still provide normal backpressure; automatic running
+drains them explicitly when the backend reports tx_blocked.
+
+The window currently supports monitor demos and raw binaries1..3840 bytes.
+It is not a DOS COM/MZ GUI loader. DOS/BIOS batch probing remains `--dos-probe`,
+using the DOS compatibility-service layer. DOS single-step GUI sessions, actual
+text cells/cursor/pages and keyboard/file services are future work.
+
+### Local debugger service protocol
+
+`pil-proof --debug-service [--load RAW_BINARY]` runs one machine owned by the
+local process. It reads UTF-8 command lines from stdin and writes one NDJSON
+reply per command on stdout, plus an initial snapshot. No prompts or guest
+text are mixed into that protocol stream. stderr reports startup failures.
+There is no network listener or dependency on lispy3/z80-cpm at runtime.
+
+Protocol1 starts with seq0 and increments for each request, including rejected
+requests. Replies contain ok/quit/text/status, guest_output as byte values,
+and state: registers, EIP, flags/undefined mask, selectors/segment text,
+breakpoints, decoded listing, memory/stack views, RAM size and cache status.
+The frontend validates framing/sequence, byte ranges and required snapshot
+fields. Guest bytes remain exact; only their presentation is escaped.
+
+`step`, `run [1..256]`, `snapshot`, `demo NAME`, `reset`, register/flag/list/memory
+inspection, `view ADDRESS`, `set REG VALUE`, `break/delete ADDRESS`, serial,
+cache, check and quit commands are supported. Slow benchmark/stress/time,
+DOS probing and arbitrary file reads through command strings are excluded.
+Raw images are passed as startup argv, preserving paths with spaces. The
+service checks size before reading an entire file. Commands must fit4095 UTF-8
+bytes plus newline; an oversized frame yields an error reply and closes the
+session. Invalid commands cannot change CPU/RAM or advance an instruction.
+EOF ends the host session; it is not a guest input byte or DOS EOF event.
+
+Run/Pause is cooperative: at most256 instruction/REP-element execution steps
+are requested at once. Pause prevents scheduling the next quantum; it does not
+inject an exception into a CPU transaction. Breakpoints and prior breakpoint
+resume behavior come from the Rust controller. One request is outstanding at
+a time. UI updates run on Tk's thread; closing the window ends its owned backend
+process. The GUI does not implement another CPU or DOS service engine.

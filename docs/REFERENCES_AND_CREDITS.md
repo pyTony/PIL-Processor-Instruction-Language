@@ -281,3 +281,15 @@ Single-executor ordinary RAM only; no concurrent bus or hardware proof claim.
 
 Code, PIL and fixtures are original. No reference text or third-party code
 imported. Native hardware/whole-image verification is not implied by this audit.
+
+## DOS output providers and optional desktop debugger (0.35)
+
+Original Rust/Python implementation. Design references were the user's
+[lispy3 abc3d616](https://github.com/pyTony/lispy3/tree/abc3d616b4292753c349dfa5e690483a7d717954)
+(Listener/Inspector, queued UI updates, output routing) and
+[z80-cpm588c356b](https://github.com/pyTony/z80-cpm/tree/588c356bcf280d00585b26bda0a4c70ba5bdaa4c)
+(code/breakpoints, changed registers, memory/stack and separate console).
+No source was copied; neither project is a runtime dependency. The reviewed
+z80-cpm tree carries MIT copyright2026 pyTony; lispy3 had no root licence file.
+Preserve notices if substantial source is adapted later. PIL's own licence
+status is unchanged. Wine is an architectural analogy, not an imported library.

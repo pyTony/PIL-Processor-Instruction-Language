@@ -289,3 +289,21 @@ load instruction is added. Pointer segment-end wrap is rejected by this profile.
 Report headers print the package version and selected per-program step budget,
 including the default budget when --steps is omitted. Keep the supplied v0.33
 100000-step report as historical user evidence until the new corpus is rerun.
+
+## Host-backed compatibility provider (0.35)
+
+`dos_services.rs` owns the supported DOS contracts; `dos::run` supplies the
+headless16KiB capture provider from `host_io.rs`. Internal `run_with_output`
+accepts another provider. Its Output interface exposes committed bytes,
+capacity/remaining space and an atomic write. Providers must leave output
+unchanged on Full or Disconnected. The dispatcher validates guest reads and
+capacity before output; AL and retirement change only after successful writes.
+Existing version/vector/memory/switch-query semantics are unchanged.
+
+This is an in-process compatibility boundary, analogous in purpose to host API
+provision in Wine. No Wine code/library or running DOS kernel is required.
+Hardware port I/O, the monitor's mock serial transport and CPU interrupt delivery
+remain distinct. No BIOS screen model, redirected files, DOS keyboard provider
+or new DOS service is introduced by this extraction. Existing stop categories
+and batch report format remain intact. The new GUI currently debugs monitor
+sessions; it does not yet single-step DOS COM/MZ sessions.

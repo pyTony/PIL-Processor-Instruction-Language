@@ -1,5 +1,23 @@
 # PIL 386 debugger
 
+## 0.35: DOS compatibility providers and desktop debugger
+
+Existing DOS service contracts now use a host output-provider boundary. An
+optional debugger window drives the existing Rust engine through structured
+snapshots, with separate guest output and command channels.
+
+```sh
+sh tools/build.sh --release
+python tools/pil_debugger.py
+```
+
+On Windows build with `.\tools\build.ps1 -Release`, then run the same Python
+command. Python3.10+ with Tk and a graphical desktop is needed for the window;
+the Rust CLI and batch probe still work without Python/Tk. Use `--engine PATH`
+for a custom build directory. The GUI currently loads monitor demos/raw binaries;
+COM/MZ remains a batch DOS probe. See the desktop-debugger section of the guide.
+
+
 ## 0.34: DOS character output, switch query and LES
 
 The DOS probe now supports bounded AH02 character output (including tab
@@ -291,7 +309,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.34.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.35.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
