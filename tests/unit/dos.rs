@@ -1512,3 +1512,20 @@ fn session_cache_survives_slices_and_rechecks_changed_code(){
  assert_eq!(third.loaded.cpu.eip,0x101);
  assert!(third.loaded.cache.stats().invalidations>0);
 }
+
+#[test]
+fn rom_code_at_dos_stub_addresses_is_executed_as_rom(){
+ let path=std::env::temp_dir().join(format!("pil-rom-{}.bin",std::process::id()));
+ let mut bytes=vec![0;65536];
+ bytes[0xfff0..0xfff5].copy_from_slice(&[0xea,0x02,0xf0,0x00,0xf0]);
+ bytes[0xf002..0xf006].copy_from_slice(&[0xb8,0x34,0x12,0xf4]);
+ std::fs::write(&path,bytes).unwrap();
+ let result=run_rom(&path,10);
+ std::fs::remove_file(&path).unwrap();
+ let r=result.unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!(r.loaded.cpu.regs[0],0x1234);
+ assert_eq!((r.loaded.selectors[1],r.loaded.cpu.eip),(0xf000,0xf005));
+ assert!(!r.instructions.contains_key("IRET (Dine interrupt entry)"));
+ assert!(r.loaded.ram.check_write(0xff002,MemWidth::Byte).is_err());
+}

@@ -95,6 +95,8 @@ pub struct Loaded{
     pub breaks:Vec<brk::Frame>,
     /// Persistent, signature-validated cache across session slices.
     pub cache:super::cache::DecodeCache,
+    /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
+    rom_mode:bool,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -269,7 +271,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     let mut system=[(0,0);SYSTEM_RANGES];
     system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
     system[1]=(vectors::ENTRIES,vectors::END);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -301,6 +303,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
 
     let stop=loop{
         if execution_steps==budget{break Stop::Budget;}
+        if !p.rom_mode {
         if !p.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match brk::returned(&mut p){
             Ok(None)=>{},
@@ -356,6 +359,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 Err(message)=>break Stop::Service(message),
             }
         }}
+        } // DOS-only services and synthetic interrupt entries
         match ports::io(&mut p){
             Ok(Some(length))=>{
                 p.cpu.eip=(p.cpu.eip+length)&0xffff;p.image.retired();completed+=1;execution_steps+=1;
@@ -484,7 +488,11 @@ pub fn run_rom(rom_path: &Path, budget: usize) -> Result<Probe, String> {
     let mut p = load(&[0x90], "test386.com")?;
     let mut ram = Ram::new(0x100000);
     ram.write_bytes(0xF0000, &rom_data).map_err(|e| format!("ROM write failed: {e:?}"))?;
+    ram.protect(0xf0000,65536).map_err(|e|format!("ROM protection: {e:?}"))?;
     p.ram = ram;
+    p.rom_mode = true;
+    p.cpu.regs = [0;8];
+    p.image.system = [(0,0);SYSTEM_RANGES];
     p.image.fetch_base = 0;
     p.image.start = 0;
     p.image.end = 0x100000;
