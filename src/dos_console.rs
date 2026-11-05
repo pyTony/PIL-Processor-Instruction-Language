@@ -236,6 +236,11 @@ fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
 /// Fixed mode-3 profile: AH00 accepts mode 3 only. Bit 7 keeps video RAM.
 fn set_mode(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
+    if al&0x7f==0x13{
+        let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x462,MemWidth::Byte,0)];
+        if al&0x80==0{writes.extend((0..64000).map(|n|(0xa0000+n,MemWidth::Byte,0)));}
+        return commit(p,&writes);
+    }
     if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the 80x25 colour text profile",al&0x7f));}
     let mut writes=vec![(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
         (0x463,MemWidth::Word,0x3d4),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1)];

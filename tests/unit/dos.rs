@@ -507,6 +507,28 @@ fn bios_mode_page_and_query_services_use_bda_state(){
  p.cpu.regs[0]=0x0508;let old=p.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);
  p.ram.store(0x462,MemWidth::Byte,9).unwrap();p.cpu.regs[0]=0x0f00;let old=p.cpu.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.cpu,old);
 }
+
+#[test]
+fn mandelbrot_guest_writes_pixels_into_mode_13_vga_memory(){
+    let bytes=crate::mandelbrot::guest_vga_bytes(8,16).unwrap();
+    let r=run(load(&bytes,"mandel.com").unwrap(),200_000).unwrap();
+    assert!(matches!(r.stop,Stop::WaitingForInput),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(0x449,MemWidth::Byte).unwrap(),0x13);
+    let reference=crate::mandelbrot::reference(8,16).unwrap();
+    for y in 0..8 {for x in 0..8 {assert_eq!(r.loaded.ram.load(0xa0000+(96+y)*320+156+x,MemWidth::Byte).unwrap(),u32::from(reference[(y*8+x) as usize]));}}
+    assert_eq!(r.loaded.ram.load(0xa0000+63999,MemWidth::Byte).unwrap(),0);
+}
+
+#[test]
+fn vga_mode13_clears_or_preserves_memory_and_returns_to_text(){
+    let mut p=load(&[0xf4],"mode.com").unwrap();
+    p.ram.store(0xa0000,MemWidth::Byte,0x55).unwrap();p.ram.store(0xafa00,MemWidth::Byte,0x77).unwrap();
+    p.cpu.regs[0]=0x93;console::display(&mut p,0).unwrap();
+    assert_eq!(p.ram.load(0xa0000,MemWidth::Byte).unwrap(),0x55);
+    p.cpu.regs[0]=0x13;console::display(&mut p,0).unwrap();
+    assert_eq!(p.ram.load(0xa0000,MemWidth::Byte).unwrap(),0);assert_eq!(p.ram.load(0xafa00,MemWidth::Byte).unwrap(),0x77);
+    p.cpu.regs[0]=3;console::display(&mut p,0).unwrap();assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),3);
+}
 #[test]
 fn bios_set_mode_three_resets_bda_and_clears_unless_bit7(){
  for keep in [false,true]{
@@ -517,7 +539,7 @@ fn bios_set_mode_three_resets_bda_and_clears_unless_bit7(){
   for page in 0..8{assert_eq!(cell(&p,page,24,79),if keep{0x4e41}else{0x0720});assert_eq!(p.ram.load(0x450+page*2,MemWidth::Word).unwrap(),0);}
   for (at,w,value) in [(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,80),(0x44c,MemWidth::Word,4096),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,24)]{assert_eq!(p.ram.load(at,w).unwrap(),value);}
  }
- for al in [0u32,1,2,7,0x13,0x87]{let mut p=load(&[0xcd,0x10],"mode.com").unwrap();p.cpu.regs[0]=al;let old=p.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);}
+ for al in [0u32,1,2,7,0x87]{let mut p=load(&[0xcd,0x10],"mode.com").unwrap();p.cpu.regs[0]=al;let old=p.clone();assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);}
  let mut p=load(&[0xcd,0x10],"mode.com").unwrap();p.ram.protect(0xbef9f,1).unwrap();p.cpu.regs[0]=3;let old=p.clone();
  assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,old.ram);
 }

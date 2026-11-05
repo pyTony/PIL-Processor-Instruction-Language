@@ -1,4 +1,5 @@
 import importlib.util
+import gc
 import json
 from pathlib import Path
 import tempfile
@@ -314,6 +315,12 @@ class FrontendTests(unittest.TestCase):
             finally:
                 if not app.closing:
                     app.close()
+                # Tk objects and their reference cycles must be collected on the
+                # thread that created the interpreter, before other tests start
+                # worker threads that could trigger cyclic garbage collection.
+                app = None
+                root = None
+                gc.collect()
 
     def test_std_and_cld_cases_and_mutation_controls(self):
         dosbox_mod = self._dosbox_module()
