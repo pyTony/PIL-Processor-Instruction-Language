@@ -186,15 +186,17 @@ impl LazyFlags {
     #[inline]
     pub fn flush_cf_only(&mut self, eflags: &mut u32, undefined_flags: &mut u32) {
         match *self {
-            Self::Add { a, b, w, write_cf: true, .. } => {
+            Self::Add { a, b, w, ref mut write_cf, .. } if *write_cf => {
                 let cf = (((a + b) >> w) & 1) as u32;
                 *undefined_flags &= !1;
                 *eflags = (*eflags & !1) | cf;
+                *write_cf = false;
             }
-            Self::Sub { a, b, write_cf: true, .. } => {
+            Self::Sub { a, b, ref mut write_cf, .. } if *write_cf => {
                 let cf = u32::from(a < b);
                 *undefined_flags &= !1;
                 *eflags = (*eflags & !1) | cf;
+                *write_cf = false;
             }
             Self::Logic { .. } => {
                 *undefined_flags &= !1;
@@ -202,7 +204,6 @@ impl LazyFlags {
             }
             _ => {}
         }
-        *self = Self::None;
     }
     #[inline]
     pub fn eval_jcc(&mut self, cond: u8, eflags: &mut u32, undefined_flags: &mut u32) -> bool {
@@ -1569,6 +1570,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             PackedOp::Flags5NoCf { pf, af, zf, sf, of } => {
                 pending_lazy.flush_cf_only(&mut pending_flags, &mut pending_undefined);
+                pending_lazy = LazyFlags::None;
                 const NO_CF: u32 = ARITH_FLAGS & !1;
                 pending_undefined &= !NO_CF;
                 pending_flags = (pending_flags & !NO_CF)

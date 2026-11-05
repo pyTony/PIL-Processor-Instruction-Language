@@ -463,3 +463,12 @@ fn pilstep_fault_stops_at_failed_check_without_reporting_retirement(){
     assert!(!message.contains("retired instruction"));
     assert_eq!(d.cpu,before);assert_eq!(d.ram,ram);
 }
+
+#[test]
+fn edits_restart_partial_pil_trace(){
+ let mut d=Debugger::new("hello").unwrap();
+ d.step_pil();assert!(d.pil_cursor.is_some());
+ d.command("set eax 7").unwrap();assert!(d.pil_cursor.is_none());
+ d.step_pil();assert!(d.pil_cursor.is_some());
+ d.command("poke 0x100 90").unwrap();assert!(d.pil_cursor.is_none());
+}

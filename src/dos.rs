@@ -93,6 +93,8 @@ pub struct Loaded{
     pub com1:Option<serial::Serial>,
     /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
     pub breaks:Vec<brk::Frame>,
+    /// Persistent, signature-validated cache across session slices.
+    pub cache:super::cache::DecodeCache,
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -267,7 +269,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     let mut system=[(0,0);SYSTEM_RANGES];
     system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
     system[1]=(vectors::ENTRIES,vectors::END);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -295,9 +297,11 @@ pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
 pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output)->Result<Probe,String>{
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
     let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();
-    let mut cache=super::cache::DecodeCache::default();
+    let mut lazy=super::LazyFlags::None;
+
     let stop=loop{
         if execution_steps==budget{break Stop::Budget;}
+        if !p.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match brk::returned(&mut p){
             Ok(None)=>{},
             Ok(Some(brk::Return::Resume))=>{execution_steps+=1;*instructions.entry("DOS INT23 return (resume)".into()).or_insert(0)+=1;continue;},
@@ -311,12 +315,15 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         }
         // The host clock is checked every 256 steps (about 0.1 ms of work here).
         if execution_steps%256==0{if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}}
+        let linear=p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip);
+        if (vectors::ENTRIES..vectors::END).contains(&linear){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match vectors::leave(&mut p){
             Ok(true)=>{execution_steps+=1;completed+=1;*instructions.entry("IRET (Dine interrupt entry)".into()).or_insert(0)+=1;continue;},
             Ok(false)=>{},
             Err(message)=>break Stop::Service(message),
         }
-        if let Ok(encoded)=bytes_at(&p,2){if encoded[0]==0xcd{
+        if let Ok(encoded)=p.image.fetch_signature(&p.ram,p.cpu.eip,2){if encoded[0]==0xcd{
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             let vector=encoded[1];
             match vectors::answered(&p,vector){
                 Ok(true)=>{},
@@ -357,9 +364,10 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Ok(None)=>{},
             Err(message)=>break Stop::Service(message),
         }
-        let decoded=match cache.fetch(&p.image,&p.ram,p.cpu.eip){
+        let decoded=match p.cache.fetch(&p.image,&p.ram,p.cpu.eip){
             Ok(d)=>d,Err(GuestError::Execution(e))=>break Stop::Fault(format!("{e:?}")),
             Err(GuestError::Decode(detail))=>{
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
                 if !detail.starts_with("fetch outside loaded image") && vectors::answered(&p,6)==Ok(false) {
                     let fault_eip=p.cpu.eip;
                     match vectors::deliver_fault(&mut p,6,fault_eip){
@@ -377,7 +385,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
-                let mut machine=p.image.segment_state();let result=super::execute_machine(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine);
+                let mut machine=p.image.segment_state();let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
@@ -395,9 +403,14 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         let repeated=matches!(&decoded.operation,Operation::Pil{program,..}if program.partial);
         let partial=repeated&&p.cpu.eip==old_ip;
         if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1;}
-        if !partial{completed+=1;let key=if repeated{decoded.label.clone()}else{decoded.label.split_whitespace().next().unwrap_or("?").to_string()};*instructions.entry(key).or_insert(0)+=1;}
+        if !partial{
+            completed+=1;
+            let key=if repeated{decoded.label.as_str()}else{decoded.label.split_whitespace().next().unwrap_or("?")};
+            if let Some(count)=instructions.get_mut(key){*count+=1;}else{instructions.insert(key.to_string(),1);}
+        }
 
     };
+    lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
     let file_offset=linear.and_then(|a|a.checked_sub(p.module_base)).filter(|n|(*n as usize)<p.module_bytes).map(|n|n as usize+p.header_bytes);
     Ok(Probe{loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})

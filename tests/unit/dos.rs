@@ -1499,3 +1499,16 @@ fn run_test386_rom_image() {
     let result = dos::run_rom(bin_path, MAX_STEPS).expect("Execution engine returned an error");
     println!("{}", dos::format_rom_report(&result));
 }
+
+#[test]
+fn session_cache_survives_slices_and_rechecks_changed_code(){
+ let p=load(&[0xeb,0xfe],"loop.com").unwrap();
+ let first=run(p,1).unwrap();
+ assert_eq!(first.loaded.cache.stats().misses,1);
+ let mut second=run(first.loaded,1).unwrap();
+ assert_eq!(second.loaded.cache.stats().hits,1);
+ second.loaded.ram.write_bytes(u32::from(PSP)*16+0x100,&[0x90]).unwrap();
+ let third=run(second.loaded,1).unwrap();
+ assert_eq!(third.loaded.cpu.eip,0x101);
+ assert!(third.loaded.cache.stats().invalidations>0);
+}
