@@ -2084,6 +2084,7 @@ Debugger and checks:
   --bench [N] [SAMPLES] [--uncached] Interpreter benchmark
   --cpu-bench [N] [SAMPLES]          Native CPU benchmark
   --stress [PASSES]                 Factorial stress check
+  --write-dos-mandel PATH            Write VGA Mandelbrot DOS program
   --mandelbrot [SIZE] [ITERATIONS]   Render Mandelbrot
   --compare-mandelbrot [SIZE] [ITERATIONS]
 
@@ -2139,6 +2140,13 @@ fn main() -> R<()> {
     if dos_args.get(1).map(String::as_str)==Some("--dos-extract"){
         if dos_args.len()!=4{return Err("usage: pil --dos-extract IMAGE.img|ARCHIVE.zip NEW_DIRECTORY".into());}
         println!("{}",containers::extract(std::path::Path::new(&dos_args[2]),std::path::Path::new(&dos_args[3]))?);return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--write-dos-mandel"){
+        if dos_args.len()!=3{return Err("usage: pil --write-dos-mandel PATH".into());}
+        use std::io::Write;
+        let bytes=mandelbrot::guest_vga_bytes(128,32)?;
+        let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[2]).map_err(|e|e.to_string())?;
+        f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote {}",dos_args[2]);return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--write-dos-hello"){
         if dos_args.len()!=4{return Err("usage: pil --write-dos-hello com|exe PATH (new file only)".into());}

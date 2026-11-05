@@ -42,3 +42,25 @@ wscript.exe .\PILdos.vbs --ignore-unassigned-out
 ```
 
 This flag only ignores unassigned OUT ports; recognized video devices retain explicit unsupported-operation stops.
+
+
+## Mode 13h Mandelbrot demonstration
+
+BIOS INT 10h mode 13h exposes a 320x200 byte-per-pixel framebuffer at
+A000:0000. The DOS terminal displays its bytes as a fixed grayscale ramp;
+this is a bounded graphics profile, not a complete VGA DAC/palette,
+planar or BIOS graphics implementation. Setting mode 13h clears 64,000
+bytes unless bit 7 requests preservation. Mode 3 returns to text display.
+
+Build and create the 128x128 DOS demonstration once:
+
+```powershell
+cargo build --release --locked
+.\target\release\pil.exe --write-dos-mandel .\driveD\MANDEL.COM
+```
+
+Run `D:\MANDEL.COM` inside PILdos. It calculates each pixel in the emulated
+CPU and writes it directly to the A000 framebuffer. Press any key when the
+image is complete to restore text mode and return to DOS. The program file is
+created only if the path does not already exist; no image file is written.
+The existing `--mandelbrot` serial/file benchmark remains available.

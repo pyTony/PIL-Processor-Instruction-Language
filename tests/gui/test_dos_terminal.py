@@ -1,4 +1,7 @@
 import importlib.util
+import io
+import json
+from types import SimpleNamespace
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,6 +19,17 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_session_reads_graphics_with_large_escaped_output(self):
+        reply = {'protocol': 1, 'seq': 0, 'graphics13': '00' * 64000,
+                 'output': '\x00' * 16384, 'com1': ''}
+        encoded = json.dumps(reply) + '\n'
+        self.assertGreater(len(encoded), 200000)
+        session = term.Session.__new__(term.Session)
+        session.process = SimpleNamespace(stdout=io.StringIO(encoded), stderr=io.StringIO())
+        session.seq = 0
+        session.com1_out = b''
+        self.assertEqual(session._read(), reply)
+
     def test_keys_map_to_bios_ascii_and_scan_codes(self):
         self.assertEqual(term.key_code('a', 'a'), (0x61, 0x1e))
         self.assertEqual(term.key_code('A', 'A'), (0x41, 0x1e))

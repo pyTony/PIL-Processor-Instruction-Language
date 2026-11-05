@@ -37,7 +37,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pil_debugger import find_engine  # noqa: E402
 
-MAX_REPLY = 65536
+MAX_REPLY = 8 * 1024 * 1024  # VGA frame plus escaped DOS and serial output
 SLICE = 20000
 # Slices a program runs after a key before it sees a shift key change.
 SETTLE = 10
@@ -428,6 +428,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     text = tk.Text(root, width=80, height=25, font=face, bg=PALETTE[0], fg=PALETTE[7], bd=0,
                    highlightthickness=0, cursor='arrow', wrap='none')
     text.pack(padx=8, pady=(8, 4))
+    graphics = tk.Label(root, bg='black', takefocus=1)
     status = tk.Label(root, anchor='w', font=('TkDefaultFont', 10))
     status.pack(fill='x', padx=8, pady=(0, 6))
     for attr in range(256):
@@ -448,9 +449,25 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     held, state = set(), {'shift': 0, 'settle': 0}
     beeps = [session.last.get('beeps', 0)]
     geom = [80, 25]
+    frame = [None]
     drawn = [None, None, None]  # [screen_hex, cursor_tuple, rows_list]
 
     def draw(reply):
+        pixels = reply.get('graphics13')
+        if pixels is not None:
+            if frame[0] != pixels:
+                rgb = b''.join(bytes((min(255, v * 2),) * 3) for v in bytes.fromhex(pixels))
+                picture = tk.PhotoImage(data=b'P6 320 200 255\n' + rgb, format='PPM').zoom(2)
+                graphics.configure(image=picture); graphics.image = picture; frame[0] = pixels
+            if graphics.winfo_manager() != "pack":
+                text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
+            detail = f" — {reply['detail']}" if reply['detail'] else ''
+            status.configure(text=("Press any key to continue" if reply['status'] == 'waiting_input' else reply['status'] + detail) + f"   steps {reply['steps']}   clock {zone}")
+            if reply.get('beeps', 0) > beeps[0]:
+                beeps[0] = reply['beeps']; root.bell()
+            return
+        if graphics.winfo_manager() == "pack":
+            graphics.pack_forget(); text.pack(before=status, padx=8, pady=(8, 4)); text.focus_set(); drawn[0] = None
         screen_hex = reply['screen']
         cursor = tuple(reply['cursor'])
         cols = reply.get('columns', 80)
