@@ -7,6 +7,21 @@
 //! its 18.2 Hz count. Port 3DAh (and 3BAh) reports the video status register.
 use super::*;
 /// PIT input clock in Hz.
+pub(crate) static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+/// Conventional PC assignments, not an exhaustive list of expansion hardware.
+fn device(port:u16)->Option<&'static str>{Some(match port{
+    0x00..=0x0f|0x80..=0x8f|0xc0..=0xdf=>"DMA controller/page registers",
+    0x20..=0x21|0xa0..=0xa1=>"interrupt controller",
+    0x40..=0x43=>"PIT timer",0x60..=0x64=>"keyboard/system control",
+    0x70..=0x71=>"CMOS/RTC",0x92=>"system control/A20",
+    0xf0..=0xf1=>"coprocessor control",0x170..=0x177|0x1f0..=0x1f7|0x376|0x3f6=>"ATA disk controller",
+    0x200..=0x207=>"game/joystick port",0x220..=0x22f=>"Sound Blaster",
+    0x278..=0x27f|0x378..=0x37f|0x3bc..=0x3bf=>"parallel port",
+    0x2e8..=0x2ef|0x2f8..=0x2ff|0x3e8..=0x3ef|0x3f8..=0x3ff=>"serial port",
+    0x3b0..=0x3bb|0x3c0..=0x3df=>"video controller",
+    0x3f0..=0x3f5|0x3f7=>"floppy controller",
+    _=>return None,
+})}
 const PIT_HZ:u32=1_193_182;
 #[derive(Clone,Debug,Default)]
 pub struct Speaker{
@@ -25,6 +40,7 @@ pub struct Speaker{
     /// Counter for video status register 1 (port 3DAh/3BAh): toggles horizontal
     /// blanking and cycles vertical retrace so snow-check and sync loops advance.
     retrace:u32,
+    ignored_out:std::collections::BTreeSet<u16>,
 }
 impl Speaker{
     /// The tone the speaker plays now in Hz, or 0 when it is off.
@@ -47,6 +63,23 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         _=>return Ok(None),
     };
     let input=first&2==0;
+    if matches!(port,0x3d4|0x3d5){
+        let word=first&1!=0;
+        if word&&port!=0x3d4{return Err("VGA word access must start at CRTC index port 3D4h".into());}
+        let mut device=p.vga.clone();
+        let lo=device.io(port,input,p.cpu.regs[0] as u8)?.unwrap();
+        let hi=if word{device.io(port+1,input,(p.cpu.regs[0]>>8)as u8)?.unwrap()}else{0};
+        p.vga=device;
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|u32::from(lo)|(u32::from(hi)<<8);}
+        return Ok(Some(length));
+    }
+    let word=first&1!=0;
+    let assigned=device(port).or_else(||if word{device(port.wrapping_add(1))}else{None});
+    // Only truly unassigned writes qualify; normal device handlers still run.
+    if !input&&assigned.is_none()&&!matches!(port,0xe9|0x190)&&IGNORE_UNASSIGNED_OUT.load(std::sync::atomic::Ordering::Relaxed){
+        if p.speaker.ignored_out.insert(port){eprintln!("Ignored unassigned OUT port {port:04X}h, width {}, value {:04X}, CS:IP={:04X}:{:04X}",if word{16}else{8},p.cpu.regs[0]&if word{65535}else{255},p.selectors[1],p.cpu.eip);}
+        return Ok(Some(length));
+    }
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
     if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
@@ -89,7 +122,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 s.latch_high=!s.latch_high;byte
             },
                         0x378..=0x37a | 0x278..=0x27a => 0x80,
-            _=>return Err(format!("IN from port {port:02x}h is not modelled")),
+            _=>return Err(format!("IN from port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         };
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
     }else{
@@ -126,7 +159,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
             },
             0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
-            _=>return Err(format!("OUT to port {port:02x}h is not modelled")),
+            _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         }
     }
     Ok(Some(length))
@@ -175,3 +208,4 @@ fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         _=>return Err(format!("CMOS register {index:02x}h is not modelled")),
     })
 }
+

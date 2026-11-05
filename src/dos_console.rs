@@ -10,6 +10,11 @@ fn read(p:&Loaded,at:u32)->Result<u32,String>{
 fn commit(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,width,_) in writes{p.ram.check_write(at,width).map_err(|e|format!("BIOS console write: {e:?}"))?;}
     for &(at,width,value) in writes{p.ram.store(at,width,value).map_err(|e|format!("BIOS console write: {e:?}"))?;}
+    if writes.iter().any(|(at,_,_)|matches!(*at,0x44e|0x450..=0x45f|0x460|0x462)){
+        let start=read(p,0x44e)?/2;let page=byte(p,0x462)?&7;let cursor=read(p,0x450+page*2)?;
+        let cols=read(p,0x44a)?.clamp(1,80);
+        p.vga.bios_sync(Some(start as u16),Some((start+(cursor>>8)*cols+(cursor&255))as u16),Some(read(p,0x460)? as u16));
+    }
     Ok(())
 }
 pub(super) fn initialize(ram:&mut Ram)->Result<(),String>{

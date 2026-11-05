@@ -194,11 +194,14 @@ def screen_rows(reply):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
         options = (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
-        self.process = subprocess.Popen([str(engine), '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
+        self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.stop_log = stop_log
+        self._last_stop = None
+        self.program = str(program)
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
@@ -211,6 +214,21 @@ class Session:
         if reply.get('protocol') != 1 or reply.get('seq') != self.seq:
             raise RuntimeError('unexpected reply from PIL DOS session')
         self.com1_out += bytes.fromhex(reply.get('com1', ''))
+        if reply.get('status') == 'stopped':
+            key = (reply.get('cs'), reply.get('eip'), reply.get('steps'), reply.get('detail'))
+            if self.stop_log and key != self._last_stop:
+                from datetime import datetime, timezone
+                record = {k: reply.get(k) for k in ('status', 'detail', 'steps', 'cs', 'eip', 'instruction_bytes', 'registers', 'selectors', 'eflags', 'msw')}
+                record.update(time=datetime.now(timezone.utc).isoformat(), program=self.program,
+                              location=f"{reply.get('cs', 0):04X}:{reply.get('eip', 0):04X}")
+                try:
+                    with open(self.stop_log, 'a', encoding='utf-8') as log:
+                        log.write(json.dumps(record, ensure_ascii=False) + '\n')
+                except OSError as exc:
+                    print(f"Cannot write stop log {self.stop_log}: {exc}", file=sys.stderr)
+            self._last_stop = key
+        else:
+            self._last_stop = None
         return reply
 
     def send(self, command):
@@ -226,12 +244,11 @@ class Session:
                 self.send('quit')
             except (OSError, RuntimeError, ValueError):
                 pass
-            if self.process.poll() is None:
-                self.process.kill()
             try:
-                self.process.wait(timeout=1)
+                self.process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                pass
+                self.process.kill()
+                self.process.wait(timeout=1)
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             if stream:
                 try:
@@ -420,7 +437,7 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -438,7 +455,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -636,6 +653,9 @@ def main(argv=None):
     parser.add_argument('--com1', metavar='console|tcp:PORT',
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
     parser.add_argument('--engine', help='pil executable (default: newest build)')
+    parser.add_argument('--ignore-unassigned-out', action='store_true', help='ignore and log OUT to unassigned ports; known devices still stop')
+    parser.add_argument('--stop-log', default='PILdos-stops.jsonl', metavar='PATH', help='append stop diagnostics (default: PILdos-stops.jsonl)')
+    parser.add_argument('--profile', metavar='JSON_PATH', help='write engine timings when the session closes')
     parser.add_argument('--keylog', action='store_true',
                         help='print each key event the window gets (name, character, state) to the console')
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
@@ -644,7 +664,7 @@ def main(argv=None):
     com1 = open_com1(args.com1) if args.com1 else None
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out)
     root.mainloop()
 
 

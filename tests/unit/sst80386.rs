@@ -86,7 +86,7 @@ struct Actual{fault:Option<String>,regs:[u32;8],eflags:u32,undefined:u32,eip:u32
 struct Prepared{image:guest::Image,cpu:Cpu,decoded:Result<guest::Decoded,guest::GuestError>,readback:Vec<u32>}
 fn prepare(c:&Case,ram:&mut Ram)->Prepared{
     let mut selectors=[0u16;6];for (i,s) in SEG.iter().enumerate(){selectors[*s]=c.init[10+i] as u16;}
-    let image=guest::Image{fetch_base:0,start:0,end:RAM_SIZE as u32,system:[(0,0);guest::SYSTEM_RANGES],segments:selectors.map(address::SegmentCache::real_mode),selectors,msw:c.init[0] as u16,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
+    let image=guest::Image{fetch_base:0,start:0,end:RAM_SIZE as u32,system:[(0,0);guest::SYSTEM_RANGES],segments:selectors.map(address::SegmentCache::real_mode),selectors,msw:c.init[0] as u16,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],flag_checkpoint:None};
     let mut regs=[0;8];for (i,r) in GPR.iter().enumerate(){regs[*r]=c.init[2+i];}
     let cpu=Cpu{regs,eflags:c.init[17],undefined_flags:0,eip:c.init[16]};
     for (a,v) in &c.ram{ram.write_bytes(*a,&[*v]).unwrap();}
@@ -213,7 +213,7 @@ fn main(){
   let flow=FlowContext{next_eip:next(),displacement:next() as i32,displacement_bits:next() as u8,code_limit:next()};
   let (kind,a,b,c,d,o)=(next(),next(),next(),next(),next(),next());
   let mut selectors=[0u16;6];for s in &mut selectors{*s=next() as u16;}let msw=next() as u16;
-  let mut machine=SegmentState{segments:selectors.map(SegmentCache::real_mode),selectors,msw,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
+  let mut machine=SegmentState{segments:selectors.map(SegmentCache::real_mode),selectors,msw,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],flag_checkpoint:None};
   let effective=match kind{1=>Some(Bits16{form:forms[a as usize],displacement:b as u16}),2=>Some(Bits32{base:gpr.get(a as usize).copied(),index:gpr.get(b as usize).copied(),scale:c as u8,displacement:d}),_=>None};
   let address=effective.map(|effective|AddressContext{effective,override_segment:segs.get(o as usize).copied(),segments:machine.segments});
   let mut regs=[0u32;8];for r in &mut regs{*r=next();}let mut flags=next();let mut eip=next();let partial=next()!=0;let mut undefined=0u32;

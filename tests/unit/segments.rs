@@ -67,7 +67,7 @@ fn generated_segment_writes_have_independent_full_state_expectations(){
     let text="read selector src 16\nwrite_segment 2 selector\npreserve_flags all\nretire";let p=compile(text,16).unwrap();let mut source=emit_rust(&p);source.push_str(r#"
 fn main(){for selector in [0,1,0x1234,0xffff]{
  let mut regs=[0xabcdef01;8];regs[0]=0xdead0000|selector;let before=regs;let mut flags=0xed7;let mut undefined=u32::MAX;let mut ip=0x100;let mut ram=Ram::new(4096);
- let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,flag_checkpoint:None};
+ let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],flag_checkpoint:None};
  let flow=FlowContext{next_eip:0x102,displacement:0,displacement_bits:32,code_limit:65535};
  execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine).unwrap();
  assert_eq!(regs,before);assert_eq!((flags,undefined,ip),(0xed7,u32::MAX,0x102));assert_eq!(machine.selectors[2],selector as u16);assert_eq!(machine.segments[2],address::SegmentCache::real_mode(selector as u16));assert_eq!(machine.ss_shadow,1);
@@ -79,4 +79,45 @@ fn main(){for selector in [0,1,0x1234,0xffff]{
 fn machine_trace_compares_selectors_cache_and_shadow(){
     let (image,_,c)=setup(&[0x90]);let m=image.segment_state();let mut before=Vec::new();trace::record_machine(&mut before,0,[0;5],&c.regs,c.eflags,c.undefined_flags,c.eip,&[],&[],&[],&m);
     for kind in 0..3{let mut after=Vec::new();let mut n=m;match kind{0=>n.selectors[3]^=1,1=>n.segments[3].base^=16,_=>n.ss_shadow=1};trace::record_machine(&mut after,0,[0;5],&c.regs,c.eflags,c.undefined_flags,c.eip,&[],&[],&[],&n);assert!(native::verify_traces(&before,&after).unwrap_err().contains("segments"));}
+}
+
+#[test]
+fn descriptor_tables_load_both_widths_and_preserve_cpu_and_ram(){
+    for table in 0..2 { for wide in [false,true] {
+        let mut bytes=vec![0x2e];if wide{bytes.push(0x66);}bytes.extend([0x0f,0x01,0x16|(table<<3),0x00,0x08]);
+        let(mut image,mut ram,mut cpu)=setup(&bytes);
+        ram.write_bytes(0x800,&[0x34,0x12,0x78,0x56,0x34,0xab]).unwrap();
+        let mut expected=cpu.clone();expected.eip+=bytes.len() as u32;let memory=ram.clone();
+        step(&mut image,&mut ram,&mut cpu).unwrap();
+        assert_eq!(image.tables[table as usize],(0x1234,if wide{0xab345678}else{0x345678}));
+        assert_eq!(image.tables[1-table as usize],(0,0));assert_eq!(cpu,expected);assert_eq!(ram,memory);
+    }}
+}
+#[test]
+fn descriptor_table_fault_does_not_commit_partial_state(){
+    let(mut image,mut ram,mut cpu)=setup(&[0x0f,0x01,0x16,0xfc,0xff]);
+    image.tables=[(7,0x12345678),(8,0xabcdef01)];let old=image.clone();let before=cpu.clone();let memory=ram.clone();
+    assert!(step(&mut image,&mut ram,&mut cpu).is_err());assert_eq!(image,old);assert_eq!(cpu,before);assert_eq!(ram,memory);
+}
+#[test]
+fn descriptor_table_register_and_lock_forms_are_rejected(){
+    for bytes in [vec![0x0f,0x01,0xd0],vec![0x0f,0x01,0xd8],vec![0xf0,0x0f,0x01,0x16,0,8]]{
+        let(image,ram,cpu)=setup(&bytes);assert!(image.decode(&ram,cpu.eip).is_err());
+    }
+}
+
+#[test]
+fn generated_table_writes_have_independent_full_state_expectations(){
+    use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
+    let dir=std::env::temp_dir().join(format!("pil-segments-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));fs::create_dir_all(&dir).unwrap();
+    let text="require_real_mode\nread selector src 16\nconst base 32 2882400001\nwrite_table 1 selector base\npreserve_flags all\nretire";let p=compile(text,16).unwrap();let mut source=emit_rust(&p);source.push_str(r#"
+fn main(){for selector in [0,1,0x1234,0xffff]{
+ let mut regs=[0xabcdef01;8];regs[0]=0xdead0000|selector;let before=regs;let mut flags=0xed7;let mut undefined=u32::MAX;let mut ip=0x100;let mut ram=Ram::new(4096);
+ let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],flag_checkpoint:None};
+ let flow=FlowContext{next_eip:0x102,displacement:0,displacement_bits:32,code_limit:65535};
+ execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine).unwrap();
+ assert_eq!(regs,before);assert_eq!((flags,undefined,ip),(0xed7,u32::MAX,0x102));assert_eq!(machine.tables[1],(selector as u16,0xabcdef01));assert_eq!(machine.tables[0],(0,0));
+ let old=machine;machine.real_mode=false;ip=0x100;assert!(execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine).is_err());assert_eq!(ip,0x100);assert_eq!(machine.segments,old.segments);
+}}
+"#);let path=dir.join("proof.rs");fs::write(&path,source).unwrap();let bin=dir.join(if cfg!(windows){"proof.exe"}else{"proof"});let out=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).args(["--edition=2021","-O"]).arg(path).arg("-o").arg(&bin).output().unwrap();assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));assert!(Command::new(bin).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
 }
