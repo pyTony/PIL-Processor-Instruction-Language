@@ -2044,8 +2044,54 @@ result
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
     out.push_str("}\n// Compatibility helper: discards diagnostic undefined-flag metadata.\npub fn execute(regs: &mut [u32;8], flags: &mut u32, dst: (usize,u8), src: (usize,u8)) -> Result<(), &'static str> {\nlet mut undefined = 0; execute_with_metadata(regs,flags,&mut undefined,dst,src)\n}\n"); out
 }
+const CLI_HELP:&str = "PIL - Processor Instruction Language
+Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
+
+DOS and ROM:
+  --dos-session [--mount DIR] [--args TEXT] PROGRAM
+      Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
+  --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
+  --run-rom PATH [--steps N]          Run a 64 KiB ROM
+  --dos-list [--all] IMAGE|ZIP        List container entries
+  --dos-read IMAGE|ZIP INNER [DEST]   Read/extract one entry
+  --dos-extract IMAGE|ZIP NEW_DIR     Extract a container
+
+Debugger and checks:
+  --repl [--load PATH]               Interactive debugger
+  --debug-service [--load PATH]      JSON debugger service
+  --selftest                        Run built-in execution checks
+  --numeric-test                    Check numeric instructions
+  --verify-backends                 Compare execution backends
+  --compare-backends [N] [SAMPLES]   Compare and benchmark backends
+  --bench [N] [SAMPLES] [--uncached] Interpreter benchmark
+  --cpu-bench [N] [SAMPLES]          Native CPU benchmark
+  --stress [PASSES]                 Factorial stress check
+  --mandelbrot [SIZE] [ITERATIONS]   Render Mandelbrot
+  --compare-mandelbrot [SIZE] [ITERATIONS]
+
+Code generation and examples:
+  --emit-rust 8|16|32 [DESCRIPTION]  Emit a Rust instruction implementation
+  --emit-suite-rust [N] [SAMPLES]    Emit backend verification suite
+  --write-selftest PATH             Write a raw example
+  --write-hello PATH                Write a raw hello example
+  --write-factorials PATH           Write a factorial example
+  --write-loop PATH                 Write a loop example
+  --write-dos-hello com|exe PATH     Write a DOS hello (new file only)
+  --demo-branch                     Show a conditional branch example
+
+Options (before COMMAND):
+  --profile JSON_PATH               Write DOS host timings on normal exit
+  --ignore-unassigned-out           Ignore/log unassigned OUT ports
+  --help, -h                        Show this help
+
+For a DOS window use: python tools/dos_terminal.py --help
+";
 fn main() -> R<()> {
     let mut dos_args:Vec<_>=std::env::args().collect();
+    if dos_args.len()==1 || matches!(dos_args.get(1).map(String::as_str),Some("--help"|"-h")){
+        if dos_args.len()>2{return Err("--help accepts no arguments".into());}
+        print!("{CLI_HELP}");return Ok(());
+    }
     let mut _profile=None;
     loop {match dos_args.get(1).map(String::as_str){
         Some("--profile")=>{if _profile.is_some(){return Err("duplicate --profile".into());}let path=dos_args.get(2).ok_or("--profile requires an output JSON path")?;_profile=Some(profile::start(path)?);dos_args.drain(1..3);},
@@ -2195,12 +2241,7 @@ fn main() -> R<()> {
         let p = compile(&instantiate(description(name)?,w),w)?;
         print!("{}",emit_rust(&p)); return Ok(());
     }
-    let p = compile(&instantiate(ADD,16),16)?;
-    let mut cpu = Cpu::default(); cpu.regs[0] = 0x1234_7fff; cpu.regs[1] = 1;
-    execute(&p,&mut cpu,View{register:0,low:0,width:16},View{register:1,low:0,width:16})?;
-    println!("AX=0x{:04x}; EAX=0x{:08x}; flags=0x{:04x}; {} typed tokens",
-        cpu.regs[0] & 0xffff,cpu.regs[0],cpu.eflags,p.tokens.len());
-    Ok(())
+    Err(format!("unknown command or option: {}. Use pil --help for usage.",args.get(1).map(String::as_str).unwrap_or("(missing command)")))
 }
 
 #[cfg(test)]
