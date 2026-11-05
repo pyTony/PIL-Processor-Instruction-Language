@@ -428,8 +428,9 @@ state. The monitor/DOS profile initializes the other bits to0010h (ET=1).
 This is explicit profile configuration,not a claim about hardware reset or an
 implemented FPU. SMSW stores exactly a word and preserves flags/markers.
 Operand-size-prefixed register forms are rejected pending legacy upper-half
-policy;66-prefixed memory forms still write a word. CR0 writes,LMSW,UMIP and
-privilege transitions are not implemented by this increment.
+policy;66-prefixed memory forms still write a word. LMSW,UMIP and
+privilege transitions remain unimplemented. See the bounded control-register
+profile below for CR0 writes.
 
 References: Intel80386
 [POP](https://pdos.csail.mit.edu/6.828/2018/readings/i386/POP.htm) and
@@ -466,3 +467,36 @@ outside this prototype. Protected/V86 calls are rejected before pointer reads.
 two loads, one bound GPR write and write_segment0. No instruction-specific
 interpreter/emitter operation is introduced. The full pointer span is checked
 before reading; any second-field fault prevents both staged register effects.
+
+### Real-mode control-register profile
+
+`read_control OUT REGISTER` reads bv32 CR0, CR2 or CR3. `write_control REGISTER
+VALUE` stages one bv32 control-register write until retirement. Registers are
+numbered 0, 2 and 3; other numbers and non-bv32 write values are rejected by
+the PIL compiler. Incoming state is read even after a staged write, matching
+other PIL effects. Missing machine state is an InvalidContext diagnostic.
+
+The 80386 MOV forms 0F20/0F22 always transfer full 32-bit GPRs, independently
+of operand/address-size prefixes. This profile accepts only register ModR/M
+forms; reserved control registers, LOCK and REP are rejected. Following the
+1986 Intel PRM, six arithmetic flags become undefined; PIL's concrete
+undefined-flag policy clears their bits and marks them undefined. Other flags
+and metadata are preserved. This is distinct from later x86 flag policies.
+
+CR0 shares the existing MSW storage used by SMSW and FPU EM/TS checks. CR2 and
+CR3 are additional machine state, included in image/cache identities, binary
+backend traces and stop-log `control_registers` (ordered CR0, CR2, CR3).
+They survive DOS EXEC/return as CPU state. CR2 accepts all 32 bits; CR3 accepts
+aligned 4 KiB directory bases. Nonzero reserved low CR3 bits are an explicit
+UnsupportedControl profile stop, not a hardware #UD or #GP claim.
+
+Real-mode CR0 writes can change MP, EM, TS and ET. PE or PG enablement and
+other reserved bit requests stop with UnsupportedControl before any state
+commits. PG=1 with PE=0 produces GeneralProtection. Virtual-8086 accesses
+produce GeneralProtection; other protected-mode contexts remain unsupported.
+There is no descriptor loading, protected-mode execution, page translation or
+TLB implementation in this increment. CR2 is not yet updated by page faults.
+
+Reference: Intel 80386 PRM
+[MOV special registers](https://people.freebsd.org/~jhb/386htm/MOVRS.htm),
+[system registers](https://www.ardent-tool.com/CPU/docs/Intel/386/manuals/prref386/s04_01.htm).

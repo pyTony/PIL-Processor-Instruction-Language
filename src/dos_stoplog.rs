@@ -5,8 +5,8 @@ pub(super) fn quote(text:&str)->String{session::quote(text)}
 pub(super) fn diagnostic(p:&Loaded)->String{
     let mut bytes=Vec::new();
     for n in 1..=15{match bytes_at(p,n){Ok(b)=>bytes.push(b[n as usize-1]),Err(_)=>break}}
-    format!("\"cs\":{},\"eip\":{},\"location\":\"{:04X}:{:04X}\",\"instruction_bytes\":{},\"registers\":{:?},\"selectors\":{:?},\"eflags\":{},\"msw\":{}",
-        p.selectors[1],p.cpu.eip,p.selectors[1],p.cpu.eip,quote(&bytes.iter().map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" ")),p.cpu.regs,p.selectors,p.cpu.eflags,p.image.msw)
+    format!("\"cs\":{},\"eip\":{},\"location\":\"{:04X}:{:04X}\",\"instruction_bytes\":{},\"registers\":{:?},\"selectors\":{:?},\"eflags\":{},\"msw\":{},\"control_registers\":[{},{},{}]",
+        p.selectors[1],p.cpu.eip,p.selectors[1],p.cpu.eip,quote(&bytes.iter().map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" ")),p.cpu.regs,p.selectors,p.cpu.eflags,p.image.msw,p.image.segment_state().machine_status(),p.image.controls[0],p.image.controls[1])
 }
 pub(crate) struct Logger{path:String,program:String,last:Option<String>}
 impl Logger{

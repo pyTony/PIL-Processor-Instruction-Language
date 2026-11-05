@@ -1,3 +1,32 @@
+# Real-mode control-register increment
+
+MOV to/from CR0, CR2 and CR3 now uses PIL `read_control`/`write_control`
+operations with staged, restartable writes in both the interpreter and emitted
+Rust. Moves use full 32-bit GPRs regardless of 66/67 prefixes. SMSW and the
+absent-FPU EM/TS checks share CR0's MSW storage. CR2/CR3 are retained in
+machine state, cache identity, binary traces and stop-log control_registers.
+DOS EXEC return retains CPU-global control-register values.
+
+Local validation: 476 Rust tests passed, one external-data test skipped.
+Release build and expanded DOS diagnostics verifier passed. Six new tests
+cover GPR/prefix combinations, atomic rejection, decode limits, FPU/MSW
+coherence, staged writes and emitted Rust. The DOS EXEC test also verifies
+child control-state changes survive return to its parent.
+
+This is a bounded real-mode profile, not protected-mode/paging support.
+CR0 PE/PG enablement and reserved-bit requests stop explicitly without
+retirement; PG=1 with PE=0 is a GP. Reserved CR3 low bits are a profile stop.
+Six arithmetic flags follow the 1986 Intel PRM undefined policy. See
+`docs/LANGUAGE.md` for the detailed scope and references.
+
+The user's local test386 ROM now passes F000:2670 MOV CR3,ESI and reads CR0.
+It stops at F000:267C MOV CR0,EAX with EAX=80000011h (PE+PG requested),
+after 793,777 instructions. CR3 retains 00001000h and CR0 remains 00000010h.
+Two earlier intentional MOV-to-CS #UD sites remain visible. Stage 08 does not
+complete. The next machine increment must implement mode switching and page
+translation; it must not simply accept the CR0 write while retaining real-mode
+addressing. The external ROM was executed locally, not imported into git.
+
 # Engine-owned ROM and DOS stop diagnostics
 
 `pil --run-rom test386.asm/test386.bin --steps 1000000` now appends its final

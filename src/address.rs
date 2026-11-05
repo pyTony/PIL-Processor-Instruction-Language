@@ -125,11 +125,24 @@ impl AddressContext {
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct SegmentState {
     pub segments:[SegmentCache;6],pub selectors:[u16;6],
-    pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub flag_checkpoint:Option<(u32,u32,u32)>,
+    pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,
 }
 impl SegmentState {
     // The mode bit is coherent with the existing normalized mode state.
     pub fn machine_status(&self)->u16{(self.msw&!1)|u16::from(!self.real_mode)}
+    pub fn read_control(&self,register:usize,flags:u32,eip:u32)->Result<u32,ExecError>{
+        if flags&0x20000!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
+        if !self.real_mode{return Err(ExecError::InvalidContext);}
+        match register{0=>Ok(u32::from(self.machine_status())),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),_=>Err(ExecError::InvalidContext)}
+    }
+    pub fn validate_control(&self,register:usize,value:u32,flags:u32,eip:u32)->Result<(),ExecError>{
+        self.read_control(register,flags,eip)?;
+        if register==0&&value&0x80000001==0x80000000{return Err(ExecError::GeneralProtection{eip,error_code:0});}
+        // This profile never retires a transition into unimplemented memory modes.
+        if (register==0&&value&!0x1e!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
+        Ok(())
+    }
+    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>self.msw=value as u16,2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}
     pub fn checkpoint_flags(&mut self,eip:u32,flags:u32,undefined:u32){if self.flag_checkpoint.map(|v|v.0)!=Some(eip){self.flag_checkpoint=Some((eip,flags,undefined));}}
     pub fn recover_flags(&mut self)->Option<(u32,u32)>{self.flag_checkpoint.take().map(|(_,f,u)|(f,u))}
     pub fn retired(&mut self){self.flag_checkpoint=None;self.ss_shadow=self.ss_shadow.saturating_sub(1);self.sti_shadow=self.sti_shadow.saturating_sub(1);}

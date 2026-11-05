@@ -5,6 +5,7 @@ pub fn fault(eip:u32,error:ExecError)->[u32;5] {
         ExecError::GeneralProtection{eip,error_code}=>[4,eip,error_code as u32,0,0],
         ExecError::StackSegment{eip,error_code}=>[5,eip,error_code as u32,0,0],
         ExecError::MemoryAccess{eip,address,bytes,write}=>[6,eip,address,bytes as u32,u32::from(write)],
+        ExecError::UnsupportedControl{eip,register,value}=>[11,eip,register as u32,value,0],
         ExecError::InvalidBinding=>[8,eip,0,0,0],ExecError::InvalidContext=>[9,eip,0,0,0],
     }
 }
@@ -22,6 +23,7 @@ pub fn record_machine(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],fla
     state.push(u8::from(machine.flag_checkpoint.is_some()));let (ip,f,u)=machine.flag_checkpoint.unwrap_or((0,0,0));for n in [ip,f,u]{state.extend_from_slice(&n.to_le_bytes());}
     state.extend_from_slice(&machine.msw.to_le_bytes());
     for (limit,base) in machine.tables {state.extend_from_slice(&limit.to_le_bytes());state.extend_from_slice(&base.to_le_bytes());}
+    for value in machine.controls {state.extend_from_slice(&value.to_le_bytes());}
     record_state(out,case,status,regs,flags,undefined,eip,ram,rx,tx,&state);
 }
 fn record_state(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],flags:u32,undefined:u32,eip:u32,ram:&[u8],rx:&[u8],tx:&[u8],state:&[u8]){
