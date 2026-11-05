@@ -1186,6 +1186,8 @@ fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
  let (read,_)=call(&mut p,0x3d00,0,b"old.txt");assert_eq!(svc(&mut p,0x4000,read,1,b"q"),(5,1));
  let (wo,_)=call(&mut p,0x3d01,0,b"old.txt");assert_eq!(svc(&mut p,0x3f00,wo,1,b""),(5,1));assert_eq!(svc(&mut p,0x4000,wo,2,b"AB"),(2,0));
  assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(),b"ABcdef");
+ assert_eq!(svc(&mut p,0x3f00,read,6,b""),(6,0));
+ assert_eq!((0..6).map(|i|p.ram.load(psp+0x400+i,MemWidth::Byte).unwrap()as u8).collect::<Vec<_>>(),b"ABcdef");
  assert_eq!(call(&mut p,0x3c00,0,b"old.txt").1,0);assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(),b"");
  // AH5A appends a new eight-digit name to the path and creates the file.
  let (_,cf)=call(&mut p,0x5a00,0,b"\\");assert_eq!(cf,0);

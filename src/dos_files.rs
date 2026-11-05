@@ -126,8 +126,9 @@ fn fail(p:&mut Loaded,code:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::fr
 fn set_ax(p:&mut Loaded,ax:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(ax&0xffff);}
 fn ds()->SegmentRegister{SegmentRegister::Ds}
 /// ASCIIZ path at DS:offset, at most 128 bytes before the NUL.
-pub(super) fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{
-    let context=MemoryContext{segment:ds(),cache:p.image.segments[ds().index()]};
+pub(super) fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{asciiz_in(p,ds(),offset)}
+pub(super) fn asciiz_in(p:&Loaded,segment:SegmentRegister,offset:u32)->Result<Vec<u8>,String>{
+    let context=MemoryContext{segment,cache:p.image.segments[segment.index()]};
     let mut path=Vec::new();
     for i in 0..128u32{
         let Some(at)=offset.checked_add(i).filter(|&a|a<=0xffff)else{return Err("DOS path exceeds segment end before NUL terminator".into());};
@@ -568,13 +569,16 @@ pub(super) fn write(p:&mut Loaded,sft:u8,bytes:&[u8])->Result<Result<u32,u16>,St
             // The drive is full: nothing is written, as DOS reports a full disk.
             let used=p.drive.memory(*drive).map_or(0,MemDir::clusters);
             let clusters=|n:usize|(n as u32).div_ceil(MEMORY_CLUSTER);
-            if used-clusters(file.data.len())+clusters(length)>MEMORY_BYTES/MEMORY_CLUSTER{return Ok(Ok(0));}
+            if used.saturating_sub(clusters(file.data.len()))+clusters(length)>MEMORY_BYTES/MEMORY_CLUSTER{return Ok(Ok(0));}
         },
     }
     let file=&mut p.drive.files[i];
     let data=Arc::make_mut(&mut file.data);
     data.resize(length,0);data[pos..end].copy_from_slice(bytes);
     file.pos=end as u32;file.written=true;let data=file.data.clone();
+    for other in &mut p.drive.files{
+        if other.sft!=sft&&other.loc.as_ref()==Some(&loc){other.data=data.clone();}
+    }
     if let Loc::Memory(drive,path)=&loc{
         let(dir,name)=p.drive.memory_parent(*drive,path).map_err(|_|"DOS write to a memory file that was removed is not modelled".to_string())?;
         let(time,date)=now();dir.entries.insert(name,MemNode::File{data,time,date});
@@ -607,10 +611,7 @@ fn change(p:&mut Loaded,ah:u8)->Result<(),String>{
             p.drive.remove(&loc,false)
         }),
         _=>{
-            let es=SegmentRegister::Es;
-            let saved=p.image.segments[ds().index()];p.image.segments[ds().index()]=p.image.segments[es.index()];
-            let to=asciiz(p,p.cpu.regs[7]&0xffff);p.image.segments[ds().index()]=saved;
-            let to=to?;
+            let to=asciiz_in(p,SegmentRegister::Es,p.cpu.regs[7]&0xffff)?;
             lookup(&p.drive,&raw).and_then(|(drive,entry)|{
                 let from=entry.loc(drive).filter(|_|entry.attr&0x0d==0).ok_or(5u16)?;
                 let(to_drive,to,_,existing)=place(&p.drive,&to)?;
