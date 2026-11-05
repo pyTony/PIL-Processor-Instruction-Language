@@ -298,7 +298,15 @@ pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String)
 #[derive(Clone,Debug)]
 pub struct Probe{
     pub loaded:Loaded,pub stop:Stop,pub completed:usize,pub pil_steps:usize,pub dos_calls:usize,
+    pub exceptions:Vec<ExceptionSite>,pub exception_count:usize,
     pub output:Vec<u8>,pub instructions:BTreeMap<String,usize>,pub stop_bytes:Vec<u8>,pub file_offset:Option<usize>,
+}
+#[path="dos_stoplog.rs"]
+pub(super) mod stoplog;
+#[derive(Clone,Debug)]
+pub struct ExceptionSite{pub vector:u8,pub detail:String,pub diagnostic:String,pub cs:u16,pub eip:u32}
+impl ExceptionSite{
+    fn capture(p:&Loaded,vector:u8,detail:&str)->Self{Self{vector,detail:detail.into(),diagnostic:stoplog::diagnostic(p),cs:p.selectors[1],eip:p.cpu.eip}}
 }
 fn bytes_at(p:&Loaded,n:u32)->Result<Vec<u8>,String>{
     p.image.fetch_signature(&p.ram,p.cpu.eip,n).map(|b|b[..n as usize].to_vec()).map_err(|e|format!("{e:?}"))
@@ -320,6 +328,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
     let _profile_run=crate::profile::span("dos_run");
     let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();
+    let mut exceptions=Vec::new();let mut exception_count=0;
     let mut lazy=super::LazyFlags::None;
 
     let stop=loop{
@@ -438,8 +447,10 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
                 if !detail.starts_with("fetch outside loaded image") && vectors::answered(&p,6)==Ok(false) {
                     let fault_eip=p.cpu.eip;
+                    let site=ExceptionSite::capture(&p,6,&detail);
                     match vectors::deliver_fault(&mut p,6,fault_eip){
                         Ok(())=>{
+                            exception_count+=1;if exceptions.len()<64{exceptions.push(site);}
                             execution_steps+=1;completed+=1;
                             *instructions.entry("#UD (vector 06h)".into()).or_insert(0)+=1;
                             continue;
@@ -481,7 +492,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
     let file_offset=linear.and_then(|a|a.checked_sub(p.module_base)).filter(|n|(*n as usize)<p.module_bytes).map(|n|n as usize+p.header_bytes);
-    Ok(Probe{loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})
+    Ok(Probe{exceptions,exception_count,loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})
 }
 fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_>=counts.iter().collect();v.sort_by(|a,b|b.1.cmp(a.1).then(a.0.cmp(b.0)));v}
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
@@ -582,6 +593,11 @@ pub fn format_rom_report(result: &Probe) -> String {
     writeln!(out, "Registers:             EAX={:08X} EBX={:08X} ECX={:08X} EDX={:08X} ESP={:08X} EBP={:08X}",
         result.loaded.cpu.regs[0], result.loaded.cpu.regs[3], result.loaded.cpu.regs[1],
         result.loaded.cpu.regs[2], result.loaded.cpu.regs[4], result.loaded.cpu.regs[5]).unwrap();
+    for site in &result.exceptions{
+        writeln!(out,"Exception #{:02X} at {:04X}:{:04X}: {}",site.vector,site.cs,site.eip,site.detail).unwrap();
+        writeln!(out,"  {}",site.diagnostic).unwrap();
+    }
+    if result.exception_count>result.exceptions.len(){writeln!(out,"{} additional exceptions omitted",result.exception_count-result.exceptions.len()).unwrap();}
     writeln!(out, "\nExecuted instruction types:").unwrap();
     for (opcode, count) in &result.instructions {
         writeln!(out, "  {:20} : {}", opcode, count).unwrap();

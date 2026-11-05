@@ -4,15 +4,17 @@
 use super::*;
 use std::io::{BufRead,Write as _};
 const MAX_LINE:usize=256;
-pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize}
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,exceptions:Vec<ExceptionSite>,exception_count:usize}
 impl Session{
-    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0}}
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,exceptions:Vec::new(),exception_count:0}}
     fn live(&self)->bool{matches!(self.stop,Stop::Budget|Stop::WaitingForInput)}
     /// Runs up to `budget` steps; output already reaches the screen through Dine.
     pub fn run(&mut self,budget:usize)->Result<Vec<u8>,String>{
         if !self.live(){return Ok(Vec::new());}
         let loaded=self.loaded.take().ok_or("session state lost")?;
         let probe=run(loaded,budget)?;
+        self.exception_count+=probe.exception_count;
+        self.exceptions.extend(probe.exceptions.into_iter().take(64-self.exceptions.len()));
         self.steps+=probe.completed;self.stop=probe.stop;self.loaded=Some(probe.loaded);
         Ok(probe.output)
     }
@@ -120,7 +122,7 @@ impl Session{
         Ok((self.reply(seq,ok,&text,&output)?,quit))
     }
 }
-fn quote(text:&str)->String{
+pub(super) fn quote(text:&str)->String{
     let mut out=String::from("\"");
     for c in text.chars(){match c{'"'=>out.push_str("\\\""),'\\'=>out.push_str("\\\\"),'\n'=>out.push_str("\\n"),'\r'=>out.push_str("\\r"),'\t'=>out.push_str("\\t"),c if (c as u32)<0x20=>out.push_str(&format!("\\u{:04x}",c as u32)),c=>out.push(c)}}
     out.push('"');out
@@ -128,7 +130,8 @@ fn quote(text:&str)->String{
 /// `--dos-session [--mount DIR] [--args TEXT] PATH`: PATH is a file or
 /// IMAGE::INNER inside a container. A FAT16 image becomes read-only drive C:
 /// and DIR the next drive; TEXT is the program's command line.
-pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>)->Result<(),String>{
+pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str)->Result<(),String>{
+    let mut logger=stoplog::Logger::new(log_path,path);
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;
     let bytes=match containers{
@@ -154,6 +157,7 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>)->Result<(),String>{
     for(seq,line)in stdin.lock().lines().enumerate(){
         let line=line.map_err(|e|e.to_string())?;
         let(reply,quit)=if line.len()>MAX_LINE{(session.reply(seq as u64+1,false,"command line too long",&[])?,false)}else{session.command(seq as u64+1,&line)?};
+        if session.status().0=="stopped"{if let Some(p)=session.loaded.as_ref(){logger.record(p,"stopped",&session.status().1,session.steps,&session.exceptions,session.exception_count);}}
         writeln!(stdout,"{reply}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
         if quit{break;}
     }
