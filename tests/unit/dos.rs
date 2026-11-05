@@ -1265,7 +1265,7 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
  // Other ports, word accesses, channel 2 reads, channel 1 and a channel 0
  // rate other than the BIOS one stop the run.
  for code in [&[0xe4,0x41,0xfa,0xf4][..],&[0xe5,0x61,0xfa,0xf4],&[0xba,0x42,0x00,0xec,0xfa,0xf4],&[0xb0,0x76,0xe6,0x43,0xfa,0xf4],
-   &[0xb0,0x36,0xe6,0x43,0xb0,0x01,0xe6,0x40,0xe6,0x40,0xfa,0xf4]]{
+   &[0xb0,0x36,0xe6,0x43,0xb0,0x01,0xe6,0x40,0xb0,0,0xe6,0x40,0xfa,0xf4]]{
   let r=run(load(code,"port.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  }
 }
@@ -1570,4 +1570,20 @@ fn bios_mode_three_restores_color_io_selection_and_bda(){
     p.ram.store(0x463,MemWidth::Word,0x3b4).unwrap();p.cpu.regs[0]=3;
     console::display(&mut p,0).unwrap();assert!(p.vga.color_io());
     assert_eq!(p.ram.load(0x463,MemWidth::Word).unwrap(),0x3d4);
+}
+
+#[test]
+fn pit_nonzero_reload_and_latch_work_through_guest_ports(){
+    // CLI; select mode 2; load E90B; latch; read low/high into BX; HLT.
+    let code=[0xfa,0xb0,0x34,0xe6,0x43,0xb0,0x0b,0xe6,0x40,0xb0,0xe9,0xe6,0x40,
+        0xb0,0,0xe6,0x43,0xe4,0x40,0x88,0xc3,0xe4,0x40,0x88,0xc7,0xf4];
+    let r=run(load(&code,"pit.com").unwrap(),50).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu.regs[3]&65535,0xe90b);
+}
+
+#[test]
+fn host_bios_clock_read_with_if_clear_keeps_undelivered_pit_ticks_out_of_bda(){
+    let mut p=load(&[0xfa,0xf4],"clock.com").unwrap();p.clock_offset=Some(0);p.cpu.eflags=2;p.timer_ticks=123;
+    p.ram.store(0x46c,MemWidth::Dword,123).unwrap();p.cpu.regs[0]=0;service(&mut p,0x1a,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.regs[2]&65535,123);assert_eq!(p.timer_ticks,123);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),123);
 }
