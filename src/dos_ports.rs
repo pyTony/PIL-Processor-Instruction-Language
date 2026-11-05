@@ -63,11 +63,11 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         _=>return Ok(None),
     };
     let input=first&2==0;
-    if matches!(port,0x3d4|0x3d5){
+    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc){
         let word=first&1!=0;
-        if word&&port!=0x3d4{return Err("VGA word access must start at CRTC index port 3D4h".into());}
+        if word&&!matches!(port,0x3b4|0x3d4){return Err("VGA word access must start at CRTC index port 3B4h or 3D4h".into());}
         let mut device=p.vga.clone();
-        let lo=device.io(port,input,p.cpu.regs[0] as u8)?.unwrap();
+        let lo=device.io(port,input,p.cpu.regs[0] as u8)?.ok_or_else(||format!("unsupported VGA port direction at {port:04X}h"))?;
         let hi=if word{device.io(port+1,input,(p.cpu.regs[0]>>8)as u8)?.unwrap()}else{0};
         p.vga=device;
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|u32::from(lo)|(u32::from(hi)<<8);}
@@ -104,6 +104,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             0x21|0xa1=>0x00,
             0x81..=0x8f=>0xff,
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
+            0x3da|0x3ba if !p.vga.status_active(port)=>0xff,
             0x3da|0x3ba=>{
                 s.retrace=s.retrace.wrapping_add(1);
                 let vblank=(s.retrace&0x3f)>=56;
