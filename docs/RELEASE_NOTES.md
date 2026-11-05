@@ -1,3 +1,26 @@
+# PIL 0.35.0-alpha.1
+
+- Extract DOS compatibility contracts into dos_services.rs. The batch runner
+  calls them through a host output provider; default capture stays deterministic
+  and bounded at16KiB. Full/disconnected providers stop before output, AL or
+  instruction retirement effects. Other DOS contracts remain unchanged.
+- Add --debug-service: local stdin commands and versioned NDJSON snapshots from
+  the existing Rust debugger. Guest bytes are separate from command text. Run
+  quanta are capped at256 execution steps; a64KiB guest-history cap bounds long
+  sessions. Input framing and raw-image reads are bounded; errors preserve state.
+- Add optional Python/Tk desktop debugger: instruction/breakpoint view, changed
+  registers, memory/stack/flags/segment inspector, guest console and command
+  Listener. One outstanding command, queued UI events and cooperative Pause;
+  no Python CPU/interpreter or asynchronous thread-exception stop mechanism.
+- The window supports existing monitor demos and raw1..3840-byte images.
+  DOS COM/MZ probing uses the compatibility layer in batch mode; DOS single-step
+  GUI sessions, BIOS text screens and DOS input providers remain separate work.
+- Windows/Linux CI40636999983 passed337 Rust tests, four Python tests,
+  backend/frontend integration,199 full-state cases (7,330,906 trace bytes),
+  standalone/native packages and full Mandelbrot checks. Windows also passed
+  the real Tk widget/Pause smoke test. No new guest instruction, full FreeDOS-
+  image, legacy hardware or ARM run is claimed.
+
 # PIL 0.34.0-alpha.1
 
 - Add bounded DOS INT21/AH02 character output. Preserve flags and registers

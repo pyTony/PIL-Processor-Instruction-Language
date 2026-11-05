@@ -1,4 +1,4 @@
-# PIL 0.34.0-alpha.1 feature matrix
+# PIL 0.35.0-alpha.1 feature matrix
 
 An alpha of the processor-language and host execution proof. It is not yet a
 bootable PC emulator. Supported means implemented in the documented prototype;
@@ -16,6 +16,8 @@ partial means a deliberately limited subset. See DEBUGGER.md for exact encodings
 | Status-byte transfers | Supported subset | LAHF/SAHF with implicit AH; five status bits and fixed byte bits; OF preserved by SAHF |
 | Real-mode control flags | Supported subset | CLI/STI, PUSHF/POPF and PUSHFD/POPFD; distinct traced STI delay; no protected/V86 privilege rules or interrupt delivery |
 | Frame teardown | Supported subset | LEAVE16/32 with independent SS size, precise read faults and dynamic SS rebinding; ENTER remains planned |
+| DOS compatibility provider | In-process boundary | Existing contracts delegated to bounded atomic output provider; deterministic headless capture, Full/Disconnected stops before effects; no Wine dependency or kernel |
+| Desktop debugger | Optional Python/Tk | Same Rust monitor engine; code/breakpoints, changed registers, memory/stack/flags, separate guest/command channels; cooperative256-step quanta, raw monitor images; DOS GUI sessions remain planned |
 | DOS character/query services | Bounded subset | AH02 capture with eight-column tabs, AL result and all-or-none16KiB cap; AX3700 fixed '/' query; no break checks, redirection or text screen |
 | Far pointer load | Real-mode subset | LES C4 r16/m16:16 and r32/m16:32; independent address size, GPR/ES cache commit after full pointer checks; LDS/LFS/LGS/LSS and protected loads remain separate |
 | DOS interrupt vectors | Bounded subset | AH25/35 physical RAM IVT, ES cache update, precise access faults; initial zero vectors, no CPU interrupt delivery or ROM/kernel handlers |
