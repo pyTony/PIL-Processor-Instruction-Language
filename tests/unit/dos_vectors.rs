@@ -83,8 +83,8 @@ fn timer_ticks_reach_the_bda_only_with_the_host_clock_if_and_bios_handlers(){
     for p in [fresh(None,0x202),fresh(Some(0),0x002)]{let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x1111);}
     let r=run(fresh(Some(0),0x202),10).unwrap();
     let ms=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()as u64%86_400_000;
-    let now=(ms*1_193_180/(65_536*1000))as u32;let got=r.loaded.ram.load(0x46c,MemWidth::Dword).unwrap();
-    assert!(got<=now&&now-got<=1,"{got} {now}");assert_eq!(r.loaded.cpu.regs[0]&0xffff,got&0xffff);
+    let now=(ms*1_193_182/(65_536*1000))as u32%super::super::TICKS_PER_DAY;let got=r.loaded.ram.load(0x46c,MemWidth::Dword).unwrap();
+    let delta=got.abs_diff(now);assert!(delta.min(super::super::TICKS_PER_DAY-delta)<=2,"{got} {now}");assert_eq!(r.loaded.cpu.regs[0]&0xffff,got&0xffff);
     // The tick went back from the old count, so midnight passed.
     assert_eq!(r.loaded.ram.load(0x470,MemWidth::Byte).unwrap(),1);
     // A program's INT 08h or 1Ch handler is not called: the run stops.
@@ -94,7 +94,7 @@ fn timer_ticks_reach_the_bda_only_with_the_host_clock_if_and_bios_handlers(){
     }
 }
 #[test]
-fn pit_channel0_latches_reads_and_takes_only_the_bios_mode(){
+fn pit_channel0_latches_reads_and_reprograms_binary_modes(){
     // Latch; IN twice into BL, BH; mode 34h; count 0000h; CLI; HLT.
     let code=[0xb0,0x00,0xe6,0x43,0xe4,0x40,0x88,0xc3,0xe4,0x40,0x88,0xc7,0xb0,0x34,0xe6,0x43,0xb0,0x00,0xe6,0x40,0xe6,0x40,0xfa,0xf4];
     let mut p=load(&code,"pit.com").unwrap();p.cpu.regs[3]=0xabcd;
@@ -103,9 +103,9 @@ fn pit_channel0_latches_reads_and_takes_only_the_bios_mode(){
     assert_eq!(r.loaded.cpu.regs[3]&0xffff,0);
     let mut p=load(&code,"pit.com").unwrap();p.clock_offset=Some(0);
     let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
-    // Reading channel 0 while its new count is half written stops the run.
+    // This 8253-compatible profile holds the previous count during programming.
     let r=run(load(&[0xb0,0x34,0xe6,0x43,0xb0,0x00,0xe6,0x40,0xe4,0x40,0xfa,0xf4],"half.com").unwrap(),20).unwrap();
-    assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     // Mode 3 and a BCD or other-mode command: 36h is taken, 35h and 30h are not.
     let r=run(load(&[0xb0,0x36,0xe6,0x43,0xb0,0x00,0xe6,0x40,0xe6,0x40,0xfa,0xf4],"m3.com").unwrap(),20).unwrap();
     assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);

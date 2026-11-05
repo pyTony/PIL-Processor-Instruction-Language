@@ -379,15 +379,19 @@ pub(super) fn local_now(offset:i64)->(u64,u64){
     let ms=ms.max(0)as u64;(ms/86_400_000,ms%86_400_000)
 }
 /// The timer interrupt's effect while time runs on the host clock: when IF=1
-/// and the host tick count has moved on, the BIOS INT 08h handler stores it
-/// at 0040:006C and sets 0040:0070 if midnight passed, so programs that poll
+/// and the PIT IRQ edge total has moved on, the BIOS INT 08h handler stores it
+/// at 0040:006C and sets 0040:0070 if the BIOS day count wraps, so programs that poll
 /// that word see time pass. Only the BIOS handlers are modelled: with a
 /// program's handler in the INT 08h or 1Ch vector the run stops instead. The
 /// deterministic clock (no host clock) moves only when it is read, as before.
 pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
-    let Some(offset)=p.clock_offset else{return Ok(())};
-    if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0{return Ok(());}
-    let(_,ms)=local_now(offset);let now=((ms*1_193_180)/(65_536*1000))as u32;
+    if p.clock_offset.is_none(){return Ok(());}
+    let now=(p.speaker.pit_interrupts(p.clock_offset)%u64::from(TICKS_PER_DAY))as u32;
+    timer_interrupt_at(p,now)
+}
+/// Commit a sampled PIT IRQ edge total through the bounded BIOS handler.
+pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
+    if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0{return Ok(());}
     if now==p.timer_ticks{return Ok(());}
     for vector in [0x08u8,0x1c]{
         if !vectors::answered(p,vector)?{
@@ -401,19 +405,18 @@ pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
     p.timer_ticks=now;
     Ok(())
 }
-/// One INT 1Ah AH=00h read. With the host clock, the count is the host's
-/// local time of day at 1193180/65536 ticks a second, and rollover is set when
-/// midnight passed since the last read. Otherwise it is the current count,
+/// One INT 1Ah AH=00h read. With a host clock, BIOS ticks follow channel 0
+/// interrupt edges, respecting IF and the programmed divisor. Initially the
+/// count matches local time of day; reprogramming changes its rate. Otherwise it is the current count,
 /// then the deterministic clock advances one tick. Either way the rollover
 /// flag is consumed by this read.
 fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
     let(ticks,next_ticks,rollover)=match p.clock_offset{
-        Some(offset)=>{
-            let(_,ms)=local_now(offset);let now=((ms*1_193_180)/(65_536*1000))as u32;
-            // Midnight passed since the last read, or a delivered tick set
-            // the BIOS rollover byte.
+        Some(_)=>{
+            timer_interrupt(p)?;
+            let now=p.timer_ticks;
             let flagged=p.ram.load(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover read: {e:?}"))?!=0;
-            (now,now,u32::from(now<p.timer_ticks||flagged))
+            (now,now,u32::from(flagged))
         },
         None=>{
             let ticks=p.timer_ticks;let next=ticks+1;

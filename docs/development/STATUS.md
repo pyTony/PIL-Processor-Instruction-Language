@@ -1,3 +1,18 @@
+# Programmable PIT channel 0
+
+The channel 0 device now models binary mode 2/3 divisors, restart phase,
+latched count reads and periodic IRQ edge totals. A new `dos_pit.rs` module
+accepts explicit input clocks for exact, sleep-free tests. Host sessions use
+monotonic time after an initial local-time sample; BIOS tick updates and
+INT 1Ah read the same edge source. See `docs/development/PIT.md` for scope.
+
+TOPBENCH's E90Bh divisor is covered by guest I/O and exact-clock regressions.
+The local TOPBENCH 0.38a -l run reached continuous-score startup, then stopped
+on its custom INT 08h handler. That IRQ0 delivery support is the next blocker;
+there is no measured score or complete benchmark pass in this increment.
+The full Rust suite passed: 485 tests, one ignored; release build and DOS
+diagnostics/console checks passed.
+
 # Real-mode control-register increment
 
 MOV to/from CR0, CR2 and CR3 now uses PIL `read_control`/`write_control`

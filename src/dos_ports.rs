@@ -3,9 +3,10 @@
 //! and 1 gate it to the speaker. The CMOS clock and setup bytes read through
 //! ports 70h (index) and 71h (data). Byte IN and OUT only; any other port, a
 //! word access, a CMOS write or a PIT use other than these stops the run.
-//! PIT channel 0 (40h) can be latched and read, and set to the BIOS mode with
-//! its 18.2 Hz count. Port 3DAh (and 3BAh) reports the video status register.
+//! PIT channel 0 (40h) supports programmed binary modes 2/3 and latched reads. Port 3DAh (and 3BAh) reports the video status register.
 use super::*;
+#[path="dos_pit.rs"]
+mod pit;
 /// PIT input clock in Hz.
 pub(crate) static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 /// Conventional PC assignments, not an exhaustive list of expansion hardware.
@@ -22,7 +23,7 @@ fn device(port:u16)->Option<&'static str>{Some(match port{
     0x3f0..=0x3f5|0x3f7=>"floppy controller",
     _=>return None,
 })}
-const PIT_HZ:u32=1_193_182;
+pub(super) const PIT_HZ:u32=1_193_182;
 #[derive(Clone,Debug,Default)]
 pub struct Speaker{
     /// Port 61h bits 0..3 as last written; bit 4 toggles on each read as
@@ -33,16 +34,26 @@ pub struct Speaker{
     access:u8,count:u16,high_next:bool,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
-    /// Channel 0 (the 18.2 Hz system timer): bytes of a new mode's count
-    /// still to come (2, 1 or 0), the low byte written, a latched count and
-    /// whether its high byte is read next.
-    timer_load:u8,timer_low:u8,latch:Option<u16>,latch_high:bool,
+    pit:pit::Counter0,
+    pit_clock:Option<(std::time::Instant,u64)>,
     /// Counter for video status register 1 (port 3DAh/3BAh): toggles horizontal
     /// blanking and cycles vertical retrace so snow-check and sync loops advance.
     retrace:u32,
     ignored_out:std::collections::BTreeSet<u16>,
 }
 impl Speaker{
+    /// Host PIT time is sampled once, then advances monotonically. Headless
+    /// deterministic sessions keep it at zero unless a host clock is selected.
+    pub fn pit_now(&mut self,clock:Option<i64>)->u64{
+        let Some(offset)=clock else{return 0;};
+        let (start,initial)=self.pit_clock.get_or_insert_with(||{
+            let ns=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()as i128+i128::from(offset)*1_000_000_000;
+            let initial=(ns.rem_euclid(86_400_000_000_000)*i128::from(PIT_HZ)/1_000_000_000)as u64;
+            (std::time::Instant::now(),initial)
+        });
+        *initial+(start.elapsed().as_nanos()*u128::from(PIT_HZ)/1_000_000_000)as u64
+    }
+    pub fn pit_interrupts(&mut self,clock:Option<i64>)->u64{let now=self.pit_now(clock);self.pit.interrupts(now)}
     /// The tone the speaker plays now in Hz, or 0 when it is off.
     pub fn tone(&self)->u32{
         if self.control&3!=3{return 0;}
@@ -111,17 +122,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 let hblank=vblank||(s.retrace&1)!=0;
                 (if hblank{1}else{0})|(if vblank{8}else{0})
             },
-            0x40 if s.timer_load!=0=>return Err("IN from PIT channel 0 while its count is being written is not modelled".into()),
-            0x40=>{
-                // Low then high byte, of the latched count when one is held
-                // (the latch is released after its high byte), else of the
-                // live count.
-                let count=match s.latch{Some(c)=>c,None=>timer_count(p.clock_offset)};
-                let s=&mut p.speaker;
-                let byte=if s.latch_high{(count>>8)as u8}else{count as u8};
-                if s.latch_high&&s.latch.is_some(){s.latch=None;}
-                s.latch_high=!s.latch_high;byte
-            },
+            0x40=>{let now=s.pit_now(p.clock_offset);s.pit.read(now)},
                         0x378..=0x37a | 0x278..=0x27a => 0x80,
             _=>return Err(format!("IN from port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         };
@@ -138,19 +139,9 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             },
             // Channel 2 mode: access in bits 5..4; the counting mode is not timed.
             0x43 if value>>6==2&&value&0x30!=0=>{s.access=value>>4&3;s.high_next=s.access==2;},
-            // Channel 0 counter latch: holds the count until both bytes are read.
-            0x43 if value&0xf0==0=>{if s.latch.is_none(){s.latch=Some(timer_count(p.clock_offset));p.speaker.latch_high=false;}},
-            // Channel 0 mode 2 or 3 (rate generator or square wave), binary,
-            // low then high byte: as the BIOS programs it. Only its count 0
-            // (65536, 18.2 Hz) is taken, so the timer rate never changes.
-            0x43 if value>>6==0&&value&0x30==0x30&&matches!(value>>1&7,2|3|6|7)&&value&1==0=>{s.timer_load=2;s.latch=None;s.latch_high=false;},
-            0x43=>return Err(format!("PIT command {value:02x}h (other than a channel 2 mode, a channel 0 latch or the BIOS channel 0 mode) is not modelled")),
-            0x40 if s.timer_load==2=>{s.timer_low=value;s.timer_load=1;},
-            0x40 if s.timer_load==1=>{
-                s.timer_load=0;
-                if s.timer_low!=0||value!=0{return Err(format!("PIT channel 0 count {:04x}h is not modelled (only 0, the BIOS 18.2 Hz rate)",u16::from(value)<<8|u16::from(s.timer_low)));}
-            },
-            0x40=>return Err("PIT channel 0 count written before its mode".into()),
+            0x43 if value>>6==0=>{let now=s.pit_now(p.clock_offset);s.pit.command(value,now)?;},
+            0x43=>return Err(format!("PIT command {value:02x}h is not modelled")),
+            0x40=>{let now=s.pit_now(p.clock_offset);s.pit.write(value,now)?;},
             0x42 if s.access==0=>return Err("PIT channel 2 count written before its mode".into()),
             0x42=>{
                 if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
@@ -164,19 +155,6 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         }
     }
     Ok(Some(length))
-}
-/// The channel 0 count now: it counts down from 65536 once a timer tick.
-/// With the host clock it is the phase of the host's local time within the
-/// current tick (to the nanosecond, at 1193182 Hz); the tick count INT 1Ah
-/// gives uses the same clock. Reprogramming the BIOS mode keeps that phase
-/// rather than restarting it. Without the host clock, time moves only a whole
-/// tick at a time, so the count is always at the start of a tick (0, which
-/// is 65536).
-fn timer_count(clock:Option<i64>)->u16{
-    let Some(offset)=clock else{return 0};
-    let ns=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_nanos()as i128)+i128::from(offset)*1_000_000_000;
-    let clocks=ns.rem_euclid(86_400_000_000_000)*1_193_180/1_000_000_000;
-    (65536-clocks%65536)as u16
 }
 /// One CMOS byte as an AT with no diskette or hard disk, 640 KiB base memory
 /// and no extended memory would hold it. The clock registers are BCD in 24-hour
@@ -210,3 +188,15 @@ fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
     })
 }
 
+
+#[cfg(test)]
+mod timer_tests{
+    use super::*;
+    #[test]fn programmed_edges_drive_bios_ticks_and_obey_interrupt_shadows(){
+        let mut p=load(&[0xfa,0xf4],"pit.com").unwrap();p.speaker.pit.command(0x34,0).unwrap();p.speaker.pit.write(0x0b,0).unwrap();p.speaker.pit.write(0xe9,0).unwrap();
+        let now=p.speaker.pit.interrupts(1+3*0xe90b)as u32;assert_eq!(now,3);
+        services::timer_interrupt_at(&mut p,now).unwrap();assert_eq!(p.timer_ticks,3);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),3);
+        for shadow in 0..3{p.cpu.eflags=if shadow==0{2}else{0x202};p.image.sti_shadow=u8::from(shadow==1);p.image.ss_shadow=u8::from(shadow==2);services::timer_interrupt_at(&mut p,4).unwrap();assert_eq!(p.timer_ticks,3);}
+        p.image.ss_shadow=0;p.image.sti_shadow=0;p.cpu.eflags=0x202;services::timer_interrupt_at(&mut p,4).unwrap();assert_eq!(p.timer_ticks,4);
+    }
+}
