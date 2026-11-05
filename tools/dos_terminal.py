@@ -73,7 +73,7 @@ def key_code(keysym, char, control=False, alt=False, altgr=False):
     `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
     # Windows can hand over the Ctrl form of an AltGr character (FS for \\,
     # ESC for {, nothing for @): the key's name says which character it typed.
-    if altgr and keysym in KEYSYM_CHARS:
+    if altgr and keysym in KEYSYM_CHARS and not (len(char) == 1 and char.isprintable()):
         char, control, alt = KEYSYM_CHARS[keysym], False, False
     # AltGr (Ctrl+Alt on Windows) types characters such as \\ @ { } on
     # national layouts: only Alt with a letter, digit or F-key is an Alt code.
@@ -122,6 +122,42 @@ def alt_code(keysym):
 ALTGR_IS_CTRL_ALT = sys.platform == 'win32'
 # Modifier keys as their BIOS shift-flag bits at 0040:0017.
 MODIFIERS = {'Shift_R': 0x01, 'Shift_L': 0x02, 'Control_L': 0x04, 'Control_R': 0x04, 'Alt_L': 0x08, 'Alt_R': 0x08}
+
+
+def event_key_code(keysym, char, state, held):
+    """Translate a key using both Tk state and tracked modifier presses."""
+    # Windows sometimes clears state and retains the unmodified keysym (7),
+    # while char already contains the AltGr text ({). Trust the held pair.
+    if ALTGR_IS_CTRL_ALT and {'Control_L', 'Alt_R'} <= held:
+        return key_code(keysym, char, altgr=True)
+    control = bool(state & 0x4)
+    alt = 'Alt_L' in held or ('Alt_R' in held and not control)
+    altgr = control and ('Alt_L' in held or 'Alt_R' in held)
+    return key_code(keysym, char, control, alt, altgr)
+
+
+def is_ctrl_break(keysym, control):
+    """Whether a key event is Ctrl+Break, which goes to the session as `break`."""
+    return keysym in ('Cancel', 'Break') or (control and keysym == 'Pause')
+
+
+def strip_vt_keys(data):
+    """Host terminal input without its VT key sequences (ESC [ ... final byte,
+    ESC O x); a lone ESC, as the Esc key gives, is kept."""
+    out = bytearray()
+    at = 0
+    while at < len(data):
+        byte = data[at]
+        if byte == 0x1b and at + 1 < len(data) and data[at + 1] in b'[O':
+            end = at + 2
+            if data[at + 1] == ord('['):
+                while end < len(data) and not 0x40 <= data[end] <= 0x7e:
+                    end += 1
+            at = end + 1
+            continue
+        out.append(byte)
+        at += 1
+    return bytes(out)
 
 
 def paste_keys(text):
@@ -275,7 +311,7 @@ class ConsolePort:
         while True:
             char = msvcrt.getwch()
             if char in ('\x00', '\xe0'):
-                self.input.put(_VT_KEYS.get(msvcrt.getwch(), b''))
+                msvcrt.getwch()  # DOS serial input does not understand VT key sequences
             else:
                 self.input.put(to_cp437(char))
 
@@ -298,7 +334,7 @@ class ConsolePort:
                 return
             decoded = decoder.decode(data, final=False)
             if decoded:
-                self.input.put(to_cp437(decoded))
+                self.input.put(strip_vt_keys(to_cp437(decoded)))
 
     def write(self, data):
         # In raw mode a bare LF only moves down; DOS sends CR LF itself.
@@ -502,10 +538,10 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         if event.keysym in MODIFIERS:
             held.add(event.keysym)
             return shift_changed()
-        # Alt_R with Ctrl is AltGr on Windows: it types the character it makes.
-        alt = 'Alt_L' in held or ('Alt_R' in held and not control)
-        altgr = control and ('Alt_L' in held or 'Alt_R' in held)
-        code = key_code(event.keysym, event.char, control, alt, altgr)
+        if is_ctrl_break(event.keysym, control):
+            keys.append('break')
+            return 'break'
+        code = event_key_code(event.keysym, event.char, event.state, held)
         if code:
             keys.append(key_command(code))
         return 'break'
