@@ -101,9 +101,12 @@ impl Session{
                 _=>(false,"com1 needs bytes in hex".into(),false),
             },
             // `break`: Ctrl+Break, as the BIOS and DOS's INT 1Bh handler take it.
-            ["break"]=>match self.loaded.as_mut().ok_or("session state lost")?.ctrl_break(){
-                Ok(())=>(true,String::new(),false),
-                Err(message)=>(false,message,false),
+            ["break"]=>{
+                let p=self.loaded.as_mut().ok_or("session state lost")?;
+                match brk::ctrl_break(p){
+                    Ok(())=>(true,String::new(),false),
+                    Err(message)=>(false,message,false),
+                }
             },
             ["quit"]=>(true,String::new(),true),
             _=>(false,format!("unknown command: {line}"),false),

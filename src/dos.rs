@@ -52,7 +52,6 @@ mod vectors;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
-#[derive(Clone,Debug)]
 pub struct Loaded{
     arena:Arena,
     pub format:Format,pub cpu:Cpu,pub ram:Ram,pub image:Image,
@@ -92,11 +91,27 @@ pub struct Loaded{
     /// COM1 when a session attached it.
     pub com1:Option<serial::Serial>,
     /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
-    pub breaks:Vec<brk::Frame>,
+    breaks:Vec<brk::Frame>,
     /// Persistent, signature-validated cache across session slices.
     pub cache:super::cache::DecodeCache,
     /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
     rom_mode:bool,
+}
+impl Clone for Loaded{
+    fn clone(&self)->Self{Self{
+        arena:self.arena.clone(),format:self.format.clone(),cpu:self.cpu.clone(),ram:self.ram.clone(),image:self.image.clone(),
+        selectors:self.selectors,relocations:self.relocations,module_bytes:self.module_bytes,header_bytes:self.header_bytes,
+        module_base:self.module_base,allocated_end:self.allocated_end,trailing_bytes:self.trailing_bytes,timer_ticks:self.timer_ticks,
+        open_handles:self.open_handles,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
+        input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
+        own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),return_code:self.return_code,
+        con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
+        cmos_index:self.cmos_index,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
+        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,
+    }}
+}
+impl std::fmt::Debug for Loaded{
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("Loaded{..}")}
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.

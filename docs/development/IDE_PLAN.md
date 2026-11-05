@@ -104,3 +104,17 @@ The PIL IDE adapts this tripartite structure for low-level systems and CPU devel
   - Implement syntax highlighting for assembly and PIL files.
 - **Stage 4 (Screen Buffer & DOS Machine)**:
   - Add emulated character/attribute text-screen viewer alongside the serial console.
+
+## 5. Future language and display adapters — 5 November 2026
+
+Add Rust and PIL as Lispy Machine language adapters in future work, following
+its existing BBC BASIC integration pattern. Use Rust compilation/subprocess
+execution and the PIL engine first. A PIL interpreter hosted inside Lispy
+Machine remains a later option subject to semantic parity checks.
+
+Each emulated display type should be a separate Rust module exposing its
+DOS/BIOS and guest-memory behavior through the machine boundary. The frontend
+renders snapshots. Language and guest display selection remain independent.
+See the [updated I/O design](IO_SERVICE_AND_DEBUGGER_DESIGN.md#updated-direction--5-november-2026)
+for canonical video memory, extraction order and acceptance criteria.
+
