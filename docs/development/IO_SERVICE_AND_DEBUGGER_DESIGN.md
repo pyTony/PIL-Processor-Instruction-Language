@@ -8,6 +8,72 @@ separate Dine project to locate. This is an architectural analogy, not a claim
 that Wine implements DOS services or that its code is being reused.
 No runtime implementation changes accompany this document.
 
+## Updated direction — 5 November 2026
+
+The proposal below records the 28 October design. Current dev already has the
+output provider, monitor debugger, DOS session controller and an 80x25 BIOS
+text console backed by video RAM in `src/dos_console.rs`, plus keyboard,
+file and serial services. The console still combines keyboard and display
+responsibilities. The module split below is requested architecture; it does
+not claim additional emulated display types are implemented.
+
+### One module per emulated display type
+
+Give each supported guest display adapter a Rust module behind a common
+machine-owned interface. First extract existing mode-3 text behavior without
+changing its BIOS contracts, keeping keyboard handling in a separate input
+module. Introduce distinct CGA, MDA, EGA and VGA modules as their behavior is
+implemented. Sharing a port or having a physical VGA output does not establish
+guest adapter compatibility.
+
+| Boundary | Responsibility |
+|---|---|
+| Display dispatcher | Select the configured guest adapter and route video BIOS and port operations; stop explicitly on unsupported requests. |
+| Adapter module | Own mode, page/cursor, register and palette behavior; define its memory aperture and text/pixel interpretation. |
+| Guest memory interface | Provide canonical video bytes shared by CPU access, BIOS services and debugger inspection. |
+| DOS console | Route output through the selected display or redirected device, preserving raw byte capture independently. |
+| Host presenter | Render snapshots in Tk, a terminal or board output; leave DOS/BIOS semantics in the engine. |
+
+Preserve the current profile's B8000 video memory, page stride, character and
+attribute layout, and BIOS data-area state. CPU stores, INT10 operations, DOS
+console output and snapshots must observe the same bytes. Avoid a second
+independently writable screen buffer. MDA and graphics apertures need their
+own mappings rather than B8000 assumptions in DOS services or the frontend.
+Character decoding and ANSI filtering must not change the raw guest trace.
+
+The adapter boundary should cover initialization/reset, BIOS video requests,
+claimed port ranges, memory-aperture metadata and immutable display snapshots.
+Use checked RAM access for the existing profile. Side-effecting memory or
+ports need explicit validation and commit behavior: restoring RAM alone
+cannot undo device effects. Unsupported requests must retain precise stop
+behavior. Keyboard input belongs to the input-device service, not every
+display implementation.
+
+Accept the extraction when existing text tests pass, direct video-memory
+writes appear in BIOS reads and snapshots, BIOS writes appear in CPU reads,
+page/cursor state stays coherent, and rejected operations have no partial
+effects. Verify headless DOS sessions and frontend snapshots against the
+same device state. Add adapter-specific behavior tests when implementing
+another display type; placeholder modules do not constitute hardware support.
+
+### Future Rust and PIL support in Lispy Machine
+
+The user wants Rust and PIL as supported Lispy Machine languages, with a
+possible future interpreter integration along the lines of its BBC BASIC
+support. This is future work; no lispy3 repository changes accompany this plan.
+
+Start with language adapters for file types, editor syntax, build/run commands,
+diagnostics, Listener output and Inspector snapshots. Compile Rust and run an
+owned subprocess. Run PIL through its authoritative engine and structured
+interface. Keep language selection independent of the guest display adapter.
+Retain queued UI updates, separate host/guest channels and cooperative stopping.
+
+A PIL interpreter hosted inside Lispy Machine is a later implementation
+option. Define its supported semantics and compare machine state, faults and
+raw I/O with the Rust interpreter/generated backend before claiming parity.
+Keep Rust authoritative while an alternative is experimental; editor support
+does not require another CPU implementation.
+
 ## Source review
 
 - [lispy3, abc3d616](https://github.com/pyTony/lispy3/tree/abc3d616b4292753c349dfa5e690483a7d717954):
@@ -93,3 +159,4 @@ Validate any CPU/backend changes with the existing full-state comparisons.
 Keep DOS API contracts in the compatibility provider and GUI concerns in the
 frontend. Validate each added DOS/BIOS service against its documented guest
 contract. BIOS and CPU interrupt dispatch remain separate explicit capabilities.
+
