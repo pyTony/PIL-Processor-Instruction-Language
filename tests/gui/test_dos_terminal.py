@@ -19,6 +19,80 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_speaker_click_is_short_quiet_and_configurable(self):
+        import struct
+        import wave
+        for level in (0, 5, 100):
+            with wave.open(io.BytesIO(term.speaker_click(level)), 'rb') as wav:
+                self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 22050))
+                self.assertLessEqual(wav.getnframes() / wav.getframerate(), .011)
+                raw = wav.readframes(wav.getnframes())
+                samples = struct.unpack('<' + 'h' * (len(raw) // 2), raw)
+                self.assertLessEqual(max(map(abs, samples)), 32767 * level / 100)
+                self.assertEqual((samples[0], samples[-1]), (0, 0))
+        for value in ('-1', '101', 'loud'):
+            with self.assertRaises(term.argparse.ArgumentTypeError):
+                term.speaker_volume(value)
+        self.assertEqual(term.speaker_volume('0'), 0)
+        self.assertEqual(term.speaker_volume('100'), 100)
+
+    def test_speaker_coalesces_and_rate_limits_repeated_edges(self):
+        player = MagicMock()
+        now = [0.0]
+        speaker = term.QuietSpeaker(5, initial=3, player=player, clock=lambda: now[0])
+        speaker.observe({'beeps': 3})
+        self.assertEqual(player.play.call_count, 0)
+        speaker.observe({'beeps': 4})
+        self.assertEqual(player.play.call_count, 1)
+        now[0] = .1
+        speaker.observe({'beeps': 20})
+        self.assertEqual(player.play.call_count, 1)
+        now[0] = .21
+        speaker.observe({'beeps': 21})
+        self.assertEqual(player.play.call_count, 2)
+        speaker.observe({'beeps': 21})
+        speaker.observe({'beeps': 1})  # restarting the count is not a beep
+        self.assertEqual(player.play.call_count, 2)
+        muted = term.QuietSpeaker(0, player=player, clock=lambda: 1)
+        muted.observe({'beeps': 4})
+        self.assertEqual(player.play.call_count, 2)
+
+    def test_guest_speaker_pulses_coalesce_to_a_short_host_click(self):
+        # Program PIT channel 2 and toggle port 61h 100 times, then exit.
+        guest = bytes.fromhex('B0 B6 E6 43 B0 A9 E6 42 B0 04 E6 42 B9 64 00 '
+                              'B0 03 E6 61 B0 00 E6 61 E2 F6 B8 00 4C CD 21')
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / 'SPEAK.COM'
+            program.write_bytes(guest)
+            session = term.Session(term.find_engine(), str(program), stop_log='')
+            try:
+                reply = session.send('run 1000')
+                self.assertEqual((reply['status'], reply['beeps']), ('exit', 100))
+                player = MagicMock()
+                speaker = term.QuietSpeaker(5, player=player, clock=lambda: 1)
+                speaker.observe(reply)
+                speaker.observe(reply)
+                self.assertEqual(player.play.call_count, 1)
+            finally:
+                session.close()
+
+    def test_speaker_playback_runs_off_gui_thread_and_stays_bounded(self):
+        import threading
+        started, release = threading.Event(), threading.Event()
+        player = term.AsyncSpeakerPlayer()
+        def blocked(data):
+            started.set()
+            release.wait(2)
+        player.output = MagicMock(side_effect=blocked)
+        try:
+            player.play(b'one')
+            self.assertTrue(started.wait(1))
+            player.play(b'two')
+            self.assertEqual(player.output.call_count, 1)
+        finally:
+            release.set()
+            player.worker.join(2)
+
     def test_ansi_option_reaches_the_session_from_window_constructor(self):
         try:
             import tkinter.font  # noqa: F401  (patched below; the module must exist)
