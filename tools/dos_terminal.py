@@ -68,6 +68,15 @@ TYPED = {c: n for n, c in enumerate(GLYPHS) if n >= 0x80 or n in range(0x14, 0x1
 _NATIONAL = {'å': 0x1a, 'ä': 0x28, 'ö': 0x27, 'æ': 0x28, 'ø': 0x27, '§': 0x29, '½': 0x29}
 
 
+def graphics_rgb(pixels, palette):
+    """Resolve mode 13h indices through the 256-entry RGB palette."""
+    indices = bytes.fromhex(pixels)
+    colors = bytes.fromhex(palette)
+    if len(indices) != 64000 or len(colors) != 768:
+        raise ValueError('invalid mode 13h frame or palette')
+    return b''.join(colors[index * 3:index * 3 + 3] for index in indices)
+
+
 def key_code(keysym, char, control=False, alt=False, altgr=False):
     """Map a Tk key event to (ascii, scan), or None for keys DOS never sees.
     `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
@@ -455,10 +464,11 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     def draw(reply):
         pixels = reply.get('graphics13')
         if pixels is not None:
-            if frame[0] != pixels:
-                rgb = b''.join(bytes((min(255, v * 2),) * 3) for v in bytes.fromhex(pixels))
+            palette = reply['palette']
+            if frame[0] != (pixels, palette):
+                rgb = graphics_rgb(pixels, palette)
                 picture = tk.PhotoImage(data=b'P6 320 200 255\n' + rgb, format='PPM').zoom(2)
-                graphics.configure(image=picture); graphics.image = picture; frame[0] = pixels
+                graphics.configure(image=picture); graphics.image = picture; frame[0] = (pixels, palette)
             if graphics.winfo_manager() != "pack":
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
             detail = f" — {reply['detail']}" if reply['detail'] else ''
@@ -669,3 +679,4 @@ def main(argv=None):
 
 if __name__ == '__main__':
     main()
+

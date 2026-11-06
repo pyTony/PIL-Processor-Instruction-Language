@@ -1,3 +1,17 @@
+# VGA mode 13h DAC palette — 6 November 2026
+
+Mode 13h now exposes a 256-entry, six-bit RGB VGA DAC at ports 3C6h-3C9h.
+The pixel mask, separate read/write indexes, RGB component sequencing and
+index wrap are modelled. Setting mode 13h reloads its standard default
+palette. The DOS session sends the resulting 256 RGB colours alongside the
+frame; the Tk terminal resolves each pixel index through that palette and
+redraws when palette entries change even if video RAM is unchanged.
+
+The text-mode terminal still uses its fixed 16-colour palette. Attribute
+controller palette mapping, INT 10h palette functions and other VGA graphics
+modes are not implemented in this increment. Rust DAC regressions and a
+Python palette conversion test are supplied; hosted validation is pending.
+
 # Programmable PIT channel 0
 
 The channel 0 device now models binary mode 2/3 divisors, restart phase,
@@ -2312,4 +2326,5 @@ is not implied by that.
 Next: strengthen decoder coverage, general PC machine state and devices; keep
 full paging, descriptor loading, exception delivery, interrupts, A20 and OS boot
 explicitly outside the current implementation. The debug port is not a UART.
+
 
