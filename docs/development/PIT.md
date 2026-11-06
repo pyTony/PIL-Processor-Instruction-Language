@@ -24,7 +24,9 @@ session behavior remains: PIT input time is zero and BIOS reads advance whole
 ticks. This is not a cycle-accurate CPU or PIC model.
 
 Limits remain explicit: BCD, modes 0/1/4/5, channel 1, read-back/status commands,
-GATE transitions and live count rewrites without a new control word stop.
+GATE transitions and live count rewrites to a different divisor without a
+new control word stop. A low/high rewrite of the currently active divisor
+is accepted without changing its phase; GW-BASIC 3.23 uses this at startup.
 Only periodic output edges are modeled; control-word-induced OUT transitions
 and a complete PIC pending/in-service/masking model are not implemented.
 The existing BIOS timer shortcut catches up elapsed ticks in one update;

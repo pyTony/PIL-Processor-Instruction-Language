@@ -46,6 +46,7 @@ jobs:
         run: |
           python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
           python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
+          python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cga --out target/dosbox-cga
       - run: python tools/verify_containers.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check

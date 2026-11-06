@@ -19,6 +19,19 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_cga_frame_bank_layout_palette_and_monochrome(self):
+        frame = bytearray(0x4000)
+        frame[0] = 0b00011011
+        frame[0x2000] = 0b11000000
+        rgb = term.cga_rgb(frame.hex(), 4, 0x30)
+        self.assertEqual(rgb[:12], bytes.fromhex('00000055ffffff55ffffffff'))
+        self.assertEqual(rgb[320*3:320*3+3], bytes.fromhex('ffffff'))
+        rgb = term.cga_rgb(frame.hex(), 6, 0x0f)
+        self.assertEqual(rgb[:12], bytes.fromhex('000000000000000000ffffff'))
+        self.assertEqual(rgb[640*3:640*3+3], bytes.fromhex('ffffff'))
+        with self.assertRaises(ValueError):
+            term.cga_rgb('00', 4, 0x30)
+
     def test_graphics_palette_maps_indices_and_rejects_bad_data(self):
         palette = bytes([i for i in range(256) for _ in range(3)])
         pixels = bytes([0, 4, 255]) + bytes(63997)
