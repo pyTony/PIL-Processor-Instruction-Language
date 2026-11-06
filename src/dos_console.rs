@@ -1,9 +1,7 @@
 //! Bounded mode-3 BIOS console. Video RAM and the BIOS keyboard ring are authoritative.
 //! VGA port state lives in dos_vga; IRQ1, ANSI and host UI are outside this module.
 use super::*;
-const VIDEO:u32=0xb8000;
-const PAGE:u32=4096;
-const CELLS:u32=80*25;
+use super::color_text::{VIDEO,PAGE,CELLS};
 fn read(p:&Loaded,at:u32)->Result<u32,String>{
     p.ram.load(at,MemWidth::Word).map_err(|e|format!("BIOS console read: {e:?}"))
 }
@@ -278,3 +276,4 @@ pub(super) fn dos_line_key(p:&Loaded)->Result<Option<(u32,Writes)>,String>{
     let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
     Ok(Some((if key&255==0{key&0xff00}else{key&255},writes)))
 }
+

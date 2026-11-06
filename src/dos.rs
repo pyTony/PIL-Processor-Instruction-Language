@@ -33,6 +33,8 @@ const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
 mod services;
 #[path="dos_console.rs"]
 mod console;
+#[path="dos_color_text.rs"]
+mod color_text;
 #[path="dos_session.rs"]
 pub mod session;
 #[path="dos_files.rs"]
@@ -608,4 +610,5 @@ pub fn format_rom_report(result: &Probe) -> String {
 #[cfg(test)]
 #[path="../tests/unit/dos.rs"]
 mod tests;
+
 

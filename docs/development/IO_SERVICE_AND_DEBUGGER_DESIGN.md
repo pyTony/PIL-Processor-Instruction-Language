@@ -17,6 +17,10 @@ file and serial services. The console still combines keyboard and display
 responsibilities. The module split below is requested architecture; it does
 not claim additional emulated display types are implemented.
 
+The current colour-text RAM layout constants now live in `src/dos_color_text.rs`;
+BIOS and DOS behavior remains in `src/dos_console.rs`. This is a first
+extraction, not a complete adapter interface or additional display type.
+
 ### One module per emulated display type
 
 Give each supported guest display adapter a Rust module behind a common
@@ -159,4 +163,5 @@ Validate any CPU/backend changes with the existing full-state comparisons.
 Keep DOS API contracts in the compatibility provider and GUI concerns in the
 frontend. Validate each added DOS/BIOS service against its documented guest
 contract. BIOS and CPU interrupt dispatch remain separate explicit capabilities.
+
 
