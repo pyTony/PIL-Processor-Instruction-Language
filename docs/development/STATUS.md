@@ -1,3 +1,40 @@
+# ANSI.SYS-style console driver — 6 November 2026
+
+Tony chose an ANSI driver so that a colour PROMPT works on the DOS screen as
+well as over COM1. It is loaded as DEVICE=ANSI.SYS would load it: by the
+session command `ansi on`, which the terminal sends with `--ansi` (also
+through PILdos: `PILdos.cmd --ansi`). Without it DOS output is unchanged.
+Once loaded, DOS console output in text mode interprets ESC [ sequences:
+`m` (0 reset, 1 bright, 5 blink, 7 reverse, 8 concealed, 30-37 and 40-47
+colours; underline needs a monochrome adapter and is ignored), `H`/`f`
+position, `A`/`B`/`C`/`D` moves that stop at the edges, `s`/`u` save and
+restore, `J` (0 to end, 1 to start, 2 all and home) and `K` to the line end.
+Characters, erases and the bottom-line scroll use the driver's attribute. ESC
+followed by anything but `[` is shown as both bytes; other final bytes drop
+the sequence. Status reports (`6n`), video mode sets (`=h`/`l`) and key
+reassignment (`p`) stop the run as not modelled rather than pretend. The
+parser state, attribute and saved cursor live in guest RAM at 0070:0390, so a
+sequence may span calls and a faulting screen write changes nothing. INT 2Fh
+AX=1A00h returns AL=FFh while the driver is loaded. Checked with FD14LITE.img
+(SHA256 f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36)
+in a cloud session: FreeCOM `PROMPT $e[1;36m[MS-DOS 6.22]$e[1;33m $p$g$e[0m `
+draws bright cyan and yellow, and command output stays grey. Two Rust tests
+and a session protocol check added; 491 Rust and 29 GUI tests pass locally.
+
+# VGA mode 13h DAC palette — 6 November 2026
+
+Mode 13h now exposes a 256-entry, six-bit RGB VGA DAC at ports 3C6h-3C9h.
+The pixel mask, separate read/write indexes, RGB component sequencing and
+index wrap are modelled. Setting mode 13h reloads its standard default
+palette. The DOS session sends the resulting 256 RGB colours alongside the
+frame; the Tk terminal resolves each pixel index through that palette and
+redraws when palette entries change even if video RAM is unchanged.
+
+The text-mode terminal still uses its fixed 16-colour palette. Attribute
+controller palette mapping, INT 10h palette functions and other VGA graphics
+modes are not implemented in this increment. Rust DAC regressions and a
+Python palette conversion test are supplied; hosted validation is pending.
+
 # Programmable PIT channel 0
 
 The channel 0 device now models binary mode 2/3 divisors, restart phase,
@@ -2312,4 +2349,5 @@ is not implied by that.
 Next: strengthen decoder coverage, general PC machine state and devices; keep
 full paging, descriptor loading, exception delivery, interrupts, A20 and OS boot
 explicitly outside the current implementation. The debug port is not a UART.
+
 

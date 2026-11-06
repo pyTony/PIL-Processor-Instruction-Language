@@ -46,6 +46,7 @@ jobs:
         run: |
           python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
           python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
+          python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cga --out target/dosbox-cga
       - run: python tools/verify_containers.py
       - if: runner.os == 'Linux'
         run: sh tools/debug.sh --check
@@ -54,6 +55,7 @@ jobs:
         run: ./tools/debug.ps1 -Check
       - run: python tools/export_runtime.py target/runtime-source --verify
       - run: cargo build --release --locked
+      - run: python tools/verify_mandel_cycle.py
       - if: runner.os == 'Linux'
         run: sh tools/bench.sh 10000 5
       - if: runner.os == 'Linux'
@@ -92,4 +94,5 @@ jobs:
             target/host-cpu-oracle/run-*/hardware.bin
             target/mandelbrot/256x256-i32/*
             target/backend-comparison/run-*/mandelbrot/*
+
 

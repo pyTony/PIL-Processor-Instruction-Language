@@ -8,7 +8,7 @@ separate Dine project to locate. This is an architectural analogy, not a claim
 that Wine implements DOS services or that its code is being reused.
 No runtime implementation changes accompany this document.
 
-## Updated direction — 5 November 2026
+## Updated direction — 6 November 2026
 
 The proposal below records the 28 October design. Current dev already has the
 output provider, monitor debugger, DOS session controller and an 80x25 BIOS
@@ -17,9 +17,14 @@ file and serial services. The console still combines keyboard and display
 responsibilities. The module split below is requested architecture; it does
 not claim additional emulated display types are implemented.
 
-The current colour-text RAM layout constants now live in `src/dos_color_text.rs`;
-BIOS and DOS behavior remains in `src/dos_console.rs`. This is a first
-extraction, not a complete adapter interface or additional display type.
+The mode-3 colour-text RAM layout and dimensions live in `src/dos_color_text.rs`,
+shared by the BIOS console and the optional ANSI driver in `src/dos_ansi.rs`.
+The latter remains a console submodule so its access to checked text helpers
+stays private. BIOS, keyboard and DOS console routing remain in
+`src/dos_console.rs`; graphics register and palette state live in `src/dos_vga.rs`.
+This extraction preserves their current behavior and is not yet a common
+adapter interface. Mode 13h and CGA support added since this proposal are
+described in `VGA.md`.
 
 ### One module per emulated display type
 
@@ -163,5 +168,3 @@ Validate any CPU/backend changes with the existing full-state comparisons.
 Keep DOS API contracts in the compatibility provider and GUI concerns in the
 frontend. Validate each added DOS/BIOS service against its documented guest
 contract. BIOS and CPU interrupt dispatch remain separate explicit capabilities.
-
-

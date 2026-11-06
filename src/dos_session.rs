@@ -1,5 +1,5 @@
 //! Interactive DOS session over stdin/stdout for a frontend: one command per
-//! line, one JSON reply per line. The frontend only draws the B800 text page
+//! line, one JSON reply per line. The frontend draws text and graphics buffers
 //! and sends keys; all execution stays in the PIL interpreter and Dine.
 use super::*;
 use std::io::{BufRead,Write as _};
@@ -61,11 +61,16 @@ impl Session{
         }).unwrap_or_else(||"\"instruction_bytes\":\"\"".into());
         let graphics=self.loaded.as_ref().and_then(|p|if p.ram.load(0x449,MemWidth::Byte).ok()==Some(0x13){
             Some(p.ram.bytes()[0xa0000..0xafa00].iter().map(|b|format!("{b:02x}")).collect::<String>())
-        }else{None}).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\""));
+        }else{None}).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()));
+        let cga=self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
+            Some(mode @ (4|6))=>Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
+                p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color())),
+            _=>None,
+        }).unwrap_or_default();
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
-        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
+        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,quote(&String::from_utf8_lossy(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
@@ -103,6 +108,8 @@ impl Session{
                 Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.country=code;(true,String::new(),false)},
                 _=>(false,"country needs 1 or 358".into(),false),
             },
+            // `ansi on`: load the ANSI.SYS-style CON driver, as DEVICE=ANSI.SYS would.
+            ["ansi","on"]=>{super::console::ansi::install(self.loaded.as_mut().ok_or("session state lost")?)?;(true,String::new(),false)},
             // `com1 HEX`: bytes arriving at COM1 from the host terminal.
             ["com1",hex]=>match(0..hex.len()).step_by(2).map(|i|hex.get(i..i+2).and_then(|b|u8::from_str_radix(b,16).ok())).collect::<Option<Vec<u8>>>(){
                 Some(bytes) if !bytes.is_empty()=>match self.loaded.as_mut().and_then(|p|p.com1.as_mut()){
@@ -166,3 +173,4 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str)->Resu
     }
     Ok(())
 }
+

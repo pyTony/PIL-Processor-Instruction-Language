@@ -520,6 +520,62 @@ fn mandelbrot_guest_writes_pixels_into_mode_13_vga_memory(){
 }
 
 #[test]
+fn cga_modes_bios_pixels_and_memory_banks(){
+ for (mode,width,cols) in [(4u32,320u32,40u32),(6,640,80)]{
+  let mut p=load(&[0xf4],"cga.com").unwrap();
+  p.ram.store(0xb8000,MemWidth::Byte,0xaa).unwrap();
+  p.cpu.regs[0]=mode|0x80;console::display(&mut p,0).unwrap();
+  assert_eq!(p.ram.load(0xb8000,MemWidth::Byte).unwrap(),0xaa);
+  p.cpu.regs[0]=mode;console::display(&mut p,0).unwrap();
+  assert_eq!(p.ram.load(0xb8000,MemWidth::Byte).unwrap(),0);
+  assert_eq!(p.ram.load(0x44a,MemWidth::Word).unwrap(),cols);
+  let col=if mode==4{3}else{1};
+  for (x,y,addr,shift) in [(0,0,0xb8000,if mode==4{6}else{7}),
+                            (width-1,0,0xb8000+79,0),(0,1,0xba000,if mode==4{6}else{7}),
+                            (width-1,199,0xba000+99*80+79,0)]{
+   p.cpu.regs[0]=0x0c00|col;p.cpu.regs[1]=x;p.cpu.regs[2]=y;p.cpu.regs[3]=0;
+   service(&mut p,0x10,&mut vec![]).unwrap();
+   assert_eq!((p.ram.load(addr,MemWidth::Byte).unwrap()>>shift)&col,col);
+   p.cpu.regs[0]=0x0d00;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,col);
+   p.cpu.regs[0]=0x0c80|col;service(&mut p,0x10,&mut vec![]).unwrap();
+   p.cpu.regs[0]=0x0d00;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,0);
+  }
+  p.cpu.regs[0]=0x0c01;p.cpu.regs[1]=width;p.cpu.regs[2]=0;
+  assert!(service(&mut p,0x10,&mut vec![]).is_err());
+  p.cpu.regs[0]=3;console::display(&mut p,0).unwrap();assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),3);
+ }
+}
+#[test]
+fn cga_palette_bios_and_hardware_register_are_independent(){
+ let mut p=load(&[0xf4],"cga.com").unwrap();p.cpu.regs[0]=4;console::display(&mut p,0).unwrap();
+ p.cpu.regs[3]=0x0012;console::display(&mut p,0x0b).unwrap();assert_eq!(p.vga.cga_color(),0x32);
+ p.cpu.regs[3]=0x0100;console::display(&mut p,0x0b).unwrap();assert_eq!(p.vga.cga_color(),0x12);
+ p.vga.io(0x3d9,false,0x2f).unwrap();assert_eq!(p.vga.cga_color(),0x2f);
+ assert_eq!(p.ram.load(0x466,MemWidth::Byte).unwrap(),0x12);
+}
+#[test]
+fn absent_game_port_and_bios_joystick_service_report_no_device(){
+ let mut p=load(&[0xf4],"joy.com").unwrap();p.cpu.regs[0]=0x1234_8402;p.cpu.regs[2]=1;p.cpu.eflags=2;
+ service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0x1234_8602);assert_eq!(p.cpu.regs[2],1);assert_eq!(p.cpu.eflags&1,1);
+ // OUT DX,AL then IN AL,DX, absent bus reads high.
+ let code=[0xba,0x01,0x02,0xb0,0x12,0xee,0xec,0xfa,0xf4];
+ let r=run(load(&code,"joy.com").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));assert_eq!(r.loaded.cpu.regs[0]&255,255);
+}
+#[test]
+fn cga_color_register_accepts_guest_out_instruction(){
+ let guest=[0xba,0xd9,0x03,0xb0,0x2f,0xee,0xf4];
+ let r=run(load(&guest,"color.com").unwrap(),100).unwrap();
+ assert_eq!(r.loaded.vga.cga_color(),0x2f);
+}
+#[test]
+fn mode13_bios_pixel_is_full_eight_bit_index(){
+ let mut p=load(&[0xf4],"pixel.com").unwrap();p.cpu.regs[0]=0x13;console::display(&mut p,0).unwrap();
+ p.cpu.regs[0]=0x0caa;p.cpu.regs[1]=319;p.cpu.regs[2]=199;p.cpu.regs[3]=0;
+ service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.ram.load(0xafa00-1,MemWidth::Byte).unwrap(),0xaa);
+ p.cpu.regs[0]=0x0d00;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,0xaa);
+}
+
+#[test]
 fn vga_mode13_clears_or_preserves_memory_and_returns_to_text(){
     let mut p=load(&[0xf4],"mode.com").unwrap();
     p.ram.store(0xa0000,MemWidth::Byte,0x55).unwrap();p.ram.store(0xafa00,MemWidth::Byte,0x77).unwrap();
@@ -1608,4 +1664,94 @@ fn host_bios_clock_read_with_if_clear_keeps_undelivered_pit_ticks_out_of_bda(){
     let mut p=load(&[0xfa,0xf4],"clock.com").unwrap();p.clock_offset=Some(0);p.cpu.eflags=2;p.timer_ticks=123;
     p.ram.store(0x46c,MemWidth::Dword,123).unwrap();p.cpu.regs[0]=0;service(&mut p,0x1a,&mut vec![]).unwrap();
     assert_eq!(p.cpu.regs[2]&65535,123);assert_eq!(p.timer_ticks,123);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),123);
+}
+
+#[test]
+fn dos_extended_error_reports_failed_open_and_survives_unrelated_calls(){
+ let mut p=load(&[0xcd,0x21],"files.com").unwrap();let mut out=vec![];
+ let base=u32::from(PSP)*16;
+ p.ram.write_bytes(base+0x200,b"MISSING.BAS\0").unwrap();
+ p.cpu.regs[0]=0xabcd3d00;p.cpu.regs[2]=0x200;
+ service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.eflags&1),(2,1));
+ // Calling AH59 repeatedly retains the last error and preserves upper halves.
+ for _ in 0..2{
+  p.cpu.regs[0]=0xabcd5902;p.cpu.regs[3]=0x12340000;p.cpu.regs[1]=0x5678aaff;p.cpu.eflags|=1;
+  service(&mut p,0x21,&mut out).unwrap();
+  assert_eq!(p.cpu.regs[0],0xabcd0002);assert_eq!(p.cpu.regs[3],0x12340801);
+  assert_eq!(p.cpu.regs[1],0x567800ff);assert_eq!(p.cpu.eflags&1,0);
+ }
+ let mut child=p.clone();child.cpu.regs[0]=0x5900;child.cpu.regs[3]=0;
+ service(&mut child,0x21,&mut out).unwrap();assert_eq!(child.cpu.regs[0],2);
+ // A later invalid close replaces the error. Nonzero BX is not modelled.
+ p.cpu.regs[0]=0x3e00;p.cpu.regs[3]=0xffff;service(&mut p,0x21,&mut out).unwrap();
+ p.cpu.regs[0]=0x5900;p.cpu.regs[3]=0;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0],6);
+ p.cpu.regs[0]=0x5900;p.cpu.regs[3]=1;assert!(service(&mut p,0x21,&mut out).is_err());
+}
+/// AH09 with `text` (ending in $) at PSP:0300.
+fn ansi_print(p:&mut Loaded,text:&[u8])->Result<(),String>{
+ let psp=u32::from(PSP)*16;p.ram.write_bytes(psp+0x300,text).unwrap();
+ p.cpu.regs[0]=0x0900;p.cpu.regs[2]=0x300;service(p,0x21,&mut vec![]).map(|_|())
+}
+#[test]
+fn ansi_driver_draws_colours_moves_the_cursor_and_clears(){
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();
+ // Without the driver the escape is an ordinary character (the arrow glyph).
+ ansi_print(&mut p,b"\x1b[1m$").unwrap();assert_eq!((cell(&p,0,0,0),cell(&p,0,0,1)),(0x071b,0x075b));
+ p.ram.store(0x450,MemWidth::Word,0).unwrap();
+ p.cpu.regs[0]=0x1a00;service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0x1a00,"not installed");
+ console::ansi::install(&mut p).unwrap();
+ p.cpu.regs[0]=0x1a00;service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0x1aff,"installed");
+ // SGR: bright cyan on blue, then reset; ANSI colour 6 (cyan) is CGA 3, 4 (blue) is CGA 1.
+ ansi_print(&mut p,b"\x1b[1;36;44mA\x1b[0mB\x1b[31;7mC\x1b[m$").unwrap();
+ assert_eq!((cell(&p,0,0,0),cell(&p,0,0,1),cell(&p,0,0,2)),(0x1b41,0x0742,0x4043));
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),3);
+ // A sequence split across two calls continues; H is 1-based and clamps.
+ ansi_print(&mut p,b"\x1b[10;$").unwrap();assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),3);
+ ansi_print(&mut p,b"5HX\x1b[2AY\x1b[99B\x1b[3DZ\x1b[200;200f$").unwrap();
+ assert_eq!((cell(&p,0,9,4)&255,cell(&p,0,7,5)&255,cell(&p,0,24,3)&255),(u32::from(b'X'),u32::from(b'Y'),u32::from(b'Z')));
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x184f);
+ // Save and restore; K erases to the line end in the current attribute.
+ ansi_print(&mut p,b"\x1b[1;1H\x1b[s\x1b[5;5H\x1b[u\x1b[42m\x1b[K$").unwrap();
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
+ assert!((0..80).all(|c|cell(&p,0,0,c)==0x2720));
+ // An ESC not followed by [ is shown with the next byte.
+ ansi_print(&mut p,b"\x1bx$").unwrap();assert_eq!((cell(&p,0,0,0),cell(&p,0,0,1)),(0x271b,0x2778));
+ // 2J clears the whole page in the attribute and homes the cursor; LF at the bottom scrolls in it.
+ ansi_print(&mut p,b"\x1b[0;44m\x1b[2J$").unwrap();
+ assert!((0..25).all(|r|(0..80).all(|c|cell(&p,0,r,c)==0x1720)));assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
+ ansi_print(&mut p,b"\x1b[25;1H\x1b[0mq\r\n$").unwrap();
+ assert_eq!((cell(&p,0,23,0),cell(&p,0,24,0)),(0x0771,0x0720));
+}
+#[test]
+fn ansi_driver_faults_change_nothing(){
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();console::ansi::install(&mut p).unwrap();
+ ansi_print(&mut p,b"\x1b[3$").unwrap();
+ // A read-only screen cell: neither the screen nor the half-read sequence changes.
+ let psp=u32::from(PSP)*16;
+ p.ram.write_bytes(psp+0x300,b"1mA$").unwrap();p.ram.protect(0xb8000,1).unwrap();let old=p.clone();
+ p.cpu.regs[0]=0x0900;p.cpu.regs[2]=0x300;assert!(service(&mut p,0x21,&mut vec![]).is_err());assert!(p.ram==old.ram,"faulting write changed RAM");
+ // Status reports, mode sets and key reassignment are refused, with nothing changed.
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();console::ansi::install(&mut p).unwrap();
+ for seq in [&b"ab\x1b[6n$"[..],b"\x1b[=3h$",b"\x1b[7l$",b"\x1b[0;68;\"dir\";13p$"]{
+  p.ram.write_bytes(psp+0x300,seq).unwrap();let old=p.clone();
+  p.cpu.regs[0]=0x0900;p.cpu.regs[2]=0x300;let err=service(&mut p,0x21,&mut vec![]).unwrap_err();
+  assert!(err.contains("not modelled"),"{err}");assert!(p.ram==old.ram,"refused sequence changed RAM");
+ }
+}
+
+#[test]
+fn ansi_driver_rejects_guest_corrupted_parameter_count_without_effects(){
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();console::ansi::install(&mut p).unwrap();
+ let state=(DOSDATA as u32)*16+0x390;
+ for count in [17,255]{
+  p.ram.store(state+1,MemWidth::Byte,2).unwrap();
+  p.ram.store(state+5,MemWidth::Byte,count).unwrap();
+  for byte in [b'1',b'm']{
+   let old=p.clone();
+   let err=console::dos_screen(&p,&[byte]).unwrap_err();
+   assert!(err.contains("invalid ANSI driver parameter count"),"{err}");
+   assert!(p.ram==old.ram,"invalid parser state changed RAM");
+  }
+ }
 }

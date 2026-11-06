@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 spec = importlib.util.spec_from_file_location('dos_terminal', Path(__file__).resolve().parents[2] / 'tools/dos_terminal.py')
 term = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(term)
@@ -19,6 +19,56 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_ansi_option_reaches_the_session_from_window_constructor(self):
+        try:
+            import tkinter.font  # noqa: F401  (patched below; the module must exist)
+        except ImportError as exc:
+            self.skipTest(f'tkinter unavailable: {exc}')
+        reply = {'screen': '2007' * 80 * 25, 'columns': 80, 'cursor': [0, 0],
+                 'status': 'running', 'detail': '', 'steps': 0, 'cs': 0, 'eip': 0}
+        with patch('tkinter.Text'), patch('tkinter.Label'), patch('tkinter.Menu'), \
+             patch('tkinter.font.Font'), patch.object(term, 'Session') as session_class:
+            session = session_class.return_value
+            session.last = reply
+            root = MagicMock()
+            term.make_app(root, 'engine', 'program', utc_offset=0, ansi=True)
+            self.assertTrue(session_class.call_args.kwargs['ansi'])
+            session.send.reset_mock()
+            term.make_app(root, 'engine', 'program', utc_offset=0)
+            self.assertFalse(session_class.call_args.kwargs['ansi'])
+
+    def test_session_ansi_option_installs_driver_before_running_guest(self):
+        for enabled in (False, True):
+            with self.subTest(ansi=enabled):
+                replies = ''.join(json.dumps({'protocol': 1, 'seq': seq, 'ok': True}) + '\n'
+                                  for seq in range(2))
+                process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(replies),
+                                          stderr=io.StringIO())
+                with patch.object(term.subprocess, 'Popen', return_value=process):
+                    session = term.Session('engine', 'program', ansi=enabled)
+                self.assertEqual(process.stdin.getvalue(), 'ansi on\n' if enabled else '')
+                self.assertEqual(session.last['seq'], int(enabled))
+
+    def test_cga_frame_bank_layout_palette_and_monochrome(self):
+        frame = bytearray(0x4000)
+        frame[0] = 0b00011011
+        frame[0x2000] = 0b11000000
+        rgb = term.cga_rgb(frame.hex(), 4, 0x30)
+        self.assertEqual(rgb[:12], bytes.fromhex('00000055ffffff55ffffffff'))
+        self.assertEqual(rgb[320*3:320*3+3], bytes.fromhex('ffffff'))
+        rgb = term.cga_rgb(frame.hex(), 6, 0x0f)
+        self.assertEqual(rgb[:12], bytes.fromhex('000000000000000000ffffff'))
+        self.assertEqual(rgb[640*3:640*3+3], bytes.fromhex('ffffff'))
+        with self.assertRaises(ValueError):
+            term.cga_rgb('00', 4, 0x30)
+
+    def test_graphics_palette_maps_indices_and_rejects_bad_data(self):
+        palette = bytes([i for i in range(256) for _ in range(3)])
+        pixels = bytes([0, 4, 255]) + bytes(63997)
+        self.assertEqual(term.graphics_rgb(pixels.hex(), palette.hex())[:9], bytes([0,0,0,4,4,4,255,255,255]))
+        with self.assertRaises(ValueError):
+            term.graphics_rgb('00', palette.hex())
+
     def test_session_reads_graphics_with_large_escaped_output(self):
         reply = {'protocol': 1, 'seq': 0, 'graphics13': '00' * 64000,
                  'output': '\x00' * 16384, 'com1': ''}
@@ -128,6 +178,8 @@ class DosTerminalTests(unittest.TestCase):
                 self.assertTrue(session.send('shift 0')['ok'])
                 self.assertTrue(session.send('country 358')['ok'])
                 self.assertFalse(session.send('country 49')['ok'])
+                self.assertTrue(session.send('ansi on')['ok'])
+                self.assertFalse(session.send('ansi maybe')['ok'])
                 for ascii_code, scan in [term.key_code('h', 'h'), term.key_code('i', 'i')]:
                     self.assertTrue(session.send(f'key {ascii_code} {scan}')['ok'])
                 reply = session.send('run 1000')
@@ -211,3 +263,4 @@ class DosTerminalTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

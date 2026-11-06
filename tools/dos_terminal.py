@@ -15,6 +15,8 @@ change, delete or rename change in the host folder itself.
 --com1 console connects COM1 to the console this was started from (CTTY COM1
 runs the shell there), --com1 tcp:2323 to a TCP port for telnet or PuTTY.
 --country 358 gives Finnish dates and times (31.10.2026, 14.27.05).
+--ansi loads an ANSI.SYS-style console driver, as DEVICE=ANSI.SYS would: then
+PROMPT $e[1;36m colours and other ESC [ sequences draw on the DOS screen.
 --args gives the program its command line; for COMMAND.COM, /K runs a batch
 file or command and then stays at the prompt.
 Z: is a drive held in memory for the session, with TEMP=Z:\\ so that pipes
@@ -66,6 +68,32 @@ TYPED = {c: n for n, c in enumerate(GLYPHS) if n >= 0x80 or n in range(0x14, 0x1
 # Letters beyond ASCII take the scan code of the key they sit on in the Nordic
 # layouts (Finnish/Swedish: å ä ö; Danish/Norwegian: å æ ø); others get 0.
 _NATIONAL = {'å': 0x1a, 'ä': 0x28, 'ö': 0x27, 'æ': 0x28, 'ø': 0x27, '§': 0x29, '½': 0x29}
+
+
+def graphics_rgb(pixels, palette):
+    """Resolve mode 13h indices through the 256-entry RGB palette."""
+    indices = bytes.fromhex(pixels)
+    colors = bytes.fromhex(palette)
+    if len(indices) != 64000 or len(colors) != 768:
+        raise ValueError('invalid mode 13h frame or palette')
+    return b''.join(colors[index * 3:index * 3 + 3] for index in indices)
+
+
+def cga_rgb(frame, mode, color):
+    """Decode CGA even/odd scanline banks to RGB, with the 3D9 palette."""
+    data = bytes.fromhex(frame)
+    if len(data) != 0x4000 or mode not in (4, 6) or not 0 <= color <= 255:
+        raise ValueError('invalid CGA frame, mode or palette')
+    colors = [bytes.fromhex(c[1:]) for c in PALETTE]
+    if mode == 4:
+        base = [2, 4, 6] if not color & 0x20 else [3, 5, 7]
+        palette = [colors[color & 15]] + [colors[i + (8 if color & 0x10 else 0)] for i in base]
+        lut = [b''.join(palette[(b >> shift) & 3] for shift in (6, 4, 2, 0)) for b in range(256)]
+    else:
+        palette = [colors[0], colors[color & 15]]
+        lut = [b''.join(palette[(b >> shift) & 1] for shift in range(7, -1, -1)) for b in range(256)]
+    rows = ((y & 1) * 0x2000 + (y // 2) * 80 for y in range(200))
+    return b''.join(lut[b] for offset in rows for b in data[offset:offset + 80])
 
 
 def key_code(keysym, char, control=False, alt=False, altgr=False):
@@ -194,7 +222,7 @@ def screen_rows(reply):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False):
         options = (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
@@ -202,6 +230,8 @@ class Session:
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
+        if ansi:
+            self.send('ansi on')
 
     def _read(self):
         line = self.process.stdout.readline(MAX_REPLY)
@@ -419,7 +449,7 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -438,7 +468,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -454,11 +484,19 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
 
     def draw(reply):
         pixels = reply.get('graphics13')
-        if pixels is not None:
-            if frame[0] != pixels:
-                rgb = b''.join(bytes((min(255, v * 2),) * 3) for v in bytes.fromhex(pixels))
-                picture = tk.PhotoImage(data=b'P6 320 200 255\n' + rgb, format='PPM').zoom(2)
-                graphics.configure(image=picture); graphics.image = picture; frame[0] = pixels
+        cga = reply.get('graphics_cga')
+        if pixels is not None or cga is not None:
+            if pixels is not None:
+                descriptor = ('vga', pixels, reply['palette'])
+                width = 320
+            else:
+                descriptor = ('cga', cga, reply['cga_mode'], reply['cga_color'])
+                width = 320 if reply['cga_mode'] == 4 else 640
+            if frame[0] != descriptor:
+                rgb = graphics_rgb(pixels, reply['palette']) if pixels is not None else cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
+                picture = tk.PhotoImage(data=f'P6 {width} 200 255\n'.encode('ascii') + rgb, format='PPM')
+                picture = picture.zoom(2, 2) if width == 320 else picture.zoom(1, 2)
+                graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
             detail = f" — {reply['detail']}" if reply['detail'] else ''
@@ -647,6 +685,8 @@ def main(argv=None):
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
     parser.add_argument('--args', metavar='COMMAND_LINE',
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
+    parser.add_argument('--ansi', action='store_true',
+                        help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
     parser.add_argument('--country', type=int, choices=[1, 358],
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',
@@ -663,9 +703,10 @@ def main(argv=None):
     com1 = open_com1(args.com1) if args.com1 else None
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi)
     root.mainloop()
 
 
 if __name__ == '__main__':
     main()
+
