@@ -1609,3 +1609,54 @@ fn host_bios_clock_read_with_if_clear_keeps_undelivered_pit_ticks_out_of_bda(){
     p.ram.store(0x46c,MemWidth::Dword,123).unwrap();p.cpu.regs[0]=0;service(&mut p,0x1a,&mut vec![]).unwrap();
     assert_eq!(p.cpu.regs[2]&65535,123);assert_eq!(p.timer_ticks,123);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),123);
 }
+/// AH09 with `text` (ending in $) at PSP:0300.
+fn ansi_print(p:&mut Loaded,text:&[u8])->Result<(),String>{
+ let psp=u32::from(PSP)*16;p.ram.write_bytes(psp+0x300,text).unwrap();
+ p.cpu.regs[0]=0x0900;p.cpu.regs[2]=0x300;service(p,0x21,&mut vec![]).map(|_|())
+}
+#[test]
+fn ansi_driver_draws_colours_moves_the_cursor_and_clears(){
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();
+ // Without the driver the escape is an ordinary character (the arrow glyph).
+ ansi_print(&mut p,b"\x1b[1m$").unwrap();assert_eq!((cell(&p,0,0,0),cell(&p,0,0,1)),(0x071b,0x075b));
+ p.ram.store(0x450,MemWidth::Word,0).unwrap();
+ p.cpu.regs[0]=0x1a00;service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0x1a00,"not installed");
+ console::ansi::install(&mut p).unwrap();
+ p.cpu.regs[0]=0x1a00;service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0x1aff,"installed");
+ // SGR: bright cyan on blue, then reset; ANSI colour 6 (cyan) is CGA 3, 4 (blue) is CGA 1.
+ ansi_print(&mut p,b"\x1b[1;36;44mA\x1b[0mB\x1b[31;7mC\x1b[m$").unwrap();
+ assert_eq!((cell(&p,0,0,0),cell(&p,0,0,1),cell(&p,0,0,2)),(0x1b41,0x0742,0x4043));
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),3);
+ // A sequence split across two calls continues; H is 1-based and clamps.
+ ansi_print(&mut p,b"\x1b[10;$").unwrap();assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),3);
+ ansi_print(&mut p,b"5HX\x1b[2AY\x1b[99B\x1b[3DZ\x1b[200;200f$").unwrap();
+ assert_eq!((cell(&p,0,9,4)&255,cell(&p,0,7,5)&255,cell(&p,0,24,3)&255),(u32::from(b'X'),u32::from(b'Y'),u32::from(b'Z')));
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x184f);
+ // Save and restore; K erases to the line end in the current attribute.
+ ansi_print(&mut p,b"\x1b[1;1H\x1b[s\x1b[5;5H\x1b[u\x1b[42m\x1b[K$").unwrap();
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
+ assert!((0..80).all(|c|cell(&p,0,0,c)==0x2720));
+ // An ESC not followed by [ is shown with the next byte.
+ ansi_print(&mut p,b"\x1bx$").unwrap();assert_eq!((cell(&p,0,0,0),cell(&p,0,0,1)),(0x271b,0x2778));
+ // 2J clears the whole page in the attribute and homes the cursor; LF at the bottom scrolls in it.
+ ansi_print(&mut p,b"\x1b[0;44m\x1b[2J$").unwrap();
+ assert!((0..25).all(|r|(0..80).all(|c|cell(&p,0,r,c)==0x1720)));assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
+ ansi_print(&mut p,b"\x1b[25;1H\x1b[0mq\r\n$").unwrap();
+ assert_eq!((cell(&p,0,23,0),cell(&p,0,24,0)),(0x0771,0x0720));
+}
+#[test]
+fn ansi_driver_faults_change_nothing(){
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();console::ansi::install(&mut p).unwrap();
+ ansi_print(&mut p,b"\x1b[3$").unwrap();
+ // A read-only screen cell: neither the screen nor the half-read sequence changes.
+ let psp=u32::from(PSP)*16;
+ p.ram.write_bytes(psp+0x300,b"1mA$").unwrap();p.ram.protect(0xb8000,1).unwrap();let old=p.clone();
+ p.cpu.regs[0]=0x0900;p.cpu.regs[2]=0x300;assert!(service(&mut p,0x21,&mut vec![]).is_err());assert!(p.ram==old.ram,"faulting write changed RAM");
+ // Status reports, mode sets and key reassignment are refused, with nothing changed.
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();console::ansi::install(&mut p).unwrap();
+ for seq in [&b"ab\x1b[6n$"[..],b"\x1b[=3h$",b"\x1b[7l$",b"\x1b[0;68;\"dir\";13p$"]{
+  p.ram.write_bytes(psp+0x300,seq).unwrap();let old=p.clone();
+  p.cpu.regs[0]=0x0900;p.cpu.regs[2]=0x300;let err=service(&mut p,0x21,&mut vec![]).unwrap_err();
+  assert!(err.contains("not modelled"),"{err}");assert!(p.ram==old.ram,"refused sequence changed RAM");
+ }
+}

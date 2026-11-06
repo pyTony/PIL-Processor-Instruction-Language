@@ -135,6 +135,8 @@ class DosTerminalTests(unittest.TestCase):
                 self.assertTrue(session.send('shift 0')['ok'])
                 self.assertTrue(session.send('country 358')['ok'])
                 self.assertFalse(session.send('country 49')['ok'])
+                self.assertTrue(session.send('ansi on')['ok'])
+                self.assertFalse(session.send('ansi maybe')['ok'])
                 for ascii_code, scan in [term.key_code('h', 'h'), term.key_code('i', 'i')]:
                     self.assertTrue(session.send(f'key {ascii_code} {scan}')['ok'])
                 reply = session.send('run 1000')
