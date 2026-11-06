@@ -1,4 +1,4 @@
-//! Bounded mode-3 BIOS console. Video RAM and the BIOS keyboard ring are authoritative.
+//! Bounded BIOS text console and graphics pixels. Video RAM and the keyboard ring are authoritative.
 //! VGA port state lives in dos_vga; IRQ1, ANSI and host UI are outside this module.
 use super::*;
 const VIDEO:u32=0xb8000;
@@ -233,9 +233,18 @@ fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
     scroll(&mut cells,(top,left,bottom,right),p.cpu.regs[0]&255,(p.cpu.regs[3]>>8)&255,up);
     commit(p,&window_writes(page,&cells,(top,left,bottom,right)))
 }
-/// Fixed mode-3 profile: AH00 accepts mode 3 only. Bit 7 keeps video RAM.
+/// Bounded mode 3, CGA 4/6 and VGA 13h profile. Bit 7 keeps video RAM.
 fn set_mode(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
+    if matches!(al&0x7f,4|6){
+        let mode=al&0x7f;let cols=if mode==4{40}else{80};
+        let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,cols),
+            (0x44c,MemWidth::Word,0x4000),(0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0),
+            (0x463,MemWidth::Word,0x3d4),(0x466,MemWidth::Byte,if mode==4{0x30}else{0x3f})];
+        writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
+        if al&0x80==0{writes.extend((0..0x4000).map(|n|(VIDEO+n,MemWidth::Byte,0)));}
+        commit(p,&writes)?;p.vga.set_cga_color(if mode==4{0x30}else{0x3f});return Ok(());
+    }
     if al&0x7f==0x13{
         let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x462,MemWidth::Byte,0)];
         if al&0x80==0{writes.extend((0..64000).map(|n|(0xa0000+n,MemWidth::Byte,0)));}
@@ -260,10 +269,39 @@ fn video_mode(p:&mut Loaded)->Result<(),String>{
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(cols<<8)|mode;
     p.cpu.regs[3]=(p.cpu.regs[3]&0xffff00ff)|(page<<8);Ok(())
 }
+/// CGA modes 4 and 6, and mode 13h, one pixel on page zero.
+fn graphics_pixel(p:&mut Loaded,write:bool)->Result<(),String>{
+    let mode=byte(p,0x449)?;let x=p.cpu.regs[1]&0xffff;let y=p.cpu.regs[2]&0xffff;
+    let page=(p.cpu.regs[3]>>8)&255;
+    if page!=0{return Err("graphics pixel page must be zero".into());}
+    let (address,shift,mask)=match mode{
+        4 if x<320&&y<200=>(VIDEO+(y&1)*0x2000+(y/2)*80+x/4,6-(x%4)*2,3),
+        6 if x<640&&y<200=>(VIDEO+(y&1)*0x2000+(y/2)*80+x/8,7-x%8,1),
+        0x13 if x<320&&y<200=>(0xa0000+y*320+x,0,255),
+        4|6|0x13=>return Err("graphics pixel outside mode bounds".into()),
+        _=>return Err(format!("BIOS pixel access is not implemented for mode {mode:02x}")),
+    };
+    let old=byte(p,address)?;
+    if write{
+        let al=p.cpu.regs[0]&255;let color=al&mask;
+        let value=if mode!=0x13&&al&0x80!=0{old^(color<<shift)}else{(old&!(mask<<shift))|(color<<shift)};
+        commit(p,&[(address,MemWidth::Byte,value)])
+    }else{
+        p.cpu.regs[0]=(p.cpu.regs[0]&!255)|((old>>shift)&mask);Ok(())
+    }
+}
+/// INT 10h AH=0Bh CGA background/intensity or palette select.
+fn cga_palette(p:&mut Loaded)->Result<(),String>{
+    let mode=byte(p,0x449)?;if !matches!(mode,4|6){return Err("CGA palette requires mode 4 or 6".into());}
+    let bh=(p.cpu.regs[3]>>8)&255;let bl=p.cpu.regs[3]&255;let old=byte(p,0x466)?;
+    let value=match bh{0=>(old&0x20)|(bl&0x1f),1=>(old&0x1f)|((bl&1)<<5),_=>return Err("CGA palette selector must be 0 or 1".into())};
+    commit(p,&[(0x466,MemWidth::Byte,value)])?;p.vga.set_cga_color(value as u8);Ok(())
+}
 pub(super) fn display(p:&mut Loaded,ah:u8)->Result<(),String>{
     match ah{
         0x00=>set_mode(p),0x05=>select_page(p),
         0x06|0x07=>scroll_service(p,ah==6),
+        0x0b=>cga_palette(p),0x0c=>graphics_pixel(p,true),0x0d=>graphics_pixel(p,false),
         0x0e=>teletype(p),0x0f=>video_mode(p),
         _=>Err(format!("unimplemented BIOS video AH={ah:02x}")),
     }

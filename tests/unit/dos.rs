@@ -520,6 +520,54 @@ fn mandelbrot_guest_writes_pixels_into_mode_13_vga_memory(){
 }
 
 #[test]
+fn cga_modes_bios_pixels_and_memory_banks(){
+ for (mode,width,cols) in [(4u32,320u32,40u32),(6,640,80)]{
+  let mut p=load(&[0xf4],"cga.com").unwrap();
+  p.ram.store(0xb8000,MemWidth::Byte,0xaa).unwrap();
+  p.cpu.regs[0]=mode|0x80;console::display(&mut p,0).unwrap();
+  assert_eq!(p.ram.load(0xb8000,MemWidth::Byte).unwrap(),0xaa);
+  p.cpu.regs[0]=mode;console::display(&mut p,0).unwrap();
+  assert_eq!(p.ram.load(0xb8000,MemWidth::Byte).unwrap(),0);
+  assert_eq!(p.ram.load(0x44a,MemWidth::Word).unwrap(),cols);
+  let col=if mode==4{3}else{1};
+  for (x,y,addr,shift) in [(0,0,0xb8000,if mode==4{6}else{7}),
+                            (width-1,0,0xb8000+79,0),(0,1,0xba000,if mode==4{6}else{7}),
+                            (width-1,199,0xba000+99*80+79,0)]{
+   p.cpu.regs[0]=0x0c00|col;p.cpu.regs[1]=x;p.cpu.regs[2]=y;p.cpu.regs[3]=0;
+   service(&mut p,0x10,&mut vec![]).unwrap();
+   assert_eq!((p.ram.load(addr,MemWidth::Byte).unwrap()>>shift)&col,col);
+   p.cpu.regs[0]=0x0d00;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,col);
+   p.cpu.regs[0]=0x0c80|col;service(&mut p,0x10,&mut vec![]).unwrap();
+   p.cpu.regs[0]=0x0d00;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,0);
+  }
+  p.cpu.regs[0]=0x0c01;p.cpu.regs[1]=width;p.cpu.regs[2]=0;
+  assert!(service(&mut p,0x10,&mut vec![]).is_err());
+  p.cpu.regs[0]=3;console::display(&mut p,0).unwrap();assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),3);
+ }
+}
+#[test]
+fn cga_palette_bios_and_hardware_register_are_independent(){
+ let mut p=load(&[0xf4],"cga.com").unwrap();p.cpu.regs[0]=4;console::display(&mut p,0).unwrap();
+ p.cpu.regs[3]=0x0012;console::display(&mut p,0x0b).unwrap();assert_eq!(p.vga.cga_color(),0x32);
+ p.cpu.regs[3]=0x0100;console::display(&mut p,0x0b).unwrap();assert_eq!(p.vga.cga_color(),0x12);
+ p.vga.io(0x3d9,false,0x2f).unwrap();assert_eq!(p.vga.cga_color(),0x2f);
+ assert_eq!(p.ram.load(0x466,MemWidth::Byte).unwrap(),0x12);
+}
+#[test]
+fn cga_color_register_accepts_guest_out_instruction(){
+ let guest=[0xba,0xd9,0x03,0xb0,0x2f,0xee,0xf4];
+ let r=run(load(&guest,"color.com").unwrap(),100).unwrap();
+ assert_eq!(r.loaded.vga.cga_color(),0x2f);
+}
+#[test]
+fn mode13_bios_pixel_is_full_eight_bit_index(){
+ let mut p=load(&[0xf4],"pixel.com").unwrap();p.cpu.regs[0]=0x13;console::display(&mut p,0).unwrap();
+ p.cpu.regs[0]=0x0caa;p.cpu.regs[1]=319;p.cpu.regs[2]=199;p.cpu.regs[3]=0;
+ service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.ram.load(0xafa00-1,MemWidth::Byte).unwrap(),0xaa);
+ p.cpu.regs[0]=0x0d00;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,0xaa);
+}
+
+#[test]
 fn vga_mode13_clears_or_preserves_memory_and_returns_to_text(){
     let mut p=load(&[0xf4],"mode.com").unwrap();
     p.ram.store(0xa0000,MemWidth::Byte,0x55).unwrap();p.ram.store(0xafa00,MemWidth::Byte,0x77).unwrap();

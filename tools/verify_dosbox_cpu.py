@@ -625,7 +625,7 @@ def main():
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--dosbox', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--suite', choices=('cpu', 'console'), default='cpu')
+    parser.add_argument('--suite', choices=('cpu', 'console', 'cga'), default='cpu')
     parser.add_argument('--timeout', type=int, default=90)
     parser.add_argument('--negative-control', action='store_true',
                         help='Deliberately corrupt the first expected result; both engines must fail it')
@@ -638,6 +638,9 @@ def main():
     if args.suite == 'console':
         from verify_dos_console import build_console
         tests, guest_bytes = build_console(args.negative_control)
+    elif args.suite == 'cga':
+        from verify_cga import build_cga
+        tests, guest_bytes = build_cga(args.negative_control)
     else:
         guest_bytes = build(tests)
     guest = directory/'CPUTEST.COM'
