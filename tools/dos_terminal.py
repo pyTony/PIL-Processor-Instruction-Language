@@ -15,6 +15,7 @@ change, delete or rename change in the host folder itself.
 --com1 console connects COM1 to the console this was started from (CTTY COM1
 runs the shell there), --com1 tcp:2323 to a TCP port for telnet or PuTTY.
 --country 358 gives Finnish dates and times (31.10.2026, 14.27.05).
+--speaker-volume 0 mutes PC speaker clicks; 1..100 adjusts their volume (default 5).
 --ansi loads an ANSI.SYS-style console driver, as DEVICE=ANSI.SYS would: then
 PROMPT $e[1;36m colours and other ESC [ sequences draw on the DOS screen.
 --args gives the program its command line; for COMMAND.COM, /K runs a batch
@@ -31,7 +32,14 @@ so F10 or Alt+F opens a menu in EDIT.
 """
 import argparse
 import codecs
+import io
 import json
+import math
+import shutil
+import struct
+import threading
+import time
+import wave
 from pathlib import Path
 import subprocess
 import sys
@@ -46,6 +54,90 @@ SETTLE = 10
 # CGA palette for the 16 text attributes.
 PALETTE = ['#000000', '#0000aa', '#00aa00', '#00aaaa', '#aa0000', '#aa00aa', '#aa5500', '#aaaaaa',
            '#555555', '#5555ff', '#55ff55', '#55ffff', '#ff5555', '#ff55ff', '#ffff55', '#ffffff']
+# Host PC speaker: the DOS session reports activation counts, not PCM or the
+# duration of each pulse. A short, quiet click is therefore an approximation.
+# It avoids playing a long system notification for each Landmark speaker pulse.
+SPEAKER_INTERVAL = 0.2
+
+
+def speaker_volume(value):
+    try:
+        level = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError('speaker volume must be 0..100')
+    if not 0 <= level <= 100:
+        raise argparse.ArgumentTypeError('speaker volume must be 0..100')
+    return level
+
+
+def speaker_click(level):
+    """10 ms PCM click with a gentle envelope, as an in-memory WAV file."""
+    rate, count = 22050, 220
+    amplitude = 32767 * level / 100
+    samples = [int(amplitude * min(i / 22, (count - 1 - i) / 22, 1)
+                   * math.sin(2 * math.pi * 1200 * i / rate)) for i in range(count)]
+    output = io.BytesIO()
+    with wave.open(output, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(struct.pack('<' + 'h' * count, *samples))
+    return output.getvalue()
+
+
+class AsyncSpeakerPlayer:
+    """One bounded background playback; never block Tk's event loop."""
+    def __init__(self):
+        self.worker = None
+        self.warned = False
+        if sys.platform == 'win32':
+            import winsound
+            self.output = lambda data: winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+        else:
+            player = shutil.which('aplay')
+            self.output = (lambda data: subprocess.run([player, '-q'], input=data,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=2, check=False)) if player else None
+
+    def play(self, data):
+        if self.output is None:
+            if not self.warned:
+                print('PIL DOS: PC speaker clicks unavailable (install aplay on Linux)', file=sys.stderr)
+                self.warned = True
+            return
+        if self.worker is not None and self.worker.is_alive():
+            return
+        def run():
+            try:
+                self.output(data)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                pass  # Audio failure must not stop DOS or the GUI.
+        self.worker = threading.Thread(target=run, daemon=True)
+        self.worker.start()
+
+
+class QuietSpeaker:
+    """Coalesce DOS speaker activations and throttle clicks during benchmarks."""
+    def __init__(self, level, initial=0, player=None, clock=time.monotonic):
+        self.level = level
+        self.last_count = initial
+        self.last_play = None
+        self.clock = clock
+        self.player = player if player is not None else (AsyncSpeakerPlayer() if level else None)
+        self.click = speaker_click(level) if level else b''
+
+    def observe(self, reply):
+        count = reply.get('beeps', self.last_count)
+        changed = count > self.last_count
+        self.last_count = count
+        if not changed or not self.level or self.player is None:
+            return
+        now = self.clock()
+        if self.last_play is None or now - self.last_play >= SPEAKER_INTERVAL:
+            self.last_play = now
+            self.player.play(self.click)
+
+
 # US-layout set 1 scan codes for the keys a DOS program sees as ASCII.
 _ROWS = [('1234567890-=', 0x02), ('qwertyuiop[]', 0x10), ("asdfghjkl;'`", 0x1e), ('zxcvbnm,./', 0x2c)]
 _SHIFTED = {'!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
@@ -449,7 +541,7 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -477,12 +569,13 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
     held, state = set(), {'shift': 0, 'settle': 0}
-    beeps = [session.last.get('beeps', 0)]
+    speaker = QuietSpeaker(speaker_level, session.last.get('beeps', 0))
     geom = [80, 25]
     frame = [None]
     drawn = [None, None, None]  # [screen_hex, cursor_tuple, rows_list]
 
     def draw(reply):
+        speaker.observe(reply)
         pixels = reply.get('graphics13')
         cga = reply.get('graphics_cga')
         if pixels is not None or cga is not None:
@@ -501,8 +594,6 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
             detail = f" — {reply['detail']}" if reply['detail'] else ''
             status.configure(text=("Press any key to continue" if reply['status'] == 'waiting_input' else reply['status'] + detail) + f"   steps {reply['steps']}   clock {zone}")
-            if reply.get('beeps', 0) > beeps[0]:
-                beeps[0] = reply['beeps']; root.bell()
             return
         if graphics.winfo_manager() == "pack":
             graphics.pack_forget(); text.pack(before=status, padx=8, pady=(8, 4)); text.focus_set(); drawn[0] = None
@@ -526,10 +617,6 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             drawn[1] = cursor
         detail = f" — {reply['detail']}" if reply['detail'] else ''
         status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}   clock {zone}")
-        # The program switched the PC speaker on: sound the host's bell.
-        if reply.get('beeps', 0) > beeps[0]:
-            beeps[0] = reply['beeps']
-            root.bell()
 
     def insert_row(r, chars, attrs, at_end=False):
         start = 0
@@ -685,6 +772,8 @@ def main(argv=None):
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
     parser.add_argument('--args', metavar='COMMAND_LINE',
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
+    parser.add_argument('--speaker-volume', type=speaker_volume, default=5, metavar='0..100',
+                        help='PC speaker click volume (default 5, 0 mutes; Windows or Linux with aplay)')
     parser.add_argument('--ansi', action='store_true',
                         help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
     parser.add_argument('--country', type=int, choices=[1, 358],
@@ -703,7 +792,7 @@ def main(argv=None):
     com1 = open_com1(args.com1) if args.com1 else None
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume)
     root.mainloop()
 
 
