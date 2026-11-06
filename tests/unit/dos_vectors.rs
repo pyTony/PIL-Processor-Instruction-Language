@@ -87,11 +87,91 @@ fn timer_ticks_reach_the_bda_only_with_the_host_clock_if_and_bios_handlers(){
     let delta=got.abs_diff(now);assert!(delta.min(super::super::TICKS_PER_DAY-delta)<=2,"{got} {now}");assert_eq!(r.loaded.cpu.regs[0]&0xffff,got&0xffff);
     // The tick went back from the old count, so midnight passed.
     assert_eq!(r.loaded.ram.load(0x470,MemWidth::Byte).unwrap(),1);
-    // A program's INT 08h or 1Ch handler is not called: the run stops.
-    for n in [0x08u32,0x1c]{
+    // A custom INT 08h handler remains outside this BIOS shortcut.
+    for n in [0x08u32]{
         let mut p=fresh(Some(0),0x202);p.ram.store(n*4,MemWidth::Dword,u32::from(PSP)<<16|0x108).unwrap();
         let r=run(p,10).unwrap();assert!(matches!(&r.stop,Stop::Service(m) if m.contains("IRQ0")),"{:?}",r.stop);
     }
+}
+#[test]
+fn timer_hook_runs_at_instruction_boundary_and_iret_restores_frame(){
+    // Interrupted CLI; HLT. Hook: INC BYTE [0200h]; IRET.
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xfe,0x06,0x00,0x02,0xcf])]);
+    let mut p=load(&code,"tick.com").unwrap();p.cpu.eflags=0x2d7;
+    p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    p.ram.store(u32::from(PSP)*16+0x200,MemWidth::Byte,0).unwrap();
+    let (ip,sp,flags)=(p.cpu.eip,p.cpu.regs[4]&0xffff,p.cpu.eflags);
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    assert_eq!(p.cpu.eip,u32::from(TIMER_OFFSET));assert_eq!(p.cpu.eflags&0x300,0);
+    assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),42);
+    let ss=u32::from(PSP)*16;
+    assert_eq!(p.ram.load(ss+sp-6,MemWidth::Word).unwrap(),ip);
+    assert_eq!(p.ram.load(ss+sp-2,MemWidth::Word).unwrap(),flags&0xffff);
+    let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(ss+0x200,MemWidth::Byte).unwrap(),1);
+    assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp);
+    assert_eq!(r.loaded.cpu.eflags&0xd5,flags&0xd5);
+}
+#[test]
+fn host_timer_run_loop_delivers_a_pending_hook_before_the_next_instruction(){
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xfe,0x06,0x00,0x02,0xcf])]);
+    let mut p=load(&code,"tick.com").unwrap();p.cpu.eflags=0x202;p.clock_offset=Some(0);p.timer_ticks=u32::MAX;
+    p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    let ss=u32::from(PSP)*16;p.ram.store(ss+0x200,MemWidth::Byte,0).unwrap();
+    let sp=p.cpu.regs[4];let r=run(p,40).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(ss+0x200,MemWidth::Byte).unwrap(),1);
+    assert_eq!(r.loaded.cpu.regs[4],sp);
+}
+#[test]
+fn timer_bios_wrapper_restores_eax_and_ds_after_the_hook(){
+    // BIOS saves EAX and DS around the user hook. This hook changes both.
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0x66,0xb8,0x34,0x12,0x78,0x56,0x8e,0xd8,0xcf])]);
+    let mut p=load(&code,"clobber.com").unwrap();p.cpu.eflags=0x202;p.cpu.regs[0]=0xdeadbeef;
+    p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    let original_ds=p.selectors[SegmentRegister::Ds.index()];
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu.regs[0],0xdeadbeef);assert_eq!(r.loaded.selectors[SegmentRegister::Ds.index()],original_ds);
+}
+#[test]
+fn timer_hook_can_chain_to_the_default_int1c_entry(){
+    let old=entry(0x1c);let [lo,hi,sl,sh]=old.to_le_bytes();
+    // PUSHF; CALL FAR old; INC BYTE [0200h]; IRET
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0x9c,0x9a,lo,hi,sl,sh,0xfe,0x06,0x00,0x02,0xcf])]);
+    let mut p=load(&code,"chain.com").unwrap();p.cpu.eflags=0x202;
+    p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    let ss=u32::from(PSP)*16;p.ram.store(ss+0x200,MemWidth::Byte,0).unwrap();
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(ss+0x200,MemWidth::Byte).unwrap(),1);
+}
+#[test]
+fn bios_clock_read_does_not_enter_timer_hook_mid_service(){
+    let code=code_at(&[(0,&[0xcd,0x1a,0xfa,0xf4]),(0x30,&[0xcf])]);
+    let mut p=load(&code,"clock.com").unwrap();p.cpu.eflags=0x202;p.clock_offset=Some(0);p.timer_ticks=12;
+    p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    p.cpu.regs[0]=0;let (ip,cs)=(p.cpu.eip,p.selectors[SegmentRegister::Cs.index()]);
+    super::super::service(&mut p,0x1a,&mut vec![]).unwrap();
+    assert_eq!((p.cpu.eip,p.selectors[SegmentRegister::Cs.index()]),(ip,cs));
+    assert_eq!(p.cpu.regs[2]&0xffff,12);
+}
+#[test]
+fn timer_hook_outside_real_mode_is_an_explicit_stop(){
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xcf])]);
+    let mut p=load(&code,"tick.com").unwrap();p.cpu.eflags=0x202;p.image.real_mode=false;
+    p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    let before=p.clone();assert!(super::super::services::timer_interrupt_at(&mut p,42).is_err());
+    assert_eq!(p.cpu,before.cpu);assert_eq!(p.ram,before.ram);assert_eq!(p.timer_ticks,before.timer_ticks);
+}
+#[test]
+fn timer_hook_invalid_target_is_transactional_and_masked_ticks_wait(){
+    let mut p=load(&[0xfa,0xf4],"tick.com").unwrap();p.cpu.eflags=2;
+    p.ram.store(0x1c*4,MemWidth::Dword,0xf000_0000).unwrap();
+    let original=p.clone();super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu,original.cpu);assert_eq!(p.ram,original.ram);
+    p.cpu.eflags=0x202;let original=p.clone();
+    assert!(super::super::services::timer_interrupt_at(&mut p,42).is_err());
+    assert_eq!(p.cpu,original.cpu);assert_eq!(p.ram,original.ram);assert_eq!(p.timer_ticks,original.timer_ticks);
 }
 #[test]
 fn pit_channel0_latches_reads_and_reprograms_binary_modes(){

@@ -60,6 +60,8 @@ pub struct Loaded{
     pub selectors:[u16;6],pub relocations:usize,pub module_bytes:usize,
     pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
     pub timer_ticks:u32,pub open_handles:u32,
+    /// Most recent reported DOS error for INT 21h/AH=59h.
+    pub dos_error:u16,
     pub dta:(u16,u16),
     /// DOS console state: scan code owed after an ASCII-0 key, and an AH0C flush
     /// already performed for the read that is waiting.
@@ -107,7 +109,7 @@ impl Clone for Loaded{
         arena:self.arena.clone(),format:self.format.clone(),cpu:self.cpu.clone(),ram:self.ram.clone(),image:self.image.clone(),
         selectors:self.selectors,relocations:self.relocations,module_bytes:self.module_bytes,header_bytes:self.header_bytes,
         module_base:self.module_base,allocated_end:self.allocated_end,trailing_bytes:self.trailing_bytes,timer_ticks:self.timer_ticks,
-        open_handles:self.open_handles,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
+        open_handles:self.open_handles,dos_error:self.dos_error,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
         input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
         own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
@@ -291,7 +293,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     let mut system=[(0,0);SYSTEM_RANGES];
     system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
     system[1]=(vectors::ENTRIES,vectors::END);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -348,7 +350,11 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Err(message)=>break Stop::Service(message),
         }
         // The host clock is checked every 256 steps (about 0.1 ms of work here).
-        if execution_steps%256==0{if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}}
+        if execution_steps%256==0{
+            // An asynchronous hook observes the flags of the interrupted instruction.
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}
+        }
         let linear=p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip);
         if (vectors::ENTRIES..vectors::END).contains(&linear){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match vectors::leave(&mut p){

@@ -79,6 +79,23 @@ def graphics_rgb(pixels, palette):
     return b''.join(colors[index * 3:index * 3 + 3] for index in indices)
 
 
+def cga_rgb(frame, mode, color):
+    """Decode CGA even/odd scanline banks to RGB, with the 3D9 palette."""
+    data = bytes.fromhex(frame)
+    if len(data) != 0x4000 or mode not in (4, 6) or not 0 <= color <= 255:
+        raise ValueError('invalid CGA frame, mode or palette')
+    colors = [bytes.fromhex(c[1:]) for c in PALETTE]
+    if mode == 4:
+        base = [2, 4, 6] if not color & 0x20 else [3, 5, 7]
+        palette = [colors[color & 15]] + [colors[i + (8 if color & 0x10 else 0)] for i in base]
+        lut = [b''.join(palette[(b >> shift) & 3] for shift in (6, 4, 2, 0)) for b in range(256)]
+    else:
+        palette = [colors[0], colors[color & 15]]
+        lut = [b''.join(palette[(b >> shift) & 1] for shift in range(7, -1, -1)) for b in range(256)]
+    rows = ((y & 1) * 0x2000 + (y // 2) * 80 for y in range(200))
+    return b''.join(lut[b] for offset in rows for b in data[offset:offset + 80])
+
+
 def key_code(keysym, char, control=False, alt=False, altgr=False):
     """Map a Tk key event to (ascii, scan), or None for keys DOS never sees.
     `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
@@ -430,7 +447,7 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -467,12 +484,19 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
 
     def draw(reply):
         pixels = reply.get('graphics13')
-        if pixels is not None:
-            palette = reply['palette']
-            if frame[0] != (pixels, palette):
-                rgb = graphics_rgb(pixels, palette)
-                picture = tk.PhotoImage(data=b'P6 320 200 255\n' + rgb, format='PPM').zoom(2)
-                graphics.configure(image=picture); graphics.image = picture; frame[0] = (pixels, palette)
+        cga = reply.get('graphics_cga')
+        if pixels is not None or cga is not None:
+            if pixels is not None:
+                descriptor = ('vga', pixels, reply['palette'])
+                width = 320
+            else:
+                descriptor = ('cga', cga, reply['cga_mode'], reply['cga_color'])
+                width = 320 if reply['cga_mode'] == 4 else 640
+            if frame[0] != descriptor:
+                rgb = graphics_rgb(pixels, reply['palette']) if pixels is not None else cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
+                picture = tk.PhotoImage(data=f'P6 {width} 200 255\n'.encode('ascii') + rgb, format='PPM')
+                picture = picture.zoom(2, 2) if width == 320 else picture.zoom(1, 2)
+                graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
             detail = f" — {reply['detail']}" if reply['detail'] else ''

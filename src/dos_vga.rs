@@ -27,14 +27,16 @@ fn default_palette()->[[u8;3];256]{
     p
 }
 #[derive(Clone,Debug)]
-pub(super) struct Vga { dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool }
-impl Default for Vga {fn default()->Self{Self{dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false}}}
+pub(super) struct Vga { cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool }
+impl Default for Vga {fn default()->Self{Self{cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false}}}
 impl Vga {
     pub fn reset_palette(&mut self){self.dac=default_palette();self.dac_mask=255;}
     pub fn palette_hex(&self)->String{
         (0..256).flat_map(|i|self.dac[i & usize::from(self.dac_mask)])
             .map(|c|format!("{:02x}",(u16::from(c)*255/63)as u8)).collect()
     }
+    pub fn cga_color(&self)->u8{self.cga_color}
+    pub fn set_cga_color(&mut self,value:u8){self.cga_color=value&0x3f;}
     pub fn color_io(&self)->bool{self.misc_output&1!=0}
     pub fn status_active(&self,port:u16)->bool{port==if self.color_io(){0x3da}else{0x3ba}}
     pub fn select_color(&mut self){self.misc_output|=1;}
@@ -42,6 +44,8 @@ impl Vga {
     pub fn cursor(&self)->u16{u16::from_be_bytes([self.regs[14],self.regs[15]])}
     pub fn io(&mut self,port:u16,input:bool,value:u8)->Result<Option<u8>,String>{
         match (port,input) {
+            (0x3d9,false)=>{self.set_cga_color(value);return Ok(Some(0));},
+            (0x3d9,true)=>return Ok(Some(0xff)),
             (0x3c6,true)=>return Ok(Some(self.dac_mask)),
             (0x3c6,false)=>{self.dac_mask=value;return Ok(Some(0));},
             (0x3c7,true)=>return Ok(Some(if self.dac_read_mode{3}else{0})),

@@ -24,13 +24,26 @@ session behavior remains: PIT input time is zero and BIOS reads advance whole
 ticks. This is not a cycle-accurate CPU or PIC model.
 
 Limits remain explicit: BCD, modes 0/1/4/5, channel 1, read-back/status commands,
-GATE transitions and live count rewrites without a new control word stop.
+GATE transitions and live count rewrites to a different divisor without a
+new control word stop. A low/high rewrite of the currently active divisor
+is accepted without changing its phase; GW-BASIC 3.23 uses this at startup.
 Only periodic output edges are modeled; control-word-induced OUT transitions
 and a complete PIC pending/in-service/masking model are not implemented.
 The existing BIOS timer shortcut catches up elapsed ticks in one update;
 it does not reproduce individual IRQ delivery while interrupts were masked.
-User INT 08h/1Ch handlers still stop rather than being silently skipped.
-Clock offset should be selected before execution, as the terminal does.
+A custom real-mode INT 1Ch handler runs through a synthetic BIOS IRQ0 wrapper
+that saves EAX and DS, calls the hook, and returns with IRET. The handler can
+chain to the default no-op INT 1Ch entry. The shortcut invokes the hook once
+per delivered poll even if multiple edges elapsed; it is not a full PIC or
+individual-edge model. Clock reads with a hooked INT 1Ch return the most
+recently delivered tick instead of entering the hook mid-service. Custom
+INT 08h handlers and timer hooks outside real mode still stop explicitly. Clock offset should be selected before execution,
+as the terminal does.
+
+With no game adapter, port 201h reads FFh and ignores writes. BIOS joystick
+service INT 15h AH=84h reports unsupported (AH=86h, CF=1), as documented by
+an AT-compatible BIOS without a joystick port. This is absence, not joystick
+emulation.
 
 TOPBENCH 0.38a was run directly with -l and a host clock. It reached its
 continuous-score startup, then stopped at the explicit custom INT 08h IRQ0
@@ -41,3 +54,7 @@ exact-clock device tests.
 References inspected (implementation written independently):
 - [Intel 8254 datasheet, modes 2/3, latch and programming rules](https://www.scs.stanford.edu/10wi-cs140/pintos/specs/8254.pdf)
 - [TOPBENCH published source](https://github.com/MobyGamer/TOPBENCH), including its ZTIMER11 timing routines.
+
+References for this increment:
+- [Epson BIOS joystick service, no-port behavior](https://download.epson.de/pub/electronics-de/card-pc/general/dbios-e.pdf).
+- [Bochs BIOS timer interrupt code](https://android.googlesource.com/platform/external/qemu-pc-bios/+/80e81e424e98b6646f3c7f3420f7bad4dc308a08/bochs/bios/rombios.c), including the registers it saves around INT 1Ch.

@@ -1,5 +1,5 @@
 //! Bounded binary PIT channel 0. Supplied input clocks make device tests exact.
-//! GATE is tied high. Reprogram through a control word; live reloads are explicit stops.
+//! GATE is tied high. The same live divisor may be rewritten; other reloads stop.
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub(super) struct Counter0{mode:u8,access:u8,reload:u32,epoch:u64,irq_base:u64,running:bool,frozen:u16,frozen_irqs:u64,armed:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>}
 impl Default for Counter0{fn default()->Self{Self{mode:3,access:3,reload:65536,epoch:0,irq_base:0,running:true,frozen:0,frozen_irqs:0,armed:false,low:None,read_high:false,latch:None}}}
@@ -22,10 +22,17 @@ impl Counter0{
         self.mode=mode;self.access=value>>4&3;self.armed=true;self.low=None;self.read_high=false;self.latch=None;Ok(())
     }
     pub fn write(&mut self,value:u8,now:u64)->Result<(),String>{
-        if !self.armed{return Err("PIT channel 0 live reload requires a new control word in this profile".into());}
+        // Rewriting the currently running divisor leaves the mode-2/3 phase
+        // unchanged: the same value is loaded at the next period boundary.
+        // Other live changes remain an explicit unsupported operation.
+        if !self.armed && self.access != 3{return Err("PIT channel 0 live reload requires a new control word in this profile".into());}
         let raw=match self.access{1=>u16::from(value),2=>u16::from(value)<<8,_=>match self.low{None=>{self.low=Some(value);return Ok(())},Some(lo)=>u16::from_le_bytes([lo,value])}};
         let reload=if raw==0{65536}else{u32::from(raw)};
         if reload<2{return Err("PIT modes 2/3 require a count of at least two (zero means 65536)".into());}
+        if !self.armed{
+            if reload!=self.reload{return Err("PIT channel 0 live reload requires a new control word in this profile".into());}
+            self.low=None;return Ok(());
+        }
         self.reload=reload;self.epoch=now.saturating_add(1);self.irq_base=self.frozen_irqs;self.running=true;self.armed=false;self.low=None;Ok(())
     }
     pub fn read(&mut self,now:u64)->u8{
@@ -70,10 +77,19 @@ mod tests{
         p.command(0x24,1).unwrap();p.write(0x12,1).unwrap();assert_eq!(p.count(2),0x1200);assert_eq!(p.read(2),0x12);
         for (a,b) in [(0x34,0x3c),(0x36,0x3e)]{let x=start(a,8,0);let y=start(b,8,0);for t in 0..100{assert_eq!(x.count(t),y.count(t));}}
     }
+    #[test]fn identical_live_reload_preserves_running_phase_and_interrupts(){
+        for mode in [0x34,0x36]{
+            for value in [20u16,0]{
+                let mut p=start(mode,value,0);let baseline=p.clone();
+                p.write(value as u8,10).unwrap();p.write((value>>8)as u8,11).unwrap();
+                for t in [11,19,21,100,65538]{assert_eq!(p.count(t),baseline.count(t));assert_eq!(p.interrupts(t),baseline.interrupts(t));}
+            }
+        }
+    }
     #[test]fn invalid_commands_counts_and_live_reload_stop_without_mutation(){
         let mut p=start(0x34,20,0);
         for cmd in [0x35,0x30,0x32,0x76,0xc2]{let old=p.clone();assert!(p.command(cmd,100).is_err());assert_eq!(p,old);}
-        let old=p.clone();assert!(p.write(0,100).is_err());assert_eq!(p,old);
+        p.write(0,100).unwrap();let old=p.clone();assert!(p.write(0,100).is_err());assert_eq!(p,old);
         p.command(0x34,100).unwrap();p.write(1,100).unwrap();let old=p.clone();assert!(p.write(0,100).is_err());assert_eq!(p,old);p.write(1,100).unwrap();assert_eq!(p.count(101),257);
     }
 }

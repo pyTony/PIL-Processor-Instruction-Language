@@ -21,8 +21,13 @@ const FIRST:u16=0xf000;
 /// 43h, 46h), the DOS-kept 22h-24h and the free and user vectors stay as
 /// they were.
 pub(super) const ANSWERED:[u8;18]=[0x08,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
-/// End of the entry area, for the fetch window.
-pub(super) const END:u32=ENTRIES+3*256;
+/// The INT stubs end before the small synthetic IRQ0 BIOS wrapper.
+const ENTRY_END:u32=ENTRIES+3*256;
+const TIMER_OFFSET:u16=0xf300;
+// IRQ0 enters here with the interrupted FLAGS/CS/IP on the stack. Save the
+// registers BIOS itself uses across INT 1Ch, then return from the hardware IRQ.
+const TIMER_CODE:&[u8]=&[0x66,0x50,0x1e,0xcd,0x1c,0x1f,0x66,0x58,0xcf];
+pub(super) const END:u32=ENTRY_END+TIMER_CODE.len() as u32;
 /// The far pointer of vector n's entry.
 pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::from(n))}
 /// Writes the entries (into the read-only BIOS area, before it is protected)
@@ -30,6 +35,7 @@ pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::f
 pub(super) fn install(ram:&mut Ram)->Result<(),String>{
     let mut code=vec![0u8;3*256];
     for n in 0..=255u8{code[3*usize::from(n)..][..3].copy_from_slice(&[0xcd,n,0xcf]);}
+    code.extend_from_slice(TIMER_CODE);
     ram.write_bytes(ENTRIES,&code).map_err(|e|format!("interrupt entries: {e:?}"))?;
     for n in ANSWERED{ram.store(u32::from(n)*4,MemWidth::Dword,entry(n)).map_err(|e|format!("INT {n:02x}h vector: {e:?}"))?;}
     Ok(())
@@ -42,7 +48,7 @@ pub(super) fn answered(p:&Loaded,n:u8)->Result<bool,String>{
 }
 fn linear(p:&Loaded)->u32{p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip)}
 /// Whether CS:IP is at an entry's INT n, so Dine answers whatever the vector holds.
-pub(super) fn at_entry(p:&Loaded)->bool{let at=linear(p);(ENTRIES..END).contains(&at)&&(at-ENTRIES)%3==0}
+pub(super) fn at_entry(p:&Loaded)->bool{let at=linear(p);(ENTRIES..ENTRY_END).contains(&at)&&(at-ENTRIES)%3==0}
 fn set_cs(p:&mut Loaded,selector:u16){
     let cs=SegmentRegister::Cs.index();
     p.selectors[cs]=selector;p.image.selectors[cs]=selector;p.image.segments[cs]=SegmentCache::real_mode(selector);
@@ -60,14 +66,25 @@ pub(super) fn deliver(p:&mut Loaded,n:u8)->Result<(),String>{
 pub(super) fn deliver_fault(p:&mut Loaded,n:u8,fault_ip:u32)->Result<(),String>{
     deliver_at(p,n,fault_ip&0xffff)
 }
-fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
-    if p.cpu.regs[4]&0xffff<6&&p.cpu.regs[4]&0xffff!=0{return Err("interrupt frame would wrap the stack segment".into());}
+fn target(p:&Loaded,n:u8)->Result<(u16,u32),String>{
     let vector=p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?;
     let(segment,offset)=((vector>>16)as u16,vector&0xffff);
-    let target=u32::from(segment)*16+offset;let image=&p.image;
-    let fetchable=(target>=image.fetch_base+image.start&&target<image.fetch_base+image.end)
-        ||image.system.iter().any(|&(start,end)|target>=start&&target<end);
+    let address=u32::from(segment)*16+offset;let image=&p.image;
+    let fetchable=(address>=image.fetch_base+image.start&&address<image.fetch_base+image.end)
+        ||image.system.iter().any(|&(start,end)|address>=start&&address<end);
     if !fetchable{return Err(format!("INT {n:02x}h handler at {segment:04x}:{offset:04x} is outside the running program"));}
+    Ok((segment,offset))
+}
+pub(super) fn deliver_timer(p:&mut Loaded)->Result<(),String>{
+    if !p.image.real_mode||p.cpu.eflags&0x20000!=0{return Err("timer hook outside real mode is not modelled".into());}
+    target(p,0x1c)?;
+    deliver_to(p,SEGMENT,u32::from(TIMER_OFFSET),p.cpu.eip&0xffff)
+}
+fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
+    let(segment,offset)=target(p,n)?;deliver_to(p,segment,offset,return_ip)
+}
+fn deliver_to(p:&mut Loaded,segment:u16,offset:u32,return_ip:u32)->Result<(),String>{
+    if p.cpu.regs[4]&0xffff<6&&p.cpu.regs[4]&0xffff!=0{return Err("interrupt frame would wrap the stack segment".into());}
     let sp=p.cpu.regs[4]&0xffff;
     let values=[(2,p.cpu.eflags&0xffff),(4,u32::from(p.selectors[SegmentRegister::Cs.index()])),(6,return_ip)];
     let mut writes=Vec::new();
@@ -83,7 +100,7 @@ fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
 /// the status flags the service left. `Ok(false)` anywhere else.
 pub(super) fn leave(p:&mut Loaded)->Result<bool,String>{
     let at=linear(p);
-    if !(ENTRIES..END).contains(&at)||(at-ENTRIES)%3!=2{return Ok(false);}
+    if !(ENTRIES..ENTRY_END).contains(&at)||(at-ENTRIES)%3!=2{return Ok(false);}
     let sp=p.cpu.regs[4]&0xffff;let mut words=[0u32;3];
     for(k,word)in words.iter_mut().enumerate(){
         let address=stack(p,sp.wrapping_add(2*k as u32),false)?;
