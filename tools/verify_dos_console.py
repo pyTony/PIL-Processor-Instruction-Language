@@ -132,6 +132,28 @@ def build_console(negative=False):
             mov(0, ah << 8); mov(3, 0); interrupt(0x21)
             b.emit(bytes.fromhex('39d3')); b.branch(fail, True)  # CMP BX,DX
     case('dos_handle_write_and_psp_query', handle_write)
+    def quarterdeck_scan(fail):
+        # Real SI 8 probe: QD/ME/M0 signature and AL=0, with CF initially set.
+        # Test the default absence response at the start, middle and wrap of
+        # the dynamically assigned multiplex identifier range.
+        for ident in (0xd2, 0xd3, 0xff, 0xc0):
+            mov(0, ident << 8); mov(3, 0x5144); mov(1, 0x4d45); mov(2, 0x4d30)
+            b.emit(bytes.fromhex('f9')); interrupt(0x2f)  # STC; INT 2F
+            b.emit(bytes.fromhex('9c5d'))  # PUSHF; POP BP
+            check(0, ident << 8, fail); check(3, 0x5144, fail)
+            check(1, 0x4d45, fail); check(2, 0x4d30, fail)
+            b.emit(bytes.fromhex('83e501')); check(5, 1, fail)  # preserve CF
+    case('quarterdeck_multiplex_scan', quarterdeck_scan)
+    def task_switcher_absent(fail):
+        # DOS's default INT 2F chain leaves the caller's ES:DI unchanged.
+        mov(0, 0x1234); b.emit(bytes.fromhex('8ec0'))  # ES=1234
+        mov(7, 0); mov(3, 0); mov(0, 0x4b02)
+        b.emit(bytes.fromhex('f9')); interrupt(0x2f); b.emit(bytes.fromhex('9c5d'))
+        check(0, 0x4b02, fail); check(7, 0, fail)
+        b.emit(bytes.fromhex('8cc0')); check(0, 0x1234, fail)  # AX=ES
+        b.emit(bytes.fromhex('83e501')); check(5, 1, fail)
+        b.emit(bytes.fromhex('0e07'))  # restore ES=CS
+    case('absent_task_switcher', task_switcher_absent)
     b.puts(f'COMPLETE {len(tests)} CASES\r\n')
     b.emit(bytes.fromhex('a1')); b.ref('fail_count')
     b.emit(bytes.fromhex('09c07405b8014ccd21b8004ccd21'))
