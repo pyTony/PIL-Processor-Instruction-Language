@@ -43,6 +43,6 @@ Check the frame, palette cycling and keyboard exit with a release build:
 `CUBE2.BAS` adapts the user-supplied BASIC cube for CGA SCREEN 2 (640x200,
 one-bit pixels). It omits the SCREEN 9 COLOR statement, uses LINE colour 1,
 and adjusts the vertical centre and field of view. The BASIC interpreter is
-not included. GW-BASIC can draw its wireframe in a deterministic-clock test;
-normal host-clock sessions still stop on its custom INT 1Ch timer handler,
-and graphics-mode text and scrolling are not fully implemented.
+not included. GW-BASIC drew part of its wireframe in both deterministic- and
+host-clock tests. Graphics-mode text and scrolling are not fully implemented,
+and this is not yet a complete GW-BASIC compatibility claim.

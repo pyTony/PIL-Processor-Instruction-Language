@@ -112,6 +112,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     if input{
         let value=match port{
             0x00..=0x0f=>0xff,
+            0x201=>0xff, // no game adapter: open bus
             0x21|0xa1=>0x00,
             0x81..=0x8f=>0xff,
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
@@ -131,6 +132,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         let value=p.cpu.regs[0]as u8;
         match port{
             0x00..=0x0f=>{},
+            0x201=>{}, // no game adapter to receive the write
             0x20|0x21|0xa0|0xa1=>{},
             0x81..=0x8f=>{},
             0x61=>{

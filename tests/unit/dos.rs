@@ -554,6 +554,14 @@ fn cga_palette_bios_and_hardware_register_are_independent(){
  assert_eq!(p.ram.load(0x466,MemWidth::Byte).unwrap(),0x12);
 }
 #[test]
+fn absent_game_port_and_bios_joystick_service_report_no_device(){
+ let mut p=load(&[0xf4],"joy.com").unwrap();p.cpu.regs[0]=0x1234_8402;p.cpu.regs[2]=1;p.cpu.eflags=2;
+ service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0x1234_8602);assert_eq!(p.cpu.regs[2],1);assert_eq!(p.cpu.eflags&1,1);
+ // OUT DX,AL then IN AL,DX, absent bus reads high.
+ let code=[0xba,0x01,0x02,0xb0,0x12,0xee,0xec,0xfa,0xf4];
+ let r=run(load(&code,"joy.com").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));assert_eq!(r.loaded.cpu.regs[0]&255,255);
+}
+#[test]
 fn cga_color_register_accepts_guest_out_instruction(){
  let guest=[0xba,0xd9,0x03,0xb0,0x2f,0xee,0xf4];
  let r=run(load(&guest,"color.com").unwrap(),100).unwrap();

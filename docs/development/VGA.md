@@ -80,9 +80,9 @@ palette and port 3D9h changes the displayed CGA colour register.
 The supplied BASIC cube targets SCREEN 9 (640x350 EGA), which is not yet
 implemented; SCREEN 2 needs centre Y=100, a smaller field of view, no COLOR
 statement and LINE colour 1. `programs/dos/CUBE2.BAS` contains that adaptation.
-In a deterministic-clock test GW-BASIC 3.23 drew part of the cube; with the
-normal host clock, its custom INT 1Ch timer handler is still an explicit
-stop. This is not yet a complete interactive BASIC compatibility claim.
+GW-BASIC 3.23 drew part of the cube in both deterministic- and host-clock
+tests. Its INT 1Ch timer hook now runs in a bounded real-mode BIOS wrapper.
+This is not yet a complete interactive BASIC compatibility claim.
 Graphics-mode text and scrolling are not yet complete, and a working
 BASIC interpreter may need further DOS or CPU features. CGA modes do not
 imply full EGA/VGA register or planar graphics support.
