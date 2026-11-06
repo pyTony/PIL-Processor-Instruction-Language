@@ -178,6 +178,8 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x10,ah @ (0x08|0x09|0x0a))=>{console::video(p,ah)?;Ok(None)},
         (0x10,ah @ (0x00|0x05|0x06|0x07|0x0b|0x0c|0x0d|0x0e|0x0f))=>{console::display(p,ah)?;Ok(None)},
         (0x16,ah)=>{console::keyboard(p,ah)?;Ok(None)},
+        (0x1c,_)=>Ok(None), // BIOS default timer user hook is an IRET.
+
         (0x10,0x01)=>{
             p.ram.store(0x460,MemWidth::Word,p.cpu.regs[1]&0xffff).map_err(|e|format!("BIOS cursor shape write: {e:?}"))?;
             Ok(None)
@@ -204,6 +206,12 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
         (0x12,_)=>{
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
             Ok(None)
+        },
+        (0x15,0x84)=>{
+            // No game adapter: report the BIOS joystick service unavailable
+            // (CF=1, AH=86h); all other register bits remain unchanged.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x15,0xc2)=>{
             // No PS/2 pointing device is modelled: answer as a BIOS without one
@@ -381,8 +389,8 @@ pub(super) fn local_now(offset:i64)->(u64,u64){
 /// The timer interrupt's effect while time runs on the host clock: when IF=1
 /// and the PIT IRQ edge total has moved on, the BIOS INT 08h handler stores it
 /// at 0040:006C and sets 0040:0070 if the BIOS day count wraps, so programs that poll
-/// that word see time pass. Only the BIOS handlers are modelled: with a
-/// program's handler in the INT 08h or 1Ch vector the run stops instead. The
+/// that word see time pass. A custom INT 1Ch hook can run on the guest CPU;
+/// a custom INT 08h handler remains an explicit stop. The
 /// deterministic clock (no host clock) moves only when it is read, as before.
 pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
     if p.clock_offset.is_none(){return Ok(());}
@@ -393,13 +401,15 @@ pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
 pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
     if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0{return Ok(());}
     if now==p.timer_ticks{return Ok(());}
-    for vector in [0x08u8,0x1c]{
-        if !vectors::answered(p,vector)?{
-            return Err(format!("timer interrupt (IRQ0) through a program's INT {vector:02x}h handler is not modelled"));
-        }
+    if !vectors::answered(p,0x08)?{
+        return Err("timer interrupt (IRQ0) through a program's INT 08h handler is not modelled".into());
     }
+    let hook=!vectors::answered(p,0x1c)?;
     p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
+    // The IRQ arrives between instructions: IRET resumes the current IP.
+    // Keep the BIOS shortcut's existing catch-up policy (one hook per poll).
+    if hook{vectors::deliver_timer(p)?;}
     p.ram.store(0x046c,MemWidth::Dword,now).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     if now<p.timer_ticks{p.ram.store(0x0470,MemWidth::Byte,1).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;}
     p.timer_ticks=now;
@@ -413,7 +423,9 @@ pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
 fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
     let(ticks,next_ticks,rollover)=match p.clock_offset{
         Some(_)=>{
-            timer_interrupt(p)?;
+            // Do not redirect CS:IP to a hook while servicing INT 1Ah itself;
+            // the run loop delivers pending hooks between guest instructions.
+            if vectors::answered(p,0x1c)?{timer_interrupt(p)?;}
             let now=p.timer_ticks;
             let flagged=p.ram.load(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover read: {e:?}"))?!=0;
             (now,now,u32::from(flagged))

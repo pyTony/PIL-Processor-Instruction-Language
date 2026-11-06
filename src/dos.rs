@@ -348,7 +348,11 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Err(message)=>break Stop::Service(message),
         }
         // The host clock is checked every 256 steps (about 0.1 ms of work here).
-        if execution_steps%256==0{if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}}
+        if execution_steps%256==0{
+            // An asynchronous hook observes the flags of the interrupted instruction.
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}
+        }
         let linear=p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip);
         if (vectors::ENTRIES..vectors::END).contains(&linear){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match vectors::leave(&mut p){
