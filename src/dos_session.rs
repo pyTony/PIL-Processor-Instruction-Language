@@ -108,6 +108,8 @@ impl Session{
                 Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.country=code;(true,String::new(),false)},
                 _=>(false,"country needs 1 or 358".into(),false),
             },
+            // `ansi on`: load the ANSI.SYS-style CON driver, as DEVICE=ANSI.SYS would.
+            ["ansi","on"]=>{super::console::ansi::install(self.loaded.as_mut().ok_or("session state lost")?)?;(true,String::new(),false)},
             // `com1 HEX`: bytes arriving at COM1 from the host terminal.
             ["com1",hex]=>match(0..hex.len()).step_by(2).map(|i|hex.get(i..i+2).and_then(|b|u8::from_str_radix(b,16).ok())).collect::<Option<Vec<u8>>>(){
                 Some(bytes) if !bytes.is_empty()=>match self.loaded.as_mut().and_then(|p|p.com1.as_mut()){

@@ -15,6 +15,8 @@ change, delete or rename change in the host folder itself.
 --com1 console connects COM1 to the console this was started from (CTTY COM1
 runs the shell there), --com1 tcp:2323 to a TCP port for telnet or PuTTY.
 --country 358 gives Finnish dates and times (31.10.2026, 14.27.05).
+--ansi loads an ANSI.SYS-style console driver, as DEVICE=ANSI.SYS would: then
+PROMPT $e[1;36m colours and other ESC [ sequences draw on the DOS screen.
 --args gives the program its command line; for COMMAND.COM, /K runs a batch
 file or command and then stays at the prompt.
 Z: is a drive held in memory for the session, with TEMP=Z:\\ so that pipes
@@ -220,7 +222,7 @@ def screen_rows(reply):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False):
         options = (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
@@ -445,7 +447,7 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -470,6 +472,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     session.send(f'clock {offset}')
     if country:
         session.send(f'country {country}')
+    if ansi:
+        session.send('ansi on')
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
     held, state = set(), {'shift': 0, 'settle': 0}
@@ -681,6 +685,8 @@ def main(argv=None):
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
     parser.add_argument('--args', metavar='COMMAND_LINE',
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
+    parser.add_argument('--ansi', action='store_true',
+                        help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
     parser.add_argument('--country', type=int, choices=[1, 358],
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',
@@ -697,7 +703,7 @@ def main(argv=None):
     com1 = open_com1(args.com1) if args.com1 else None
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi)
     root.mainloop()
 
 

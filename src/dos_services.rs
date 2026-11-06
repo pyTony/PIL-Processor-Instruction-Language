@@ -289,10 +289,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // redirector or network software is present.
             Ok(None)
         },
+        (0x2f,_) if p.cpu.regs[0]&0xffff==0x1a00&&console::ansi::installed(p)?=>{
+            // The ANSI driver answers its installation check with AL=FFh (RBIL INT 2F/AX=1A00h).
+            p.cpu.regs[0]|=0xff;Ok(None)
+        },
         (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x160a|0x1680..=0x168f|0x1700..=0x17ff|0x1a00|0x4300|0x4680|0x4a10|0x4a11|0x4a33|0xae00|0xb700|0xb706|0xb707|0xb710|0xd44d|0xd44e|0xd44f)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
-            // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS or
+            // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS (unless loaded) or
             // XMS driver, and no installable command claims AX=AE00h (AL stays 00h).
             // AX=1680h leaves AL=80h (time slice not released). D44Dh is the
             // 4DOS installation check (no resident 4DOS answers 44DDh) and
