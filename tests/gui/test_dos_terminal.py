@@ -20,7 +20,10 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
     def test_ansi_option_reaches_the_session_from_window_constructor(self):
-        import tkinter.font
+        try:
+            import tkinter.font  # noqa: F401  (patched below; the module must exist)
+        except ImportError as exc:
+            self.skipTest(f'tkinter unavailable: {exc}')
         reply = {'screen': '2007' * 80 * 25, 'columns': 80, 'cursor': [0, 0],
                  'status': 'running', 'detail': '', 'steps': 0, 'cs': 0, 'eip': 0}
         with patch('tkinter.Text'), patch('tkinter.Label'), patch('tkinter.Menu'), \
