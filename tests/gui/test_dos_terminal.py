@@ -32,10 +32,22 @@ class DosTerminalTests(unittest.TestCase):
             session.last = reply
             root = MagicMock()
             term.make_app(root, 'engine', 'program', utc_offset=0, ansi=True)
-            session.send.assert_any_call('ansi on')
+            self.assertTrue(session_class.call_args.kwargs['ansi'])
             session.send.reset_mock()
             term.make_app(root, 'engine', 'program', utc_offset=0)
-            self.assertNotIn('ansi on', [call.args[0] for call in session.send.call_args_list])
+            self.assertFalse(session_class.call_args.kwargs['ansi'])
+
+    def test_session_ansi_option_installs_driver_before_running_guest(self):
+        for enabled in (False, True):
+            with self.subTest(ansi=enabled):
+                replies = ''.join(json.dumps({'protocol': 1, 'seq': seq, 'ok': True}) + '\n'
+                                  for seq in range(2))
+                process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(replies),
+                                          stderr=io.StringIO())
+                with patch.object(term.subprocess, 'Popen', return_value=process):
+                    session = term.Session('engine', 'program', ansi=enabled)
+                self.assertEqual(process.stdin.getvalue(), 'ansi on\n' if enabled else '')
+                self.assertEqual(session.last['seq'], int(enabled))
 
     def test_cga_frame_bank_layout_palette_and_monochrome(self):
         frame = bytearray(0x4000)

@@ -1,3 +1,14 @@
+# Text console module and ANSI follow-up — 6 November 2026
+
+Mode-3 text layout and dimensions now live in `src/dos_color_text.rs` and
+are shared by the BIOS console and the optional driver in `src/dos_ansi.rs`.
+The driver remains a submodule of the console and uses its checked text helpers;
+this does not add a new display adapter or change the video RAM layout.
+Python callers can now enable the driver with `Session(..., ansi=True)`,
+using the same path as the terminal's `--ansi` option. Guest-corrupted ANSI
+parameter counts stop with an explicit error before any screen or parser-state
+write, rather than panicking in the host. Regression tests cover both fixes.
+
 # ANSI.SYS-style console driver — 6 November 2026
 
 Tony chose an ANSI driver so that a colour PROMPT works on the DOS screen as

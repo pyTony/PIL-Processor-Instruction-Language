@@ -230,6 +230,8 @@ class Session:
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
+        if ansi:
+            self.send('ansi on')
 
     def _read(self):
         line = self.process.stdout.readline(MAX_REPLY)
@@ -466,14 +468,12 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
     if country:
         session.send(f'country {country}')
-    if ansi:
-        session.send('ansi on')
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
     held, state = set(), {'shift': 0, 'settle': 0}

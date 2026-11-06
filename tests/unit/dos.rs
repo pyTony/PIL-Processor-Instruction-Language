@@ -1739,3 +1739,19 @@ fn ansi_driver_faults_change_nothing(){
   assert!(err.contains("not modelled"),"{err}");assert!(p.ram==old.ram,"refused sequence changed RAM");
  }
 }
+
+#[test]
+fn ansi_driver_rejects_guest_corrupted_parameter_count_without_effects(){
+ let mut p=load(&[0xcd,0x21],"ansi.com").unwrap();console::ansi::install(&mut p).unwrap();
+ let state=(DOSDATA as u32)*16+0x390;
+ for count in [17,255]{
+  p.ram.store(state+1,MemWidth::Byte,2).unwrap();
+  p.ram.store(state+5,MemWidth::Byte,count).unwrap();
+  for byte in [b'1',b'm']{
+   let old=p.clone();
+   let err=console::dos_screen(&p,&[byte]).unwrap_err();
+   assert!(err.contains("invalid ANSI driver parameter count"),"{err}");
+   assert!(p.ram==old.ram,"invalid parser state changed RAM");
+  }
+ }
+}
