@@ -46,3 +46,7 @@ and adjusts the vertical centre and field of view. The BASIC interpreter is
 not included. GW-BASIC drew part of its wireframe in both deterministic- and
 host-clock tests. Graphics-mode text and scrolling are not fully implemented,
 and this is not yet a complete GW-BASIC compatibility claim.
+
+`CUBE2.BAS` is stored with DOS CRLF line endings because GW-BASIC cannot
+load the LF-only file. Copy it without converting line endings, then run
+`GWBASIC CUBE2.BAS` from the directory containing it.
