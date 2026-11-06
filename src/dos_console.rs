@@ -239,7 +239,7 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
     if al&0x7f==0x13{
         let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x462,MemWidth::Byte,0)];
         if al&0x80==0{writes.extend((0..64000).map(|n|(0xa0000+n,MemWidth::Byte,0)));}
-        return commit(p,&writes);
+        commit(p,&writes)?;p.vga.reset_palette();return Ok(());
     }
     if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the 80x25 colour text profile",al&0x7f));}
     let mut writes=vec![(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
@@ -278,3 +278,4 @@ pub(super) fn dos_line_key(p:&Loaded)->Result<Option<(u32,Writes)>,String>{
     let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
     Ok(Some((if key&255==0{key&0xff00}else{key&255},writes)))
 }
+

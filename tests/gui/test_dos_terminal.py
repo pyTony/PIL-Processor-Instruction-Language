@@ -19,6 +19,13 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_graphics_palette_maps_indices_and_rejects_bad_data(self):
+        palette = bytes([i for i in range(256) for _ in range(3)])
+        pixels = bytes([0, 4, 255]) + bytes(63997)
+        self.assertEqual(term.graphics_rgb(pixels.hex(), palette.hex())[:9], bytes([0,0,0,4,4,4,255,255,255]))
+        with self.assertRaises(ValueError):
+            term.graphics_rgb('00', palette.hex())
+
     def test_session_reads_graphics_with_large_escaped_output(self):
         reply = {'protocol': 1, 'seq': 0, 'graphics13': '00' * 64000,
                  'output': '\x00' * 16384, 'com1': ''}
@@ -211,3 +218,4 @@ class DosTerminalTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

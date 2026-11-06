@@ -74,7 +74,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         _=>return Ok(None),
     };
     let input=first&2==0;
-    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc){
+    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3c6..=0x3c9){
         let word=first&1!=0;
         if word&&!matches!(port,0x3b4|0x3d4){return Err("VGA word access must start at CRTC index port 3B4h or 3D4h".into());}
         let mut device=p.vga.clone();
@@ -200,3 +200,4 @@ mod timer_tests{
         p.image.ss_shadow=0;p.image.sti_shadow=0;p.cpu.eflags=0x202;services::timer_interrupt_at(&mut p,4).unwrap();assert_eq!(p.timer_ticks,4);
     }
 }
+
