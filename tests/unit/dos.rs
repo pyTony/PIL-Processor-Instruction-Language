@@ -1665,3 +1665,26 @@ fn host_bios_clock_read_with_if_clear_keeps_undelivered_pit_ticks_out_of_bda(){
     p.ram.store(0x46c,MemWidth::Dword,123).unwrap();p.cpu.regs[0]=0;service(&mut p,0x1a,&mut vec![]).unwrap();
     assert_eq!(p.cpu.regs[2]&65535,123);assert_eq!(p.timer_ticks,123);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),123);
 }
+
+#[test]
+fn dos_extended_error_reports_failed_open_and_survives_unrelated_calls(){
+ let mut p=load(&[0xcd,0x21],"files.com").unwrap();let mut out=vec![];
+ let base=u32::from(PSP)*16;
+ p.ram.write_bytes(base+0x200,b"MISSING.BAS\0").unwrap();
+ p.cpu.regs[0]=0xabcd3d00;p.cpu.regs[2]=0x200;
+ service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.eflags&1),(2,1));
+ // Calling AH59 repeatedly retains the last error and preserves upper halves.
+ for _ in 0..2{
+  p.cpu.regs[0]=0xabcd5902;p.cpu.regs[3]=0x12340000;p.cpu.regs[1]=0x5678aaff;p.cpu.eflags|=1;
+  service(&mut p,0x21,&mut out).unwrap();
+  assert_eq!(p.cpu.regs[0],0xabcd0002);assert_eq!(p.cpu.regs[3],0x12340801);
+  assert_eq!(p.cpu.regs[1],0x567800ff);assert_eq!(p.cpu.eflags&1,0);
+ }
+ let mut child=p.clone();child.cpu.regs[0]=0x5900;child.cpu.regs[3]=0;
+ service(&mut child,0x21,&mut out).unwrap();assert_eq!(child.cpu.regs[0],2);
+ // A later invalid close replaces the error. Nonzero BX is not modelled.
+ p.cpu.regs[0]=0x3e00;p.cpu.regs[3]=0xffff;service(&mut p,0x21,&mut out).unwrap();
+ p.cpu.regs[0]=0x5900;p.cpu.regs[3]=0;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0],6);
+ p.cpu.regs[0]=0x5900;p.cpu.regs[3]=1;assert!(service(&mut p,0x21,&mut out).is_err());
+}
