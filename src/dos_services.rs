@@ -2,7 +2,17 @@
 use super::*;
 use crate::host_io::Output;
 use std::time::{SystemTime,UNIX_EPOCH};
+// Capture only DOS services that return errors in AX with carry set. Other
+// calls need not define carry, so it cannot be used as a general error signal.
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
+    let ah=(p.cpu.regs[0]>>8)as u8;
+    let result=dispatch_inner(p,vector,out);
+    if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x60|0x65..=0x67|0x69) && p.cpu.eflags&1!=0 {
+        p.dos_error=p.cpu.regs[0]as u16;
+    }
+    result
+}
+fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     let _span=crate::profile::span("dos_bios_service");
     if vector==0x21&&aux_console(p)?{return Ok(None);}
     // DOS checks for Ctrl-C on entry to the character calls, and to every
@@ -117,6 +127,16 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
             p.selectors[es]=DOSDATA;p.image.selectors[es]=DOSDATA;p.image.segments[es]=SegmentCache::real_mode(DOSDATA);
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(if ah==0x34{INDOS}else{SYSVARS});
             Ok(None)
+        },
+        (0x21,0x59)=>{
+            if p.cpu.regs[3]&0xffff!=0{return Err("DOS extended error AH59 requires BX=0000h".into());}
+            // Match DOSBox-X's conservative classification: file/path-not-found
+            // are class 8; other classes and the locus are unspecified.
+            let class=if matches!(p.dos_error,2|3){8}else{0};
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.dos_error);
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|(class<<8)|1;
+            p.cpu.regs[1]&=!0xff00;
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x21,0x4c)=>Ok(Some(p.cpu.regs[0]as u8)),
         (0x21,0x4b)=>{exec::exec(p)?;Ok(None)},
