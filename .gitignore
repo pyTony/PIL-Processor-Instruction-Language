@@ -10,3 +10,9 @@ __pycache__/
 /dist/
 /test386.asm/
 
+
+# Personal DOS drive mounted as D: by freedos.cmd. It holds third-party
+# programs (GW-BASIC, Turbo Pascal, benchmarks...), which stay out of the repo.
+# The project's own DOS programs live in programs/dos. See docs/DRIVE_D.md.
+/driveD/
+/DriveD/

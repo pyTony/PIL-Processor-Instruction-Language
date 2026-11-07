@@ -46,6 +46,7 @@ operands and context; devices and the surrounding PC platform are separate.
 | What syntax and behavior are implemented? | [PIL language reference](LANGUAGE.md) — current grammar, types, bindings, flags, memory, retirement and execution APIs |
 | What does actual PIL look like? | [Executable instruction descriptions](../isa/i386/) — the `.pil` files embedded by the runtime |
 | How do I build and run the project? | [Project README](../README.md) and [debugger guide](DEBUGGER.md) |
+| Where do my own DOS programs go (drive D:)? | [Drive D: guide](DRIVE_D.md) |
 | Which x86 instructions and emulator features work? | [Delivery feature matrix](../delivery/source/FEATURE_MATRIX.md) and the instruction-profile sections of the [debugger guide](DEBUGGER.md) |
 | What is the larger design? | [Original language design proposal](design/processor_instruction_language_v01.md) — architectural goals and proposed syntax, including features not implemented |
 
