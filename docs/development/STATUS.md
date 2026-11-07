@@ -20,7 +20,7 @@ Continues Tony's priority on real-mode SingleStepTests/80386 fixes.
 - Unit tests now use 63h (ARPL, #UD in real mode) as their unsupported
   opcode.
 
-Local Linux: 588 Rust tests pass, 8 of them new. The generated-backend
+Local Linux: 587 Rust tests pass, 8 of them new. The generated-backend
 suite has 265 cases, 7 of them new. SingleStepTests/80386 run 05 (local):
 pass 1,555,403 -> 1,582,234, with 0 disagreements across 2,274 generated
 programs. Tony's own Windows run on #107 matched run 04 exactly (1,555,403).
