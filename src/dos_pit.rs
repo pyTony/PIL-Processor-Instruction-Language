@@ -1,5 +1,49 @@
 //! Bounded binary PIT channel 0. Supplied input clocks make device tests exact.
 //! GATE is tied high. The same live divisor may be rewritten; other reloads stop.
+/// Channel 2 starts with the conventional BIOS square-wave configuration and
+/// its gate low. Binary modes 0, 2 and 3 are timed; other speaker modes can still be written
+/// for audio but cannot be read as though they were modelled.
+#[derive(Clone,Debug)]
+pub(super) struct Counter2{mode:u8,access:u8,reload:u32,epoch:u64,frozen:u32,gate:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>}
+impl Default for Counter2{fn default()->Self{Self{mode:3,access:3,reload:65536,epoch:0,frozen:0,gate:false,low:None,read_high:false,latch:None}}}
+impl Counter2{
+    fn count_full(&self,now:u64)->u32{
+        if !self.gate{return self.frozen;}
+        if self.mode==0{return u64::from(self.frozen).wrapping_sub(now.saturating_sub(self.epoch))as u16 as u32;}
+        let phase=now.saturating_sub(self.epoch)%u64::from(self.reload);
+        if self.mode==2{(u64::from(self.reload)-phase)as u32}else{
+            let half=u64::from(self.reload).div_ceil(2);let at=if phase<half{phase}else{phase-half};
+            u64::from(self.reload&!1).saturating_sub(2*at)as u32
+        }
+    }
+    fn count(&self,now:u64)->u16{self.count_full(now)as u16}
+    pub fn gate(&mut self,gate:bool,now:u64){
+        if self.gate&&!gate{self.frozen=self.count_full(now);}
+        if !self.gate&&gate{self.epoch=if self.mode==0{now}else{now.saturating_add(1)};}
+        self.gate=gate;
+    }
+    pub fn command(&mut self,value:u8,now:u64)->Result<(),String>{
+        if value&0x30==0{
+            if !matches!(self.mode,0|2|3){return Err(format!("PIT channel 2 latch: mode {} is not modelled",self.mode));}
+            if self.latch.is_none(){self.latch=Some((self.count(now),self.read_high));}
+        }else{
+            self.frozen=self.count_full(now);self.mode=if value&1!=0{255}else{match value>>1&7{6=>2,7=>3,n=>n}};
+            self.access=value>>4&3;self.low=None;self.read_high=false;self.latch=None;
+        }
+        Ok(())
+    }
+    pub fn write(&mut self,value:u8,now:u64){
+        let raw=match self.access{1=>u16::from(value),2=>u16::from(value)<<8,3=>match self.low.take(){None=>{self.low=Some(value);return},Some(lo)=>u16::from_le_bytes([lo,value])},_=>return};
+        self.reload=if raw==0{65536}else{u32::from(raw)};self.frozen=self.reload;self.epoch=now.saturating_add(1);
+    }
+    pub fn read(&mut self,now:u64)->Result<u8,String>{
+        if !matches!(self.mode,0|2|3){return Err("PIT channel 2 read requires a modelled binary mode 0, 2 or 3".into());}
+        let(count,high)=self.latch.unwrap_or((self.count(now),self.read_high));
+        let value=if self.access==2||self.access==3&&high{(count>>8)as u8}else{count as u8};
+        if self.latch.is_some(){if self.access!=3||high{self.latch=None}else{self.latch=Some((count,true));}}
+        self.read_high=self.access==3&&!high;Ok(value)
+    }
+}
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub(super) struct Counter0{mode:u8,access:u8,reload:u32,epoch:u64,irq_base:u64,running:bool,frozen:u16,frozen_irqs:u64,armed:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>}
 impl Default for Counter0{fn default()->Self{Self{mode:3,access:3,reload:65536,epoch:0,irq_base:0,running:true,frozen:0,frozen_irqs:0,armed:false,low:None,read_high:false,latch:None}}}
@@ -47,6 +91,21 @@ impl Counter0{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn channel_two_latches_count_and_gate_restarts_square_wave(){
+        let mut p=Counter2::default();p.command(0xb6,0).unwrap();p.write(0x34,0);p.write(0x12,0);p.gate(true,10);
+        p.command(0x80,20).unwrap();let expected=p.count(20);p.command(0x80,30).unwrap();
+        assert_eq!(p.read(50).unwrap(),expected as u8);assert_eq!(p.read(100).unwrap(),(expected>>8)as u8);
+        p.gate(false,101);let frozen=p.count(101);assert_eq!(p.count(200),frozen);
+        p.gate(true,200);assert_eq!(p.count(201),0x1234);assert_ne!(p.count(205),frozen);
+        p.command(0xb2,210).unwrap();assert!(p.read(211).is_err());
+    }
+    #[test]fn channel_two_mode_zero_latches_and_gate_pauses_count(){
+        let mut p=Counter2::default();p.command(0xb0,0).unwrap();p.write(0,0);p.write(0,0);p.gate(true,10);
+        assert_eq!(p.count(10),0);assert_eq!(p.count(11),0xffff);
+        p.command(0x80,15).unwrap();assert_eq!(p.read(19).unwrap(),0xfb);assert_eq!(p.read(100).unwrap(),0xff);
+        p.gate(false,101);let frozen=p.count(101);assert_eq!(p.count(500),frozen);p.gate(true,500);
+        assert_eq!(p.count(501),frozen.wrapping_sub(1));assert_eq!(p.count(100000),frozen.wrapping_sub(99500u32 as u16));
+    }
     fn start(word:u8,count:u16,now:u64)->Counter0{let mut p=Counter0::default();p.command(word,now).unwrap();p.write(count as u8,now).unwrap();p.write((count>>8)as u8,now).unwrap();p}
     #[test]fn mode_two_uses_programmed_divisor_next_clock_load_and_periodic_edges(){
         for n in [2u16,3,0xe90b,0]{let p=start(0x34,n,100);let period=if n==0{65536}else{u64::from(n)};

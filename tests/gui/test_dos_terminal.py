@@ -143,6 +143,96 @@ class DosTerminalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             term.graphics_rgb('00', palette.hex())
 
+    def test_graphics_modes_display_at_four_by_three_with_nearest_rows(self):
+        # Distinct scanline colours make duplicated rows and both edges visible.
+        for width in (320, 640):
+            with self.subTest(width=width):
+                rgb = b''.join(bytes((y, 255 - y, y)) * width for y in range(200))
+                tk = MagicMock()
+                result = term.graphics_photo(tk, rgb, width)
+                data = tk.PhotoImage.call_args.kwargs['data']
+                header, raster = data.split(b'\n', 1)
+                self.assertEqual(header, f'P6 {width} 480 255'.encode())
+                row_bytes = width * 3
+                self.assertEqual(len(raster), row_bytes * 480)
+                for y in range(480):
+                    source_y = y * 200 // 480
+                    self.assertEqual(raster[y * row_bytes:(y + 1) * row_bytes],
+                                     rgb[source_y * row_bytes:(source_y + 1) * row_bytes])
+                if width == 320:
+                    tk.PhotoImage.return_value.zoom.assert_called_once_with(2, 1)
+                    self.assertIs(result, tk.PhotoImage.return_value.zoom.return_value)
+                else:
+                    tk.PhotoImage.return_value.zoom.assert_not_called()
+                    self.assertIs(result, tk.PhotoImage.return_value)
+        with self.assertRaises(ValueError):
+            term.graphics_photo(MagicMock(), b'', 320)
+        with self.assertRaises(ValueError):
+            term.graphics_photo(MagicMock(), b'', 800)
+
+    def test_tk_graphics_photo_dimensions_and_colours(self):
+        try:
+            import tkinter as tk
+        except ImportError as exc:
+            self.skipTest(f'tkinter unavailable: {exc}')
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f'Tk display unavailable: {exc}')
+        root.withdraw()
+        try:
+            for width in (320, 640):
+                with self.subTest(width=width):
+                    rgb = b''.join(bytes((y, 255 - y, 0)) * width for y in range(200))
+                    image = term.graphics_photo(tk, rgb, width)
+                    self.assertEqual((image.width(), image.height()), (640, 480))
+                    for y in (0, 2, 3, 239, 479):
+                        source_y = y * 200 // 480
+                        self.assertEqual(image.get(639, y), (source_y, 255 - source_y, 0))
+        finally:
+            root.destroy()
+
+    def test_tk_switches_between_text_and_each_graphics_mode(self):
+        try:
+            import tkinter as tk
+        except ImportError as exc:
+            self.skipTest(f'tkinter unavailable: {exc}')
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f'Tk display unavailable: {exc}')
+        root.withdraw()
+        text_reply = {'screen': '2007' * 80 * 25, 'columns': 80, 'cursor': [0, 0],
+                      'status': 'exit', 'detail': '', 'steps': 0, 'cs': 0, 'eip': 0}
+        base = {'status': 'exit', 'detail': '', 'steps': 0}
+        cga = '00' * 0x4000
+        replies = [dict(base, graphics_cga=cga, cga_mode=4, cga_color=0),
+                   dict(base, graphics_cga=cga, cga_mode=6, cga_color=15),
+                   dict(base, graphics13='00' * 64000, palette='00' * 768),
+                   text_reply]
+        try:
+            with patch.object(term, 'Session') as session_class, patch.object(root, 'after') as after:
+                session = session_class.return_value
+                session.last = text_reply
+                term.make_app(root, 'engine', 'program', utc_offset=0, speaker_level=0)
+                tick = after.call_args.args[1]
+                text_widget = next(widget for widget in root.winfo_children() if isinstance(widget, tk.Text))
+                graphics = None
+                for index, reply in enumerate(replies):
+                    session.last = reply
+                    tick()
+                    if index < 3:
+                        graphics = next(widget for widget in root.winfo_children()
+                                        if isinstance(widget, tk.Label) and hasattr(widget, 'image'))
+                        self.assertEqual((graphics.image.width(), graphics.image.height()), (640, 480))
+                        self.assertEqual(graphics.winfo_manager(), 'pack')
+                        self.assertEqual(text_widget.winfo_manager(), '')
+                    else:
+                        self.assertEqual(graphics.winfo_manager(), '')
+                        self.assertEqual(text_widget.winfo_manager(), 'pack')
+        finally:
+            root.destroy()
+
     def test_session_reads_graphics_with_large_escaped_output(self):
         reply = {'protocol': 1, 'seq': 0, 'graphics13': '00' * 64000,
                  'output': '\x00' * 16384, 'com1': ''}

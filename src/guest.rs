@@ -57,6 +57,9 @@ impl Image {
     // Keep the imported physical code window fixed when CS changes.
     pub fn contains_offset(&self,offset:u32)->bool{
         let at=u64::from(self.segments[1].base)+u64::from(offset);
+        self.contains_linear(at)
+    }
+    fn contains_linear(&self,at:u64)->bool{
         (at>=u64::from(self.fetch_base)+u64::from(self.start)&&at<u64::from(self.fetch_base)+u64::from(self.end))
             ||self.system.iter().any(|&(s,e)|at>=u64::from(s)&&at<u64::from(e))
     }
@@ -81,6 +84,8 @@ impl Image {
         let last_off=u64::from(eip)+u64::from(length)-1;
         let lin_start=u64::from(cs.base)+u64::from(eip);
         let lin_end=lin_start+u64::from(length);
+        let physical=if lin_start<=u64::from(u32::MAX){u64::from(ram.physical_address(lin_start as u32))}else{lin_start};
+        let physical_end=physical+u64::from(length);
         let img_start=u64::from(self.fetch_base)+u64::from(self.start);
         let img_end=u64::from(self.fetch_base)+u64::from(self.end);
         let readable=match cs.access {
@@ -88,8 +93,8 @@ impl Image {
             SegmentAccess::Code{readable}=>readable,
             _=>false,
         };
-        if readable && last_off<=u64::from(cs.limit) && ((lin_start>=img_start && lin_end<=img_end)||self.system.iter().any(|&(s,e)|lin_start>=u64::from(s)&&lin_end<=u64::from(e))) && lin_end<=0x1_0000_0000 {
-            if let Some(slice)=ram.bytes().get(lin_start as usize..lin_end as usize) {
+        if readable && last_off<=u64::from(cs.limit) && ((physical>=img_start && physical_end<=img_end)||self.system.iter().any(|&(s,e)|physical>=u64::from(s)&&physical_end<=u64::from(e))) && lin_end<=0x1_0000_0000 {
+            if let Some(slice)=ram.contiguous_slice(lin_start as u32,length as usize) {
                 let mut bytes=[0u8;15];
                 bytes[..length as usize].copy_from_slice(slice);
                 return Ok(bytes);
@@ -112,7 +117,10 @@ impl Image {
                 _=>break b,
             }
         };
-        if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
+        // F2 MOVSB/MOVSW/MOVSD are undocumented compatibility encodings
+        // used by DOS software. Like F3 MOVS, they repeat by count and do
+        // not test ZF. Keep other unverified F2 string forms unsupported.
+        if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa4|0xa5|0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         if locked&&!matches!(opcode,0x86|0x87){return Err(GuestError::Decode("LOCK requires memory XCHG in this profile".into()));}
         // Normalize alternative register encodings while retaining consumed bytes.
         let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;let mut jump_indirect=None;let mut far_jump=None;
@@ -398,12 +406,19 @@ impl Image {
                         let text=include_str!("../isa/i386/load_table.pil").replace("$SEG",&seg.to_string()).replace("$TABLE",&table.to_string()).replace("$MASK",if wide{"4294967295"}else{"16777215"});
                         (if table==0{"LGDT".into()}else{"LIDT".into()},compile(&text,w))
                     }else{
-                    if (m>>3)&7!=4{return Err(GuestError::Decode("unsupported 0F01 group extension (SMSW /4 only)".into()));}
+                    if (m>>3)&7==6{
+                        w=16;dst=view((m&7)as usize,w);src=dst;
+                        let mut text=include_str!("../isa/i386/lmsw.pil").to_string();
+                        if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("read input src 16","read_address source\nload input source 16");}
+                        (format!("LMSW {}",operand_name(src,address)),compile(&text,w))
+                    }else{
+                    if (m>>3)&7!=4{return Err(GuestError::Decode("unsupported 0F01 group extension".into()));}
                     if wide&&m>>6==3{return Err(GuestError::Decode("SMSW r32 upper-half policy is outside the 386 word profile".into()));}
                     w=16;dst=view((m&7)as usize,w);src=dst;
                     let mut text=description("smsw").map_err(GuestError::Decode)?;
                     if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("write dst status","read_address destination\nstore destination status");}
                     (format!("SMSW {}",operand_name(dst,address)),compile(&text,w))
+                    }
                     }
                 }else if (0x80..=0x8f).contains(&second){
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
@@ -730,9 +745,9 @@ impl Reader<'_> {
     fn byte(&mut self)->Result<u8,GuestError> {
         if self.pos-self.start>=15 {return Err(GuestError::Decode("instruction exceeds 15 bytes".into()));}
         // Image extent is a monitor safety boundary, not an architectural fault.
-        if !self.image.contains_offset(self.pos) {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
         let c=MemoryContext{segment:SegmentRegister::Cs,cache:self.image.segments[SegmentRegister::Cs.index()]};
         let linear=c.translate(self.pos,MemWidth::Byte,false,self.start)?;
+        if !self.image.contains_linear(u64::from(self.ram.physical_address(linear))) {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
         let value=self.ram.load(linear,MemWidth::Byte).map_err(|f|GuestError::Execution(ExecError::MemoryAccess{eip:self.start,address:f.address,bytes:1,write:false}))?;
         self.pos+=1;Ok(value as u8)
     }

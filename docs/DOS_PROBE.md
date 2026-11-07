@@ -1,3 +1,67 @@
+# DOS drive IOCTLs — 7 November 2026
+
+INT 21h AX=440Dh CX=0867h reports an accessible drive in the two-byte
+parameter block; invalid drives return error 15. AX=440Eh reports one
+logical drive letter per virtual drive, or error 15 for an invalid drive.
+Other generic block requests report unsupported operation for valid drives.
+
+# BIOS disk geometry probe — 7 November 2026
+
+INT 13h AH=08h returns CF set and AH=01h (unsupported operation). DOS-mounted
+images and folders are accessible through DOS file services but are not BIOS
+sector devices; this response does not provide or claim physical disk geometry.
+
+# Keyboard BIOS and echo — 7 November 2026
+
+INT 16h AH=10h/11h reads or checks the BIOS key ring using enhanced key words;
+checks preserve the queued word and set ZF, and blocking reads wait without
+retiring. Both classic and enhanced calls currently return queued words as
+provided: classic filtering/translation of enhanced keys is not implemented.
+The exact Compaq speed probe AX=F1FFh preserves its FFh absence sentinel;
+other unimplemented Compaq functions still stop. Port 60h keyboard command EEh
+produces the EEh diagnostic response in the controller's single response slot;
+port 64h reports whether that slot is full. This bounded model does not yet
+implement IRQ1, keyboard scan-code hardware, or the rest of the 8042 commands.
+
+# CMOS calendar year — 7 November 2026
+
+CMOS year (09h) and century (32h) accept valid BCD writes into a virtual RTC
+that follows the session clock. A write preserves the other displayed calendar
+fields and the RTC weekday; time continues to advance with the session clock.
+Direct CMOS writes do not change the host clock or DOS-maintained date. DOS
+INT 21h AH=2Bh and AH=2Dh update the session's DOS date or time and virtual RTC,
+but not the host clock. The DOS date follows virtual midnight, and setting a
+date updates the RTC weekday to match. DOS time keeps the BIOS tick resolution. Host-backed
+file modification timestamps still come from the host filesystem. Invalid BCD or a
+year that would make the current month/day invalid stops without changing RTC
+state. Writes to other clock fields and RTC control modes remain unsupported.
+
+# Interrupt-controller status — 7 November 2026
+
+The DOS machine models the primary and secondary PIC mask registers and the
+IRR/ISR read selection. PIT IRQ0 can become pending while masked or while IF
+is clear; the existing BIOS timer path acknowledges it, and its synthetic
+INT 1Ch wrapper sends EOI. No other hardware IRQ inputs, PIC reinitialization,
+polling, priority rotation or special-mask mode are implemented. The BIOS timer
+shortcut still catches up to sampled host time, rather than modelling a full
+cycle-accurate 8259/PIT pair. Unsupported commands stop explicitly.
+
+# DOS A20 and protected-mode boundary — 7 November 2026
+
+DOS sessions start with A20 masked and 1 MiB plus 64 KiB of backing memory.
+With A20 masked, physical bit 20 is cleared, including for instruction fetches
+and accesses spanning the boundary. Port 92h, the 8042 output-port commands
+and INT 15h AX=2400h..2403h control or report the gate. The two hardware gate
+inputs are independent. This is a bounded controller model, not a complete
+keyboard controller. CMOS register 0Fh stores the shutdown byte; reset and
+POST handling remain unimplemented. Extended memory is not advertised.
+
+LMSW register and memory forms update the supported real-mode CR0 bits while
+preserving flags. Requests to set PE stop before committing the instruction:
+descriptor-based protected mode, paging, extended-memory management and a DPMI
+host are not yet implemented. Doom and PC Player Benchmark reach this boundary
+through their DOS/4GW startup; neither program has been shown to run.
+
 # Text console module and ANSI follow-up — 6 November 2026
 
 Mode-3 text layout and dimensions now live in `src/dos_color_text.rs` and

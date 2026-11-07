@@ -3,7 +3,11 @@ use super::*;
 fn generated_suite_matches_full_interpreter_traces_and_benchmarks() {
     let dir=std::env::temp_dir().join(format!("pil-native-proof-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     let report=compare_at(&dir,16,2).unwrap();
-    assert!(report.contains("byte-for-byte after every execution step across 254 cases"));
+    assert!(report.contains("byte-for-byte after every execution step across 258 cases"));
+    assert!(report.contains("GENERATED verify lmsw_real:"));
+    assert!(report.contains("GENERATED verify lmsw_transition:"));
+    assert!(report.contains("GENERATED verify f2_rep_movs:"));
+    assert!(report.contains("GENERATED verify f2_rep_movs_fault:"));
     assert!(report.contains("GENERATED verify readonly_store: steps=0 stop=6"));
     assert!(report.contains("GENERATED verify branch_fault: steps=0 stop=4"));
     assert!(report.contains("GENERATED verify code_guard: steps=0 stop=7"));

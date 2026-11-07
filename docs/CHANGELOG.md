@@ -1,3 +1,16 @@
+# DOS IOCTL input and output status — 7 November 2026
+
+INT 21h AX=4406h/4407h now reports input/output readiness for open files,
+CON, NUL and an attached COM1/AUX. File input status follows the shared file
+position and does not consume data; disk output and NUL are immediately
+ready. Console and serial input status checks their pending input without
+removing it. Invalid handles return DOS error 6. AUX without an attached
+COM1 and PRN remain unmodelled. This allows BBC BASIC (86) `*EXEC` to read
+an ASCII command file; a shortened coloured Mandelbrot program was checked
+through to its completion message. The full image has not yet been checked.
+The DOS 3.10 Programmer's Reference, function 44h codes 6 and 7, documents
+the return contract.
+
 # ANSI.SYS-style console driver — 6 November 2026
 
 Tony chose an ANSI driver so that a colour PROMPT works on the DOS screen as

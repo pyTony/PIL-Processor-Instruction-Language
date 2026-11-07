@@ -90,6 +90,7 @@ questions; proposed syntax and plans are not implementation claims.
 | Document | Purpose |
 |---|---|
 | [Development status](development/STATUS.md) | Work log, verification evidence and continuation notes; newest entries first |
+| [Dine architecture](development/DINE_ARCHITECTURE.md) | DOS compatibility code, hardware boundaries and current separation |
 | [Roadmap](ROADMAP.md) | Emulator and portability goals, with historical planning notes |
 | [386 instruction completion plan](development/ISA_COMPLETION_PLAN.md) | Ordered instruction-family work, dependencies and acceptance gates |
 | [Machine-readable ISA backlog](development/ISA_BACKLOG.json) | Family/form inventory; not an opcode-completion percentage |

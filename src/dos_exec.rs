@@ -1,4 +1,4 @@
-//! INT 21 AH4B EXEC (load and execute, AL=00h) and returning to the parent
+//! INT 21 AH4B EXEC (load and execute, AL=00h; load overlay, AL=03h) and returning to the parent
 //! when the child terminates, after FreeDOS task.c: the child gets its own
 //! environment and program blocks, a PSP with the parent's handles, command
 //! tail and FCBs, and the parent resumes after its INT 21 with CF=0.
@@ -40,9 +40,45 @@ fn parse(bytes:&[u8])->Option<Program>{
     let loaded=(usize::from(pages)*512).min(bytes.len());
     Some(Program{module:bytes[header..loaded].to_vec(),relocations,min,max,entry:Some((cs,ip,ss,sp))})
 }
+/// Load an overlay into memory supplied by the caller. DOS does not allocate
+/// a PSP or transfer control for AL=03h. Relocations add the independent
+/// factor from ES:BX+2, which need not equal the load segment.
+fn overlay(p:&mut Loaded,file:&[u8])->Result<(),String>{
+    let mz=file.starts_with(b"MZ")||file.starts_with(b"ZM");
+    let mut program=if mz{match parse(file){Some(program)=>program,None=>{fail(p,11);return Ok(());}}}
+        else{Program{module:file.to_vec(),relocations:Vec::new(),min:0,max:0,entry:None}};
+    if mz{
+        let header=usize::from(u16::from_le_bytes([file[8],file[9]]))*16;
+        let table=usize::from(u16::from_le_bytes([file[24],file[25]]));
+        if !program.relocations.is_empty()&&(table<28||table+program.relocations.len()*4>header){fail(p,11);return Ok(());}
+    }
+    let block=u32::from(p.image.selectors[SegmentRegister::Es.index()])*16+(p.cpu.regs[3]&0xffff);
+    let load=word(&p.ram,block)?;let factor=word(&p.ram,block+2)?;
+    for(segment,offset)in &program.relocations{
+        let at=usize::from(*segment)*16+usize::from(*offset);
+        let Some(value)=program.module.get(at..at+2).map(|b|u16::from_le_bytes([b[0],b[1]]))else{fail(p,11);return Ok(())};
+        program.module[at..at+2].copy_from_slice(&value.wrapping_add(factor).to_le_bytes());
+    }
+    let start=u32::from(load)*16;let end=start.checked_add(program.module.len()as u32).ok_or("EXEC overlay address overflow")?;
+    let in_window=start>=p.image.fetch_base+p.image.start&&end<=p.image.fetch_base+p.image.end;
+    let in_system=p.image.system.iter().any(|&(a,b)|start>=a&&end<=b&&a<b);
+    let slot=if !program.module.is_empty()&&!in_window&&!in_system{
+        let overlap=p.image.system.iter().position(|&(a,b)|a<b&&start<=b&&a<=end);
+        Some(overlap.or_else(||p.image.system.iter().position(|&(a,b)|a==0&&b==0)).ok_or("EXEC overlay code range capacity exhausted")?)
+    }else{None};
+    // write_bytes validates the entire range and protection before changing RAM.
+    p.ram.write_bytes(start,&program.module).map_err(|e|format!("EXEC overlay write: {e:?}"))?;
+    if let Some(i)=slot{let(a,b)=p.image.system[i];p.image.system[i]=if a<b{(a.min(start),b.max(end))}else{(start,end)};}
+    p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(())
+}
 pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]as u8;
-    if al!=0{return Err(format!("EXEC AL={al:02x}h (load without running or overlay) is not modelled"));}
+    if !matches!(al,0|3){return Err(format!("EXEC AL={al:02x}h (load without running) is not modelled"));}
+    if al==3{
+        let raw=files::asciiz(p,p.cpu.regs[2]&0xffff)?;
+        let(file,_)=match files::program(p,&raw)?{Ok(found)=>found,Err(code)=>{fail(p,u32::from(code));return Ok(())}};
+        return overlay(p,&file);
+    }
     if p.exec.len()>=MAX_DEPTH{fail(p,8);return Ok(());}
     let raw=files::asciiz(p,p.cpu.regs[2]&0xffff)?;
     let(file,path)=match files::program(p,&raw)?{Ok(found)=>found,Err(code)=>{fail(p,u32::from(code));return Ok(())}};

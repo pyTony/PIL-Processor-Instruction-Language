@@ -1,7 +1,6 @@
 //! DOS compatibility contracts. CPU execution and host output are separate.
 use super::*;
 use crate::host_io::Output;
-use std::time::{SystemTime,UNIX_EPOCH};
 // Capture only DOS services that return errors in AX with carry set. Other
 // calls need not define carry, so it cannot be used as a general error signal.
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
@@ -227,11 +226,31 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
             Ok(None)
         },
+        (0x13,0x08)=>{
+            // DOS-mounted images and folders are not BIOS sector devices.
+            // Report this unimplemented BIOS operation as an error, not a
+            // fabricated geometry or access to the underlying host disk.
+            p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x0100;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        (0x15,0xd8) if p.cpu.regs[0]as u8==0=>{
+            // EISA slot-information probe on this non-EISA BIOS.
+            p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
         (0x15,0x84)=>{
             // No game adapter: report the BIOS joystick service unavailable
             // (CF=1, AH=86h); all other register bits remain unchanged.
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
+        (0x15,0x24) if (p.cpu.regs[0]as u8)<=3=>{
+            let op=p.cpu.regs[0]as u8;
+            if op<=1{p.speaker.bios_a20(&mut p.ram,op==1);}
+            if op==2{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.ram.a20_enabled());}
+            if op==3{p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|3;}
+            p.cpu.regs[0]&=!0xff00;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x15,0xc2)=>{
             // No PS/2 pointing device is modelled: answer as a BIOS without one
@@ -239,6 +258,13 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
+        },
+        (0x15,0xbf) if p.cpu.regs[0]&0xffff==0xbfde=>{
+            // No DESQview/X DVDOS4GX driver hooks INT 15h. The underlying
+            // BIOS reports the unsupported function, without claiming that
+            // a DOS extender or its protected-mode services are installed.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
             // No mouse driver is loaded: the reset reports AX=0 (not installed)
@@ -257,7 +283,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
         (0x21,ah @ (0x38|0x65|0x66))=>{nls::service(p,ah)?;Ok(None)},
-        (0x21,0x44) if matches!(p.cpu.regs[0]as u8,0|9)=>{files::service(p,0x44)?;Ok(None)},
+        (0x21,0x44) if p.cpu.regs[0]as u8==0x0c&&p.cpu.regs[1]&0xffff==0x036a=>{
+            // Generic CON code-page query needs a DISPLAY-style device
+            // driver. None is installed; the normal device rejects the
+            // request. Invalid handles still get DOS error 6.
+            let code=if files::system_file(p,(p.cpu.regs[3]&0xffff)as u16)?.is_some(){1}else{6};
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|code;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
+        (0x21,0x44) if matches!(p.cpu.regs[0]as u8,0|6|7|9|0x0d|0x0e)=>{files::service(p,0x44)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8>0x11=>{
             // IOCTL subfunctions end at 11h in DOS 6.22 and FreeDOS
             // (ioctl.c default case): others fail with CF=1, AX=0001h
@@ -289,21 +322,18 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // redirector or network software is present.
             Ok(None)
         },
-        (0x2f,_) if (0xc0..=0xff).contains(&ah) && p.cpu.regs[0]&255==0
-            && p.cpu.regs[3]&0xffff==0x5144 && p.cpu.regs[1]&0xffff==0x4d45 && p.cpu.regs[2]&0xffff==0x4d30=>{
-            // Quarterdeck RPCI scans D2h..FFh, then C0h..D1h, looking for
-            // its resident memory manager. With no handler, FreeDOS leaves
-            // the call untouched: AL=0 means the slot is unclaimed.
-            Ok(None)
-        },
-        (0x2f,_) if p.cpu.regs[0]&0xffff==0x4b02=>{
-            // No DOS task switcher: the default INT 2F handler leaves the
-            // caller's ES:DI (normally zero) and other registers untouched.
-            Ok(None)
-        },
         (0x2f,_) if p.cpu.regs[0]&0xffff==0x1a00&&console::ansi::installed(p)?=>{
             // The ANSI driver answers its installation check with AL=FFh (RBIL INT 2F/AX=1A00h).
             p.cpu.regs[0]|=0xff;Ok(None)
+        },
+        (0x2f,_) if (0xc0..=0xff).contains(&ah) && p.cpu.regs[0]&255==0
+            && p.cpu.regs[3]&0xffff==0x5144 && p.cpu.regs[1]&0xffff==0x4d45 && p.cpu.regs[2]&0xffff==0x4d30=>{
+            // No Quarterdeck RPCI handler claims this signed scan.
+            Ok(None)
+        },
+        (0x2f,_) if p.cpu.regs[0]&0xffff==0x4b02=>{
+            // The default multiplex handler leaves the caller's state unchanged.
+            Ok(None)
         },
         (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x160a|0x1680..=0x168f|0x1700..=0x17ff|0x1a00|0x4300|0x4680|0x4a10|0x4a11|0x4a33|0xae00|0xb700|0xb706|0xb707|0xb710|0xd44d|0xd44e|0xd44f)=>{
             // Nothing hooks the multiplex chain, so these installation checks
@@ -318,6 +348,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // B706h (APPEND state) keeps BX: no APPEND, so no functions on.
             // 1500h/150Bh keep BX (not ADADh): no MSCDEX, no CD-ROM drives.
             // 1000h keeps AL=00h: SHARE is not installed.
+            // D200h keeps AL=00h: Quarterdeck RPCI is not installed.
             Ok(None)
         },
         (0x10,0x10|0x11|0x12|0x1a|0x1b|0x1c|0x4f|0xfe|0xff)=>{
@@ -346,6 +377,19 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|((rest/100)<<8)|(rest%100);
             Ok(None)
         },
+        (0x21,0x2d)=>{
+            let h=(p.cpu.regs[1]>>8)&255;let m=p.cpu.regs[1]&255;let s=(p.cpu.regs[2]>>8)&255;let hundredths=p.cpu.regs[2]&255;
+            if h>23||m>59||s>59||hundredths>99{p.cpu.regs[0]|=255;return Ok(None);}
+            let total_hundredths=((h*60+m)*60+s)*100+hundredths;
+            let desired=(u64::from(total_hundredths)*59659/327680)as u32;
+            p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("DOS set time BDA write: {e:?}"))?;
+            p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("DOS set time rollover write: {e:?}"))?;
+            if p.clock_offset.is_some(){let raw=p.speaker.pit_interrupts(p.clock_offset)%u64::from(TICKS_PER_DAY);p.timer_tick_adjust=i64::from(desired)-raw as i64;}
+            p.dos_date_adjust=p.rtc.set_dos_time(p.clock_offset,p.dos_date_adjust,(h*60+m)*60+s);
+            p.ram.store(0x046c,MemWidth::Dword,desired).map_err(|e|format!("DOS set time BDA write: {e:?}"))?;
+            p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("DOS set time rollover write: {e:?}"))?;
+            p.timer_ticks=desired;p.cpu.regs[0]&=!255;Ok(None)
+        },
         (0x15,0xc0)=>{
             // No system configuration table: CF=1, AH=86h as for AH=C2.
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
@@ -363,14 +407,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // Without the host clock there is no clock driver or CMOS: DOS keeps
             // its 1 January 1980 default, a Tuesday (FreeDOS systime.c: day of
             // week (days+2)%7 with days=0). With it, the host's local date.
-            let(year,month,day,weekday)=match p.clock_offset{
-                Some(offset)=>{
-                    let(days,_)=local_now(offset);
-                    let(_,date)=files::stamp(Some(UNIX_EPOCH+std::time::Duration::from_secs(days*86400)));
-                    (1980+u32::from(date>>9),u32::from(date>>5&15),u32::from(date&31),((days+4)%7)as u32)
-                },
-                None=>(1980,1,1,2),
-            };
+            let(year,month,day,weekday)=rtc::dos_date(p.clock_offset,p.dos_date_adjust);
             p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|year;
             p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|month<<8|day;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|weekday;
@@ -380,13 +417,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // Set date: FreeDOS DosSetDate rejects a year outside 1980..2099,
             // a month outside 1..12 or a day outside the month with AL=FFh and
             // changes nothing. That is also the DESQview/TopView installation
-            // check (CX='DE', DX='SQ'): no DESQview answers it. A valid date
-            // would change the DOS clock, which is not modelled, so it stops.
+            // check (CX='DE', DX='SQ'): no DESQview answers it. Valid writes
+            // update the session's DOS date and RTC, never the host clock.
             let year=p.cpu.regs[1]&0xffff;let(month,day)=((p.cpu.regs[2]>>8)&255,p.cpu.regs[2]&255);
             let leap=year%4==0&&(year%100!=0||year%400==0);
             let days=match month{1|3|5|7|8|10|12=>31,4|6|9|11=>30,2 if leap=>29,2=>28,_=>0};
-            if (1980..=2099).contains(&year)&&day>=1&&day<=days{return Err("DOS set date (a valid date) is not modelled: the DOS clock cannot be changed".into());}
-            p.cpu.regs[0]|=0xff;
+            if (1980..=2099).contains(&year)&&day>=1&&day<=days{
+                p.dos_date_adjust=p.rtc.set_dos_date(p.clock_offset,p.dos_date_adjust,year,month,day);p.cpu.regs[0]&=!255;
+            }else{p.cpu.regs[0]|=0xff;}
             Ok(None)
         },
         (0x21,0x58)=>{
@@ -416,12 +454,6 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
 }
-/// Days since 1970-01-01 and milliseconds into the day, in the host's local
-/// time `offset` seconds east of UTC.
-pub(super) fn local_now(offset:i64)->(u64,u64){
-    let ms=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.as_millis()as i64)+offset*1000;
-    let ms=ms.max(0)as u64;(ms/86_400_000,ms%86_400_000)
-}
 /// The timer interrupt's effect while time runs on the host clock: when IF=1
 /// and the PIT IRQ edge total has moved on, the BIOS INT 08h handler stores it
 /// at 0040:006C and sets 0040:0070 if the BIOS day count wraps, so programs that poll
@@ -430,13 +462,18 @@ pub(super) fn local_now(offset:i64)->(u64,u64){
 /// deterministic clock (no host clock) moves only when it is read, as before.
 pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
     if p.clock_offset.is_none(){return Ok(());}
-    let now=(p.speaker.pit_interrupts(p.clock_offset)%u64::from(TICKS_PER_DAY))as u32;
+    let now=sampled_ticks(p);
     timer_interrupt_at(p,now)
+}
+pub(super) fn sampled_ticks(p:&mut Loaded)->u32{
+    let raw=p.speaker.pit_interrupts(p.clock_offset)%u64::from(TICKS_PER_DAY);
+    (raw as i64+p.timer_tick_adjust).rem_euclid(i64::from(TICKS_PER_DAY))as u32
 }
 /// Commit a sampled PIT IRQ edge total through the bounded BIOS handler.
 pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
+    if now!=p.timer_ticks{p.speaker.pic.raise_timer();}
     if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0{return Ok(());}
-    if now==p.timer_ticks{return Ok(());}
+    if !p.speaker.pic.timer_ready(){return Ok(());}
     if !vectors::answered(p,0x08)?{
         return Err("timer interrupt (IRQ0) through a program's INT 08h handler is not modelled".into());
     }
@@ -446,6 +483,8 @@ pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
     // The IRQ arrives between instructions: IRET resumes the current IP.
     // Keep the BIOS shortcut's existing catch-up policy (one hook per poll).
     if hook{vectors::deliver_timer(p)?;}
+    p.speaker.pic.acknowledge_timer();
+    if !hook{p.speaker.pic.finish_timer();}
     p.ram.store(0x046c,MemWidth::Dword,now).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     if now<p.timer_ticks{p.ram.store(0x0470,MemWidth::Byte,1).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;}
     p.timer_ticks=now;
@@ -477,6 +516,7 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
     p.ram.store(0x046c,MemWidth::Dword,ticks).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
     p.timer_ticks=next_ticks;
+    if p.clock_offset.is_none()&&rollover!=0{p.dos_date_adjust+=86400;}
     Ok((ticks,rollover))
 }
 /// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without

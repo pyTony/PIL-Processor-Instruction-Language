@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Tk text-mode screen for a PIL DOS session (Python 3.10+).
+"""Tk screen for a PIL DOS session (Python 3.10+).
 
 Runs `pil --dos-session PROGRAM`, draws the B800 text page it reports
 and sends key presses as BIOS keystrokes. Execution, DOS services and the
 screen contents all come from the engine; this file only displays them.
+CGA modes 04h/06h and VGA mode 13h are displayed at 4:3, like a CRT;
+text mode uses the host font.
 
     python tools/dos_terminal.py images/FD14LITE.img::COMMAND.COM
     python tools/dos_terminal.py --mount dosfiles images/FD14LITE.img::COMMAND.COM
@@ -186,6 +188,22 @@ def cga_rgb(frame, mode, color):
         lut = [b''.join(palette[(b >> shift) & 1] for shift in range(7, -1, -1)) for b in range(256)]
     rows = ((y & 1) * 0x2000 + (y // 2) * 80 for y in range(200))
     return b''.join(lut[b] for offset in rows for b in data[offset:offset + 80])
+
+
+def graphics_photo(tk, rgb, width):
+    """Show 200-line CGA/VGA graphics at 4:3 using nearest-neighbour pixels.
+
+    320x200 pixels are 5:6 and 640x200 pixels are 5:12 on a 4:3
+    display. Expand each source scanline to two or three host scanlines,
+    then double the width of 320-pixel modes. The guest frame stays intact.
+    """
+    if width not in (320, 640) or len(rgb) != width * 200 * 3:
+        raise ValueError('invalid graphics frame dimensions')
+    row_bytes = width * 3
+    rows = [rgb[y * row_bytes:(y + 1) * row_bytes] for y in range(200)]
+    scaled = b''.join(rows[y * 200 // 480] for y in range(480))
+    picture = tk.PhotoImage(data=f'P6 {width} 480 255\n'.encode('ascii') + scaled, format='PPM')
+    return picture.zoom(2, 1) if width == 320 else picture
 
 
 def key_code(keysym, char, control=False, alt=False, altgr=False):
@@ -587,8 +605,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 width = 320 if reply['cga_mode'] == 4 else 640
             if frame[0] != descriptor:
                 rgb = graphics_rgb(pixels, reply['palette']) if pixels is not None else cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
-                picture = tk.PhotoImage(data=f'P6 {width} 200 255\n'.encode('ascii') + rgb, format='PPM')
-                picture = picture.zoom(2, 2) if width == 320 else picture.zoom(1, 2)
+                picture = graphics_photo(tk, rgb, width)
                 graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()

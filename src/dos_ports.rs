@@ -2,11 +2,14 @@
 //! channel 2 (count at 42h, mode at 43h) sets the tone and port 61h bits 0
 //! and 1 gate it to the speaker. The CMOS clock and setup bytes read through
 //! ports 70h (index) and 71h (data). Byte IN and OUT only; any other port, a
-//! word access, a CMOS write or a PIT use other than these stops the run.
-//! PIT channel 0 (40h) supports programmed binary modes 2/3 and latched reads. Port 3DAh (and 3BAh) reports the video status register.
+//! word access, unsupported CMOS writes or unsupported PIT use stops the run.
+//! Channel 0 supports binary modes 2/3; channel 2 has timed binary modes
+//! 0/2/3 and latched reads. Port 3DAh (and 3BAh) reports video status.
 use super::*;
 #[path="dos_pit.rs"]
 mod pit;
+#[path="dos_pic.rs"]
+pub(super) mod pic;
 /// PIT input clock in Hz.
 pub(crate) static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 /// Conventional PC assignments, not an exhaustive list of expansion hardware.
@@ -32,6 +35,8 @@ pub struct Speaker{
     /// Channel 2 access mode (1 low, 2 high, 3 low then high), the count and
     /// whether the high byte comes next.
     access:u8,count:u16,high_next:bool,
+    counter2:pit::Counter2,
+    pub(super) pic:pic::Pair,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
     pit:pit::Counter0,
@@ -40,8 +45,11 @@ pub struct Speaker{
     /// blanking and cycles vertical retrace so snow-check and sync loops advance.
     retrace:u32,
     ignored_out:std::collections::BTreeSet<u16>,
+    fast_a20:u8,kbc_a20:bool,kbc_write_output:bool,kbc_reply:Option<u8>,
 }
 impl Speaker{
+    fn update_a20(&self,ram:&mut Ram){ram.set_a20_enabled(self.kbc_a20||self.fast_a20&2!=0);}
+    pub(super) fn bios_a20(&mut self,ram:&mut Ram,enabled:bool){self.kbc_a20=enabled;if !enabled{self.fast_a20&=!2;}self.update_a20(ram);}
     /// Host PIT time is sampled once, then advances monotonically. Headless
     /// deterministic sessions keep it at zero unless a host clock is selected.
     pub fn pit_now(&mut self,clock:Option<i64>)->u64{
@@ -97,7 +105,16 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         return Ok(Some(length));
     }
     if port==0x71{
-        if !input{return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index));}
+        if !input{
+            match p.cmos_index{
+                // BIOS shutdown byte: a subsequent CPU reset is separate.
+                0x0f=>p.cmos_shutdown=p.cpu.regs[0]as u8,
+                // BCD calendar-year writes adjust only this virtual RTC.
+                0x09|0x32=>p.rtc.write_year(p.clock_offset,p.cmos_index,p.cpu.regs[0]as u8)?,
+                _=>return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index)),
+            }
+            return Ok(Some(length));
+        }
         let value=cmos(p,p.cmos_index)?;
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
         return Ok(Some(length));
@@ -108,12 +125,51 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         p.cmos_index=p.cpu.regs[0]as u8&0x3f;
         return Ok(Some(length));
     }
+    if matches!(port,0x20|0x21|0xa0|0xa1){
+        if input{
+            // IRR must reflect a pending edge even when IF or the IRQ mask
+            // prevents the BIOS timer shortcut from delivering it.
+            if port==0x20&&p.clock_offset.is_some(){
+                let now=services::sampled_ticks(p);
+                if now!=p.timer_ticks{p.speaker.pic.raise_timer();}
+            }
+            let value=p.speaker.pic.read(port);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+        }else{p.speaker.pic.write(port,p.cpu.regs[0]as u8)?;}
+        return Ok(Some(length));
+    }
+    // Bounded AT keyboard-controller output-port interface and fast A20 gate.
+    // CPU reset requests remain explicit stops rather than being ignored.
+    if matches!(port,0x60|0x64|0x92){
+        let s=&mut p.speaker;
+        if input{
+            let value=match port{
+                0x64=>u8::from(s.kbc_reply.is_some()), // output full; input always ready
+                0x60=>s.kbc_reply.take().ok_or("IN 60h without a pending keyboard-controller response")?,
+                _=>s.fast_a20,
+            };
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+        }else{
+            let value=p.cpu.regs[0]as u8;
+            match port{
+                0x92=>{if value&1!=0{return Err("system reset through port 92h is not modelled".into());}s.fast_a20=value;s.update_a20(&mut p.ram);},
+                0x64=>match value{
+                    0xd0=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(1|u8::from(s.kbc_a20)<<1);},
+                    0xd1=>s.kbc_write_output=true,
+                    _=>return Err(format!("keyboard-controller command {value:02x}h is not modelled")),
+                },
+                0x60 if s.kbc_write_output=>{if value&1==0{return Err("keyboard-controller CPU reset is not modelled".into());}s.kbc_write_output=false;s.kbc_a20=value&2!=0;s.update_a20(&mut p.ram);},
+                // AT keyboard diagnostic echo: no ACK precedes the EE reply.
+                0x60 if value==0xee=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(0xee);},
+                _=>return Err("OUT 60h without a keyboard-controller output-port command is not modelled".into()),
+            }
+        }
+        return Ok(Some(length));
+    }
     let s=&mut p.speaker;
     if input{
         let value=match port{
             0x00..=0x0f=>0xff,
             0x201=>0xff, // no game adapter: open bus
-            0x21|0xa1=>0x00,
             0x81..=0x8f=>0xff,
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
             0x3da|0x3ba if !p.vga.status_active(port)=>0xff,
@@ -124,6 +180,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 (if hblank{1}else{0})|(if vblank{8}else{0})
             },
             0x40=>{let now=s.pit_now(p.clock_offset);s.pit.read(now)},
+            0x42=>{let now=s.pit_now(p.clock_offset);s.counter2.read(now)?},
                         0x378..=0x37a | 0x278..=0x27a => 0x80,
             _=>return Err(format!("IN from port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         };
@@ -133,19 +190,19 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         match port{
             0x00..=0x0f=>{},
             0x201=>{}, // no game adapter to receive the write
-            0x20|0x21|0xa0|0xa1=>{},
             0x81..=0x8f=>{},
             0x61=>{
-                let was=s.tone()!=0;s.control=value&0x0f;
+                let was=s.tone()!=0;let now=s.pit_now(p.clock_offset);s.counter2.gate(value&1!=0,now);s.control=value&0x0f;
                 if !was&&s.tone()!=0{s.beeps+=1;}
             },
             // Channel 2 mode: access in bits 5..4; the counting mode is not timed.
-            0x43 if value>>6==2&&value&0x30!=0=>{s.access=value>>4&3;s.high_next=s.access==2;},
+            0x43 if value>>6==2=>{let now=s.pit_now(p.clock_offset);s.counter2.command(value,now)?;if value&0x30!=0{s.access=value>>4&3;s.high_next=s.access==2;}},
             0x43 if value>>6==0=>{let now=s.pit_now(p.clock_offset);s.pit.command(value,now)?;},
             0x43=>return Err(format!("PIT command {value:02x}h is not modelled")),
             0x40=>{let now=s.pit_now(p.clock_offset);s.pit.write(value,now)?;},
             0x42 if s.access==0=>return Err("PIT channel 2 count written before its mode".into()),
             0x42=>{
+                let now=s.pit_now(p.clock_offset);s.counter2.write(value,now);
                 if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
                 if s.access==3{s.high_next=!s.high_next;}
             },
@@ -161,31 +218,23 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
 /// One CMOS byte as an AT with no diskette or hard disk, 640 KiB base memory
 /// and no extended memory would hold it. The clock registers are BCD in 24-hour
 /// form: the host's local time with the session clock, else midnight on
-/// Tuesday 1 January 1980, as INT 21h AH2A/AH2C give. Bit 7 of register 0Ah
-/// (update in progress) stays clear, so a read never has to wait.
+/// Tuesday 1 January 1980. Direct RTC year changes are session-local and do
+/// not alter the DOS-maintained clock or the host clock. Bit 7 of register
+/// 0Ah (update in progress) stays clear, so a read never has to wait.
 fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
-    let bcd=|n:u32|((n/10)<<4|n%10)as u8;
-    let(year,month,day,weekday,seconds)=match p.clock_offset{
-        Some(offset)=>{
-            let(days,ms)=services::local_now(offset);
-            let(_,date)=files::stamp(Some(std::time::UNIX_EPOCH+std::time::Duration::from_secs(days*86400)));
-            (1980+u32::from(date>>9),u32::from(date>>5&15),u32::from(date&31),((days+4)%7)as u32+1,(ms/1000)as u32)
-        },
-        None=>(1980,1,1,3,0),
-    };
+    if let Some(value)=p.rtc.read(p.clock_offset,index){return Ok(value);}
     Ok(match index{
-        0x00=>bcd(seconds%60),0x02=>bcd(seconds/60%60),0x04=>bcd(seconds/3600),
         // Alarm registers: no alarm set.
         0x01|0x03|0x05=>0,
-        0x06=>bcd(weekday),0x07=>bcd(day),0x08=>bcd(month),0x09=>bcd(year%100),0x32=>bcd(year/100),
         // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
         0x0a=>0x26,0x0b=>0x02,0x0c=>0x00,0x0d=>0x80,
         // Diagnostics passed, normal shutdown, no diskette, no hard disk.
-        0x0e|0x0f|0x10|0x11|0x12|0x13=>0,
+        0x0e|0x10|0x11|0x12|0x13=>0,0x0f=>p.cmos_shutdown,
         // Equipment: CGA 80 columns, no diskette, no coprocessor.
         0x14=>p.fpu.equipment(0x20) as u8,
         0x15=>0x80,0x16=>0x02,
-        0x17|0x18|0x30|0x31=>0,
+        // No expansion card or pending setup notice in the POST information byte.
+        0x17|0x18|0x30|0x31|0x33=>0,
         _=>return Err(format!("CMOS register {index:02x}h is not modelled")),
     })
 }

@@ -43,7 +43,7 @@ pub(super) fn waiting(p:&mut Loaded,vector:u8)->Result<bool,String>{
     // With standard input on COM1 the service itself waits for the port.
     if vector==0x21&&super::services::stdin_aux(p){return Ok(false);}
     match(vector,ah){
-        (0x16,0)=>{let(head,tail)=ring(p)?;Ok(head==tail)},
+        (0x16,0|0x10)=>{let(head,tail)=ring(p)?;Ok(head==tail)},
         (0x21,1|7|8)=>Ok(!dos_available(p)?),
         (0x21,0x0c) if matches!(al,1|7|8)=>{
             if !p.flushed{let writes=dos_flush_writes(p)?;commit(p,&writes)?;p.pending_scan=None;p.flushed=true;}
@@ -61,14 +61,14 @@ pub(super) fn enqueue(p:&mut Loaded,key:u16)->Result<bool,String>{
 }
 pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
     match ah{
-        0|1=>{
+        0|1|0x10|0x11=>{
             let(head,tail)=ring(p)?;
             if head==tail{
-                if ah==0{return Err("BIOS keyboard requires input".into());}
+                if ah==0||ah==0x10{return Err("BIOS keyboard requires input".into());}
                 p.cpu.eflags|=0x40;p.cpu.undefined_flags&=!0x40;return Ok(());
             }
             let key=read(p,0x400+head)?;
-            if ah==0{commit(p,&[(0x41a,MemWidth::Word,next(head))])?;}
+            if ah==0||ah==0x10{commit(p,&[(0x41a,MemWidth::Word,next(head))])?;}
             else{p.cpu.eflags&=!0x40;p.cpu.undefined_flags&=!0x40;}
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|key;Ok(())
         },
@@ -80,6 +80,9 @@ pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
             let inserted=enqueue(p,p.cpu.regs[1]as u16)?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(!inserted);Ok(())
         },
+        // A Compaq speed probe starts with AL=FFh. No Compaq extension is
+        // installed, so preserve its sentinel rather than inventing a speed.
+        0xf1 if p.cpu.regs[0]as u8==0xff=>Ok(()),
         _=>Err(format!("unimplemented BIOS keyboard AH={ah:02x}")),
     }
 }
@@ -290,10 +293,12 @@ fn graphics_pixel(p:&mut Loaded,write:bool)->Result<(),String>{
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|((old>>shift)&mask);Ok(())
     }
 }
-/// INT 10h AH=0Bh CGA background/intensity or palette select.
+/// INT 10h AH=0Bh CGA border/background/intensity or palette select.
 fn cga_palette(p:&mut Loaded)->Result<(),String>{
-    let mode=byte(p,0x449)?;if !matches!(mode,4|6){return Err("CGA palette requires mode 4 or 6".into());}
-    let bh=(p.cpu.regs[3]>>8)&255;let bl=p.cpu.regs[3]&255;let old=byte(p,0x466)?;
+    let mode=byte(p,0x449)?;let bh=(p.cpu.regs[3]>>8)&255;
+    // BH=0 also selects the border colour in 80-column colour text mode.
+    if !matches!(mode,4|6)&&!(mode==3&&bh==0){return Err("CGA palette requires mode 4 or 6, or border selection in mode 3".into());}
+    let bl=p.cpu.regs[3]&255;let old=byte(p,0x466)?;
     let value=match bh{0=>(old&0x20)|(bl&0x1f),1=>(old&0x1f)|((bl&1)<<5),_=>return Err("CGA palette selector must be 0 or 1".into())};
     commit(p,&[(0x466,MemWidth::Byte,value)])?;p.vga.set_cga_color(value as u8);Ok(())
 }
