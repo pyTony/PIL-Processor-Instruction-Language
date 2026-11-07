@@ -16,3 +16,9 @@ __pycache__/
 # The project's own DOS programs live in programs/dos. See docs/DRIVE_D.md.
 /driveD/
 /DriveD/
+
+# SingleStepTests 80386 test data (third-party), kept next to the checkout.
+/80386.zip
+
+# Stop log written by Dine sessions (PILdos).
+/PILdos-stops.jsonl
