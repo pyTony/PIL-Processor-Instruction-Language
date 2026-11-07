@@ -122,10 +122,9 @@ impl Image {
                 _=>break b,
             }
         };
-        // F2 MOVSB/MOVSW/MOVSD are undocumented compatibility encodings
-        // used by DOS software. Like F3 MOVS, they repeat by count and do
-        // not test ZF. Keep other unverified F2 string forms unsupported.
-        if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa4|0xa5|0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
+        // F2 MOVSB/MOVSW/MOVSD and F2/F3 INS/OUTS repeat by count and do not
+        // test ZF. Keep other unverified F2 string forms unsupported.
+        if let Some(prefix)=repeat{if !matches!(opcode,0x6c..=0x6f|0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0x6c..=0x6f|0xa4|0xa5|0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
         // LOCK is valid only on a read-modify-write memory destination; the
         // single-executor RAM model makes every instruction indivisible, so it
         // changes nothing else. XCHG checks its memory operand itself.
@@ -188,12 +187,35 @@ impl Image {
                 let text=include_str!("../isa/i386/pop_memory.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$HIGH_MASK",if stack_bits==16{"4294901760"}else{"0"}).replace("$WRAP_GUARD",guard);
                 (format!("POP {}",operand_name(dst,address)),compile(&instantiate(text,w),w))
             }
+            0x62=>{
+                let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode("BOUND requires a memory bounds pair".into()));}
+                dst=view(((m>>3)&7)as usize,w);src=dst;
+                let effective=r.effective(m,addr32)?;
+                address=Some(AddressContext{effective,override_segment,segments:self.segments});
+                let text=include_str!("../isa/i386/bound.pil").replace("$A",if addr32{"32"}else{"16"});
+                (format!("BOUND {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
+            }
             0xc8=>{
                 let size=r.unsigned(16)?;let level=r.byte()?&31;
-                if level!=0{return Err(GuestError::Decode(format!("ENTER nesting level {level} is outside this profile")));}
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
-                let text=include_str!("../isa/i386/enter.pil").replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
-                (format!("ENTER 0x{size:04x},0"),compile(&instantiate(&text,w),w))
+                let frame_ptr=match (w,stack_bits){
+                    (16,16)|(32,32)=>"or frame_ptr sp0 sp0",
+                    (16,32)=>"trunc frame_ptr sp0 16",
+                    _=>"read_gpr old_esp 4 32\nconst high_mask 32 4294901760\nand esp_high old_esp high_mask\nzext sp0_wide sp0 32\nor frame_ptr esp_high sp0_wide",
+                };
+                let mut nesting=String::new();
+                if level>=2{nesting.push_str("read_gpr bp0 5 $S\n");}
+                for i in 1..level{
+                    let prev=i-1;
+                    nesting.push_str(&format!("sub bp{i} bp{prev} step\nzext bp_at{i} bp{i} 32\nload_segment disp{i} 2 bp_at{i} $W\nsub sp{i} sp{prev} step\nzext sp_at{i} sp{i} 32\nstore_segment 2 sp_at{i} disp{i}\n"));
+                }
+                if level>=1{
+                    let prev=level-1;
+                    nesting.push_str(&format!("sub sp{level} sp{prev} step\nzext sp_at{level} sp{level} 32\nstore_segment 2 sp_at{level} frame_ptr"));
+                }
+                let sp_after=format!("sp{level}");
+                let text=include_str!("../isa/i386/enter.pil").replace("$FRAME_PTR",frame_ptr).replace("$NESTING",&nesting).replace("$SP_AFTER",&sp_after).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                (format!("ENTER 0x{size:04x},{level}"),compile(&instantiate(&text,w),w))
             }
             0xd7=>{
                 let seg=override_segment.unwrap_or(SegmentRegister::Ds).index();
@@ -284,10 +306,10 @@ impl Image {
                 let text=include_str!("../isa/i386/ret.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (if opcode==0xc2{format!("RET 0x{cleanup:04x}")}else{"RET".into()},compile(&instantiate(text,w),w))
             }
-            0xa4|0xa5|0xaa|0xab|0xac|0xad=>{
+            0x6c..=0x6f|0xa4|0xa5|0xaa|0xab|0xac|0xad=>{
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;let a=if addr32{32}else{16};
-                let name=match opcode{0xa4|0xa5=>"movs",0xaa|0xab=>"stos",_=>"lods"};
-                let body=match name{"movs"=>include_str!("../isa/i386/movs.pil"),"stos"=>include_str!("../isa/i386/stos.pil"),_=>include_str!("../isa/i386/lods.pil")};
+                let name=match opcode{0x6c|0x6d=>"ins",0x6e|0x6f=>"outs",0xa4|0xa5=>"movs",0xaa|0xab=>"stos",_=>"lods"};
+                let body=match name{"ins"=>include_str!("../isa/i386/ins.pil"),"outs"=>include_str!("../isa/i386/outs.pil"),"movs"=>include_str!("../isa/i386/movs.pil"),"stos"=>include_str!("../isa/i386/stos.pil"),_=>include_str!("../isa/i386/lods.pil")};
                 let body=body.replace("$SEG",&override_segment.unwrap_or(SegmentRegister::Ds).index().to_string()).replace("$A",&a.to_string()).replace("$BYTES",&(w/8).to_string());
                 let text=if repeat.is_some(){super::repeat_description(&body,a)}else{body};
                 let mnemonic=format!("{}{}",name.to_ascii_uppercase(),match w{8=>"B",16=>"W",_=>"D"});
@@ -655,9 +677,18 @@ impl Image {
                 (label,compile(&text,w))
                 }
             }
-            0xe4|0xe6=>{
-                let port=r.byte()?;if port!=0xe9{return Err(GuestError::Decode(format!("unsupported monitor port {port:02x}")));}
-                return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
+            0xe4..=0xe7|0xec..=0xef=>{
+                if opcode&1==0{w=8;}dst=view(0,w);src=dst;
+                let port=if opcode<0xe8{Some(r.byte()?)}else{None};
+                if matches!((opcode,port),(0xe4|0xe6,Some(0xe9)))&&self.end<=RAM_BYTES as u32{
+                    return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
+                }
+                let is_in=opcode&2==0;
+                let port_name=port.map(|p|format!("0x{p:02x}")).unwrap_or_else(||"DX".into());
+                let reg_name=register_name(dst);
+                let label=if is_in{format!("IN {reg_name},{port_name}")}else{format!("OUT {port_name},{reg_name}")};
+                let text=if is_in{format!("const v {w} {}\nwrite dst v\npreserve_flags all\nretire",super::mask(w))}else{format!("read v dst {w}\npreserve_flags all\nretire")};
+                (label,compile(&text,w))
             }
             0xcc|0xcd|0xce=>{
                 let vector=match opcode{0xcc=>3,0xce=>4,_=>r.byte()?};

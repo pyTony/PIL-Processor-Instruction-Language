@@ -93,6 +93,23 @@ impl Ram {
         }
         Ok(value)
     }
+    pub fn load_staged(&self,address:u32,width:MemWidth,staged:&[Option<(u32,MemWidth,u32)>])->Result<u32,AccessFault> {
+        let mut value=self.load(address,width)?;
+        if staged.is_empty(){return Ok(value);}
+        let bytes=width.bytes()as u32;
+        for &(s_addr,s_width,s_val) in staged.iter().flatten(){
+            for b in 0..s_width.bytes()as u32{
+                let phys=self.physical_address(s_addr.wrapping_add(b));
+                for i in 0..bytes{
+                    if self.physical_address(address.wrapping_add(i))==phys{
+                        let byte=(s_val>>(b*8))&0xff;
+                        value=(value&!(0xff<<(i*8)))|(byte<<(i*8));
+                    }
+                }
+            }
+        }
+        Ok(value)
+    }
     pub fn store(&mut self,address:u32,width:MemWidth,value:u32)->Result<(),AccessFault> {
         let bytes=width.bytes()as usize;self.check_bus(address,bytes,true)?;
         if let Some(offset)=self.alias(address,bytes){

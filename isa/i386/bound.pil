@@ -1,0 +1,22 @@
+require_width 16_or_32
+read index dst $W
+read_address pointer
+load lower pointer $W
+trunc pointer_a pointer $A
+const step $A $BYTES
+add upper_a pointer_a step
+zext upper_at upper_a 32
+load upper upper_at $W
+const one $W 1
+const sign_bit $W $SIGN
+shl bias one sign_bit
+xor index_biased index bias
+xor lower_biased lower bias
+xor upper_biased upper bias
+ult below_lower index_biased lower_biased
+ult above_upper upper_biased index_biased
+or out_of_bounds below_lower above_upper
+not in_bounds out_of_bounds
+raise_unless in_bounds 5
+preserve_flags all
+retire

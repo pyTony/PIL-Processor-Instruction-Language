@@ -39,7 +39,7 @@ fn decode_modrm_and_sib_signed_displacements() {
 }
 #[test]
 fn truncated_and_unsupported_instructions_are_diagnostics() {
-    for bytes in [vec![0xb8,1],vec![0x67,0x89,4],vec![0x62],vec![0xf0,0x01,0xc0],vec![0xe6,0x80]] {
+    for bytes in [vec![0xb8,1],vec![0x67,0x89,4],vec![0x62],vec![0x62,0xc0],vec![0xf0,0x01,0xc0],vec![0xe6]] {
         assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:?}");
     }
 }
@@ -664,5 +664,45 @@ fn lock_is_accepted_only_on_read_modify_write_memory_destinations(){
     // Register destinations, a memory source, CMP, TEST and other opcodes are not lockable.
     for bytes in [vec![0xf0,0x01,0xc0],vec![0xf0,0x03,0x06,0,4],vec![0xf0,0x80,0x3e,0,4,1],vec![0xf0,0x39,0x06,0,4],vec![0xf0,0xf6,0x06,0,4,1],vec![0xf0,0x0f,0xa3,0x06,0,4],vec![0xf0,0x0f,0xba,0x26,0,4,1],vec![0xf0,0x8b,0x06,0,4]]{
         assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");
+    }
+}
+#[test]
+fn bound_enter_nesting_and_port_io_instructions(){
+    use super::super::Cpu;
+    // BOUND AX,[0400h] with signed bounds [-5 (FFFBh), 10 (000Ah)] at linear 500h.
+    let bounds=(10u32<<16)|0xfffbu32;
+    for (ax,ok) in [(0xfffbu32,true),(0,true),(10,true),(0xfffau32,false),(11,false),(0x8000,false),(0x7fff,false)]{
+        let mut c=Cpu{regs:[ax,0,0,0,0,0,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+        let res=execute_one(&[0x62,0x06,0x00,0x04],&mut c,bounds,false);
+        if ok{assert!(res.is_ok());assert_eq!(c.eip,ENTRY+4);}
+        else{assert_eq!(res,Err(ExecError::Exception{eip:ENTRY,vector:5}));assert_eq!(c.eip,ENTRY);}
+    }
+    // ENTER 0008,2 copies 1 display pointer from [BP-2] before pushing frame_ptr (SS base is 200h).
+    let (image,mut ram)=Image::load(&[0xc8,0x08,0x00,0x02]).unwrap();
+    ram.store(0x200+0x2fe,MemWidth::Word,0x4321).unwrap();
+    let mut c=Cpu{regs:[0,0,0,0,0x0200,0x0300,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+    let d=image.decode(&ram,ENTRY).unwrap();
+    if let Operation::Pil{program,dst,src,flow,address}=d.operation{
+        let mut machine=image.segment_state();
+        super::super::execute_machine(&program,&mut c,dst,src,flow,&mut ram,address,&mut machine).unwrap();
+    }else{panic!();}
+    assert_eq!((c.regs[5]&0xffff,c.regs[4]&0xffff),(0x01fe,0x01f2));
+    assert_eq!(ram.load(0x200+0x1fe,MemWidth::Word).unwrap(),0x0300);
+    assert_eq!(ram.load(0x200+0x1fc,MemWidth::Word).unwrap(),0x4321);
+    assert_eq!(ram.load(0x200+0x1fa,MemWidth::Word).unwrap(),0x01fe);
+    // Open-bus IN returns all-ones; INS writes FF/FFFF/FFFFFFFF to ES:[DI].
+    for (bytes,init_eax,want_eax) in [
+        (vec![0xe4,0x80],0x1234_5600u32,0x1234_56ffu32),
+        (vec![0xe5,0x80],0x1234_0000,0x1234_ffff),
+        (vec![0x66,0xe5,0x80],0,0xffff_ffff),
+        (vec![0xec],0x1234_5600,0x1234_56ff),
+        (vec![0xed],0x1234_0000,0x1234_ffff),
+        (vec![0x66,0xed],0,0xffff_ffff),
+        (vec![0xe6,0x80],0x1234_5678,0x1234_5678),
+        (vec![0xee],0x1234_5678,0x1234_5678),
+    ]{
+        let mut c=Cpu{regs:[init_eax,0,0x3f8,0,0,0,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+        execute_one(&bytes,&mut c,0,false).unwrap();
+        assert_eq!((c.regs[0],c.eip),(want_eax,ENTRY+bytes.len() as u32),"{bytes:02x?}");
     }
 }

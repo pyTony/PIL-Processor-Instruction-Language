@@ -964,8 +964,8 @@ fn number(s: &str) -> R<u64> {
         u64::from_str_radix(hex, 16).map_err(|_| format!("bad number: {s}"))
     } else { s.parse().map_err(|_| format!("bad number: {s}")) }
 }
-/// Staged RAM stores one PIL program may commit together (PUSHA needs eight).
-const MAX_STORES:usize=8;
+/// Staged RAM stores one PIL program may commit together (ENTER level 31 needs 32).
+const MAX_STORES:usize=32;
 fn width(s: &str) -> R<u8> {
     let w = number(s)?;
     if (1..=64).contains(&w) { Ok(w as u8) } else { Err("width must be 1..64".into()) }
@@ -1098,7 +1098,6 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     Token::WriteGpr(reg,a,w)
                 }
                 ["load_segment", out, register, address, bits]=>{
-                    if stored{return Err("loads after a staged store are not supported".into());}
                     let segment=number(register)?;let a=slot(&names,address)?;let w=width(bits)?;
                     if segment>=6||widths[a]!=32{return Err("load_segment needs segment0..5 and bv32 offset".into());}
                     let mem=MemWidth::from_bits(w).ok_or("memory width must be8/16/32")?;
@@ -1106,7 +1105,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["store_segment", register, address, input]=>{
                     let segment=number(register)?;let a=slot(&names,address)?;let v=slot(&names,input)?;
-                    if segment>=6||widths[a]!=32||store_count>=MAX_STORES{return Err("at most eight stores with segment0..5 and bv32 offset required".into());}
+                    if segment>=6||widths[a]!=32||store_count>=MAX_STORES{return Err("at most 32 stores with segment0..5 and bv32 offset required".into());}
                     let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be8/16/32")?;stored=true;store_count+=1;Token::StoreSegment(a,v,mem,segment as usize)
                 }
                 ["retire_if", predicate]=>{
@@ -1127,7 +1126,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
                 ["raise_unless", predicate, vector]=>{
                     let c=slot(&names,predicate)?;let v=number(vector)?;
-                    if widths[c]!=1||v!=0{return Err("raise_unless needs a bv1 predicate and vector 0 (#DE)".into());}Token::RaiseUnless(c,v as u8)
+                    if widths[c]!=1||!matches!(v,0|5){return Err("raise_unless needs a bv1 predicate and vector 0 (#DE) or 5 (#BR)".into());}Token::RaiseUnless(c,v as u8)
                 }
                 ["require", predicate]=>{
                     let c=slot(&names,predicate)?;if widths[c]!=1{return Err("require needs bv1 predicate".into());}Token::Require(c)
@@ -1695,7 +1694,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
                 let at=c.translate(values[a].bits as u32,w,false,cpu.eip)?;
-                values[o]=value(ram.as_deref().ok_or(ExecError::InvalidContext)?.load(at,w).map_err(|f|access_error(cpu.eip,f))? as u64,w.bits());
+                values[o]=value(ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,w,&pending_stores[..store_index]).map_err(|f|access_error(cpu.eip,f))? as u64,w.bits());
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:false,is_stack:segment==2&&!p.checkpoint_flags});
             }
             Token::StoreSegment(a,v,w,segment)=>{
@@ -1869,7 +1868,7 @@ fn compare_repeat_description(body:&str,a:u8,equal:bool)->String{
 }
 fn description(name: &str) -> R<String> {
     for (prefix,equal) in [("repe_",true),("repne_",false)]{if let Some(base)=name.strip_prefix(prefix){if matches!(base,"cmps"|"scas"){return Ok(compare_repeat_description(&description(base)?,16,equal));}}}
-    if let Some(base)=name.strip_prefix("rep_"){if matches!(base,"movs"|"stos"|"lods"){return Ok(repeat_description(&description(base)?,16));}}
+    if let Some(base)=name.strip_prefix("rep_"){if matches!(base,"movs"|"stos"|"lods"|"ins"|"outs"){return Ok(repeat_description(&description(base)?,16));}}
 
     let plain=match name {
         "add" => Some(ADD), "sub" => Some(SUB), "cmp" => Some(CMP),
@@ -1911,6 +1910,9 @@ fn description(name: &str) -> R<String> {
         "movs" => Some(include_str!("../isa/i386/movs.pil")),
         "stos" => Some(include_str!("../isa/i386/stos.pil")),
         "lods" => Some(include_str!("../isa/i386/lods.pil")),
+        "ins" => Some(include_str!("../isa/i386/ins.pil")),
+        "outs" => Some(include_str!("../isa/i386/outs.pil")),
+        "bound" => Some(include_str!("../isa/i386/bound.pil")),
         "push" => Some(include_str!("../isa/i386/push.pil")),
         "push_memory" => Some(include_str!("../isa/i386/push_memory.pil")),
         "pop" => Some(include_str!("../isa/i386/pop.pil")),
@@ -1977,7 +1979,7 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_control: Option<(usize,u32)> = None;\n\
          let mut pending_table: Option<(usize,u16,u32)> = None;\n\
          let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
-         let mut pending_stores: [Option<(u32,MemWidth,u32)>;8] = [None;8];let mut store_index=0;\n\
+         let mut pending_stores: [Option<(u32,MemWidth,u32)>;32] = [None;32];let mut store_index=0;\n\
          let mut pending_eip = context.next_eip;\n\
          let mut pending_resume = false;\nlet mut pending_interrupt_shadow = false;\n\
          let mut pending_flags = *flags;\n\
@@ -1996,7 +1998,7 @@ fn emit_rust_functions(p:&Program)->String {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
-            Token::LoadSegment(o,a,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.as_deref().ok_or(ExecError::InvalidContext)?.load(at,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
+            Token::LoadSegment(o,a,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,MemWidth::{w:?},&pending_stores[..store_index]).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
             Token::StoreSegment(a,v,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?;pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
             Token::RetireIf(c)=>format!("if v{c}!=0 {{*eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){{m.retired();}}return Ok(());}}"),
             Token::ResumeIf(c)=>format!("if v{c}!=0 {{pending_eip=*eip;pending_resume=true;}}"),

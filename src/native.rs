@@ -37,7 +37,7 @@ pub fn cases()->Result<Vec<Case>,String> {
 
     let mut memory=case("readonly_store",vec![0x66,0x89,0x07,0xf4])?;memory.regs[0]=0xdeadbeef;memory.regs[3]=0x400;memory.protect=Some((0x500,4));tests.push(memory);
     let mut branch=case("branch_fault",vec![0x74,0x7f,0xf4])?;branch.flags=0x246;branch.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(branch);
-    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0x62]));tests.push(changed);
+    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0xd6]));tests.push(changed);
     tests.push(case("rx_wait",vec![0xe4,0xe9,0xf4])?);
     let mut blocked=case("tx_blocked",vec![0xe6,0xe9,0xf4])?;blocked.regs[0]=65;blocked.tx=vec![42;256];tests.push(blocked);
     // Cover each ALU group, memory direction, immediate sign extension and unary
@@ -358,6 +358,14 @@ pub fn cases()->Result<Vec<Case>,String> {
     t.regs[0]=0x80014002;t.regs[1]=0x00000005;t.regs[2]=0x12348765;t.regs[3]=0x400;t.flags=0x8d7;t.patch=Some((0x500,vec![0x34,0x12,0x78,0x56]));tests.push(t);
     let mut t=case("double_shift_reject",vec![0x0f,0xa5,0xc2,0xf4])?;t.regs[1]=17;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
+    let mut t=case("bound_ok",vec![0x62,0x07,0x66,0x62,0x07,0xf4])?;
+    t.regs[0]=0x0005_0003;t.regs[3]=0x400;t.patch=Some((0x500,vec![0x01,0x00,0x05,0x00,0x00,0x00,0x06,0x00]));tests.push(t);
+    let mut t=case("bound_fault",vec![0x62,0x07,0xf4])?;
+    t.regs[0]=11;t.regs[3]=0x400;t.patch=Some((0x500,vec![0xfb,0xff,0x0a,0x00]));tests.push(t);
+    let mut t=case("enter_nested",vec![0xc8,0x10,0x00,0x02,0xf4])?;
+    t.regs[4]=0xabcd0800;t.regs[5]=0x12340810;t.patch=Some((0xa0e,vec![0x34,0x12]));tests.push(t);
+    let mut t=case("port_io",vec![0xe4,0x80,0xe5,0x80,0x66,0xe5,0x80,0xe6,0x80,0xec,0xef,0x6c,0x6f,0xf3,0x6d,0xf4])?;
+    t.regs[0]=0x12345600;t.regs[1]=2;t.regs[2]=0x3f8;t.regs[6]=0x400;t.regs[7]=0x600;t.patch=Some((0x500,vec![1,2,3,4]));tests.push(t);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {
