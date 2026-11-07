@@ -393,7 +393,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
             }
             Operation::Input{next}=>{let delta=next-ip;dispatch.push_str(&format!("if let Some(b)=s.rx.pop_front(){{s.regs[0]=(s.regs[0]&!255)|u32::from(b);s.eip=s.eip+{delta};s.machine.retired();[0,0,0,0,0]}}else{{[2,s.eip,0,0,0]}}"));},
             Operation::Output{next}=>{let delta=next-ip;dispatch.push_str(&format!("if s.tx.len()==256{{[3,s.eip,0,0,0]}}else{{s.tx.push_back(s.regs[0] as u8);s.eip=s.eip+{delta};s.machine.retired();[0,0,0,0,0]}}"));},
-            Operation::Halt=>dispatch.push_str("[1,s.eip,0,0,0]"),
+            Operation::Halt|Operation::Interrupt{..}=>dispatch.push_str("[1,s.eip,0,0,0]"),
         }
         dispatch.push_str("},\n");ip+=decoded.length;
     }

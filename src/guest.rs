@@ -44,6 +44,9 @@ impl From<ExecError> for GuestError {fn from(e:ExecError)->Self{Self::Execution(
 pub enum Operation {
     Pil{program:Program,dst:View,src:View,flow:FlowContext,address:Option<AddressContext>},
     Input{next:u32}, Output{next:u32}, Halt,
+    /// INT n, INT3 or INTO (`overflow`): a software interrupt to `vector`
+    /// that returns to `next`. Delivery belongs to the runner (interrupt.rs).
+    Interrupt{vector:u8,overflow:bool,next:u32},
 }
 #[derive(Clone,Debug)]
 pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
@@ -76,7 +79,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -634,6 +637,11 @@ impl Image {
                 let port=r.byte()?;if port!=0xe9{return Err(GuestError::Decode(format!("unsupported monitor port {port:02x}")));}
                 return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
             }
+            0xcc|0xcd|0xce=>{
+                let vector=match opcode{0xcc=>3,0xce=>4,_=>r.byte()?};
+                let label=match opcode{0xcc=>"INT3".to_string(),0xce=>"INTO".to_string(),_=>format!("INT 0x{vector:02x}")};
+                return Ok(Decoded{label,length:r.pos-eip,operation:Operation::Interrupt{vector,overflow:opcode==0xce,next:r.pos}});
+            }
             0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
@@ -716,9 +724,9 @@ fn imul1_pil(w: u8, memory: bool) -> String {
 fn div_pil(w: u8, memory: bool) -> String {
     let read_divisor = if memory { format!("read_address addr\nload divisor addr {w}") } else { format!("read divisor src {w}") };
     match w {
-        8 => format!("read_gpr ax 0 16\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nzext divisor_16 divisor 16\ndiv q_16 ax divisor_16\nrem r_16 ax divisor_16\ntrunc q_8 q_16 8\ntrunc r_8 r_16 8\nzext q_check q_8 16\nult overflow q_check q_16\nnot no_overflow overflow\nrequire no_overflow\nzext q_wide q_8 16\nzext r_wide r_8 16\nconst shift 16 8\nshl r_high r_wide shift\nor ax_new r_high q_wide\nwrite_gpr 0 ax_new\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
-        16 => format!("read_gpr ax 0 16\nread_gpr dx 2 16\nzext ax_32 ax 32\nzext dx_32 dx 32\nconst shift 32 16\nshl dx_high dx_32 shift\nor dividend dx_high ax_32\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nzext divisor_32 divisor 32\ndiv q_32 dividend divisor_32\nrem r_32 dividend divisor_32\ntrunc q_16 q_32 16\ntrunc r_16 r_32 16\nzext q_check q_16 32\nult overflow q_check q_32\nnot no_overflow overflow\nrequire no_overflow\nwrite_gpr 0 q_16\nwrite_gpr 2 r_16\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
-        32 => format!("read_gpr eax 0 32\nread_gpr edx 2 32\nzext eax_64 eax 64\nzext edx_64 edx 64\nconst shift 64 32\nshl edx_high edx_64 shift\nor dividend edx_high eax_64\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nzext divisor_64 divisor 64\ndiv q_64 dividend divisor_64\nrem r_64 dividend divisor_64\ntrunc q_32 q_64 32\ntrunc r_32 r_64 32\nzext q_check q_32 64\nult overflow q_check q_64\nnot no_overflow overflow\nrequire no_overflow\nwrite_gpr 0 q_32\nwrite_gpr 2 r_32\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
+        8 => format!("read_gpr ax 0 16\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nraise_unless div_ok 0\nzext divisor_16 divisor 16\ndiv q_16 ax divisor_16\nrem r_16 ax divisor_16\ntrunc q_8 q_16 8\ntrunc r_8 r_16 8\nzext q_check q_8 16\nult overflow q_check q_16\nnot no_overflow overflow\nraise_unless no_overflow 0\nzext q_wide q_8 16\nzext r_wide r_8 16\nconst shift 16 8\nshl r_high r_wide shift\nor ax_new r_high q_wide\nwrite_gpr 0 ax_new\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
+        16 => format!("read_gpr ax 0 16\nread_gpr dx 2 16\nzext ax_32 ax 32\nzext dx_32 dx 32\nconst shift 32 16\nshl dx_high dx_32 shift\nor dividend dx_high ax_32\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nraise_unless div_ok 0\nzext divisor_32 divisor 32\ndiv q_32 dividend divisor_32\nrem r_32 dividend divisor_32\ntrunc q_16 q_32 16\ntrunc r_16 r_32 16\nzext q_check q_16 32\nult overflow q_check q_32\nnot no_overflow overflow\nraise_unless no_overflow 0\nwrite_gpr 0 q_16\nwrite_gpr 2 r_16\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
+        32 => format!("read_gpr eax 0 32\nread_gpr edx 2 32\nzext eax_64 eax 64\nzext edx_64 edx 64\nconst shift 64 32\nshl edx_high edx_64 shift\nor dividend edx_high eax_64\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nraise_unless div_ok 0\nzext divisor_64 divisor 64\ndiv q_64 dividend divisor_64\nrem r_64 dividend divisor_64\ntrunc q_32 q_64 32\ntrunc r_32 r_64 32\nzext q_check q_32 64\nult overflow q_check q_64\nnot no_overflow overflow\nraise_unless no_overflow 0\nwrite_gpr 0 q_32\nwrite_gpr 2 r_32\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire"),
         _ => unreachable!(),
     }
 }
@@ -737,7 +745,7 @@ fn idiv_pil(w: u8, memory: bool) -> String {
         _ => "write_gpr 0 q_w\nwrite_gpr 2 r_w".to_string(),
     };
     let top = d - 1;
-    format!("{dividend}\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nrequire div_ok\nsext d_wide divisor {d}\nconst none {d} 0\nbit n_sign dividend {top}\nbit d_sign d_wide {top}\nsub n_neg none dividend\nselect n_abs n_sign n_neg dividend\nsub d_neg none d_wide\nselect d_abs d_sign d_neg d_wide\ndiv q_abs n_abs d_abs\nrem r_abs n_abs d_abs\nxor q_sign n_sign d_sign\nsub q_neg none q_abs\nselect q q_sign q_neg q_abs\nsub r_neg none r_abs\nselect r n_sign r_neg r_abs\ntrunc q_w q {w}\nsext q_check q_w {d}\nxor q_lost q_check q\nzero q_fits q_lost\nrequire q_fits\ntrunc r_w r {w}\n{write}\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire")
+    format!("{dividend}\n{read_divisor}\nzero div_zero divisor\nnot div_ok div_zero\nraise_unless div_ok 0\nsext d_wide divisor {d}\nconst none {d} 0\nbit n_sign dividend {top}\nbit d_sign d_wide {top}\nsub n_neg none dividend\nselect n_abs n_sign n_neg dividend\nsub d_neg none d_wide\nselect d_abs d_sign d_neg d_wide\ndiv q_abs n_abs d_abs\nrem r_abs n_abs d_abs\nxor q_sign n_sign d_sign\nsub q_neg none q_abs\nselect q q_sign q_neg q_abs\nsub r_neg none r_abs\nselect r n_sign r_neg r_abs\ntrunc q_w q {w}\nsext q_check q_w {d}\nxor q_lost q_check q\nzero q_fits q_lost\nraise_unless q_fits 0\ntrunc r_w r {w}\n{write}\nundef_flag CF\nundef_flag OF\nundef_flag SF\nundef_flag ZF\nundef_flag AF\nundef_flag PF\nretire")
 }
 fn gpr(n:u8)->Gpr {[Gpr::Eax,Gpr::Ecx,Gpr::Edx,Gpr::Ebx,Gpr::Esp,Gpr::Ebp,Gpr::Esi,Gpr::Edi][n as usize]}
 struct Reader<'a> {image:&'a Image,ram:&'a Ram,start:u32,pos:u32}

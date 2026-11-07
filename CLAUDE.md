@@ -1,3 +1,13 @@
+# Real-mode exception delivery — 7 November 2026
+
+Protected-mode plan increment 1 (docs/development/PROTECTED_MODE_PLAN.md).
+src/interrupt.rs: IDTR-based real-mode delivery (reset IDTR 03FFh/0), shared
+with Dine's INT n. #DE via new PIL `raise_unless P 0` (DIV/IDIV/AAM;
+ExecError::Exception, trace code 12), #GP/#SS to 0Dh/0Ch, INT n/INT3/INTO
+decoded as Operation::Interrupt. No handler installed: Dine stops as before.
+SST80386 local: pass 1,188,711 -> 1,351,553, no undelivered exception cases.
+test386 still 00h-06h, stops at 08h (PE+PG). Not modelled: #DB, #DF, PM/V86.
+
 # Graphics-mode text and CGA Mandelbrot — 7 November 2026
 
 Goal 1 step 5. src/dos_graphics_text.rs (separate module, Tony's request):

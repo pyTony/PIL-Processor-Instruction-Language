@@ -57,8 +57,9 @@ fn a_handler_that_answers_itself_returns_with_iret_and_entry_frames_are_exact(){
 }
 #[test]
 fn delivery_faults_change_nothing(){
-    // A handler outside the program (the BIOS area), and a stack that would wrap.
-    for(vector,sp)in [(0xf000_0000u32,0xfffe),(u32::from(PSP)<<16|0x110,4)]{
+    // A handler outside the program (the BIOS area), and a stack whose words
+    // would straddle the end of the segment (SP odd and below 6: shutdown).
+    for(vector,sp)in [(0xf000_0000u32,0xfffe),(u32::from(PSP)<<16|0x110,5)]{
         let mut p=load(&[0xcd,0x2f,0xfa,0xf4],"bad.com").unwrap();
         p.ram.store(0x2f*4,MemWidth::Dword,vector).unwrap();p.cpu.regs[4]=sp;
         let(cpu,ram,image)=(p.cpu.clone(),p.ram.clone(),p.image.clone());
@@ -302,4 +303,102 @@ fn parent_interrupt_handler_can_be_called_by_child_program(){
     assert_eq!(r.loaded.cpu.regs[6]&0xffff,0x77,"child called parent INT 2Fh and exited with 77h");
     assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+// Real-mode exception delivery (interrupt.rs). Handlers are installed by
+// writing the vector directly: XOR AX,AX; MOV ES,AX; MOV word ES:[4n],0130h;
+// MOV ES:[4n+2],CS. The handler is at 0130h (code offset 30h).
+fn hook(n:u8)->Vec<u8>{
+    let at=u16::from(n)*4;let [a0,a1]=at.to_le_bytes();let [b0,b1]=(at+2).to_le_bytes();
+    vec![0x31,0xc0,0x8e,0xc0,0x26,0xc7,0x06,a0,a1,0x30,0x01,0x26,0x8c,0x0e,b0,b1]
+}
+fn with_hook(n:u8,test:&[u8],handler:&[u8])->Vec<u8>{
+    let mut main=hook(n);main.extend_from_slice(test);main.extend_from_slice(&[0xfa,0xf4]);
+    code_at(&[(0,&main),(0x30,handler)])
+}
+#[test]
+fn divide_error_enters_the_handler_with_the_div_address_and_restarts_it(){
+    // XOR CX,CX; MOV AX,7; XOR DX,DX; DIV CX (at 0117h). The handler sets
+    // CX=1, BX=1234h, SI=the pushed IP, DI=the pushed FLAGS, and IRETs, so
+    // DIV runs again and divides by one.
+    let code=with_hook(0,&[0x31,0xc9,0xb8,0x07,0x00,0x31,0xd2,0xf7,0xf1],
+        &[0x41,0xbb,0x34,0x12,0x89,0xe5,0x8b,0x76,0x00,0x8b,0x7e,0x04,0xcf]);
+    let mut p=load(&code,"de.com").unwrap();p.cpu.eflags=0x202;let sp=p.cpu.regs[4];
+    let r=run(p,100).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    let c=&r.loaded.cpu;
+    assert_eq!((c.regs[0]&0xffff,c.regs[2]&0xffff,c.regs[1]&0xffff,c.regs[3]&0xffff),(7,0,1,0x1234));
+    assert_eq!(c.regs[6]&0xffff,0x117,"return address is the DIV itself");
+    assert_eq!(c.regs[7]&0x200,0x200,"pushed FLAGS keep the caller's IF");
+    assert_eq!(c.regs[4],sp);
+    assert_eq!(r.instructions.get("#DE (vector 00h)"),Some(&1));
+    assert_eq!(r.exception_count,1);assert_eq!(r.exceptions[0].eip,0x117);
+}
+#[test]
+fn without_a_program_handler_a_divide_error_still_stops_the_run(){
+    let mut p=load(&[0x31,0xc9,0xf7,0xf1,0xfa,0xf4],"de.com").unwrap();p.cpu.eflags=0x202;
+    let r=run(p,10).unwrap();
+    assert!(matches!(&r.stop,Stop::Fault(m) if m.contains("Exception")&&m.contains("vector: 0")),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu.eip,0x102,"nothing committed");
+}
+#[test]
+fn idiv_overflow_and_aam_zero_are_divide_errors_too(){
+    // IDIV CL with AX=8000h (quotient -32768 does not fit AL); AAM 0.
+    for (test,name) in [(vec![0xb8,0x00,0x80,0xb1,0x01,0xf6,0xf9],"idiv"),(vec![0xd4,0x00],"aam")]{
+        let code=with_hook(0,&test,&[0xbb,0x34,0x12,0x89,0xe5,0x8b,0x76,0x00,0x83,0x46,0x00,0x02,0xcf]);
+        let r=run(load(&code,"de.com").unwrap(),100).unwrap();
+        assert!(matches!(r.stop,Stop::Monitor(_)),"{name}: {:?}",r.stop);
+        assert_eq!(r.loaded.cpu.regs[3]&0xffff,0x1234,"{name}");
+        assert_eq!(r.instructions.get("#DE (vector 00h)"),Some(&1),"{name}");
+    }
+}
+#[test]
+fn segment_limit_faults_are_gp_and_ss_in_real_mode(){
+    // MOV AX,[FFFFh] is #GP(0) (vector 0Dh); MOV BP,FFFFh; MOV AX,[BP+0] is
+    // #SS(0) (vector 0Ch). The handler skips the 3-byte instruction.
+    let skip=[0xbb,0x34,0x12,0x89,0xe5,0x83,0x46,0x00,0x03,0xcf];
+    for (n,test,key) in [(0x0du8,vec![0xa1,0xff,0xff],"#GP (vector 0dh)"),(0x0c,vec![0xbd,0xff,0xff,0x8b,0x46,0x00],"#SS (vector 0ch)")]{
+        let code=with_hook(n,&test,&skip);
+        let r=run(load(&code,"gp.com").unwrap(),100).unwrap();
+        assert!(matches!(r.stop,Stop::Monitor(_)),"{key}: {:?}",r.stop);
+        assert_eq!(r.loaded.cpu.regs[3]&0xffff,0x1234,"{key}");
+        assert_eq!(r.instructions.get(key),Some(&1),"{key}");
+    }
+}
+#[test]
+fn int3_and_into_return_to_the_next_instruction(){
+    // The handler counts calls in BX and keeps the pushed IP in SI.
+    let count=[0x43,0x89,0xe5,0x8b,0x76,0x00,0xcf];
+    // INT3 at 0110h.
+    let r=run(load(&with_hook(3,&[0x31,0xdb,0xcc],&count),"bp.com").unwrap(),100).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[6]&0xffff),(1,0x113));
+    // INTO with OF=0 (after XOR) does nothing; MOV AL,7Fh; ADD AL,1 sets OF; INTO again.
+    let r=run(load(&with_hook(4,&[0x31,0xdb,0xce,0xb0,0x7f,0x04,0x01,0xce],&count),"of.com").unwrap(),100).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[6]&0xffff),(1,0x118));
+    assert_eq!(r.instructions.get("INTO"),Some(&2));
+}
+#[test]
+fn int3_without_a_program_handler_stops_as_a_service(){
+    let r=run(load(&[0xcc,0xf4],"bp.com").unwrap(),10).unwrap();
+    assert!(matches!(&r.stop,Stop::Service(m) if m.contains("INT3")),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu.eip,0x100);
+}
+#[test]
+fn a_rom_takes_its_divide_error_through_the_vector_it_set_up(){
+    use crate::dos::run_rom;
+    let mut rom=vec![0u8;65536];
+    rom[0xfff0..0xfff5].copy_from_slice(&[0xea,0x00,0xe0,0x00,0xf0]);
+    // XOR AX,AX; MOV DS,AX; MOV [0],E100h; MOV [2],F000h; MOV AX,1000h;
+    // MOV SS,AX; MOV SP,100h; XOR CX,CX; MOV AX,9; XOR DX,DX; DIV CX; CLI; HLT.
+    let main=[0x31,0xc0,0x8e,0xd8,0xc7,0x06,0,0,0x00,0xe1,0xc7,0x06,2,0,0x00,0xf0,0xb8,0x00,0x10,0x8e,0xd0,0xbc,0x00,0x01,
+        0x31,0xc9,0xb8,0x09,0x00,0x31,0xd2,0xf7,0xf1,0xfa,0xf4];
+    rom[0xe000..0xe000+main.len()].copy_from_slice(&main);
+    rom[0xe100..0xe102].copy_from_slice(&[0x41,0xcf]); // INC CX; IRET
+    let path=std::env::temp_dir().join(format!("pil-rom-de-{}.bin",std::process::id()));
+    std::fs::write(&path,&rom).unwrap();
+    let r=run_rom(&path,100);std::fs::remove_file(&path).unwrap();let r=r.unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[1]&0xffff,r.loaded.cpu.regs[4]&0xffff),(9,1,0x100));
+    assert_eq!(r.loaded.ram.load(0x10000+0xfa,MemWidth::Word).unwrap(),0xe01f,"pushed IP = the DIV at E01Fh");
 }

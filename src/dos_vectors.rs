@@ -43,6 +43,8 @@ pub(super) fn install(ram:&mut Ram)->Result<(),String>{
 /// Whether vector n still leads to Dine: its entry, or 0 for a vector that
 /// has none.
 pub(super) fn answered(p:&Loaded,n:u8)->Result<bool,String>{
+    // A raw ROM has no Dine behind its vectors: 0000:0000 is an address too.
+    if p.rom_mode{return Ok(false);}
     let vector=p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?;
     Ok(vector==0||vector==entry(n))
 }
@@ -67,8 +69,7 @@ pub(super) fn deliver_fault(p:&mut Loaded,n:u8,fault_ip:u32)->Result<(),String>{
     deliver_at(p,n,fault_ip&0xffff)
 }
 fn target(p:&Loaded,n:u8)->Result<(u16,u32),String>{
-    let vector=p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?;
-    let(segment,offset)=((vector>>16)as u16,vector&0xffff);
+    let(segment,offset)=crate::interrupt::real_vector(&p.image,&p.ram,n)?;let offset=u32::from(offset);
     let address=u32::from(segment)*16+offset;let image=&p.image;
     let fetchable=(address>=image.fetch_base+image.start&&address<image.fetch_base+image.end)
         ||image.system.iter().any(|&(start,end)|address>=start&&address<end);
@@ -84,16 +85,8 @@ fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
     let(segment,offset)=target(p,n)?;deliver_to(p,segment,offset,return_ip)
 }
 fn deliver_to(p:&mut Loaded,segment:u16,offset:u32,return_ip:u32)->Result<(),String>{
-    if p.cpu.regs[4]&0xffff<6&&p.cpu.regs[4]&0xffff!=0{return Err("interrupt frame would wrap the stack segment".into());}
-    let sp=p.cpu.regs[4]&0xffff;
-    let values=[(2,p.cpu.eflags&0xffff),(4,u32::from(p.selectors[SegmentRegister::Cs.index()])),(6,return_ip)];
-    let mut writes=Vec::new();
-    for(k,value)in values{writes.push((stack(p,sp.wrapping_sub(k),true)?,value));}
-    for(at,_)in &writes{p.ram.check_write(*at,MemWidth::Word).map_err(|e|format!("interrupt stack write: {e:?}"))?;}
-    for(at,value)in writes{p.ram.store(at,MemWidth::Word,value).map_err(|e|format!("interrupt stack write: {e:?}"))?;}
-    p.cpu.regs[4]=(p.cpu.regs[4]&0xffff0000)|(sp.wrapping_sub(6)&0xffff);
-    p.cpu.eflags&=!0x300;p.cpu.undefined_flags&=!0x300;
-    set_cs(p,segment);p.cpu.eip=offset;p.image.retired();
+    crate::interrupt::real_frame(&mut p.cpu,&mut p.image,&mut p.ram,segment,offset as u16,return_ip)?;
+    p.selectors=p.image.selectors;
     Ok(())
 }
 /// At an entry's IRET: return to the caller with its own control flags and

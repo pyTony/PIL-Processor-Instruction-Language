@@ -60,6 +60,18 @@ decoded; 93,329 undefined-flag-only; 6,023 undefined SIB; 43 HLT fetch faults;
 100 monitor port operations; 1 revoked; 14,524 failures. Generated Rust ran
 6,736 sampled cases with no outcome disagreement. No stray writes.
 
+Run 02 (7 November 2026, local cloud session, same revision): exceptions are
+delivered through `src/interrupt.rs` (real-mode frame through IDTR), including
+#UD where the decoder rejects an opcode the hardware also rejected, and INT n,
+INT3 and INTO. The generated backend is compared with the interpreter on the
+state the PIL program left, before delivery. Frame FLAGS bits CF, PF, AF, ZF,
+SF and OF after #DE count as undefined flags. Result: 1,351,553 pass; 291,831
+not decoded; 94,258 undefined-flag-only; 6,263 undefined SIB; 43 HLT fetch
+faults; 1 revoked; 14,751 failures (4,705 16-bit stack wraps now reported as
+#SS, 144 IRETD/RETFD #SS where the 386 raises #GP, 9 byte IDIVs where the
+386EX returns 80h without #DE). No expected exception is left undelivered.
+No disagreement in 6,864 sampled generated-Rust cases.
+
 ## Original plan: SingleStepTests CPU adapter
 
 The captures use an Intel80386EX KU80C386EX33 with a16-bit external data bus.

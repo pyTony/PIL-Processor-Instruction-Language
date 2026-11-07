@@ -17,6 +17,7 @@ mod inflate;
 mod cache;
 mod native;
 mod trace;
+mod interrupt;
 mod mandelbrot;
 use flow::{ExecError, FlowContext};
 
@@ -65,6 +66,8 @@ enum Token {
     WriteControl(usize,usize),
     WriteTable(usize,usize,usize),
     Require(usize),
+    // A false predicate raises an architectural exception (only #DE, vector 0).
+    RaiseUnless(usize,u8),
     LoadSegment(usize,usize,MemWidth,usize),
     StoreSegment(usize,usize,MemWidth,usize),
     RetireIf(usize),
@@ -286,7 +289,7 @@ fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         |Token::Not(_,a)|Token::Bit(_,a,_)|Token::Zero(_,a)|Token::Parity(_,a)
         |Token::Write(a)|Token::WriteSource(a)|Token::Flag(_,a)|Token::WriteGpr(_,a,_)
         |Token::WriteSegment(_,a)|Token::InterruptShadowIf(a)|Token::RetireIf(a)
-        |Token::ResumeIf(a)|Token::Require(a)|Token::CheckSegment(_,a,_)
+        |Token::ResumeIf(a)|Token::Require(a)|Token::RaiseUnless(a,_)|Token::CheckSegment(_,a,_)
         |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
         Token::WriteControl(_,a)=>used(a),
         Token::WriteTable(_,a,b)=>used(a)||used(b),
@@ -614,6 +617,7 @@ impl Program {
             Token::WriteControl(r,v)=>format!("write_control {r} v{v}"),
             Token::ReadMsw(v) => format!("v{v} = read_msw"),
             Token::Require(c) => format!("require v{c}"),
+            Token::RaiseUnless(c,v) => format!("raise_unless v{c} {v}"),
             Token::LoadSegment(v, a, m, s) => format!("v{v} = load_segment [v{a}] {} (seg {s})", m.bytes() * 8),
             Token::StoreSegment(a, v, m, s) => format!("store_segment [v{a}] v{v} {} (seg {s})", m.bytes() * 8),
             Token::RetireIf(c) => format!("retire_if v{c}"),
@@ -771,6 +775,10 @@ impl Program {
                     Token::Require(c) => {
                         if values[c].bits == 0 { early_stop = Some(idx); note = "; FAULT (require v=0)".into(); }
                         else { note = "; require ok".into(); }
+                    }
+                    Token::RaiseUnless(c, v) => {
+                        if values[c].bits == 0 { early_stop = Some(idx); note = format!("; EXCEPTION vector {v:02x}h"); }
+                        else { note = "; no exception".into(); }
                     }
                     Token::ReadAddressAfter(o, reg, a) => {
                         let mut regs = cpu.regs;
@@ -1116,6 +1124,10 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 ["read_control",out,register]=>{let r=number(register)? as usize;if !matches!(r,0|2|3){return Err("read_control needs CR0, CR2 or CR3".into());}Token::ReadControl(define(&mut names,&mut widths,out,32)?,r)}
                 ["write_control",register,input]=>{let r=number(register)? as usize;let v=slot(&names,input)?;if !matches!(r,0|2|3)||widths[v]!=32||tokens.iter().any(|t|matches!(t,Token::WriteControl(..))){return Err("write_control needs CR0, CR2 or CR3 and bv32, once".into());}Token::WriteControl(r,v)}
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
+                ["raise_unless", predicate, vector]=>{
+                    let c=slot(&names,predicate)?;let v=number(vector)?;
+                    if widths[c]!=1||v!=0{return Err("raise_unless needs a bv1 predicate and vector 0 (#DE)".into());}Token::RaiseUnless(c,v as u8)
+                }
                 ["require", predicate]=>{
                     let c=slot(&names,predicate)?;if widths[c]!=1{return Err("require needs bv1 predicate".into());}Token::Require(c)
                 }
@@ -1385,7 +1397,7 @@ fn probe_program_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContex
             Token::ReadControl(o,r)=>values[o]=value(machine?.read_control(r,cpu.eflags,cpu.eip).ok()? as u64,32),
             Token::WriteTable(..)=>{},
             Token::ReadMsw(o)=>values[o]=value(machine?.machine_status() as u64,16),
-            Token::Require(c)=>if values[c].bits==0{return found;},
+            Token::Require(c)|Token::RaiseUnless(c,_)=>if values[c].bits==0{return found;},
             Token::ReadAddressAfter(o,reg,a)=>{
                 let mut regs=cpu.regs;regs[reg]=values[a].bits as u32;
                 values[o]=value(effective?.resolve(&regs,None).ok()?.offset as u64,32);
@@ -1707,6 +1719,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::WriteTable(t,l,b)=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some((t,values[l].bits as u16,values[b].bits as u32));},
             Token::ReadMsw(o)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64,16),
             Token::Require(c)=>if values[c].bits==0{return Err(ExecError::InvalidContext);},
+            Token::RaiseUnless(c,v)=>if values[c].bits==0{return Err(ExecError::Exception{eip:cpu.eip,vector:v});},
             Token::ReadAddressAfter(o,reg,a)=>{
                 let mut regs=cpu.regs;regs[reg]=values[a].bits as u32;
                 let ea=effective.ok_or(ExecError::InvalidContext)?;
@@ -1994,6 +2007,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteTable(t,l,b)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some(({t},v{l} as u16,v{b} as u32));"),
             Token::ReadMsw(o)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64;"),
             Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
+            Token::RaiseUnless(c,v)=>format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}"),
             Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
             Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;"),
