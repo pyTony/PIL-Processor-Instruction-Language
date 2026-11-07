@@ -274,7 +274,7 @@ fn cache_controls_and_reset_load_keep_the_requested_mode() {
     d.command("reset").unwrap();assert_eq!(d.cache.stats(),super::super::cache::Stats::default());assert!(d.cache.enabled());
     d.command("cache off").unwrap();d.run(20).unwrap();assert_eq!(d.cache.stats(),super::super::cache::Stats::default());
     d.command("demo hello").unwrap();assert!(!d.cache.enabled());d.command("cache on").unwrap();d.step();
-    assert!(d.command("cache stats").unwrap().0.contains("misses=1"));d.command("cache clear").unwrap();assert!(d.command("cache").unwrap().0.contains("entries=0/256"));
+    assert!(d.command("cache stats").unwrap().0.contains("misses=1"));d.command("cache clear").unwrap();assert!(d.command("cache").unwrap().0.contains(&format!("entries=0/{}",super::super::cache::CAPACITY)));
 }
 #[test]
 fn patched_cached_opcode_reports_error_without_cpu_or_ram_mutation() {

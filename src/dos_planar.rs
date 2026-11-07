@@ -58,7 +58,7 @@ pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<
     }
     if word&&!matches!(port,0x3c4|0x3ce){return Err("VGA word access must start at index port 3C4h or 3CEh".into());}
     let sequencer=port<0x3ce;
-    let planar=p.ram.planar().ok_or("VGA sequencer and graphics controller access outside the 16-colour planar modes is not modelled")?;
+    let Some(planar)=p.ram.planar() else{return idle_io(p,sequencer,port&1==0,input,value,word).map(Some);};
     let mut next=planar.clone();
     let mut index=if sequencer{next.seq_index}else{next.gc_index};
     let mut access=|data:bool,value:u8|->Result<u8,String>{
@@ -83,6 +83,26 @@ pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<
     if sequencer{next.seq_index=index;}else{next.gc_index=index;}
     *p.ram.planar_mut().unwrap()=next;
     Ok(Some(u16::from(lo)|u16::from(hi)<<8))
+}
+/// The same ports outside the planar modes (see dos_vga::Controllers):
+/// all checks precede any change.
+fn idle_io(p:&mut Loaded,sequencer:bool,even:bool,input:bool,value:u16,word:bool)->Result<u16,String>{
+    let mut next=p.vga.idle.clone();
+    let mut index=if sequencer{next.seq_index}else{next.gc_index};
+    let mut access=|data:bool,value:u8|->Result<u8,String>{
+        if !data{if input{return Ok(index);}index=value;return Ok(0);}
+        let i=usize::from(index&0x1f);
+        let regs:&[u8]=if sequencer{&next.seq}else{&next.gc};
+        let Some(old)=regs.get(i).copied() else{return if input{Ok(0xff)}else{Err(format!("VGA {} register {i:02X}h is not modelled",if sequencer{"sequencer"}else{"graphics controller"}))}};
+        if input{return Ok(old);}
+        if !next.allowed(sequencer,i,value){return Err(format!("VGA {} register {i:02X}h value {value:02X}h outside the 16-colour planar modes is not modelled",if sequencer{"sequencer"}else{"graphics controller"}));}
+        if sequencer{next.seq[i]=value;}else{next.gc[i]=value;}Ok(0)
+    };
+    let lo=access(!even,value as u8)?;
+    let hi=if word{access(true,(value>>8)as u8)?}else{0};
+    if sequencer{next.seq_index=index;}else{next.gc_index=index;}
+    p.vga.idle=next;
+    Ok(u16::from(lo)|u16::from(hi)<<8)
 }
 /// INT 10h AH=0Ch/0Dh in a planar mode, page 0. Bit 7 of AL XORs.
 pub(super) fn pixel(p:&mut Loaded,mode:u32,write:bool)->Result<(),String>{

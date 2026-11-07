@@ -87,6 +87,11 @@ pub(super) fn ctrl_break(p:&mut Loaded)->Result<(),String>{
     if !vectors::answered(p,0x1b)?{
         return Err("the program hooked INT 1Bh; calling it for Ctrl+Break is not modelled".into());
     }
+    bios_break(p)
+}
+/// The BIOS keyboard handler's Ctrl+Break: empty the ring, store a 0000h
+/// word and set bit 7 of 0040:0071, all or nothing.
+pub(super) fn bios_break(p:&mut Loaded)->Result<(),String>{
     // The flush makes head equal tail; the 0000h word goes in at tail.
     let mut writes=console::dos_flush_writes(p)?;
     let tail=p.ram.load(0x41c,MemWidth::Word).map_err(|e|format!("BIOS keyboard read: {e:?}"))?;
