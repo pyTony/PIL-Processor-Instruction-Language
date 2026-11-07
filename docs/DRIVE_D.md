@@ -35,3 +35,16 @@ folder. Copy the folder first and copy it back afterwards:
 
 Older branches still track `driveD`. Checking one out can overwrite or remove
 files there, so make the same copy before switching to an old branch.
+
+## Desktop shortcut
+
+`python tools/makeshortcut.py` makes a "PIL DOS" shortcut that opens the DOS
+terminal with drive D: and `D:\AUTOEXEC.BAT`:
+
+- Windows: `PIL DOS.lnk` on the Desktop, starting `PILdos.vbs` (needs Pillow
+  to rebuild `PILdos.ico` from `PILdos.png`).
+- Linux and Android with Termux-x11: `pildos.desktop` in the application menu
+  and on the Desktop folder, starting `PILdos.sh`. In Termux it also writes
+  `~/.shortcuts/PIL DOS` for the Termux:Widget widget, which starts Termux-x11
+  first. The terminal needs Tk (`pkg install python-tkinter` in Termux,
+  `python3-tk` on Debian/Ubuntu).
