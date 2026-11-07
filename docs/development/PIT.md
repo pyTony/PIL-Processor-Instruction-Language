@@ -36,8 +36,10 @@ that saves EAX and DS, calls the hook, and returns with IRET. The handler can
 chain to the default no-op INT 1Ch entry. The shortcut invokes the hook once
 per delivered poll even if multiple edges elapsed; it is not a full PIC or
 individual-edge model. Clock reads with a hooked INT 1Ch return the most
-recently delivered tick instead of entering the hook mid-service. Custom
-INT 08h handlers and timer hooks outside real mode still stop explicitly. Clock offset should be selected before execution,
+recently delivered tick instead of entering the hook mid-service. A program's
+own real-mode INT 08h handler now receives IRQ0 through the PIC (see
+docs/DOS_PROBE.md); timer hooks and handlers outside real mode still stop
+explicitly. Clock offset should be selected before execution,
 as the terminal does.
 
 With no game adapter, port 201h reads FFh and ignores writes. BIOS joystick

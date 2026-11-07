@@ -374,6 +374,20 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         if let Ok(encoded)=p.image.fetch_signature(&p.ram,p.cpu.eip,2){if encoded[0]==0xcd{
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             let vector=encoded[1];
+            if vector==8&&vectors::at_timer_entry(&p){
+                match services::bios_timer(&mut p){
+                    Ok(())=>{execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 08h (timer tick)".into()).or_insert(0)+=1;continue;},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+            // A software INT 08h through the BIOS vector enters its entry with
+            // a frame, as any interrupt does, so the handler can IRET.
+            if vector==8&&vectors::answered(&p,8)==Ok(true){
+                match vectors::deliver(&mut p,8){
+                    Ok(())=>{execution_steps+=1;completed+=1;*instructions.entry("INT 08h to the BIOS handler".into()).or_insert(0)+=1;continue;},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
             match vectors::answered(&p,vector){
                 Ok(true)=>{},
                 Ok(false) if vectors::at_entry(&p)=>{},
@@ -485,8 +499,12 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
                 // With IF=1 the timer interrupt ends HLT: one tick passes, then
                 // execution continues after it. Programs use this to idle.
-                p.timer_ticks=(p.timer_ticks+1)%TICKS_PER_DAY;
+                // A program's own INT 08h handler takes that tick under the host clock.
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                let program_irq=!p.rom_mode&&p.clock_offset.is_some()&&vectors::answered(&p,8)==Ok(false);
+                if !program_irq{p.timer_ticks=(p.timer_ticks+1)%TICKS_PER_DAY;}
                 p.cpu.eip=(p.cpu.eip+decoded.length)&0xffff;p.image.retired();
+                if program_irq{if let Err(message)=services::halt_tick(&mut p){break Stop::Service(message);}}
                 completed+=1;execution_steps+=1;*instructions.entry("HLT (idle tick)".into()).or_insert(0)+=1;continue;
             },
             Operation::Halt=>break Stop::Monitor("HLT with IF=0 never resumes; monitor stop is not DOS process termination".into()),

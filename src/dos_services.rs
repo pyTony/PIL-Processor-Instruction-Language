@@ -392,6 +392,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.dos_date_adjust=p.rtc.set_dos_time(p.clock_offset,p.dos_date_adjust,(h*60+m)*60+s);
             p.ram.store(0x046c,MemWidth::Dword,desired).map_err(|e|format!("DOS set time BDA write: {e:?}"))?;
             p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("DOS set time rollover write: {e:?}"))?;
+            if p.clock_offset.is_some(){p.speaker.irq_edges=Some(desired);}
             p.timer_ticks=desired;p.cpu.regs[0]&=!255;Ok(None)
         },
         (0x15,0xc0)=>{
@@ -458,12 +459,17 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
 }
-/// The timer interrupt's effect while time runs on the host clock: when IF=1
-/// and the PIT IRQ edge total has moved on, the BIOS INT 08h handler stores it
-/// at 0040:006C and sets 0040:0070 if the BIOS day count wraps, so programs that poll
-/// that word see time pass. A custom INT 1Ch hook can run on the guest CPU;
-/// a custom INT 08h handler remains an explicit stop. The
-/// deterministic clock (no host clock) moves only when it is read, as before.
+/// The timer interrupt's effect while time runs on the host clock: when the
+/// PIT IRQ edge total moves on, IRR bit 0 is set; with IF=1, no interrupt
+/// shadow, IRQ0 unmasked and not in service, the PIC acknowledges it.
+/// While INT 08h is still the BIOS entry, Dine does the BIOS handler's work
+/// on the host: it stores the edge total at 0040:006C (and sets 0040:0070
+/// when the BIOS day count wraps) and runs a program's INT 1Ch hook through
+/// the BIOS wrapper. When a program has its own INT 08h handler, IRQ0 is a
+/// real-mode interrupt to that handler, which stays in service until an EOI;
+/// a handler that chains to the BIOS entry reaches [`bios_timer`]. The
+/// deterministic clock (no host clock) raises no IRQs and moves only when it
+/// is read, as before.
 pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
     if p.clock_offset.is_none(){return Ok(());}
     let now=sampled_ticks(p);
@@ -473,18 +479,30 @@ pub(super) fn sampled_ticks(p:&mut Loaded)->u32{
     let raw=p.speaker.pit_interrupts(p.clock_offset)%u64::from(TICKS_PER_DAY);
     (raw as i64+p.timer_tick_adjust).rem_euclid(i64::from(TICKS_PER_DAY))as u32
 }
-/// Commit a sampled PIT IRQ edge total through the bounded BIOS handler.
+/// A sampled PIT IRQ edge total: a new one sets IRR bit 0. The PIC holds a
+/// single request, so edges that pass while one is pending are not counted.
+pub(super) fn timer_edge(p:&mut Loaded,now:u32){
+    if p.speaker.irq_edges!=Some(now){p.speaker.pic.raise_timer();p.speaker.irq_edges=Some(now);}
+}
+/// Commit a sampled PIT IRQ edge total through the PIC and INT 08h.
 pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
-    if now!=p.timer_ticks{p.speaker.pic.raise_timer();}
+    timer_edge(p,now);
+    timer_pending(p,now)
+}
+fn timer_pending(p:&mut Loaded,now:u32)->Result<(),String>{
     if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0{return Ok(());}
     if !p.speaker.pic.timer_ready(){return Ok(());}
     if !vectors::answered(p,0x08)?{
-        return Err("timer interrupt (IRQ0) through a program's INT 08h handler is not modelled".into());
+        // The interrupt arrives between instructions: IRET resumes the
+        // current IP. The handler's EOI (its own, or the BIOS wrapper's
+        // after chaining) takes IRQ0 out of service.
+        vectors::deliver_irq(p,0x08)?;
+        p.speaker.pic.acknowledge_timer();
+        return Ok(());
     }
     let hook=!vectors::answered(p,0x1c)?;
     p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
-    // The IRQ arrives between instructions: IRET resumes the current IP.
     // Keep the BIOS shortcut's existing catch-up policy (one hook per poll).
     if hook{vectors::deliver_timer(p)?;}
     p.speaker.pic.acknowledge_timer();
@@ -492,6 +510,30 @@ pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
     p.ram.store(0x046c,MemWidth::Dword,now).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     if now<p.timer_ticks{p.ram.store(0x0470,MemWidth::Byte,1).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;}
     p.timer_ticks=now;
+    Ok(())
+}
+/// HLT with IF=1 under the host clock while a program owns INT 08h: the
+/// halt ends with the next timer edge, delivered to the handler once HLT
+/// has retired. Waiting for the edge is not modelled; it arrives at once.
+/// If IRQ0 is masked or still in service, execution continues as the
+/// deterministic idle tick does.
+pub(super) fn halt_tick(p:&mut Loaded)->Result<(),String>{
+    p.speaker.pic.raise_timer();
+    timer_pending(p,p.timer_ticks)
+}
+/// The BIOS INT 08h handler, reached by INT 08h at its entry (a program's
+/// handler chaining to the saved vector, or a software INT 08h). It adds one
+/// to the tick count at 0040:006C, wrapping at a day with 0040:0070 set, then
+/// continues in the BIOS wrapper: INT 1Ch, EOI to port 20h, IRET.
+pub(super) fn bios_timer(p:&mut Loaded)->Result<(),String>{
+    let ticks=p.ram.load(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA read: {e:?}"))?;
+    p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
+    p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
+    let next=ticks.wrapping_add(1);let wrapped=next>=TICKS_PER_DAY;let next=if wrapped{0}else{next};
+    p.ram.store(0x046c,MemWidth::Dword,next).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
+    if wrapped{p.ram.store(0x0470,MemWidth::Byte,1).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;}
+    p.timer_ticks=next;
+    vectors::enter_timer_wrapper(p);
     Ok(())
 }
 /// One INT 1Ah AH=00h read. With a host clock, BIOS ticks follow channel 0
@@ -504,7 +546,9 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
         Some(_)=>{
             // Do not redirect CS:IP to a hook while servicing INT 1Ah itself;
             // the run loop delivers pending hooks between guest instructions.
-            if vectors::answered(p,0x1c)?{timer_interrupt(p)?;}
+            // Nor into a program's INT 08h handler: its chained BIOS ticks
+            // are the count.
+            if vectors::answered(p,0x1c)?&&vectors::answered(p,0x08)?{timer_interrupt(p)?;}
             let now=p.timer_ticks;
             let flagged=p.ram.load(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover read: {e:?}"))?!=0;
             (now,now,u32::from(flagged))

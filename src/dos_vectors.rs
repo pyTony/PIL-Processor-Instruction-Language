@@ -80,6 +80,19 @@ pub(super) fn deliver_timer(p:&mut Loaded)->Result<(),String>{
     target(p,0x1c)?;
     deliver_to(p,SEGMENT,u32::from(TIMER_OFFSET),p.cpu.eip&0xffff)
 }
+/// A hardware interrupt (IRQ0 as INT 08h) between instructions: the frame
+/// returns to the current IP.
+pub(super) fn deliver_irq(p:&mut Loaded,n:u8)->Result<(),String>{
+    if !p.image.real_mode||p.cpu.eflags&0x20000!=0{return Err(format!("IRQ through INT {n:02x}h outside real mode is not modelled"));}
+    deliver_at(p,n,p.cpu.eip&0xffff)
+}
+/// Continue the BIOS INT 08h handler in its wrapper (INT 1Ch, EOI, IRET),
+/// which returns through the frame already on the stack.
+pub(super) fn enter_timer_wrapper(p:&mut Loaded){
+    set_cs(p,SEGMENT);p.cpu.eip=u32::from(TIMER_OFFSET);p.image.retired();
+}
+/// Whether CS:IP is INT 08h at its own entry, where the BIOS handler runs.
+pub(super) fn at_timer_entry(p:&Loaded)->bool{linear(p)==ENTRIES+3*8}
 fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
     let(segment,offset)=target(p,n)?;deliver_to(p,segment,offset,return_ip)
 }
