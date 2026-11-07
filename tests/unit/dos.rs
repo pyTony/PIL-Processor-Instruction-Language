@@ -1755,3 +1755,40 @@ fn ansi_driver_rejects_guest_corrupted_parameter_count_without_effects(){
   }
  }
 }
+
+#[test]
+fn quarterdeck_multiplex_scan_reports_absent_without_changing_guest_state(){
+ let mut p=load(&[0xcd,0x2f],"rpciscan.com").unwrap();let mut out=vec![];
+ for id in 0xc0..=0xffu32{
+  p.cpu.regs[0]=0x12340000|(id<<8);p.cpu.regs[3]=0xaaaa5144;
+  p.cpu.regs[1]=0xbbbb4d45;p.cpu.regs[2]=0xcccc4d30;
+  p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x45;
+  let cpu=p.cpu.clone();let ram=p.ram.clone();let image=p.image.clone();
+  assert_eq!(service(&mut p,0x2f,&mut out).unwrap(),None);
+  assert_eq!(p.cpu,cpu);assert_eq!(p.ram,ram);assert_eq!(p.image,image);
+ }
+ for (ax,bx,cx,dx) in [(0xd201,0x5144,0x4d45,0x4d30),(0xd200,0x5145,0x4d45,0x4d30),
+                        (0xd200,0x5144,0x4d46,0x4d30),(0xd200,0x5144,0x4d45,0x4d31)]{
+  p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=dx;
+  let cpu=p.cpu.clone();assert!(service(&mut p,0x2f,&mut out).is_err());assert_eq!(p.cpu,cpu);
+ }
+}
+#[test]
+fn guest_multiplex_handler_receives_quarterdeck_probe_first(){
+ let mut p=load(&[0xcd,0x2f,0xfa,0xf4],"rpcitsr.com").unwrap();
+ p.ram.write_bytes(u32::from(PSP)*16+0x120,&[0xb0,0xff,0xcf]).unwrap();
+ p.ram.store(0x2f*4,MemWidth::Dword,(u32::from(PSP)<<16)|0x120).unwrap();
+ p.cpu.regs[0]=0xd200;p.cpu.regs[3]=0x5144;p.cpu.regs[1]=0x4d45;p.cpu.regs[2]=0x4d30;
+ let result=run(p,20).unwrap();assert!(matches!(result.stop,Stop::Monitor(_)),"{:?}",result.stop);
+ assert_eq!(result.loaded.cpu.regs[0]&0xffff,0xd2ff);
+}
+
+#[test]
+fn absent_task_switcher_returns_the_caller_state_unchanged(){
+ let mut p=load(&[0xcd,0x2f],"switcher.com").unwrap();
+ p.cpu.regs[0]=0x12344b02;p.cpu.regs[3]=0;p.cpu.regs[7]=0;
+ p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x45;
+ let old=p.cpu.clone();let image=p.image.clone();let ram=p.ram.clone();
+ assert_eq!(service(&mut p,0x2f,&mut vec![]).unwrap(),None);
+ assert_eq!(p.cpu,old);assert_eq!(p.image,image);assert_eq!(p.ram,ram);
+}

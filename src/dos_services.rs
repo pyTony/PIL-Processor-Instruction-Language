@@ -289,6 +289,18 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // redirector or network software is present.
             Ok(None)
         },
+        (0x2f,_) if (0xc0..=0xff).contains(&ah) && p.cpu.regs[0]&255==0
+            && p.cpu.regs[3]&0xffff==0x5144 && p.cpu.regs[1]&0xffff==0x4d45 && p.cpu.regs[2]&0xffff==0x4d30=>{
+            // Quarterdeck RPCI scans D2h..FFh, then C0h..D1h, looking for
+            // its resident memory manager. With no handler, FreeDOS leaves
+            // the call untouched: AL=0 means the slot is unclaimed.
+            Ok(None)
+        },
+        (0x2f,_) if p.cpu.regs[0]&0xffff==0x4b02=>{
+            // No DOS task switcher: the default INT 2F handler leaves the
+            // caller's ES:DI (normally zero) and other registers untouched.
+            Ok(None)
+        },
         (0x2f,_) if p.cpu.regs[0]&0xffff==0x1a00&&console::ansi::installed(p)?=>{
             // The ANSI driver answers its installation check with AL=FFh (RBIL INT 2F/AX=1A00h).
             p.cpu.regs[0]|=0xff;Ok(None)
