@@ -4,7 +4,7 @@
 Runs `pil --dos-session PROGRAM`, draws the B800 text page it reports
 and sends key presses as BIOS keystrokes. Execution, DOS services and the
 screen contents all come from the engine; this file only displays them.
-CGA modes 04h/06h and VGA mode 13h are displayed at 4:3, like a CRT;
+CGA modes 04h-06h and VGA mode 13h are displayed at 4:3, like a CRT;
 text mode uses the host font.
 
     python tools/dos_terminal.py images/FD14LITE.img::COMMAND.COM
@@ -176,11 +176,13 @@ def graphics_rgb(pixels, palette):
 def cga_rgb(frame, mode, color):
     """Decode CGA even/odd scanline banks to RGB, with the 3D9 palette."""
     data = bytes.fromhex(frame)
-    if len(data) != 0x4000 or mode not in (4, 6) or not 0 <= color <= 255:
+    if len(data) != 0x4000 or mode not in (4, 5, 6) or not 0 <= color <= 255:
         raise ValueError('invalid CGA frame, mode or palette')
     colors = [bytes.fromhex(c[1:]) for c in PALETTE]
-    if mode == 4:
-        base = [2, 4, 6] if not color & 0x20 else [3, 5, 7]
+    if mode in (4, 5):
+        # Mode 5 sets the CGA black-and-white bit: an RGB monitor then shows
+        # cyan, red and white, and the palette-select bit has no effect.
+        base = [3, 4, 7] if mode == 5 else [2, 4, 6] if not color & 0x20 else [3, 5, 7]
         palette = [colors[color & 15]] + [colors[i + (8 if color & 0x10 else 0)] for i in base]
         lut = [b''.join(palette[(b >> shift) & 3] for shift in (6, 4, 2, 0)) for b in range(256)]
     else:
@@ -602,7 +604,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 width = 320
             else:
                 descriptor = ('cga', cga, reply['cga_mode'], reply['cga_color'])
-                width = 320 if reply['cga_mode'] == 4 else 640
+                width = 640 if reply['cga_mode'] == 6 else 320
             if frame[0] != descriptor:
                 rgb = graphics_rgb(pixels, reply['palette']) if pixels is not None else cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
                 picture = graphics_photo(tk, rgb, width)

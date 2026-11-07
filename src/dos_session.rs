@@ -63,7 +63,7 @@ impl Session{
             Some(p.ram.bytes()[0xa0000..0xafa00].iter().map(|b|format!("{b:02x}")).collect::<String>())
         }else{None}).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()));
         let cga=self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
-            Some(mode @ (4|6))=>Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
+            Some(mode @ (4|5|6))=>Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
                 p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color())),
             _=>None,
         }).unwrap_or_default();

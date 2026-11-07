@@ -24,7 +24,7 @@ pub(super) fn initialize(ram:&mut Ram)->Result<(),String>{
     }}
     ram.write_bytes(VIDEO,&bytes).map_err(|e|format!("video initialization: {e:?}"))?;
     for (at,width,value) in [(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,80),
-        (0x463,MemWidth::Word,0x3d4),(0x44c,MemWidth::Word,PAGE),(0x484,MemWidth::Byte,24),
+        (0x463,MemWidth::Word,0x3d4),(0x44c,MemWidth::Word,PAGE),(0x484,MemWidth::Byte,24),(0x465,MemWidth::Byte,0x29),
         (0x41a,MemWidth::Word,0x1e),(0x41c,MemWidth::Word,0x1e)]{
         ram.store(at,width,value).map_err(|e|format!("console initialization: {e:?}"))?;
     }Ok(())
@@ -87,6 +87,10 @@ pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
     }
 }
 pub(super) fn video(p:&mut Loaded,ah:u8)->Result<(),String>{
+    if graphics_text::is_graphics(byte(p,0x449)?){
+        if ah==8{let ch=graphics_text::read_char(p)?;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|ch;return Ok(());}
+        let writes=graphics_text::write_chars(p)?;return commit(p,&writes);
+    }
     let page=(p.cpu.regs[3]>>8)&255;
     if page>=8{return Err("BIOS video page must be 0..7".into());}
     let position=read(p,0x450+page*2)?;
@@ -177,17 +181,26 @@ fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,St
 /// AH0E writes to the active page and ignores BH, as SeaBIOS and DOSBox-X do;
 /// the earliest IBM PC ROMs required BH to equal the active page anyway.
 fn teletype(p:&mut Loaded)->Result<(),String>{
+    // In graphics modes BL is the foreground colour.
+    if graphics_text::is_graphics(byte(p,0x449)?){
+        let writes=graphics_text::teletype(p,&[p.cpu.regs[0]as u8],p.cpu.regs[3]&255,false)?;return commit(p,&writes);
+    }
     let writes=teletype_plan(p,active_page(p)?,&[p.cpu.regs[0]as u8],false)?;
     commit(p,&writes)
 }
 /// DOS console output also reaches the active page, as through INT29/AH0E;
 /// with the ANSI driver loaded its escape sequences are interpreted.
 pub(super) fn dos_screen(p:&Loaded,bytes:&[u8])->Result<Writes,String>{
-    let writes=if ansi::installed(p)?&&byte(p,0x449)?==3{ansi::plan(p,active_page(p)?,bytes)?}else{teletype_plan(p,active_page(p)?,bytes,true)?};
+    let mode=byte(p,0x449)?;
+    // FreeDOS INT 29h prints with AH0Eh and BX=0007h, so colour 7 in graphics.
+    if graphics_text::is_graphics(mode){let writes=graphics_text::teletype(p,bytes,7,true)?;check(p,&writes)?;return Ok(writes);}
+    let writes=if ansi::installed(p)?&&mode==3{ansi::plan(p,active_page(p)?,bytes)?}else{teletype_plan(p,active_page(p)?,bytes,true)?};
     check(p,&writes)?;Ok(writes)
 }
 #[path="dos_ansi.rs"]
 pub(super) mod ansi;
+#[path="dos_graphics_text.rs"]
+pub(super) mod graphics_text;
 pub(super) fn check(p:&Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,width,_) in writes{p.ram.check_write(at,width).map_err(|e|format!("BIOS console write: {e:?}"))?;}
     Ok(())
@@ -228,6 +241,7 @@ pub(super) fn dos_flush_writes(p:&Loaded)->Result<Writes,String>{
 /// INT10/AH06 (up) and AH07 (down) on the active page. Lower-right corners
 /// beyond the text page are clamped; an inverted window changes nothing.
 fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
+    if graphics_text::is_graphics(byte(p,0x449)?){let writes=graphics_text::scroll(p,up)?;return commit(p,&writes);}
     let page=active_page(p)?;
     let(cx,dx)=(p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
     let(top,left)=(cx>>8,cx&255);let(bottom,right)=((dx>>8).min(ROWS-1),(dx&255).min(COLS-1));
@@ -236,17 +250,18 @@ fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
     scroll(&mut cells,(top,left,bottom,right),p.cpu.regs[0]&255,(p.cpu.regs[3]>>8)&255,up);
     commit(p,&window_writes(page,&cells,(top,left,bottom,right)))
 }
-/// Bounded mode 3, CGA 4/6 and VGA 13h profile. Bit 7 keeps video RAM.
+/// Bounded mode 3, CGA 4/5/6 and VGA 13h profile. Bit 7 keeps video RAM.
 fn set_mode(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
-    if matches!(al&0x7f,4|6){
-        let mode=al&0x7f;let cols=if mode==4{40}else{80};
+    if matches!(al&0x7f,4|5|6){
+        let mode=al&0x7f;let cols=if mode==6{80}else{40};
         let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,cols),
             (0x44c,MemWidth::Word,0x4000),(0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0),
-            (0x463,MemWidth::Word,0x3d4),(0x466,MemWidth::Byte,if mode==4{0x30}else{0x3f})];
+            (0x463,MemWidth::Word,0x3d4),(0x466,MemWidth::Byte,if mode==6{0x3f}else{0x30}),
+            (0x465,MemWidth::Byte,match mode{4=>0x2a,5=>0x2e,_=>0x1e})];
         writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
         if al&0x80==0{writes.extend((0..0x4000).map(|n|(VIDEO+n,MemWidth::Byte,0)));}
-        commit(p,&writes)?;p.vga.set_cga_color(if mode==4{0x30}else{0x3f});return Ok(());
+        commit(p,&writes)?;p.vga.set_cga_color(if mode==6{0x3f}else{0x30});return Ok(());
     }
     if al&0x7f==0x13{
         let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x462,MemWidth::Byte,0)];
@@ -255,7 +270,7 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
     }
     if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the 80x25 colour text profile",al&0x7f));}
     let mut writes=vec![(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
-        (0x463,MemWidth::Word,0x3d4),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1)];
+        (0x463,MemWidth::Word,0x3d4),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1),(0x465,MemWidth::Byte,0x29)];
     writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
     if al&0x80==0{
         writes.extend((0..8).flat_map(|page|(0..CELLS).map(move|cell|(VIDEO+page*PAGE+cell*2,MemWidth::Word,0x0720))));
@@ -272,16 +287,16 @@ fn video_mode(p:&mut Loaded)->Result<(),String>{
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(cols<<8)|mode;
     p.cpu.regs[3]=(p.cpu.regs[3]&0xffff00ff)|(page<<8);Ok(())
 }
-/// CGA modes 4 and 6, and mode 13h, one pixel on page zero.
+/// CGA modes 4, 5 and 6, and mode 13h, one pixel on page zero.
 fn graphics_pixel(p:&mut Loaded,write:bool)->Result<(),String>{
     let mode=byte(p,0x449)?;let x=p.cpu.regs[1]&0xffff;let y=p.cpu.regs[2]&0xffff;
     let page=(p.cpu.regs[3]>>8)&255;
     if page!=0{return Err("graphics pixel page must be zero".into());}
     let (address,shift,mask)=match mode{
-        4 if x<320&&y<200=>(VIDEO+(y&1)*0x2000+(y/2)*80+x/4,6-(x%4)*2,3),
+        4|5 if x<320&&y<200=>(VIDEO+(y&1)*0x2000+(y/2)*80+x/4,6-(x%4)*2,3),
         6 if x<640&&y<200=>(VIDEO+(y&1)*0x2000+(y/2)*80+x/8,7-x%8,1),
         0x13 if x<320&&y<200=>(0xa0000+y*320+x,0,255),
-        4|6|0x13=>return Err("graphics pixel outside mode bounds".into()),
+        4|5|6|0x13=>return Err("graphics pixel outside mode bounds".into()),
         _=>return Err(format!("BIOS pixel access is not implemented for mode {mode:02x}")),
     };
     let old=byte(p,address)?;
@@ -297,7 +312,7 @@ fn graphics_pixel(p:&mut Loaded,write:bool)->Result<(),String>{
 fn cga_palette(p:&mut Loaded)->Result<(),String>{
     let mode=byte(p,0x449)?;let bh=(p.cpu.regs[3]>>8)&255;
     // BH=0 also selects the border colour in 80-column colour text mode.
-    if !matches!(mode,4|6)&&!(mode==3&&bh==0){return Err("CGA palette requires mode 4 or 6, or border selection in mode 3".into());}
+    if !matches!(mode,4|5|6)&&!(mode==3&&bh==0){return Err("CGA palette requires mode 4, 5 or 6, or border selection in mode 3".into());}
     let bl=p.cpu.regs[3]&255;let old=byte(p,0x466)?;
     let value=match bh{0=>(old&0x20)|(bl&0x1f),1=>(old&0x1f)|((bl&1)<<5),_=>return Err("CGA palette selector must be 0 or 1".into())};
     commit(p,&[(0x466,MemWidth::Byte,value)])?;p.vga.set_cga_color(value as u8);Ok(())

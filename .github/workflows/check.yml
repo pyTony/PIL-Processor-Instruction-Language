@@ -56,6 +56,7 @@ jobs:
       - run: python tools/export_runtime.py target/runtime-source --verify
       - run: cargo build --release --locked
       - run: python tools/verify_mandel_cycle.py
+      - run: python tools/verify_mandel_cga.py
       - if: runner.os == 'Linux'
         run: sh tools/bench.sh 10000 5
       - if: runner.os == 'Linux'

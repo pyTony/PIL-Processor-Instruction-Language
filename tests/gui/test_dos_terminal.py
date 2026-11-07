@@ -136,6 +136,13 @@ class DosTerminalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             term.cga_rgb('00', 4, 0x30)
 
+    def test_cga_mode_five_is_cyan_red_white_whatever_the_palette_bit(self):
+        frame = bytearray(0x4000)
+        frame[0] = 0b00011011
+        for color in (0x30, 0x10):
+            self.assertEqual(term.cga_rgb(frame.hex(), 5, color)[:12], bytes.fromhex('00000055ffffff5555ffffff'))
+        self.assertEqual(term.cga_rgb(frame.hex(), 5, 0x00)[:12], bytes.fromhex('00000000aaaaaa0000aaaaaa'))
+
     def test_graphics_palette_maps_indices_and_rejects_bad_data(self):
         palette = bytes([i for i in range(256) for _ in range(3)])
         pixels = bytes([0, 4, 255]) + bytes(63997)
