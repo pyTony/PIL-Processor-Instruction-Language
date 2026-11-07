@@ -94,6 +94,17 @@ fn timer_ticks_reach_the_bda_only_with_the_host_clock_if_and_bios_handlers(){
     }
 }
 #[test]
+fn timer_irq_respects_pic_mask_and_hook_remains_in_service_until_eoi(){
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xcf])]);let mut p=load(&code,"pic.com").unwrap();
+    p.cpu.eflags=2;p.speaker.pic.write(0x20,0x0a).unwrap();p.speaker.pic.write(0x21,1).unwrap();
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,1);assert_eq!(p.timer_ticks,0);
+    p.cpu.eflags=0x202;super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.timer_ticks,0);
+    p.speaker.pic.write(0x21,0).unwrap();p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.timer_ticks,42);
+    p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,1);
+    let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!(r.loaded.speaker.pic.read(0x20)&1,0);
+}
+#[test]
 fn timer_hook_runs_at_instruction_boundary_and_iret_restores_frame(){
     // Interrupted CLI; HLT. Hook: INC BYTE [0200h]; IRET.
     let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xfe,0x06,0x00,0x02,0xcf])]);
@@ -107,7 +118,7 @@ fn timer_hook_runs_at_instruction_boundary_and_iret_restores_frame(){
     let ss=u32::from(PSP)*16;
     assert_eq!(p.ram.load(ss+sp-6,MemWidth::Word).unwrap(),ip);
     assert_eq!(p.ram.load(ss+sp-2,MemWidth::Word).unwrap(),flags&0xffff);
-    let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     assert_eq!(r.loaded.ram.load(ss+0x200,MemWidth::Byte).unwrap(),1);
     assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp);
     assert_eq!(r.loaded.cpu.eflags&0xd5,flags&0xd5);
@@ -229,11 +240,16 @@ fn code_page_remote_drive_dr_dos_and_date_checks_answer_as_dos_6_22(){
     for al in [0x12,0x52,0xff]{assert_eq!(dos(&mut p,0x4400|al,0,0,0).unwrap(),(1,0,0,1));}
     assert!(dos(&mut p,0x4410,0,0,0).is_err());
     // AH2Bh: an invalid date (the DESQview check, 29 Feb 2001, 1979, 2100)
-    // gives AL=FFh; a valid one would change the clock and stops.
+    // gives AL=FFh; valid dates change the session clock only.
     for(cx,dx)in [(0x4445,0x5351),(2001,0x021d),(1979,0x0101),(2100,0x0101),(1990,0x0d01),(1990,0x0100)]{
         assert_eq!(dos(&mut p,0x2b00,0,cx,dx).unwrap(),(0x2bff,0,dx,0),"{cx} {dx:04x}");
     }
-    for(cx,dx)in [(2000,0x021d),(1980,0x0101),(2099,0x0c1f)]{assert!(dos(&mut p,0x2b00,0,cx,dx).is_err());}
+    for(cx,dx,weekday)in [(2000,0x021d,2),(1980,0x0101,2),(2099,0x0c1f,4)]{
+        assert_eq!(dos(&mut p,0x2b00,0,cx,dx).unwrap(),(0x2b00,0,dx,0));
+        p.cpu.regs[0]=0x2a00;super::super::service(&mut p,0x21,&mut vec![]).unwrap();
+        assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.cpu.regs[0]&255),(cx,dx,weekday));
+        let bcd=|n:u32|((n/10)<<4|n%10)as u8;assert_eq!(p.rtc.read(None,9),Some(bcd(cx%100)));assert_eq!(p.rtc.read(None,0x32),Some(bcd(cx/100)));
+    }
     // AH50h: the current PSP may be set to a segment holding a PSP.
     assert_eq!(dos(&mut p,0x5000,u32::from(PSP),0,0).unwrap().0,0x5000);
     assert!(dos(&mut p,0x5000,0x2000,0,0).is_err());assert_eq!(p.psp,PSP);

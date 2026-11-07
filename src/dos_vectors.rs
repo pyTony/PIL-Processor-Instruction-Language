@@ -26,7 +26,7 @@ const ENTRY_END:u32=ENTRIES+3*256;
 const TIMER_OFFSET:u16=0xf300;
 // IRQ0 enters here with the interrupted FLAGS/CS/IP on the stack. Save the
 // registers BIOS itself uses across INT 1Ch, then return from the hardware IRQ.
-const TIMER_CODE:&[u8]=&[0x66,0x50,0x1e,0xcd,0x1c,0x1f,0x66,0x58,0xcf];
+const TIMER_CODE:&[u8]=&[0x66,0x50,0x1e,0xcd,0x1c,0x1f,0xb0,0x20,0xe6,0x20,0x66,0x58,0xcf];
 pub(super) const END:u32=ENTRY_END+TIMER_CODE.len() as u32;
 /// The far pointer of vector n's entry.
 pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::from(n))}

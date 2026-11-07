@@ -47,6 +47,30 @@ fn rep_retains_prior_progress_on_fault_and_resumes_without_replaying(){
  step(&mut image,&mut ram,&mut c).unwrap();step(&mut image,&mut ram,&mut c).unwrap();assert_eq!(&ram.bytes()[0xa00..0xa03],&[10,20,30]);assert_eq!((c.eip,c.regs[1]),(0x102,0));assert_eq!(image.ss_shadow,0);
 }
 #[test]
+fn f2_movs_repeats_by_count_without_testing_zf_and_preserves_precise_progress(){
+ for width in [8u8,16,32]{for address in [16u32,32]{for backwards in [false,true]{for zero in [false,true]{
+  let mut code=vec![0xf2];if width==32{code.push(0x66);}if address==32{code.push(0x67);}code.push(if width==8{0xa4}else{0xa5});
+  let (mut image,mut ram,mut c)=setup(&code,false);let bytes=u32::from(width/8);
+  c.regs[1]=if address==16{0xabcd0003}else{3};
+  c.regs[6]=if address==16{0x12340800}else{0x800};c.regs[7]=if address==16{0x56780a00}else{0xa00};
+  if backwards{c.eflags|=0x400;}else{c.eflags&=!0x400;}
+  if zero{c.eflags|=0x40;}else{c.eflags&=!0x40;}
+  let old=c.clone();let mut expected=Vec::new();
+  for i in 0..3u32{let delta=i*bytes;let src=if backwards{0x900-delta}else{0x900+delta};let dst=if backwards{0xa00-delta}else{0xa00+delta};
+   let value=(0x12345678u32.wrapping_add(i*0x11111111))&(mask(width)as u32);ram.store(src,MemWidth::from_bits(width).unwrap(),value).unwrap();expected.push((dst,value));}
+  for i in 0..3{step(&mut image,&mut ram,&mut c).unwrap();assert_eq!(c.eip,if i==2{0x100+code.len()as u32}else{0x100});}
+  for (dst,value) in expected{assert_eq!(ram.load(dst,MemWidth::from_bits(width).unwrap()).unwrap(),value);}
+  let mask=if address==16{65535}else{u32::MAX};let delta=3*bytes;let delta=if backwards{0u32.wrapping_sub(delta)}else{delta};
+  assert_eq!(c.regs[1],old.regs[1]&!mask);assert_eq!(c.regs[6],(old.regs[6]&!mask)|(old.regs[6].wrapping_add(delta)&mask));assert_eq!(c.regs[7],(old.regs[7]&!mask)|(old.regs[7].wrapping_add(delta)&mask));
+  assert_eq!((c.eflags,c.undefined_flags),(old.eflags,old.undefined_flags));
+ }}}}
+ let (mut image,mut ram,mut c)=setup(&[0xf2,0xa5],false);c.regs[1]=0xabcd0000;image.segments[0].access=SegmentAccess::Unusable;image.segments[3].access=SegmentAccess::Unusable;
+ let mut expected=c.clone();expected.eip+=2;step(&mut image,&mut ram,&mut c).unwrap();assert_eq!(c,expected);
+ let (mut image,mut ram,mut c)=setup(&[0xf2,0xa5],false);ram.write_bytes(0x900,&[1,2,3,4]).unwrap();c.regs[1]=2;ram.protect(0xa02,2).unwrap();
+ step(&mut image,&mut ram,&mut c).unwrap();let before=c.clone();let before_ram=ram.clone();assert!(step(&mut image,&mut ram,&mut c).is_err());assert_eq!(c,before);assert_eq!(ram,before_ram);
+ assert_eq!((c.eip,c.regs[1],c.regs[6],c.regs[7]),(0x100,1,0x802,0xa02));assert_eq!(&ram.bytes()[0xa00..0xa02],&[1,2]);
+}
+#[test]
 fn rep_overlap_matches_serial_element_order_and_budget_is_bounded(){
  let (mut image,mut ram,mut c)=setup(&[0xf3,0xa4],false);image.segments[0]=image.segments[3];c.regs[7]=0x801;c.regs[1]=3;ram.write_bytes(0x900,&[1,2,3,4]).unwrap();for _ in 0..3{step(&mut image,&mut ram,&mut c).unwrap();}assert_eq!(&ram.bytes()[0x900..0x904],&[1,1,1,1]);
  let bytes=[0xb9,0xff,0xff,0xf3,0xaa];let p=dos::load(&bytes,"repeat.com").unwrap();let result=dos::run(p,4).unwrap();assert_eq!(result.stop,dos::Stop::Budget);assert_eq!(result.completed,1);assert_eq!(result.pil_steps,4);assert_eq!(result.loaded.cpu.regs[1],65532);assert_eq!(result.loaded.cpu.eip,0x103);
@@ -54,5 +78,5 @@ fn rep_overlap_matches_serial_element_order_and_budget_is_bounded(){
 #[test]
 fn new_effects_validate_context_and_early_retirement_placement(){
  for text in ["const x 32 0\nload_segment v 6 x 8\npreserve_flags all\nretire","const x 1 1\nconst v 16 0\nwrite_gpr 0 v\nretire_if x\npreserve_flags all\nretire"]{assert!(compile(text,16).is_err());}
- for bytes in [vec![0xf3,0x90],vec![0xf2,0xa4],vec![0xf3,0xf3,0xa4],vec![0xf0,0xe8,0,0]]{let (image,ram,_)=setup(&bytes,false);assert!(image.decode(&ram,0x100).is_err());}
+ for bytes in [vec![0xf3,0x90],vec![0xf2,0xaa],vec![0xf3,0xf3,0xa4],vec![0xf0,0xe8,0,0]]{let (image,ram,_)=setup(&bytes,false);assert!(image.decode(&ram,0x100).is_err());}
 }

@@ -133,6 +133,10 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("rep_backward",vec![0xf3,0xa5,0xf4])?;t.regs[1]=3;t.regs[6]=0x810;t.regs[7]=0xa10;t.flags=0xed7;t.patch=Some((0x900,(0..64u8).collect()));tests.push(t);
     let mut t=case("rep_partial_fault",vec![0xf3,0xa4,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![10,20,30]));t.protect=Some((0xa01,1));t.image.ss_shadow=1;tests.push(t);
     let mut t=case("rep_zero",vec![0xf3,0xa4,0xf4])?;t.regs[1]=0xabcd0000;t.image.segments[0].access=super::address::SegmentAccess::Unusable;t.image.segments[3].access=super::address::SegmentAccess::Unusable;tests.push(t);
+    let mut t=case("f2_rep_movs",vec![0xf2,0xa5,0xb9,3,0,0xf2,0xa4,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.flags=0xad7;t.patch=Some((0x900,(0..32u8).collect()));tests.push(t);
+    let mut t=case("f2_rep_movs_fault",vec![0xf2,0xa5,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![1,2,3,4,5,6]));t.protect=Some((0xa02,2));tests.push(t);
+    let mut t=case("lmsw_real",vec![0xb8,0x0e,0,0x0f,1,0xf0,0xf4])?;t.flags=0xad7;tests.push(t);
+    let mut t=case("lmsw_transition",vec![0xb8,0x11,0,0x0f,1,0xf0,0xf4])?;t.flags=0xad7;tests.push(t);
     for big in [false,true]{for w in [16,32]{
         let mut bytes=vec![0xfa];if w==32{bytes.push(0x66);}bytes.push(0x9c);bytes.push(0xf9);if w==32{bytes.push(0x66);}bytes.push(0x9d);bytes.extend([0xfb,0xfb,0x90,0xf4]);
         let mut t=case(match(big,w){(false,16)=>"flagstack16_16",(false,_)=>"flagstack16_32",(true,16)=>"flagstack32_16",_=>"flagstack32_32"},bytes)?;t.regs[4]=0x800;t.flags=0x17dd7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};tests.push(t);

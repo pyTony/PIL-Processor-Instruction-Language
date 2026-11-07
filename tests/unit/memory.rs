@@ -46,3 +46,12 @@ fn invalid_protection_does_not_change_ram() {
     let mut m=Ram::new(4);let before=m.clone();
     assert!(m.protect(3,2).is_err());assert_eq!(m,before);
 }
+#[test]
+fn a20_masks_only_bit_twenty_and_cross_boundary_accesses_are_atomic(){
+    let mut m=Ram::new(0x300000);m.store(0,MemWidth::Dword,0x44332211).unwrap();m.store(0x100000,MemWidth::Dword,0x88776655).unwrap();m.store(0x200000,MemWidth::Byte,0xa5).unwrap();
+    m.set_a20_enabled(false);assert_eq!(m.load(0x100000,MemWidth::Dword).unwrap(),0x44332211);assert_eq!(m.load(0x300000,MemWidth::Byte).unwrap(),0xa5);
+    m.store(0xffffe,MemWidth::Dword,0xdeadbeef).unwrap();assert_eq!(&m.bytes()[0xffffe..0x100000],&[0xef,0xbe]);assert_eq!(&m.bytes()[0..2],&[0xad,0xde]);assert_eq!(m.load(0xffffe,MemWidth::Dword).unwrap(),0xdeadbeef);
+    m.protect(0,1).unwrap();let before=m.clone();assert!(m.store(0xfffff,MemWidth::Word,0).is_err());assert_eq!(m,before);
+    assert!(m.write_bytes(0xfffff,&[1,2,3]).is_err());assert_eq!(m,before);
+    m.set_a20_enabled(true);assert_eq!(m.load(0x100000,MemWidth::Dword).unwrap(),0x88776655);assert_eq!(m.load(0,MemWidth::Word).unwrap(),0xdead);
+}

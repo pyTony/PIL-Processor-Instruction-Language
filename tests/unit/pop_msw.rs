@@ -46,6 +46,22 @@ fn memory_pop_prefixes_and_bad_extensions_are_diagnostics(){
  for text in ["const v 16 0\nread_address_after a 4 v\npreserve_flags all\nretire","const v 32 0\nread_address_after a 8 v\npreserve_flags all\nretire","const v 8 1\nrequire v\npreserve_flags all\nretire"]{assert!(compile(text,16).is_err());}
 }
 #[test]
+fn lmsw_loads_low_status_bits_or_stops_precisely_at_mode_transition(){
+ for prefix in [false,true]{for value in [0u16,2,4,6,8,10,12,14,0xfff2]{
+  let mut bytes=vec![];if prefix{bytes.push(0x66);}bytes.extend([0x0f,1,0xf0]);
+  let(mut i,mut r,mut c)=setup(&bytes,false);i.msw=0x10;c.regs[0]=0xbeef0000|u32::from(value);let mut want=c.clone();want.eip+=bytes.len()as u32;
+  step(&mut i,&mut r,&mut c).unwrap();assert_eq!(c,want);assert_eq!(i.msw,0x10|(value&14));assert!(i.real_mode);
+ }}
+ // Memory source may be read-only; it is a word even with operand-size prefix.
+ let b=[0x66,0x0f,1,0x36,0,6];let(mut i,mut r,mut c)=setup(&b,false);r.store(0x700,MemWidth::Dword,0x12340006).unwrap();r.protect(0x700,4).unwrap();
+ let old=r.clone();step(&mut i,&mut r,&mut c).unwrap();assert_eq!(i.msw,0x16);assert_eq!(r,old);
+ // The actual DOS/4GW encoding requests PE=1: no state is committed until
+ // descriptor-based protected execution is implemented.
+ let(mut i,mut r,mut c)=setup(&[0x0f,1,0xf0],false);c.regs[0]=0x11;let(old_i,old_r,old_c)=(i.clone(),r.clone(),c.clone());
+ assert!(matches!(step(&mut i,&mut r,&mut c),Err(ExecError::UnsupportedControl{register:0,value:0x11,..})));assert_eq!((i,r,c),(old_i,old_r,old_c));
+ let(mut i,mut r,mut c)=setup(&[0x0f,1,0x36,0xff,0xff],false);let(old_i,old_r,old_c)=(i.clone(),r.clone(),c.clone());assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!((i,r,c),(old_i,old_r,old_c));
+}
+#[test]
 fn smsw_word_registers_read_supplied_msw_and_preserve_other_state(){
  for reg in 0..8{for msw in [0u16,0x10,0xa5a0,0xffff]{for real in [false,true]{
   let(mut i,mut r,mut c)=setup(&[0x0f,1,0xe0|reg],false);i.msw=msw;i.real_mode=real;let old=c.clone();let oldi=i.clone();let oldr=r.clone();step(&mut i,&mut r,&mut c).unwrap();let mut want=old;want.eip+=3;want.regs[reg as usize]=(want.regs[reg as usize]&0xffff0000)|u32::from((msw&!1)|u16::from(!real));assert_eq!(c,want);assert_eq!(i,oldi);assert_eq!(r,oldr);

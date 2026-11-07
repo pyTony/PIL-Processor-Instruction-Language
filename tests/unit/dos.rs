@@ -329,6 +329,48 @@ fn ioctl_device_info_validates_handles_and_preserves_unrelated_state(){
  p.cpu.regs[0]=0x4401;let old=p.clone();assert!(service(&mut p,0x21,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
 }
 #[test]
+fn ioctl_status_reports_file_eof_and_device_readiness_without_consuming(){
+ let mut p=load_with_drives(&[0xcd,0x21,0xf4],"status.com",vec![Source::Memory(Default::default())],None).unwrap();let mut out=vec![];
+ let (handle,cf)=call(&mut p,0x3d00,0,b"status.com");assert_eq!(cf,0);
+ fn status(p:&mut Loaded,out:&mut Vec<u8>,sub:u32,handle:u32)->(u32,u32){
+  p.cpu.regs[0]=0xabcd4400|sub;p.cpu.regs[3]=handle;p.cpu.regs[2]=0x12345678;
+  p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x891;
+  service(p,0x21,out).unwrap();
+  assert_eq!(p.cpu.regs[2],0x12345678);assert_eq!(p.cpu.eflags&!1,0xad6);assert_eq!(p.cpu.undefined_flags,0x890);
+  (p.cpu.regs[0],p.cpu.eflags&1)
+ }
+ assert_eq!(status(&mut p,&mut out,6,handle),(0xabcd44ff,0));
+ assert_eq!(status(&mut p,&mut out,6,handle),(0xabcd44ff,0));
+ p.cpu.regs[0]=0x4500;p.cpu.regs[3]=handle;service(&mut p,0x21,&mut out).unwrap();let dup=p.cpu.regs[0]&0xffff;
+ p.cpu.regs[0]=0x3f00;p.cpu.regs[3]=dup;p.cpu.regs[1]=3;p.cpu.regs[2]=0x400;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,3);
+ assert_eq!(status(&mut p,&mut out,6,handle),(0xabcd4400,0));
+ assert_eq!(status(&mut p,&mut out,7,handle),(0xabcd44ff,0));
+ p.cpu.regs[0]=0x4200;p.cpu.regs[3]=handle;p.cpu.regs[1]=0;p.cpu.regs[2]=1;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!(status(&mut p,&mut out,6,dup),(0xabcd44ff,0));
+ p.cpu.regs[0]=0x4200;p.cpu.regs[3]=dup;p.cpu.regs[1]=0;p.cpu.regs[2]=9;service(&mut p,0x21,&mut out).unwrap();
+ assert_eq!(status(&mut p,&mut out,6,handle),(0xabcd4400,0));
+ let (created,cf)=call(&mut p,0x3c00,0,b"Z:\\STATUS.TMP");assert_eq!(cf,0);
+ p.cpu.regs[0]=0x3e00;p.cpu.regs[3]=created;service(&mut p,0x21,&mut out).unwrap();
+ let (write_only,cf)=call(&mut p,0x3d01,0,b"Z:\\STATUS.TMP");assert_eq!(cf,0);
+ assert_eq!(status(&mut p,&mut out,6,write_only),(0xabcd44ff,0));
+ assert_eq!(status(&mut p,&mut out,7,write_only),(0xabcd44ff,0));
+ assert_eq!(status(&mut p,&mut out,6,19),(0xabcd0006,1));
+ assert_eq!(status(&mut p,&mut out,6,0),(0xabcd4400,0));
+ p.enqueue_key(0x1e61).unwrap();
+ assert_eq!(status(&mut p,&mut out,6,0),(0xabcd44ff,0));
+ assert_eq!(status(&mut p,&mut out,6,0),(0xabcd44ff,0));
+ assert_eq!(status(&mut p,&mut out,7,1),(0xabcd44ff,0));
+ let (nul,cf)=call(&mut p,0x3d00,0,b"NUL");assert_eq!(cf,0);
+ assert_eq!(status(&mut p,&mut out,6,nul),(0xabcd44ff,0));
+ assert_eq!(status(&mut p,&mut out,7,nul),(0xabcd44ff,0));
+ serial::attach(&mut p).unwrap();
+ assert_eq!(status(&mut p,&mut out,6,3),(0xabcd4400,0));
+ p.com1.as_mut().unwrap().rx.push_back(b'X');
+ assert_eq!(status(&mut p,&mut out,6,3),(0xabcd44ff,0));
+ assert_eq!(p.com1.as_ref().unwrap().rx.front(),Some(&b'X'));
+ assert_eq!(status(&mut p,&mut out,7,3),(0xabcd44ff,0));
+}
+#[test]
 fn cursor_shape_roundtrip_uses_bda_and_faults_atomically(){
  let mut p=load(&[0xcd,0x10],"cursor.com").unwrap();let mut out=vec![];
  assert_eq!(p.ram.load(0x460,MemWidth::Word).unwrap(),0x0607);
@@ -415,6 +457,88 @@ fn bios_keyboard_store_and_shift_status_services(){
  let mut p=load(&[0xcd,0x16],"keys.com").unwrap();let mut out=vec![];
  for n in 0..16{p.cpu.regs[0]=0xabcd0500;p.cpu.regs[1]=0x1e61;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0500|u32::from(n==15));}
  p.ram.store(0x417,MemWidth::Byte,0xa5).unwrap();p.cpu.regs[0]=0xabcd0200;service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd02a5);
+}
+#[test]
+fn bios_enhanced_keyboard_checks_and_reads_preserve_extended_words(){
+ let mut p=load(&[0xcd,0x16],"keys.com").unwrap();let mut out=vec![];
+ p.cpu.regs[0]=0xabcd1100;p.cpu.eflags=0x203;p.cpu.undefined_flags=0x40;
+ service(&mut p,0x16,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd1100);assert_eq!(p.cpu.eflags,0x243);assert_eq!(p.cpu.undefined_flags,0);
+ assert!(p.enqueue_key(0x48e0).unwrap());assert!(p.enqueue_key(0x8500).unwrap());
+ for key in [0x48e0,0x8500]{
+  let ram=p.ram.clone();p.cpu.regs[0]=0xabcd1100;service(&mut p,0x16,&mut out).unwrap();
+  assert_eq!(p.cpu.regs[0],0xabcd0000|key);assert_eq!(p.cpu.eflags&0x40,0);assert_eq!(p.ram,ram);
+  p.cpu.regs[0]=0xabcd1000;let flags=p.cpu.eflags;service(&mut p,0x16,&mut out).unwrap();
+  assert_eq!(p.cpu.regs[0],0xabcd0000|key);assert_eq!(p.cpu.eflags,flags);
+ }
+ let mut p=load(&[0xcd,0x16,0x89,0xc3,0xb8,0,0x4c,0xcd,0x21],"keys.com").unwrap();
+ p.cpu.regs[0]=0x1000;let old=p.clone();let r=run(p,10).unwrap();
+ assert_eq!(r.stop,Stop::WaitingForInput);assert_eq!(r.completed,0);assert_eq!(r.loaded.cpu,old.cpu);assert_eq!(r.loaded.ram,old.ram);
+ let mut p=r.loaded;p.enqueue_key(0x48e0).unwrap();let r=run(p,10).unwrap();
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[3],0x48e0);
+}
+#[test]
+fn bios_compaq_speed_probe_reports_absent_without_touching_state(){
+ let mut p=load(&[0xcd,0x16],"probe.com").unwrap();p.enqueue_key(0x1e61).unwrap();
+ p.cpu.regs[0]=0xabcd_f1ff;p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x891;let old=p.clone();
+ service(&mut p,0x16,&mut vec![]).unwrap();assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+ p.cpu.regs[0]=0xf100;let old=p.clone();assert!(service(&mut p,0x16,&mut vec![]).is_err());
+ assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+}
+#[test]
+fn bios_disk_geometry_reports_unsupported_without_fabricating_a_drive(){
+ let mut p=load(&[0xcd,0x13],"disk.com").unwrap();p.cpu.regs=[0xabcd0801,0x12345678,0x98766480,0xaaaa5555,0,0,0,0];
+ p.cpu.eflags=0x202;p.cpu.undefined_flags=1;let old=p.clone();
+ service(&mut p,0x13,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0101);
+ assert_eq!(&p.cpu.regs[1..],&old.cpu.regs[1..]);assert_eq!(p.cpu.eflags,0x203);assert_eq!(p.cpu.undefined_flags,0);assert_eq!(p.ram,old.ram);
+}
+#[test]
+fn ioctl_block_access_flag_checks_drive_and_writes_only_result_byte(){
+ let mut p=load(&[0xcd,0x21],"ioctl.com").unwrap();let at=p.image.segments[3].base+0x300;
+ p.ram.store(at,MemWidth::Word,0xaa00).unwrap();p.cpu.regs[0]=0x440d;p.cpu.regs[1]=0x0867;p.cpu.regs[2]=0x300;p.cpu.regs[3]=0;
+ service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&1,0);assert_eq!(p.ram.load(at,MemWidth::Word).unwrap(),0x0100);
+ p.cpu.regs[0]=0x440d;p.cpu.regs[3]=27;let ram=p.ram.clone();service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[0]&0xffff,15);assert_eq!(p.cpu.eflags&1,1);assert_eq!(p.ram,ram);
+ p.cpu.regs[0]=0x440d;p.cpu.regs[3]=0;p.ram.protect(at+1,1).unwrap();let old=p.clone();
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+}
+#[test]
+fn ioctl_logical_drive_map_has_one_letter_and_rejects_invalid_drive(){
+ let mut p=load(&[0xcd,0x21],"map.com").unwrap();p.cpu.regs[0]=0x1234440e;p.cpu.regs[3]=0;
+ service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0x12344400);assert_eq!(p.cpu.eflags&1,0);
+ p.cpu.regs[0]=0x440e;p.cpu.regs[3]=27;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[0]&0xffff,15);assert_eq!(p.cpu.eflags&1,1);
+}
+#[test]
+fn eisa_slot_probe_reports_unsupported_without_modifying_slot_state(){
+ let mut p=load(&[0xcd,0x15],"eisa.com").unwrap();p.cpu.regs[0]=0x1234d800;p.cpu.regs[1]=0x5678;
+ p.cpu.eflags=0x202;p.cpu.undefined_flags=1;let old=p.clone();service(&mut p,0x15,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[0],0x12348600);assert_eq!(&p.cpu.regs[1..],&old.cpu.regs[1..]);
+ assert_eq!(p.cpu.eflags,0x203);assert_eq!(p.cpu.undefined_flags,0);assert_eq!(p.ram,old.ram);
+}
+#[test]
+fn dos_date_advances_when_virtual_clock_crosses_midnight(){
+ let mut p=load(&[0xcd,0x21],"midnight.com").unwrap();
+ p.cpu.regs[0]=0x2b00;p.cpu.regs[1]=2026;p.cpu.regs[2]=0x0b07;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.rtc.read(None,6),Some(7));
+ p.cpu.regs[0]=0x2d00;p.cpu.regs[1]=0x173b;p.cpu.regs[2]=0x3b00;service(&mut p,0x21,&mut vec![]).unwrap();
+ p.timer_ticks=TICKS_PER_DAY-1;p.cpu.regs[0]=0;service(&mut p,0x1a,&mut vec![]).unwrap();
+ p.cpu.regs[0]=0x2a00;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.cpu.regs[0]&255),(2026,0x0b08,0));
+}
+#[test]
+fn keyboard_echo_uses_controller_response_without_consuming_bios_keys(){
+ // Send EE, inspect output-full, read the response, inspect empty status.
+ let code=[0xb0,0xee,0xe6,0x60,0xe4,0x64,0x88,0xc3,0xe4,0x60,0x88,0xc7,0xe4,0x64,0x88,0xc1,0xfa,0xf4];
+ let mut p=load(&code,"kbecho.com").unwrap();p.enqueue_key(0x1e61).unwrap();
+ let r=run(p,40).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!(r.loaded.cpu.regs[3]&0xffff,0xee01);assert_eq!(r.loaded.cpu.regs[1]&0xff,0);
+ let mut p=r.loaded;p.cpu.regs[0]=0x1000;service(&mut p,0x16,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0x1e61);
+ // An unread response must not be silently replaced.
+ let code=[0xb0,0xee,0xe6,0x60,0xe6,0x60,0xfa,0xf4];let r=run(load(&code,"full.com").unwrap(),20).unwrap();
+ assert!(matches!(r.stop,Stop::Service(_)));let mut p=r.loaded;
+ p.cpu.eip=0x106;p.ram.store(p.image.segments[1].base+0x106,MemWidth::Byte,0xe4).unwrap();
+ p.ram.store(p.image.segments[1].base+0x107,MemWidth::Byte,0x60).unwrap();
+ assert_eq!(ports::io(&mut p).unwrap(),Some(2));assert_eq!(p.cpu.regs[0]&255,0xee);
 }
 fn cell(p:&Loaded,page:u32,row:u32,col:u32)->u32{p.ram.load(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word).unwrap()}
 fn put(p:&mut Loaded,page:u32,row:u32,col:u32,value:u32){p.ram.store(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word,value).unwrap();}
@@ -552,6 +676,17 @@ fn cga_palette_bios_and_hardware_register_are_independent(){
  p.cpu.regs[3]=0x0100;console::display(&mut p,0x0b).unwrap();assert_eq!(p.vga.cga_color(),0x12);
  p.vga.io(0x3d9,false,0x2f).unwrap();assert_eq!(p.vga.cga_color(),0x2f);
  assert_eq!(p.ram.load(0x466,MemWidth::Byte).unwrap(),0x12);
+}
+#[test]
+fn cga_border_selection_works_in_colour_text_mode(){
+ let mut p=load(&[0xf4],"border.com").unwrap();
+ p.ram.store(0x466,MemWidth::Byte,0x30).unwrap();
+ p.ram.store(0xb8000,MemWidth::Word,0x1e41).unwrap();
+ p.cpu.regs[3]=0x0004;console::display(&mut p,0x0b).unwrap();
+ assert_eq!(p.ram.load(0x466,MemWidth::Byte).unwrap(),0x24);
+ assert_eq!(p.vga.cga_color(),0x24);
+ assert_eq!(p.ram.load(0xb8000,MemWidth::Word).unwrap(),0x1e41);
+ p.cpu.regs[3]=0x0101;assert!(console::display(&mut p,0x0b).is_err());
 }
 #[test]
 fn absent_game_port_and_bios_joystick_service_report_no_device(){
@@ -1117,6 +1252,43 @@ fn image_is_drive_c_with_its_label_and_the_host_folder_is_drive_d(){
  std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
+fn exec_overlay_loads_relocates_and_executes_without_a_child(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-overlay-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ std::fs::create_dir_all(&dir).unwrap();
+ // MOV AX,1234h; RETF. The relocation is data following the code and the
+ // factor is deliberately different from the destination segment.
+ let mut module=vec![0xb8,0x34,0x12,0xcb,0xf0,0xff,0x23,0x01];
+ std::fs::write(dir.join("CODE.OVL"),exe(&module,&[(4,0),(6,0)])).unwrap();
+ let parent=[0xba,0x00,0x02,0xbb,0x40,0x02,0xb8,0x03,0x4b,0xcd,0x21,0x9a,0,0,0,0x30,0xfa,0xf4];
+ let mut p=load_with_drives(&parent,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();let base=u32::from(PSP)*16;
+ p.ram.write_bytes(base+0x200,b"CODE.OVL\0").unwrap();p.ram.write_bytes(base+0x240,&[0,0x30,0x35,0x12]).unwrap();
+ let arena=p.arena.clone();let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x1234);assert_eq!(r.loaded.ram.load(0x30004,MemWidth::Word).unwrap(),0x1225);assert_eq!(r.loaded.ram.load(0x30006,MemWidth::Word).unwrap(),0x1358);
+ assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));assert_eq!(r.loaded.arena,arena);
+ // A raw overlay loads at offset zero as well, without applying the factor.
+ module[..4].copy_from_slice(&[0xb8,0x78,0x56,0xcb]);std::fs::write(dir.join("RAW.OVL"),&module).unwrap();
+ let mut p=load_with_drives(&[0xcd,0x21],"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
+ p.image.end=0x1000; // Overlay goes in a separately allocated executable area.
+ p.ram.write_bytes(base+0x200,b"RAW.OVL\0").unwrap();p.ram.write_bytes(base+0x240,&[0,0x30,0x35,0x12]).unwrap();p.cpu.regs[0]=0xbeef4b03;p.cpu.regs[2]=0x200;p.cpu.regs[3]=0x240;p.cpu.eflags|=1;p.cpu.undefined_flags|=1;
+ let mut expected=p.cpu.clone();expected.eflags&=!1;expected.undefined_flags&=!1;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu,expected);assert_eq!(&p.ram.bytes()[0x30000..0x30008],&module);
+ // A second load invalidates the old decoded code through its signature.
+ let mut image=p.image.clone();image.selectors[1]=0x3000;image.segments[1]=SegmentCache::real_mode(0x3000);
+ let first=p.cache.fetch(&image,&p.ram,0).unwrap();assert!(first.label.contains("0x5678"),"{}",first.label);
+ std::fs::write(dir.join("RAW.OVL"),[0xb8,0xbc,0x9a,0xcb]).unwrap();p.cpu.regs[0]=0x4b03;service(&mut p,0x21,&mut vec![]).unwrap();
+ let second=p.cache.fetch(&image,&p.ram,0).unwrap();assert!(second.label.contains("0x9abc"),"{}",second.label);
+ // An invalid relocation and a missing file report DOS errors without writing.
+ std::fs::write(dir.join("BAD.OVL"),exe(&[1,2,3],&[(3,0)])).unwrap();
+ for(name,error)in [(b"BAD.OVL\0".as_slice(),11),(b"MISSING.OVL\0".as_slice(),2)]{
+  p.ram.write_bytes(base+0x200,name).unwrap();let before=p.ram.clone();p.cpu.regs[0]=0x4b03;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.eflags&1),(error,1));assert_eq!(p.ram,before);
+ }
+ // A protected destination fails before any of the overlay is written.
+ p.ram.write_bytes(base+0x200,b"CODE.OVL\0").unwrap();p.ram.protect(0x30004,1).unwrap();let before=p.ram.clone();p.cpu.regs[0]=0x4b03;assert!(service(&mut p,0x21,&mut vec![]).is_err());assert_eq!(p.ram,before);
+ std::fs::write(dir.join("BIG.OVL"),vec![0x90;0x10020]).unwrap();p.ram.set_a20_enabled(true);p.ram.write_bytes(base+0x200,b"BIG.OVL\0").unwrap();p.ram.write_bytes(base+0x240,&[0xff,0xff,0,0]).unwrap();
+ let before=p.ram.clone();p.cpu.regs[0]=0x4b03;assert!(service(&mut p,0x21,&mut vec![]).is_err());assert_eq!(p.ram,before);
+ std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
 fn exec_runs_a_com_and_a_relocated_exe_and_returns_their_codes(){
  use std::time::{SystemTime,UNIX_EPOCH};
  let dir=std::env::temp_dir().join(format!("pil-exec-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
@@ -1298,6 +1470,57 @@ fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
  std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
+fn pic_ports_expose_pending_timer_and_independent_masks(){
+ // CLI; select IRR; read IRQ0 into BL; set/read master and slave masks.
+ let code=[0xfa,0xb0,0x0a,0xe6,0x20,0xe4,0x20,0x88,0xc3,0xb0,0xa5,0xe6,0x21,0xe4,0x21,0x88,0xc7,0xb0,0x5a,0xe6,0xa1,0xe4,0xa1,0xfa,0xf4];
+ let mut p=load(&code,"picports.com").unwrap();p.speaker.pic.raise_timer();let r=run(p,30).unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[0]&255),(0xa501,0x5a));
+}
+#[test]
+fn generic_console_codepage_query_reports_no_display_driver(){
+ let mut p=load(&[0xcd,0x21],"ioctl.com").unwrap();let base=u32::from(PSP)*16;p.ram.write_bytes(base+0x200,&[0x34,0x12,0x78,0x56]).unwrap();
+ // Duplicate stdout as handle 5, as SYSINFO does when opening CON.
+ p.cpu.regs[0]=0x4500;p.cpu.regs[3]=1;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,5);
+ for (handle,error) in [(5,1),(19,6)]{
+  p.cpu.regs[0]=0xbeef440c;p.cpu.regs[1]=0x036a;p.cpu.regs[3]=handle;p.cpu.regs[2]=0x200;p.cpu.eflags&=!1;p.cpu.undefined_flags|=1;
+  let before=p.ram.clone();service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0],p.cpu.eflags&1,p.cpu.undefined_flags&1,p.dos_error),(0xbeef0000|error,1,0,error as u16));assert_eq!(p.ram,before);
+ }
+}
+#[test]
+fn dos_a20_gate_wraps_real_mode_and_accepts_fast_kbc_and_bios_controls(){
+ // DS=FFFF, read FFFF:0510 with A20 disabled, enable port 92, read again,
+ // disable it, and read once more. Both physical bytes were set independently.
+ let code=[0xb8,0xff,0xff,0x8e,0xd8,0xa0,0x10,0x05,0x88,0xc3,0xb0,2,0xe6,0x92,0xa0,0x10,0x05,0x88,0xc7,0xb0,0,0xe6,0x92,0xa0,0x10,0x05,0xfa,0xf4];
+ let mut p=load(&code,"a20.com").unwrap();p.ram.set_a20_enabled(true);p.ram.store(0x500,MemWidth::Byte,0x12).unwrap();p.ram.store(0x100500,MemWidth::Byte,0x34).unwrap();p.ram.set_a20_enabled(false);
+ let r=run(p,40).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[0]&255),(0x3412,0x12));
+ // The fast and 8042 gates are independent inputs to the address line.
+ let code=[0xb0,2,0xe6,0x92,0xb0,0xd1,0xe6,0x64,0xb0,3,0xe6,0x60,0xb0,0,0xe6,0x92,0xb0,0xd0,0xe6,0x64,0xe4,0x64,0x88,0xc3,0xe4,0x60,0x88,0xc7,0xb0,0xd1,0xe6,0x64,0xb0,1,0xe6,0x60,0xfa,0xf4];
+ let r=run(load(&code,"kbc.com").unwrap(),50).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu.regs[3]&0xffff,0x0301);assert!(!r.loaded.ram.a20_enabled());
+ let mut p=load(&[0xcd,0x15],"a20bios.com").unwrap();
+ for (op,ax,bx,enabled) in [(0x2401,1,0,true),(0x2402,1,0,true),(0x2403,3,3,true),(0x2400,0,3,false),(0x2402,0,3,false)]{
+  p.cpu.regs[0]=op;p.cpu.eflags|=1;p.cpu.undefined_flags|=1;service(&mut p,0x15,&mut vec![]).unwrap();
+  assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.eflags&1,p.cpu.undefined_flags&1,p.ram.a20_enabled()),(ax,bx,0,0,enabled));
+ }
+}
+#[test]
+fn dosbench_absent_quarterdeck_checks_and_pit_latch(){
+ let mut p=load(&[0xcd,0x2f],"quarterdeck.com").unwrap();
+ p.cpu.regs[0]=0xabcd_d200;p.cpu.regs[3]=0x5144;p.cpu.regs[1]=0x4d45;p.cpu.regs[2]=0x4d30;
+ let before=p.cpu.clone();service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu,before);
+ p.cpu.regs[0]=0x4b02;p.cpu.regs[3]=0;p.cpu.regs[7]=0;p.selectors[SegmentRegister::Es.index()]=0;
+ let before=p.cpu.clone();service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu,before);
+ p.cpu.regs[7]=1;assert!(service(&mut p,0x2f,&mut vec![]).is_err());
+ p.cpu.regs[0]=0xabcd_bfde;p.cpu.regs[3]=8;p.cpu.eflags&=!1;p.cpu.undefined_flags|=1;
+ service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0xabcd_86de);assert_eq!(p.cpu.regs[3],8);assert_eq!(p.cpu.eflags&1,1);assert_eq!(p.cpu.undefined_flags&1,0);
+ for code in [&[0xb8,0x00,0xd2,0xcd,0x2f,0xfa,0xf4][..],&[0xb8,0xde,0xbf,0xbb,8,0,0xcd,0x15,0xfa,0xf4]]{
+  let r=run(load(code,"probe.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ }
+ // The exact channel 2 latch/read sequence used by CHKCPU, after programming.
+ let code=[0xb0,0xb6,0xe6,0x43,0xb0,0x34,0xe6,0x42,0xb0,0x12,0xe6,0x42,0xb0,1,0xe6,0x61,0xb0,0x80,0xe6,0x43,0xe4,0x42,0x88,0xc3,0xe4,0x42,0xfa,0xf4];
+ let r=run(load(&code,"pit2.com").unwrap(),30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.cpu.regs[0]&255,r.loaded.cpu.regs[3]&255),(0x12,0x34));
+}
+#[test]
 fn speaker_ports_take_watcoms_sound_and_nosound(){
  // sound(900): IN AL,61h by DX; OR AL,3; OUT; mode B6h to 43h; count 052Dh to 42h low then high; CLI; HLT.
  let code=[0xba,0x61,0x00,0xec,0x0c,0x03,0xee,0xb0,0xb6,0xba,0x43,0x00,0xee,0xba,0x42,0x00,0xb0,0x2d,0xee,0xb0,0x05,0xee,0xfa,0xf4];
@@ -1340,9 +1563,9 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
  ];
  let r = run(load(&vsync_code, "vsync.com").unwrap(), 200).unwrap();
  assert!(matches!(r.stop, Stop::Monitor(_)), "{:?}", r.stop);
- // Other ports, word accesses, channel 2 reads, channel 1 and a channel 0
+ // Other ports, word accesses, channel 1 and a channel 0
  // rate other than the BIOS one stop the run.
- for code in [&[0xe4,0x41,0xfa,0xf4][..],&[0xe5,0x61,0xfa,0xf4],&[0xba,0x42,0x00,0xec,0xfa,0xf4],&[0xb0,0x76,0xe6,0x43,0xfa,0xf4],
+ for code in [&[0xe4,0x41,0xfa,0xf4][..],&[0xe5,0x61,0xfa,0xf4],&[0xb0,0x76,0xe6,0x43,0xfa,0xf4],
    &[0xb0,0x36,0xe6,0x43,0xb0,0x01,0xe6,0x40,0xb0,0,0xe6,0x40,0xfa,0xf4]]{
   let r=run(load(code,"port.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  }
@@ -1435,6 +1658,28 @@ fn command_line_goes_to_the_psp_tail_as_command_com_passes_it(){
     set_command_tail(&mut p,&"x".repeat(125)).unwrap();assert_eq!(read(&p,1),[126]);assert_eq!(read(&p,128)[127],0x0d);
 }
 #[test]
+fn dos_set_time_changes_only_virtual_clocks_and_validates_the_complete_write(){
+ let mut p=load(&[0xcd,0x21],"time.com").unwrap();p.cpu.regs[0]=0xabcd2d00;p.cpu.regs[1]=0x0c22;p.cpu.regs[2]=0x384e;p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x8d5;
+ service(&mut p,0x21,&mut vec![]).unwrap();let hundredths=((12*60+34)*60+56)*100+78;let ticks=hundredths*59659u64/327680;
+ assert_eq!((p.cpu.regs[0],p.cpu.eflags,p.cpu.undefined_flags,p.timer_ticks),(0xabcd2d00,0xad7,0x8d5,ticks as u32));assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),ticks as u32);
+ assert_eq!((p.rtc.read(None,4),p.rtc.read(None,2),p.rtc.read(None,0)),(Some(0x12),Some(0x34),Some(0x56)));
+ p.cpu.regs[0]=0x2c00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[1]&0xffff,0x0c22);assert_eq!((p.cpu.regs[2]>>8)&255,56);assert!((p.cpu.regs[2]&255).abs_diff(78)<=6);
+ let mut live=load(&[0xcd,0x21],"time-live.com").unwrap();live.clock_offset=Some(0);live.cpu.regs[0]=0x2d00;live.cpu.regs[1]=0x0102;live.cpu.regs[2]=0x0300;service(&mut live,0x21,&mut vec![]).unwrap();let first=live.timer_ticks;let now=services::sampled_ticks(&mut live);assert!(now.wrapping_sub(first)<20);
+ // Out-of-range values return AL=FF without altering either clock or memory.
+ p.cpu.regs[0]=0x2d00;p.cpu.regs[1]=0x1800;p.cpu.regs[2]=0;let before=p.clone();service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&255,255);assert_eq!((p.timer_ticks,p.timer_tick_adjust,&p.rtc,&p.ram),(before.timer_ticks,before.timer_tick_adjust,&before.rtc,&before.ram));
+ // A failure at either BDA write leaves time and all guest state unchanged.
+ let mut p=load(&[0xcd,0x21],"time-ro.com").unwrap();p.ram.protect(0x470,1).unwrap();p.cpu.regs[0]=0x2d00;p.cpu.regs[1]=0x0102;p.cpu.regs[2]=0x0304;let before=p.clone();assert!(service(&mut p,0x21,&mut vec![]).is_err());assert_eq!((p.cpu,p.timer_ticks,p.timer_tick_adjust,p.rtc,p.ram),(before.cpu,before.timer_ticks,before.timer_tick_adjust,before.rtc,before.ram));
+}
+#[test]
+fn cmos_year_writes_are_virtual_readable_and_do_not_change_dos_date(){
+ // Read/write the year twice, as a hardware probe does, leaving the RTC restored.
+ let code=[0xb0,9,0xe6,0x70,0xb0,0x81,0xe6,0x71,0xe4,0x71,0x88,0xc3,0xb0,0x80,0xe6,0x71,0xe4,0x71,0xfa,0xf4];
+ let r=run(load(&code,"rtc.com").unwrap(),30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!((r.loaded.cpu.regs[3]&255,r.loaded.cpu.regs[0]&255),(0x81,0x80));
+ let mut p=r.loaded;p.cpu.regs[0]=0x2a00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(1980,0x0101));
+ let code=[0xb0,9,0xe6,0x70,0xb0,0xfa,0xe6,0x71,0xfa,0xf4];let r=run(load(&code,"rtc-invalid.com").unwrap(),20).unwrap();
+ assert!(matches!(&r.stop,Stop::Service(m) if m.contains("valid BCD")),"{:?}",r.stop);assert_eq!(r.loaded.rtc.read(None,9),Some(0x80));
+}
+#[test]
 fn no_mouse_driver_and_cmos_reads_as_an_at_with_640k(){
  // INT 33h AX=0: AX=0 (no driver) and BX=0; other mouse calls are not answered.
  let mut p=load(&[0xcd,0x21],"mouse.com").unwrap();p.cpu.regs[0]=0;p.cpu.regs[3]=0x1234;service(&mut p,0x33,&mut vec![]).unwrap();
@@ -1442,12 +1687,15 @@ fn no_mouse_driver_and_cmos_reads_as_an_at_with_640k(){
  // OUT 70h,AL then IN AL,71h for registers 15h, 16h (640K), 17h (no extended
  // memory), 0Bh (24-hour BCD), 09h, 32h (1980) and 06h (Tuesday); CLI; HLT.
  let mut code=Vec::new();
- for reg in [0x15,0x16,0x17,0x0b,0x09,0x32,0x06]{code.extend([0xb0,reg,0xe6,0x70,0xe4,0x71,0x50]);}
+ for reg in [0x15,0x16,0x17,0x0b,0x09,0x32,0x06,0x33]{code.extend([0xb0,reg,0xe6,0x70,0xe4,0x71,0x50]);}
  code.extend([0xfa,0xf4]);
  let r=run(load(&code,"cmos.com").unwrap(),40).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  let sp=r.loaded.cpu.regs[4];let base=u32::from(PSP)*16;
- let pushed:Vec<u32>=(0..7).rev().map(|i|r.loaded.ram.load(base+sp+i*2,MemWidth::Byte).unwrap()).collect();
- assert_eq!(pushed,[0x80,0x02,0x00,0x02,0x80,0x19,0x03]);
+ let pushed:Vec<u32>=(0..8).rev().map(|i|r.loaded.ram.load(base+sp+i*2,MemWidth::Byte).unwrap()).collect();
+ assert_eq!(pushed,[0x80,0x02,0x00,0x02,0x80,0x19,0x03,0]);
+ // CMOS shutdown byte round trip; its value is state, not a reset by itself.
+ let code=[0xb0,0x8f,0xe6,0x70,0xb0,9,0xe6,0x71,0xe4,0x71,0xfa,0xf4];
+ let r=run(load(&code,"shutdown.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!((r.loaded.cpu.regs[0]&255,r.loaded.cmos_shutdown),(9,9));
  // Writing the data port and reading the index port stop the run.
  for code in [&[0xb0,0x0b,0xe6,0x70,0xe6,0x71,0xfa,0xf4][..],&[0xe4,0x70,0xfa,0xf4]]{
   let r=run(load(code,"cmosw.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);

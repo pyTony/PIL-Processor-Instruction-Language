@@ -9,6 +9,15 @@ fn valid_instruction_reuses_the_same_decoded_program() {
     assert!(Rc::ptr_eq(&a,&b));assert_eq!(c.stats(),Stats{hits:1,misses:1,..Stats::default()});
 }
 #[test]
+fn a20_gate_changes_fetch_and_invalidates_cached_instruction(){
+    let (mut image,_)=Image::load(&[0x90]).unwrap();let mut ram=Ram::new(0x110000);
+    ram.write_bytes(0x100,&[0x90]).unwrap();ram.write_bytes(0x100100,&[0x40]).unwrap();
+    image.segments[SegmentRegister::Cs.index()]=super::super::address::SegmentCache::real_mode(0xffff);image.system[0]=(0x100100,0x100101);
+    let mut cache=DecodeCache::default();ram.set_a20_enabled(false);let low=cache.fetch(&image,&ram,0x110).unwrap();assert_eq!(low.label,"NOP");
+    ram.set_a20_enabled(true);let high=cache.fetch(&image,&ram,0x110).unwrap();assert!(high.label.starts_with("INC"));assert_eq!(cache.stats().invalidations,1);
+    ram.set_a20_enabled(false);assert_eq!(cache.fetch(&image,&ram,0x110).unwrap().label,"NOP");assert_eq!(cache.stats().invalidations,2);
+}
+#[test]
 fn changed_bytes_redecode_immediates_lengths_and_unsupported_opcodes() {
     let (image,mut ram)=Image::load(&[0xb8,1,0,0xf4]).unwrap();let mut c=DecodeCache::default();
     let old=c.fetch(&image,&ram,ENTRY).unwrap();

@@ -76,6 +76,25 @@ fn unsupported_memory_effect_shapes_are_rejected() {
 }
 
 #[test]
+fn generated_memory_observes_a20_and_keeps_crossing_writes_atomic(){
+    use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
+    let dir=std::env::temp_dir().join(format!("pil-a20-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));fs::create_dir(&dir).unwrap();
+    let mut source=emit_rust(&program("store_ram",32));source.push_str(r#"
+fn main(){
+ let mut ram=Ram::new(0x110000);ram.store(0x100000,MemWidth::Word,0x5678).unwrap();ram.set_a20_enabled(false);
+ let mut regs=[0u32;8];regs[1]=0xdeadbeef;let(mut flags,mut undefined,mut ip)=(0x203,0,0x400);
+ let c=FlowContext{next_eip:0x402,displacement:0,displacement_bits:32,code_limit:0x4ff};
+ execute_with_memory(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(1,0),c,&mut ram,0xffffe).unwrap();
+ assert_eq!(&ram.bytes()[0xffffe..0x100000],&[0xef,0xbe]);assert_eq!(&ram.bytes()[0..2],&[0xad,0xde]);
+ ram.protect(0,1).unwrap();let before=ram.clone();let (old_regs,old_flags,old_ip)=(regs,flags,ip);
+ assert!(execute_with_memory(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(1,0),c,&mut ram,0xffffe).is_err());
+ assert_eq!(ram,before);assert_eq!((regs,flags,ip),(old_regs,old_flags,old_ip));
+ ram.set_a20_enabled(true);assert_eq!(ram.load(0x100000,MemWidth::Word).unwrap(),0x5678);
+}
+"#);let path=dir.join("proof.rs");fs::write(&path,source).unwrap();let bin=dir.join(if cfg!(windows){"proof.exe"}else{"proof"});
+    let out=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).args(["--edition=2021","-O"]).arg(path).arg("-o").arg(&bin).output().unwrap();assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));assert!(Command::new(bin).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
+}
+#[test]
 fn generated_ram_semantics_match_interpreter_including_faults() {
     use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
     let dir=std::env::temp_dir().join(format!("pil-memory-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));

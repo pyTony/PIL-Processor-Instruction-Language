@@ -822,12 +822,44 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
                 p.open_handles&=!(1u32<<handle);drop_unreferenced(p)?;ok(p);
             }else{fail(p,6);}
         },
+        0x44 if matches!(al,6|7)=>{
+            // IOCTL input/output status: do not consume input or move the
+            // shared file position. Disk output is always reported ready.
+            let handle=(p.cpu.regs[3]&0xffff)as u16;
+            let Some(sft)=system_file(p,handle)? else{fail(p,6);return Ok(())};
+            let ready=match sft{
+                0..=2 if al==6=>!p.con_pending.is_empty()||console::dos_available(p)?,
+                0..=2=>true,
+                // NUL has no input buffer: a read completes immediately at EOF.
+                NUL=>true,
+                3 if p.com1.is_some()=>al==7||!p.com1.as_ref().unwrap().rx.is_empty(),
+                3|4=>return Err(format!("DOS IOCTL status on handle {handle} (device {sft}) is not modelled")),
+                _=>match p.drive.files.iter().find(|f|f.sft==sft){
+                    Some(f)=>al==7||f.mode==1||(f.pos as usize)<f.data.len(),
+                    None=>{fail(p,6);return Ok(())},
+                },
+            };
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|if ready{0xff}else{0};ok(p);
+        },
         0x44 if al==9=>{
             // AL=09 is the drive remote: no drive is a network or SUBST drive,
             // and none has a block device header whose attributes to report,
             // so DX=0 (local, not substituted). Unknown drive: error 15.
             let Some(_)=p.drive.number(p.cpu.regs[3]as u8)else{fail(p,0x0f);return Ok(())};
             p.cpu.regs[2]&=0xffff0000;ok(p);
+        },
+        0x44 if al==0x0e=>{
+            if p.drive.number(p.cpu.regs[3]as u8).is_none(){fail(p,15);}
+            else{p.cpu.regs[0]&=!255;ok(p);}
+        },
+        0x44 if al==0x0d=>{
+            let drive=p.cpu.regs[3]as u8;
+            if p.drive.number(drive).is_none(){fail(p,15);}
+            else if p.cpu.regs[1]as u16==0x0867{
+                let offset=p.cpu.regs[2]&0xffff;
+                if offset==0xffff{return Err("DOS IOCTL parameter block exceeds segment end".into());}
+                store_ds(p,offset+1,&[1])?;ok(p);
+            }else{fail(p,1);}
         },
         0x44=>{
             // AL=00 device information: CON for 0..2, AUX/PRN for 3..4, with
