@@ -52,6 +52,12 @@ from pil_debugger import find_engine  # noqa: E402
 
 MAX_REPLY = 8 * 1024 * 1024  # VGA frame plus escaped DOS and serial output
 SLICE = 20000
+# A tick keeps running slices for up to this many seconds before it redraws,
+# so that a busy program is not held up by drawing a frame every slice.
+FRAME = 0.05
+# Steps in each further slice of a tick, once the first has shown the
+# program is still busy.
+BURST = 100000
 # Slices a program runs after a key before it sees a shift key change.
 SETTLE = 10
 # CGA palette for the 16 text attributes.
@@ -786,6 +792,10 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                         reply = session.send('com1 ' + incoming[at:at + 100].hex())
             if reply['status'] in ('running', 'waiting_input'):
                 reply = session.send(f'run {SLICE}')
+                until = time.monotonic() + FRAME
+                while reply['status'] == 'running' and not keys and time.monotonic() < until:
+                    speaker.observe(reply)
+                    reply = session.send(f'run {BURST}')
             if com1 and session.com1_out:
                 com1.write(session.com1_out)
                 session.com1_out = b''
@@ -793,7 +803,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
             return
-        root.after(15 if session.last['status'] == 'running' else 40, tick)
+        root.after(1 if session.last['status'] == 'running' else 40, tick)
 
     def close():
         if com1 and hasattr(com1, 'close'):
