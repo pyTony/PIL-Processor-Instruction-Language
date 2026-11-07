@@ -4,6 +4,7 @@ use std::collections::HashMap;
 mod profile;
 mod flow;
 mod memory;
+mod vga_planar;
 mod address;
 use memory::{Ram, MemWidth};
 mod serial;
@@ -1942,7 +1943,8 @@ fn emit_rust(p: &Program) -> String {
     out.push_str(include_str!("flow.rs"));
     // The included module has an inner documentation comment; in the emitted
     // standalone body it must be an ordinary comment.
-    out.push_str("\n");out.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());
+    out.push_str("\npub mod memory {\n");out.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());out.push_str("\n}\npub use memory::*;\n");
+    out.push_str("\npub mod vga_planar {\n");out.push_str(include_str!("vga_planar.rs").split("#[cfg(test)]").next().unwrap());out.push_str("\n}\n");
     out.push_str("\npub mod address {\n");
     out.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());
     out.push_str("\n}\n");

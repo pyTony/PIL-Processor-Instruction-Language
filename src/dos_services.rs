@@ -351,14 +351,18 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // D200h keeps AL=00h: Quarterdeck RPCI is not installed.
             Ok(None)
         },
-        (0x10,0x10|0x11|0x12|0x1a|0x1b|0x1c|0x4f|0xfe|0xff)=>{
-            // CGA-class video BIOS: no EGA/VGA palette (10h), font (11h),
-            // alternate (12h), display combination (1Ah) or state (1Bh/1Ch)
-            // functions and no VBE. FEh/FFh are DESQview/TopView shadow buffers
-            // (not installed, ES:DI unchanged). The AT BIOS returns from these
-            // unchanged (10h-12h are reserved entries, the rest are past its table),
-            // so BL=10h stays 10h (no EGA), AX=1A00h does not return AL=1Ah (no
-            // VGA) and AX=4F00h does not return AL=4Fh.
+        // Colour VGA BIOS (Tony's choice, 7 November 2026): palette/DAC (10h),
+        // font information (11h), EGA information (12h BL=10h) and display
+        // combination (1Ah) are answered in dos_planar.
+        (0x10,0x10)=>{planar::palette(p)?;Ok(None)},
+        (0x10,0x11)=>{planar::font(p)?;Ok(None)},
+        (0x10,0x12)=>{planar::alternate(p);Ok(None)},
+        (0x10,0x1a)=>{planar::combination(p)?;Ok(None)},
+        (0x10,0x1b|0x1c|0x4f|0xfe|0xff)=>{
+            // No functionality/state services (1Bh/1Ch) and no VBE: they return
+            // unchanged, so AL stays and callers see them as unsupported.
+            // FEh/FFh are DESQview/TopView shadow buffers (not installed, ES:DI
+            // unchanged), and AX=4F00h does not return AL=4Fh.
             Ok(None)
         },
         (0x15,0xe8)=>{

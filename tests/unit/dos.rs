@@ -955,7 +955,8 @@ fn handle_write_psp_query_and_absent_extensions(){
  // AX=4310h (XMS entry point) is only meaningful once XMS is present: still a stop.
  let r=run(load(&[0xb8,0x10,0x43,0xcd,0x2f,0xfa,0xf4],"xms.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
  // MOV AH,12; MOV BL,10; INT 10: no EGA, BL stays 10h. INT 15 AH=C0: CF=1, AH=86h.
- let r=run(load(&[0xb4,0x12,0xb3,0x10,0xcd,0x10,0xfa,0xf4],"ega.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&255,0x10);
+ // The VGA BIOS answers the EGA information call: colour, 256 KiB.
+ let r=run(load(&[0xb4,0x12,0xb3,0x10,0xcd,0x10,0xfa,0xf4],"ega.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&0xffff,0x0003);
  let r=run(load(&[0xb4,0xc0,0xcd,0x15,0xfa,0xf4],"config.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
 }
 #[test]
@@ -1363,10 +1364,12 @@ fn demo_programs_print_exact_factorials_and_a_text_mandelbrot(){
  assert_eq!(lines[11],":====+%++++++**@#############################################+===------------::");
 }
 #[test]
-fn ega_and_vga_video_functions_return_unchanged_on_the_cga_bios(){
- // AX=1130h (font info), 1A00h (display combination), 1003h (blink), 1B00h, 1C00h, 1210h (EGA info),
- // FE00h/FF00h (TopView/DESQview shadow buffers).
- for ax in [0x1130u32,0x1a00,0x1003,0x1b00,0x1c00,0x1210,0xfe00,0xff00]{
+fn unsupported_vga_state_and_shadow_buffer_functions_return_unchanged(){
+ // AX=1B00h/1C00h (functionality and state, not provided), 4F00h (no VBE),
+ // FE00h/FF00h (TopView/DESQview shadow buffers). The palette, font,
+ // EGA-information and display-combination calls are covered with the
+ // planar modes.
+ for ax in [0x1b00u32,0x1c00,0x4f00,0xfe00,0xff00]{
   let mut p=load(&[0xcd,0x10],"vga.com").unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=0x0010;p.cpu.regs[2]=0x1234;p.cpu.regs[1]=0x5678;
   let before=p.cpu.clone();service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu.regs,before.regs,"AX={ax:04x}");assert_eq!(p.cpu.eflags,before.eflags);
  }
@@ -2174,4 +2177,119 @@ fn mode_five_is_four_colour_with_its_own_crt_mode_byte(){
  int10(&mut p,0x0b00,0x0100,0,0);assert_eq!(p.ram.load(0x466,MemWidth::Byte).unwrap(),0x10);
  for(mode,value)in [(4u32,0x2au32),(6,0x1e),(3,0x29)]{let p=graphics_mode(mode);assert_eq!(p.ram.load(0x465,MemWidth::Byte).unwrap(),value);}
  assert_eq!(load(&[0xf4],"boot.com").unwrap().ram.load(0x465,MemWidth::Byte).unwrap(),0x29);
+}
+
+// EGA/VGA 16-colour planar modes and the VGA BIOS calls (Tony chose a VGA
+// BIOS identity on 7 November 2026).
+#[test]
+fn planar_mode_sets_fill_the_bios_data_area_and_map_the_planes(){
+ for(mode,cols,rows,cell,page)in [(0x0du32,40u32,24u32,8u32,0x2000u32),(0x0e,80,24,8,0x4000),(0x10,80,24,14,0x8000),(0x12,80,29,16,0xa000)]{
+  let mut p=graphics_mode(mode);
+  assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),mode);assert_eq!(p.ram.load(0x44a,MemWidth::Word).unwrap(),cols);
+  assert_eq!(p.ram.load(0x484,MemWidth::Byte).unwrap(),rows);assert_eq!(p.ram.load(0x485,MemWidth::Word).unwrap(),cell);
+  assert_eq!(p.ram.load(0x44c,MemWidth::Word).unwrap(),page);
+  let planar=p.ram.planar().unwrap();assert_eq!((planar.seq[2],planar.gc[5],planar.gc[8]),(0x0f,0,0xff));
+  int10(&mut p,0x0f00,0,0,0);assert_eq!(p.cpu.regs[0]&0xffff,cols<<8|mode);
+  // The window is the planes: a write reaches all four, RAM behind stays.
+  p.ram.store(0xa0000,MemWidth::Byte,0xa5).unwrap();assert_eq!(p.ram.bytes()[0xa0000],0);
+  assert!((0..4).all(|n|p.ram.planar().unwrap().peek(n,0)==0xa5));
+  int10(&mut p,0x0003,0,0,0);assert!(p.ram.planar().is_none());assert_eq!(p.ram.load(0xa0000,MemWidth::Byte).unwrap(),0);
+  assert_eq!(p.ram.load(0x485,MemWidth::Word).unwrap(),16);
+ }
+ // Bit 7 keeps the planes across a planar mode set.
+ let mut p=graphics_mode(0x12);p.ram.store(0xa0010,MemWidth::Byte,0x3c).unwrap();
+ int10(&mut p,0x0090,0,0,0);assert_eq!(p.ram.planar().unwrap().peek(2,0x10),0x3c);
+ int10(&mut p,0x0010,0,0,0);assert_eq!(p.ram.planar().unwrap().peek(2,0x10),0);
+}
+#[test]
+fn planar_bios_pixels_combine_four_planes(){
+ let mut p=graphics_mode(0x12);
+ int10(&mut p,0x0c0b,0,639,479);
+ let at=479*80+79;assert_eq!([0,1,2,3].map(|n|p.ram.planar().unwrap().peek(n,at)),[1,1,0,1]);
+ int10(&mut p,0x0d00,0,639,479);assert_eq!(p.cpu.regs[0]&255,0x0b);
+ int10(&mut p,0x0c86,0,639,479);int10(&mut p,0x0d00,0,639,479);assert_eq!(p.cpu.regs[0]&255,0x0d,"XOR 0Bh^06h");
+ p.cpu.regs[0]=0x0c01;p.cpu.regs[1]=0;p.cpu.regs[2]=480;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ let mut p=graphics_mode(0x10);p.cpu.regs[0]=0x0c01;p.cpu.regs[1]=0;p.cpu.regs[2]=350;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ int10(&mut p,0x0c0f,0,0,349);assert_eq!(p.ram.planar().unwrap().peek(3,349*80),0x80);
+}
+#[test]
+fn guest_programs_the_graphics_controller_with_word_outs(){
+ // MOV AX,12h; INT 10h; MOV AX,A000h; MOV ES,AX; MOV DX,3CEh;
+ // MOV AX,0205h; OUT DX,AX (write mode 2); MOV AX,3C08h; OUT DX,AX (mask);
+ // MOV AL,[ES:0]; MOV AL,9; MOV [ES:0],AL; MOV DX,3C4h; MOV AX,0102h;
+ // OUT DX,AX (map mask plane 0); IN AL,DX (index 02h back); CLI; HLT
+ let code=[0xb8,0x12,0x00,0xcd,0x10,0xb8,0x00,0xa0,0x8e,0xc0,0xba,0xce,0x03,
+  0xb8,0x05,0x02,0xef,0xb8,0x08,0x3c,0xef,0x26,0xa0,0x00,0x00,0xb0,0x09,0x26,0xa2,0x00,0x00,
+  0xba,0xc4,0x03,0xb8,0x02,0x01,0xef,0xec,0xfa,0xf4];
+ let r=run(load(&code,"gc.com").unwrap(),40).unwrap();
+ let planar=r.loaded.ram.planar().unwrap();
+ assert_eq!([0,1,2,3].map(|n|planar.peek(n,0)),[0x3c,0,0,0x3c]);
+ assert_eq!((planar.gc[5],planar.gc[8],planar.seq[2]),(2,0x3c,1));
+ assert_eq!(r.loaded.cpu.regs[0]&255,2);
+ // Chain-4 or odd/even addressing is refused with nothing changed.
+ let code=[0xb8,0x12,0x00,0xcd,0x10,0xba,0xc4,0x03,0xb8,0x04,0x0e,0xef,0xfa,0xf4];
+ let r=run(load(&code,"chain.com").unwrap(),20).unwrap();
+ assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the planar profile")),"{:?}",r.stop);
+ assert_eq!(r.loaded.ram.planar().unwrap().seq[4],6);
+ // Outside the planar modes the sequencer is not modelled.
+ let code=[0xba,0xc4,0x03,0xb0,0x02,0xee,0xfa,0xf4];
+ let r=run(load(&code,"text.com").unwrap(),20).unwrap();
+ assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the 16-colour planar modes")),"{:?}",r.stop);
+}
+#[test]
+fn attribute_controller_flip_flop_and_palette_reach_the_display_colours(){
+ let mut p=graphics_mode(0x12);
+ // Default palette: pixel 6 is attribute 14h, EGA brown (2Ah,15h,00h).
+ assert_eq!(p.vga.planar_rgb()[6],[0xaa,0x55,0]);
+ // 3DAh read resets the flip-flop; index 01h, data 3Fh (white).
+ let code=[0xba,0xda,0x03,0xec,0xba,0xc0,0x03,0xb0,0x01,0xee,0xb0,0x3f,0xee,0xb0,0x01,0xee,0x42,0xec,0xfa,0xf4];
+ // The program runs in a fresh load; only the planes and VGA state are copied.
+ let mut q=load(&code,"attr.com").unwrap();q.ram.set_planar(p.ram.planar().cloned());q.vga=p.vga.clone();
+ q.ram.store(0x449,MemWidth::Byte,0x12).unwrap();
+ let r=run(q,20).unwrap();assert_eq!(r.loaded.vga.planar_rgb()[1],[0xff,0xff,0xff]);assert_eq!(r.loaded.cpu.regs[0]&255,0x3f);
+ // AH=10h: set and read a palette register, the overscan and a DAC entry.
+ int10(&mut p,0x1000,0x2a02,0,0);int10(&mut p,0x1007,0x0002,0,0);assert_eq!((p.cpu.regs[3]>>8)&255,0x2a);
+ int10(&mut p,0x1001,0x0500,0,0);int10(&mut p,0x1008,0,0,0);assert_eq!((p.cpu.regs[3]>>8)&255,5);
+ int10(&mut p,0x1010,0x002a,0x2030,0x1000);int10(&mut p,0x1015,0x002a,0,0);
+ assert_eq!((p.cpu.regs[2]>>8&255,p.cpu.regs[1]&0xffff),(0x10,0x2030));
+ assert_eq!(p.vga.planar_rgb()[2],[64,129,194]);
+ // Block write and read through ES:DX, 2 entries from 40h.
+ p.selectors[SegmentRegister::Es.index()]=0x2000;
+ for(n,v)in [1u32,2,3,4,5,6].iter().enumerate(){p.ram.store(0x20000+n as u32,MemWidth::Byte,*v).unwrap();}
+ int10(&mut p,0x1012,0x0040,2,0);assert_eq!((p.vga.dac(0x40),p.vga.dac(0x41)),([1,2,3],[4,5,6]));
+ int10(&mut p,0x1017,0x0040,2,0x10);assert_eq!(&p.ram.bytes()[0x20010..0x20016],&[1,2,3,4,5,6]);
+ p.cpu.regs[0]=0x1013;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ // 200-line modes use CGA colours: attribute 0Eh -> DAC 16h, yellow.
+ let p=graphics_mode(0x0d);assert_eq!(p.vga.planar_rgb()[14],[0xff,0xff,0x55]);
+}
+#[test]
+fn vga_bios_identifies_itself_and_reports_its_8x8_font(){
+ let mut p=load(&[0xf4],"id.com").unwrap();
+ int10(&mut p,0x1a00,0,0,0);assert_eq!((p.cpu.regs[0]&255,p.cpu.regs[3]&0xffff),(0x1a,0x0008));
+ int10(&mut p,0x1200,0xff10,0,0);assert_eq!((p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff),(0x0003,0x0009));
+ int10(&mut p,0x1200,0x0036,0,0);assert_eq!(p.cpu.regs[0]&0xffff,0x1200,"other AH=12h calls stay unsupported");
+ assert_eq!((p.ram.load(0x487,MemWidth::Byte).unwrap(),p.ram.load(0x489,MemWidth::Byte).unwrap()),(0x60,0x11));
+ int10(&mut p,0x1130,0x0300,0,0);
+ assert_eq!((p.selectors[SegmentRegister::Es.index()],p.cpu.regs[5]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&255),(0xf000,0xfa6e,16,24));
+ p.cpu.regs[0]=0x1130;p.cpu.regs[3]=0x0600;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ p.cpu.regs[0]=0x1100;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ p.cpu.regs[0]=0x1a01;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+}
+#[test]
+fn planar_text_uses_tall_cells_and_scrolls_them(){
+ let mut p=graphics_mode(0x12);p.ram.store(0x450,MemWidth::Word,0x0102).unwrap();
+ int10(&mut p,0x0e41,0x000c,0,0);
+ let g=glyph_rows(b'A');
+ for r in 0..16u32{let at=(16+r)as usize*80+2;let want=g[(r/2)as usize];
+  assert_eq!([0,1,2,3].map(|n|p.ram.planar().unwrap().peek(n,at)),[0,0,want,want],"row {r}");}
+ p.ram.store(0x450,MemWidth::Word,0x0102).unwrap();int10(&mut p,0x0800,0,0,0);assert_eq!(p.cpu.regs[0]&255,u32::from(b'A'));
+ // Mode 10h: 14-line cells; rows 0 and 7 once, the others twice.
+ let mut p=graphics_mode(0x10);int10(&mut p,0x0e48,0x0001,0,0);
+ let g=glyph_rows(b'H');let rows:Vec<u8>=(0..14).map(|r|p.ram.planar().unwrap().peek(0,r*80)).collect();
+ assert_eq!(rows,vec![g[0],g[1],g[1],g[2],g[2],g[3],g[3],g[4],g[4],g[5],g[5],g[6],g[6],g[7]]);
+ // A line feed on the last of 30 rows moves everything up 16 lines.
+ let mut p=graphics_mode(0x12);p.ram.planar_mut().unwrap().poke(1,20*80+5,0x81);p.ram.store(0x450,MemWidth::Word,0x1d00).unwrap();
+ let writes=console::dos_screen(&p,b"\n").unwrap();for(at,w,v)in writes{p.ram.store(at,w,v).unwrap();}
+ assert_eq!(p.ram.planar().unwrap().peek(1,4*80+5),0x81);assert_eq!(p.ram.planar().unwrap().peek(1,20*80+5),0);
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x1d00);
 }

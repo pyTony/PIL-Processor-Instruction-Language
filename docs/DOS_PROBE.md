@@ -1486,3 +1486,12 @@ absence and session resumption. Run `cargo test --locked fpu`, then the normal
 development checks.
 
 Reference: [Intel 80386 Programmer's Reference Manual, sections 11.1.2–11.1.4](https://www.css.csail.mit.edu/6.858/2014/readings/i386/s11_01.htm).
+
+## Colour VGA video BIOS — 7 November 2026
+
+Tony chose a colour VGA identity for the video BIOS. This replaces the
+CGA-class profile described above for INT 10h AH=12h. AH=12h BL=10h now
+returns EGA information (colour, 256 KiB). AX=1A00h reports a colour VGA.
+AH=10h handles the palette and DAC. AX=1130h returns font pointers. Planar
+modes 0Dh, 0Eh, 10h and 12h are available. VBE (AH=4Fh) and AH=1Bh/1Ch
+still return unchanged. Details are in docs/development/VGA.md.

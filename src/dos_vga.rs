@@ -27,10 +27,62 @@ fn default_palette()->[[u8;3];256]{
     p
 }
 #[derive(Clone,Debug)]
-pub(super) struct Vga { cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool }
-impl Default for Vga {fn default()->Self{Self{cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false}}}
+pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool }
+impl Default for Vga {fn default()->Self{Self{attr:EGA_ATTR,attr_index:0x20,attr_data:false,cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false}}}
+/// Attribute controller after a 350/480-line 16-colour mode set: palette
+/// 0-5, 14h, 7, 38h-3Fh (the EGA colours in a 64-colour DAC), mode control
+/// 01h (graphics), plane enable 0Fh.
+const EGA_ATTR:[u8;21]=[0,1,2,3,4,5,0x14,7,0x38,0x39,0x3a,0x3b,0x3c,0x3d,0x3e,0x3f,1,0,0x0f,0,0];
+/// The 64-colour EGA DAC layout: index bits 0-2 are blue/green/red at 2/3
+/// and bits 3-5 the same at 1/3 (rgbRGB).
+fn ega_dac(i:usize)->[u8;3]{let c=|hi:usize,lo:usize|(if i>>hi&1!=0{42}else{0})+(if i>>lo&1!=0{21}else{0});[c(2,5),c(1,4),c(0,3)]}
+/// The 16 CGA colours repeated over 64 entries, as a 200-line mode loads:
+/// index bit 4 is intensity, and colour 6 without it is brown.
+fn cga_dac(i:usize)->[u8;3]{
+    let bright=if i&0x10!=0{21}else{0};let c=|bit:usize|if i&bit!=0{42+bright}else{bright};
+    [c(4),if i&0x17==6{21}else{c(2)},c(1)]
+}
 impl Vga {
     pub fn reset_palette(&mut self){self.dac=default_palette();self.dac_mask=255;}
+    /// BIOS palette load for a 16-colour planar mode (EGA layout for 350 and
+    /// 480 lines, CGA-compatible for 200 lines).
+    pub fn planar_palette(&mut self,two_hundred:bool){
+        for i in 0..64{self.dac[i]=if two_hundred{cga_dac(i)}else{ega_dac(i)};}
+        self.attr=EGA_ATTR;self.dac_mask=255;
+        if two_hundred{for i in 0..16{self.attr[i]=if i<8{i as u8}else{i as u8+8};}}
+    }
+    /// Resets the attribute address/data flip-flop, as reading Input Status 1 does.
+    pub fn reset_attribute_flip_flop(&mut self){self.attr_data=false;}
+    /// Port 3C0h (index, then data) and 3C1h (data read).
+    pub fn attribute_io(&mut self,port:u16,input:bool,value:u8)->Result<u8,String>{
+        match(port,input){
+            (0x3c0,true)=>Ok(self.attr_index),
+            (0x3c1,true)=>Ok(self.attr.get(usize::from(self.attr_index&0x1f)).copied().unwrap_or(0xff)),
+            (0x3c0,false) if !self.attr_data=>{self.attr_index=value&0x3f;self.attr_data=true;Ok(0)},
+            (0x3c0,false)=>{
+                let i=usize::from(self.attr_index&0x1f);self.attr_data=false;
+                if i>=self.attr.len(){return Err(format!("VGA attribute register {i:02X}h does not exist"));}
+                self.attr[i]=if i<16{value&0x3f}else{value};Ok(0)
+            },
+            _=>Err(format!("VGA attribute controller port {port:03X}h {} is not modelled",if input{"read"}else{"write"})),
+        }
+    }
+    /// DAC entry n as 6-bit RGB, and its replacement (AH=10h AL=10h/12h).
+    pub fn dac(&self,n:usize)->[u8;3]{self.dac[n]}
+    pub fn set_dac(&mut self,n:usize,rgb:[u8;3]){self.dac[n]=rgb.map(|c|c&63);}
+    pub fn dac_mask(&self)->u8{self.dac_mask}
+    pub fn set_dac_mask(&mut self,mask:u8){self.dac_mask=mask;}
+    /// RGB (8 bits each) of the 16 planar pixel values through the attribute
+    /// palette, colour plane enable, colour select and the DAC.
+    pub fn planar_rgb(&self)->[[u8;3];16]{
+        let(mode,enable,select)=(self.attr[16],self.attr[18],self.attr[20]);
+        std::array::from_fn(|pixel|{
+            let p=self.attr[pixel&usize::from(enable)];
+            let high=if mode&0x80!=0{(select&3)<<4|(p&0x0f)}else{p&0x3f};
+            let index=usize::from((select&0x0c)<<4|high)&usize::from(self.dac_mask);
+            self.dac[index].map(|c|(u16::from(c)*255/63)as u8)
+        })
+    }
     pub fn palette_hex(&self)->String{
         (0..256).flat_map(|i|self.dac[i & usize::from(self.dac_mask)])
             .map(|c|format!("{:02x}",(u16::from(c)*255/63)as u8)).collect()
