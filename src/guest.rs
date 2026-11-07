@@ -122,9 +122,8 @@ impl Image {
                 _=>break b,
             }
         };
-        // F2 MOVSB/MOVSW/MOVSD and F2/F3 INS/OUTS repeat by count and do not
-        // test ZF. Keep other unverified F2 string forms unsupported.
-        if let Some(prefix)=repeat{if !matches!(opcode,0x6c..=0x6f|0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0x6c..=0x6f|0xa4|0xa5|0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
+        // F2 and F3 repeat all string instructions; only CMPS/SCAS test ZF.
+        if repeat.is_some()&&!matches!(opcode,0x6c..=0x6f|0xa4..=0xa7|0xaa..=0xaf){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}
         // LOCK is valid only on a read-modify-write memory destination; the
         // single-executor RAM model makes every instruction indivisible, so it
         // changes nothing else. XCHG checks its memory operand itself.
@@ -428,7 +427,9 @@ impl Image {
             }
             0x0f=>{
                 let second=r.byte()?;
-                if matches!(second,0x20|0x22){
+                if second==0x06{
+                    ("CLTS".into(),compile(&description("clts").map_err(GuestError::Decode)?,w))
+                }else if matches!(second,0x20|0x22){
                     let m=r.byte()?;let control=((m>>3)&7)as usize;
                     if m>>6!=3||!matches!(control,0|2|3){return Err(GuestError::Decode("MOV control requires register operands and CR0, CR2 or CR3".into()));}
                     dst=view((m&7)as usize,32);src=dst;
@@ -614,6 +615,11 @@ impl Image {
                 (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
             }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
+            0x9b=>("WAIT".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
+            0xd6=>{
+                w=8;dst=view(0,w);src=dst;
+                ("SALC".into(),compile(&description("salc").map_err(GuestError::Decode)?,w))
+            }
             0x40..=0x4f=>{
                 dst=view((opcode&7) as usize,w);src=dst;
                 let name=if opcode<0x48{"inc"}else{"dec"};

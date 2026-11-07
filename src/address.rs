@@ -139,7 +139,7 @@ impl SegmentState {
         self.read_control(register,flags,eip)?;
         if register==0&&value&0x80000001==0x80000000{return Err(ExecError::GeneralProtection{eip,error_code:0});}
         // This profile never retires a transition into unimplemented memory modes.
-        if (register==0&&value&!0x1e!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
+        if (register==0&&(value&!u32::from(0x1eu16|(self.msw&0xffe0)))!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
         Ok(())
     }
     pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>self.msw=value as u16,2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}

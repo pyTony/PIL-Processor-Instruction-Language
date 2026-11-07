@@ -143,7 +143,7 @@ fn actual_guest_selftest_runs_through_decoder_and_pil_to_serial() {
 fn executable_breakpoint_and_reset_restore_program_and_data() {
     let mut d=Debugger::new("selftest").unwrap();d.command("break 0x100").unwrap();
     assert_eq!(d.run(100).unwrap(),(0,Stop::Breakpoint(0x100)));assert_eq!(d.run(1).unwrap(),(1,Stop::Budget(0x103)));
-    d.command("poke 0x100 d6").unwrap();d.reset();assert_eq!(d.ram.load(0x100,super::super::memory::MemWidth::Byte),Ok(0xb8));
+    d.command("poke 0x100 f1").unwrap();d.reset();assert_eq!(d.ram.load(0x100,super::super::memory::MemWidth::Byte),Ok(0xb8));
     assert_eq!(d.cpu.eip,0x100);assert!(d.breakpoints.contains(&0x100));
 }
 #[test]
@@ -153,7 +153,7 @@ fn corrupted_guest_check_reaches_failure_marker() {
 }
 #[test]
 fn binary_decode_error_preserves_cpu_and_ram() {
-    let mut d=Debugger::new("selftest").unwrap();d.command("poke 0x100 d6").unwrap();let c=d.cpu.clone();let m=d.ram.clone();
+    let mut d=Debugger::new("selftest").unwrap();d.command("poke 0x100 f1").unwrap();let c=d.cpu.clone();let m=d.ram.clone();
     assert!(matches!(d.step(),Stop::Decode{eip:0x100,..}));assert_eq!(d.cpu,c);assert_eq!(d.ram,m);
     assert!(d.load_image(&[],"bad").is_err());assert_eq!(d.cpu,c);assert_eq!(d.ram,m);
 }
@@ -278,7 +278,7 @@ fn cache_controls_and_reset_load_keep_the_requested_mode() {
 }
 #[test]
 fn patched_cached_opcode_reports_error_without_cpu_or_ram_mutation() {
-    let mut d=Debugger::new("hello").unwrap();d.step();d.cpu.eip=0x100;d.command("poke 0x100 d6").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();
+    let mut d=Debugger::new("hello").unwrap();d.step();d.cpu.eip=0x100;d.command("poke 0x100 f1").unwrap();let cpu=d.cpu.clone();let ram=d.ram.clone();
     assert!(matches!(d.step(),Stop::Decode{eip:0x100,..}));assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);assert_eq!(d.cache.stats().invalidations,1);
 }
 #[test]
@@ -340,7 +340,7 @@ fn listing_validates_limits_and_uses_live_bytes_for_binary_and_predecoded_demos(
     let out=d.command("list 1").unwrap().0;assert!(out.contains("b0 5a"));assert!(out.contains("MOV AL,0x5a"));
     for command in ["list 0","list 257","list 0x100000000 1","list 0 1","list 0x100 0","list 0x100 16 extra"] {assert!(d.command(command).is_err(),"{command}");}
     assert_eq!(d.cpu,cpu);assert_eq!(d.ram,ram);
-    d.command("poke 0x100 d6").unwrap();let cpu=d.cpu.clone();let out=d.command("list 4").unwrap().0;assert_eq!(out.lines().count(),1);assert!(out.contains("Decode"));assert_eq!(d.cpu,cpu);
+    d.command("poke 0x100 f1").unwrap();let cpu=d.cpu.clone();let out=d.command("list 4").unwrap().0;assert_eq!(out.lines().count(),1);assert!(out.contains("Decode"));assert_eq!(d.cpu,cpu);
     d.command("demo counter").unwrap();assert_eq!(d.command("list 1").unwrap().0.lines().count(),1);assert!(d.command("list 0x100 4").is_ok());
 }
 

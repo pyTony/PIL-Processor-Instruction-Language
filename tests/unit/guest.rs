@@ -705,4 +705,20 @@ fn bound_enter_nesting_and_port_io_instructions(){
         execute_one(&bytes,&mut c,0,false).unwrap();
         assert_eq!((c.regs[0],c.eip),(want_eax,ENTRY+bytes.len() as u32),"{bytes:02x?}");
     }
+    // WAIT is a no-op, SALC sets AL from CF, and CLTS clears CR0.TS.
+    let mut c=Cpu{regs:[0x1234_5678,0,0,0,0,0,0,0],eflags:3,undefined_flags:0,eip:ENTRY};
+    execute_one(&[0x9b],&mut c,0,false).unwrap();
+    assert_eq!((c.regs[0],c.eflags,c.eip),(0x1234_5678,3,ENTRY+1));
+    c.eip=ENTRY;execute_one(&[0xd6],&mut c,0,false).unwrap();
+    assert_eq!((c.regs[0],c.eflags,c.eip),(0x1234_56ff,3,ENTRY+1));
+    c.eflags=2;c.eip=ENTRY;execute_one(&[0xd6],&mut c,0,false).unwrap();
+    assert_eq!((c.regs[0],c.eflags,c.eip),(0x1234_5600,2,ENTRY+1));
+    let (mut image,mut ram)=Image::load(&[0x0f,0x06]).unwrap();image.msw=0x001a;
+    let mut c=Cpu{regs:[0;8],eflags:2,undefined_flags:0,eip:ENTRY};
+    let d=image.decode(&ram,ENTRY).unwrap();
+    if let Operation::Pil{program,dst,src,flow,address}=d.operation{
+        let mut machine=image.segment_state();
+        super::super::execute_machine(&program,&mut c,dst,src,flow,&mut ram,address,&mut machine).unwrap();
+        assert_eq!(machine.machine_status(),0x0012);
+    }else{panic!();}
 }

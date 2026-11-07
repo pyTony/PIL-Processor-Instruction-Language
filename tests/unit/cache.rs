@@ -23,7 +23,7 @@ fn changed_bytes_redecode_immediates_lengths_and_unsupported_opcodes() {
     let old=c.fetch(&image,&ram,ENTRY).unwrap();
     ram.write_bytes(ENTRY,&[0xb0,2]).unwrap();let new=c.fetch(&image,&ram,ENTRY).unwrap();
     assert!(!Rc::ptr_eq(&old,&new));assert_eq!(new.length,2);assert_eq!(c.stats().invalidations,1);
-    ram.write_bytes(ENTRY,&[0xd6]).unwrap();assert!(matches!(c.fetch(&image,&ram,ENTRY),Err(GuestError::Decode(_))));
+    ram.write_bytes(ENTRY,&[0xf1]).unwrap();assert!(matches!(c.fetch(&image,&ram,ENTRY),Err(GuestError::Decode(_))));
     assert!(!c.entries.contains_key(&ENTRY));assert_eq!(c.stats().invalidations,2);
 }
 #[test]

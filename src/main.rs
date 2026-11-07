@@ -1913,6 +1913,8 @@ fn description(name: &str) -> R<String> {
         "ins" => Some(include_str!("../isa/i386/ins.pil")),
         "outs" => Some(include_str!("../isa/i386/outs.pil")),
         "bound" => Some(include_str!("../isa/i386/bound.pil")),
+        "clts" => Some(include_str!("../isa/i386/clts.pil")),
+        "salc" => Some(include_str!("../isa/i386/salc.pil")),
         "push" => Some(include_str!("../isa/i386/push.pil")),
         "push_memory" => Some(include_str!("../isa/i386/push_memory.pil")),
         "pop" => Some(include_str!("../isa/i386/pop.pil")),

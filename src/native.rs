@@ -37,7 +37,7 @@ pub fn cases()->Result<Vec<Case>,String> {
 
     let mut memory=case("readonly_store",vec![0x66,0x89,0x07,0xf4])?;memory.regs[0]=0xdeadbeef;memory.regs[3]=0x400;memory.protect=Some((0x500,4));tests.push(memory);
     let mut branch=case("branch_fault",vec![0x74,0x7f,0xf4])?;branch.flags=0x246;branch.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(branch);
-    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0xd6]));tests.push(changed);
+    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0xf1]));tests.push(changed);
     tests.push(case("rx_wait",vec![0xe4,0xe9,0xf4])?);
     let mut blocked=case("tx_blocked",vec![0xe6,0xe9,0xf4])?;blocked.regs[0]=65;blocked.tx=vec![42;256];tests.push(blocked);
     // Cover each ALU group, memory direction, immediate sign extension and unary
@@ -366,6 +366,8 @@ pub fn cases()->Result<Vec<Case>,String> {
     t.regs[4]=0xabcd0800;t.regs[5]=0x12340810;t.patch=Some((0xa0e,vec![0x34,0x12]));tests.push(t);
     let mut t=case("port_io",vec![0xe4,0x80,0xe5,0x80,0x66,0xe5,0x80,0xe6,0x80,0xec,0xef,0x6c,0x6f,0xf3,0x6d,0xf4])?;
     t.regs[0]=0x12345600;t.regs[1]=2;t.regs[2]=0x3f8;t.regs[6]=0x400;t.regs[7]=0x600;t.patch=Some((0x500,vec![1,2,3,4]));tests.push(t);
+    let mut t=case("wait_salc_clts_f2",vec![0x9b,0xf9,0xd6,0xf8,0xd6,0x0f,0x06,0xf2,0xaa,0xf2,0xac,0xf4])?;
+    t.image.msw=0x001a;t.regs[0]=0x12345678;t.regs[1]=2;t.regs[6]=0x400;t.regs[7]=0x500;t.patch=Some((0x500,vec![0x11,0x22]));tests.push(t);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {

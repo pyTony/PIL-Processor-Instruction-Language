@@ -1,0 +1,9 @@
+# Set AL on Carry (undocumented 8086-386 D6h): AL = 0xFF if CF=1 else 0x00.
+require_width 8
+read_flag cf CF
+const ff 8 255
+const zero 8 0
+select r cf ff zero
+write dst r
+preserve_flags all
+retire
