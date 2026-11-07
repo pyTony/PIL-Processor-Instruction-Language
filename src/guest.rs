@@ -477,7 +477,9 @@ impl Image {
                     let (count,count_label)=if second&1==0{let imm=r.byte()?;(format!("const raw 8 {imm}"),format!("0x{imm:02x}"))}else{("read_gpr raw 1 8".into(),"CL".into())};
                     let (operand,write)=if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
                     let (name,text)=if second<0xa8{("SHLD",include_str!("../isa/i386/shld.pil"))}else{("SHRD",include_str!("../isa/i386/shrd.pil"))};
-                    let text=text.replace("$OPERAND",operand).replace("$COUNT",&count).replace("$WRITE",write);
+                    // A 16-bit double shift works on 48 bits on the 386: dst:src:src (SHLD), src:src:dst (SHRD).
+                    let (join_b,join_low,join_top,join_high)=if w==16{("16","65535","48","281470681743360")}else{("0","0","64","0")};
+                    let text=text.replace("$OPERAND",operand).replace("$COUNT",&count).replace("$WRITE",write).replace("$JOINB",join_b).replace("$JOINLOW",join_low).replace("$JOINTOP",join_top).replace("$JOINHIGH",join_high);
                     (format!("{name} {},{},{count_label}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
                 }else if matches!(second,0xbc|0xbd){
                     let m=r.byte()?;dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,w);
