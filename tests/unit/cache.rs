@@ -51,9 +51,11 @@ fn data_segment_context_changes_replace_decoded_memory_binding() {
 }
 #[test]
 fn entry_capacity_is_bounded_and_flushes_without_changing_decode() {
-    let (image,ram)=Image::load(&vec![0xf4;CAPACITY+1]).unwrap();let mut c=DecodeCache::default();
-    for i in 0..=CAPACITY {assert_eq!(c.fetch(&image,&ram,ENTRY+i as u32).unwrap().length,1);}
-    assert_eq!(c.entries.len(),1);assert_eq!(c.stats().evictions,CAPACITY as u64);assert_eq!(c.stats().misses,(CAPACITY+1) as u64);
+    const N:usize=256;
+    let (image,ram)=Image::load(&vec![0xf4;N+1]).unwrap();let mut c=DecodeCache::with_capacity(N);
+    for i in 0..=N {assert_eq!(c.fetch(&image,&ram,ENTRY+i as u32).unwrap().length,1);}
+    assert_eq!(c.entries.len(),1);assert_eq!(c.stats().evictions,N as u64);assert_eq!(c.stats().misses,(N+1) as u64);
+    assert!(DecodeCache::default().summary().contains(&format!("entries=0/{CAPACITY}")));
 }
 #[test]
 fn data_writes_and_readonly_code_keep_valid_cached_programs() {

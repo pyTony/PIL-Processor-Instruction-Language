@@ -341,6 +341,11 @@ def paste_keys(text):
     return keys
 
 
+def is_retryable(text):
+    """Whether a refused key or break waits for room rather than failing."""
+    return 'buffer full' in text or 'still waiting' in text
+
+
 def key_command(code):
     return 'key {} {}'.format(*code)
 
@@ -618,6 +623,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     geom = [80, 25]
     frame = [None]
     drawn = [None, None, None]  # [screen_hex, cursor_tuple, rows_list]
+    notice = ['']  # the last refused key, shown on the status line
 
     def draw(reply):
         speaker.observe(reply)
@@ -647,7 +653,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             if graphics.winfo_manager() != "pack":
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
             detail = f" — {reply['detail']}" if reply['detail'] else ''
-            status.configure(text=("Press any key to continue" if reply['status'] == 'waiting_input' else reply['status'] + detail) + f"   steps {reply['steps']}   clock {zone}")
+            status.configure(text=("Press any key to continue" if reply['status'] == 'waiting_input' else reply['status'] + detail) + f"   steps {reply['steps']}   clock {zone}" + (f"   {notice[0]}" if notice[0] else ''))
             return
         if graphics.winfo_manager() == "pack":
             graphics.pack_forget(); text.pack(before=status, padx=8, pady=(8, 4)); text.focus_set(); drawn[0] = None
@@ -670,7 +676,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             text.tag_add('cursor', f'{row + 1}.{column}')
             drawn[1] = cursor
         detail = f" — {reply['detail']}" if reply['detail'] else ''
-        status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}   clock {zone}")
+        status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}   clock {zone}" + (f"   {notice[0]}" if notice[0] else ''))
 
     def insert_row(r, chars, attrs, at_end=False):
         start = 0
@@ -780,6 +786,11 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                     break
                 reply = session.send(keys[0])
                 if not reply['ok']:
+                    # A full keyboard is retried on a later tick; any other
+                    # refusal (such as Ctrl+Break the session cannot deliver)
+                    # is shown and dropped, so keys behind it still arrive.
+                    if not is_retryable(reply.get('text', '')):
+                        notice[0] = f"{keys.pop(0)}: {reply.get('text', '')}"
                     break
                 sent = keys.pop(0)
                 if sent.startswith('shift'):

@@ -27,8 +27,39 @@ fn default_palette()->[[u8;3];256]{
     p
 }
 #[derive(Clone,Debug)]
-pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool }
-impl Default for Vga {fn default()->Self{Self{attr:EGA_ATTR,attr_index:0x20,attr_data:false,cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false}}}
+pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(super) idle:Controllers }
+impl Default for Vga {fn default()->Self{Self{attr:EGA_ATTR,attr_index:0x20,attr_data:false,cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3)}}}
+/// Sequencer and graphics controller registers outside the planar modes,
+/// where the planes are not mapped. The BIOS mode set loads the mode's
+/// standard values. Programs may write the registers that only steer planar
+/// writes and reads (map mask, set/reset, compare, rotate, read map, write
+/// mode, bit mask): they read back, and video memory keeps the mode's own
+/// layout until the next mode set, as GW-BASIC expects when it programs them
+/// ahead of SCREEN 7-9. Registers that remap or reshape video memory (memory
+/// mode, miscellaneous, shift and 256-colour bits) stay refused.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(super) struct Controllers{pub seq:[u8;5],pub gc:[u8;9],pub seq_index:u8,pub gc_index:u8}
+impl Controllers{
+    pub fn standard(mode:u32)->Self{
+        let(seq,gc)=match mode{
+            4|5=>([3,9,3,0,2],[0,0,0,0,0,0x30,0x0f,0,0xff]),
+            6=>([3,1,1,0,6],[0,0,0,0,0,0,0x0d,0,0xff]),
+            0x13=>([3,1,0x0f,0,0x0e],[0,0,0,0,0,0x40,5,0x0f,0xff]),
+            _=>([3,0,3,0,2],[0,0,0,0,0,0x10,0x0e,0,0xff]),
+        };
+        Self{seq,gc,seq_index:0,gc_index:0}
+    }
+    /// Whether a write keeps the memory layout of the current mode.
+    pub fn allowed(&self,sequencer:bool,index:usize,value:u8)->bool{
+        match(sequencer,index){
+            (true,2)=>true,
+            (false,0..=4|7|8)=>true,
+            (false,5)=>value&0x60==self.gc[5]&0x60,
+            (true,i)=>self.seq.get(i)==Some(&value),
+            (false,i)=>self.gc.get(i)==Some(&value),
+        }
+    }
+}
 /// Attribute controller after a 350/480-line 16-colour mode set: palette
 /// 0-5, 14h, 7, 38h-3Fh (the EGA colours in a 64-colour DAC), mode control
 /// 01h (graphics), plane enable 0Fh.
