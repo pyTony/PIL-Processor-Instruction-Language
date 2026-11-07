@@ -669,8 +669,8 @@ fn rotate_oracle(op:&str,a:u32,count:u32,w:u8,f:u32,u:u32)->(u32,u32,u32){
     // Deliberate one-bit iteration, independent of the PIL's paired shifts.
     for _ in 0..n{if op=="rol"{cf=u32::from(r&sign!=0);r=(r.wrapping_shl(1)&m)|cf;}
         else{cf=r&1;r=(r>>1)|(cf<<(w-1));}}
-    let of=if n!=1{0}else if op=="rol"{u32::from(r&sign!=0)^cf}else{((r>>(w-1))^(r>>(w-2)))&1};
-    ((a&!m)|r,(f&!0x801)|cf|(of<<11),(u&!0x801)|if n==1{0}else{0x800})
+    let of=if op=="rol"{u32::from(r&sign!=0)^cf}else{((r>>(w-1))^(r>>(w-2)))&1};
+    ((a&!m)|r,(f&!0x801)|cf|(of<<11),u&!0x801)
 }
 #[test]
 fn rotates_match_exhaustive_byte_counts_and_wide_boundaries(){

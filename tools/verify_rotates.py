@@ -14,10 +14,8 @@ def expected(op,a,count,w,flags,undefined):
         else:
             carry=r&1
             r=(r//2)|(carry<<(w-1))
-    overflow=0
-    if n==1:
-        overflow=((r>>(w-1))^carry) if op=='rol' else ((r>>(w-1))^(r>>(w-2)))&1
-    return (a&~m)|r,(flags&~0x801)|carry|(overflow<<11),(undefined&~0x801)|(0 if n==1 else 0x800)
+    overflow=((r>>(w-1))^carry) if op=='rol' else ((r>>(w-1))^(r>>(w-2)))&1
+    return (a&~m)|r,(flags&~0x801)|carry|(overflow<<11),undefined&~0x801
 
 
 def main():
