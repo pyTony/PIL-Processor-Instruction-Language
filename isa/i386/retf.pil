@@ -1,13 +1,14 @@
-# Real-mode far return: read the complete frame before staging CS/IP/SP.
+# Real-mode far return: read IP and CS before staging CS/IP/SP. Each slot offset
+# wraps at the stack-address width (SP=FFFEh reads FFFE then 0000); the CS slot
+# is a full operand-size slot, unlike POP Sreg, which reads only a word.
 require_width 16_or_32
 require_real_mode
 read_gpr old_sp 4 $S
-zext stack_wide old_sp 64
-check_segment 2 stack_wide $FRAME
 zext stack_offset old_sp 32
 load_segment target_value 2 stack_offset $W
-const slot32 32 $BYTES
-add selector_offset stack_offset slot32
+const slot $S $BYTES
+add selector_sp old_sp slot
+zext selector_offset selector_sp 32
 load_segment selector_value 2 selector_offset $W
 trunc selector selector_value 16
 zext target32 target_value 32

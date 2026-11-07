@@ -1,0 +1,13 @@
+# CLTS clears CR0.TS (bit 3); every other CR0 bit and all flags stay put.
+# Real mode runs at privilege 0, so no #GP check applies here. When TS is
+# already clear nothing changes, so the step retires without a CR0 write.
+read_msw status
+bit ts status 3
+not clear ts
+retire_if clear
+const keep 16 65527
+and cleared status keep
+zext value cleared 32
+write_control 0 value
+preserve_flags all
+retire

@@ -33,7 +33,7 @@ fn dos_vector_faults_leave_cpu_ram_and_segments_unchanged(){
 }
 #[test]
 fn dos_vector_bridge_retires_and_reads_guest_ivt_edits(){
- let mut p=load(&[0xcd,0x21,0x62],"vectors.com").unwrap();p.cpu.regs[0]=0x35ff;
+ let mut p=load(&[0xcd,0x21,0x63],"vectors.com").unwrap();p.cpu.regs[0]=0x35ff;
  p.ram.store(1020,MemWidth::Dword,0x43218765).unwrap();
  let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{..}));
  assert_eq!((r.completed,r.pil_steps,r.dos_calls),(1,0,1));assert_eq!(r.loaded.cpu.eip,0x102);
@@ -104,8 +104,8 @@ fn windows_new_format_signatures_are_rejected_and_zm_is_accepted(){
 #[test]
 fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
     // Typical startup now loads DS before reaching an intentionally unsupported opcode.
-    let mut b=exe(&[0xb8,0,0,0x8e,0xd8,0x62],&[(1,0)]);put_word(&mut b,16,0x100);
-    let r=run(load(&b,"startup.exe").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 62"));assert_eq!(r.completed,2);assert_eq!(r.loaded.cpu.eip,5);assert_eq!(r.loaded.cpu.regs[0],u32::from(LOAD));assert_eq!(r.file_offset,Some(37));assert_eq!(r.loaded.selectors[3],LOAD);assert_eq!(r.stop_bytes[0],0x62);
+    let mut b=exe(&[0xb8,0,0,0x8e,0xd8,0x63],&[(1,0)]);put_word(&mut b,16,0x100);
+    let r=run(load(&b,"startup.exe").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 63"));assert_eq!(r.completed,2);assert_eq!(r.loaded.cpu.eip,5);assert_eq!(r.loaded.cpu.regs[0],u32::from(LOAD));assert_eq!(r.file_offset,Some(37));assert_eq!(r.loaded.selectors[3],LOAD);assert_eq!(r.stop_bytes[0],0x63);
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
@@ -135,8 +135,8 @@ fn unterminated_or_oversized_dos_output_is_all_or_none(){
 #[test]
 fn corpus_report_ranks_first_blockers_and_keeps_service_failures_separate(){
     use std::time::{SystemTime,UNIX_EPOCH};let dir=std::env::temp_dir().join(format!("pil-dos-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir_all(&dir).unwrap();let mut paths=Vec::new();
-    for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0x62]),("gap2.com",vec![0x62]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
-    let text=report(&paths,100).unwrap();assert!(text.contains(&format!("DOS executable probe v{}; step budget=100 per program",env!("CARGO_PKG_VERSION"))));assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 62"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
+    for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0x63]),("gap2.com",vec![0x63]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
+    let text=report(&paths,100).unwrap();assert!(text.contains(&format!("DOS executable probe v{}; step budget=100 per program",env!("CARGO_PKG_VERSION"))));assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 63"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn dos_version_queries_preserve_upper_registers_flags_and_use_psp_override(){
 }
 #[test]
 fn dos_version_query_retires_bridge_then_reaches_next_blocker_or_exit(){
- let r=run(load(&[0xb8,0,0x30,0xcd,0x21,0x62],"version.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 62"));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(2,1,1));assert_eq!(r.loaded.cpu.regs[0],0x1606);
+ let r=run(load(&[0xb8,0,0x30,0xcd,0x21,0x63],"version.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 63"));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(2,1,1));assert_eq!(r.loaded.cpu.regs[0],0x1606);
  let r=run(load(&[0xb8,1,0x30,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21],"version.com").unwrap(),10).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(4,2,2));
 }
 #[test]
@@ -934,8 +934,13 @@ fn lds_and_enter_have_literal_results(){
  assert_eq!(r.loaded.cpu.regs[5],0x11110000|(sp-2));assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp-2-0x1e);
  let ss=u32::from(r.loaded.selectors[SegmentRegister::Ss.index()])*16;
  assert_eq!(r.loaded.ram.load(ss+sp-2,MemWidth::Word).unwrap(),0xabcd);
- // A non-zero nesting level is outside the profile.
- let r=run(load(&[0xc8,0x10,0x00,0x01,0xf4],"enter1.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{..}),"{:?}",r.stop);
+ // ENTER 0010,2 with BP=ABCD and [SS:ABCB]=5555: push ABCD, copy [ABCB], push the frame
+ // pointer FFFC; BP=FFFC, SP=FFFC-4-10h.
+ let mut p=load(&[0xc8,0x10,0x00,0x02,0xf4],"enter2.com").unwrap();p.cpu.regs[5]=0x1111abcd;
+ let ss=u32::from(p.selectors[SegmentRegister::Ss.index()])*16;p.ram.store(ss+0xabcb,MemWidth::Word,0x5555).unwrap();
+ let sp=p.cpu.regs[4]&0xffff;let r=run(p,10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[5],0x11110000|(sp-2));assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp-6-0x10);
+ assert_eq!([sp-2,sp-4,sp-6].map(|o|r.loaded.ram.load(ss+o,MemWidth::Word).unwrap()),[0xabcd,0x5555,sp-2]);
 }
 #[test]
 fn handle_write_psp_query_and_absent_extensions(){
