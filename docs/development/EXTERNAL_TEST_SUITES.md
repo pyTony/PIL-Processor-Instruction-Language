@@ -38,6 +38,14 @@ The script clones the suite at the pinned revision into
 plain `cargo test`. The report goes to `target/external-tests/sst80386/report/`
 (`report.md` per file, `failures.tsv` per case with hash and bytes).
 
+Where a network drops long git transfers (git reports `curl 56 Recv failure`
+partway through the clone), add `--download`: the script then fetches only the
+needed files from raw.githubusercontent.com at the pinned revision, one at a
+time, resumes a cut transfer with an HTTP range request, and checks every file
+against its git blob SHA-1 in `tools/sst80386_manifest.txt` (941 MOO files plus
+LICENSE, README.md and revocation_list.txt, taken from `git ls-tree` at
+459d49fb). `--fetch-only` stops after fetching.
+
 Outcomes are kept apart, and only `Pass` is a pass:
 - not decoded (family from the decoder message; repeated prefixes separately),
 - expected exception where PIL faulted or rejected the opcode (no delivery yet),
