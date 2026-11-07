@@ -113,10 +113,12 @@ impl Image {
         let mut opcode=loop {
             let b=r.byte()?;
             match b {
-                0xf2|0xf3 if repeat.is_none()=>repeat=Some(b),
-                0xf0 if !locked=>locked=true,
-                0x66 if !wide=>wide=true,0x67 if !addr32=>addr32=true,
-                0x26|0x2e|0x36|0x3e|0x64|0x65 if override_segment.is_none()=>override_segment=Some(match b{0x26=>SegmentRegister::Es,0x2e=>SegmentRegister::Cs,0x36=>SegmentRegister::Ss,0x3e=>SegmentRegister::Ds,0x64=>SegmentRegister::Fs,_=>SegmentRegister::Gs}),
+                // The 386 accepts repeated and multiple prefixes: the last
+                // segment override and the last repeat prefix take effect.
+                0xf2|0xf3=>repeat=Some(b),
+                0xf0=>locked=true,
+                0x66=>wide=true,0x67=>addr32=true,
+                0x26|0x2e|0x36|0x3e|0x64|0x65=>override_segment=Some(match b{0x26=>SegmentRegister::Es,0x2e=>SegmentRegister::Cs,0x36=>SegmentRegister::Ss,0x3e=>SegmentRegister::Ds,0x64=>SegmentRegister::Fs,_=>SegmentRegister::Gs}),
                 _=>break b,
             }
         };
@@ -124,7 +126,20 @@ impl Image {
         // used by DOS software. Like F3 MOVS, they repeat by count and do
         // not test ZF. Keep other unverified F2 string forms unsupported.
         if let Some(prefix)=repeat{if !matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf)||(prefix==0xf2&&!matches!(opcode,0xa4|0xa5|0xa6|0xa7|0xae|0xaf)){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}}
-        if locked&&!matches!(opcode,0x86|0x87){return Err(GuestError::Decode("LOCK requires memory XCHG in this profile".into()));}
+        // LOCK is valid only on a read-modify-write memory destination; the
+        // single-executor RAM model makes every instruction indivisible, so it
+        // changes nothing else. XCHG checks its memory operand itself.
+        if locked&&!matches!(opcode,0x86|0x87){
+            let mut peek=Reader{image:self,ram,start:eip,pos:r.pos};
+            let (op,m)=if opcode==0x0f{let second=peek.byte()?;(0x0f00|u16::from(second),peek.byte()?)}else{(u16::from(opcode),peek.byte()?)};
+            let ext=(m>>3)&7;
+            let lockable=m>>6!=3&&match op{
+                0x00..=0x31=>op&6==0&&op&0x38!=0x38,
+                0x80..=0x83=>ext!=7,0xf6|0xf7=>matches!(ext,2|3),0xfe|0xff=>ext<2,
+                0x0fab|0x0fb3|0x0fbb=>true,0x0fba=>ext>=5,_=>false,
+            };
+            if !lockable{return Err(GuestError::Decode("LOCK requires a read-modify-write memory destination".into()));}
+        }
         // Normalize alternative register encodings while retaining consumed bytes.
         let mut push_selector=None;let mut pop_selector=None;let mut call_indirect=None;let mut memory_pop=None;let mut memory_push=None;let mut far_indirect=None;let mut jump_indirect=None;let mut far_jump=None;
         if matches!(opcode,0xff|0x8f){
@@ -439,17 +454,19 @@ impl Image {
                     }else{register_name(src).into()};
                     (format!("{} {},{}",name.to_ascii_uppercase(),register_name(dst),source_label),compile(&instantiate(text,w),w))
                 }else if matches!(second,0xa3|0xab|0xb3|0xbb|0xba){
-                    // Register-offset memory forms address a bit string beyond
-                    // the operand, so only the immediate form takes memory.
+                    // Register-offset memory forms address a bit string: the signed
+                    // offset selects the word or dword at EA+(offset>>4)*2 or
+                    // EA+(offset>>5)*4, wrapped to the address size.
                     let m=r.byte()?;let memory=m>>6!=3;
                     let kind=if second==0xba{(m>>3)&7}else{4+((second>>3)&3)};
                     if kind<4{return Err(GuestError::Decode("unsupported 0FBA group extension (BT/BTS/BTR/BTC /4-/7 only)".into()));}
-                    if memory&&second!=0xba{return Err(GuestError::Decode("BT-family bit-string memory operand is outside this profile".into()));}
                     let name=["BT","BTS","BTR","BTC"][(kind-4)as usize];
                     dst=view((m&7)as usize,w);src=view(((m>>3)&7)as usize,w);
                     if memory{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});}
                     let (offset,offset_label)=if second==0xba{let imm=r.byte()?;(format!("const b $W {imm}"),format!("0x{imm:02x}"))}else{("read b src $W".into(),register_name(src).into())};
-                    let (operand,write)=if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
+                    let string=format!("read_address base\nread b src $W\nsext offset b 32\nconst unit_bits 32 {}\nashr units offset unit_bits\nconst unit_scale 32 {}\nshl unit_bytes units unit_scale\nadd at base unit_bytes\nconst address_mask 32 {}\nand addr at address_mask\nload a addr $W",if w==32{5}else{4},if w==32{2}else{1},if addr32{u32::MAX}else{0xffff});
+                    let (operand,write)=if memory&&second!=0xba{(string.as_str(),"store addr r")}else if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
+                    let offset=if memory&&second!=0xba{String::new()}else{offset};
                     let update=match kind{5=>format!("or r a selected\n{write}"),6=>format!("not cleared selected\nand r a cleared\n{write}"),7=>format!("xor r a selected\n{write}"),_=>String::new()};
                     let text=include_str!("../isa/i386/bt.pil").replace("$OPERAND",operand).replace("$OFFSET",&offset).replace("$UPDATE",&update);
                     (format!("{name} {},{offset_label}",operand_name(dst,address)),compile(&instantiate(text,w),w))
@@ -462,6 +479,11 @@ impl Image {
                     let (name,text)=if second<0xa8{("SHLD",include_str!("../isa/i386/shld.pil"))}else{("SHRD",include_str!("../isa/i386/shrd.pil"))};
                     let text=text.replace("$OPERAND",operand).replace("$COUNT",&count).replace("$WRITE",write);
                     (format!("{name} {},{},{count_label}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
+                }else if matches!(second,0xbc|0xbd){
+                    let m=r.byte()?;dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,w);
+                    let read=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});src=dst;"read_address addr\nload a addr $W"}else{"read a src $W"};
+                    let (name,text)=if second==0xbc{("BSF",include_str!("../isa/i386/bsf.pil"))}else{("BSR",include_str!("../isa/i386/bsr.pil"))};
+                    (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text.replace("$READ",read),w),w))
                 }else if second==0xaf {
                     let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
                     dst=reg;src=rm;
@@ -482,7 +504,7 @@ impl Image {
                 }else{
                 if !(0x90..=0x9f).contains(&second) {return Err(GuestError::Decode(format!("unsupported opcode 0f {second:02x}")));}
                 let m=r.byte()?;
-                if (m>>3)&7!=0{return Err(GuestError::Decode("SETcc profile requires /0".into()));}
+                // The reg field of SETcc is ignored.
                 w=8;dst=view((m&7) as usize,w);src=dst;
                 let name=format!("set{}",CONDITIONS[(second&15) as usize]);
                 let mut text=description(&name).map_err(GuestError::Decode)?;
@@ -518,7 +540,7 @@ impl Image {
             }
             0xc0|0xc1|0xd0|0xd1|0xd2|0xd3=>{
                 if opcode&1==0{w=8;}
-                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror",2=>"rcl",3=>"rcr",4=>"shl",5=>"shr",7=>"sar",_=>return Err(GuestError::Decode("unsupported shift/rotate extension".into()))};
+                let m=r.byte()?;let name=match (m>>3)&7{0=>"rol",1=>"ror",2=>"rcl",3=>"rcr",4|6=>"shl",5=>"shr",_=>"sar"};
                 dst=view((m&7) as usize,w);src=view(1,w);
                 let memory=m>>6!=3;
                 if memory{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});dst=view(0,w);}
@@ -583,11 +605,11 @@ impl Image {
                 let text=operand_text(name,w,false,false,Some(value))?;
                 (format!("{} {},0x{value:0digits$x}",name.to_ascii_uppercase(),register_name(dst),digits=(w/4) as usize),compile(&text,w))
             }
-            0x00..=0x03|0x08..=0x0b|0x10..=0x13|0x18..=0x1b|0x20..=0x23|0x28..=0x2b|0x30..=0x33|0x38..=0x3b|0x84|0x85|0x88..=0x8b|0x80|0x81|0x83|0xf6|0xf7|0xfe|0xff=>{
+            0x00..=0x03|0x08..=0x0b|0x10..=0x13|0x18..=0x1b|0x20..=0x23|0x28..=0x2b|0x30..=0x33|0x38..=0x3b|0x84|0x85|0x88..=0x8b|0x80..=0x83|0xf6|0xf7|0xfe|0xff=>{
                 if opcode&1==0{w=8;}
                 let m=r.byte()?;let extension=(m>>3)&7;
                 let reg=view(extension as usize,w);let rm=view((m&7) as usize,w);
-                let group1=matches!(opcode,0x80|0x81|0x83);
+                let group1=matches!(opcode,0x80..=0x83);
                 let group3=matches!(opcode,0xf6|0xf7);
                 let group45=matches!(opcode,0xfe|0xff);
                 if group3 && extension == 4 {
@@ -613,7 +635,7 @@ impl Image {
                     (format!("IDIV {}", operand_name(src, address)), compile(&idiv_pil(w, memory), w))
                 } else {
                 let name=if group1{alu_name(extension)}else if group3 {
-                    match extension{0=>"test",2=>"not",3=>"neg",_=>return Err(GuestError::Decode("unsupported group 3 extension".into()))}
+                    match extension{0|1=>"test",2=>"not",3=>"neg",_=>return Err(GuestError::Decode("unsupported group 3 extension".into()))}
                 }else if group45 {
                     match extension{0=>"inc",1=>"dec",_=>return Err(GuestError::Decode("unsupported group 4/5 extension".into()))}
                 }else if opcode>=0x88{"mov"}else if opcode>=0x84{"test"}else{alu_name((opcode>>3)&7)};
@@ -625,7 +647,7 @@ impl Image {
                     dst=reg;src=reg;
                 }else{(dst,src)=if reverse{(reg,rm)}else{(rm,reg)};}
                 let immediate=if opcode==0x83{Some((r.byte()? as i8 as i32 as u32)&super::mask(w) as u32)}
-                    else if group1||(group3&&extension==0){Some(r.unsigned(w)?)}else{None};
+                    else if group1||(group3&&extension<2){Some(r.unsigned(w)?)}else{None};
                 let text=operand_text(name,w,memory,reverse,immediate)?;
                 let left=operand_name(dst,if reverse{None}else{address});
                 let right=if let Some(value)=immediate{format!("0x{value:0digits$x}",digits=(w/4) as usize)}else{operand_name(src,if reverse{address}else{None})};

@@ -46,6 +46,12 @@ against its git blob SHA-1 in `tools/sst80386_manifest.txt` (941 MOO files plus
 LICENSE, README.md and revocation_list.txt, taken from `git ls-tree` at
 459d49fb). `--fetch-only` stops after fetching.
 
+Tony's own Windows run (7 November 2026, dev after PR #104, files fetched
+with `--download`) reported the same totals as cloud run 02: 941 files,
+1,758,700 cases, interpreter pass 1,351,553 (92.1% of decoded cases), and 0
+outcome disagreements for the generated backend over 2,122 compiled PIL
+programs. This is Tony's report, not a CI run.
+
 Outcomes are kept apart, and only `Pass` is a pass:
 - not decoded (family from the decoder message; repeated prefixes separately),
 - expected exception where PIL faulted or rejected the opcode (no delivery yet),
@@ -79,6 +85,21 @@ faults; 1 revoked; 14,751 failures (4,705 16-bit stack wraps now reported as
 #SS, 144 IRETD/RETFD #SS where the 386 raises #GP, 9 byte IDIVs where the
 386EX returns 80h without #DE). No expected exception is left undelivered.
 No disagreement in 6,864 sampled generated-Rust cases.
+
+Run 04 (7 November 2026, local cloud session, same revision) adds decoder
+forms the suite exercises in real mode: repeated and multiple prefixes (the
+last segment override and the last repeat prefix win), opcode 82h (alias of
+80h), F6/F7 /1 (TEST), shift /6 (SAL, as SHL), SETcc with any reg field,
+BSF/BSR (new isa/i386/bsf.pil and bsr.pil), BT/BTS/BTR/BTC with a register
+offset into a memory bit string, and LOCK on read-modify-write memory
+destinations. Result: 1,555,403 pass (+203,850); 37,545 not decoded; 142,334
+undefined-flag-only (BSF, BSR and the BT family leave CF, OF, SF, AF and PF
+undefined; PIL keeps them undefined); 7,823 undefined SIB; 15,400 failures.
+The 649 extra failures are SHLD/SHRD cases that now decode past their
+repeated prefixes and reach the known 16-bit count-above-16 refusal. The
+generated runner now embeds src/vga_planar.rs (it stopped building after
+the VGA planar change); 2,265 programs, 0 disagreements. Report:
+/mnt/project-files/pil_proof/sst80386-run-04.md (project files, not in git).
 
 ## Original plan: SingleStepTests CPU adapter
 

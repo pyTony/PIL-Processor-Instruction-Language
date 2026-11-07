@@ -39,7 +39,7 @@ fn decode_modrm_and_sib_signed_displacements() {
 }
 #[test]
 fn truncated_and_unsupported_instructions_are_diagnostics() {
-    for bytes in [vec![0xb8,1],vec![0x67,0x89,4],vec![0x62],vec![0xf0,0x01,0xc0],vec![0xe6,0x80],vec![0x66,0x66,0xf4]] {
+    for bytes in [vec![0xb8,1],vec![0x67,0x89,4],vec![0x62],vec![0xf0,0x01,0xc0],vec![0xe6,0x80]] {
         assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:?}");
     }
 }
@@ -120,7 +120,7 @@ fn readonly_test_cmp_and_source_reads_succeed_while_rmw_faults_preserve_cpu(){
 }
 #[test]
 fn new_decode_forms_are_bounded_and_reserved_extensions_stay_unsupported(){
-    for bytes in [vec![0x81,0xc0,1],vec![0x83,0x86,0],vec![0xf7,0xc0,1],vec![0xff,0xd8],vec![0xf6,0xc8],vec![0xfe,0xd0],vec![0x82,0xc0,1]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    for bytes in [vec![0x81,0xc0,1],vec![0x83,0x86,0],vec![0xf7,0xc0,1],vec![0xff,0xd8],vec![0xf6,0xc8],vec![0xfe,0xd0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
     for prefix in [vec![],vec![0x66]] {for opcode in 0x40..=0x4f {let mut bytes=prefix.clone();bytes.push(opcode);assert!(decode(&bytes).is_ok());}}
 }
 
@@ -184,7 +184,7 @@ fn memory_shift_rmw_checks_zero_counts_and_preserves_fault_state(){
 }
 #[test]
 fn unimplemented_rotate_extensions_and_truncated_operands_stay_diagnostics(){
-    for bytes in [vec![0xc1,0xe0],vec![0xc0,0x66],vec![0xd1,0xf0],vec![0xd3,0xf0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+    for bytes in [vec![0xc1,0xe0],vec![0xc1,0x87,0]] {assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
     assert_eq!(description("shl").unwrap(),description("sal").unwrap());
 }
 
@@ -366,7 +366,7 @@ fn cmc_involution_prefixes_readonly_ram_and_fetch_faults(){
             assert_eq!((c.eflags,c.undefined_flags),(f,u&!1));
         }}
     }
-    for bytes in [vec![0xf0,0xf5],vec![0x66,0x66,0xf5]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))));}
+    for bytes in [vec![0xf0,0xf5]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))));}
     let (mut image,ram)=Image::load(&[0x66,0xf5]).unwrap();image.segments[1].limit=ENTRY;
     assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
 }
@@ -401,7 +401,7 @@ fn byte_flag_transfers_bind_ah_ignore_size_prefixes_and_check_fetch(){
             let ram=execute_one(&bytes,&mut c,0x89abcdef,true).unwrap();assert_eq!(c,want);assert_eq!(ram.load(0x500,MemWidth::Dword).unwrap(),0x89abcdef);
         }}
     }
-    for bytes in [vec![0xf0,opcode],vec![0x66,0x66,opcode]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))));}
+    for bytes in [vec![0xf0,opcode]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))));}
     let(mut image,ram)=Image::load(&[0x66,opcode]).unwrap();image.segments[1].limit=ENTRY;
     assert!(matches!(image.decode(&ram,ENTRY),Err(GuestError::Execution(ExecError::GeneralProtection{eip:ENTRY,error_code:0}))));
     }
@@ -424,7 +424,7 @@ fn setcc_memory_conditions_addressing_and_exact_byte_writes(){
 fn setcc_memory_faults_are_transactional_and_do_not_require_a_read(){
  use super::super::Cpu;
  for readonly in [false,true]{let bytes=[0x0f,0x95,0x07];let mut c=Cpu{regs:[0x12345678;8],eflags:0xad7,undefined_flags:0x8d5,eip:ENTRY};c.regs[3]=if readonly{0x400}else{0xffff};let old=c.clone();assert!(execute_one(&bytes,&mut c,99,readonly).is_err());assert_eq!(c,old);}
- for bytes in [vec![0x0f,0x95,0x06,0],vec![0xf0,0x0f,0x95,7],vec![0x0f,0x95,0x0f]]{assert!(decode(&bytes).is_err());}
+ for bytes in [vec![0x0f,0x95,0x06,0],vec![0xf0,0x0f,0x95,7]]{assert!(decode(&bytes).is_err());}
 }
 
 #[test]
@@ -533,8 +533,8 @@ fn bit_test_immediate_memory_writes_only_for_modifying_forms(){
  execute_one(&[0x0f,0xba,0x27,0x00],&mut c,1,true).unwrap();assert_eq!(c.eflags&1,1);
  let mut c=Cpu{regs:[0,1,2,0x400,4,5,6,7],eflags:0x202,undefined_flags:0,eip:ENTRY};let before=c.clone();
  assert!(execute_one(&[0x0f,0xba,0x2f,0x01],&mut c,1,true).is_err());assert_eq!(c,before);
- // Register-offset memory forms and /0-/3 of 0FBA stay decode diagnostics.
- for bytes in [vec![0x0f,0xa3,0x07],vec![0x0f,0xbb,0x07],vec![0x0f,0xba,0xc0,1],vec![0x0f,0xba,0xd8,1]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
+ // /0-/3 of 0FBA stay decode diagnostics.
+ for bytes in [vec![0x0f,0xba,0xc0,1],vec![0x0f,0xba,0xd8,1]]{assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");}
 }
 
 fn double_shift_reference(left:bool,w:u32,a:u64,b:u64,c:u32)->(u64,u32){
@@ -576,4 +576,93 @@ fn double_precision_shifts_match_a_reference_for_register_and_memory_forms(){
  let ram=execute_one(&[0x0f,0xa4,0x07,0x04],&mut cpu,0x1234,false).unwrap();assert_eq!(ram.load(0x500,MemWidth::Word).unwrap(),0x234a);
  let mut cpu=Cpu{regs:[0xabcd,0,0,0x400,4,5,6,7],eflags:0x202,undefined_flags:0,eip:ENTRY};let before=cpu.clone();
  assert!(execute_one(&[0x0f,0xa4,0x07,0x04],&mut cpu,0x1234,true).is_err());assert_eq!(cpu,before);
+}
+#[test]
+fn repeated_prefixes_and_386_alias_encodings_decode_and_execute(){
+    use super::super::Cpu;
+    let cpu=|eax:u32,flags:u32|Cpu{regs:[eax,0,0,0x400,0,0,0,0],eflags:flags,undefined_flags:0,eip:ENTRY};
+    // The last segment override wins: DS (base 100h) + BX 400h, then ES (base 0) + BX 500h.
+    for (bytes,bx) in [(vec![0x26,0x3e,0x8b,0x07],0x400),(vec![0x3e,0x26,0x8b,0x07],0x500)]{
+        let mut c=cpu(0xffff_0000,2);c.regs[3]=bx;execute_one(&bytes,&mut c,0x1234_abcd,false).unwrap();
+        assert_eq!((c.regs[0],c.eip),(0xffff_abcd,ENTRY+4),"{bytes:02x?}");
+    }
+    // A repeated operand-size prefix is one prefix: INC EAX.
+    let mut c=cpu(0xffff,2);execute_one(&[0x66,0x66,0x40],&mut c,0,false).unwrap();assert_eq!((c.regs[0],c.eip),(0x1_0000,ENTRY+3));
+    // 82 /0 is ADD r/m8,imm8: 01h+7Fh=80h sets OF, SF and AF; PF is clear (one bit).
+    let mut c=cpu(0x1201,2);execute_one(&[0x82,0xc0,0x7f],&mut c,0,false).unwrap();assert_eq!((c.regs[0],c.eflags&0x8d5,c.eip),(0x1280,0x890,ENTRY+3));
+    // F6 /1 is TEST r/m8,imm8: F0h AND 0Fh is zero.
+    let mut c=cpu(0xf0,0x8d7);execute_one(&[0xf6,0xc8,0x0f],&mut c,0,false).unwrap();assert_eq!((c.regs[0],c.eflags&0x8c5,c.eip),(0xf0,0x44,ENTRY+3));
+    // D0 /6 shifts like SHL: 81h<<1 = 02h, CF=1, OF=CF^MSB=1.
+    let mut c=cpu(0x81,2);execute_one(&[0xd0,0xf0],&mut c,0,false).unwrap();assert_eq!((c.regs[0],c.eflags&0x8c5,c.eip),(0x02,0x801,ENTRY+2));
+    // SETcc ignores its reg field: 0F 94 D8 is SETE AL.
+    let mut c=cpu(0x5500,0x42);execute_one(&[0x0f,0x94,0xd8],&mut c,0,false).unwrap();assert_eq!((c.regs[0],c.eip),(0x5501,ENTRY+3));
+    // The last repeat prefix wins.
+    for (both,last) in [(vec![0xf2,0xf3,0xa6],vec![0xf3,0xa6]),(vec![0xf3,0xf2,0xa6],vec![0xf2,0xa6])]{
+        assert_eq!(decode(&both).unwrap().label,decode(&last).unwrap().label);
+    }
+    // Prefixes still count toward the 15-byte limit.
+    let mut long=vec![0x66;14];long.push(0x40);assert!(decode(&long).is_ok());
+    let mut long=vec![0x66;15];long.push(0x40);assert!(decode(&long).is_err());
+}
+#[test]
+fn bsf_and_bsr_find_the_lowest_and_highest_set_bit(){
+    use super::super::Cpu;
+    // 0F BC C8 = BSF CX,AX; 0F BD C8 = BSR CX,AX; 66 prefix for 32 bits.
+    for (bytes,source,want_cx,zf) in [
+        (vec![0x0f,0xbc,0xc8],0x00f0u32,4u32,false),(vec![0x0f,0xbd,0xc8],0x00f0,7,false),
+        (vec![0x0f,0xbc,0xc8],0x8000,15,false),(vec![0x0f,0xbd,0xc8],0x0001,0,false),
+        (vec![0x66,0x0f,0xbc,0xc8],0x8000_0000,31,false),(vec![0x66,0x0f,0xbd,0xc8],0x0001_0001,16,false),
+        (vec![0x66,0x0f,0xbd,0xc8],0xffff_ffff,31,false),(vec![0x66,0x0f,0xbc,0xc8],0x0006_0000,17,false),
+        // A zero source sets ZF and leaves the destination alone.
+        (vec![0x0f,0xbc,0xc8],0xffff_0000,0xdead_beef,true),(vec![0x66,0x0f,0xbd,0xc8],0,0xdead_beef,true),
+    ]{
+        let mut c=Cpu{regs:[source,0xdead_beef,0,0,0,0,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+        execute_one(&bytes,&mut c,0,false).unwrap();
+        let mask=if bytes[0]==0x66{u32::MAX}else{0xffff};
+        let want=if zf{0xdead_beef}else{(0xdead_beef&!mask)|want_cx};
+        assert_eq!((c.regs[1],c.eflags&0x40!=0,c.undefined_flags&0x8d5,c.eip),(want,zf,0x895,ENTRY+bytes.len() as u32),"{bytes:02x?} {source:x}");
+    }
+    // Memory source: BSF AX,[0500h] reads the word at DS:0400h+100h base.
+    let mut c=Cpu{regs:[0,0,0,0,0,0,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+    execute_one(&[0x0f,0xbc,0x06,0x00,0x04],&mut c,0x0000_0300,false).unwrap();assert_eq!(c.regs[0],8);
+}
+#[test]
+fn bit_string_memory_operands_use_the_signed_register_offset(){
+    use super::super::Cpu;
+    // DS base 100h, EA 0400h -> linear 500h. Dword 500h = 8002_8001h.
+    // (bytes, AX offset, CF, dword at 500h after, dword at 504h after)
+    for (bytes,offset,cf,at500,at504) in [
+        (vec![0x0f,0xa3,0x06,0x00,0x04],0x000fu32,1,0x8002_8001u32,0),     // BT word: bit 15 of word 500h
+        (vec![0x0f,0xa3,0x06,0x00,0x04],0x0011,1,0x8002_8001,0),            // offset 17: word 502h bit 1
+        (vec![0x0f,0xa3,0x06,0x00,0x04],0xffff,0,0x8002_8001,0),            // offset -1: word 4FEh bit 15
+        (vec![0x0f,0xab,0x06,0x00,0x04],0x0021,0,0x8002_8001,0x2),          // BTS offset 33: word 504h bit 1
+        (vec![0x0f,0xb3,0x06,0x00,0x04],0x0011,1,0x8000_8001,0),            // BTR offset 17: word 502h bit 1
+        (vec![0x66,0x0f,0xbb,0x06,0x00,0x04],0x0000_001f,1,0x0002_8001,0),  // BTC dword bit 31
+        (vec![0x66,0x0f,0xab,0x06,0x00,0x04],0x0000_0020,0,0x8002_8001,1),  // BTS dword offset 32: dword 504h bit 0
+    ]{
+        let mut c=Cpu{regs:[offset,0,0,0,0,0,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+        let ram=execute_one(&bytes,&mut c,0x8002_8001,false).unwrap();
+        assert_eq!((c.eflags&1,ram.load(0x500,MemWidth::Dword).unwrap(),ram.load(0x504,MemWidth::Dword).unwrap()),(cf,at500,at504),"{bytes:02x?} {offset:x}");
+    }
+    // A 16-bit address wraps: EA FFF0h + 40h bytes -> offset 0030h (linear 130h).
+    let mut c=Cpu{regs:[0x0200,0,0,0,0,0,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+    let (image,mut ram)=Image::load(&[0x0f,0xab,0x06,0xf0,0xff]).unwrap();
+    let d=image.decode(&ram,ENTRY).unwrap();
+    if let Operation::Pil{program,dst,src,flow,address:Some(a)}=d.operation{super::super::execute_segmented(&program,&mut c,dst,src,flow,&mut ram,a).unwrap();}else{panic!();}
+    assert_eq!((ram.load(0x130,MemWidth::Byte).unwrap(),c.eflags&1),(1,0),"BTS set bit 0 of the word at DS:0030");
+}
+#[test]
+fn lock_is_accepted_only_on_read_modify_write_memory_destinations(){
+    use super::super::Cpu;
+    // LOCK ADD [0400h],AX: dword 500h 0000_0001h + 0002h.
+    let mut c=Cpu{regs:[2,0,0,0,0,0,0,0],eflags:2,undefined_flags:0,eip:ENTRY};
+    let ram=execute_one(&[0xf0,0x01,0x06,0x00,0x04],&mut c,1,false).unwrap();
+    assert_eq!((ram.load(0x500,MemWidth::Dword).unwrap(),c.eip),(3,ENTRY+5));
+    for bytes in [vec![0xf0,0x80,0x06,0,4,1],vec![0xf0,0xf7,0x16,0,4],vec![0xf0,0xfe,0x06,0,4],vec![0xf0,0x0f,0xab,0x06,0,4],vec![0xf0,0x0f,0xba,0x3e,0,4,1]]{
+        assert!(decode(&bytes).is_ok(),"{bytes:02x?}");
+    }
+    // Register destinations, a memory source, CMP, TEST and other opcodes are not lockable.
+    for bytes in [vec![0xf0,0x01,0xc0],vec![0xf0,0x03,0x06,0,4],vec![0xf0,0x80,0x3e,0,4,1],vec![0xf0,0x39,0x06,0,4],vec![0xf0,0xf6,0x06,0,4,1],vec![0xf0,0x0f,0xa3,0x06,0,4],vec![0xf0,0x0f,0xba,0x26,0,4,1],vec![0xf0,0x8b,0x06,0,4]]{
+        assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:02x?}");
+    }
 }

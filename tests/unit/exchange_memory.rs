@@ -43,7 +43,7 @@ fn exchange_memory_faults_do_not_commit_registers_ram_or_markers(){
 }
 #[test]
 fn exchange_memory_invalid_prefixes_and_truncation_still_reject(){
- for bytes in [vec![0xf0,0x87,0xc0],vec![0xf0,0x90],vec![0xf0,0xf0,0x87,7],vec![0xf3,0x87,7],vec![0x87,6,0],vec![0x67,0x87,4]]{
+ for bytes in [vec![0xf0,0x87,0xc0],vec![0xf0,0x90],vec![0xf3,0x87,7],vec![0x87,6,0],vec![0x67,0x87,4]]{
   let(image,ram)=guest::Image::load(&bytes).unwrap();assert!(image.decode(&ram,0x100).is_err(),"{bytes:02x?}");
  }
 }
