@@ -46,6 +46,12 @@ against its git blob SHA-1 in `tools/sst80386_manifest.txt` (941 MOO files plus
 LICENSE, README.md and revocation_list.txt, taken from `git ls-tree` at
 459d49fb). `--fetch-only` stops after fetching.
 
+Tony's own Windows run (7 November 2026, dev after PR #104, files fetched
+with `--download`) reported the same totals as cloud run 02: 941 files,
+1,758,700 cases, interpreter pass 1,351,553 (92.1% of decoded cases), and 0
+outcome disagreements for the generated backend over 2,122 compiled PIL
+programs. This is Tony's report, not a CI run.
+
 Outcomes are kept apart, and only `Pass` is a pass:
 - not decoded (family from the decoder message; repeated prefixes separately),
 - expected exception where PIL faulted or rejected the opcode (no delivery yet),
