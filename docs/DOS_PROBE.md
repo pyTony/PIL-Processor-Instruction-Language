@@ -21,7 +21,12 @@ chained handler stored, not the host edge total, and INT 1Ah reads it.
 HLT with IF=1 ends through the program's handler at once (waiting for the
 edge is not modelled). The diskette motor count at 0040:0040h is not kept,
 since no diskette is modelled. The deterministic clock raises no IRQs, as
-before. Behaviour checked against the IBM AT BIOS timer handler as RBIL
+before. Local Linux check: TOPBENCH 0.38a (Tony's copy, SHA256
+4428fc27...0e63d, not in the repository) run as `--dos-session --args -l`
+with a host clock now passes its INT 08h handler and keeps running its
+Continuous Score loop for 24 million steps, showing "This system's TOPBENCH
+Score: 5" on the release build. That score reflects this interpreter on
+that host, not a calibrated machine. Behaviour checked against the IBM AT BIOS timer handler as RBIL
 INT 08h describes it and the Intel 8259A datasheet (IRR, ISR, EOI).
 
 # DOS drive IOCTLs — 7 November 2026
