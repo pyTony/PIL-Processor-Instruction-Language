@@ -86,6 +86,21 @@ faults; 1 revoked; 14,751 failures (4,705 16-bit stack wraps now reported as
 386EX returns 80h without #DE). No expected exception is left undelivered.
 No disagreement in 6,864 sampled generated-Rust cases.
 
+Run 04 (7 November 2026, local cloud session, same revision) adds decoder
+forms the suite exercises in real mode: repeated and multiple prefixes (the
+last segment override and the last repeat prefix win), opcode 82h (alias of
+80h), F6/F7 /1 (TEST), shift /6 (SAL, as SHL), SETcc with any reg field,
+BSF/BSR (new isa/i386/bsf.pil and bsr.pil), BT/BTS/BTR/BTC with a register
+offset into a memory bit string, and LOCK on read-modify-write memory
+destinations. Result: 1,555,403 pass (+203,850); 37,545 not decoded; 142,334
+undefined-flag-only (BSF, BSR and the BT family leave CF, OF, SF, AF and PF
+undefined; PIL keeps them undefined); 7,823 undefined SIB; 15,400 failures.
+The 649 extra failures are SHLD/SHRD cases that now decode past their
+repeated prefixes and reach the known 16-bit count-above-16 refusal. The
+generated runner now embeds src/vga_planar.rs (it stopped building after
+the VGA planar change); 2,265 programs, 0 disagreements. Report:
+/mnt/project-files/pil_proof/sst80386-run-04.md (project files, not in git).
+
 ## Original plan: SingleStepTests CPU adapter
 
 The captures use an Intel80386EX KU80C386EX33 with a16-bit external data bus.

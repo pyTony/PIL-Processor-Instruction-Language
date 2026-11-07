@@ -78,5 +78,5 @@ fn rep_overlap_matches_serial_element_order_and_budget_is_bounded(){
 #[test]
 fn new_effects_validate_context_and_early_retirement_placement(){
  for text in ["const x 32 0\nload_segment v 6 x 8\npreserve_flags all\nretire","const x 1 1\nconst v 16 0\nwrite_gpr 0 v\nretire_if x\npreserve_flags all\nretire"]{assert!(compile(text,16).is_err());}
- for bytes in [vec![0xf3,0x90],vec![0xf2,0xaa],vec![0xf3,0xf3,0xa4],vec![0xf0,0xe8,0,0]]{let (image,ram,_)=setup(&bytes,false);assert!(image.decode(&ram,0x100).is_err());}
+ for bytes in [vec![0xf3,0x90],vec![0xf2,0xaa],vec![0xf0,0xe8,0,0]]{let (image,ram,_)=setup(&bytes,false);assert!(image.decode(&ram,0x100).is_err());}
 }

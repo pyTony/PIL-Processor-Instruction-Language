@@ -1,0 +1,56 @@
+# BSF: index of the lowest set bit, by binary search over halves.
+# A zero source sets ZF and leaves the destination unchanged; the 386
+# leaves CF, OF, SF, AF and PF undefined. One template serves 16 and 32
+# bits: on a 16-bit source the 16-bit step only matters for zero input.
+$READ
+zero empty a
+not found empty
+const n0 $W 0
+const k16 $W 16
+add more16 n0 k16
+const m16 $W 65535
+and low16 a m16
+zero z16 low16
+select n16 z16 more16 n0
+lshr s16 a k16
+select x16 z16 s16 a
+const k8 $W 8
+add more8 n16 k8
+const m8 $W 255
+and low8 x16 m8
+zero z8 low8
+select n8 z8 more8 n16
+lshr s8 x16 k8
+select x8 z8 s8 x16
+const k4 $W 4
+add more4 n8 k4
+const m4 $W 15
+and low4 x8 m4
+zero z4 low4
+select n4 z4 more4 n8
+lshr s4 x8 k4
+select x4 z4 s4 x8
+const k2 $W 2
+add more2 n4 k2
+const m2 $W 3
+and low2 x4 m2
+zero z2 low2
+select n2 z2 more2 n4
+lshr s2 x4 k2
+select x2 z2 s2 x4
+const k1 $W 1
+add more1 n2 k1
+const m1 $W 1
+and low1 x2 m1
+zero z1 low1
+select n1 z1 more1 n2
+lshr s1 x2 k1
+select x1 z1 s1 x2
+write_if dst n1 found
+flag ZF empty
+undef_flag CF
+undef_flag OF
+undef_flag SF
+undef_flag AF
+undef_flag PF
+retire
