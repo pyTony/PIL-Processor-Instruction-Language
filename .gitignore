@@ -19,3 +19,6 @@ __pycache__/
 
 # SingleStepTests 80386 test data (third-party), kept next to the checkout.
 /80386.zip
+
+# Stop log written by Dine sessions (PILdos).
+/PILdos-stops.jsonl
