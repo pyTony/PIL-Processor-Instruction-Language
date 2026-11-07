@@ -24,7 +24,7 @@ fn case_policy(op:usize,w:u8,count:u32)->FlagPolicy{
     }else if matches!(op,17|18){
         let n=count&31;
         if n==0{FlagPolicy{defined:0,preserved:u32::MAX,undefined:0}}
-        else{FlagPolicy{defined:1|if n==1{0x800}else{0},preserved:!0x801,undefined:if n==1{0}else{0x800}}}
+        else{FlagPolicy{defined:0x801,preserved:!0x801,undefined:0}}
     }else{flag_policy(op)}
 }
 fn divergence(actual:&Cpu,expected:&Cpu,policy:FlagPolicy)->Option<String>{
@@ -173,7 +173,7 @@ fn harness_selfcheck()->Result<(),String>{
         (15,8,0x80,8,1,0xff,0x85),(16,16,0x7fff,2,0,0xfffe,0x801),
         (16,32,0xffffffff,2,1,0xfffffffe,0),
         (17,8,0x81,1,0,3,0x801),(18,8,0x81,1,0,0xc0,1),
-        (17,8,0x81,8,0,0x81,1),(18,8,0x80,8,0,0x80,1),
+        (17,8,0x81,8,0,0x81,1),(18,8,0x80,8,0,0x80,0x801),
         (17,8,0x81,0,0,0x81,0),(17,32,0x80000000,1,1,1,0x801),
         (19,16,0,0,1,0,0),(20,16,0,0,0,0,1),
         (22,16,0x1234,0,0,0x1234,1),(22,16,0x1234,0,1,0x1234,0),
@@ -291,7 +291,7 @@ fn host_cpu_rotate_masks_use_masked_not_modulo_width_count(){
         assert_eq!(p.defined|p.preserved|p.undefined,u32::MAX);
         assert_eq!((p.defined&p.preserved)|(p.defined&p.undefined)|(p.preserved&p.undefined),0);
         if n==0{assert_eq!((p.defined,p.preserved,p.undefined),(0,u32::MAX,0));}
-        else{assert_eq!(p.defined&1,1);assert_eq!(p.preserved,!0x801);assert_eq!(p.undefined,if n==1{0}else{0x800});}
+        else{assert_eq!(p.defined,0x801);assert_eq!(p.preserved,!0x801);assert_eq!(p.undefined,0);}
     }}}
     for op in [19,20]{let p=flag_policy(op);assert_eq!((p.defined,p.preserved,p.undefined),(1,!1,0));}
 }

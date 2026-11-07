@@ -335,6 +335,7 @@ fn run(root:&Path,out_dir:&Path)->Result<String,String>{
                             judge(c,&after,&p.readback)
                         }
                         &guest::Operation::Interrupt{vector,overflow,next}=>{let a=software_interrupt(&mut p,&mut ram,vector,overflow,next);judge(c,&a,&p.readback)},
+                        guest::Operation::Halt=>{p.cpu.eip=p.cpu.eip.wrapping_add(d.length-1);let a=snapshot(&p,&ram,None,None);judge(c,&a,&p.readback)},
                         _=>Outcome::MonitorOperation,
                     },
                 };
