@@ -1509,10 +1509,10 @@ fn dosbench_absent_quarterdeck_checks_and_pit_latch(){
  let before=p.cpu.clone();service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu,before);
  p.cpu.regs[0]=0x4b02;p.cpu.regs[3]=0;p.cpu.regs[7]=0;p.selectors[SegmentRegister::Es.index()]=0;
  let before=p.cpu.clone();service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu,before);
- p.cpu.regs[7]=1;assert!(service(&mut p,0x2f,&mut vec![]).is_err());
+ p.cpu.regs[7]=1;let before=p.cpu.clone();service(&mut p,0x2f,&mut vec![]).unwrap();assert_eq!(p.cpu,before);
  p.cpu.regs[0]=0xabcd_bfde;p.cpu.regs[3]=8;p.cpu.eflags&=!1;p.cpu.undefined_flags|=1;
  service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0xabcd_86de);assert_eq!(p.cpu.regs[3],8);assert_eq!(p.cpu.eflags&1,1);assert_eq!(p.cpu.undefined_flags&1,0);
- for code in [&[0xb8,0x00,0xd2,0xcd,0x2f,0xfa,0xf4][..],&[0xb8,0xde,0xbf,0xbb,8,0,0xcd,0x15,0xfa,0xf4]]{
+ for code in [&[0xb8,0x00,0xd2,0xbb,0x44,0x51,0xb9,0x45,0x4d,0xba,0x30,0x4d,0xcd,0x2f,0xfa,0xf4][..],&[0xb8,0xde,0xbf,0xbb,8,0,0xcd,0x15,0xfa,0xf4]]{
   let r=run(load(code,"probe.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  }
  // The exact channel 2 latch/read sequence used by CHKCPU, after programming.
@@ -2002,4 +2002,40 @@ fn ansi_driver_rejects_guest_corrupted_parameter_count_without_effects(){
    assert!(p.ram==old.ram,"invalid parser state changed RAM");
   }
  }
+}
+#[test]
+fn quarterdeck_multiplex_scan_reports_absent_without_changing_guest_state(){
+ let mut p=load(&[0xcd,0x2f],"rpciscan.com").unwrap();let mut out=vec![];
+ for id in 0xc0..=0xffu32{
+  p.cpu.regs[0]=0x12340000|(id<<8);p.cpu.regs[3]=0xaaaa5144;
+  p.cpu.regs[1]=0xbbbb4d45;p.cpu.regs[2]=0xcccc4d30;
+  p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x45;
+  let cpu=p.cpu.clone();let ram=p.ram.clone();let image=p.image.clone();
+  assert_eq!(service(&mut p,0x2f,&mut out).unwrap(),None);
+  assert_eq!(p.cpu,cpu);assert_eq!(p.ram,ram);assert_eq!(p.image,image);
+ }
+ for (ax,bx,cx,dx) in [(0xd201,0x5144,0x4d45,0x4d30),(0xd200,0x5145,0x4d45,0x4d30),
+                        (0xd200,0x5144,0x4d46,0x4d30),(0xd200,0x5144,0x4d45,0x4d31)]{
+  p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=dx;
+  let cpu=p.cpu.clone();assert!(service(&mut p,0x2f,&mut out).is_err());assert_eq!(p.cpu,cpu);
+ }
+}
+#[test]
+fn guest_multiplex_handler_receives_quarterdeck_probe_first(){
+ let mut p=load(&[0xcd,0x2f,0xfa,0xf4],"rpcitsr.com").unwrap();
+ p.ram.write_bytes(u32::from(PSP)*16+0x120,&[0xb0,0xff,0xcf]).unwrap();
+ p.ram.store(0x2f*4,MemWidth::Dword,(u32::from(PSP)<<16)|0x120).unwrap();
+ p.cpu.regs[0]=0xd200;p.cpu.regs[3]=0x5144;p.cpu.regs[1]=0x4d45;p.cpu.regs[2]=0x4d30;
+ let result=run(p,20).unwrap();assert!(matches!(result.stop,Stop::Monitor(_)),"{:?}",result.stop);
+ assert_eq!(result.loaded.cpu.regs[0]&0xffff,0xd2ff);
+}
+
+#[test]
+fn absent_task_switcher_returns_the_caller_state_unchanged(){
+ let mut p=load(&[0xcd,0x2f],"switcher.com").unwrap();
+ p.cpu.regs[0]=0x12344b02;p.cpu.regs[3]=0;p.cpu.regs[7]=0;
+ p.cpu.eflags=0xad7;p.cpu.undefined_flags=0x45;
+ let old=p.cpu.clone();let image=p.image.clone();let ram=p.ram.clone();
+ assert_eq!(service(&mut p,0x2f,&mut vec![]).unwrap(),None);
+ assert_eq!(p.cpu,old);assert_eq!(p.image,image);assert_eq!(p.ram,ram);
 }

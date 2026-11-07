@@ -326,13 +326,16 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // The ANSI driver answers its installation check with AL=FFh (RBIL INT 2F/AX=1A00h).
             p.cpu.regs[0]|=0xff;Ok(None)
         },
-        (0x2f,_) if p.cpu.regs[0]&0xffff==0x4b02&&p.cpu.regs[3]&0xffff==0
-            &&p.selectors[SegmentRegister::Es.index()]==0&&p.cpu.regs[7]&0xffff==0=>{
-            // Task-switcher installation check with its required null pointer:
-            // no switcher hooks INT 2Fh, so ES:DI stays 0000:0000.
+        (0x2f,_) if (0xc0..=0xff).contains(&ah) && p.cpu.regs[0]&255==0
+            && p.cpu.regs[3]&0xffff==0x5144 && p.cpu.regs[1]&0xffff==0x4d45 && p.cpu.regs[2]&0xffff==0x4d30=>{
+            // No Quarterdeck RPCI handler claims this signed scan.
             Ok(None)
         },
-        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x160a|0x1680..=0x168f|0x1700..=0x17ff|0x1a00|0x4300|0x4680|0x4a10|0x4a11|0x4a33|0xae00|0xb700|0xb706|0xb707|0xb710|0xd200|0xd44d|0xd44e|0xd44f)=>{
+        (0x2f,_) if p.cpu.regs[0]&0xffff==0x4b02=>{
+            // The default multiplex handler leaves the caller's state unchanged.
+            Ok(None)
+        },
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x160a|0x1680..=0x168f|0x1700..=0x17ff|0x1a00|0x4300|0x4680|0x4a10|0x4a11|0x4a33|0xae00|0xb700|0xb706|0xb707|0xb710|0xd44d|0xd44e|0xd44f)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
             // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS (unless loaded) or
