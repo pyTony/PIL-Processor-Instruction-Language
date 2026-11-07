@@ -1,3 +1,32 @@
+# Text in graphics modes and a CGA Mandelbrot — 7 November 2026
+
+Goal 1 step 5. Before this change, DOS and BIOS text in CGA modes 4/6 wrote
+character bytes into the framebuffer as if it were text RAM. Graphics-mode
+text now lives in its own module, `src/dos_graphics_text.rs`. As on the IBM
+BIOS, characters are 8x8 cells drawn into the framebuffer: 00h-7Fh from a
+ROM font at F000:FA6E, 80h-FFh from the table INT 1Fh points to. INT 1Fh
+starts at 0, and an upper-half character then stops the run instead of
+drawing from the interrupt table. The font is original to this project
+(`src/dos_font8x8.txt`, 128 readable glyphs), copied read-only into the BIOS
+area. Modes 4, 5, 6 and 13h support AH0Eh teletype (BL is the colour; BEL
+does nothing; a line feed on row 24 scrolls 8 scanlines with colour 0),
+AH09h/0Ah (BL colour, bit 7 XOR in CGA modes, no cursor move, refused past
+the screen), AH08h (matches lit pixels against the font, AL=0 when nothing
+matches) and AH06h/07h (character-cell windows, BH fill). DOS console
+output uses colour 7, as FreeDOS INT 29h calls AH0Eh with BX=0007h. Mode 5
+is added (BDA 0465h = 2Eh; the terminal shows cyan/red/white), and BDA
+0465h now holds the CRT mode-control byte for modes 3-6. Pages other than 0
+and characters outside the 40/80x25 grid stop the run.
+`programs/dos/MANDCGA.COM` (8086, NASM source `mandcga.asm`) draws a 320x200
+four-colour Mandelbrot straight into B800h, prints its caption through DOS
+in graphics mode, switches palettes with P and returns to text mode on any
+other key. Local Linux: 544 Rust tests pass (7 new), 40 GUI tests, and
+`tools/verify_mandel_cga.py` (new, in CI) matches all 61,440 picture pixels
+against an independent fixed-point reference plus the 37-character ROM-font
+caption, the palette key and the exit. The release build takes about 31.6
+million steps (5 s here) for the picture. No full FreeDOS probe rerun; no
+EGA/VGA planar modes, INT 10h AH=10h palette services or SVGA yet.
+
 # ANSI.SYS-style console driver — 6 November 2026
 
 Tony chose an ANSI driver so that a colour PROMPT works on the DOS screen as

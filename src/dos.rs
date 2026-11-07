@@ -161,6 +161,7 @@ fn rom(ram:&mut Ram)->Result<(),String>{
     top[5..13].copy_from_slice(b"01/10/84");top[13]=0;top[14]=0xfc;top[15]=0;
     ram.write_bytes(0xc0000,&vec![0xff;0x3fff0]).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(0xffff0,&top).map_err(|e|format!("{e:?}"))?;
+    ram.write_bytes(console::graphics_text::FONT,&console::graphics_text::font()?).map_err(|e|format!("ROM font: {e:?}"))?;
     vectors::install(ram)?;
     ram.protect(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
 }

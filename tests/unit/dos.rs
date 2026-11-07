@@ -2039,3 +2039,139 @@ fn absent_task_switcher_returns_the_caller_state_unchanged(){
  assert_eq!(service(&mut p,0x2f,&mut vec![]).unwrap(),None);
  assert_eq!(p.cpu,old);assert_eq!(p.image,image);assert_eq!(p.ram,ram);
 }
+
+// Graphics-mode text: an independent decoding of the glyph file, then the
+// framebuffer bytes each mode must hold for one character cell.
+fn glyph_rows(ch:u8)->[u8;8]{
+ let text=include_str!("../../src/dos_font8x8.txt");
+ let lines:Vec<&str>=text.lines().filter(|l|!l.starts_with(';')).collect();
+ let at=usize::from(ch)*9;assert!(lines[at].starts_with(&format!("{ch:02X}")));
+ let mut rows=[0u8;8];
+ for r in 0..8{for(b,c)in lines[at+1+r].chars().enumerate(){if c=='#'{rows[r]|=0x80>>b;}}}
+ rows
+}
+fn graphics_mode(mode:u32)->Loaded{
+ let mut p=load(&[0xf4],"gfx.com").unwrap();p.cpu.regs[0]=mode;console::display(&mut p,0).unwrap();p
+}
+fn int10(p:&mut Loaded,ax:u32,bx:u32,cx:u32,dx:u32){
+ p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=dx;service(p,0x10,&mut vec![]).unwrap();
+}
+/// Byte address of scanline y, byte column `byte` in the CGA banks.
+fn cga_line(y:u32,byte:u32)->u32{0xb8000+(y&1)*0x2000+(y/2)*80+byte}
+fn two_bit(bits:u8,color:u32)->[u32;2]{
+ let half=|nibble:u8|(0..4).fold(0,|n,i|n<<2|if nibble&(8>>i)!=0{color}else{0});
+ [half(bits>>4),half(bits&15)]
+}
+#[test]
+fn rom_font_sits_read_only_at_f000_fa6e_and_has_every_low_glyph(){
+ let p=load(&[0xf4],"font.com").unwrap();
+ for ch in 0..128u8{for(r,row)in glyph_rows(ch).into_iter().enumerate(){
+  assert_eq!(p.ram.load(0xffa6e+u32::from(ch)*8+r as u32,MemWidth::Byte).unwrap(),u32::from(row),"glyph {ch:02X} row {r}");
+ }}
+ assert_eq!(glyph_rows(b' '),[0;8]);assert_ne!(glyph_rows(b'A'),[0;8]);
+ // Printable glyphs are distinct, so AH08h can tell them apart.
+ let shapes:std::collections::BTreeSet<[u8;8]>=(0x21..0x7f).map(glyph_rows).collect();assert_eq!(shapes.len(),0x7f-0x21);
+ assert!(p.ram.check_write(0xffa6e,MemWidth::Byte).is_err());
+ assert_eq!(p.ram.load(0xffff5,MemWidth::Byte).unwrap(),u32::from(b'0'));
+}
+#[test]
+fn teletype_draws_glyphs_in_each_graphics_mode_and_moves_the_cursor(){
+ // Mode 4: two bits a pixel, so each glyph row is two bytes; BL=2.
+ let mut p=graphics_mode(4);int10(&mut p,0x0e41,0x0002,0,0);
+ for(r,bits)in glyph_rows(b'A').into_iter().enumerate(){
+  let [a,b]=two_bit(bits,2);let y=r as u32;
+  assert_eq!((p.ram.load(cga_line(y,0),MemWidth::Byte).unwrap(),p.ram.load(cga_line(y,1),MemWidth::Byte).unwrap()),(a,b),"row {r}");
+ }
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x0001);
+ // Mode 6: 80 columns of one byte; the cursor wraps after column 79.
+ let mut p=graphics_mode(6);p.ram.store(0x450,MemWidth::Word,0x024f).unwrap();int10(&mut p,0x0e5a,0x0001,0,0);
+ for(r,bits)in glyph_rows(b'Z').into_iter().enumerate(){assert_eq!(p.ram.load(cga_line(16+r as u32,79),MemWidth::Byte).unwrap(),u32::from(bits));}
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x0300);
+ // Mode 13h: one byte a pixel in the BL colour, background 0.
+ let mut p=graphics_mode(0x13);p.ram.store(0x450,MemWidth::Word,0x0103).unwrap();int10(&mut p,0x0e40,0x002a,0,0);
+ for(r,bits)in glyph_rows(b'@').into_iter().enumerate(){for b in 0..8{
+  let at=0xa0000+(8+r as u32)*320+24+b;assert_eq!(p.ram.load(at,MemWidth::Byte).unwrap(),if bits&(0x80>>b)!=0{0x2a}else{0});
+ }}
+ // Control bytes move the cursor without drawing; text RAM rules are not used.
+ let mut p=graphics_mode(4);let before=p.ram.clone();
+ for ch in [7u32,b'\r' as u32,b'\n' as u32]{int10(&mut p,0x0e00|ch,3,0,0);}
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x0100);
+ assert_eq!(&p.ram.bytes()[0xb8000..0xbc000],&before.bytes()[0xb8000..0xbc000]);
+ p.cpu.regs[0]=0x0e09;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+}
+#[test]
+fn dos_output_in_graphics_uses_freedos_colour_seven(){
+ // MOV AX,4 / INT 10h / MOV AH,2 / MOV DL,'H' / INT 21h / CLI / HLT
+ let code=[0xb8,0x04,0x00,0xcd,0x10,0xb4,0x02,0xb2,b'H',0xcd,0x21,0xfa,0xf4];
+ let r=run(load(&code,"dos.com").unwrap(),10).unwrap();assert_eq!(r.output,b"H");
+ for(r_,bits)in glyph_rows(b'H').into_iter().enumerate(){
+  let [a,b]=two_bit(bits,3);let y=r_ as u32;
+  assert_eq!((r.loaded.ram.load(cga_line(y,0),MemWidth::Byte).unwrap(),r.loaded.ram.load(cga_line(y,1),MemWidth::Byte).unwrap()),(a,b));
+ }
+ // A line feed on row 24 scrolls the screen up one character row (8 lines).
+ let mut p=graphics_mode(6);p.ram.store(cga_line(8,5),MemWidth::Byte,0x81).unwrap();p.ram.store(cga_line(199,0),MemWidth::Byte,0xff).unwrap();
+ p.ram.store(0x450,MemWidth::Word,0x1800).unwrap();
+ let writes=console::dos_screen(&p,b"\n").unwrap();for(at,w,v)in writes{p.ram.store(at,w,v).unwrap();}
+ assert_eq!(p.ram.load(cga_line(0,5),MemWidth::Byte).unwrap(),0x81);assert_eq!(p.ram.load(cga_line(8,5),MemWidth::Byte).unwrap(),0);
+ assert_eq!(p.ram.load(cga_line(191,0),MemWidth::Byte).unwrap(),0xff);assert_eq!(p.ram.load(cga_line(199,0),MemWidth::Byte).unwrap(),0);
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x1800);
+}
+#[test]
+fn repeated_graphics_characters_xor_read_back_and_stay_on_screen(){
+ let mut p=graphics_mode(4);p.ram.store(0x450,MemWidth::Word,0x0526).unwrap();
+ int10(&mut p,0x0957,0x0001,2,0);
+ for col in [38u32,39]{for(r,bits)in glyph_rows(b'W').into_iter().enumerate(){
+  let [a,b]=two_bit(bits,1);let y=40+r as u32;
+  assert_eq!((p.ram.load(cga_line(y,col*2),MemWidth::Byte).unwrap(),p.ram.load(cga_line(y,col*2+1),MemWidth::Byte).unwrap()),(a,b));
+ }}
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x0526);
+ int10(&mut p,0x0800,0,0,0);assert_eq!(p.cpu.regs[0]&0xffff,u32::from(b'W'));
+ // Bit 7 XORs: drawing the same character again clears both cells.
+ int10(&mut p,0x0a57,0x0081,2,0);
+ assert!((40..48).all(|y|(76..80).all(|b|p.ram.load(cga_line(y,b),MemWidth::Byte).unwrap()==0)));
+ int10(&mut p,0x0800,0,0,0);assert_eq!(p.cpu.regs[0]&0xffff,0);
+ // A run past the last cell is refused before anything is drawn.
+ p.ram.store(0x450,MemWidth::Word,0x1827).unwrap();let before=p.ram.clone();
+ p.cpu.regs[0]=0x0941;p.cpu.regs[1]=2;assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.ram,before);
+ // The 40-column modes refuse a cursor in column 40.
+ p.ram.store(0x450,MemWidth::Word,0x0028).unwrap();p.cpu.regs[0]=0x0e41;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+}
+#[test]
+fn upper_half_characters_need_an_int_1f_table(){
+ let mut p=graphics_mode(6);let before=p.ram.clone();
+ p.cpu.regs[0]=0x0e80;p.cpu.regs[3]=1;
+ let e=service(&mut p,0x10,&mut vec![]).unwrap_err();assert!(e.contains("INT 1Fh"),"{e}");assert_eq!(p.ram,before);
+ // A table at 2000:0000 supplies 80h onward, as GRAFTABL would.
+ let shape=[0x18u32,0x3c,0x7e,0xff,0xff,0x7e,0x3c,0x18];
+ for(n,v)in shape.iter().enumerate(){p.ram.store(0x20008+n as u32,MemWidth::Byte,*v).unwrap();}
+ p.ram.store(0x1f*4,MemWidth::Dword,0x2000_0000).unwrap();
+ int10(&mut p,0x0e81,1,0,0);
+ for(r,v)in shape.iter().enumerate(){assert_eq!(p.ram.load(cga_line(r as u32,0),MemWidth::Byte).unwrap(),*v);}
+ p.ram.store(0x450,MemWidth::Word,0).unwrap();int10(&mut p,0x0800,0,0,0);assert_eq!(p.cpu.regs[0]&255,0x81);
+}
+#[test]
+fn graphics_scroll_moves_character_rows_and_fills_with_bh(){
+ let mut p=graphics_mode(0x13);
+ p.ram.store(0xa0000+16*320+9,MemWidth::Byte,0x55).unwrap();p.ram.store(0xa0000+16*320+100,MemWidth::Byte,0x66).unwrap();
+ // Rows 1..3, columns 1..2 (pixels 8..23), up one row, fill 9.
+ int10(&mut p,0x0601,0x0900,0x0101,0x0302);
+ assert_eq!(p.ram.load(0xa0000+8*320+9,MemWidth::Byte).unwrap(),0x55);
+ assert_eq!(p.ram.load(0xa0000+16*320+100,MemWidth::Byte).unwrap(),0x66,"outside the window");
+ assert!((24..32).all(|y|(8..24).all(|x|p.ram.load(0xa0000+y*320+x,MemWidth::Byte).unwrap()==9)));
+ assert_eq!(p.ram.load(0xa0000+24*320+24,MemWidth::Byte).unwrap(),0);
+ // Down one row in mode 5 moves the pixel back and fills the top row.
+ let mut p=graphics_mode(5);p.ram.store(cga_line(8,0),MemWidth::Byte,0xc0).unwrap();
+ int10(&mut p,0x0701,0x0200,0x0000,0x184f);
+ assert_eq!(p.ram.load(cga_line(16,0),MemWidth::Byte).unwrap(),0xc0);
+ assert!((0..8).all(|y|(0..80).all(|b|p.ram.load(cga_line(y,b),MemWidth::Byte).unwrap()==0xaa)));
+}
+#[test]
+fn mode_five_is_four_colour_with_its_own_crt_mode_byte(){
+ let mut p=graphics_mode(5);
+ assert_eq!(p.ram.load(0x465,MemWidth::Byte).unwrap(),0x2e);assert_eq!(p.ram.load(0x44a,MemWidth::Word).unwrap(),40);
+ int10(&mut p,0x0f00,0,0,0);assert_eq!(p.cpu.regs[0]&0xffff,0x2805);
+ int10(&mut p,0x0c03,0,319,199);assert_eq!(p.ram.load(cga_line(199,79),MemWidth::Byte).unwrap(),3);
+ int10(&mut p,0x0b00,0x0100,0,0);assert_eq!(p.ram.load(0x466,MemWidth::Byte).unwrap(),0x10);
+ for(mode,value)in [(4u32,0x2au32),(6,0x1e),(3,0x29)]{let p=graphics_mode(mode);assert_eq!(p.ram.load(0x465,MemWidth::Byte).unwrap(),value);}
+ assert_eq!(load(&[0xf4],"boot.com").unwrap().ram.load(0x465,MemWidth::Byte).unwrap(),0x29);
+}

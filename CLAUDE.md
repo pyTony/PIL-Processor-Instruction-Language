@@ -1,3 +1,14 @@
+# Graphics-mode text and CGA Mandelbrot — 7 November 2026
+
+Goal 1 step 5. src/dos_graphics_text.rs (separate module, Tony's request):
+modes 4/5/6/13h draw BIOS/DOS text as 8x8 glyphs into the framebuffer, from
+an original ROM font at F000:FA6E (src/dos_font8x8.txt) and INT 1Fh for
+80h-FFh (stops when INT 1Fh is 0). AH0E/09/0A/08/06/07 in graphics, DOS
+output colour 7 (FreeDOS INT 29h BX=0007h), mode 5, BDA 0465h. New
+programs/dos/MANDCGA.COM (8086, mode 4, P palette, key exits). Local Linux:
+544 Rust, 40 GUI tests; tools/verify_mandel_cga.py checks 61,440 pixels.
+No probe rerun, no EGA/VGA planar modes or SVGA.
+
 # 4DOS 8.00 under Dine — 2 November 2026
 
 Tony asked whether 4DOS runs. 4dos800.zip (SHA256 732915f4...a4d5f, Tony's

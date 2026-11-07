@@ -83,7 +83,7 @@ statement and LINE colour 1. `programs/dos/CUBE2.BAS` contains that adaptation.
 GW-BASIC 3.23 drew part of the cube in both deterministic- and host-clock
 tests. Its INT 1Ch timer hook now runs in a bounded real-mode BIOS wrapper.
 This is not yet a complete interactive BASIC compatibility claim.
-Graphics-mode text and scrolling are not yet complete, and a working
+Graphics-mode text is described below. A working
 BASIC interpreter may need further DOS or CPU features. CGA modes do not
 imply full EGA/VGA register or planar graphics support.
 
@@ -91,3 +91,36 @@ imply full EGA/VGA register or planar graphics support.
 mode-13h demo. Run `python tools/dos_terminal.py programs/dos/MANDCYC.COM`;
 the first frame takes time and a key exits to text mode. It draws 160x100
 calculated points as 2x2 blocks.
+
+## Text in graphics modes
+
+`src/dos_graphics_text.rs` draws BIOS and DOS text in modes 04h, 05h, 06h
+and 13h as 8x8 character cells in the framebuffer (40x25, or 80x25 in mode
+06h), as the IBM BIOS does. Glyphs 00h-7Fh come from the ROM font at
+F000:FA6E; 80h-FFh from the table at the INT 1Fh vector. Dine's font is
+original to this project: `src/dos_font8x8.txt` holds the 128 glyphs as
+readable rows and is copied into the read-only BIOS area at start-up. INT 1Fh
+starts at 0 (no GRAFTABL), and an upper-half character then stops the run
+with that reason instead of drawing whatever the interrupt table holds.
+
+- AH0Eh teletype: BL is the foreground colour, the rest of the cell is 0.
+  BEL draws nothing; BS, CR and LF move the cursor; a line feed on row 24
+  scrolls the whole screen up 8 scanlines and fills with colour 0. TAB keeps
+  the text-mode policy (DOS expands it; BIOS AH0Eh refuses it).
+- DOS console output (AH02h, AH09h, AH40h to CON) goes through the same
+  teletype in colour 7, because FreeDOS INT 29h calls AH0Eh with BX=0007h.
+  That is colour 3 in modes 4/5, 1 in mode 6 and 7 in mode 13h.
+- AH09h/0Ah: CX copies of AL in colour BL from the cursor, which does not
+  move. In the CGA modes bit 7 of BL XORs the glyph into the cell. A run past
+  the last cell is refused before anything changes.
+- AH08h: returns the character whose glyph matches the cell's non-zero
+  pixels (searching 00h-7Fh, then the INT 1Fh table if installed), AL=0 if
+  none, AH=0.
+- AH06h/07h: the window is in character cells; vacated rows take BH.
+- Only display page 0 exists in graphics modes. The BIOS data byte 0465h
+  holds the CRT mode-control value (29h, 2Ah, 2Eh, 1Eh for modes 3-6).
+
+Mode 05h is mode 04h with the CGA black-and-white bit. On an RGB monitor it
+shows cyan, red and white, and the palette-select bit has no effect; the
+terminal draws it that way. `programs/dos/MANDCGA.COM` uses mode 04h and
+prints its caption through DOS, so it exercises the font, colour and cursor.
