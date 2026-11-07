@@ -157,6 +157,8 @@ impl Debugger {
                 self.last_step_access=None;Stop::Advanced
             }
             Operation::Halt=>Stop::Halt(self.cpu.eip),
+            // The monitor has no interrupt table: an unmodelled context, not committed.
+            Operation::Interrupt{..}=>Stop::Fault(ExecError::InvalidContext),
         }
     }
     fn reset(&mut self) {
@@ -479,6 +481,7 @@ impl Debugger {
                     super::guest::Operation::Input { next } => format!("Instruction: {}\nOperation: MOCK_IN -> AL (next EIP={:08x}){mem_line}", d.label, next),
                     super::guest::Operation::Output { next } => format!("Instruction: {}\nOperation: MOCK_OUT <- AL (next EIP={:08x}){mem_line}", d.label, next),
                     super::guest::Operation::Halt => format!("Instruction: {}\nOperation: HLT (monitor stop){mem_line}", d.label),
+                    super::guest::Operation::Interrupt { vector, .. } => format!("Instruction: {}\nOperation: interrupt {vector:02x}h (not delivered by the monitor){mem_line}", d.label),
                 },
                 Err(e) => format!("Decode error at EIP={:08x}: {e:?}{mem_line}", self.cpu.eip),
             }

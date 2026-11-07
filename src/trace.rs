@@ -6,6 +6,7 @@ pub fn fault(eip:u32,error:ExecError)->[u32;5] {
         ExecError::StackSegment{eip,error_code}=>[5,eip,error_code as u32,0,0],
         ExecError::MemoryAccess{eip,address,bytes,write}=>[6,eip,address,bytes as u32,u32::from(write)],
         ExecError::UnsupportedControl{eip,register,value}=>[11,eip,register as u32,value,0],
+        ExecError::Exception{eip,vector}=>[12,eip,u32::from(vector),0,0],
         ExecError::InvalidBinding=>[8,eip,0,0,0],ExecError::InvalidContext=>[9,eip,0,0,0],
     }
 }

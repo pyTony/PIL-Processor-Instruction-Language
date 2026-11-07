@@ -82,11 +82,11 @@ fn parse(path:&Path)->Result<Vec<Case>,String>{
 
 /// State after one instruction; the same record is produced by both backends.
 #[derive(Clone,Debug,PartialEq,Eq)]
-struct Actual{fault:Option<String>,regs:[u32;8],eflags:u32,undefined:u32,eip:u32,selectors:[u16;6],msw:u16,real_mode:bool,ram:Vec<u8>}
+struct Actual{fault:Option<String>,delivered:Option<u8>,regs:[u32;8],eflags:u32,undefined:u32,eip:u32,selectors:[u16;6],msw:u16,real_mode:bool,ram:Vec<u8>}
 struct Prepared{image:guest::Image,cpu:Cpu,decoded:Result<guest::Decoded,guest::GuestError>,readback:Vec<u32>}
 fn prepare(c:&Case,ram:&mut Ram)->Prepared{
     let mut selectors=[0u16;6];for (i,s) in SEG.iter().enumerate(){selectors[*s]=c.init[10+i] as u16;}
-    let image=guest::Image{fetch_base:0,start:0,end:RAM_SIZE as u32,system:[(0,0);guest::SYSTEM_RANGES],segments:selectors.map(address::SegmentCache::real_mode),selectors,msw:c.init[0] as u16,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None};
+    let image=guest::Image{fetch_base:0,start:0,end:RAM_SIZE as u32,system:[(0,0);guest::SYSTEM_RANGES],segments:selectors.map(address::SegmentCache::real_mode),selectors,msw:c.init[0] as u16,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None};
     let mut regs=[0;8];for (i,r) in GPR.iter().enumerate(){regs[*r]=c.init[2+i];}
     let cpu=Cpu{regs,eflags:c.init[17],undefined_flags:0,eip:c.init[16]};
     for (a,v) in &c.ram{ram.write_bytes(*a,&[*v]).unwrap();}
@@ -95,17 +95,39 @@ fn prepare(c:&Case,ram:&mut Ram)->Prepared{
     Prepared{image,cpu,decoded,readback}
 }
 fn clear(c:&Case,ram:&mut Ram){for (a,_) in c.ram.iter().chain(&c.fin_ram){ram.write_bytes(*a,&[0]).unwrap();}}
-fn interpret(p:&mut Prepared,ram:&mut Ram)->Option<Actual>{
+fn snapshot(p:&Prepared,ram:&Ram,fault:Option<String>,delivered:Option<u8>)->Actual{
+    Actual{fault,delivered,regs:p.cpu.regs,eflags:p.cpu.eflags,undefined:p.cpu.undefined_flags,eip:p.cpu.eip,selectors:p.image.selectors,msw:p.image.msw,real_mode:p.image.real_mode,ram:p.readback.iter().map(|a|ram.bytes()[*a as usize]).collect()}
+}
+/// Real-mode delivery of `vector` (interrupt.rs) from the state in `p`. A
+/// frame that cannot be pushed is reported as a fault, as the CPU shuts down.
+fn deliver(p:&mut Prepared,ram:&mut Ram,vector:u8,return_ip:u32)->Actual{
+    match crate::interrupt::deliver_real(&mut p.cpu,&mut p.image,ram,vector,return_ip){
+        Ok(())=>snapshot(p,ram,None,Some(vector)),
+        Err(e)=>snapshot(p,ram,Some(format!("Delivery {e}")),None),
+    }
+}
+/// Runs the case's PIL program. Returns the state the program left (what the
+/// generated backend is compared against) and the state after any exception
+/// delivery (what the hardware capture is compared against).
+fn interpret(p:&mut Prepared,ram:&mut Ram)->Option<(Actual,Actual)>{
     let Ok(d)=&p.decoded else{return None};
     let guest::Operation::Pil{program,dst,src,flow,address}=&d.operation else{return None};
+    let (program,dst,src,flow,address)=(program.clone(),*dst,*src,*flow,*address);
     let mut fault=None;
     for _ in 0..REP_LIMIT{
         let old=p.cpu.eip;let mut machine=p.image.segment_state();
-        let r=execute_machine(program,&mut p.cpu,*dst,*src,*flow,ram,*address,&mut machine);p.image.set_segment_state(machine);
-        if let Err(e)=r{fault=Some(fault_kind(&format!("{e:?}")));break;}
+        let r=execute_machine(&program,&mut p.cpu,dst,src,flow,ram,address,&mut machine);p.image.set_segment_state(machine);
+        if let Err(e)=r{fault=Some(e);break;}
         if !(program.partial&&p.cpu.eip==old){break;}
     }
-    Some(Actual{fault,regs:p.cpu.regs,eflags:p.cpu.eflags,undefined:p.cpu.undefined_flags,eip:p.cpu.eip,selectors:p.image.selectors,msw:p.image.msw,real_mode:p.image.real_mode,ram:p.readback.iter().map(|a|ram.bytes()[*a as usize]).collect()})
+    let pil=snapshot(p,ram,fault.map(|e|fault_kind(&format!("{e:?}"))),None);
+    let after=match fault.and_then(|e|crate::interrupt::vector(&e).map(|v|(e,v))){Some((e,v))=>{let eip=p.cpu.eip;let mut a=deliver(p,ram,v,eip);if a.delivered.is_some(){crate::interrupt::after_fault(&mut p.cpu,&e);a.undefined=p.cpu.undefined_flags;}a},None=>pil.clone()};
+    Some((pil,after))
+}
+/// INT n, INT3 and INTO: delivered to the next instruction (INTO only with OF=1).
+fn software_interrupt(p:&mut Prepared,ram:&mut Ram,vector:u8,overflow:bool,next:u32)->Actual{
+    if overflow&&p.cpu.eflags&0x800==0{p.cpu.eip=next&0xffff;p.image.retired();return snapshot(p,ram,None,None);}
+    deliver(p,ram,vector,next)
 }
 
 #[derive(Clone,Debug,PartialEq,Eq,PartialOrd,Ord)]
@@ -135,11 +157,17 @@ fn decode_family(c:&Case,detail:&str)->String{
     detail.to_string()
 }
 fn judge(c:&Case,actual:&Actual,readback:&[u32])->Outcome{
-    if let Some(n)=c.exception{
-        // The instruction completed, but the injected HLT lies past the CS
-        // limit, so hardware raised #GP fetching it. Not a PIL result.
-        if n==13&&actual.fault.is_none()&&actual.eip>0xffff{return Outcome::HltFetchFault;}
-        return if actual.fault.is_some(){Outcome::ExceptionNotDelivered(n)}else{Outcome::Fail(format!("missed exception #{n}"))};
+    match (c.exception,actual.delivered){
+        (Some(n),Some(v)) if n!=v=>return Outcome::Fail(format!("exception #{v} instead of #{n}")),
+        (Some(_),Some(_))=>{},
+        (None,Some(v))=>return Outcome::Fail(format!("unexpected exception #{v}")),
+        (Some(n),None)=>{
+            // The instruction completed, but the injected HLT lies past the CS
+            // limit, so hardware raised #GP fetching it. Not a PIL result.
+            if n==13&&actual.fault.is_none()&&actual.eip>0xffff{return Outcome::HltFetchFault;}
+            return if actual.fault.is_some(){Outcome::ExceptionNotDelivered(n)}else{Outcome::Fail(format!("missed exception #{n}"))};
+        }
+        (None,None)=>{},
     }
     if let Some(f)=&actual.fault{return Outcome::Fail(format!("unexpected fault {f}"));}
     let mut got=c.init;
@@ -159,7 +187,18 @@ fn judge(c:&Case,actual:&Actual,readback:&[u32])->Outcome{
     }
     let index:HashMap<u32,usize>=readback.iter().enumerate().map(|(i,a)|(*a,i)).collect();
     let mut want:HashMap<u32,u8>=c.ram.iter().copied().collect();want.extend(c.fin_ram.iter().copied());
-    for (a,v) in &want{if actual.ram[index[a]]!=*v{return Outcome::Fail(if c.fin_ram.iter().any(|e|e.0==*a){"memory write".into()}else{"memory changed unexpectedly".into()});}}
+    // A divide error leaves CF, PF, AF, ZF, SF and OF undefined (Intel lists
+    // them undefined for DIV, IDIV and AAM). The 386 pushes the values its
+    // microcode left there; PIL pushes the entry values. Differences in just
+    // those bits of the pushed FLAGS word count as undefined flags.
+    let flags_at=u32::from(actual.selectors[2])*16+(actual.regs[4].wrapping_add(4)&0xffff);
+    for (a,v) in &want{
+        let got=actual.ram[index[a]];
+        if got==*v{continue;}
+        let mask=match a.wrapping_sub(flags_at){0=>0xd5u8,1=>0x08,_=>0};
+        if actual.delivered==Some(0)&&(got^*v)&!mask==0{flags_only=Some(flags_only.unwrap_or(0)|u32::from(got^*v)<<(8*a.wrapping_sub(flags_at)));continue;}
+        return Outcome::Fail(if c.fin_ram.iter().any(|e|e.0==*a){"memory write".into()}else{"memory changed unexpectedly".into()});
+    }
     match flags_only{
         None=>Outcome::Pass,
         Some(diff) if diff&!actual.undefined==0=>Outcome::UndefinedFlagsOnly,
@@ -197,10 +236,10 @@ fn decode_actual(words:&mut impl Iterator<Item=u32>,n:usize)->Option<Actual>{
     let status=next()?;let detail=next()?;let mut regs=[0;8];for r in &mut regs{*r=next()?;}
     let (eflags,undefined,eip)=(next()?,next()?,next()?);let mut selectors=[0u16;6];for s in &mut selectors{*s=next()? as u16;}
     let msw=next()? as u16;let real_mode=next()?!=0;let ram=(0..n).map(|_|next().map(|v|v as u8)).collect::<Option<Vec<_>>>()?;
-    Some(Actual{fault:(status!=0).then(||FAULTS.get(detail as usize).copied().unwrap_or("Unknown").to_string()),regs,eflags,undefined,eip,selectors,msw,real_mode,ram})
+    Some(Actual{fault:(status!=0).then(||FAULTS.get(detail as usize).copied().unwrap_or("Unknown").to_string()),delivered:None,regs,eflags,undefined,eip,selectors,msw,real_mode,ram})
 }
 // Only the ExecError variant crosses the generated boundary; judge() compares kinds.
-const FAULTS:[&str;5]=["MemoryAccess","StackSegment","InvalidBinding","InvalidContext","GeneralProtection"];
+const FAULTS:[&str;7]=["MemoryAccess","StackSegment","InvalidBinding","InvalidContext","GeneralProtection","Exception","UnsupportedControl"];
 const RUNNER:&str=r#"
 fn main(){
  let mut args=std::env::args().skip(1);let input=std::fs::read(args.next().unwrap()).unwrap();let output=args.next().unwrap();
@@ -222,7 +261,7 @@ fn main(){
   let back:Vec<u32>=(0..n_back).map(|_|next()).collect();
   let (mut status,mut detail)=(0,0);
   for _ in 0..1024{let old=eip;
-   if let Err(e)=dispatch(variant,&mut regs,&mut flags,&mut undefined,&mut eip,dst,src,flow,&mut ram,address,&mut machine){status=1;detail=match e{ExecError::MemoryAccess{..}=>0,ExecError::StackSegment{..}=>1,ExecError::InvalidBinding=>2,ExecError::InvalidContext=>3,ExecError::GeneralProtection{..}=>4};break;}
+   if let Err(e)=dispatch(variant,&mut regs,&mut flags,&mut undefined,&mut eip,dst,src,flow,&mut ram,address,&mut machine){status=1;detail=match e{ExecError::MemoryAccess{..}=>0,ExecError::StackSegment{..}=>1,ExecError::InvalidBinding=>2,ExecError::InvalidContext=>3,ExecError::GeneralProtection{..}=>4,ExecError::Exception{..}=>5,ExecError::UnsupportedControl{..}=>6};break;}
    if !(partial&&eip==old){break;}
   }
   out.extend([status,detail]);out.extend(regs);out.extend([flags,undefined,eip]);out.extend(machine.selectors.map(u32::from));out.extend([u32::from(machine.msw),u32::from(machine.real_mode)]);
@@ -263,7 +302,7 @@ fn run(root:&Path,out_dir:&Path)->Result<String,String>{
     let sample:usize=std::env::var("SST80386_GENERATED_SAMPLE").ok().and_then(|v|v.parse().ok()).unwrap_or(8);
     let gen_dir=out_dir.join("generated");fs::create_dir_all(&gen_dir).map_err(|e|e.to_string())?;
     let mut ram=Ram::new(RAM_SIZE);let mut variants:Vec<String>=Vec::new();let mut variant_ids:HashMap<String,u32>=HashMap::new();
-    let mut rows:Vec<(String,String,Tally,Tally)>=Vec::new();let mut interp_results:Vec<Vec<Option<Outcome>>>=Vec::new();
+    let mut rows:Vec<(String,String,Tally,Tally)>=Vec::new();let mut interp_results:Vec<Vec<Option<(Actual,Outcome)>>>=Vec::new();
     let mut failures=std::io::BufWriter::new(fs::File::create(out_dir.join("failures.tsv")).map_err(|e|e.to_string())?);
     writeln!(failures,"file\tindex\thash\tbackend\toutcome\tname\tbytes").unwrap();
     let mut disagreements=0usize;let mut stray:Vec<(String,usize)>=Vec::new();let started=Instant::now();
@@ -271,14 +310,16 @@ fn run(root:&Path,out_dir:&Path)->Result<String,String>{
         let cases=parse(path)?;let name=stem(path);let mnemonic=cases.first().map(|c|c.name.split_whitespace().next().unwrap_or("").to_string()).unwrap_or_default();
         let mut tally=Tally::default();let mut input=Vec::new();let mut per_case=Vec::new();let mut sampled=0usize;
         for c in &cases{
-            let mut in_sample=false;
+            let mut in_sample=false;let mut sampled_pil=None;
             let outcome=if revoked.contains(&c.hash){per_case.push(None);Outcome::Revoked}else{
                 let mut p=prepare(c,&mut ram);
                 let o=match &p.decoded{
-                    // Hardware raised #UD too: the rejection is right, delivery is absent.
-                    Err(guest::GuestError::Decode(_)) if c.exception==Some(6)=>Outcome::ExceptionNotDelivered(6),
+                    // Hardware raised #UD too: the rejection is right, so deliver it.
+                    Err(guest::GuestError::Decode(_)) if c.exception==Some(6)=>{let eip=p.cpu.eip;let a=deliver(&mut p,&mut ram,6,eip);judge(c,&a,&p.readback)},
                     Err(guest::GuestError::Decode(d))=>Outcome::NotDecoded(decode_family(c,d)),
-                    Err(guest::GuestError::Execution(e))=>{let a=Actual{fault:Some(fault_kind(&format!("{e:?}"))),regs:p.cpu.regs,eflags:p.cpu.eflags,undefined:0,eip:p.cpu.eip,selectors:p.image.selectors,msw:p.image.msw,real_mode:true,ram:Vec::new()};judge(c,&a,&p.readback)},
+                    Err(guest::GuestError::Execution(e))=>{let e=*e;let a=match crate::interrupt::vector(&e){
+                        Some(v)=>{let eip=p.cpu.eip;deliver(&mut p,&mut ram,v,eip)},
+                        None=>Actual{fault:Some(fault_kind(&format!("{e:?}"))),delivered:None,regs:p.cpu.regs,eflags:p.cpu.eflags,undefined:0,eip:p.cpu.eip,selectors:p.image.selectors,msw:p.image.msw,real_mode:true,ram:Vec::new()}};judge(c,&a,&p.readback)},
                     Ok(d)=>match &d.operation{
                         guest::Operation::Pil{address,..} if undefined_sib(&c.bytes,address)=>Outcome::UndefinedSib,
                         guest::Operation::Pil{program,..}=>{
@@ -289,13 +330,16 @@ fn run(root:&Path,out_dir:&Path)->Result<String,String>{
                                 let id=*variant_ids.entry(key.clone()).or_insert_with(||{variants.push(key);next});
                                 encode(&mut input,id,&p,c);sampled+=1;in_sample=true;
                             }
-                            let actual=interpret(&mut p,&mut ram).unwrap();judge(c,&actual,&p.readback)
+                            let (pil,after)=interpret(&mut p,&mut ram).unwrap();
+                            if in_sample{sampled_pil=Some(pil);}
+                            judge(c,&after,&p.readback)
                         }
+                        &guest::Operation::Interrupt{vector,overflow,next}=>{let a=software_interrupt(&mut p,&mut ram,vector,overflow,next);judge(c,&a,&p.readback)},
                         _=>Outcome::MonitorOperation,
                     },
                 };
                 clear(c,&mut ram);
-                per_case.push(Some(o.clone()).filter(|_|in_sample));o
+                per_case.push(sampled_pil.map(|a|(a,o.clone())));o
             };
             if !matches!(outcome,Outcome::Pass|Outcome::Revoked){writeln!(failures,"{name}\t{}\t{}\tinterpreter\t{outcome:?}\t{}\t{}",c.index,c.hash,c.name,c.bytes.iter().map(|b|format!("{b:02x}")).collect::<String>()).unwrap();}
             tally.add(&outcome);
@@ -327,8 +371,13 @@ fn run(root:&Path,out_dir:&Path)->Result<String,String>{
                 let Some(interp)=interp else{continue};
                 let mut readback:Vec<u32>=c.ram.iter().chain(&c.fin_ram).map(|e|e.0).collect();readback.sort();readback.dedup();
                 let actual=decode_actual(&mut words,readback.len()).ok_or("short generated output")?;
-                let o=judge(c,&actual,&readback);
-                if &o!=interp{disagreements+=1;writeln!(failures,"{name}\t{}\t{}\tdisagree\tinterpreter={interp:?} generated={o:?}\t{}\t",c.index,c.hash,c.name).unwrap();}
+                // Both backends are compared on the state the PIL program left,
+                // before any exception delivery (shared Rust, not PIL output).
+                let (pil,outcome)=interp;
+                let o=if &actual==pil{outcome.clone()}else{
+                    disagreements+=1;writeln!(failures,"{name}\t{}\t{}\tdisagree\tinterpreter={pil:?} generated={actual:?}\t{}\t",c.index,c.hash,c.name).unwrap();
+                    Outcome::Fail("generated Rust differs from the interpreter".into())
+                };
                 row.3.add(&o);
             }
             let _=fs::remove_file(&outp);let _=fs::remove_file(&inp);
@@ -388,7 +437,7 @@ fn sst80386_moo_reader_and_judge_on_a_synthetic_case(){
     assert_eq!(cases.len(),2);assert_eq!(cases[0].bytes,[4,1,0xf4]);assert_eq!(cases[0].fin[2],Some(0x80));
     let mut ram=Ram::new(RAM_SIZE);
     let mut outcomes=Vec::new();
-    for c in &cases{let mut p=prepare(c,&mut ram);let a=interpret(&mut p,&mut ram).unwrap();outcomes.push(judge(c,&a,&p.readback));clear(c,&mut ram);}
+    for c in &cases{let mut p=prepare(c,&mut ram);let (_,a)=interpret(&mut p,&mut ram).unwrap();outcomes.push(judge(c,&a,&p.readback));clear(c,&mut ram);}
     // 7F+1=80: OF SF AF set, ZF CF clear, PF clear (80h has one bit).
     assert_eq!(outcomes,[Outcome::Pass,Outcome::Fail("eflags AF".into())]);
     assert!(repeated_prefixes(&[0x26,0x2e,0x01,0xc0]));assert!(!repeated_prefixes(&[0x66,0x67,0x26,0x01]));

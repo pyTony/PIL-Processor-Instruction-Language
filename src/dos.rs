@@ -302,7 +302,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     let mut system=[(0,0);SYSTEM_RANGES];
     system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
     system[1]=(vectors::ENTRIES,vectors::END);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -330,6 +330,18 @@ fn opcode_key(bytes:&[u8])->String{
     match bytes.get(at){Some(0x0f)=>format!("opcode 0f {}",bytes.get(at+1).map(|x|format!("{x:02x}")).unwrap_or_else(||"??".into())),Some(b)=>format!("opcode {b:02x}"),None=>"fetch/truncated encoding".into()}
 }
 
+/// Delivers an architectural fault to the program's real-mode handler, with
+/// the faulting instruction's address as the return address. `None` keeps
+/// the old stop: a model fault, a vector Dine still answers (no handler is
+/// installed), or a mode where delivery is not modelled yet.
+fn exception(p:&mut Loaded,e:&super::flow::ExecError,lazy:&mut super::LazyFlags)->Option<Result<ExceptionSite,String>>{
+    let vector=crate::interrupt::vector(e)?;
+    if !p.image.real_mode||p.cpu.eflags&0x20000!=0||vectors::answered(p,vector)!=Ok(false){return None;}
+    lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+    let site=ExceptionSite::capture(p,vector,&format!("{e:?}"));
+    let eip=p.cpu.eip;
+    Some(vectors::deliver_fault(p,vector,eip).map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}))
+}
 pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
     let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
     let mut probe=run_with_output(p,budget,&mut output)?;
@@ -471,7 +483,11 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Ok(None)|Err(_)=>{},
         }
         let decoded=match {let _span=crate::profile::span("decode_cache");p.cache.fetch(&p.image,&p.ram,p.cpu.eip)}{
-            Ok(d)=>d,Err(GuestError::Execution(e))=>break Stop::Fault(format!("{e:?}")),
+            Ok(d)=>d,Err(GuestError::Execution(e))=>match exception(&mut p,&e,&mut lazy){
+                Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
+                Some(Err(message))=>break Stop::Fault(message),
+                None=>break Stop::Fault(format!("{e:?}")),
+            },
             Err(GuestError::Decode(detail))=>{
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
                 if !detail.starts_with("fetch outside loaded image") && vectors::answered(&p,6)==Ok(false) {
@@ -508,9 +524,33 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 completed+=1;execution_steps+=1;*instructions.entry("HLT (idle tick)".into()).or_insert(0)+=1;continue;
             },
             Operation::Halt=>break Stop::Monitor("HLT with IF=0 never resumes; monitor stop is not DOS process termination".into()),
+            Operation::Interrupt{vector,overflow,next}=>{
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                let next=*next&0xffff;let vector=*vector;
+                let label=decoded.label.split_whitespace().next().unwrap_or("INT").to_string();
+                if *overflow&&p.cpu.eflags&0x800==0{
+                    // INTO with OF=0 does nothing.
+                    p.cpu.eip=next;p.image.retired();completed+=1;execution_steps+=1;
+                    *instructions.entry(label).or_insert(0)+=1;continue;
+                }
+                match vectors::answered(&p,vector){
+                    Ok(false)=>match vectors::deliver_fault(&mut p,vector,next){
+                        Ok(())=>{completed+=1;execution_steps+=1;*instructions.entry(label).or_insert(0)+=1;continue;},
+                        Err(message)=>break Stop::Fault(message),
+                    },
+                    Ok(true)=>break Stop::Service(format!("{} with no program handler for INT {vector:02x}h",decoded.label)),
+                    Err(message)=>break Stop::Service(message),
+                }
+            },
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),
         };
-        if let Err(e)=result{break Stop::Fault(format!("{e:?}"));}
+        if let Err(e)=result{
+            match exception(&mut p,&e,&mut lazy){
+                Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
+                Some(Err(message))=>break Stop::Fault(message),
+                None=>break Stop::Fault(format!("{e:?}")),
+            }
+        }
         execution_steps+=1;pil_steps+=1;
         let repeated=matches!(&decoded.operation,Operation::Pil{program,..}if program.partial);
         let partial=repeated&&p.cpu.eip==old_ip;

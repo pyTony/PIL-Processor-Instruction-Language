@@ -1,3 +1,48 @@
+# Real-mode exception delivery — 7 November 2026
+
+First increment of the protected-mode plan
+(docs/development/PROTECTED_MODE_PLAN.md). Faults that the 386 delivers
+through the interrupt table in real mode now go to the program's handler
+instead of ending the run. A new shared module, `src/interrupt.rs`, reads the
+vector through IDTR (reset value base 0, limit 03FFh, now the initial state
+of every image), pushes FLAGS, CS and IP through SS:SP, clears IF and TF, and
+enters the handler. A frame word that would straddle the end of the stack
+segment (SP odd and below 6) is reported as the shutdown the 386 performs;
+SP 2 and 4 now wrap as on hardware (the old check refused them). Dine's own
+INT n delivery uses the same frame code.
+
+- #DE: DIV, IDIV and AAM use a new PIL statement, `raise_unless PREDICATE 0`,
+  which faults with `ExecError::Exception{eip,vector}` and commits nothing
+  (before, these stopped with InvalidContext). Both backends report it; the
+  native trace fault code is 12. After delivery CF, PF, AF, ZF, SF and OF are
+  marked undefined, as Intel lists them for these instructions.
+- #GP and #SS from segment-limit checks go to vectors 0Dh and 0Ch; #UD and
+  #NM keep their existing delivery. The return address is the faulting
+  instruction, so the handler's IRET restarts it.
+- INT n (CD), INT3 (CC) and INTO (CE) decode as an interrupt operation that
+  the runner delivers with the next instruction as return address; INTO
+  does nothing with OF=0. In DOS mode CD stays with Dine as before.
+- Dine still stops when no program handler is installed (the vector is 0 or
+  Dine's own entry), as before. ROM mode (`--run-rom`) has no Dine behind its
+  vectors, so 0000:0000 is an ordinary handler address there.
+
+Not modelled yet: #DB/TF single-step traps, #DF (a failing delivery stops the
+run), protected-mode and V86 delivery.
+
+SingleStepTests/80386 (revision 459d49fb, local Linux run, interpreter on all
+1,758,700 cases, generated Rust on the first 8 PIL-decoded cases per file with
+no disagreement): pass 1,188,711 -> 1,351,553. No expected-exception case is
+left undelivered (run 01: 122,682). INT3, INT n and INTO pass all 3,100 cases.
+Remaining exception failures are old families now named by vector: 4,705
+16-bit stack wraps (#SS where the 386 wraps), 144 IRETD/RETFD where the 386
+raises #GP and PIL #SS, 9 byte IDIVs where the 386EX returns 80h without
+#DE, 7 far pointer loads. Report: project file sst80386-run-02.md.
+
+test386 (ROM SHA256 a53356b0...ed3c8b, local) still passes POST 00h-06h and
+stops at 08h on `MOV CR0` with PE and PG; its two `MOV CS` #UD cases are
+delivered. Local Linux: 559 Rust tests pass (15 new: 8 in tests/unit/interrupt.rs,
+7 DOS/ROM delivery tests).
+
 # IRQ0 through a program's INT 08h handler — 7 November 2026
 
 TOPBENCH 0.38a stopped with "timer interrupt (IRQ0) through a program's

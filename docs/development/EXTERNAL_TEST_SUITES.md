@@ -38,6 +38,14 @@ The script clones the suite at the pinned revision into
 plain `cargo test`. The report goes to `target/external-tests/sst80386/report/`
 (`report.md` per file, `failures.tsv` per case with hash and bytes).
 
+Where a network drops long git transfers (git reports `curl 56 Recv failure`
+partway through the clone), add `--download`: the script then fetches only the
+needed files from raw.githubusercontent.com at the pinned revision, one at a
+time, resumes a cut transfer with an HTTP range request, and checks every file
+against its git blob SHA-1 in `tools/sst80386_manifest.txt` (941 MOO files plus
+LICENSE, README.md and revocation_list.txt, taken from `git ls-tree` at
+459d49fb). `--fetch-only` stops after fetching.
+
 Outcomes are kept apart, and only `Pass` is a pass:
 - not decoded (family from the decoder message; repeated prefixes separately),
 - expected exception where PIL faulted or rejected the opcode (no delivery yet),
@@ -59,6 +67,18 @@ First run (local cloud session, revision 459d49fb, 941 files, 1,758,700 cases):
 decoded; 93,329 undefined-flag-only; 6,023 undefined SIB; 43 HLT fetch faults;
 100 monitor port operations; 1 revoked; 14,524 failures. Generated Rust ran
 6,736 sampled cases with no outcome disagreement. No stray writes.
+
+Run 02 (7 November 2026, local cloud session, same revision): exceptions are
+delivered through `src/interrupt.rs` (real-mode frame through IDTR), including
+#UD where the decoder rejects an opcode the hardware also rejected, and INT n,
+INT3 and INTO. The generated backend is compared with the interpreter on the
+state the PIL program left, before delivery. Frame FLAGS bits CF, PF, AF, ZF,
+SF and OF after #DE count as undefined flags. Result: 1,351,553 pass; 291,831
+not decoded; 94,258 undefined-flag-only; 6,263 undefined SIB; 43 HLT fetch
+faults; 1 revoked; 14,751 failures (4,705 16-bit stack wraps now reported as
+#SS, 144 IRETD/RETFD #SS where the 386 raises #GP, 9 byte IDIVs where the
+386EX returns 80h without #DE). No expected exception is left undelivered.
+No disagreement in 6,864 sampled generated-Rust cases.
 
 ## Original plan: SingleStepTests CPU adapter
 

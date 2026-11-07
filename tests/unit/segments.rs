@@ -90,7 +90,7 @@ fn descriptor_tables_load_both_widths_and_preserve_cpu_and_ram(){
         let mut expected=cpu.clone();expected.eip+=bytes.len() as u32;let memory=ram.clone();
         step(&mut image,&mut ram,&mut cpu).unwrap();
         assert_eq!(image.tables[table as usize],(0x1234,if wide{0xab345678}else{0x345678}));
-        assert_eq!(image.tables[1-table as usize],(0,0));assert_eq!(cpu,expected);assert_eq!(ram,memory);
+        assert_eq!(image.tables[1-table as usize],if table==0{crate::interrupt::RESET_IDTR}else{(0,0)});assert_eq!(cpu,expected);assert_eq!(ram,memory);
     }}
 }
 #[test]

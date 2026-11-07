@@ -422,6 +422,15 @@ CPU/RAM/segment state. `require PREDICATE` rejects a false bv1 condition with
 InvalidContext;POP uses it to reject the documented processor-family-specific
 16-bit SP wrap case for ESP-based32-bit destination addressing.
 
+`raise_unless PREDICATE VECTOR` is the architectural counterpart: a false bv1
+predicate stops the instruction with `ExecError::Exception{eip,vector}` and
+commits nothing, like every other fault. Only vector 0 (#DE) is accepted; DIV,
+IDIV and AAM use it for a zero divisor or a quotient that does not fit. The
+runner, not PIL, then delivers the exception (`src/interrupt.rs`): in real
+mode through the IDTR table with FLAGS, CS and the faulting IP pushed, so the
+handler's IRET restarts the instruction. #GP and #SS faults from segment
+limit checks are delivered the same way (vectors 0Dh and 0Ch).
+
 `read_msw OUT` reads the explicit bv16 machine-status profile. MSW is retained
 in Image/SegmentState and traces;PE is derived from the normalized real_mode
 state. The monitor/DOS profile initializes the other bits to0010h (ET=1).

@@ -8,7 +8,7 @@ trunc al ax 8
 read base src 8
 zero base_zero base
 not base_ok base_zero
-require base_ok
+raise_unless base_ok 0
 div q al base
 rem r al base
 zext q_wide q 16
