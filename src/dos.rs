@@ -49,6 +49,8 @@ pub(crate) mod ports;
 mod rtc;
 #[path="dos_vga.rs"]
 mod vga;
+#[path="dos_planar.rs"]
+mod planar;
 #[path="dos_serial.rs"]
 mod serial;
 #[path="dos_break.rs"]
@@ -384,6 +386,20 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         if let Ok(encoded)=p.image.fetch_signature(&p.ram,p.cpu.eip,2){if encoded[0]==0xcd{
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             let vector=encoded[1];
+            if vector==8&&vectors::at_timer_entry(&p){
+                match services::bios_timer(&mut p){
+                    Ok(())=>{execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 08h (timer tick)".into()).or_insert(0)+=1;continue;},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+            // A software INT 08h through the BIOS vector enters its entry with
+            // a frame, as any interrupt does, so the handler can IRET.
+            if vector==8&&vectors::answered(&p,8)==Ok(true){
+                match vectors::deliver(&mut p,8){
+                    Ok(())=>{execution_steps+=1;completed+=1;*instructions.entry("INT 08h to the BIOS handler".into()).or_insert(0)+=1;continue;},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
             match vectors::answered(&p,vector){
                 Ok(true)=>{},
                 Ok(false) if vectors::at_entry(&p)=>{},
@@ -499,8 +515,12 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
                 // With IF=1 the timer interrupt ends HLT: one tick passes, then
                 // execution continues after it. Programs use this to idle.
-                p.timer_ticks=(p.timer_ticks+1)%TICKS_PER_DAY;
+                // A program's own INT 08h handler takes that tick under the host clock.
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                let program_irq=!p.rom_mode&&p.clock_offset.is_some()&&vectors::answered(&p,8)==Ok(false);
+                if !program_irq{p.timer_ticks=(p.timer_ticks+1)%TICKS_PER_DAY;}
                 p.cpu.eip=(p.cpu.eip+decoded.length)&0xffff;p.image.retired();
+                if program_irq{if let Err(message)=services::halt_tick(&mut p){break Stop::Service(message);}}
                 completed+=1;execution_steps+=1;*instructions.entry("HLT (idle tick)".into()).or_insert(0)+=1;continue;
             },
             Operation::Halt=>break Stop::Monitor("HLT with IF=0 never resumes; monitor stop is not DOS process termination".into()),
@@ -551,7 +571,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; 80387 unavailable (no coprocessor installed); PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; CGA-class INT10 (no EGA/VGA AH12, no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; 80387 unavailable (no coprocessor installed); PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; colour VGA INT10 (AH10 palette/DAC, AX1130 8x8 font, AH12 BL10, AH1A; 16-colour planar modes 0D/0E/10/12; no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{

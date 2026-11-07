@@ -43,6 +43,44 @@ stops at 08h on `MOV CR0` with PE and PG; its two `MOV CS` #UD cases are
 delivered. Local Linux: 559 Rust tests pass (15 new: 8 in tests/unit/interrupt.rs,
 7 DOS/ROM delivery tests).
 
+# IRQ0 through a program's INT 08h handler — 7 November 2026
+
+TOPBENCH 0.38a stopped with "timer interrupt (IRQ0) through a program's
+INT 08h handler is not modelled". Under the host clock, IRQ0 is now a
+real-mode interrupt to the program's INT 08h handler, gated by IF, the
+interrupt shadows, the PIC mask at port 21h and the in-service bit until
+EOI. Chaining to the saved BIOS vector runs the BIOS tick (+1 at 0040:006Ch,
+midnight wrap with 0040:0070h), INT 1Ch, EOI and IRET. Software INT 08h
+through the BIOS vector does the same. Edge sampling moved to a recorded
+edge total, so a new edge sets IRR once. Six new tests cover the frame,
+EOI, masking, IF, chaining by CALL FAR and JMP FAR with an INT 1Ch hook,
+the day wrap, a read-only tick count, delivery faults and HLT. Local
+Linux: 560 Rust tests pass, one ignored. Details in docs/DOS_PROBE.md.
+
+# EGA/VGA planar graphics and a VGA BIOS identity — 7 November 2026
+
+Goal 1 step 5, second part. Tony chose to identify the video BIOS as a
+colour VGA. `src/vga_planar.rs` adds four 64 KiB planes as the one
+memory-mapped device in `Ram`. They sit behind A0000h only while a planar
+mode is set; both backends embed the same code.
+- Hardware: latches, write modes 0-3, rotate, function, bit mask, map mask,
+  and read modes 0/1.
+- `src/dos_planar.rs`: modes 0Dh/0Eh/10h/12h, the sequencer, graphics
+  controller and attribute ports, AH=0Ch/0Dh, AH=10h palette/DAC, AX=1130h,
+  AH=12h BL=10h and AH=1Ah.
+- Graphics text in 8/14/16-line cells.
+- Session `graphics_planar` frames, drawn by the Tk terminal.
+- `MANDVGA.COM`: a mode 12h Mandelbrot drawn through write mode 2 and the
+  bit mask.
+
+Local Linux: 554 Rust tests (10 new, 2 updated for the VGA identity) and 41
+GUI tests pass. `tools/verify_mandel_vga.py` (in CI) matches 296,960 pixels
+across the four planes. The Tk terminal was seen drawing mode 12h under
+Xvfb. FD14LITE.img probe at 10,000 steps: imports 151/156 and exits 53 are
+unchanged. IDLEDPMS gets past "EGA, VGA or newer needed", and VMODE reports
+Font16. Not done: chain-4/odd-even/mode X, VGA text-mode attribute
+rendering, 8x14/8x16 ROM fonts, font loading, SVGA/VBE.
+
 # Text in graphics modes and a CGA Mandelbrot — 7 November 2026
 
 Goal 1 step 5. Before this change, DOS and BIOS text in CGA modes 4/6 wrote

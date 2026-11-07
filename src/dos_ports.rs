@@ -37,6 +37,9 @@ pub struct Speaker{
     access:u8,count:u16,high_next:bool,
     counter2:pit::Counter2,
     pub(super) pic:pic::Pair,
+    /// The channel 0 IRQ edge total (BIOS ticks since midnight) last seen;
+    /// a different total is a new edge that sets IRR bit 0.
+    pub(super) irq_edges:Option<u32>,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
     pit:pit::Counter0,
@@ -82,6 +85,12 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         _=>return Ok(None),
     };
     let input=first&2==0;
+    if matches!(port,0x3c0|0x3c1|0x3c4|0x3c5|0x3ce|0x3cf){
+        let word=first&1!=0;
+        let value=super::planar::io(p,port,input,p.cpu.regs[0]as u16,word)?.unwrap();
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
+        return Ok(Some(length));
+    }
     if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3c6..=0x3c9|0x3d9){
         let word=first&1!=0;
         if word&&!matches!(port,0x3b4|0x3d4){return Err("VGA word access must start at CRTC index port 3B4h or 3D4h".into());}
@@ -131,7 +140,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             // prevents the BIOS timer shortcut from delivering it.
             if port==0x20&&p.clock_offset.is_some(){
                 let now=services::sampled_ticks(p);
-                if now!=p.timer_ticks{p.speaker.pic.raise_timer();}
+                services::timer_edge(p,now);
             }
             let value=p.speaker.pic.read(port);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
         }else{p.speaker.pic.write(port,p.cpu.regs[0]as u8)?;}
@@ -174,6 +183,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
             0x3da|0x3ba if !p.vga.status_active(port)=>0xff,
             0x3da|0x3ba=>{
+                p.vga.reset_attribute_flip_flop();
                 s.retrace=s.retrace.wrapping_add(1);
                 let vblank=(s.retrace&0x3f)>=56;
                 let hblank=vblank||(s.retrace&1)!=0;

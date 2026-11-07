@@ -4,7 +4,8 @@
 Runs `pil --dos-session PROGRAM`, draws the B800 text page it reports
 and sends key presses as BIOS keystrokes. Execution, DOS services and the
 screen contents all come from the engine; this file only displays them.
-CGA modes 04h-06h and VGA mode 13h are displayed at 4:3, like a CRT;
+CGA modes 04h-06h, EGA/VGA 16-colour modes 0Dh/0Eh/10h/12h and VGA mode
+13h are displayed at 4:3, like a CRT;
 text mode uses the host font.
 
     python tools/dos_terminal.py images/FD14LITE.img::COMMAND.COM
@@ -51,6 +52,12 @@ from pil_debugger import find_engine  # noqa: E402
 
 MAX_REPLY = 8 * 1024 * 1024  # VGA frame plus escaped DOS and serial output
 SLICE = 20000
+# A tick keeps running slices for up to this many seconds before it redraws,
+# so that a busy program is not held up by drawing a frame every slice.
+FRAME = 0.05
+# Steps in each further slice of a tick, once the first has shown the
+# program is still busy.
+BURST = 100000
 # Slices a program runs after a key before it sees a shift key change.
 SETTLE = 10
 # CGA palette for the 16 text attributes.
@@ -192,18 +199,36 @@ def cga_rgb(frame, mode, color):
     return b''.join(lut[b] for offset in rows for b in data[offset:offset + 80])
 
 
-def graphics_photo(tk, rgb, width):
+def planar_rgb(planes, width, height, colors):
+    """Combine four EGA/VGA bit planes (plane 0 first, width/8 bytes a line)
+    into RGB, through the 16 colours the attribute palette and DAC give."""
+    data = bytes.fromhex(planes)
+    size = width // 8 * height
+    palette = bytes.fromhex(colors)
+    if width not in (320, 640) or len(data) != 4 * size or len(palette) != 48:
+        raise ValueError('invalid planar frame or palette')
+    # Each plane byte spreads into eight pixel bytes holding that plane's bit.
+    spread = [[int.from_bytes(bytes((b >> (7 - i) & 1) << n for i in range(8)), 'big') for b in range(256)] for n in range(4)]
+    planes4 = [data[n * size:(n + 1) * size] for n in range(4)]
+    indices = b''.join((spread[0][a] | spread[1][b] | spread[2][c] | spread[3][d]).to_bytes(8, 'big')
+                       for a, b, c, d in zip(*planes4))
+    rgb = [palette[i * 3:i * 3 + 3] for i in range(16)]
+    return b''.join(rgb[i] for i in indices)
+
+
+def graphics_photo(tk, rgb, width, height=200):
     """Show 200-line CGA/VGA graphics at 4:3 using nearest-neighbour pixels.
 
     320x200 pixels are 5:6 and 640x200 pixels are 5:12 on a 4:3
     display. Expand each source scanline to two or three host scanlines,
-    then double the width of 320-pixel modes. The guest frame stays intact.
+    then double the width of 320-pixel modes. 350 and 480 lines are scaled
+    to 480 the same way. The guest frame stays intact.
     """
-    if width not in (320, 640) or len(rgb) != width * 200 * 3:
+    if width not in (320, 640) or height not in (200, 350, 480) or len(rgb) != width * height * 3:
         raise ValueError('invalid graphics frame dimensions')
     row_bytes = width * 3
-    rows = [rgb[y * row_bytes:(y + 1) * row_bytes] for y in range(200)]
-    scaled = b''.join(rows[y * 200 // 480] for y in range(480))
+    rows = [rgb[y * row_bytes:(y + 1) * row_bytes] for y in range(height)]
+    scaled = b''.join(rows[y * height // 480] for y in range(480))
     picture = tk.PhotoImage(data=f'P6 {width} 480 255\n'.encode('ascii') + scaled, format='PPM')
     return picture.zoom(2, 1) if width == 320 else picture
 
@@ -598,16 +623,26 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         speaker.observe(reply)
         pixels = reply.get('graphics13')
         cga = reply.get('graphics_cga')
-        if pixels is not None or cga is not None:
+        planes = reply.get('graphics_planar')
+        if pixels is not None or cga is not None or planes is not None:
+            height = 200
             if pixels is not None:
                 descriptor = ('vga', pixels, reply['palette'])
                 width = 320
+            elif planes is not None:
+                descriptor = ('planar', planes, reply['planar_rgb'])
+                width, height = reply['planar_width'], reply['planar_height']
             else:
                 descriptor = ('cga', cga, reply['cga_mode'], reply['cga_color'])
                 width = 640 if reply['cga_mode'] == 6 else 320
             if frame[0] != descriptor:
-                rgb = graphics_rgb(pixels, reply['palette']) if pixels is not None else cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
-                picture = graphics_photo(tk, rgb, width)
+                if pixels is not None:
+                    rgb = graphics_rgb(pixels, reply['palette'])
+                elif planes is not None:
+                    rgb = planar_rgb(planes, width, height, reply['planar_rgb'])
+                else:
+                    rgb = cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
+                picture = graphics_photo(tk, rgb, width, height)
                 graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
@@ -757,6 +792,10 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                         reply = session.send('com1 ' + incoming[at:at + 100].hex())
             if reply['status'] in ('running', 'waiting_input'):
                 reply = session.send(f'run {SLICE}')
+                until = time.monotonic() + FRAME
+                while reply['status'] == 'running' and not keys and time.monotonic() < until:
+                    speaker.observe(reply)
+                    reply = session.send(f'run {BURST}')
             if com1 and session.com1_out:
                 com1.write(session.com1_out)
                 session.com1_out = b''
@@ -764,7 +803,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
             return
-        root.after(15 if session.last['status'] == 'running' else 40, tick)
+        root.after(1 if session.last['status'] == 'running' else 40, tick)
 
     def close():
         if com1 and hasattr(com1, 'close'):

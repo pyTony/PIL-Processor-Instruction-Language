@@ -88,11 +88,127 @@ fn timer_ticks_reach_the_bda_only_with_the_host_clock_if_and_bios_handlers(){
     let delta=got.abs_diff(now);assert!(delta.min(super::super::TICKS_PER_DAY-delta)<=2,"{got} {now}");assert_eq!(r.loaded.cpu.regs[0]&0xffff,got&0xffff);
     // The tick went back from the old count, so midnight passed.
     assert_eq!(r.loaded.ram.load(0x470,MemWidth::Byte).unwrap(),1);
-    // A custom INT 08h handler remains outside this BIOS shortcut.
-    for n in [0x08u32]{
-        let mut p=fresh(Some(0),0x202);p.ram.store(n*4,MemWidth::Dword,u32::from(PSP)<<16|0x108).unwrap();
-        let r=run(p,10).unwrap();assert!(matches!(&r.stop,Stop::Service(m) if m.contains("IRQ0")),"{:?}",r.stop);
+    // A program's INT 08h handler takes IRQ0 instead of this BIOS shortcut:
+    // here the vector points at CLI; HLT, which halts inside the handler.
+    let mut p=fresh(Some(0),0x202);p.ram.store(0x08*4,MemWidth::Dword,u32::from(PSP)<<16|0x108).unwrap();
+    let r=run(p,10).unwrap();assert!(matches!(&r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(0x46c,MemWidth::Dword).unwrap(),0x1111,"no chaining, so no BIOS tick");
+    assert_eq!(r.loaded.cpu.eip,0x109);assert_eq!(r.loaded.speaker.pic.read(0x20)&1,0,"acknowledged, IRR clear");
+}
+/// A COM program whose main code is CLI; HLT, with the old INT 08h vector
+/// saved at 0200h, a tick counter at 0210h and the handler at 0130h.
+fn irq0_program(handler:&[u8])->Loaded{
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,handler)]);
+    let mut p=load(&code,"irq0.com").unwrap();p.cpu.eflags=0x202;
+    let ss=u32::from(PSP)*16;
+    p.ram.store(ss+0x200,MemWidth::Dword,entry(8)).unwrap();p.ram.store(ss+0x210,MemWidth::Byte,0).unwrap();
+    p.ram.store(0x08*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    p.ram.store(0x46c,MemWidth::Dword,0x1111).unwrap();
+    p
+}
+// INC BYTE [0210h]; MOV AL,20h; OUT 20h,AL; IRET
+const OWN_EOI:&[u8]=&[0xfe,0x06,0x10,0x02,0xb0,0x20,0xe6,0x20,0xcf];
+#[test]
+fn irq0_enters_a_program_int08_handler_with_an_exact_frame_and_its_eoi_ends_service(){
+    let mut p=irq0_program(OWN_EOI);p.cpu.eflags=0x2d7;
+    let(ip,sp,flags,cs)=(p.cpu.eip,p.cpu.regs[4]&0xffff,p.cpu.eflags,p.selectors[SegmentRegister::Cs.index()]);
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    let ss=u32::from(PSP)*16;let word=|p:&Loaded,o:u32|p.ram.load(ss+((sp-o)&0xffff),MemWidth::Word).unwrap();
+    assert_eq!((word(&p,2),word(&p,4),word(&p,6)),(flags&0xffff,u32::from(cs),ip));
+    assert_eq!((p.cpu.eip,p.cpu.regs[4]&0xffff,p.cpu.eflags&0x300),(0x130,sp-6,0));
+    // In service until the EOI; the BIOS count is the handler's business.
+    p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,1);p.speaker.pic.write(0x20,0x0a).unwrap();
+    assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),0x1111);assert_eq!(p.timer_ticks,0);
+    let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    let mut p=r.loaded;assert_eq!(p.ram.load(ss+0x210,MemWidth::Byte).unwrap(),1);
+    assert_eq!(p.cpu.regs[4]&0xffff,sp);assert_eq!(p.cpu.eflags&0xdd5,flags&0xdd5,"IRET restored them; only the final CLI changed IF");
+    p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,0);
+}
+#[test]
+fn irq0_waits_while_masked_in_service_or_with_if_clear(){
+    // A handler without EOI: the next edge stays pending in IRR.
+    let mut p=irq0_program(&[0xfe,0x06,0x10,0x02,0xcf]);
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x130);
+    let r=run(p,2).unwrap();let mut p=r.loaded;assert_eq!(p.cpu.eip,0x100);
+    let before=(p.cpu.clone(),p.ram.clone());
+    super::super::services::timer_interrupt_at(&mut p,43).unwrap();
+    assert_eq!((p.cpu.clone(),p.ram.clone()),before);assert_eq!(p.speaker.pic.read(0x20)&1,1,"IRR pending");
+    // EOI, then the pending request is delivered at the next boundary.
+    p.speaker.pic.write(0x20,0x20).unwrap();super::super::services::timer_interrupt_at(&mut p,43).unwrap();assert_eq!(p.cpu.eip,0x130);
+    // Masked at the PIC, or IF=0: nothing is delivered, the request waits.
+    for(mask,flags)in [(1,0x202),(0,0x002)]{
+        let mut p=irq0_program(OWN_EOI);p.cpu.eflags=flags;p.speaker.pic.write(0x21,mask).unwrap();
+        let before=(p.cpu.clone(),p.ram.clone());
+        super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+        assert_eq!((p.cpu.clone(),p.ram.clone()),before);assert_eq!(p.speaker.pic.read(0x20)&1,1);
+        p.speaker.pic.write(0x21,0).unwrap();p.cpu.eflags=0x202;
+        super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x130,"the same edge, once allowed");
     }
+}
+#[test]
+fn a_chained_bios_handler_counts_one_tick_runs_int1c_and_sends_the_eoi(){
+    // PUSHF; CALL FAR CS:[0200h]; INC BYTE [0210h]; IRET, and the
+    // tail-chaining form INC BYTE [0210h]; JMP FAR CS:[0200h].
+    let call:&[u8]=&[0x9c,0x2e,0xff,0x1e,0x00,0x02,0xfe,0x06,0x10,0x02,0xcf];
+    let jump:&[u8]=&[0xfe,0x06,0x10,0x02,0x2e,0xff,0x2e,0x00,0x02];
+    for handler in [call,jump]{
+        let mut p=irq0_program(handler);
+        // An INT 1Ch hook at 0140h: INC BYTE [0211h]; IRET.
+        let ss=u32::from(PSP)*16;
+        for(k,b)in [0xfeu32,0x06,0x11,0x02,0xcf].into_iter().enumerate(){p.ram.store(ss+0x140+k as u32,MemWidth::Byte,b).unwrap();}
+        p.ram.store(ss+0x211,MemWidth::Byte,0).unwrap();p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();
+        p.cpu.regs[0]=0xdeadbeef;let(sp,flags)=(p.cpu.regs[4],p.cpu.eflags);
+        super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+        let r=run(p,60).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+        let p=&r.loaded;
+        assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),0x1112,"one tick, not the host edge total");
+        assert_eq!(p.timer_ticks,0x1112);assert_eq!(p.ram.load(0x470,MemWidth::Byte).unwrap(),0);
+        assert_eq!((p.ram.load(ss+0x210,MemWidth::Byte).unwrap(),p.ram.load(ss+0x211,MemWidth::Byte).unwrap()),(1,1));
+        assert_eq!(r.instructions.get("BIOS INT 08h (timer tick)"),Some(&1));
+        assert_eq!((p.cpu.regs[0],p.cpu.regs[4],p.cpu.eflags&0xdd5),(0xdeadbeef,sp,flags&0xdd5));
+        let mut pic=p.speaker.pic.clone();pic.write(0x20,0x0b).unwrap();assert_eq!(pic.read(0x20)&1,0,"BIOS EOI");
+    }
+}
+#[test]
+fn the_bios_tick_wraps_at_a_day_and_a_software_int08_runs_it_with_a_frame(){
+    // INT 08h through the BIOS vector, then CLI; HLT.
+    let mut p=load(&[0xcd,0x08,0xfa,0xf4],"soft.com").unwrap();p.cpu.eflags=0x202;
+    p.ram.store(0x46c,MemWidth::Dword,0x18_00af).unwrap();let sp=p.cpu.regs[4];
+    let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(0x46c,MemWidth::Dword).unwrap(),0);assert_eq!(r.loaded.ram.load(0x470,MemWidth::Byte).unwrap(),1);
+    assert_eq!((r.loaded.cpu.eip,r.loaded.cpu.regs[4]),(0x103,sp));
+    assert_eq!(r.instructions.get("INT 08h to the BIOS handler"),Some(&1));
+    // A read-only tick count stops before anything changes.
+    let mut p=irq0_program(&[0x2e,0xff,0x2e,0x00,0x02]);p.ram.protect(0x46c,4).unwrap();
+    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    let r=run(p,1).unwrap();let p=r.loaded;let(cpu,ram)=(p.cpu.clone(),p.ram.clone());
+    let r=run(p,5).unwrap();assert!(matches!(&r.stop,Stop::Service(m) if m.contains("BDA")),"{:?}",r.stop);
+    assert_eq!((r.loaded.cpu,r.loaded.ram),(cpu,ram));
+}
+#[test]
+fn irq0_delivery_faults_change_nothing(){
+    // A handler outside the program, an odd SP below 6 (shutdown), and protected mode.
+    for case in 0..3{
+        let mut p=irq0_program(OWN_EOI);
+        match case{0=>p.ram.store(0x08*4,MemWidth::Dword,0xf000_0000).unwrap(),1=>p.cpu.regs[4]=5,_=>p.image.real_mode=false}
+        let(cpu,ram,image)=(p.cpu.clone(),p.ram.clone(),p.image.clone());
+        assert!(super::super::services::timer_interrupt_at(&mut p,42).is_err());
+        assert_eq!((p.cpu,p.ram,p.image),(cpu,ram,image));
+        p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,0,"not acknowledged");
+    }
+}
+#[test]
+fn hlt_with_a_program_int08_handler_and_the_host_clock_ends_through_the_handler(){
+    // STI; HLT; CLI; HLT.
+    let code=code_at(&[(0,&[0xfb,0xf4,0xfa,0xf4]),(0x30,OWN_EOI)]);
+    let mut p=load(&code,"idle.com").unwrap();p.clock_offset=Some(0);p.cpu.eflags=0x002;
+    p.ram.store(0x08*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    let ss=u32::from(PSP)*16;p.ram.store(ss+0x210,MemWidth::Byte,0).unwrap();
+    // Take the host edge first, so only HLT can raise the next one.
+    let now=super::super::services::sampled_ticks(&mut p);p.speaker.irq_edges=Some(now);p.timer_ticks=7;
+    let r=run(p,8).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert!(r.loaded.ram.load(ss+0x210,MemWidth::Byte).unwrap()>=1);assert_eq!(r.loaded.cpu.eip,0x103);
+    assert_eq!(r.loaded.timer_ticks,7,"the handler, not Dine, keeps the count");
 }
 #[test]
 fn timer_irq_respects_pic_mask_and_hook_remains_in_service_until_eoi(){

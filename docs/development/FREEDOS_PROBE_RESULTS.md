@@ -383,3 +383,18 @@ Changed first stops (all others identical):
 4DOS 8.00 itself (4dos800.zip, SHA256 732915f4a9b3f32c00f17854649c85f502925846f309cff10d180190161a4d5f)
 is not on the image; it was run from a host folder in `--dos-session` and
 reaches its prompt, DIR, TIMER and batch files (see STATUS.md).
+
+## VGA BIOS identity and planar modes — 7 November 2026
+
+Local Linux release build in a cloud session, `--dos-probe` with the default
+10,000-step budget on FD14LITE.img (SHA256
+f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36), compared
+with the same run of dev 1a82f59. Summary unchanged: imports 151/156, 53
+exits, one first missing encoding (0F 01). Differences:
+
+- IDLEDPMS.COM (FDAPM) used to exit with "EGA, VGA or newer needed." It now
+  passes its display check and prints its usage text.
+- VMODE.COM (V8POWER) now reports `CO80 + Font16` instead of `CO80`,
+  because the BIOS data area holds the VGA 16-line character height.
+- DISKCOPY.EXE, REPLACE.EXE and SWSUBST.EXE stop at a slightly different
+  point within the same step budget (3-12 more retired instructions).

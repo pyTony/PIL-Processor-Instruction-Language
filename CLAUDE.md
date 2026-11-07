@@ -8,6 +8,17 @@ decoded as Operation::Interrupt. No handler installed: Dine stops as before.
 SST80386 local: pass 1,188,711 -> 1,351,553, no undelivered exception cases.
 test386 still 00h-06h, stops at 08h (PE+PG). Not modelled: #DB, #DF, PM/V86.
 
+# EGA/VGA planar modes and VGA BIOS identity — 7 November 2026
+
+Tony chose a colour VGA BIOS identity (decision card). src/vga_planar.rs
+holds the four planes and is Ram's only MMIO window, at A0000h while a
+planar mode is set. It covers latches, write modes 0-3, read modes 0/1 and
+the map mask, and both backends embed it. src/dos_planar.rs: modes
+0D/0E/10/12, ports 3C0/3C4/3CE, AH10 palette/DAC, AX1130, AH12 BL10, AH1A.
+MANDVGA.COM and tools/verify_mandel_vga.py check 296,960 pixels.
+Local Linux: 554 Rust tests, 41 GUI tests. Probe at 10,000 steps:
+151/156, 53 exits unchanged; IDLEDPMS now passes its EGA check.
+
 # Graphics-mode text and CGA Mandelbrot — 7 November 2026
 
 Goal 1 step 5. src/dos_graphics_text.rs (separate module, Tony's request):

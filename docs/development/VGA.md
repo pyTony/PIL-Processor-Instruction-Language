@@ -12,9 +12,9 @@ with color-text defaults; locked writes to 0..7 are ignored (overflow bit 4
 remains writable). Unlocked timing/mode changes stop explicitly. Extended
 register reads return FFh; unsupported extended writes stop.
 
-The device does not yet implement planar graphics, the sequencer,
-attribute/graphics controllers, monochrome text modes or hardware scan timing.
-It does not yet advertise VGA BIOS capabilities. Existing status-port polling
+Planar graphics, the sequencer, graphics controller and attribute controller
+are described in "EGA/VGA 16-colour planar modes" below. Monochrome text
+modes and hardware scan timing are not implemented. Existing status-port polling
 remains a deterministic approximation. Landmark must be rerun to determine its
 next requirement; a full successful benchmark is not claimed.
 
@@ -124,3 +124,48 @@ Mode 05h is mode 04h with the CGA black-and-white bit. On an RGB monitor it
 shows cyan, red and white, and the palette-select bit has no effect; the
 terminal draws it that way. `programs/dos/MANDCGA.COM` uses mode 04h and
 prints its caption through DOS, so it exercises the font, colour and cursor.
+
+## EGA/VGA 16-colour planar modes and the VGA BIOS identity
+
+Tony chose on 7 November 2026 to identify the video BIOS as a colour VGA
+(it was CGA-class). INT 10h AX=1A00h returns AL=1Ah, BX=0008h; AH=12h
+BL=10h returns BH=0 (colour), BL=3 (256 KiB), CX=0009h; the BIOS data area
+holds 0485h=16 (9x16 text cells), 0487h=60h, 0488h=09h and 0489h=11h.
+
+**Display memory.** `src/vga_planar.rs` holds four 64 KiB planes and is the
+one memory-mapped device in `Ram` (`src/memory.rs`). While a planar mode is
+set, guest bytes at A0000h-AFFFFh go to it; otherwise the window is ordinary
+RAM, so mode 13h stays linear. Both execution backends embed the same code.
+- Reads load the four latches, then return read mode 0 (Read Map Select) or
+  read mode 1 (colour compare with Colour Don't Care).
+- Writes use write modes 0-3, data rotate, the AND/OR/XOR function, the bit
+  mask and the sequencer map mask.
+- A latch load happens on the read itself, as on the hardware, even if the
+  instruction later faults. Nothing else is staged.
+- Chain-4, odd/even and shift-register modes are refused, with no change.
+  Sequencer/graphics controller access outside the planar modes stops too.
+- BIOS services reach the planes through a host-only alias at F0000000h,
+  which real-mode guests cannot address.
+
+**Ports.** 3C4h/3C5h (sequencer), 3CEh/3CFh (graphics controller), byte or
+word OUT to the index port; 3C0h/3C1h (attribute controller, with the
+index/data flip-flop that reading 3DAh resets). The 16 displayed colours go
+through the attribute palette, colour plane enable, colour select and DAC.
+
+**BIOS.** Modes 0Dh (320x200), 0Eh (640x200), 10h (640x350) and 12h
+(640x480):
+- Each mode set writes the BIOS data area, resets the registers and clears
+  the planes, unless AL bit 7 asks to keep them.
+- It loads the palette: EGA 64-colour DAC layout for 350/480 lines,
+  CGA-compatible colours for 200 lines.
+- AH=0Ch/0Dh draw and read pixels (bit 7 XORs). The text services draw 8-,
+  14- or 16-line cells from the 8x8 font, repeating rows for the tall cells:
+  14 lines show rows 0 and 7 once and the others twice.
+- AH=10h handles palette registers (00h-03h, 07h-09h) and DAC entries and
+  blocks (10h, 12h, 15h, 17h-19h). Colour paging and grey-scale summing stop.
+- AX=1130h answers BH=0/1 (INT 1Fh/43h vectors) and BH=3 (the 8x8 ROM font).
+  Other fonts and font loading stop, because no 8x14/8x16 tables exist.
+- AH=1Bh/1Ch and VBE return unchanged.
+
+`programs/dos/MANDVGA.COM` draws a mode 12h Mandelbrot through write mode 2
+and the bit mask; `tools/verify_mandel_vga.py` checks all four planes.
