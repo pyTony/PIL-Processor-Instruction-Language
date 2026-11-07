@@ -2231,8 +2231,8 @@ fn guest_programs_the_graphics_controller_with_word_outs(){
  let r=run(load(&code,"chain.com").unwrap(),20).unwrap();
  assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the planar profile")),"{:?}",r.stop);
  assert_eq!(r.loaded.ram.planar().unwrap().seq[4],6);
- // Outside the planar modes the sequencer is not modelled.
- let code=[0xba,0xc4,0x03,0xb0,0x02,0xee,0xfa,0xf4];
+ // Outside the planar modes the map mask is kept, but a memory-mode change is refused.
+ let code=[0xba,0xc4,0x03,0xb8,0x02,0x0f,0xef,0xb8,0x04,0x06,0xef,0xfa,0xf4];
  let r=run(load(&code,"text.com").unwrap(),20).unwrap();
  assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the 16-colour planar modes")),"{:?}",r.stop);
 }

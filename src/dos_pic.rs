@@ -1,5 +1,5 @@
-//! Bounded AT interrupt-controller state. Only the PIT's IRQ0 is wired to a
-//! device; other request lines remain inactive. ICW initialization, polling,
+//! Bounded AT interrupt-controller state. The PIT's IRQ0 and the keyboard's
+//! IRQ1 are wired to devices; other request lines remain inactive. ICW initialization, polling,
 //! priority rotation and special-mask mode are not modelled.
 #[derive(Clone,Debug,Default,PartialEq,Eq)]
 struct Controller{mask:u8,request:u8,in_service:u8,read_service:bool}
@@ -29,6 +29,12 @@ impl Pair{
     pub fn timer_ready(&self)->bool{self.master.request&!self.master.mask&1!=0&&self.master.in_service&1==0}
     pub fn acknowledge_timer(&mut self){self.master.request&=!1;self.master.in_service|=1;}
     pub fn finish_timer(&mut self){self.master.in_service&=!1;}
+    /// IRQ1 can be taken: unmasked, and neither it nor IRQ0 (higher
+    /// priority) in service. The request is raised as the code is latched.
+    pub fn keyboard_ready(&self)->bool{self.master.mask&2==0&&self.master.in_service&3==0}
+    pub fn acknowledge_keyboard(&mut self){self.master.request&=!2;self.master.in_service|=2;}
+    /// The BIOS handler's specific EOI for IRQ1.
+    pub fn end_keyboard(&mut self){self.master.in_service&=!2;}
 }
 #[cfg(test)]
 mod tests{

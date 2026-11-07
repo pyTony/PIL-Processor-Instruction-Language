@@ -258,7 +258,7 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
     if super::planar::geometry(al&0x7f).is_some(){return super::planar::set_mode(p,al&0x7f,al&0x80!=0);}
     let result=set_other_mode(p,al);
     // Leaving a planar mode unmaps the planes; A000h is ordinary RAM again.
-    if result.is_ok(){p.ram.set_planar(None);}
+    if result.is_ok(){p.ram.set_planar(None);p.vga.idle=super::vga::Controllers::standard(al&0x7f);}
     result
 }
 fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{

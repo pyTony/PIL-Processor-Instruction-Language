@@ -1,3 +1,52 @@
+# GW-BASIC keyboard IRQ1, decode cache and VGA registers — 7 November 2026
+
+Tony ran his GW-BASIC (own copy, not in the repo) with CUBE2.BAS and cube.bas
+in the Dine terminal: slow, Ctrl+Break and Esc did nothing, and SCREEN 9
+stopped on a VGA register write.
+
+- Speed: the decode cache held 256 instructions and emptied itself when full.
+  GW-BASIC's interpreter, floating point and LINE code run about 4,100
+  distinct instructions in a steady loop, so nearly every step recompiled PIL.
+  CAPACITY is now 8,192 (about 49 MB resident for GW-BASIC). Local Linux
+  release, 30M steps of CUBE2 in SCREEN 2: 157 s before, 6 s after.
+- Keyboard IRQ1 (src/dos_keyboard.rs): GW-BASIC hooks INT 09h, reads port
+  60h and 0040:0017 itself, and chains other keys through INT EFh to the
+  vector it saved. While a program's INT 09h handler is reachable, session
+  keys arrive as scan codes in port 60h (64h bit 0 full) and IRQ1 between
+  instructions with IF=1, unmasked and nothing of equal or higher priority in
+  service. INT 09h is now one of the answered vectors (entry F000:F01B): the
+  BIOS handler stores the key's BIOS word, keeps the Ctrl/Shift/Alt bits on
+  make/break codes, and sends EOI. A blocking INT 16h or DOS read takes a
+  waiting code even with IF=0, as the BIOS's own STI would.
+- Ctrl+Break arrives as the XT codes Ctrl+Scroll Lock (1Dh first if Ctrl is
+  not already held, 46h, C6h, 9Dh). The BIOS handler empties the ring, stores
+  0000h and sets 0040:0071 bit 7; a program INT 1Bh handler now runs from a
+  BIOS wrapper (PUSH AX, INT 1Bh, EOI, POP AX, IRET) instead of refusing.
+  GW-BASIC shows "Break in 420" / "Ok", and SYSTEM typed at Ok exits.
+- VGA controllers outside the planar modes (dos_vga::Controllers): ports
+  3C4h/3C5h and 3CEh/3CFh keep map mask, set/reset, compare, rotate, read
+  map, write mode and bit mask values, as GW-BASIC programs them in text mode
+  before SCREEN 9. Video memory keeps the mode's layout until the next mode
+  set, which reloads standard values. Memory mode, miscellaneous, shift and
+  256-colour bit changes stay refused. cube.bas now draws in mode 10h.
+- Terminal: a refused key or break used to stay at the head of the key queue
+  forever, holding back every later key; it is now dropped and shown on the
+  status line (a full keyboard still waits).
+- Not changed: the terminal already shows 200-line modes at 4:3; CUBE2's tall
+  cube comes from its own FOV, written for 350 lines.
+
+Not modelled: E0h-prefixed AT codes, typematic repeat, LEDs, keyboard
+commands, 0040:0096/0097, scan-code translation for codes that arrive with no
+BIOS word. After Ctrl+Break in SCREEN 9, GW-BASIC's cursor (character FFh)
+stops the run: 350/480-line modes still draw 80h-FFh only from an INT 1Fh
+table, because the original font has 00h-7Fh only.
+
+Local Linux: 581 Rust tests (6 new keyboard tests), 42 GUI tests. FD14LITE.img
+(SHA256 f539d456...) probe at 10,000 steps unchanged: 151/156, 53 exits, same
+STOP lines. GWBASIC.EXE SHA256 e1e9fe30...b6b43aeaf3 (Tony's copy).
+CUBE2.BAS in Tony's driveD had two CR bytes inserted before LF bytes (a CRLF
+conversion), giving "Syntax error in 18243".
+
 # Real-mode exception delivery — 7 November 2026
 
 First increment of the protected-mode plan
