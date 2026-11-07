@@ -1,1 +1,0 @@
-PROMPT [$D $T] $N:$_$P$G
