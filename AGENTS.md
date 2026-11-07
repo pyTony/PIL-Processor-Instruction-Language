@@ -1,3 +1,559 @@
+# GitHub state synced — 7 November 2026
+
+Current `origin/dev` is `f8747a9d405c9ff15be483293ab39ddb6e2efd7a` (CI 42411110618 passed on Windows/Linux).
+Current `origin/main` is `4b8db9d` (PR #83 merged: runtime delivery `v0.35.0-alpha.1`).
+Recent `dev` merges through #110:
+- PR #107 (`72a2684`): Real-mode decoder forms from SingleStepTests/80386 (repeated/multiple prefixes, 82h alias, F6/F7 /1 TEST, shift /6 SAL, SETcc any reg, BSF/BSR PIL descriptions, BT-family memory bit-string offsets, RMW memory LOCK; SST run 04: 1,555,403 pass, 0 generated-backend disagreements, 579 Rust tests).
+- PR #110 (`b0c980c`, `dacb383`): PILdos shortcut (`tools/makeshortcut.py`, `PILdos.sh`, `PILdos.vbs`, `PILdos.ico`, `PILdos.png`) for Windows, Linux and Termux-x11.
+- PR #109 (`2304024`, `8eaa4cd`): Ignore `80386.zip` and `PILdos-stops.jsonl`.
+- PR #108 (`07420ff`): Untrack and ignore `/driveD/` (documented in `docs/DRIVE_D.md`; `freedos.cmd` honours `PILDRIVE`).
+- PR #106 (`8692e43`, `bf98c2f`): Deliver IRQ0 through a program's INT 08h handler; TOPBENCH continuous-score run recorded.
+- PR #105 (`dd15bdc`): Terminal runs several slices per redraw while busy.
+- PR #104 (`20131fb`): Real-mode exception delivery through IDTR (`src/interrupt.rs`: #DE via PIL `raise_unless`, #GP/#SS, INT n/INT3/INTO).
+
+# Real-mode decoder forms from SingleStepTests — 7 November 2026
+
+Tony made real-mode fixes found by SingleStepTests/80386 the priority ahead
+of protected-mode PR 2. The decoder now accepts repeated and multiple
+prefixes (last segment override and last repeat prefix win, 15-byte limit
+kept), opcode 82h as the 80h alias, F6/F7 /1 as TEST, shift /6 as SAL (SHL),
+and SETcc with any reg field. BSF and BSR are new PIL descriptions
+(isa/i386/bsf.pil, bsr.pil: binary search; a zero source sets ZF and leaves
+the destination; CF, OF, SF, AF, PF undefined). BT/BTS/BTR/BTC with a
+register offset now take a memory bit string: the signed offset selects the
+word or dword at EA+(offset>>4)*2 or EA+(offset>>5)*4, wrapped to the address
+size. LOCK is accepted on read-modify-write memory destinations (00-31h ALU
+r/m,reg forms, 80-83h except /7, F6/F7 /2 /3, FE/FF /0 /1, 0F AB/B3/BB, 0F BA
+/5-/7) and refused elsewhere. The SingleStepTests generated runner embeds
+src/vga_planar.rs again.
+
+Local Linux: 579 Rust tests pass (4 new: prefixes and aliases, BSF/BSR,
+bit-string memory, LOCK; 10 older tests no longer expect these forms to be
+refused). SingleStepTests/80386 run 04 (local): pass 1,351,553 -> 1,555,403,
+0 generated-backend disagreements in 2,265 programs. Still open: BOUND,
+INS/OUTS and IN/OUT ports, ENTER nesting, 16-bit SHLD/SHRD counts above 16,
+16-bit stack wrap at SP=FFFFh, POPAD with a 16-bit stack.
+
+# Real-mode exception delivery — 7 November 2026
+
+Protected-mode plan increment 1 (docs/development/PROTECTED_MODE_PLAN.md).
+src/interrupt.rs: IDTR-based real-mode delivery (reset IDTR 03FFh/0), shared
+with Dine's INT n. #DE via new PIL `raise_unless P 0` (DIV/IDIV/AAM;
+ExecError::Exception, trace code 12), #GP/#SS to 0Dh/0Ch, INT n/INT3/INTO
+decoded as Operation::Interrupt. No handler installed: Dine stops as before.
+SST80386 local: pass 1,188,711 -> 1,351,553, no undelivered exception cases.
+test386 still 00h-06h, stops at 08h (PE+PG). Not modelled: #DB, #DF, PM/V86.
+
+# EGA/VGA planar modes and VGA BIOS identity — 7 November 2026
+
+Tony chose a colour VGA BIOS identity (decision card). src/vga_planar.rs
+holds the four planes and is Ram's only MMIO window, at A0000h while a
+planar mode is set. It covers latches, write modes 0-3, read modes 0/1 and
+the map mask, and both backends embed it. src/dos_planar.rs: modes
+0D/0E/10/12, ports 3C0/3C4/3CE, AH10 palette/DAC, AX1130, AH12 BL10, AH1A.
+MANDVGA.COM and tools/verify_mandel_vga.py check 296,960 pixels.
+Local Linux: 554 Rust tests, 41 GUI tests. Probe at 10,000 steps:
+151/156, 53 exits unchanged; IDLEDPMS now passes its EGA check.
+
+# Graphics-mode text and CGA Mandelbrot — 7 November 2026
+
+Goal 1 step 5. src/dos_graphics_text.rs (separate module, Tony's request):
+modes 4/5/6/13h draw BIOS/DOS text as 8x8 glyphs into the framebuffer, from
+an original ROM font at F000:FA6E (src/dos_font8x8.txt) and INT 1Fh for
+80h-FFh (stops when INT 1Fh is 0). AH0E/09/0A/08/06/07 in graphics, DOS
+output colour 7 (FreeDOS INT 29h BX=0007h), mode 5, BDA 0465h. New
+programs/dos/MANDCGA.COM (8086, mode 4, P palette, key exits). Local Linux:
+544 Rust, 40 GUI tests; tools/verify_mandel_cga.py checks 61,440 pixels.
+No probe rerun, no EGA/VGA planar modes or SVGA.
+
+# 4DOS 8.00 under Dine — 2 November 2026
+
+Tony asked whether 4DOS runs. 4dos800.zip (SHA256 732915f4...a4d5f, Tony's
+copy; not on FD14LITE.img, not in repo/CI) now reaches its prompt in
+--dos-session: DIR, TIMER (hundredths from the host clock), %_time, batch
+files, external programs, EXIT back to FreeCOM. Added: program interrupt
+handlers through the IVT (answered vectors point at INT n/IRET entries at
+F000:F000+3n; chaining back to an entry returns the service's status flags),
+PIT channel 0 latch/read, BIOS tick at 0040:006C with the host clock and IF=1,
+AAA/AAS/AAM/AAD in PIL, NUL device, AX=4452h/6601h/4409h, AH2B invalid dates,
+AH50, INT 28h/2Ah IRET, more INT 2Fh not-installed checks. Local Linux: 441
+Rust tests, SST80386 37/3F/D4/D5 all pass except exception delivery,
+DOSBox-X 548/548. Probe exits 71 -> 72. No IRQs beyond the timer tick, no
+exception delivery, no EMS/XMS.
+
+# PIL 0.34.0-alpha.1
+
+- Add bounded DOS INT21/AH02 character output. Preserve flags and registers
+  except AL; return the emitted byte, or20h for a tab. Expand tabs to the next
+  eight-column stop derived from captured output. Check the entire expansion
+  against the16KiB cap before changing output or AL. No keyboard/break checks,
+  redirection, text-screen model or BIOS services are added.
+- Add INT21/AX3700 switch-character query: AL=0, DL='/', preserving upper
+  register bits and flags. This fixed DOS6.22 compatibility profile rejects
+  unsupported AH37 subfunctions instead of claiming a mutable DOS setting.
+- Add real-mode LES C4 r16,m16:16 and r32,m16:32 through shared PIL. Address
+  and operand sizes are independent. Check the full pointer span and read both
+  fields through the incoming source segment before committing the GPR and ES
+  selector/cache. Read or segment faults preserve CPU, RAM and machine markers.
+  Protected/V86 loads and LDS/LFS/LGS/LSS remain separate.
+- Report headers now identify the runtime version and per-program step budget.
+  Nine new expected-state tests and14 backend cases. Windows/Linux CI40624671136
+  passed328 Rust tests,199 full-state cases (7,330,906 matching trace bytes),
+  standalone runtime/native packages and full256x256 Mandelbrot comparisons.
+- Targets the user's100000-step v0.33 report: AH02(20), AH37(16), LES(6).
+  No new full FreeDOS-image, ARM or legacy real-mode hardware run is claimed.
+
+# PIL 0.33.0-alpha.1
+
+- Add DOS INT21/AH25 and AH35 using the physical RAM interrupt-vector table.
+  AH25 stores DS:DX; AH35 returns ES:BX and updates the ES cache. Preserve flags
+  and upper register halves. Check the complete four-byte access before effects.
+  Initial vectors are zero; no kernel handlers or CPU interrupt delivery added.
+- Add ordinary-RAM memory XCHG86/87 at8/16/32 bits through shared PIL tokens.
+  Address and source use incoming registers, including overlapping BX/BH and
+  ESP addressing. Segment/address sizes remain independent. Faults commit no
+  RAM/register/retirement effects. Explicit LOCK is accepted for memory XCHG;
+  register LOCK and other LOCK instructions remain rejected. The transaction
+  is indivisible in the single-executor RAM model; no MMIO/DMA/bus simulation.
+- Add seven expected-state tests and ten interpreter/generated backend cases.
+  Hosted Windows/Linux CI40621030314 passed319 Rust tests,185 full-state cases
+  (7,224,306 matching trace bytes), standalone runtime/native-package checks and
+  full256x256 Mandelbrot comparisons on both hosts.
+- This increment targets the reported AH35 blockers (26 programs), FreeCom AH25
+  and GREP memory XCHG. No new full FreeDOS-image, ARM or legacy hardware run.
+  The separate v0.32 10000-step report exhausts FreeCom's budget before far CALL;
+  it must not be compared directly with the earlier100000-step measurements.
+
+# Real-mode far CALL verified — 27 October 2026
+
+Version 0.32 implements immediate 9A and memory FF /3 at 16/32 operand widths,
+independent pointer addressing and SS sizes. Shared PIL now permits at most two
+ordered staged RAM writes. Loads precede staging; both writes and all branch/
+binding checks precede commit. Pointer aliases and second-slot faults are tested.
+
+Local Windows: 312 tests passed; 175 full-state cases matched 7,147,554 trace
+bytes. Standalone 110-file runtime built and passed debugger, generated-Rust,
+DOS hello and ZIP checks. Hosted Windows/Linux CI 40590192023 passed on code
+commit fd1441eb12c1c7f496fa3a742a2fa16c2a2ca23f, including native packages and full Mandelbrot checks.
+
+Actual FD14LITE.img (SHA256 f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36),
+budget 100000: all 16 FreeCom FF /3 blockers reach DOS AH=25. GREP passes 9A and
+reaches memory XCHG 87. Missing-encoding programs 21 -> 5: 2 0FBB, 1 0F01, 1 60,
+1 87. Imports 151/156, exits 6. No third-party image/program files uploaded.
+
+This is ordinary real-mode support: protected/V86 calls, gates/tasks and
+exception/shutdown delivery remain separate. Wide CS padding is deterministically
+zero, consistent with existing segment PUSH; no new legacy hardware padding
+evidence is claimed. Frames are contiguous as required by the current RETF
+profile; split-frame wrap is rejected. No new legacy real-mode/ARM execution.
+Keep full development on dev and strict runtime/main delivery PRs. User
+authorizes uploads and reviews/merges delivery PRs.
+
+# Memory PUSH verified — 27 October 2026
+
+Version 0.31.0-alpha.1 adds FF /6 m16/m32 through existing shared PIL effects.
+Source EA sees old ESP; only the stack write uses SS after decrementing SP/ESP.
+Operand, address and SS widths remain independent; faults commit no effects.
+
+Local Windows: 303 tests passed; 160 full-state backend cases matched
+6,951,410 trace bytes. The standalone 109-file export built and passed launch,
+generated Rust, debugger, DOS hello and ZIP list/probe/extract checks.
+Hosted Windows/Linux CI 40587290825 passed on code commit 5eb100818cc0b244f91dfccb6bf3046ae52bf143.
+No new legacy real-mode hardware vectors or ARM execution are claimed.
+
+Actual local FD14LITE.img, budget 100000: all sixteen FreeCom variants advanced
+from FF 74 14 (PUSH /6) to FF 1E 1F 02 (far CALL /3), twelve bytes later.
+PUSH retirements rose 796 -> 812. Imports remain 151/156 and exits remain six.
+The first unsupported opcode counts remain 16 FF, 2 0FBB, 1 0F01, 1 60, 1 9A.
+Read detailed group extensions and CS:IP; unchanged FF totals hide this progress.
+The disk image and third-party program files stay outside the repository.
+
+Keep development on dev and strict runtime delivery PRs against main. User
+standing authorization covers project uploads; user reviews/merges deliveries.
+
+# Memory POP, MSW and DOS version increment — 27 October 2026
+
+Based on dev 28bf3088 (RETF) and the user's v0.29 corpus summary.
+Adds 8F /0 memory POP with post-pop ESP address evaluation, explicit MSW/SMSW
+word forms, and DOS AH=30 through PSP:0040 with a declared 6.22 shim profile.
+
+Windows/Linux CI 40582461490 verifies code commit
+a0d578c4347fa4f182e4e93c53f12d7405e70580: 297 Rust tests per host,
+149 interpreter/generated full-state cases and 6,870,394 matching trace bytes.
+Standalone runtime export, package and full Mandelbrot checks passed.
+Local execution was unavailable because the host rejected its sandbox path;
+these results come from hosted CI.
+
+SP-wrap/ESP addressing is rejected where behavior is processor-family-specific.
+SMSW r32 and CR0 writes remain separate work. No full FreeDOS image or new
+legacy real-mode hardware/ARM execution is claimed. Existing modern-host native
+overlap checks do not independently verify the newly added forms.
+
+User standing authorization covers project uploads. Keep development on dev
+and runtime deliveries as separate main PRs; merging remains the user's action.
+
+# Standing GitHub authorization — 27 October 2026
+
+User explicitly confirmed: "Kyllä voit laittaa aina repoon" (you may always
+put it in the repository). This is standing authorization to upload pil_proof
+source,tests,documentation and runtime deliveries to pyTony/PIL-Processor-Instruction-Language,including
+future implementation increments. Do not ask for repeat conversational upload
+approval. Preserve dev/runtime separation; PR merges remain the user's action.
+
+# RETF real-mode increment — 27 October 2026
+
+Based on dev1195a351 (0.28alpha.2,Windows/Linux CI40570140583).
+Adds CB/CA RETF16/32 via shared PIL far_branch and check_segment effects.
+CS/IP/SP commit together after both slots are checked/read;SS size is
+independent,cleanup unsigned bytes,flags/markers preserved. New CS uses ordinary
+real-mode caches and limitFFFFh. Protected/V86 returns are rejected.
+Image fetch bounds retain their initial physical anchor across CS aliases;
+generated dispatch/next-IP/limits use physical instruction identity and live
+logical flow. Byte guards and bounded imported windows remain enforced.
+
+Local Windows:285 tests passed,135 full-state backend cases (6,743,574 matching trace bytes). Original tests
+cover sizes,selectors,padding,cleanup,wrap,readonly reads,SS/RAM/target faults,
+mode rejection,CS-alias execution and original DOS process exit after RETF.
+Standalone106-file runtime and unpacked Windows native-package checks passed.
+Full256x256 Mandelbrot matched65,536 pixels and256 state checkpoints.
+No new external real-mode hardware vectors/ARM execution/full FreeDOS rerun.
+User 0.28alpha.2 report at100000 steps:151/156 imports,6 exits;31 CB blockers,
+1SMSW group and1memory POP. This is user-reported evidence from the pasted
+summary,not a locally analyzed whole report. RETF may expose further loaded-
+window/service/encoding stops;do not claim31 new successful applications.
+
+# Real-mode CS writes — 27 October 2026
+
+Based on upstream dev15fb5b12 (0.28 comparison strings and memory SETcc).
+Ordinary monitor and DOS CS caches now retain SegmentCache::real_mode data
+permissions instead of being mislabeled protected Code caches. Generic protected
+Code permission checks are unchanged. Segment limits, RAM write protection and
+loaded-image fetch boundaries remain enforced. The interpreter invalidates
+modified cached instructions on reuse; generated fixed images retain code guards.
+
+Local Windows x86-64:277 Rust tests passed (16.64s),121 full-state backend cases
+matched6,594,404 trace bytes. COM and MZ original fixtures modify a later INC AX
+to INC CX and execute it; a separate cache fixture primes that instruction first.
+Additional SETcc tests cover all16 predicates,mixed flags,BP/SS,FS,SIB,ignored66,
+exact byte writes,readonly and truncated/invalid forms. Existing native hardware
+oracle ran with the suite; it does not independently verify new CS semantics.
+Standalone105-file runtime build, scripts, generated comparison, COM/MZ hello
+and ZIP list/probe/extract checks passed locally. No new ARM run or full FD14LITE.img rerun:local image materialization was blocked
+by network access. Prior corpus measurements remain upstream evidence only.
+
+# Comparison strings and memory SETcc verified — 27 October 2026
+
+Windows/Linux CI40562311100 passed on d7697f8994a41096070073d2ea64e7526c554cd0:
+273 tests per host,118 full-state backend cases (6,577,356 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone105-file
+runtime source/native-package checks. Eight new expected-state tests cover
+comparison flags across widths,address sizes,DF,source/ES rules,zero count,
+new-ZF termination,count exhaustion,entry-flag recovery/fault retry,all16 memory
+SETcc conditions,readonly stores and bounded REP budgets. No new hardware-oracle
+or ARM run is claimed.
+
+CMPS/SCAS8/16/32 use shared subtraction flags and pointer effects. REPE/F3 and
+REPNE/F2 evaluate new ZF after each bounded element. Generic checkpoint_flags
+remembers entry EIP/EFLAGS/undefined metadata across partial resumes;execution
+faults restore entry flags while retaining prior pointer/count progress. Full
+retirement clears checkpoint state. It is included in machine traces and the
+interpreter/generated wrappers share the same lifecycle. SETcc memory uses
+existing select/store effects,including zero stores and fault checks.
+
+Memory PUSH/POP needs post-increment ESP effective-address semantics and remains
+separate;SMSW needs explicit machine-status state. Interrupt/exception delivery,
+full prefix/mode audit and copied-code/CS-write model work remain. Version0.28
+follow-up changes only versions/docs/evidence relative to the tested code.
+
+# LEAVE and bounded DOS memory verified — 27 October 2026
+
+Windows/Linux CI40536350302 passed on 4256a139aca4a21b997483a967de25de7860984c:
+265 tests per host,103 full-state backend cases (6,089,907 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone103-file
+runtime source/native-package checks. Thirteen new expected-state tests cover
+frame sizes/base/limits/readonly reads and faults,MCB headers,PSP extent,first-fit
+allocation,reuse/coalescing,zero/exact sizes,error results,failed growth and
+all-or-none MCB permission checks. No new hardware-oracle or ARM run claimed.
+
+LEAVE uses shared PIL effects;generated dispatch now considers named SP writes
+when selecting alternative SS sizes,including LEAVE after a real-mode SS load.
+ENTER remains separate. DOS48/49/4A use a bounded single-process first-fit MCB
+arena with visible M/Z,owner/size fields and CF/AX/BX results. Resize failure
+can grow to the maximum contiguous size,as documented for DOS2..6. Free keeps
+bytes and delays coalescing until allocate/resize. Direct chain edits are
+rejected rather than overwritten. Physical640KiB RAM and current PSP allocation
+extent are distinct; instruction fetch windows remain bounded as before.
+The source audit corrected original PSP:0002 retention and successful4A AX=ES
+before the final verification run. These are checked against FreeDOS handler
+commit d6791add2043c9d7b584d840a8ffaf8829fd2bdc,not assumed from field names.
+No UMB,strategy,EXEC/TSR,environment allocator,interrupt delivery or full DOS
+kernel is claimed. Version0.27 follow-up changes only versions/docs/evidence.
+
+# Real-mode flags and counter branches verified — 27 October 2026
+
+Windows/Linux CI40527735310 passed on 0e673f4f6db3b368bc37145803e53fca4f28f827:
+252 tests per host,96 full-state backend cases (6,026,172 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone101-file
+runtime source/native-package checks. New expected-state tests check visible
+386 FLAGS bits,reserved/RF/VM handling,independent operand/SS sizes,precise stack
+faults,mode rejection,JCXZ count/target sizes,limits and STI delay through REP
+fault/retry. No new hardware oracle or ARM run is claimed.
+
+FA/FB CLI/STI and9C/9D PUSHF/POPF16/32 are a real-mode subset;protected/V86
+contexts are explicitly rejected. STI delay is separate from SS shadow and
+included in full traces. IF-clear to IF-set creates delay;consecutive STI does
+not extend it. Full PIL/monitor-I/O/DOS-bridge retirement advances shadows;
+partial REP and faults preserve them. No interrupt/exception/NMI delivery or
+legacy stack-shutdown behavior is claimed. JCXZ/JECXZ uses address size for the
+counter and operand size for target wrapping,with flags/count untouched.
+The0.26 follow-up changes only versions/docs/evidence after verification.
+
+# Near CALL/RET and REP movement verified — 27 October 2026
+
+Windows/Linux CI40511872914 passed on b0ab7c8159ac107895161cb0bfe331e5fef6d728:
+243 tests per host,84 full-state backend cases (5,816,602 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone96-file runtime
+source/native-package checks. These new instructions have independent expected-
+state tests and interpreter/generated-Rust comparisons;no new hardware-oracle or
+ARM run is claimed. The first run passed242 tests and failed only an old test
+that expected CALL AX unsupported;it now checks the invalid far-register form.
+
+Near E8/FF2 CALL and C3/C2 RET use shared per-access segment effects,independent
+operand/SS sizes,pre-write target snapshots and transactional stack faults.
+MOVS/STOS/LODS8/16/32 support both address sizes,DF and source overrides/fixed ES.
+F3 REP commits one element per execution step;zero count avoids data accesses,
+fault retry retains prior progress,and SS shadow retires only at completion.
+DOS budgets include element steps;completed instructions count full retirements.
+No far calls,CMPS/SCAS/F2,external interrupt delivery or compiled changed-code
+fallback is claimed. Memory PUSH/POP and broader mode/prefix audits remain.
+The0.25 follow-up changes only versions/docs/evidence after verification.
+
+# Additional MOV forms verified — 27 October 2026
+
+Windows/Linux CI40500511068 passed ate74c95100ee5fff346b229a2c4cf45643ad25922:
+235 tests per host,67 full-state backend cases (5,417,290 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone91-file source/
+native-package checks. A0..A3 and C6/C7 use existing PIL load/store/constant/write
+semantics;no instruction-specific backend operations were added. Operand/address
+sizes,high bytes,SS defaults,SIB/overrides,readonly/boundary/fetch faults checked.
+The first run's only failure was a test fixture using a>64KiB offset with a64KiB
+cache;the fixture now supplies a larger cache and separately checks rejection.
+
+Normal-build warnings fixed:remove unused mut;gate legacy segmented wrapper and
+empty-state trace record helper as test-only. No new hardware oracle/ARM run is
+claimed. The0.24 follow-up changes only versions/docs/evidence after verification.
+Next remains independent per-access contexts,near CALL/RET and one-element
+strings before restartable REP. Real-image evidence is recorded separately below.
+
+# Real-mode segment transfers verified — 27 October 2026
+
+Windows/Linux CI40498283191 passed at6b2f7d1ceceb57f73786f01d17b0e40d09cc740b:
+231 tests per host,62 full-state backend cases (5,336,578 trace bytes),existing
+340,920 native overlap cases,full256x256 Mandelbrot and standalone91-file source/
+native-package checks. New trace sections compare selectors,caches,mode and SS
+shadow after every instruction. No new segment hardware-oracle/ARM run claimed.
+
+Local execution of the Linux CI artifact on unchangedFD14LITE.img imported151/156:
+116 encoding stops,24 services,8 model faults,3 exits. JEMFBHLP and MOVEXBDA now
+print their usage and exit0;VCHKBOX exits36. This proves usage paths,not drivers.
+Counts:404MOV,82PUSH,31POP;segment MOV/POP first blockers are gone. The newly
+reached SHARE CS-write fault is the same model limitation as the prior7 faults.
+REP54,CALL18,moffs A0(17)/A3(3),STI16,PUSHF5,LODSB2,C7(1) remain first blockers.
+
+PIL read_segment/write_segment and execute_machine share real-mode updates in
+both backends. Segment POP uses old SS/stack width;SS load records boundary
+inhibition until successful following retirement. External interrupt/NMI/debug
+and protected loads remain unsupported;MOVr32,Sreg is rejected pending legacy
+upper-half policy. Memory PUSH/POP and per-access contexts remain next alongside
+moffs/CALL/string priorities. Runtime0.23 is a version/docs-only follow-up to
+the tested implementation;user reviews/merges delivery PR.
+
+# Initial stack forms verified — 27 October 2026
+
+Windows/Linux CI40487360431 passed at9189e64e7d18f9b0b87b55c6b2bba549c00a5236:
+223 tests per host,56 backend cases (5,133,394 trace bytes),existing340,920 native
+CPU overlap cases and full256x256 Mandelbrot checks. The stack checks include
+independent full-state expectations for generated Rust,operand/SS-size matrices,
+SP/ESP snapshot and POP alias ordering,precise RAM/SS/readonly faults and cache
+identity. Native overlap counts do not include new legacy stack forms;no external
+386 suite or new ARM run is claimed. Standalone90-file source/native package
+checks passed. 0.22 delivery changes version/docs/evidence only after this run.
+
+All general-register PUSH/POP (including FF/6 and8F/0 aliases),PUSH imm16/32/
+sign-extended imm8 and PUSH ES/CS/SS/DS/FS/GS are admitted. Explicit visible
+selectors live alongside caches in Image and are part of decode-cache identity.
+The generic PIL foundation is snapshot read_gpr and ordered staged write_gpr;
+it remains a precise RAM-only single-store model. Memory stack operands,
+segment POP/MOV,CALL/RET,interrupt shadows and per-access contexts remain next.
+
+# CLD/STD verified — 27 October 2026
+
+Windows/Linux CI40476098533 passed at5ec02f081aa618da0d44e541bb6d73da677428b4:
+215 tests per host,50 backend comparisons (5,008,114 trace bytes),98,304 independent
+Python direction cases and existing340,920 native overlap cases. The separate
+ABI-safe CLD/STD hardware test ran on both hosts. Full256x256 Mandelbrot and
+standalone88-file source/native package checks passed. No new ARM run claimed.
+
+0.21alpha.1 delivery follows this tested implementation; follow-up changes only
+version/documentation/evidence. Stack addressing and ordered effects remain P0
+before PUSH/POP. User reviews/merges runtime PR; project uploads authorized.
+
+# Containers and actual FreeDOS image verified — 27 October 2026
+
+Windows/Linux CI40470152015 atab63a6ec01b570bf29f5251e89f9f819b4fdba37
+passed210 tests per host,independent FAT16/ZIP interoperability,standalone86-file
+source/native ZIP list/probe/extract,existing49 backend cases(4,983,058 bytes),
+340,920 native CPU cases and full256x256 Mandelbrot comparisons.
+
+Compiled Linux artifact04914f4b read/extracted actualFD14LITE.img:2,147 files,
+all688 original and1,459 package files byte-identical to independent Python.
+Codec/container code is unchanged inab63a6ec. Correctedab63a6ec runtime directly
+probed the actual image:208 occurrences->156 distinct;151 DOS imports,5LE
+rejections;138encoding gaps,5services,7model faults,1successfulVCHKBOX exit.
+Source image unchanged. The image was not uploaded toGitHub;only local runs.
+Detailed measured blockers and next priorities:docs/development/FREEDOS_PROBE_RESULTS.md.
+
+Prepare strict0.20alpha.1 runtime PR. This follow-up only records evidence/docs;
+execution/export/package logic matches testedab63a6ec. No ARM run claimed.
+User's extracted corpus and report are saved separately;do not add third-party
+FreeDOS program/source packages to the git repo. All project uploads authorized;
+user reviews/merges delivery PR. Chat placement in the PC project is unnecessary
+for continuation:keep code/docs/handoff ondev and runtime projection onmain.
+
+# Wrapped MZ entry correction from the FreeDOS corpus — 27 October 2026
+
+The0.19 native CI runtime probed all156 unique extracted executables locally:
+138 imported,125 missing encodings,5 service stops,7 faults,1 successful exit
+(VCHKBOX),13 mouse-driver MZ entry rejections and5 expected LE rejections.
+Inspection showed all13 mouse drivers use relativeCS=FFF0,IP=0100. Their
+relocated physical entry is valid;MZCS/SS must wrap as16-bit additions before
+entry/stack validation. Corrected this and the code-window start;added a
+synthetic wrapped-segment hello regression. Expected210 tests now;CI pending.
+The baseline first blockers were1E(30),FD(22),06(18),FB(16),0E/8E/E8/FC(8each),
+8C(4),16/54/C7(1each);these are observed first blockers,not complete ISA usage.
+Baseline was original0.19 code,not a pass of the new container reader.
+
+# FAT16/ZIP container support — 27 October 2026
+
+0.20alpha.1 adds original bounded FAT16 MBR/superfloppy reader and ZIP stored/
+deflate reader with CRC32 and local/central checks. DEFLATE is original Rust
+from RFC1951;no third-party codec/crate/runtime Python dependency. --dos-list
+INPUT and --dos-extract INPUT NEW_DIRECTORY inspect/extract;--dos-probe and
+REPLdosprobe expand executable candidates plus one ZIP package level and
+remove byte-identical container duplicates. Inputs remain read-only;path,
+chain,CRC,counts/size/depth and new-destination constraints are explicit.
+Supported subset and omitted FAT12/FAT32/ISO/ZIP64/encryption are documented.
+
+Expected209 Rust tests (9 new),existing49 backend/native cases unchanged.
+New independent Python CLI script builds synthetic FAT16 plus streaming ZIPs
+with data descriptors;tests verify source immutability,byte-equal extraction,
+dedupe,overwrite/path rejection. Stored/fixed/dynamic/multiblock DEFLATE vectors
+were independently generated with Pythonzlib.86 runtime-source files expected.
+Local Python syntax/export/links checked;Rust/hosted execution pending CI.
+
+User supplied32MiB FD14LITE.img was separately read/extracted with Python:
+FAT16partitionLBA63;688 original files,65 package ZIPs;208 executable copies,
+156 unique byte streams(58COM,93MZ,5LE). CRCs ofall65 archives passed.
+ImageSHA256f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36.
+FreeDOS data and packages stay outside the git repo;only original synthetic
+fixtures/source are committed. The extracted user bundle is separately saved.
+No native Rust reading of the user's image is claimed before it is tested.
+
+User authorizes all project uploads. Publish dev,complete Windows/Linux CI,
+then strict runtime delivery PR frommain;user reviews/merges. Latest runtime
+main includes0.19 plus the debug/release documentation correction.
+
+# DOS probe verified — 27 October 2026
+
+Windows/Linux CI40460972486 passed at11dd1caed36b786a447f4ff055be0bc073d8b700:
+200 tests per host;independent CLI checks passed COM/MZ hello,relocated startup
+blocker,bounded loop and overwrite refusal. Both standalone83-file source and
+unpacked native delivery ran both original DOS hello examples to Exit0.
+Existing49 backend cases still matched4,983,058 trace bytes;340,920 existing
+native CPU cases passed per host. Full256x256 Mandelbrot comparison passed.
+DOS probe is interpreter-only plus explicit host INT21/09,4C andINT20 bridges;
+these results are not DOS/BIOS boot or general CPU interrupt verification.
+
+InitialCI40460839517 failed only on a byte-literal cast syntax error in a new
+test;fixed before the successful run. Execution code otherwise unchanged.
+This follow-up changes evidence/docs only;tested loader/source matches11dd1cae.
+Prepare separate0.19alpha.1 runtime PR frommain;user reviews/merges.
+The report ranks first observed encoding blockers,not complete missing-ISA
+percentages. Next useful family depends on the user's real COM/EXE corpus;
+MOV segment registers,PUSH/POP,CALL/RET and further DOS services are likely
+startup blockers but must be measured rather than assumed completed.
+
+# DOS executable import/probe — 27 October 2026
+
+0.19alpha.1 adds bounded COM and MZ/ZM EXE import,word relocations,min/max
+allocation checks,minimal PSP,COM/MZ entry state,and a diagnostic interpreter
+runner. --write-dos-hello com|exe PATH creates original fixtures;--dos-probe
+[--steps N] PATH... reports first blockers and reached mix. REPL dosprobe
+runs in isolation. DOS INT21/AH09,AH4C and INT20 are explicit host bridges,
+not CPU INT/IRET or a DOS kernel. CPU gaps,service gaps,faults,boundaries and
+budgets are separate;no unknown-byte skipping/static data scanning/coverage
+percentage. An independent relocated-startup fixture stops on MOV DS,AX8E D8.
+
+Expected200 Rust tests (12 new),existing49 backend cases and340,920 native
+cases unchanged;DOS probing has no generated-Rust execution path yet.
+Independent CLI script plus standalone/export/native-package hello checks added.
+83 runtime files expected. Local Python syntax/export/Markdown checks passed;
+Rust execution and hosted Windows/Linux checks are pending. No new native
+DOS/386 hardware-oracle pass is claimed. No external executables/code imported.
+Sources/limits/commands are in docs/DOS_PROBE.md.
+
+PR21 merged:main3051f190 is0.18alpha.1. User phone Android/aarch64 reported
+49 cases matching4,983,058 bytes includingbyte_flags7steps. Generated0.336038ms
+(89,284,545guest ins/s),cached7.192ms(4,171,696/s),21.40x at10000/5.
+Generated build23.544s excluded;nativeCPU baseline unavailable onARM as expected.
+This is user-reported correctness/timing,not native386 validation orcycle data.
+
+Publish dev and complete CI;prepare a strict runtime PR from currentmain.
+User authorized project source/tests/docs/runtime uploads;user reviews/merges.
+
+# LAHF/SAHF verified — 27 October 2026
+
+Windows/Linux CI40446250754 passed atf2056e697e8d5dff5d5001ffb3f0176e7a8e64ab:
+188 tests and340,920 native CPU cases per host,64 variants,40 known answers.
+LAHF/SAHF hardware forms actually executed on both hosts. All49 backend
+cases matched4,983,058 trace bytes. Python20,480 status-byte cases passed,
+as did existing oracles,full256x256 Mandelbrot and standalone81-file source
+builds/unpacked native packages. No ARM execution claimed for this increment.
+Runtime now includes the current PIL reference and links the full docs overview.
+
+Prepare a separate0.18alpha.1 delivery branch based on main;keep tests,CI and
+history ondev. User reviews/merges. This follow-up only records evidence/docs;
+execution source and export/package logic match testedf2056e69.
+Next instruction candidates remain RCL/RCR (count/CF policy),direction flag
+support and further P0 stack/ordered-effects work;do not claim them implemented.
+
+# LAHF/SAHF increment — 27 October 2026
+
+0.18.0-alpha.1 implements LAHF9F and SAHF9E with implicit AH bindings and
+ordinary shared PIL tokens. LAHF forces byte bits1/3/5 to1/0/0 and preserves
+flags/markers;SAHF writes five status flags,clears only their markers,and
+preserves OF and registers. Prefix/fetch-fault and all-state emitted tests added.
+Python20,480 independent cases passed locally. Expected188 Rust tests,49
+backend cases,340,920 native cases/64 variants/40 harness checks when the
+host CPUID LAHF/SAHF feature is available. Missing host feature skips and
+reports only those native forms;guest support remains. CI execution pending.
+
+Current reference docs/LANGUAGE.md and documentation map docs/README.md
+were corrected/uploaded before this increment. Runtime export now includes
+PIL_REFERENCE.md under docs;native packages include it at their root.
+81-file runtime source expected. Source/native packages remain isolated.
+
+PR20 merged;main4d6ca2b3 is0.17alpha.2. Prepare a separate0.18 runtime PR
+only after Windows/Linux checks. All project uploads are user-authorized;
+do not merge dev into main. User reviews/merges runtime delivery PRs.
+
+User reported0.17alpha.2 source80162c46 passing332,728 hardware cases on
+Windows/x86_64 AuthenticAMD CPUID1 EAX00a20f10,ECXfed8320b,EDX178bfbff,
+rustc1.99.1. Fingerprint01164feba93c1f9c;selected test1 passed,183 filtered.
+48 backend cases matched4,949,650 bytes. Generated median0.3087ms vs cached
+interpreter3.537ms at10000 iterations/5 samples:11.46x. Generated compilation
+5.686s excluded;correctness/timing evidence is user-reported,not386 cycles.
+
 # CMC verified — 27 October 2026
 
 Windows/Linux CI40443065185 passed at7bdfc1b0b27e87f9a897d9a3c66f86da3d2f3a2a:

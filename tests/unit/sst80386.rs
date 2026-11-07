@@ -149,8 +149,7 @@ fn undefined_sib(bytes:&[u8],address:&Option<address::AddressContext>)->bool{
     let (Some(m),Some(sib))=(bytes.get(at),bytes.get(at+1)) else{return false};
     m>>6!=3&&m&7==4&&(sib>>3)&7==4&&sib>>6!=0
 }
-fn decode_family(c:&Case,detail:&str)->String{
-    if repeated_prefixes(&c.bytes){return "repeated or multiple segment prefixes".into();}
+fn decode_family(_c:&Case,detail:&str)->String{
     if let Some(at)=detail.find(" at "){return detail[..at].to_string();}
     if detail.starts_with("fetch outside"){return "fetch outside image".into();}
     if detail.starts_with("ENTER nesting level"){return "ENTER nesting level above 0".into();}
@@ -274,6 +273,7 @@ fn main(){
 fn runner_source(variants:&[String])->String{
     let mut s=String::from("// Generated from validated PIL for the SingleStepTests/80386 adapter.\n#![allow(dead_code,unused_variables,unused_mut,unused_imports,unused_parens)]\n");
     s.push_str("mod flow {\n");s.push_str(include_str!("../../src/flow.rs"));s.push_str("\n}\nuse flow::{ExecError,FlowContext};\n");
+    s.push_str("mod vga_planar {\n");s.push_str(include_str!("../../src/vga_planar.rs").split("#[cfg(test)]").next().unwrap());s.push_str("\n}\n");
     s.push_str("mod memory {\n");s.push_str(include_str!("../../src/memory.rs").split("#[cfg(test)]").next().unwrap());s.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
     s.push_str("mod address {\n");s.push_str(include_str!("../../src/address.rs").split("#[cfg(test)]").next().unwrap());s.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*};\n");
     for (i,v) in variants.iter().enumerate(){s.push_str(&format!("mod p{i} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {v} }}\n"));}

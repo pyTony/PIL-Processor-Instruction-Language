@@ -41,11 +41,34 @@ BIOS word. After Ctrl+Break in SCREEN 9, GW-BASIC's cursor (character FFh)
 stops the run: 350/480-line modes still draw 80h-FFh only from an INT 1Fh
 table, because the original font has 00h-7Fh only.
 
-Local Linux: 581 Rust tests (6 new keyboard tests), 42 GUI tests. FD14LITE.img
+Local Linux: 581 Rust tests (6 new keyboard tests), 42 GUI tests; 585 after merging dev with #107. FD14LITE.img
 (SHA256 f539d456...) probe at 10,000 steps unchanged: 151/156, 53 exits, same
 STOP lines. GWBASIC.EXE SHA256 e1e9fe30...b6b43aeaf3 (Tony's copy).
 CUBE2.BAS in Tony's driveD had two CR bytes inserted before LF bytes (a CRLF
 conversion), giving "Syntax error in 18243".
+
+# Real-mode decoder forms from SingleStepTests — 7 November 2026
+
+Tony made real-mode fixes found by SingleStepTests/80386 the priority ahead
+of protected-mode PR 2. The decoder now accepts repeated and multiple
+prefixes (last segment override and last repeat prefix win, 15-byte limit
+kept), opcode 82h as the 80h alias, F6/F7 /1 as TEST, shift /6 as SAL (SHL),
+and SETcc with any reg field. BSF and BSR are new PIL descriptions
+(isa/i386/bsf.pil, bsr.pil: binary search; a zero source sets ZF and leaves
+the destination; CF, OF, SF, AF, PF undefined). BT/BTS/BTR/BTC with a
+register offset now take a memory bit string: the signed offset selects the
+word or dword at EA+(offset>>4)*2 or EA+(offset>>5)*4, wrapped to the address
+size. LOCK is accepted on read-modify-write memory destinations (00-31h ALU
+r/m,reg forms, 80-83h except /7, F6/F7 /2 /3, FE/FF /0 /1, 0F AB/B3/BB, 0F BA
+/5-/7) and refused elsewhere. The SingleStepTests generated runner embeds
+src/vga_planar.rs again.
+
+Local Linux: 579 Rust tests pass (4 new: prefixes and aliases, BSF/BSR,
+bit-string memory, LOCK; 10 older tests no longer expect these forms to be
+refused). SingleStepTests/80386 run 04 (local): pass 1,351,553 -> 1,555,403,
+0 generated-backend disagreements in 2,265 programs. Still open: BOUND,
+INS/OUTS and IN/OUT ports, ENTER nesting, 16-bit SHLD/SHRD counts above 16,
+16-bit stack wrap at SP=FFFFh, POPAD with a 16-bit stack.
 
 # Real-mode exception delivery — 7 November 2026
 

@@ -1,0 +1,46 @@
+# BSR: index of the highest set bit, by binary search over halves.
+# A zero source sets ZF and leaves the destination unchanged; the 386
+# leaves CF, OF, SF, AF and PF undefined. One template serves 16 and 32
+# bits: on a 16-bit source the 16-bit step never moves.
+$READ
+zero empty a
+not found empty
+const n0 $W 0
+const k16 $W 16
+add more16 n0 k16
+lshr high16 a k16
+zero z16 high16
+select n16 z16 n0 more16
+select x16 z16 a high16
+const k8 $W 8
+add more8 n16 k8
+lshr high8 x16 k8
+zero z8 high8
+select n8 z8 n16 more8
+select x8 z8 x16 high8
+const k4 $W 4
+add more4 n8 k4
+lshr high4 x8 k4
+zero z4 high4
+select n4 z4 n8 more4
+select x4 z4 x8 high4
+const k2 $W 2
+add more2 n4 k2
+lshr high2 x4 k2
+zero z2 high2
+select n2 z2 n4 more2
+select x2 z2 x4 high2
+const k1 $W 1
+add more1 n2 k1
+lshr high1 x2 k1
+zero z1 high1
+select n1 z1 n2 more1
+select x1 z1 x2 high1
+write_if dst n1 found
+flag ZF empty
+undef_flag CF
+undef_flag OF
+undef_flag SF
+undef_flag AF
+undef_flag PF
+retire
