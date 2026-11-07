@@ -1,3 +1,34 @@
+# IRQ0 through a program's INT 08h handler — 7 November 2026
+
+TOPBENCH 0.38a installs its own INT 08h handler and stopped there. Now, under
+the host clock, a new PIT channel 0 edge sets IRR bit 0. With IF=1, no
+interrupt shadow, IRQ0 unmasked at port 21h and not in service, the PIC
+acknowledges it (IRR to ISR) and INT 08h is delivered as a real-mode
+interrupt to the program's handler: FLAGS, CS and the current IP are
+pushed, IF and TF cleared. IRQ0 stays in service until an EOI to port 20h,
+so a handler that never sends one gets no further ticks. The PIC holds a
+single request, so edges that pass while one is pending are not counted, as
+on hardware; the run loop samples the host clock every 256 steps, so a
+reprogrammed rate faster than that loses edges.
+
+A handler that chains to the saved vector (PUSHF; CALL FAR, or JMP FAR)
+reaches the BIOS INT 08h entry at F000:F018. There the BIOS handler adds one
+to 0040:006Ch (wrapping to 0 at 1800B0h and setting 0040:0070h), then runs
+the BIOS wrapper: INT 1Ch, EOI to port 20h, IRET through the chainer's
+frame. A software INT 08h through the BIOS vector runs the same handler
+with a frame. While a program owns INT 08h, the BIOS count is what the
+chained handler stored, not the host edge total, and INT 1Ah reads it.
+HLT with IF=1 ends through the program's handler at once (waiting for the
+edge is not modelled). The diskette motor count at 0040:0040h is not kept,
+since no diskette is modelled. The deterministic clock raises no IRQs, as
+before. Local Linux check: TOPBENCH 0.38a (Tony's copy, SHA256
+4428fc27...0e63d, not in the repository) run as `--dos-session --args -l`
+with a host clock now passes its INT 08h handler and keeps running its
+Continuous Score loop for 24 million steps, showing "This system's TOPBENCH
+Score: 5" on the release build. That score reflects this interpreter on
+that host, not a calibrated machine. Behaviour checked against the IBM AT BIOS timer handler as RBIL
+INT 08h describes it and the Intel 8259A datasheet (IRR, ISR, EOI).
+
 # DOS drive IOCTLs — 7 November 2026
 
 INT 21h AX=440Dh CX=0867h reports an accessible drive in the two-byte
@@ -182,8 +213,10 @@ what Dine now does:
 - The timer tick at 0040:006Ch: while the session has the host clock and
   IF=1, the BIOS INT 08h handler's work (the tick count, and 0040:0070h at
   midnight) is done every 256 steps, so programs that wait for the word to
-  change see time pass. A program's own INT 08h or 1Ch handler is not called;
-  the run stops instead. The probe's deterministic clock is unchanged.
+  change see time pass. A program's own INT 1Ch hook runs through the BIOS
+  wrapper. A program's own INT 08h handler receives IRQ0 as a real-mode
+  interrupt (see "IRQ0 through a program's INT 08h handler" above). The
+  probe's deterministic clock is unchanged.
 - Programs' own interrupt handlers: 4DOS hooks INT 2Fh and then calls it.
   The vectors Dine answers (08h, 10h-17h, 1Ah-1Ch, 20h, 21h, 28h, 29h, 2Ah,
   2Fh) now hold F000:F000+3n, where the read-only BIOS area has

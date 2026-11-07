@@ -37,6 +37,9 @@ pub struct Speaker{
     access:u8,count:u16,high_next:bool,
     counter2:pit::Counter2,
     pub(super) pic:pic::Pair,
+    /// The channel 0 IRQ edge total (BIOS ticks since midnight) last seen;
+    /// a different total is a new edge that sets IRR bit 0.
+    pub(super) irq_edges:Option<u32>,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
     pit:pit::Counter0,
@@ -137,7 +140,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             // prevents the BIOS timer shortcut from delivering it.
             if port==0x20&&p.clock_offset.is_some(){
                 let now=services::sampled_ticks(p);
-                if now!=p.timer_ticks{p.speaker.pic.raise_timer();}
+                services::timer_edge(p,now);
             }
             let value=p.speaker.pic.read(port);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
         }else{p.speaker.pic.write(port,p.cpu.regs[0]as u8)?;}

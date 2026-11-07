@@ -1,3 +1,17 @@
+# IRQ0 through a program's INT 08h handler — 7 November 2026
+
+TOPBENCH 0.38a stopped with "timer interrupt (IRQ0) through a program's
+INT 08h handler is not modelled". Under the host clock, IRQ0 is now a
+real-mode interrupt to the program's INT 08h handler, gated by IF, the
+interrupt shadows, the PIC mask at port 21h and the in-service bit until
+EOI. Chaining to the saved BIOS vector runs the BIOS tick (+1 at 0040:006Ch,
+midnight wrap with 0040:0070h), INT 1Ch, EOI and IRET. Software INT 08h
+through the BIOS vector does the same. Edge sampling moved to a recorded
+edge total, so a new edge sets IRR once. Six new tests cover the frame,
+EOI, masking, IF, chaining by CALL FAR and JMP FAR with an INT 1Ch hook,
+the day wrap, a read-only tick count, delivery faults and HLT. Local
+Linux: 560 Rust tests pass, one ignored. Details in docs/DOS_PROBE.md.
+
 # EGA/VGA planar graphics and a VGA BIOS identity — 7 November 2026
 
 Goal 1 step 5, second part. Tony chose to identify the video BIOS as a
