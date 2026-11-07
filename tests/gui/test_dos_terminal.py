@@ -136,6 +136,20 @@ class DosTerminalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             term.cga_rgb('00', 4, 0x30)
 
+    def test_planar_frame_combines_four_planes_through_sixteen_colours(self):
+        size = 80 * 480
+        planes = bytearray(4 * size)
+        planes[0] = 0x80               # pixel 0: plane 0 -> colour 1
+        planes[size] = 0x40            # pixel 1: plane 1 -> colour 2
+        planes[3 * size + 1] = 0x01    # pixel 15: plane 3 -> colour 8
+        colors = ''.join(f'{i:02x}{i:02x}{i:02x}' for i in range(16))
+        rgb = term.planar_rgb(planes.hex(), 640, 480, colors)
+        self.assertEqual(len(rgb), 640 * 480 * 3)
+        self.assertEqual(rgb[:9], bytes([1, 1, 1, 2, 2, 2, 0, 0, 0]))
+        self.assertEqual(rgb[15 * 3:16 * 3], bytes([8, 8, 8]))
+        with self.assertRaises(ValueError):
+            term.planar_rgb(planes.hex(), 640, 350, colors)
+
     def test_cga_mode_five_is_cyan_red_white_whatever_the_palette_bit(self):
         frame = bytearray(0x4000)
         frame[0] = 0b00011011

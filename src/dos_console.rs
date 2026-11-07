@@ -25,6 +25,8 @@ pub(super) fn initialize(ram:&mut Ram)->Result<(),String>{
     ram.write_bytes(VIDEO,&bytes).map_err(|e|format!("video initialization: {e:?}"))?;
     for (at,width,value) in [(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,80),
         (0x463,MemWidth::Word,0x3d4),(0x44c,MemWidth::Word,PAGE),(0x484,MemWidth::Byte,24),(0x465,MemWidth::Byte,0x29),
+        // VGA BIOS: 9x16 text cells, EGA feature/switch bytes, VGA flags.
+        (0x485,MemWidth::Word,16),(0x487,MemWidth::Byte,0x60),(0x488,MemWidth::Byte,0x09),(0x489,MemWidth::Byte,0x11),
         (0x41a,MemWidth::Word,0x1e),(0x41c,MemWidth::Word,0x1e)]{
         ram.store(at,width,value).map_err(|e|format!("console initialization: {e:?}"))?;
     }Ok(())
@@ -250,9 +252,16 @@ fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
     scroll(&mut cells,(top,left,bottom,right),p.cpu.regs[0]&255,(p.cpu.regs[3]>>8)&255,up);
     commit(p,&window_writes(page,&cells,(top,left,bottom,right)))
 }
-/// Bounded mode 3, CGA 4/5/6 and VGA 13h profile. Bit 7 keeps video RAM.
+/// Bounded mode 3, CGA 4/5/6, EGA/VGA planar 0Dh/0Eh/10h/12h and VGA 13h profile. Bit 7 keeps video RAM.
 fn set_mode(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
+    if super::planar::geometry(al&0x7f).is_some(){return super::planar::set_mode(p,al&0x7f,al&0x80!=0);}
+    let result=set_other_mode(p,al);
+    // Leaving a planar mode unmaps the planes; A000h is ordinary RAM again.
+    if result.is_ok(){p.ram.set_planar(None);}
+    result
+}
+fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
     if matches!(al&0x7f,4|5|6){
         let mode=al&0x7f;let cols=if mode==6{80}else{40};
         let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,cols),
@@ -268,9 +277,9 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
         if al&0x80==0{writes.extend((0..64000).map(|n|(0xa0000+n,MemWidth::Byte,0)));}
         commit(p,&writes)?;p.vga.reset_palette();return Ok(());
     }
-    if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the 80x25 colour text profile",al&0x7f));}
+    if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the VGA BIOS profile (03h, 04h-06h, 0Dh, 0Eh, 10h, 12h, 13h)",al&0x7f));}
     let mut writes=vec![(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
-        (0x463,MemWidth::Word,0x3d4),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1),(0x465,MemWidth::Byte,0x29)];
+        (0x463,MemWidth::Word,0x3d4),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1),(0x465,MemWidth::Byte,0x29),(0x485,MemWidth::Word,16)];
     writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
     if al&0x80==0{
         writes.extend((0..8).flat_map(|page|(0..CELLS).map(move|cell|(VIDEO+page*PAGE+cell*2,MemWidth::Word,0x0720))));
@@ -289,7 +298,9 @@ fn video_mode(p:&mut Loaded)->Result<(),String>{
 }
 /// CGA modes 4, 5 and 6, and mode 13h, one pixel on page zero.
 fn graphics_pixel(p:&mut Loaded,write:bool)->Result<(),String>{
-    let mode=byte(p,0x449)?;let x=p.cpu.regs[1]&0xffff;let y=p.cpu.regs[2]&0xffff;
+    let mode=byte(p,0x449)?;
+    if super::planar::geometry(mode).is_some(){return super::planar::pixel(p,mode,write);}
+    let x=p.cpu.regs[1]&0xffff;let y=p.cpu.regs[2]&0xffff;
     let page=(p.cpu.regs[3]>>8)&255;
     if page!=0{return Err("graphics pixel page must be zero".into());}
     let (address,shift,mask)=match mode{

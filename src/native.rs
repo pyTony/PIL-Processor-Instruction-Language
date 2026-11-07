@@ -406,6 +406,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
 fn runner_source()->String {
     let mut source=String::from("// Generated from validated PIL; fixed-image native Rust proof, not a JIT.\n#![allow(dead_code,unused_variables,unused_mut,unused_imports)]\nuse std::collections::VecDeque;\n");
     source.push_str("mod flow {\n");source.push_str(include_str!("flow.rs"));source.push_str("\n}\nuse flow::{ExecError,FlowContext};\n");
+    source.push_str("mod vga_planar {\n");source.push_str(include_str!("vga_planar.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod memory {\n");source.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
     source.push_str("mod address {\n");source.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*,SegmentAccess::*};\n");
     source.push_str("mod trace {\n");source.push_str(include_str!("trace.rs"));source.push_str("\n}\n");
