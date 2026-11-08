@@ -3,16 +3,11 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 dir = fso.GetParentFolderName(WScript.ScriptFullName)
 WshShell.CurrentDirectory = dir
 
-engine = "target\release\pil.exe"
-candidate = "programs\compiled\pil-engine-v2.exe"
-If fso.FileExists(candidate) Then
-    engine = candidate
-End If
 config = WshShell.Environment("PROCESS")("PILDOS_CONFIG")
 If fso.FileExists("pildos.conf") Or Len(config) > 0 Then
-    cmd = "python tools/dos_terminal.py --engine """ & engine & """"
+    cmd = "python tools/dos_terminal.py"
 Else
-    cmd = "python tools/dos_terminal.py --engine """ & engine & """ --country 358 --mount DriveD --args ""/K D:\AUTOEXEC.BAT"" images/FD14LITE.img::COMMAND.COM"
+    cmd = "python tools/dos_terminal.py --country 358 --mount DriveD --args ""/K D:\AUTOEXEC.BAT"" images/FD14LITE.img::COMMAND.COM"
 End If
 
 For Each arg In WScript.Arguments
