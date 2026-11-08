@@ -20,7 +20,7 @@ feat/bound-enter-io branch had.
   undefined, and this host's CPU disagrees with the 386EX value, so the
   host-CPU oracle failed.
 
-Local Linux: 597 Rust tests pass (3 new); the generated-backend suite has
+Local Linux: 596 Rust tests pass (3 new); the generated-backend suite has
 267 cases (2 new: port_io, enter_overlap). SingleStepTests/80386 run 06
 (local): pass 1,582,234 -> 1,600,052; nothing is left undecoded; 0
 disagreements in 2,306 generated programs.
