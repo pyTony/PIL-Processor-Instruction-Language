@@ -1,3 +1,46 @@
+# SysInfo 8: text-mode font plane, DOS default divide handler — 8 November 2026
+
+Tony's DOS benchmark menu (driveD\dosbench), option k (Norton System
+Information 8.0, MARKS\SI8\SYSINFO.EXE with NLIB200.RTL) gave two stops in
+his stop log: "VGA sequencer register 04h value 07h" at 4EFE:0016 and a
+divide error at 3365:0086 (F7 F3, DIV BX with BX=0).
+- 4EFE:0016 is not mode X. It is the standard font-access sequence (map
+  mask 04h, memory mode 07h, GC mode 00h, miscellaneous 04h, read map 02h),
+  which SysInfo uses to put its own glyphs (61 of them: frames, scroll bars,
+  check boxes) into plane 2 in text mode. src/dos_vga_font.rs: while the
+  registers select A0000h with odd/even and chain-4 off, the four planes
+  are Ram's planar window (same engine as vga_planar); otherwise they are
+  kept aside and A0000h is ordinary RAM again. A text-mode set clears them.
+  Chain-4, graphics mode, the mono map and shift/256-colour bits stay
+  refused in text mode. Not modelled: the BIOS 8x16 font (plane 2 starts
+  as zeros) and showing program glyphs (the terminal draws with the host
+  font, so SysInfo's frames appear as CP437 box characters).
+- 3365:0086 is SysInfo's I/O delay calibration: PIT channel 0 counts read
+  around 100 LOOPs, minus an empty measurement. Under the host-time PIT the
+  difference can be 0 on a fast host (Tony's twice; never in 3 local runs),
+  and 100/0 faults. Vector 0 now starts at its entry (F000:F000), and a #DE
+  there runs the FreeDOS kernel's default handler (entry.asm
+  reloc_call_int0_handler): "Interrupt divide by zero, stack:" plus 13
+  stack words in hex through BIOS teletype, then exit with errorlevel 127.
+  A program's own INT 0 handler is used as before; with INT 10h hooked, or
+  vector 0 cleared to 0000:0000, it still stops.
+- SysInfo's next stops, answered as the FreeDOS kernel does: INT 21h
+  AH=DCh (unsupported function, AL=00h), AX=5F44h and other AH=5Fh
+  redirector calls except 07h/08h (CF=1, AX=0001h, from int2f.asm's
+  "redirected INT21/5F44"), INT 2Fh AX=D701h (no Banyan VINES) and B800h
+  (no network) return unchanged.
+- Next SysInfo stop (local run, not fixed): a byte write to C000:0000 at
+  3517:72D6. Dine's C000-FFFF area is read-only RAM, so a write faults;
+  on real hardware a ROM write is ignored. That is a memory-model change
+  in src/memory.rs, shared by both backends.
+
+Local Linux: 610 of 611 Rust tests pass (5 new: dos_vga_font 3, divide
+handler 2; 4 older tests updated). host_cpu_alu fails on this cloud host
+with and without the change. FD14LITE.img (SHA256 f539d456...) probe at
+10,000 steps unchanged: 151/156 imported, 53 exits.
+After merging dev (paging, IDT delivery): 635 Rust tests pass, 1 ignored,
+host_cpu_alu included.
+
 # Protected mode, increment 4: IDT delivery and IRET — 8 November 2026
 
 Protected-mode plan increment 4 (#122 was paging).

@@ -405,3 +405,13 @@ Local Linux release, FD14LITE.img SHA256
 f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36, 10,000
 steps: imports 151/156, 53 exits, every STOP line identical to dev 409ab84.
 INT 09h now starts at its entry (F000:F01B); no probed program reads it.
+
+## SysInfo font plane and DOS default divide handler — 8 November 2026
+
+Local Linux probe at 10,000 steps, FD14LITE.img SHA256 f539d456...:
+151/156 imported, 53 exits, unchanged. Vector 0 now holds its BIOS entry
+(F000:F000) and an unhandled #DE ends the program with errorlevel 127, as
+the FreeDOS kernel does; no probe program reached one at this budget.
+INT 21h AH=5Fh other than 07h/08h now returns CF=1, AX=0001h; the one
+remaining AH=5Fh stop is DRVON.COM's AX=5F07h (enable drive), which needs
+the CDS and still stops.
