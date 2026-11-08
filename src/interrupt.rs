@@ -13,13 +13,15 @@
 //! reported as a shutdown.
 //!
 //! Protected mode (`deliver`): the IDT entry must be a 286 or 386 interrupt
-//! or trap gate to a code segment of the current privilege level (or a
-//! conforming one); EFLAGS, CS, EIP and the error code, if any, are pushed
+//! or trap gate to a code segment with DPL <= CPL, entered at its own
+//! level unless conforming; EFLAGS, CS, EIP and the error code are pushed
 //! as words or dwords by the gate size. A fault while delivering is itself
 //! delivered, as a double fault (#DF) where the 386 makes one, and a fault
-//! while delivering #DF is a shutdown (triple fault). Task gates, the stack
-//! switch to an inner level and virtual-8086 mode stop the run.
-use super::address::{MemoryContext,SegmentCache,SegmentRegister};
+//! while delivering #DF is a shutdown (triple fault). A handler of a more
+//! privileged level runs on its stack from the TSS (privilege.rs). Task
+//! gates and virtual-8086 mode stop the run.
+use super::address::{MemoryContext,SegmentAccess,SegmentCache,SegmentRegister};
+use super::privilege::{self,read_descriptor,Frame};
 use super::flow::ExecError;
 use super::guest::Image;
 use super::memory::{MemWidth,Ram};
@@ -37,6 +39,7 @@ pub fn vector(error:&ExecError)->Option<u8>{
         ExecError::GeneralProtection{..}=>Some(13),
         ExecError::PageFault{..}=>Some(14),
         ExecError::SegmentNotPresent{..}=>Some(11),
+        ExecError::InvalidTss{..}=>Some(10),
         _=>None,
     }
 }
@@ -72,7 +75,7 @@ impl Event{
     pub fn fault(error:&ExecError,eip:u32)->Option<Self>{
         let vector=vector(error)?;
         let (error_code,cr2)=match *error{
-            ExecError::GeneralProtection{error_code,..}|ExecError::StackSegment{error_code,..}|ExecError::SegmentNotPresent{error_code,..}=>(Some(error_code),None),
+            ExecError::GeneralProtection{error_code,..}|ExecError::StackSegment{error_code,..}|ExecError::SegmentNotPresent{error_code,..}|ExecError::InvalidTss{error_code,..}=>(Some(error_code),None),
             ExecError::PageFault{address,error_code,..}=>(Some(error_code),Some(address)),
             _=>(None,None),
         };
@@ -108,7 +111,9 @@ pub fn deliver(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:Event)->Result<(
 }
 
 /// One protected-mode delivery attempt. Every read, check and stack write
-/// is tried before anything changes, so on error nothing has.
+/// is tried before anything changes, so on error nothing has. A
+/// nonconforming handler of a more privileged level runs on the stack for
+/// its level from the TSS, with the old SS and ESP pushed first.
 fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Result<(),ExecError>{
     if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
     let eip=cpu.eip;
@@ -116,41 +121,49 @@ fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Res
     ram.set_paging(machine.ram_paging());
     let result=(||{
         let r:&Ram=ram;
-        let mut read=|at:u32|->Result<u64,ExecError>{
-            let lo=r.load(at,MemWidth::Dword).map_err(|f|f.error(eip))?;
-            let hi=r.load(at.wrapping_add(4),MemWidth::Dword).map_err(|f|f.error(eip))?;
-            Ok(u64::from(lo)|(u64::from(hi)<<32))
-        };
+        let mut read=|at:u32|read_descriptor(r,at,eip);
         let gate=machine.interrupt_gate(event.vector,event.software,eip,&mut read)?;
         let (selector,cache,accessed)=machine.interrupt_target(gate.selector,event.software,eip,&mut read)?;
-        if gate.offset>cache.limit{return Err(ExecError::GeneralProtection{eip,error_code:0});}
-        if let Some((at,_))=accessed{r.check_write(at,MemWidth::Byte).map_err(|f|f.error(eip))?;}
-        let ss=machine.segments[SegmentRegister::Ss.index()];
-        let mask=if matches!(ss.access,super::address::SegmentAccess::Data{big:true,..}){u32::MAX}else{0xffff};
-        let (width,bytes)=if gate.big{(MemWidth::Dword,4)}else{(MemWidth::Word,2)};
-        let context=MemoryContext{segment:SegmentRegister::Ss,cache:ss};
-        let mut sp=cpu.regs[4];
-        let values=[Some(cpu.eflags),Some(u32::from(machine.selectors[SegmentRegister::Cs.index()])),Some(event.return_eip),event.error_code.map(u32::from)];
-        let mut writes=Vec::with_capacity(4);
-        for value in values.into_iter().flatten(){
-            sp=(sp&!mask)|(sp.wrapping_sub(bytes)&mask);
-            let at=context.translate(sp&mask,width,true,eip)?;
-            r.check_write(at,width).map_err(|f|f.error(eip))?;
-            writes.push((at,value));
+        let offset=if gate.big{gate.offset}else{gate.offset&0xffff};
+        if offset>cache.limit{return Err(ExecError::GeneralProtection{eip,error_code:0});}
+        let level=match cache.access{SegmentAccess::Code{dpl,..}=>dpl,_=>return Err(ExecError::InvalidContext)};
+        let cpl=machine.cpl();
+        let width=if gate.big{MemWidth::Dword}else{MemWidth::Word};
+        let mut stores=Vec::new();
+        if let Some((at,value))=accessed{
+            r.as_level(false,|r|r.check_write(at,MemWidth::Byte)).map_err(|f|f.error(eip))?;
+            stores.push((at,MemWidth::Byte,u32::from(value),false));
         }
-        Ok((gate,selector,cache,accessed,sp,writes))
+        let ss_index=SegmentRegister::Ss.index();
+        let (mut frame,stack)=if level<cpl{
+            let ext=u16::from(!event.software);
+            let (ss_selector,ss_cache,ss_mark,esp)=privilege::inner_stack(&machine,r,level,ext,eip)?;
+            if let Some((at,value))=ss_mark{
+                r.as_level(false,|r|r.check_write(at,MemWidth::Byte)).map_err(|f|f.error(eip))?;
+                stores.push((at,MemWidth::Byte,u32::from(value),false));
+            }
+            let mut frame=Frame::new(ss_cache,esp,level==3,(ss_selector&0xfffc)|ext,eip);
+            frame.push(r,width,u32::from(machine.selectors[ss_index]),&mut stores)?;
+            frame.push(r,width,cpu.regs[4],&mut stores)?;
+            (frame,Some((ss_selector,ss_cache)))
+        }else{(Frame::new(machine.segments[ss_index],cpu.regs[4],cpl==3,0,eip),None)};
+        let values=[Some(cpu.eflags),Some(u32::from(machine.selectors[SegmentRegister::Cs.index()])),Some(event.return_eip),event.error_code.map(u32::from)];
+        for value in values.into_iter().flatten(){frame.push(r,width,value,&mut stores)?;}
+        Ok((gate,selector,cache,offset,stack,frame.sp,stores))
     })();
-    let (gate,selector,cache,accessed,sp,writes)=match result{Ok(v)=>v,Err(e)=>{ram.set_paging(machine.ram_paging());return Err(e);}};
-    let width=if gate.big{MemWidth::Dword}else{MemWidth::Word};
-    if let Some((at,value))=accessed{ram.store(at,MemWidth::Byte,u32::from(value)).map_err(|f|f.error(eip))?;}
-    for (at,value) in writes{ram.store(at,width,value).map_err(|f|f.error(eip))?;}
+    let (gate,selector,cache,offset,stack,sp,stores)=match result{Ok(v)=>v,Err(e)=>{ram.set_paging(machine.ram_paging());return Err(e);}};
+    for (at,width,value,user) in stores{ram.store_as(user,at,width,value).map_err(|f|f.error(eip))?;}
     cpu.regs[4]=sp;
     // TF, NT, RF and VM clear; an interrupt gate clears IF too.
     let clear=0x0003_4100|if gate.trap{0}else{0x200};
     cpu.eflags&=!clear;cpu.undefined_flags&=!clear;
+    if let Some((ss_selector,ss_cache))=stack{
+        let index=SegmentRegister::Ss.index();
+        image.selectors[index]=ss_selector;image.segments[index]=ss_cache;
+    }
     let index=SegmentRegister::Cs.index();
     image.selectors[index]=selector;image.segments[index]=cache;
-    cpu.eip=if gate.big{gate.offset}else{gate.offset&0xffff};
+    cpu.eip=offset;
     image.retired();
     ram.set_paging(image.segment_state().ram_paging());
     Ok(())
@@ -158,7 +171,7 @@ fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Res
 
 /// Short mnemonic for a vector, for reports.
 pub fn name(vector:u8)->&'static str{
-    match vector{0=>"#DE",1=>"#DB",3=>"#BP",4=>"#OF",5=>"#BR",6=>"#UD",7=>"#NM",8=>"#DF",12=>"#SS",13=>"#GP",14=>"#PF",_=>"INT"}
+    match vector{0=>"#DE",1=>"#DB",3=>"#BP",4=>"#OF",5=>"#BR",6=>"#UD",7=>"#NM",8=>"#DF",10=>"#TS",11=>"#NP",12=>"#SS",13=>"#GP",14=>"#PF",_=>"INT"}
 }
 
 /// The real-mode handler address (segment, offset) for vector `n`.

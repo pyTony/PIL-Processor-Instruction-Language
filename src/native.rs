@@ -107,13 +107,13 @@ pub fn cases()->Result<Vec<Case>,String> {
     for big in [false,true]{for w in [16,32]{
         let mut bytes=Vec::new();for instruction in [vec![0x54],vec![0x58],vec![0x6a,0x80],vec![0x5b],vec![0x1e],vec![0x5f]]{if w==32{bytes.push(0x66);}bytes.extend(instruction);}bytes.push(0xf4);
         let mut t=case(match(big,w){(false,16)=>"stack16_16",(false,_)=>"stack16_32",(true,16)=>"stack32_16",_=>"stack32_32"},bytes)?;
-        t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.flags=0xed7;tests.push(t);
+        t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.flags=0xed7;tests.push(t);
     }}
     let mut t=case("stack_readonly",vec![0x50,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
     let mut t=case("stack_boundary",vec![0x50,0xf4])?;t.regs[4]=1;tests.push(t);
     let mut t=case("segment_roundtrip",vec![0xb8,0x40,0,0x8e,0xd8,0x8c,0xdb,0x1e,0x07,0x8c,0xc1,0x0f,0xa0,0x0f,0xa9,0xf4])?;t.regs[4]=0x800;t.flags=0xed7;tests.push(t);
     let t=case("segment_memory",vec![0xb8,0x40,0,0x8e,0xd8,0x8c,0x1e,0,2,0x8e,0x06,0,2,0x26,0x8b,0x16,0,2,0xf4])?;tests.push(t);
-    let mut t=case("segment_ss",vec![0xb8,0x30,0,0x8e,0xd0,0x50,0x1f,0x8c,0xda,0xf4])?;t.regs[4]=0x800;t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true}};tests.push(t);
+    let mut t=case("segment_ss",vec![0xb8,0x30,0,0x8e,0xd0,0x50,0x1f,0x8c,0xda,0xf4])?;t.regs[4]=0x800;t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};tests.push(t);
     let mut t=case("segment_fault",vec![0x17,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("segment_pop32",vec![0x66,0x68,0x40,0,0xcd,0xab,0x66,0x1f,0x8c,0xd8,0xf4])?;t.regs[4]=0x800;tests.push(t);
     let mut t=case("segment_store_readonly",vec![0x8c,0x1e,0,8,0xf4])?;t.protect=Some((0x900,2));tests.push(t);
@@ -123,7 +123,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     let t=case("moffs_boundary",vec![0xa1,0xff,0xff,0xf4])?;tests.push(t);
     for big in [false,true]{for w in [16,32]{
         let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.push(0xe8);bytes.push(1);bytes.extend(vec![0;(w/8-1)as usize]);bytes.push(0xf4);if w==32{bytes.push(0x66);}bytes.extend([0xb8,0x34,0x12]);if w==32{bytes.extend([0x78,0x56]);bytes.push(0x66);}bytes.push(0xc3);
-        let mut t=case(match(big,w){(false,16)=>"calls16_16",(false,_)=>"calls16_32",(true,16)=>"calls32_16",_=>"calls32_32"},bytes)?;t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.flags=0xed7;tests.push(t);
+        let mut t=case(match(big,w){(false,16)=>"calls16_16",(false,_)=>"calls16_32",(true,16)=>"calls32_16",_=>"calls32_32"},bytes)?;t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.flags=0xed7;tests.push(t);
     }}
     let mut t=case("call_register",vec![0xff,0xd0,0xf4,0x90,0x90,0x41,0xc3])?;t.regs[0]=0x105;t.regs[4]=0x800;tests.push(t);
     let mut t=case("call_memory",vec![0xff,0x16,0,8,0xf4,0x41,0xc3])?;t.regs[4]=0x800;t.patch=Some((0x900,vec![5,1]));tests.push(t);
@@ -142,17 +142,17 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("lmsw_transition",vec![0xb8,0x11,0,0x0f,1,0xf0,0xf4])?;t.flags=0xad7;tests.push(t);
     for big in [false,true]{for w in [16,32]{
         let mut bytes=vec![0xfa];if w==32{bytes.push(0x66);}bytes.push(0x9c);bytes.push(0xf9);if w==32{bytes.push(0x66);}bytes.push(0x9d);bytes.extend([0xfb,0xfb,0x90,0xf4]);
-        let mut t=case(match(big,w){(false,16)=>"flagstack16_16",(false,_)=>"flagstack16_32",(true,16)=>"flagstack32_16",_=>"flagstack32_32"},bytes)?;t.regs[4]=0x800;t.flags=0x17dd7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};tests.push(t);
+        let mut t=case(match(big,w){(false,16)=>"flagstack16_16",(false,_)=>"flagstack16_32",(true,16)=>"flagstack32_16",_=>"flagstack32_32"},bytes)?;t.regs[4]=0x800;t.flags=0x17dd7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};tests.push(t);
     }}
     let mut t=case("pushf_readonly",vec![0x9c,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
     let mut t=case("popf_limit",vec![0x9d,0xf4])?;t.regs[4]=0xffff;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("control_mode_reject",vec![0xfb,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     let mut t=case("sti_rep_fault",vec![0xfa,0xfb,0xf3,0xaa,0xf4])?;t.regs[1]=2;t.regs[7]=0xa00;t.protect=Some((0xa01,1));tests.push(t);
     for addr32 in [false,true]{for zero in [false,true]{let mut bytes=vec![];if addr32{bytes.push(0x67);}bytes.extend([0xe3,1,0x40,0xf4]);let mut t=case(match(addr32,zero){(false,false)=>"jcxz_nonzero",(false,true)=>"jcxz_zero",(true,false)=>"jecxz_nonzero",_=>"jecxz_zero"},bytes)?;t.regs[1]=if zero{if addr32{0}else{0xabcd0000}}else{1};tests.push(t);}}
-    for big in [false,true]{for w in [16,32]{let bytes=if w==32{vec![0x66,0xc9,0xf4]}else{vec![0xc9,0xf4]};let mut t=case(match(big,w){(false,16)=>"leave16_16",(false,_)=>"leave16_32",(true,16)=>"leave32_16",_=>"leave32_32"},bytes)?;t.regs[4]=0x400;t.regs[5]=if big{0x800}else{0xabcd0800};t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0x34,0x12,0x78,0x56]));t.flags=0xed7;tests.push(t);}}
+    for big in [false,true]{for w in [16,32]{let bytes=if w==32{vec![0x66,0xc9,0xf4]}else{vec![0xc9,0xf4]};let mut t=case(match(big,w){(false,16)=>"leave16_16",(false,_)=>"leave16_32",(true,16)=>"leave32_16",_=>"leave32_32"},bytes)?;t.regs[4]=0x400;t.regs[5]=if big{0x800}else{0xabcd0800};t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,vec![0x34,0x12,0x78,0x56]));t.flags=0xed7;tests.push(t);}}
     let mut t=case("leave_fault",vec![0xc9,0xf4])?;t.regs[5]=0xffff;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("leave_readonly",vec![0xc9,0xf4])?;t.regs[5]=0x800;t.patch=Some((0xa00,vec![0x34,0x12]));t.protect=Some((0xa00,2));tests.push(t);
-    let mut t=case("leave_after_ss_load",vec![0xb8,0x30,0,0x8e,0xd0,0xc9,0xf4])?;t.regs[5]=0xabcd0800;t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true}};t.patch=Some((0xb00,vec![0x34,0x12]));tests.push(t);
+    let mut t=case("leave_after_ss_load",vec![0xb8,0x30,0,0x8e,0xd0,0xc9,0xf4])?;t.regs[5]=0xabcd0800;t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.patch=Some((0xb00,vec![0x34,0x12]));tests.push(t);
     for w in [8,16,32]{for a32 in [false,true]{let mut bytes=Vec::new();for (prefix,op) in [(None,0xa6u8),(None,0xae),(Some(0xf3),0xa6),(Some(0xf2),0xae)]{bytes.extend([0xb9,2,0]);if w==32{bytes.push(0x66);}if a32{bytes.push(0x67);}if let Some(prefix)=prefix{bytes.push(prefix);}bytes.push(op|u8::from(w!=8));}bytes.push(0xf4);let mut t=case(match(w,a32){(8,false)=>"compare8_16",(8,true)=>"compare8_32",(16,false)=>"compare16_16",(16,true)=>"compare16_32",(32,false)=>"compare32_16",_=>"compare32_32"},bytes)?;t.regs[0]=0;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![0;64]));tests.push(t);}}
     for prefix in [0xf2,0xf3]{for op in [0xa6u8,0xae]{let mut t=case(match(prefix,op){(0xf2,0xa6)=>"repne_cmps_fault",(0xf3,0xa6)=>"repe_cmps_fault",(0xf2,_)=>"repne_scas_fault",_=>"repe_scas_fault"},vec![prefix,op,0xf4])?;t.regs[0]=u32::from(prefix==0xf2);t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![t.regs[0]as u8;3]));t.image.segments[0].limit=0xa00;t.image.sti_shadow=1;t.flags=0xad7;tests.push(t);}}
     let mut t=case("compare_zero",vec![0xf3,0xae,0xf2,0xa6,0xf4])?;t.regs[1]=0xabcd0000;t.image.segments[0].access=super::address::SegmentAccess::Unusable;tests.push(t);
@@ -176,7 +176,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     for w in [16,32]{for big in [false,true]{for cleanup in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.push(if cleanup{0xca}else{0xcb});if cleanup{bytes.extend([7,0]);}bytes.extend([0x41,0xf4]);
         let target=0x100+bytes.len()as u32-2-16;let mut data=if w==16{(target as u16).to_le_bytes().to_vec()}else{target.to_le_bytes().to_vec()};if w==16{data.extend([1,0]);}else{data.extend([1,0,0xcd,0xab]);}
-        let mut t=case(match(w,big,cleanup){(16,false,false)=>"retf16_ss16",(16,false,true)=>"retfi16_ss16",(16,true,false)=>"retf16_ss32",(16,true,true)=>"retfi16_ss32",(32,false,false)=>"retf32_ss16",(32,false,true)=>"retfi32_ss16",(32,true,false)=>"retf32_ss32",_=>"retfi32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,data));tests.push(t);
+        let mut t=case(match(w,big,cleanup){(16,false,false)=>"retf16_ss16",(16,false,true)=>"retfi16_ss16",(16,true,false)=>"retf16_ss32",(16,true,true)=>"retfi16_ss32",(32,false,false)=>"retf32_ss16",(32,false,true)=>"retfi32_ss16",(32,true,false)=>"retf32_ss32",_=>"retfi32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,data));tests.push(t);
     }}}
     for w in [16,32]{for big in [false,true]{
         // IRET to 0001:target with flags 0ED7h (DF, IF, OF and arithmetic flags), from 0246h.
@@ -185,7 +185,7 @@ pub fn cases()->Result<Vec<Case>,String> {
         let mut data=if w==16{(target as u16).to_le_bytes().to_vec()}else{target.to_le_bytes().to_vec()};
         if w==16{data.extend([1,0,0xd7,0x0e]);}else{data.extend([1,0,0xcd,0xab,0xd7,0x0e,0x34,0x12]);}
         let mut t=case(match(w,big){(16,false)=>"iret16_ss16",(16,true)=>"iret16_ss32",(32,false)=>"iret32_ss16",_=>"iret32_ss32"},bytes)?;
-        t.regs[4]=0x800;t.flags=0x246;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,data));tests.push(t);
+        t.regs[4]=0x800;t.flags=0x246;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,data));tests.push(t);
     }}
     let mut t=case("iret_frame_fault",vec![0xcf,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("retf_alias_branch",vec![0xcb,0x74,1,0x40,0xf4])?;t.regs[4]=0x800;t.flags=0x246;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
@@ -196,7 +196,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("retf_mode_reject",vec![0xcb,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     for w in [16,32]{for big in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0x8f,4,0x24,0xf4]);
-        let mut t=case(match(w,big){(16,false)=>"popmem16_ss16",(16,true)=>"popmem16_ss32",(32,false)=>"popmem32_ss16",_=>"popmem32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
+        let mut t=case(match(w,big){(16,false)=>"popmem16_ss16",(16,true)=>"popmem16_ss32",(32,false)=>"popmem32_ss16",_=>"popmem32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
     }}
     for w in [16,32]{let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x64,0x8f,6,0,4,0xf4]);let mut t=case(if w==16{"popmem_fs16"}else{"popmem_fs32"},bytes)?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);}
     for (name,msw,real) in [("smsw_zero",0,true),("smsw_supplied",0xa5a0,true),("smsw_protected",0xa5a0,false)]{let mut t=case(name,vec![0x0f,1,0xe0,0x0f,1,0xe3,0xf4])?;t.image.msw=msw;t.image.real_mode=real;t.regs[0]=0x12345678;t.regs[3]=0xabcdef01;t.flags=0xed7;tests.push(t);}
@@ -208,7 +208,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     for w in [16,32]{for big in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0xff,0x34,0x24,0xf4]);
         let mut t=case(match(w,big){(16,false)=>"pushmem16_ss16",(16,true)=>"pushmem16_ss32",(32,false)=>"pushmem32_ss16",_=>"pushmem32_ss32"},bytes)?;
-        t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};
+        t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
         t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
     }}
     for w in [16,32]{
@@ -225,7 +225,7 @@ pub fn cases()->Result<Vec<Case>,String> {
         if indirect{bytes.extend([0xff,0x1e,0,4]);}else{bytes.push(0x9a);bytes.extend(&0x100u32.to_le_bytes()[..(w/8)as usize]);bytes.extend([1,0]);}
         bytes.push(0xf4);while bytes.len()<16{bytes.push(0x90);}bytes.push(0x41);if w==32{bytes.push(0x66);}bytes.push(0xcb);
         let name=match(w,big,indirect){(16,false,false)=>"far_imm16_ss16",(16,true,false)=>"far_imm16_ss32",(32,false,false)=>"far_imm32_ss16",(32,true,false)=>"far_imm32_ss32",(16,false,true)=>"far_mem16_ss16",(16,true,true)=>"far_mem16_ss32",(32,false,true)=>"far_mem32_ss16",_=>"far_mem32_ss32"};
-        let mut t=case(name,bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};
+        let mut t=case(name,bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
         if indirect{let mut ptr=0x100u32.to_le_bytes()[..(w/8)as usize].to_vec();ptr.extend([1,0]);t.patch=Some((0x500,ptr));}tests.push(t);
     }}}
     for w in [16,32]{
@@ -403,7 +403,22 @@ pub fn cases()->Result<Vec<Case>,String> {
     // returns to 0008:00000110 with IOPL 3, NT clear and IF set.
     let mut code=vec![0xcf];code.resize(0x10,0x90);code.push(0xf4);
     let mut frame=gdt_iret.clone();for v in [0x110u32,0x08,0x3ed7]{frame.extend(v.to_le_bytes());}
-    let mut t=case("pm_iret",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true}};t.regs[4]=0xc18;t.patch=Some((0xc00,frame));tests.push(t);
+    let mut t=case("pm_iret",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xc18;t.patch=Some((0xc00,frame));tests.push(t);
+    // Rings in 32-bit code: IRETD at CPL 0 to ring 3 (frame at E00h: EIP
+    // 110h, CS 1Bh, EFLAGS, ESP B00h, SS 23h), which nulls DS/ES/FS/GS; then
+    // CALL FAR 0033:0 through a DPL 3 call gate copying one dword to
+    // 0008:0120, on the ring 0 stack at TSS ESP0 F00h; HLT there at CPL 0.
+    let gate:u64=0x0000_ec01_0008_0120;
+    let mut rings=vec![0u8;0x320];
+    for (n,d) in [0u64,0x00cf_9a00_0000_ffff,0x00cf_9200_0000_ffff,0x00cf_fa00_0000_ffff,0x00cf_f200_0000_ffff,0x0000_8b00_0d00_0067,gate].iter().enumerate(){rings[0x100+8*n..0x108+8*n].copy_from_slice(&d.to_le_bytes());}
+    rings[0..4].copy_from_slice(&0xcafe_babeu32.to_le_bytes());
+    rings[0x204..0x208].copy_from_slice(&0xf00u32.to_le_bytes());rings[0x208..0x20a].copy_from_slice(&0x10u16.to_le_bytes());
+    for (n,v) in [0x110u32,0x1b,0x202,0xb00,0x23].iter().enumerate(){rings[0x300+4*n..0x304+4*n].copy_from_slice(&v.to_le_bytes());}
+    let mut code=vec![0xcf];code.resize(0x10,0x90);code.extend([0x9a,0,0,0,0,0x33,0,0xf4]);code.resize(0x20,0x90);code.push(0xf4);
+    let mut t=case("pm_rings",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x37,0xc00);
+    t.image.ldt_tr[1]=super::address::SystemSegment{selector:0x28,base:0xd00,limit:0x67,kind:0x0b};
+    t.image.selectors[1]=0x08;t.image.selectors[2]=0x10;
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xe00;t.patch=Some((0xb00,rings));tests.push(t);
     let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
@@ -423,7 +438,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
         dispatch.push_str(&format!("{physical}=>{{if let Err(status)=guard(s,s.eip,&{bytes:?},s.machine.segments[1],{}){{return status;}}\n",case.image.end));
         match decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
-                code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&program)));
+                code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {} }}\n",super::emit_rust_functions(&program)));
                 let dynamic_flow=format!("FlowContext{{next_eip:s.eip+{},code_limit:s.machine.segments[1].limit,..{flow:?}}}",decoded.length);
                 dispatch.push_str(&format!("let flow_context={dynamic_flow};\n"));
                 let args=format!("&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context",dst.register,dst.low,src.register,src.low);
@@ -432,7 +447,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
                     let mut alternate=case.image.clone();let old_big=matches!(alternate.segments[2].access,super::address::SegmentAccess::Data{big:true,..});
                     if let super::address::SegmentAccess::Data{ref mut big,..}=alternate.segments[2].access{*big=!old_big;}
                     if let Operation::Pil{program:p,dst:d,src:r,flow:_,address:a}=alternate.decode(&ram,ip).map_err(|e|format!("alternate stack decode: {e:?}"))?.operation{
-                        code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&p)));
+                        code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {} }}\n",super::emit_rust_functions(&p)));
                         let alternate_call=format!("alt{ip:x}::execute_with_machine(&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context,&mut s.ram,{a:?},&mut s.machine)",d.register,d.low,r.register,r.low);
                         call=format!("if matches!(s.machine.segments[2].access,SegmentAccess::Data{{big:true,..}})=={old_big}{{{call}}}else{{{alternate_call}}}");
                     }
@@ -457,6 +472,7 @@ fn runner_source()->String {
     source.push_str("mod vga_planar {\n");source.push_str(include_str!("vga_planar.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod memory {\n");source.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
     source.push_str("mod address {\n");source.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*,SegmentAccess::*};\n");
+    source.push_str("mod privilege {\n");source.push_str(include_str!("privilege.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod trace {\n");source.push_str(include_str!("trace.rs"));source.push_str("\n}\n");
     source.push_str(RUNNER);
     source

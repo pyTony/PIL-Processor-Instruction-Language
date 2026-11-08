@@ -9,6 +9,7 @@ pub fn fault(eip:u32,error:ExecError)->[u32;5] {
         ExecError::Exception{eip,vector}=>[12,eip,u32::from(vector),0,0],
         ExecError::PageFault{eip,address,error_code}=>[13,eip,address,u32::from(error_code),0],
         ExecError::SegmentNotPresent{eip,error_code}=>[14,eip,u32::from(error_code),0,0],
+        ExecError::InvalidTss{eip,error_code}=>[15,eip,u32::from(error_code),0,0],
         ExecError::InvalidBinding=>[8,eip,0,0,0],ExecError::InvalidContext=>[9,eip,0,0,0],
     }
 }
@@ -20,7 +21,7 @@ pub fn record_machine(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],fla
     let mut state=Vec::new();
     for (selector,cache) in machine.selectors.iter().zip(machine.segments){
         state.extend_from_slice(&selector.to_le_bytes());state.extend_from_slice(&cache.base.to_le_bytes());state.extend_from_slice(&cache.limit.to_le_bytes());
-        let access=match cache.access{super::address::SegmentAccess::Unusable=>0,super::address::SegmentAccess::Code{readable,conforming,big,dpl}=>1|(u8::from(readable)<<1)|(u8::from(conforming)<<2)|(u8::from(big)<<5)|(dpl<<6),super::address::SegmentAccess::Data{writable,expand_down,big}=>4|(u8::from(writable)<<3)|(u8::from(expand_down)<<4)|(u8::from(big)<<5)};state.push(access);
+        let access=match cache.access{super::address::SegmentAccess::Unusable=>0,super::address::SegmentAccess::Code{readable,conforming,big,dpl}=>1|(u8::from(readable)<<1)|(u8::from(conforming)<<2)|(u8::from(big)<<5)|(dpl<<6),super::address::SegmentAccess::Data{writable,expand_down,big,dpl}=>4|(u8::from(writable)<<3)|(u8::from(expand_down)<<4)|(u8::from(big)<<5)|(dpl<<6)};state.push(access);
     }
     state.extend_from_slice(&[u8::from(machine.real_mode),machine.ss_shadow,machine.sti_shadow]);
     state.push(u8::from(machine.flag_checkpoint.is_some()));let (ip,f,u)=machine.flag_checkpoint.unwrap_or((0,0,0));for n in [ip,f,u]{state.extend_from_slice(&n.to_le_bytes());}

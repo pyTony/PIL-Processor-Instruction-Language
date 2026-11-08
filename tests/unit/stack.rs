@@ -9,7 +9,7 @@ fn step(image:&guest::Image,ram:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{
 }
 fn setup(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){
     let (mut image,_)=guest::Image::load(bytes).unwrap();
-    image.segments[2]=address::SegmentCache{base:0x200,limit:if big{u32::MAX}else{65535},access:SegmentAccess::Data{writable:true,expand_down:false,big}};
+    image.segments[2]=address::SegmentCache{base:0x200,limit:if big{u32::MAX}else{65535},access:SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0}};
     let mut ram=Ram::new(0x20200);ram.write_bytes(0x100,bytes).unwrap();
     let c=Cpu{regs:[0x12345678,0x87654321,0,0,if big{0x800}else{0xabcd0800},0,0,0],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100};
     (image,ram,c)
@@ -97,7 +97,7 @@ fn emitted_stack_aliases_match_independent_expected_state(){
 fn stack_cache_identity_includes_ss_size_and_visible_selectors(){
     let (mut image,mut ram,c)=setup(&[0x1e],false);let mut cache=cache::DecodeCache::default();
     cache.fetch(&image,&ram,c.eip).unwrap();image.selectors[3]^=1;cache.fetch(&image,&ram,c.eip).unwrap();
-    image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big:true};cache.fetch(&image,&ram,c.eip).unwrap();assert_eq!(cache.stats().invalidations,2);
+    image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0};cache.fetch(&image,&ram,c.eip).unwrap();assert_eq!(cache.stats().invalidations,2);
     ram.write_bytes(0x100,&[0x66]).unwrap();let old=c.clone();let c=c;assert!(image.decode(&ram,c.eip).is_err());assert_eq!(c,old);
 }
 

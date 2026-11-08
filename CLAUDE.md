@@ -1,3 +1,41 @@
+# Protected mode, increment 5: privilege levels — 8 November 2026
+
+Protected-mode plan increment 5 (#123 was IDT delivery).
+- New src/privilege.rs, shared by both backends (embedded in generated
+  Rust) and interrupt delivery: far JMP and CALL through 286/386 call
+  gates; CALL to an inner level takes SS:ESP for the target DPL from the
+  TSS and copies the gate's parameter count; RETF (with imm16) and IRET to
+  an outer level pop SS:ESP and null ES/DS/FS/GS more privileged than the
+  new CPL. New PIL tokens far_jump, far_call, far_return.
+- Interrupts and exceptions from ring 3 to a nonconforming ring 0 handler
+  switch to the TSS stack and push the old SS and ESP.
+- New ExecError::InvalidTss{eip,error_code} (#TS, vector 10, trace code
+  15). SegmentAccess::Data now keeps the descriptor DPL.
+- Privileged instructions above CPL 0 are #GP(0) instead of stopping
+  (require_ring0; HLT too). CLI/STI use require_iopl. PUSHF/POPF work at
+  any CPL; POPF changes IOPL only at CPL 0 and IF only where CPL <= IOPL.
+- I/O permission (check_io, and Dine's own port handling in protected
+  mode): above IOPL the 386 TSS I/O bitmap decides; a 286 TSS or a bit past
+  the TSS limit is #GP(0).
+- Descriptor-table, TSS and inner-stack accesses are supervisor-level
+  (Ram::as_level, store_as). Not yet: a segment load's accessed-bit store
+  at CPL 3 is still made at user level.
+- Not yet: V86 mode (increment 6), task gates and TSS jumps (7).
+
+Local Linux: 638 Rust tests pass, 1 ignored, release and debug (7 new in
+privilege.rs; 8 older expectations changed from a stop to #GP). The
+generated-backend suite has 274 cases (1 new: pm_rings; four CPL 3 cases
+now end in #GP). test386 passes POST 20h and stops at POST 21h on IRETD to
+V86 mode. A local build that skips POST 21h-22h (scratchpad only) runs
+0Bh-17h and stops at POST 17h on ARPL with a read-only memory operand
+(the 386 does not write back an unchanged selector; arpl.pil does). With
+that one ARPL removed it runs 18h-1Ah and stops in POST 1Ah (ENTER at
+ring 3 on a supervisor stack page).
+SingleStepTests/80386 run 09 (local; real-mode far CALL/JMP/RETF now go
+through privilege.rs): pass 1,621,228 as in run 08, 0 generated-backend
+disagreements in 2,379 programs. Its generated runner needed the PageFault,
+SegmentNotPresent and InvalidTss arms (it had not been rerun since #122).
+
 # Protected mode, increment 4: IDT delivery and IRET — 8 November 2026
 
 Protected-mode plan increment 4 (#122 was paging).

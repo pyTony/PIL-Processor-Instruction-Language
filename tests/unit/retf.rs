@@ -3,7 +3,7 @@ use super::*;
 use address::{SegmentAccess,SegmentCache};
 fn setup(w:u8,big:bool,cleanup:Option<u16>)->(guest::Image,Ram,Cpu){
  let mut code=Vec::new();if w==32{code.push(0x66);}if let Some(n)=cleanup{code.push(0xca);code.extend(n.to_le_bytes());}else{code.push(0xcb);}
- let(mut image,_)=guest::Image::load(&code).unwrap();image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};
+ let(mut image,_)=guest::Image::load(&code).unwrap();image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
  let mut ram=Ram::new(0x21000);ram.write_bytes(0x100,&code).unwrap();let c=Cpu{regs:[0x12345678,0xabcdef01,2,3,0xabcd0800,5,6,7],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100};let mut c=c;if big{c.regs[4]=0x800;} (image,ram,c)
 }
 fn frame(r:&mut Ram,w:u8,target:u32,selector:u32){let width=MemWidth::from_bits(w).unwrap();r.store(0xa00,width,target).unwrap();r.store(0xa00+(w/8)as u32,width,selector).unwrap();}
@@ -27,7 +27,7 @@ fn retf_checks_new_code_limit_and_does_not_use_old_limit(){
 fn retf_stack_segment_and_ram_faults_commit_nothing(){
  for w in [16,32]{for big in [false,true]{for failure in 0..4{
   let(mut i,mut r,mut c)=setup(w,big,Some(7));frame(&mut r,w,0x345,1);i.ss_shadow=1;i.sti_shadow=1;
-  match failure{0=>i.segments[2].limit=0x800+(w/4)as u32-2,1=>{i.segments[2].limit=if big{u32::MAX}else{65535};c.regs[4]=if big{u32::MAX}else{0xabcdffff};},2=>{i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:true,big};i.segments[2].limit=0x800;},_=>{let n=0xa00+(w/4)as usize-1;let mut short=Ram::new(n);short.write_bytes(0,&r.bytes()[..n]).unwrap();r=short;}}
+  match failure{0=>i.segments[2].limit=0x800+(w/4)as u32-2,1=>{i.segments[2].limit=if big{u32::MAX}else{65535};c.regs[4]=if big{u32::MAX}else{0xabcdffff};},2=>{i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:true,big,dpl:0};i.segments[2].limit=0x800;},_=>{let n=0xa00+(w/4)as usize-1;let mut short=Ram::new(n);short.write_bytes(0,&r.bytes()[..n]).unwrap();r=short;}}
   let old=c.clone();let oldr=r.clone();let oldi=i.clone();let result=step(&mut i,&mut r,&mut c);assert!(result.is_err(),"w={w} big={big} failure={failure}");if failure==0||failure==2||big&&failure==1{assert!(matches!(result,Err(ExecError::StackSegment{..})));}assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
  }}}
 }

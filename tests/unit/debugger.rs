@@ -451,14 +451,13 @@ fn pilstep_traces_individual_tokens_and_retires_at_end(){
 #[test]
 fn pilstep_fault_stops_at_failed_check_without_reporting_retirement(){
     let mut d=Debugger::new("counter").unwrap();
-    // A far CALL outside CPL 0 needs call gates, which are not modelled yet.
-    d.load_image(&[0x9a,0,0,0,0,0,0],"faulting far call").unwrap();
+    // HLT above CPL 0 is #GP(0) at its require_ring0 check.
+    d.load_image(&[0xf4],"faulting HLT").unwrap();
     d.image.as_mut().unwrap().real_mode=false;d.image.as_mut().unwrap().segments[1].access=crate::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};
     let before=d.cpu.clone();let ram=d.ram.clone();
-    assert_eq!(d.step_pil().1,Stop::Advanced); // width declaration token
     assert!(d.current_pil().contains("FAULT (CPL 0 required)"),"{}",d.current_pil());
     let (message,stop)=d.step_pil();
-    assert_eq!(stop,Stop::Fault(ExecError::InvalidContext));
+    assert_eq!(stop,Stop::Fault(ExecError::GeneralProtection{eip:0x100,error_code:0}));
     assert!(message.contains("execution stopped"));
     assert!(!message.contains("retired instruction"));
     assert_eq!(d.cpu,before);assert_eq!(d.ram,ram);

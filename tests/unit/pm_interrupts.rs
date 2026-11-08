@@ -47,7 +47,7 @@ fn machine()->(Cpu,Image,Ram){
     image.real_mode=false;image.msw=0x11;image.end=0x20000;image.start=0;
     image.tables=[(8*DESCRIPTORS.len() as u16-1,GDT),(0x21*8+7,IDT)];
     image.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
-    let flat=SegmentCache{base:0,limit:u32::MAX,access:SegmentAccess::Data{writable:true,expand_down:false,big:true}};
+    let flat=SegmentCache{base:0,limit:u32::MAX,access:SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};
     image.segments=[flat;6];
     image.segments[1]=SegmentCache{base:0,limit:u32::MAX,access:SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0}};
     let cpu=Cpu{regs:[0,0,0,0,0x8000,0,0,0],eflags:0x0000_0346,undefined_flags:0,eip:0x0500};
@@ -87,7 +87,7 @@ fn a_286_gate_pushes_words_and_takes_a_16_bit_offset(){
 #[test]
 fn a_16_bit_stack_wraps_sp_and_keeps_the_upper_half_of_esp(){
     let (mut cpu,mut image,mut ram)=machine();
-    image.segments[2]=SegmentCache{base:0x10000,limit:0xffff,access:SegmentAccess::Data{writable:true,expand_down:false,big:false}};
+    image.segments[2]=SegmentCache{base:0x10000,limit:0xffff,access:SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:0}};
     cpu.regs[4]=0xabcd_0004;
     deliver(&mut cpu,&mut image,&mut ram,fault(ExecError::Exception{eip:0x500,vector:0},0x500)).unwrap();
     assert_eq!([dword(&ram,0x10000),dword(&ram,0x1fffc),dword(&ram,0x1fff8)],[0x346,0x08,0x500]);
@@ -117,9 +117,10 @@ fn the_conforming_target_keeps_cpl_and_the_gate_type_checks_come_first(){
     assert_eq!(u.interrupt_gate(0x20,true,0x500,&mut read),Err(ExecError::GeneralProtection{eip:0x500,error_code:0x102}));
     assert!(u.interrupt_gate(0x03,true,0x500,&mut read).is_ok());
     assert!(u.interrupt_gate(0x20,false,0x500,&mut read).is_ok(),"exceptions ignore the gate DPL");
-    // A ring 0 handler from CPL 3 needs the TSS stack switch: not modelled yet.
+    // A ring 0 handler from CPL 3 switches stacks through the TSS
+    // (tests/unit/privilege.rs); with no TSS loaded, #TS is not deliverable here.
     let (mut uimage,mut uram)=(user,ram.clone());
-    assert!(deliver(&mut cpu,&mut uimage,&mut uram,Event::software(3,0x501)).unwrap_err().contains("InvalidContext"));
+    assert!(deliver(&mut cpu,&mut uimage,&mut uram,Event::software(3,0x501)).is_err());
 }
 
 #[test]
