@@ -1,0 +1,4 @@
+# OUT to a port with no device behind it: the value goes nowhere. Registers,
+# memory and flags stay.
+preserve_flags all
+retire

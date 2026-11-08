@@ -93,6 +93,23 @@ impl Ram {
         }
         Ok(value)
     }
+    /// Loads as `load` does, then overlays bytes of stores this instruction
+    /// has staged but not committed, in staging order, so a later read in the
+    /// same instruction sees its earlier writes (ENTER reads frame pointers
+    /// it may just have pushed).
+    pub fn load_staged(&self,address:u32,width:MemWidth,staged:&[Option<(u32,MemWidth,u32)>],extra:&[(u32,MemWidth,u32)])->Result<u32,AccessFault> {
+        let mut value=self.load(address,width)?;
+        let bytes=width.bytes()as u32;
+        for &(at,w,v) in staged.iter().flatten().chain(extra.iter()){
+            for b in 0..w.bytes()as u32{
+                let phys=self.physical_address(at.wrapping_add(b));
+                for i in 0..bytes{
+                    if self.physical_address(address.wrapping_add(i))==phys{value=(value&!(0xff<<(i*8)))|(((v>>(b*8))&0xff)<<(i*8));}
+                }
+            }
+        }
+        Ok(value)
+    }
     pub fn store(&mut self,address:u32,width:MemWidth,value:u32)->Result<(),AccessFault> {
         let bytes=width.bytes()as usize;self.check_bus(address,bytes,true)?;
         if let Some(offset)=self.alias(address,bytes){

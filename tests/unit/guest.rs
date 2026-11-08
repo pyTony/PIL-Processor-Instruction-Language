@@ -39,7 +39,7 @@ fn decode_modrm_and_sib_signed_displacements() {
 }
 #[test]
 fn truncated_and_unsupported_instructions_are_diagnostics() {
-    for bytes in [vec![0xb8,1],vec![0x67,0x89,4],vec![0x62],vec![0xf0,0x01,0xc0],vec![0xe6,0x80]] {
+    for bytes in [vec![0xb8,1],vec![0x67,0x89,4],vec![0x62],vec![0xf0,0x01,0xc0],vec![0xe6]] {
         assert!(matches!(decode(&bytes),Err(GuestError::Decode(_))),"{bytes:?}");
     }
 }

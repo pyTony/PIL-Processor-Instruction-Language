@@ -531,6 +531,10 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 break if detail.starts_with("fetch outside loaded image"){Stop::Boundary(detail)}else{Stop::MissingEncoding{key:opcode_key(&site_bytes(&p)),detail}};
             }
         };
+        // The decoder treats ports as an open bus (for SingleStepTests); Dine
+        // answers its device ports itself in ports::io, so any port access
+        // that reaches here (a prefixed IN/OUT, INS or OUTS) is not modelled.
+        if is_port_access(&decoded.label){break Stop::Service(format!("{} at {:04x}:{:04x}: this port access is not modelled in Dine",decoded.label,p.selectors[1],p.cpu.eip));}
         let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
@@ -706,3 +710,9 @@ pub fn format_rom_report(result: &Probe) -> String {
 #[cfg(test)]
 #[path="../tests/unit/dos.rs"]
 mod tests;
+
+/// IN, OUT, INS and OUTS labels as the decoder writes them.
+fn is_port_access(label:&str)->bool{
+    let name=label.strip_prefix("REP ").unwrap_or(label);
+    name.starts_with("IN ")||name.starts_with("OUT ")||name.starts_with("INS")||name.starts_with("OUTS")
+}

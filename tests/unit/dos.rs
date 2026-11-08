@@ -2298,3 +2298,12 @@ fn planar_text_uses_tall_cells_and_scrolls_them(){
  assert_eq!(p.ram.planar().unwrap().peek(1,4*80+5),0x81);assert_eq!(p.ram.planar().unwrap().peek(1,20*80+5),0);
  assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x1d00);
 }
+#[test]
+fn port_accesses_dine_does_not_answer_stop_instead_of_reading_open_bus(){
+ // Dine answers unprefixed IN/OUT itself; a prefixed IN, INS or OUTS reaches the decoder's
+ // open bus, which Dine must not use for its devices.
+ for bytes in [vec![0x66,0xe5,0x60],vec![0x6c],vec![0xf3,0x6f]]{
+  let r=run(load(&bytes,"port.com").unwrap(),10).unwrap();
+  assert!(matches!(r.stop,Stop::Service(ref m)if m.contains("not modelled in Dine")),"{bytes:02x?} {:?}",r.stop);assert_eq!(r.loaded.cpu.eip,0x100);
+ }
+}

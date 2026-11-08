@@ -1101,7 +1101,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     Token::WriteGpr(reg,a,w)
                 }
                 ["load_segment", out, register, address, bits]=>{
-                    if stored{return Err("loads after a staged store are not supported".into());}
+                    // A load_segment after a staged store sees that store's bytes.
                     let segment=number(register)?;let a=slot(&names,address)?;let w=width(bits)?;
                     if segment>=6||widths[a]!=32{return Err("load_segment needs segment0..5 and bv32 offset".into());}
                     let mem=MemWidth::from_bits(w).ok_or("memory width must be8/16/32")?;
@@ -1698,7 +1698,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
                 let at=c.translate(values[a].bits as u32,w,false,cpu.eip)?;
-                values[o]=value(ram.as_deref().ok_or(ExecError::InvalidContext)?.load(at,w).map_err(|f|access_error(cpu.eip,f))? as u64,w.bits());
+                values[o]=value(ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,w,&pending_stores[..store_index.min(MAX_STORES)],&extra_stores).map_err(|f|access_error(cpu.eip,f))? as u64,w.bits());
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:false,is_stack:segment==2&&!p.checkpoint_flags});
             }
             Token::StoreSegment(a,v,w,segment)=>{
@@ -2000,7 +2000,7 @@ fn emit_rust_functions(p:&Program)->String {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
-            Token::LoadSegment(o,a,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.as_deref().ok_or(ExecError::InvalidContext)?.load(at,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
+            Token::LoadSegment(o,a,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,MemWidth::{w:?},&pending_stores[..store_index],&[]).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
             Token::StoreSegment(a,v,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?;pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
             Token::RetireIf(c)=>format!("if v{c}!=0 {{*eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){{m.retired();}}return Ok(());}}"),
             Token::ResumeIf(c)=>format!("if v{c}!=0 {{pending_eip=*eip;pending_resume=true;}}"),
