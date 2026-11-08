@@ -17,6 +17,10 @@ descriptors and paging both work. On dev 1a82f59 it already passes POST
 (EAX=80000011h). That is a local Linux run of the 64 KB ROM built with
 `nasm -i./src/ -f bin src/test386.asm -w-all` (NASM 2.16.01), SHA256
 a53356b0c6073434c3deb8baeed5fbb5f0e61cd027d2923311f6d5be39ed3c8b.
+`--run-rom` also takes the 128 KB ROM (`ROM128 equ 1` in
+src/configuration.asm), which holds the task-switching tests of POST 22h:
+its lower half goes to E0000h, its upper half to F0000h as before. Built the
+same way, SHA256 c4537dcdc514381b18eb6e58d4464efbc16cbf67910453d2adc2c73cac0c25fe.
 
 SingleStepTests/80386 (revision 459d49fb) has only real-mode data; the
 protected, unreal and V86 sets are announced but not published.
@@ -157,6 +161,9 @@ Merged increment 5: #124. Increment 6, on the same branch:
 - Follow-up: ARPL writes a memory destination only when the RPL changes
   (new PIL `store_if`). test386 now runs POST 17h-19h and stops in POST
   1Ah, the ENTER case above.
+- Follow-up: `--run-rom` takes the 128 KB ROM. It passes POST 00h-21h as
+  the 64 KB one does and stops in POST 22h, task switching (increment 7),
+  on #GP(00A8h) at 00C0:0012.
 - The fixed-image generated backend decodes each instruction once, at the
   starting mode: its V86 case runs 16-bit code on both sides of the IRETD
   and ends on MOV CR0 rather than HLT (HLT decoded at CPL 0 halts there).

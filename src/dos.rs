@@ -701,13 +701,17 @@ pub fn run_rom(rom_path: &Path, budget: usize) -> Result<Probe, String> {
         return Err(format!("ROM file not found: {}", rom_path.display()));
     }
     let rom_data = std::fs::read(rom_path).map_err(|e| format!("failed to read ROM: {e}"))?;
-    if rom_data.len() != 65536 {
-        return Err(format!("ROM image size must be exactly 64 KB (got {} bytes)", rom_data.len()));
+    // A 64 KB ROM sits at F0000h; a 128 KB one (test386 with ROM128) at
+    // E0000h, its upper half at F0000h as before. Both end at FFFFFh, so the
+    // reset vector stays at F000:FFF0.
+    if rom_data.len() != 0x10000 && rom_data.len() != 0x20000 {
+        return Err(format!("ROM image size must be exactly 64 KB or 128 KB (got {} bytes)", rom_data.len()));
     }
+    let rom_base = 0x100000 - rom_data.len() as u32;
     let mut p = load(&[0x90], "test386.com")?;
     let mut ram = Ram::new(0x100000);
-    ram.write_bytes(0xF0000, &rom_data).map_err(|e| format!("ROM write failed: {e:?}"))?;
-    ram.protect(0xf0000,65536).map_err(|e|format!("ROM protection: {e:?}"))?;
+    ram.write_bytes(rom_base, &rom_data).map_err(|e| format!("ROM write failed: {e:?}"))?;
+    ram.protect(rom_base,rom_data.len()).map_err(|e|format!("ROM protection: {e:?}"))?;
     p.ram = ram;
     p.rom_mode = true;
     p.cpu.regs = [0;8];

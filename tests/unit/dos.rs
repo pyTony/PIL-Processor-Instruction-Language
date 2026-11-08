@@ -1894,6 +1894,26 @@ fn rom_code_at_dos_stub_addresses_is_executed_as_rom(){
 }
 
 #[test]
+fn a_128k_rom_maps_its_lower_half_at_e0000(){
+ // Reset at F000:FFF0 (offset 1FFF0h) jumps to E000:0000 in the lower
+ // half: MOV AX,5678h; HLT. Sizes other than 64 and 128 KB are refused.
+ let path=std::env::temp_dir().join(format!("pil-rom128-{}.bin",std::process::id()));
+ let mut bytes=vec![0;0x20000];
+ bytes[0x1fff0..0x1fff5].copy_from_slice(&[0xea,0x00,0x00,0x00,0xe0]);
+ bytes[0..4].copy_from_slice(&[0xb8,0x78,0x56,0xf4]);
+ std::fs::write(&path,&bytes).unwrap();
+ let result=run_rom(&path,10);
+ std::fs::write(&path,vec![0;0x18000]).unwrap();
+ let odd=run_rom(&path,10);
+ std::fs::remove_file(&path).unwrap();
+ let r=result.unwrap();
+ assert_eq!(r.loaded.cpu.regs[0],0x5678);
+ assert_eq!((r.loaded.selectors[1],r.loaded.cpu.eip),(0xe000,0x0003));
+ assert!(r.loaded.ram.check_write(0xe0000,MemWidth::Byte).is_err(),"the lower half is ROM too");
+ assert!(odd.is_err_and(|e|e.contains("64 KB or 128 KB")));
+}
+
+#[test]
 fn vga_word_io_roundtrips_and_direct_display_start_is_visible(){
     // MOV DX,3D4; MOV AX,010D; OUT DX,AX; IN AX,DX; HLT
     let mut p=load(&[0xba,0xd4,3,0xb8,0x0d,1,0xef,0xed,0xf4],"crtc.com").unwrap();
