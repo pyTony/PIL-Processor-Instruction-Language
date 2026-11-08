@@ -24,7 +24,7 @@ fn stack_flag_faults_preserve_cpu_ram_and_both_shadows(){
 }
 #[test]
 fn real_mode_guards_reject_protected_and_vm_context_without_effects(){
- for code in [0xfa,0xfb,0x9c,0x9d]{for vm in [false,true]{let(mut i,mut r,mut c)=setup(&[code],false);if vm{c.eflags|=0x20000;}else{i.real_mode=false;}let old=c.clone();let oldr=r.clone();let oldm=i.segment_state();assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::InvalidContext));assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i.segment_state(),oldm);}}
+ for code in [0xfa,0xfb,0x9c,0x9d]{for vm in [false,true]{let(mut i,mut r,mut c)=setup(&[code],false);if vm{c.eflags|=0x20000;}else{i.real_mode=false;i.segments[1].access=address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}let old=c.clone();let oldr=r.clone();let oldm=i.segment_state();assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::InvalidContext));assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i.segment_state(),oldm);}}
 }
 #[test]
 fn counter_branch_uses_address_size_without_changing_count_or_flags(){

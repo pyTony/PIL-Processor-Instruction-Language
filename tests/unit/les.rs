@@ -26,7 +26,7 @@ fn les_ss_and_sib_sources_and_upper_destination_preservation(){
 }
 #[test]
 fn les_pointer_faults_leave_registers_segments_ram_and_markers_unchanged(){
- for fault in 0..5{
+ for fault in 0..4{
   let bytes=[0xc4,0x3f];let(mut image,mut ram)=guest::Image::load(&bytes).unwrap();let mut cpu=Cpu{eip:0x100,..Cpu::default()};cpu.regs[3]=0x700;cpu.regs[7]=0xabcd1234;image.ss_shadow=1;image.sti_shadow=1;
   ram.store(0x800,MemWidth::Word,0xbeef).unwrap();match fault{0=>image.segments[3].limit=0x702,1=>{ram=Ram::new(0x803);ram.write_bytes(0x100,&bytes).unwrap();ram.store(0x800,MemWidth::Word,0xbeef).unwrap();},2=>image.segments[3].access=address::SegmentAccess::Unusable,3=>cpu.regs[3]=0xfffe,_=>cpu.eflags|=0x20000}
   let old=cpu.clone();let old_ram=ram.clone();let old_image=image.clone();assert!(step(&mut cpu,&mut ram,&mut image).is_err());assert_eq!(cpu,old);assert_eq!(ram,old_ram);assert_eq!(image,old_image);
@@ -37,5 +37,5 @@ fn les_rejects_register_prefix_mode_and_truncated_forms(){
  for bytes in [vec![0xc4,0xff],vec![0xf0,0xc4,0x3f],vec![0xf3,0xc4,0x3f],vec![0xc4],vec![0xc4,0x3e,0],vec![0x67,0xc4,0x3c]]{
   let(image,ram)=guest::Image::load(&bytes).unwrap();assert!(image.decode(&ram,0x100).is_err());
  }
- let(mut image,ram)=guest::Image::load(&[0xc4,0x3f]).unwrap();image.real_mode=false;assert!(image.decode(&ram,0x100).is_err());
+ let(mut image,ram)=guest::Image::load(&[0xc4,0x3f]).unwrap();image.real_mode=false;assert!(image.decode(&ram,0x100).is_ok(),"LES decodes in protected mode too");
 }

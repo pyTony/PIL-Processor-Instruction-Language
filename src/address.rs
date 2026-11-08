@@ -60,7 +60,9 @@ pub enum SegmentAccess {
     #[allow(dead_code)]
     Unusable,
     Data { writable: bool, expand_down: bool, big: bool },
-    Code { readable: bool },
+    // A protected-mode code segment: `big` is the D bit (32-bit default
+    // operand and address size) and `dpl` is the CPL while it is CS.
+    Code { readable: bool, conforming: bool, big: bool, dpl: u8 },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegmentCache { pub base: u32, pub limit: u32, pub access: SegmentAccess }
@@ -73,7 +75,38 @@ impl SegmentCache {
         Self { base: u32::from(selector) << 4, limit: 0xffff,
             access: SegmentAccess::Data { writable: true, expand_down: false, big: false } }
     }
+    /// The 32-bit default operand/address size of a code segment (CS.D).
+    pub fn default_32(&self) -> bool { matches!(self.access, SegmentAccess::Code { big: true, .. }) }
 }
+/// A raw 8-byte GDT/LDT entry decoded into its fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Descriptor { pub base: u32, pub limit: u32, pub access: u8, pub big: bool }
+impl Descriptor {
+    pub fn decode(raw: u64) -> Self {
+        let (lo, hi) = (raw as u32, (raw >> 32) as u32);
+        let mut limit = (lo & 0xffff) | (hi & 0xf_0000);
+        if hi & 0x80_0000 != 0 { limit = (limit << 12) | 0xfff; }
+        Self { base: (lo >> 16) | ((hi & 0xff) << 16) | (hi & 0xff00_0000), limit, access: (hi >> 8) as u8, big: hi & 0x40_0000 != 0 }
+    }
+    pub fn present(&self) -> bool { self.access & 0x80 != 0 }
+    pub fn dpl(&self) -> u8 { (self.access >> 5) & 3 }
+    /// Code or data (S=1), as opposed to a system descriptor or gate.
+    pub fn segment(&self) -> bool { self.access & 0x10 != 0 }
+    pub fn code(&self) -> bool { self.access & 0x08 != 0 }
+    pub fn cache(&self) -> SegmentCache {
+        let t = self.access;
+        let access = if self.code() {
+            SegmentAccess::Code { readable: t & 2 != 0, conforming: t & 4 != 0, big: self.big, dpl: self.dpl() }
+        } else {
+            SegmentAccess::Data { writable: t & 2 != 0, expand_down: t & 4 != 0, big: self.big }
+        };
+        SegmentCache { base: self.base, limit: self.limit, access }
+    }
+}
+/// A segment register load, ready to commit: the visible selector, the new
+/// hidden cache and, in protected mode, the descriptor's access byte to mark
+/// accessed (address, new value) when it is not already.
+pub type SegmentLoad = (u16, SegmentCache, Option<(u32, u8)>);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemoryContext { pub segment: SegmentRegister, pub cache: SegmentCache }
 impl MemoryContext {
@@ -91,7 +124,7 @@ impl MemoryContext {
         let (permitted, expand_down, big) = match self.cache.access {
             SegmentAccess::Unusable => return Err(gp),
             SegmentAccess::Data { writable, expand_down, big } => (!write || writable, expand_down, big),
-            SegmentAccess::Code { readable } => (!write && readable, false, false),
+            SegmentAccess::Code { readable, .. } => (!write && readable, false, false),
         };
         if !permitted { return Err(gp); }
         // Use a widened end: a multi-byte operand cannot wrap its segment offset.
@@ -132,17 +165,84 @@ impl SegmentState {
     pub fn machine_status(&self)->u16{(self.msw&!1)|u16::from(!self.real_mode)}
     pub fn read_control(&self,register:usize,flags:u32,eip:u32)->Result<u32,ExecError>{
         if flags&0x20000!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
-        if !self.real_mode{return Err(ExecError::InvalidContext);}
+        if self.cpl()!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
         match register{0=>Ok(u32::from(self.machine_status())),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),_=>Err(ExecError::InvalidContext)}
     }
     pub fn validate_control(&self,register:usize,value:u32,flags:u32,eip:u32)->Result<(),ExecError>{
         self.read_control(register,flags,eip)?;
         if register==0&&value&0x80000001==0x80000000{return Err(ExecError::GeneralProtection{eip,error_code:0});}
-        // This profile never retires a transition into unimplemented memory modes.
-        if (register==0&&value&!0x1e!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
+        // PE may be set or cleared; paging (PG) comes with a later increment.
+        if (register==0&&value&!0x1f!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
         Ok(())
     }
-    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>self.msw=value as u16,2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}
+    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>{self.msw=value as u16;self.real_mode=value&1==0;},2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}
+    /// Current privilege level: the DPL of the CS cache in protected mode.
+    pub fn cpl(&self)->u8{
+        if self.real_mode{return 0;}
+        match self.segments[1].access{SegmentAccess::Code{dpl,..}=>dpl,_=>0}
+    }
+    /// Loads segment register `reg` (0..5, SegmentRegister order) with
+    /// `selector`. In real mode only the base changes, so limits and
+    /// attributes loaded in protected mode stay ("unreal mode"); CS gets the
+    /// ordinary real-mode cache. In protected mode the descriptor is read
+    /// from the GDT through `read` (a linear 8-byte read) and checked as the
+    /// 386 does for MOV/POP/LDS-style loads (DS/ES/FS/GS, SS) and for a far
+    /// JMP/CALL/RETF to a code segment at the same privilege (CS). LDT
+    /// selectors, gates and privilege changes are not modelled yet.
+    pub fn load_segment(&self,reg:usize,selector:u16,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<SegmentLoad,ExecError>{
+        if self.real_mode{
+            let cache=match self.segments[reg]{
+                c if reg!=1&&c.access!=SegmentAccess::Unusable=>SegmentCache{base:u32::from(selector)<<4,..c},
+                _=>SegmentCache::real_mode(selector),
+            };
+            return Ok((selector,cache,None));
+        }
+        let gp=|code:u16|ExecError::GeneralProtection{eip,error_code:code};
+        let (index,rpl,cpl)=(selector&0xfff8,(selector&3) as u8,self.cpl());
+        if index==0&&selector&4==0{
+            // A null selector: allowed in DS, ES, FS and GS (later use faults).
+            return if matches!(reg,0|3|4|5){Ok((selector,SegmentCache{base:0,limit:0,access:SegmentAccess::Unusable},None))}else{Err(gp(0))};
+        }
+        let code=selector&0xfffc;
+        // No LDT is loaded yet (LDTR stays null), so a TI=1 selector faults.
+        if selector&4!=0{return Err(gp(code));}
+        let (limit,base)=self.tables[0];
+        if u32::from(index)+7>u32::from(limit){return Err(gp(code));}
+        let at=base.wrapping_add(u32::from(index));
+        let d=Descriptor::decode(read(at)?);
+        if !d.segment(){
+            // Call gates, task gates and TSS descriptors come with later increments.
+            return Err(if reg==1{ExecError::InvalidContext}else{gp(code)});
+        }
+        let (readable_or_writable,conforming)=(d.access&2!=0,d.access&4!=0);
+        let mut visible=selector;
+        match reg{
+            1=>{
+                if !d.code(){return Err(gp(code));}
+                if conforming{if d.dpl()>cpl{return Err(gp(code));}}
+                else{
+                    // RPL above CPL would be a return to an outer level (RETF) or
+                    // a #GP (JMP/CALL); neither path is modelled yet.
+                    if rpl>cpl{return Err(ExecError::InvalidContext);}
+                    if d.dpl()!=cpl{return Err(gp(code));}
+                }
+                if !d.present(){return Err(ExecError::Exception{eip,vector:11});}
+                visible=(selector&!3)|u16::from(cpl);
+            }
+            2=>{
+                if rpl!=cpl||d.code()||!readable_or_writable||d.dpl()!=cpl{return Err(gp(code));}
+                if !d.present(){return Err(ExecError::StackSegment{eip,error_code:code});}
+            }
+            _=>{
+                if d.code()&&!readable_or_writable{return Err(gp(code));}
+                if (!d.code()||!conforming)&&(rpl>d.dpl()||cpl>d.dpl()){return Err(gp(code));}
+                if !d.present(){return Err(ExecError::Exception{eip,vector:11});}
+            }
+        }
+        let mut cache=d.cache();
+        if reg==1{if let SegmentAccess::Code{ref mut dpl,..}=cache.access{if conforming{*dpl=cpl;}}}
+        Ok((visible,cache,(d.access&1==0).then_some((at.wrapping_add(5),d.access|1))))
+    }
     pub fn checkpoint_flags(&mut self,eip:u32,flags:u32,undefined:u32){if self.flag_checkpoint.map(|v|v.0)!=Some(eip){self.flag_checkpoint=Some((eip,flags,undefined));}}
     pub fn recover_flags(&mut self)->Option<(u32,u32)>{self.flag_checkpoint.take().map(|(_,f,u)|(f,u))}
     pub fn retired(&mut self){self.flag_checkpoint=None;self.ss_shadow=self.ss_shadow.saturating_sub(1);self.sti_shadow=self.sti_shadow.saturating_sub(1);}

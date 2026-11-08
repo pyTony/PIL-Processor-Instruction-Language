@@ -64,7 +64,8 @@ fn far_call_faults_never_commit_either_slot_or_cs_ip_sp(){
 }
 #[test]
 fn far_call_requires_real_mode_and_valid_memory_encoding(){
- for vm in [false,true]{let(mut i,mut r,mut c)=setup(&[0xff,0x1f],false);i.real_mode=vm;if vm{c.eflags|=0x20000;}i.segments[3].access=SegmentAccess::Unusable;
+ // Protected mode at CPL 3 (no gates yet) and V86 mode both stop.
+ for vm in [false,true]{let(mut i,mut r,mut c)=setup(&[0xff,0x1f],false);i.real_mode=vm;if vm{c.eflags|=0x20000;}else{i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}i.segments[3].access=SegmentAccess::Unusable;
   let old=c.clone();let oldi=i.clone();let oldr=r.clone();assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::InvalidContext));assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
  }
  for b in [vec![0x9a],vec![0x9a,0,0,0],vec![0x66,0x9a,0,0,0,0,0],vec![0xff,0xd8],vec![0xff,0x1e,0],vec![0x67,0xff,0x1c],vec![0xf0,0x9a,0,0,0,0],vec![0xf3,0xff,0x1f]]{

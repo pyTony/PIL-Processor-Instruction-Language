@@ -57,7 +57,7 @@ fn data_and_code_permissions_and_null_cache() {
         let readonly=SegmentCache{access:SegmentAccess::Data{writable:false,expand_down:false,big:false},..data(9)};
         assert_eq!(mc(Ds,readonly).translate(1,MemWidth::Byte,write,7).is_ok(),!write);
         for readable in [false,true] {
-            let code=SegmentCache{access:SegmentAccess::Code{readable},..data(9)};
+            let code=SegmentCache{access:SegmentAccess::Code{readable,conforming:false,big:false,dpl:0},..data(9)};
             assert_eq!(mc(Cs,code).translate(1,MemWidth::Byte,write,7).is_ok(),readable&&!write);
         }
         let null=SegmentCache{access:SegmentAccess::Unusable,..data(9)};

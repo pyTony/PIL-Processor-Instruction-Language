@@ -55,10 +55,11 @@ fn lmsw_loads_low_status_bits_or_stops_precisely_at_mode_transition(){
  // Memory source may be read-only; it is a word even with operand-size prefix.
  let b=[0x66,0x0f,1,0x36,0,6];let(mut i,mut r,mut c)=setup(&b,false);r.store(0x700,MemWidth::Dword,0x12340006).unwrap();r.protect(0x700,4).unwrap();
  let old=r.clone();step(&mut i,&mut r,&mut c).unwrap();assert_eq!(i.msw,0x16);assert_eq!(r,old);
- // The actual DOS/4GW encoding requests PE=1: no state is committed until
- // descriptor-based protected execution is implemented.
- let(mut i,mut r,mut c)=setup(&[0x0f,1,0xf0],false);c.regs[0]=0x11;let(old_i,old_r,old_c)=(i.clone(),r.clone(),c.clone());
- assert!(matches!(step(&mut i,&mut r,&mut c),Err(ExecError::UnsupportedControl{register:0,value:0x11,..})));assert_eq!((i,r,c),(old_i,old_r,old_c));
+ // The actual DOS/4GW encoding sets PE=1: protected mode starts with the
+ // caches unchanged, and a later LMSW cannot clear PE again.
+ let(mut i,mut r,mut c)=setup(&[0x0f,1,0xf0,0x0f,1,0xf0],false);c.regs[0]=0x11;let old_segments=i.segments;
+ step(&mut i,&mut r,&mut c).unwrap();assert_eq!((i.msw,i.real_mode,i.segments,c.eip),(0x11,false,old_segments,0x103));
+ c.regs[0]=0x10;step(&mut i,&mut r,&mut c).unwrap();assert_eq!((i.msw,i.real_mode),(0x11,false));
  let(mut i,mut r,mut c)=setup(&[0x0f,1,0x36,0xff,0xff],false);let(old_i,old_r,old_c)=(i.clone(),r.clone(),c.clone());assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!((i,r,c),(old_i,old_r,old_c));
 }
 #[test]

@@ -1,6 +1,6 @@
 # Documented 386 FLAGS bits only; reserved bit1 set, RF/VM absent from image.
 require_width 16_or_32
-require_real_mode
+require_ring0
 read_flags raw
 const visible 32 32725
 and defined raw visible

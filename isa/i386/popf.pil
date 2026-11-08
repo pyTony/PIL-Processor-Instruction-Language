@@ -1,6 +1,6 @@
-# Real-mode subset: restore writable 386 bits, preserve RF/VM and reserved state.
+# Restore writable 386 bits, preserve RF/VM and reserved state; real mode or CPL 0.
 require_width 16_or_32
-require_real_mode
+require_ring0
 read_gpr old_sp 4 $S
 zext offset old_sp 32
 load_segment packed 2 offset $W

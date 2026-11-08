@@ -1,6 +1,6 @@
-# Real-mode descriptor-table loads; commit only after the whole operand is read.
+# Descriptor-table loads (real mode or CPL 0); commit only after the whole operand is read.
 require_width 16_or_32
-require_real_mode
+require_ring0
 read_address pointer
 zext span pointer 64
 check_segment $SEG span 6
