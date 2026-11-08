@@ -813,7 +813,12 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
             // The program's own file answers by name, as AH3D opens it.
             let own=!raw.is_empty()&&base_name(&raw)==p.own_name;
-            let found=if own{Ok(0x20)}else{lookup(&p.drive,&raw).map(|(_,e)|e.attr)};
+            let found=if own{Ok(0x20)}else if raw.is_empty(){Err(3)}else{
+                match components(&p.drive,&raw){
+                    Ok((_,path)) if path.is_empty()=>Ok(0x10),
+                    _=>lookup(&p.drive,&raw).map(|(_,e)|e.attr),
+                }
+            };
             match(al,found){
                 (0,Ok(attr))=>{p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|u32::from(attr);ok(p);},
                 (0,Err(code))=>fail(p,code),

@@ -1178,6 +1178,9 @@ fn mounted_folder_is_drive_c_for_find_chdir_and_reading_files(){
  p.cpu.regs[0]=0x3e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.drive.open_files(),0);
  assert_eq!(call(&mut p,0x3d00,0,b"missing.txt"),(2,1));assert_eq!(call(&mut p,0x3d00,0,b"\\games"),(5,1));
  assert_eq!(call(&mut p,0x4300,0,b"readme.txt"),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x20);assert_eq!(call(&mut p,0x4301,0x20,b"readme.txt"),(5,1));
+ for d in [&b"."[..],b"..",b"\\"]{assert_eq!(call(&mut p,0x4300,0,d),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x10);}
+ assert_eq!(call(&mut p,0x3b00,0,b"..").1,0);assert_eq!(call(&mut p,0x4300,0,b"."),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x10);
+ assert_eq!(call(&mut p,0x4300,0,b".."),(3,1));assert_eq!(call(&mut p,0x4300,0,b""),(3,1));
  // AH36: no free clusters reported; three 512-byte clusters hold the files.
  p.cpu.regs[2]=0;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(1,0,512,3));
