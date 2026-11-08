@@ -75,6 +75,14 @@ impl SegmentCache {
         Self { base: u32::from(selector) << 4, limit: 0xffff,
             access: SegmentAccess::Data { writable: true, expand_down: false, big: false, dpl: 0 } }
     }
+    /// The cache a segment load makes in virtual-8086 mode: as in real mode,
+    /// but at privilege level 3. A CS cache of this kind is how the machine
+    /// state marks virtual-8086 mode (`SegmentState::v86`), together with
+    /// EFLAGS.VM.
+    pub fn v86(selector: u16) -> Self {
+        Self { base: u32::from(selector) << 4, limit: 0xffff,
+            access: SegmentAccess::Data { writable: true, expand_down: false, big: false, dpl: 3 } }
+    }
     /// The 32-bit default operand/address size of a code segment (CS.D).
     pub fn default_32(&self) -> bool { matches!(self.access, SegmentAccess::Code { big: true, .. }) }
 }
@@ -206,21 +214,29 @@ impl SegmentState {
     pub fn ram_paging(&self)->Option<super::memory::Paging>{
         self.paging.then(||super::memory::Paging{directory:self.controls[1]&!0xfff,user:self.cpl()==3})
     }
-    /// Current privilege level: the DPL of the CS cache in protected mode.
+    /// Current privilege level: the DPL of the CS cache in protected mode
+    /// (3 in virtual-8086 mode).
     pub fn cpl(&self)->u8{
         if self.real_mode{return 0;}
-        match self.segments[1].access{SegmentAccess::Code{dpl,..}=>dpl,_=>0}
+        match self.segments[1].access{SegmentAccess::Code{dpl,..}|SegmentAccess::Data{dpl,..}=>dpl,_=>0}
     }
+    /// Virtual-8086 mode: protected mode with a V86 CS cache
+    /// (`SegmentCache::v86`). The real-mode cache CS keeps between setting
+    /// PE and the first far jump has DPL 0, so it does not count.
+    pub fn v86(&self)->bool{!self.real_mode&&matches!(self.segments[1].access,SegmentAccess::Data{dpl:3,..})}
     /// Loads segment register `reg` (0..5, SegmentRegister order) with
     /// `selector`. In real mode only the base changes, so limits and
     /// attributes loaded in protected mode stay ("unreal mode"); CS gets the
-    /// ordinary real-mode cache. In protected mode the descriptor is read
+    /// ordinary real-mode cache. In virtual-8086 mode every load makes the
+    /// full V86 cache (base selector*16, limit FFFFh, level 3). In protected
+    /// mode the descriptor is read
     /// from the GDT through `read` (a linear 8-byte read) and checked as the
     /// 386 does for MOV/POP/LDS-style loads (DS/ES/FS/GS, SS) and for a far
     /// JMP/CALL/RETF to a code segment at the same privilege (CS). TI=1
     /// selectors read the LDT. Gates and privilege changes are in
     /// privilege.rs.
     pub fn load_segment(&self,reg:usize,selector:u16,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<SegmentLoad,ExecError>{
+        if self.v86(){return Ok((selector,SegmentCache::v86(selector),None));}
         if self.real_mode{
             let cache=match self.segments[reg]{
                 c if reg!=1&&c.access!=SegmentAccess::Unusable=>SegmentCache{base:u32::from(selector)<<4,..c},
@@ -339,6 +355,8 @@ impl SegmentState {
         let d=Descriptor::decode(read(at)?);
         if !d.segment()||!d.code()||d.dpl()>cpl{return Err(gp(code));}
         if !d.present(){return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
+        // From virtual-8086 mode only a nonconforming ring 0 handler will do.
+        if self.v86()&&(d.access&4!=0||d.dpl()!=0){return Err(gp(code));}
         let level=if d.access&4!=0{cpl}else{d.dpl()};
         let mut cache=d.cache();
         if let SegmentAccess::Code{ref mut dpl,..}=cache.access{*dpl=level;}

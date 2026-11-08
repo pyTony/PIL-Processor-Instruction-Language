@@ -114,10 +114,16 @@ pub fn deliver(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:Event)->Result<(
 /// is tried before anything changes, so on error nothing has. A
 /// nonconforming handler of a more privileged level runs on the stack for
 /// its level from the TSS, with the old SS and ESP pushed first.
+///
+/// From virtual-8086 mode (CPL 3) INT n, INT3 and INTO need IOPL 3, else
+/// #GP(0), and the handler must be a nonconforming ring 0 segment, else
+/// #GP(selector). GS, FS, DS and ES are pushed before the old SS, and all
+/// four are loaded with null selectors as VM clears.
 fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Result<(),ExecError>{
-    if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
     let eip=cpu.eip;
     let machine=image.segment_state();
+    let v86=machine.v86();
+    if v86&&event.software&&(cpu.eflags>>12)&3!=3{return Err(ExecError::GeneralProtection{eip,error_code:0});}
     ram.set_paging(machine.ram_paging());
     let result=(||{
         let r:&Ram=ram;
@@ -143,6 +149,11 @@ fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Res
                 stores.push((at,MemWidth::Byte,u32::from(value),false));
             }
             let mut frame=Frame::new(ss_cache,esp,level==3,(ss_selector&0xfffc)|ext,eip);
+            if v86{
+                for reg in [SegmentRegister::Gs,SegmentRegister::Fs,SegmentRegister::Ds,SegmentRegister::Es]{
+                    frame.push(r,width,u32::from(machine.selectors[reg.index()]),&mut stores)?;
+                }
+            }
             frame.push(r,width,u32::from(machine.selectors[ss_index]),&mut stores)?;
             frame.push(r,width,cpu.regs[4],&mut stores)?;
             (frame,Some((ss_selector,ss_cache)))
@@ -160,6 +171,11 @@ fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Res
     if let Some((ss_selector,ss_cache))=stack{
         let index=SegmentRegister::Ss.index();
         image.selectors[index]=ss_selector;image.segments[index]=ss_cache;
+    }
+    if v86{
+        for reg in [SegmentRegister::Es,SegmentRegister::Ds,SegmentRegister::Fs,SegmentRegister::Gs]{
+            image.selectors[reg.index()]=0;image.segments[reg.index()]=SegmentCache{base:0,limit:0,access:SegmentAccess::Unusable};
+        }
     }
     let index=SegmentRegister::Cs.index();
     image.selectors[index]=selector;image.segments[index]=cache;

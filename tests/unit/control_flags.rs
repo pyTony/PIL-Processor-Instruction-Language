@@ -24,9 +24,10 @@ fn stack_flag_faults_preserve_cpu_ram_and_both_shadows(){
 }
 #[test]
 fn real_mode_guards_reject_protected_and_vm_context_without_effects(){
- // V86 mode stops for all four; CLI and STI at CPL 3 with IOPL 0 are #GP(0).
- // (PUSHF and POPF at CPL 3 are allowed: tests/unit/privilege.rs.)
- for code in [0xfa,0xfb,0x9c,0x9d]{for vm in [false,true]{if !vm&&code>=0x9c{continue;}let(mut i,mut r,mut c)=setup(&[code],false);if vm{c.eflags|=0x20000;}else{i.real_mode=false;i.segments[1].access=address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}let old=c.clone();let oldr=r.clone();let oldm=i.segment_state();assert_eq!(step(&mut i,&mut r,&mut c),if vm{Err(ExecError::InvalidContext)}else{Err(ExecError::GeneralProtection{eip:0x100,error_code:0})});assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i.segment_state(),oldm);}}
+ // In V86 mode with IOPL 0 all four are #GP(0); CLI and STI at CPL 3 with
+ // IOPL 0 are #GP(0). (PUSHF and POPF at CPL 3 are allowed:
+ // tests/unit/privilege.rs; V86 with IOPL 3: tests/unit/v86.rs.)
+ for code in [0xfa,0xfb,0x9c,0x9d]{for vm in [false,true]{if !vm&&code>=0x9c{continue;}let(mut i,mut r,mut c)=setup(&[code],false);i.real_mode=false;if vm{c.eflags|=0x20000;c.eflags&=!0x3000;i.segments[1]=address::SegmentCache::v86(0);}else{i.segments[1].access=address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}let old=c.clone();let oldr=r.clone();let oldm=i.segment_state();assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::GeneralProtection{eip:0x100,error_code:0}));assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i.segment_state(),oldm);}}
 }
 #[test]
 fn counter_branch_uses_address_size_without_changing_count_or_flags(){

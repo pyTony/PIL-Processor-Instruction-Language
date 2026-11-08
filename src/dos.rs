@@ -342,9 +342,8 @@ fn opcode_key(bytes:&[u8])->String{
 /// installed), or a mode where delivery is not modelled yet.
 fn exception(p:&mut Loaded,e:&super::flow::ExecError,lazy:&mut super::LazyFlags)->Option<Result<ExceptionSite,String>>{
     let vector=crate::interrupt::vector(e)?;
-    if p.cpu.eflags&0x20000!=0{return None;}
     if !p.image.real_mode{
-        // Protected mode: always through the IDT; Dine answers nothing there.
+        // Protected and virtual-8086 mode: always through the IDT; Dine answers nothing there.
         lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
         let site=ExceptionSite::capture(p,vector,&format!("{e:?}"));
         let event=crate::interrupt::Event::fault(e,p.cpu.eip)?;
@@ -546,7 +545,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             },
             Err(GuestError::Decode(detail))=>{
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if !detail.starts_with("fetch outside loaded image") && (!p.image.real_mode&&p.cpu.eflags&0x20000==0||vectors::answered(&p,6)==Ok(false)) {
+                if !detail.starts_with("fetch outside loaded image") && (!p.image.real_mode||vectors::answered(&p,6)==Ok(false)) {
                     let fault_eip=p.cpu.eip;
                     let site=ExceptionSite::capture(&p,6,&detail);
                     let delivered=if p.image.real_mode{vectors::deliver_fault(&mut p,6,fault_eip)}else{vectors::deliver_protected(&mut p,crate::interrupt::Event{vector:6,error_code:None,return_eip:fault_eip,software:false,cr2:None})};
@@ -587,8 +586,9 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Operation::Halt=>break Stop::Monitor("HLT with IF=0 never resumes; monitor stop is not DOS process termination".into()),
             Operation::Interrupt{vector,overflow,next}=>{
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                let vector=*vector;let protected=!p.image.real_mode&&p.cpu.eflags&0x20000==0;
-                let next=if protected{*next}else{*next&0xffff};
+                // Virtual-8086 mode delivers through the IDT too, with a 16-bit IP.
+                let vector=*vector;let protected=!p.image.real_mode;
+                let next=if protected&&!p.image.segment_state().v86(){*next}else{*next&0xffff};
                 let label=decoded.label.split_whitespace().next().unwrap_or("INT").to_string();
                 if *overflow&&p.cpu.eflags&0x800==0{
                     // INTO with OF=0 does nothing.
