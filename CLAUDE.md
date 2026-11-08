@@ -1,3 +1,19 @@
+# test386 128 KB ROM in the ROM runner — 8 November 2026
+
+Tony asked for 128 KB ROM support, because only test386 built with ROM128
+has the task-switching tests (POST 22h) that increment 7 needs.
+- `pil --run-rom` (src/dos.rs run_rom) takes a 64 KB or 128 KB image. The
+  ROM ends at FFFFFh either way, so a 128 KB one starts at E0000h; the whole
+  image is read-only. Other sizes are refused.
+- Not modelled: the alias at FFFE0000h (RAM is 1 MB; test386 stays in the
+  first megabyte after the reset jump, as its header says).
+
+Local Linux: 652 Rust tests pass, 1 ignored (1 new: a 128 KB ROM that jumps
+from the reset vector into its lower half, and a 96 KB image refused).
+test386 with ROM128 equ 1 (built locally, scratchpad only) passes POST
+00h-21h and stops in POST 22h on #GP(00A8h) at 00C0:0012: a task switch,
+which is increment 7. The 64 KB ROM runs as before.
+
 # ARPL leaves an unchanged memory selector alone — 8 November 2026
 
 Follow-up to increment 6 (#128). test386 POST 17h runs ARPL [mem],BX with

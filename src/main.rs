@@ -2314,7 +2314,7 @@ DOS and ROM:
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
-  --run-rom PATH [--steps N]          Run a 64 KiB ROM
+  --run-rom PATH [--steps N]          Run a 64 or 128 KiB ROM
   --dos-list [--all] IMAGE|ZIP        List container entries
   --dos-read IMAGE|ZIP INNER [DEST]   Read/extract one entry
   --dos-extract IMAGE|ZIP NEW_DIR     Extract a container
