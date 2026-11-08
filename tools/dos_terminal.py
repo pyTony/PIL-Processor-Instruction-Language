@@ -38,6 +38,7 @@ import codecs
 import io
 import json
 import math
+import os
 import shutil
 import struct
 import threading
@@ -49,6 +50,24 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pil_debugger import find_engine  # noqa: E402
+
+
+def find_dos_engine(explicit=None):
+    """Use the newest applicable DOS engine, including the local Windows build."""
+    if explicit:
+        return find_engine(explicit)
+    try:
+        standard = find_engine()
+    except FileNotFoundError:
+        standard = None
+    candidate = Path(__file__).resolve().parent.parent / 'programs/compiled/pil-engine-v2.exe'
+    windows_target = sys.platform == 'win32' or bool(os.environ.get('WSL_INTEROP'))
+    config_active = bool(os.environ.get('PILDOS_CONFIG')) or Path('pildos.conf').is_file()
+    if windows_target and candidate.is_file() and (config_active or standard is None or candidate.stat().st_mtime > standard.stat().st_mtime):
+        return candidate
+    if standard is None:
+        raise FileNotFoundError('Build PIL first, or select its executable with --engine PATH')
+    return standard
 
 MAX_REPLY = 8 * 1024 * 1024  # VGA frame plus escaped DOS and serial output
 SLICE = 20000
@@ -378,8 +397,8 @@ def screen_rows(reply):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None):
-        options = (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None):
+        options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -486,6 +505,7 @@ class ConsolePort:
         self._terminal = None
         if sys.platform == 'win32':
             self._enable_vt()
+            self._pass_ctrl_c()
             reader = self._read_windows
         else:
             import atexit
@@ -506,6 +526,21 @@ class ConsolePort:
         mode = ctypes.c_uint32()
         if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
             kernel.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+
+    @staticmethod
+    def _pass_ctrl_c():
+        try:
+            import atexit
+            import ctypes
+            kernel = ctypes.windll.kernel32
+            handle = kernel.GetStdHandle(-10)  # STD_INPUT_HANDLE
+            mode = ctypes.c_uint32()
+            if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+                old = mode.value
+                kernel.SetConsoleMode(handle, old & ~0x0001)  # ENABLE_PROCESSED_INPUT off
+                atexit.register(lambda: kernel.SetConsoleMode(handle, old))
+        except Exception:
+            pass
 
     def _read_windows(self):
         import msvcrt
@@ -619,23 +654,135 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def run_headless(session, com1, offset, country=None):
+class HeadlessGraphics:
+    """Try to show a window only when graphics output is active."""
+
+    def __init__(self):
+        self.root = None
+        self.label = None
+        self.photo = None
+        self.available = True
+        self.user_closed = False
+        self.stop_requested = False
+
+    def update(self, reply, session=None):
+        pixels = reply.get('graphics13')
+        cga = reply.get('graphics_cga')
+        planes = reply.get('graphics_planar')
+        has_graphics = (pixels is not None or cga is not None or planes is not None)
+        if not has_graphics:
+            self.user_closed = False
+            if self.root is not None:
+                try:
+                    self.root.withdraw()
+                except Exception:
+                    pass
+            return
+
+        if not self.available or self.user_closed:
+            return
+
+        try:
+            import tkinter as tk
+            if self.root is None:
+                self.root = tk.Tk()
+                self.root.title('PIL DOS Graphics')
+                self.root.configure(bg='black')
+
+                def on_close():
+                    self.user_closed = True
+                    self.stop_requested = True
+                    if session is not None:
+                        try:
+                            session.send('break')
+                            session.send(f'key 27 {SCAN.get(chr(27), 1)}')
+                        except Exception:
+                            pass
+                    if self.root is not None:
+                        try:
+                            self.root.withdraw()
+                        except Exception:
+                            pass
+
+                self.root.protocol('WM_DELETE_WINDOW', on_close)
+                self._on_close = on_close
+                self.label = tk.Label(self.root, bg='black', takefocus=1)
+                self.label.pack()
+                if session is not None:
+                    def on_key(event):
+                        if is_ctrl_break(event.keysym, bool(event.state & 0x4)):
+                            session.send('break')
+                            return
+                        code = key_code(event.keysym, event.char)
+                        if code:
+                            session.send(f'key {code[0]} {code[1]}')
+                    self.root.bind('<KeyPress>', on_key)
+
+            height = 200
+            if pixels is not None:
+                rgb = vga_rgb(pixels, reply['palette'])
+                width = 320
+            elif planes is not None:
+                width, height = reply['planar_width'], reply['planar_height']
+                rgb = planar_rgb(planes, width, height, reply['planar_rgb'])
+            else:
+                mode, color = reply['cga_mode'], reply['cga_color']
+                width = 320 if mode in (4, 5) else 640
+                rgb = cga_rgb(cga, mode, color)
+
+            self.photo = graphics_photo(tk, rgb, width, height)
+            self.label.configure(image=self.photo)
+            self.root.deiconify()
+            self.root.update_idletasks()
+            self.root.update()
+        except Exception:
+            self.available = False
+
+    def close(self):
+        if self.root is not None:
+            try:
+                self.root.destroy()
+            except Exception:
+                pass
+            self.root = None
+
+
+def run_headless(session, com1, offset, country=None, is_shell=True):
     """Route DOS input and output over COM1 before running the guest."""
     session.send(f'clock {offset}')
     if country:
         session.send(f'country {country}')
     reply = session.send('console com1')
-    while reply['status'] in ('running', 'waiting_input'):
-        incoming = com1.read()
-        for at in range(0, len(incoming), 100):
-            reply = session.send('com1 ' + incoming[at:at + 100].hex())
-        reply = session.send(f'run {SLICE}')
-        if session.com1_out:
-            com1.write(session.com1_out)
-            session.com1_out = b''
-        if reply['status'] == 'waiting_input' and not incoming:
-            time.sleep(0.01)
-    return reply
+    gfx = HeadlessGraphics()
+    ctty_done = False
+    com1_seen = False
+    try:
+        while reply['status'] in ('running', 'waiting_input'):
+            if gfx.stop_requested:
+                gfx.stop_requested = False
+                session.send('break')
+                session.send(f'key 27 {SCAN.get(chr(27), 1)}')
+                if not is_shell:
+                    break
+            incoming = com1.read()
+            for at in range(0, len(incoming), 100):
+                reply = session.send('com1 ' + incoming[at:at + 100].hex())
+            reply = session.send(f'run {SLICE}')
+            if session.com1_out:
+                com1_seen = True
+                com1.write(session.com1_out)
+                session.com1_out = b''
+            gfx.update(reply, session)
+            if reply['status'] == 'waiting_input' and not incoming:
+                if not ctty_done and not com1_seen:
+                    ctty_done = True
+                    for ch in 'ctty com1\r':
+                        session.send(f'key {ord(ch)} {SCAN.get(ch.lower(), 0)}')
+                    continue
+                time.sleep(0.01)
+        return reply
+    finally:
+        gfx.close()
 
 
 def drive_spec(value):
@@ -677,7 +824,7 @@ def prepare_image_drives(engine, images, drives):
     return drives
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -696,7 +843,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives, config=config)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -961,10 +1108,26 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     return session
 
 
+def configured_startup(engine, config=None):
+    command = [str(engine), '--pildos-startup'] + ([str(config)] if config else [])
+    result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or 'PILdos startup configuration failed')
+    try:
+        value = json.loads(result.stdout)
+        program, args = value['program'], value['args']
+        if not isinstance(program, str) or not program or (args is not None and not isinstance(args, str)):
+            raise ValueError('invalid startup values')
+        return program, args
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError('invalid PILdos startup configuration response') from exc
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('program', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH')
+    parser.add_argument('program', nargs='?', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH; default from config')
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
+    parser.add_argument('--config', help='DOS configuration file (default: pildos.conf if present)')
     parser.add_argument('--drive', action='append', type=drive_spec, metavar='LETTER=PATH',
                         help='mount an image or folder on drive A through E before startup; repeat for more drives')
     parser.add_argument('--drive-from-image', action='append', type=drive_spec, metavar='LETTER=IMAGE',
@@ -979,7 +1142,8 @@ def main(argv=None):
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
-    parser.add_argument('--headless', action='store_true', help='run without a window, using this terminal for COM1')
+    parser.add_argument('--headless', action='store_true',
+                        help='run without a window, interacting through this terminal (shows a window only when graphics output is active)')
     parser.add_argument('--engine', help='pil executable (default: newest build)')
     parser.add_argument('--ignore-unassigned-out', action='store_true', help='ignore and log OUT to unassigned ports; known devices still stop')
     parser.add_argument('--stop-log', default='PILdos-stops.jsonl', metavar='PATH', help='append stop diagnostics (default: PILdos-stops.jsonl)')
@@ -989,20 +1153,31 @@ def main(argv=None):
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
-    if args.drive_from_image:
+    if args.program is None:
         try:
-            args.drive = prepare_image_drives(find_engine(args.engine), args.drive_from_image, args.drive)
+            args.program, default_args = configured_startup(find_dos_engine(args.engine), args.config)
+            if args.args is None:
+                args.args = default_args
         except (OSError, ValueError) as exc:
             parser.error(str(exc))
-    if args.headless and args.com1 not in (None, 'console'):
-        parser.error('--headless currently requires --com1 console')
-    com1 = open_com1(args.com1 or 'console') if args.headless else (open_com1(args.com1) if args.com1 else None)
+    if args.drive_from_image:
+        try:
+            args.drive = prepare_image_drives(find_dos_engine(args.engine), args.drive_from_image, args.drive)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+    if args.headless:
+        if args.com1 is None:
+            args.com1 = 'console'
+        if args.args is None:
+            args.args = '/K CTTY COM1'
+    com1 = open_com1(args.com1) if args.com1 else None
     if args.headless:
         session = None
         try:
-            session = Session(find_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
-                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive)
-            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country)
+            session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
+                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config)
+            is_shell = any(sh in args.program.upper() for sh in ('COMMAND.COM', 'CMD.EXE', '4DOS'))
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell)
             if reply['status'] != 'exit':
                 print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
                 raise SystemExit(1)
@@ -1013,7 +1188,7 @@ def main(argv=None):
         return
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive)
+    make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config)
     root.mainloop()
 
 

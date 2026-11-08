@@ -2,19 +2,24 @@
 //! (640x200, 1 bit), VGA 13h (320x200, 1 byte) and the EGA/VGA 16-colour
 //! planar modes 0Dh/0Eh/10h/12h (8-, 14- or 16-line cells). Like the IBM PC BIOS,
 //! characters are 8x8 cells drawn into the framebuffer: 00h-7Fh from the ROM
-//! font at F000:FA6E, 80h-FFh from the table the INT 1Fh vector points to.
+//! font at F000:FA6E, 80h-FFh from the table the INT 1Fh vector points to
+//! (Dine's own table at C000:1000 until a program changes the vector).
 //! Guest RAM stays authoritative. The font and the framebuffer are read from
 //! it, and every change is a planned write that the caller commits all or none.
 use super::*;
 /// Linear address of the ROM font, F000:FA6E as on the IBM PC/XT/AT BIOS.
 pub(in super::super) const FONT:u32=0xffa6e;
+/// Far pointer to the 80h-FFh half in the video BIOS area (C000:1000). A
+/// VGA BIOS points INT 1Fh at its own upper-half table, so Dine's colour
+/// VGA identity starts INT 1Fh here; GRAFTABL or a program may replace it.
+pub(in super::super) const UPPER_FONT:u32=0xc000_1000;
 const FONT_TEXT:&str=include_str!("dos_font8x8.txt");
-/// The 1024 font bytes for characters 00h-7Fh, parsed from the readable
+/// The 2048 font bytes for characters 00h-FFh, parsed from the readable
 /// glyph file (a header line, then eight rows of '#' and '.').
 pub(in super::super) fn font()->Result<Vec<u8>,String>{
     let mut lines=FONT_TEXT.lines().filter(|l|!l.starts_with(';'));
-    let mut bytes=Vec::with_capacity(1024);
-    for code in 0..128u32{
+    let mut bytes=Vec::with_capacity(2048);
+    for code in 0..256u32{
         let header=lines.next().ok_or("font file ends early")?;
         if u32::from_str_radix(header.get(..2).unwrap_or(""),16)!=Ok(code){return Err(format!("font glyph {code:02X}h header is {header:?}"));}
         for _ in 0..8{
@@ -23,7 +28,7 @@ pub(in super::super) fn font()->Result<Vec<u8>,String>{
             bytes.push(row.bytes().fold(0u8,|n,b|n<<1|u8::from(b==b'#')));
         }
     }
-    if lines.next().is_some(){return Err("font file has data after glyph 7Fh".into());}
+    if lines.next().is_some(){return Err("font file has data after glyph FFh".into());}
     Ok(bytes)
 }
 pub(super) fn is_graphics(mode:u32)->bool{matches!(mode,4|5|6|0x13)||super::super::planar::geometry(mode).is_some()}
@@ -107,9 +112,9 @@ impl Frame{
 fn byte(p:&Loaded,at:u32)->Result<u32,String>{
     p.ram.load(at,MemWidth::Byte).map_err(|e|format!("BIOS graphics read: {e:?}"))
 }
-/// The glyph of `ch`. 80h-FFh come through INT 1Fh; with no table installed
-/// (vector 0, as the BIOS leaves it until GRAFTABL or a program sets one) the
-/// call stops instead of drawing whatever the interrupt table holds.
+/// The glyph of `ch`. 80h-FFh come through INT 1Fh, which starts at Dine's
+/// own upper-half table. A program that sets the vector to 0 leaves no table;
+/// the call then stops instead of drawing whatever the interrupt table holds.
 fn glyph(p:&Loaded,ch:u32)->Result<[u8;8],String>{
     let at=if ch<0x80{FONT+ch*8}else{
         let vector=p.ram.load(0x1f*4,MemWidth::Dword).map_err(|e|format!("INT 1Fh vector read: {e:?}"))?;

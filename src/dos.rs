@@ -169,8 +169,11 @@ fn rom(ram:&mut Ram)->Result<(),String>{
     top[5..13].copy_from_slice(b"01/10/84");top[13]=0;top[14]=0xfc;top[15]=0;
     ram.write_bytes(0xc0000,&vec![0xff;0x3fff0]).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(0xffff0,&top).map_err(|e|format!("{e:?}"))?;
-    ram.write_bytes(console::graphics_text::FONT,&console::graphics_text::font()?).map_err(|e|format!("ROM font: {e:?}"))?;
+    let font=console::graphics_text::font()?;let upper=console::graphics_text::UPPER_FONT;
+    ram.write_bytes(console::graphics_text::FONT,&font[..1024]).map_err(|e|format!("ROM font: {e:?}"))?;
+    ram.write_bytes((upper>>16)*16+(upper&0xffff),&font[1024..]).map_err(|e|format!("ROM upper font: {e:?}"))?;
     vectors::install(ram)?;
+    ram.store(0x1f*4,MemWidth::Dword,upper).map_err(|e|format!("INT 1Fh vector: {e:?}"))?;
     ram.protect(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
 }
 pub fn hello(format:&str)->Result<Vec<u8>,String>{

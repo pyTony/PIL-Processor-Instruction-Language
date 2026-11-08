@@ -35,7 +35,7 @@ def colour(px, py):
 
 
 def font():
-    lines = [l for l in (root / 'src' / 'dos_font8x8.txt').read_text().splitlines() if not l.startswith(';')]
+    lines = [l for l in (root / 'src' / 'dos_font8x8.txt').read_text(encoding='utf-8').splitlines() if not l.startswith(';')]
     return {int(lines[n * 9][:2], 16): [int(r.replace('#', '1').replace('.', '0'), 2) for r in lines[n * 9 + 1:n * 9 + 9]]
             for n in range(128)}
 

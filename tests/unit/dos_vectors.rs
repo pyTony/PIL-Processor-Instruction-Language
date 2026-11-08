@@ -19,8 +19,10 @@ fn answered_vectors_start_at_read_only_entries_and_others_keep_their_values(){
         assert_eq!(b,vec![0xcd,u32::from(n),0xcf]);
         assert!(p.ram.check_write(at,MemWidth::Byte).is_err(),"entries are in the read-only BIOS area");
     }
-    // No mouse driver, user and free vectors, BIOS data pointers: still 0.
-    for n in [0x1d,0x1e,0x1f,0x33,0x41,0x60,0x67]{assert_eq!(p.ram.load(n*4,MemWidth::Dword).unwrap(),0,"INT {n:02x}h");}
+    // INT 1Fh points to the upper half of the BIOS graphics font.
+    assert_eq!(p.ram.load(0x1f*4,MemWidth::Dword).unwrap(),super::super::console::graphics_text::UPPER_FONT);
+    // Other unimplemented BIOS data pointers, mouse and free vectors stay 0.
+    for n in [0x1d,0x1e,0x33,0x41,0x60,0x67]{assert_eq!(p.ram.load(n*4,MemWidth::Dword).unwrap(),0,"INT {n:02x}h");}
     assert_eq!(p.ram.load(0x23*4,MemWidth::Dword).unwrap(),0x0070_0074);
 }
 #[test]
