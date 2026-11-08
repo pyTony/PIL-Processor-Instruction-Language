@@ -222,6 +222,54 @@ pub fn extract(path:&Path,destination:&Path)->Result<String,String>{
         use std::io::Write;let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&target).map_err(|e|e.to_string())?;file.write_all(&e.bytes).map_err(|e|e.to_string())?;}
     let mut s=format!("Extracted {} files to {} (original paths;ZIP packages under .zip.contents)\n",a.files.len(),destination.display());for n in a.notes{writeln!(s,"NOTE {n}").unwrap();}Ok(s)
 }
+/// Copy the visible FAT directory tree to a new host directory for writable DOS access.
+/// This deliberately does not expand ZIP files or recreate disk-level metadata.
+pub fn extract_drive(path:&Path,destination:&Path)->Result<String,String>{
+    let data=read_image(path)?;
+    let tree=fat16_tree(&data)?;
+    let mut paths=Vec::new();
+    let mut seen=BTreeSet::new();
+    let mut pending=vec![(0usize,String::new())];
+    while let Some((index,prefix))=pending.pop(){
+        for entry in &tree.dirs[index]{
+            if !entry.name.is_ascii(){return Err("non-ASCII FAT short names cannot be copied to a host drive".into());}
+            let base=std::str::from_utf8(&entry.name[..8]).unwrap().trim_end();
+            let ext=std::str::from_utf8(&entry.name[8..]).unwrap().trim_end();
+            let name=if ext.is_empty(){base.to_string()}else{format!("{base}.{ext}")};
+            if name.contains('/')||name.contains('\\'){return Err("invalid FAT short name".into());}
+            let name=safe_name(&name)?;
+            let relative=if prefix.is_empty(){name}else{format!("{prefix}/{name}")};
+            safe_name(&relative)?;
+            if !seen.insert(relative.to_ascii_lowercase()){return Err(format!("duplicate/case-aliased FAT path: {relative}"));}
+            paths.push((relative.clone(),entry.node));
+            if let FatNode::Dir(child)=entry.node{pending.push((child,relative));}
+        }
+    }
+    // Parents precede children: entries are added before their directories are visited.
+    std::fs::create_dir(destination).map_err(|e|format!("drive import requires a new directory {}: {e}",destination.display()))?;
+    for (relative,node) in &paths{
+        let target=destination.join(relative);
+        let result=match node{
+            FatNode::Dir(_)=>std::fs::create_dir(&target),
+            FatNode::File(i)=>{
+                use std::io::Write;
+                std::fs::OpenOptions::new().write(true).create_new(true).open(&target).and_then(|mut f|f.write_all(&tree.files[*i]))
+            },
+        };
+        result.map_err(|e|format!("drive import failed at {}: {e}; the incomplete destination must be removed before retrying",target.display()))?;
+    }
+    Ok(format!("Copied FAT files to {} (original image unchanged)",destination.display()))
+}
+/// A stable host-folder name that distinguishes images with the same label.
+pub fn drive_image_name(path:&Path)->Result<String,String>{
+    let data=read_image(path)?;
+    let tree=fat16_tree(&data)?;
+    let label=tree.label.as_ref().and_then(|n|std::str::from_utf8(n).ok()).map(str::trim)
+        .filter(|s|!s.is_empty()).or_else(||path.file_stem().and_then(|s|s.to_str())).unwrap_or("disk");
+    let label:String=label.chars().take(32).map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{c}else{'_'}).collect();
+    let label=if label.is_empty(){"disk"}else{&label};
+    Ok(format!("{label}-{:08x}",crc32(&data)))
+}
 #[cfg(test)]
 #[path="../tests/unit/containers.rs"]
 mod tests;

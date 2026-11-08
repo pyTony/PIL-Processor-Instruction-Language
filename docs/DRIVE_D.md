@@ -1,5 +1,35 @@
 # Drive D: (your own DOS programs)
 
+## Writable copies of FAT images
+
+For a FAT12 or FAT16 floppy or hard-disk image, the terminal can copy the
+files to a host folder and mount that folder as a writable drive:
+
+```sh
+python3 tools/dos_terminal.py --headless --drive-from-image A=images/disk.img images/FD14LITE.img::COMMAND.COM
+```
+
+The new folder is `drives/A/LABEL-IDENTIFIER`, relative to the current working
+directory. The label comes from the image, or its filename when no label is
+available. The identifier is a checksum of the image, distinguishing images
+with the same label. The terminal reports the actual folder path. Repeat the
+option with other letters to import multiple images. Each destination must be
+new: an existing folder is never overwritten. For later sessions, mount the
+reported folder directly, for example:
+
+```sh
+python3 tools/dos_terminal.py --headless --drive A=drives/A/LABEL-IDENTIFIER images/FD14LITE.img::COMMAND.COM
+```
+
+DOS changes persist in the host folder and do not alter the original image.
+This is a file-level copy, not a writable image or a bootable disk: raw sector
+access and disk capacity are not replicated. Empty directories and ZIP files
+are retained, but FAT volume metadata, long filenames, file attributes and
+timestamps are not preserved. Unsupported names cause the import to fail.
+If an I/O error leaves an incomplete new folder, the error identifies it; remove
+that incomplete folder before retrying. The `drives` folder is git-ignored.
+ISO/CD-ROM images are not supported by this option.
+
 `freedos.cmd` mounts a host folder as drive D: in the Dine session. By default
 that is `driveD` in the checkout. Git ignores this folder, so its contents are
 yours: GW-BASIC, Turbo Pascal, benchmarks, BASIC files and so on. Third-party

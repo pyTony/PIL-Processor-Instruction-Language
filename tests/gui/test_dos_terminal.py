@@ -48,6 +48,31 @@ class DosTerminalTests(unittest.TestCase):
             term.Session('engine', 'program', drives=[('A', 'disk one.img'), ('B', 'disk2.img')])
         self.assertEqual(process.stdin.getvalue(), 'mount A disk one.img\nmount B disk2.img\n')
 
+    def test_imported_drive_uses_label_and_refuses_existing_folder(self):
+        import os
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                os.chdir(tmp)
+                def run(cmd, **kwargs):
+                    if cmd[1] == '--dos-drive-name':
+                        return SimpleNamespace(returncode=0, stdout='MY_DISK-12345678\n', stderr='')
+                    Path(cmd[3]).mkdir()
+                    (Path(cmd[3]) / 'CONFIG.SYS').write_text('original')
+                    return SimpleNamespace(returncode=0, stdout='Copied', stderr='')
+                with patch.object(term.subprocess, 'run', side_effect=run):
+                    drives = term.prepare_image_drives('engine', [('A', 'disk.img')], [('B', 'other.img')])
+                    folder = Path('drives') / 'A' / 'MY_DISK-12345678'
+                    self.assertEqual(drives, [('B', 'other.img'), ('A', str(folder))])
+                    (folder / 'CONFIG.SYS').write_text('saved')
+                    with self.assertRaisesRegex(ValueError, 'reuse it with --drive'):
+                        term.prepare_image_drives('engine', [('A', 'disk.img')], [])
+                    self.assertEqual((folder / 'CONFIG.SYS').read_text(), 'saved')
+                    with self.assertRaisesRegex(ValueError, 'specified more than once'):
+                        term.prepare_image_drives('engine', [('A', 'disk.img')], [('A', 'other.img')])
+            finally:
+                os.chdir(previous)
+
     def test_speaker_click_is_short_quiet_and_configurable(self):
         import struct
         import wave

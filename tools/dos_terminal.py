@@ -649,6 +649,34 @@ def drive_spec(value):
     return (letter.strip().rstrip(':').upper(), path)
 
 
+def prepare_image_drives(engine, images, drives):
+    """Import images once into labelled host folders; never replace a folder."""
+    drives = list(drives or [])
+    used = {letter for letter, _ in drives}
+    for letter, _ in images or []:
+        if letter in used:
+            raise ValueError(f'drive {letter}: was specified more than once')
+        used.add(letter)
+    for letter, image in images or []:
+        def run(*args):
+            result = subprocess.run([str(engine), *args], capture_output=True, text=True,
+                                    encoding='utf-8', errors='replace')
+            if result.returncode:
+                raise ValueError(result.stderr.strip() or result.stdout.strip() or 'drive import failed')
+            return result.stdout.strip()
+        name = run('--dos-drive-name', image)
+        if not name or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in name):
+            raise ValueError('engine returned an invalid drive folder name')
+        destination = Path('drives') / letter / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            raise ValueError(f'{destination} already exists; reuse it with --drive {letter}={destination}')
+        message = run('--dos-unpack-drive', image, str(destination))
+        print(message, file=sys.stderr)
+        drives.append((letter, str(destination)))
+    return drives
+
+
 def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None):
     import tkinter as tk
     from tkinter import font as tkfont
@@ -932,6 +960,8 @@ def main(argv=None):
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
     parser.add_argument('--drive', action='append', type=drive_spec, metavar='LETTER=PATH',
                         help='mount an image or folder on drive A through E before startup; repeat for more drives')
+    parser.add_argument('--drive-from-image', action='append', type=drive_spec, metavar='LETTER=IMAGE',
+                        help='copy a FAT image to a new labelled drives/LETTER folder and mount it writable')
     parser.add_argument('--args', metavar='COMMAND_LINE',
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
     parser.add_argument('--speaker-volume', type=speaker_volume, default=5, metavar='0..100',
@@ -952,6 +982,11 @@ def main(argv=None):
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
+    if args.drive_from_image:
+        try:
+            args.drive = prepare_image_drives(find_engine(args.engine), args.drive_from_image, args.drive)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
     if args.headless and args.com1 not in (None, 'console'):
         parser.error('--headless currently requires --com1 console')
     com1 = open_com1(args.com1 or 'console') if args.headless else (open_com1(args.com1) if args.com1 else None)
