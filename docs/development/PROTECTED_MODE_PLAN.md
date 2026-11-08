@@ -45,3 +45,18 @@ real mode for INT 21h, so Dine's existing services keep answering.
 
 Done on branch claude/project-thread-ssjwyx; see STATUS.md, "Real-mode
 exception delivery". The test386 runner (`--run-rom`) was already on dev.
+
+## Increment 2 status (first part)
+
+PR 2 is split in two. The first part, on branch claude/project-thread-ssjwyx:
+- MOV CR0 and LMSW can set PE; MOV CR0 can clear it. PG still stops.
+- Segment loads (MOV, POP, LDS/LES/LSS/LFS/LGS) and far JMP/CALL/RETF read
+  and check GDT descriptors at CPL 0, set the accessed bit, and fault with
+  #GP, #NP or #SS and the selector as error code.
+- A CS descriptor with the D bit selects 32-bit default operand and address
+  size.
+- Real-mode loads change only the base, so unreal mode works.
+- test386 still stops at POST 08h, which sets PE and PG together.
+
+The second part adds LLDT/SLDT, LTR/STR, SGDT/SIDT, LAR, LSL, VERR, VERW,
+ARPL and SMSW r32.

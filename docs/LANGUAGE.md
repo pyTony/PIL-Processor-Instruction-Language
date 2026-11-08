@@ -265,13 +265,26 @@ default with --emit-rust. The decoder substitutes the actual SS size/register.
 
 Register aliases FF /6 and 8F /0 share the same PUSH/POP descriptions.
 
-## Mutable real-mode segment state
+## Mutable segment state
 
 `read_segment out INDEX` snapshots a visible selector (ES,CS,SS,DS,FS,GS =0..5)
-as bv16. `write_segment INDEX value` stages one bv16 non-CS selector load,
-rebuilds its ordinary real-mode cache and commits with GPR/memory effects.
+as bv16. `write_segment INDEX value` stages one bv16 non-CS selector load and
+commits it with the GPR and memory effects. Both backends call the shared
+`SegmentState::load_segment` (src/address.rs):
+- In real mode only the base changes (selector * 16). The limit and
+  attributes stay, so limits loaded in protected mode survive the return to
+  real mode ("unreal mode"). CS gets the ordinary real-mode cache.
+- In protected mode the 8-byte GDT entry is read at GDTR base + index * 8 and
+  checked as the 386 does. A null selector loads into DS, ES, FS and GS (a
+  later access is #GP(0)); in SS or CS it is #GP(0). Data registers need a
+  data or readable code segment with RPL and CPL not above DPL (conforming
+  code excepted); SS needs a writable data segment with RPL = DPL = CPL. A
+  selector past the GDT limit, a system descriptor or a TI=1 selector (no LDT
+  yet) is #GP(selector). Not present is #NP (vector 11), or #SS(selector)
+  for SS. The load stages one more byte store that sets the descriptor's
+  accessed bit.
 Use execute_machine / emitted execute_with_machine with SegmentState; contextless
-wrappers reject these tokens. Protected-mode loads are explicitly unsupported.
+wrappers reject these tokens.
 MOV8C/8E supports register and word-memory transfers; operand-prefix66 does not
 widen memory accesses. MOV r32,Sreg is rejected pending legacy upper-half policy.
 POP ES/SS/DS/FS/GS reads through old SS using the original stack-address width,
@@ -331,7 +344,9 @@ profiles;the decoder binds the actual profiles and source segment.
 
 `read_flags out` snapshots bv32 EFLAGS; `require_real_mode` requires supplied
 machine state with real_mode=true and VM clear, otherwise InvalidContext before
-commit. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
+commit. `require_ring0` requires CPL 0 (real mode, or protected mode with a
+CS cache of DPL 0) and VM clear; CLI, STI, PUSHF, POPF, LGDT/LIDT and the far
+transfers use it, because at CPL 0 they behave as in real mode. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
 retirement when true. It cannot precede an early retire guard. Shadows are
 separate SS/STI state, included in full traces; partial REP and faults retain
 both, and full PIL, monitor-I/O and DOS-bridge retirements advance both.
@@ -393,9 +408,14 @@ Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/w
 an incoming segment cache without reading memory. OFFSET is bv64 to reject
 wraparound before narrowing to a32-bit address. SS violations use the existing
 StackSegment model error; it does not deliver a guest exception frame.
-`far_branch SELECTOR OFFSET` stages a real-mode CS cache/selector and EIP update.
-SELECTOR is bv16,OFFSET bv32; the new ordinary real-mode cache has limitFFFFh.
-The effect rejects protected/V86 contexts and offsets beyond that new limit.
+`far_branch SELECTOR OFFSET` stages a CS cache/selector and EIP update.
+SELECTOR is bv16,OFFSET bv32. In real mode the new cache is the ordinary one
+(limit FFFFh). In protected mode the code descriptor is read and checked by
+`load_segment` (same privilege only: a conforming segment with DPL <= CPL, or
+a non-conforming one with DPL = CPL and RPL <= CPL; the new selector's RPL is
+CPL). Gates, TSS descriptors and RPL above CPL (a return to an outer level)
+stop with InvalidContext, because they are not modelled yet. The effect
+rejects V86 and offsets beyond the new limit (#GP(0)).
 It cannot mix with another segment update or branch. Changes commit at retire.
 
 Original retf.pil uses these effects plus ordered SS loads and named SP writes.
@@ -466,18 +486,18 @@ before staging; retirement commits writes in program order only after all
 instruction checks pass. Overlapping stores use the later store's bytes.
 This is bounded ordinary RAM support, not MMIO or bus-atomic behavior.
 
-`call_far` uses existing `require_real_mode`, pointer loads, two SS stores and
+`call_far` uses `require_ring0`, pointer loads, two SS stores and
 `far_branch`. Memory pointers contain an operand-sized offset plus a 16-bit
 selector, even with a 32-bit operand size. The return frame has two operand-sized
 slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
 slot. SS size is independent. A contiguous full-frame check matches RETF;
 split frames across stack wrap and hardware shutdown/exception delivery remain
-outside this prototype. Protected/V86 calls are rejected before pointer reads.
+outside this prototype. CPL above 0 and V86 calls are rejected before pointer reads.
 
 ## LES composition (0.34)
 
-`les.pil` composes require_real_mode, read_address, widened check_segment,
-two loads, one bound GPR write and write_segment0. No instruction-specific
+`les.pil` composes read_address, two per-field check_segment checks, two
+loads, one bound GPR write and write_segment (ES, DS, SS, FS or GS). No instruction-specific
 interpreter/emitter operation is introduced. The full pointer span is checked
 before reading; any second-field fault prevents both staged register effects.
 
@@ -503,12 +523,14 @@ They survive DOS EXEC/return as CPU state. CR2 accepts all 32 bits; CR3 accepts
 aligned 4 KiB directory bases. Nonzero reserved low CR3 bits are an explicit
 UnsupportedControl profile stop, not a hardware #UD or #GP claim.
 
-Real-mode CR0 writes can change MP, EM, TS and ET. PE or PG enablement and
-other reserved bit requests stop with UnsupportedControl before any state
-commits. PG=1 with PE=0 produces GeneralProtection. Virtual-8086 accesses
-produce GeneralProtection; other protected-mode contexts remain unsupported.
-There is no descriptor loading, protected-mode execution, page translation or
-TLB implementation in this increment. CR2 is not yet updated by page faults.
+CR0 writes can change PE, MP, EM, TS and ET. Setting PE enters protected
+mode with every segment cache unchanged (CS keeps its real-mode cache until
+a far transfer loads a descriptor); clearing it returns to real mode with the
+caches kept as well. LMSW can set PE but not clear it. PG and other reserved
+bit requests stop with UnsupportedControl before any state commits. PG=1 with
+PE=0 produces GeneralProtection. Control-register access from V86 mode or at
+CPL above 0 produces GeneralProtection. There is no page translation or TLB
+yet, and CR2 is not updated by page faults.
 
 Reference: Intel 80386 PRM
 [MOV special registers](https://people.freebsd.org/~jhb/386htm/MOVRS.htm),

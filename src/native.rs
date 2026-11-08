@@ -7,6 +7,9 @@ pub struct Case {
     pub name:&'static str,pub bytes:Vec<u8>,pub image:Image,pub regs:[u32;8],pub flags:u32,
     pub rx:Vec<u8>,pub tx:Vec<u8>,pub protect:Option<(u32,usize)>,pub patch:Option<(u32,Vec<u8>)>,
 }
+/// Protected mode at CPL 3: far transfers and flag instructions there need
+/// gates and IOPL checks that are not modelled yet, so they stop.
+fn cpl3(t:&mut Case){t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}
 fn case(name:&'static str,bytes:Vec<u8>)->Result<Case,String> {
     let (image,_)=Image::load(&bytes)?;
     Ok(Case{name,bytes,image,regs:[0;8],flags:0x202,rx:Vec::new(),tx:Vec::new(),protect:None,patch:None})
@@ -143,7 +146,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     }}
     let mut t=case("pushf_readonly",vec![0x9c,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
     let mut t=case("popf_limit",vec![0x9d,0xf4])?;t.regs[4]=0xffff;t.image.sti_shadow=1;tests.push(t);
-    let mut t=case("control_mode_reject",vec![0xfb,0xf4])?;t.image.real_mode=false;tests.push(t);
+    let mut t=case("control_mode_reject",vec![0xfb,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     let mut t=case("sti_rep_fault",vec![0xfa,0xfb,0xf3,0xaa,0xf4])?;t.regs[1]=2;t.regs[7]=0xa00;t.protect=Some((0xa01,1));tests.push(t);
     for addr32 in [false,true]{for zero in [false,true]{let mut bytes=vec![];if addr32{bytes.push(0x67);}bytes.extend([0xe3,1,0x40,0xf4]);let mut t=case(match(addr32,zero){(false,false)=>"jcxz_nonzero",(false,true)=>"jcxz_zero",(true,false)=>"jecxz_nonzero",_=>"jecxz_zero"},bytes)?;t.regs[1]=if zero{if addr32{0}else{0xabcd0000}}else{1};tests.push(t);}}
     for big in [false,true]{for w in [16,32]{let bytes=if w==32{vec![0x66,0xc9,0xf4]}else{vec![0xc9,0xf4]};let mut t=case(match(big,w){(false,16)=>"leave16_16",(false,_)=>"leave16_32",(true,16)=>"leave32_16",_=>"leave32_32"},bytes)?;t.regs[4]=0x400;t.regs[5]=if big{0x800}else{0xabcd0800};t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0x34,0x12,0x78,0x56]));t.flags=0xed7;tests.push(t);}}
@@ -168,7 +171,7 @@ pub fn cases()->Result<Vec<Case>,String> {
         t.regs[0]=0x12345678;t.regs[1]=0xabcdef01;t.regs[7]=0xfedcba98;t.flags=0xad7;tests.push(t);
     }
     let t=case("cs_real_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;tests.push(t);
-    let mut t=case("cs_protected_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.image.real_mode=false;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true};tests.push(t);
+    let mut t=case("cs_protected_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.image.real_mode=false;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};tests.push(t);
     let mut t=case("cs_readonly",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.protect=Some((0x800,1));tests.push(t);
     for w in [16,32]{for big in [false,true]{for cleanup in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.push(if cleanup{0xca}else{0xcb});if cleanup{bytes.extend([7,0]);}bytes.extend([0x41,0xf4]);
@@ -190,7 +193,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("retf_outside_window",vec![0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,2,1,0]));tests.push(t);
     let mut t=case("retf_target_fault",vec![0x66,0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,0,1,0,1,0,0,0]));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("retf_frame_fault",vec![0xcb,0xf4])?;t.regs[4]=0xffff;tests.push(t);
-    let mut t=case("retf_mode_reject",vec![0xcb,0xf4])?;t.image.real_mode=false;tests.push(t);
+    let mut t=case("retf_mode_reject",vec![0xcb,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     for w in [16,32]{for big in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0x8f,4,0x24,0xf4]);
         let mut t=case(match(w,big){(16,false)=>"popmem16_ss16",(16,true)=>"popmem16_ss32",(32,false)=>"popmem32_ss16",_=>"popmem32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
@@ -235,11 +238,11 @@ pub fn cases()->Result<Vec<Case>,String> {
         let mut t=case(name,bytes)?;t.flags=0xed7;t.patch=ptr.map(|p|(0x500,p));tests.push(t);
     }
     tests.push(case("jmpfar_pointer_boundary",vec![0xff,0x2e,0xfd,0xff,0xf4])?);
-    let mut t=case("jmpfar_mode_reject",vec![0xea,0,1,1,0,0xf4])?;t.image.real_mode=false;tests.push(t);
+    let mut t=case("jmpfar_mode_reject",vec![0xea,0,1,1,0,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     let mut t=case("far_second_store_fault",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fc,2));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("far_pointer_boundary",vec![0xff,0x1e,0xfd,0xff,0xf4])?;t.regs[4]=0x800;tests.push(t);
     let mut t=case("far_target_fault",vec![0x66,0x9a,0,0,1,0,1,0,0xf4])?;t.regs[4]=0x800;tests.push(t);
-    let mut t=case("far_mode_reject",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.image.real_mode=false;tests.push(t);
+    let mut t=case("far_mode_reject",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     let mut t=case("far_outside_window",vec![0x9a,0,0,0xff,0xff,0xf4])?;t.regs[4]=0x800;tests.push(t);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
@@ -367,6 +370,15 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("port_io",vec![0xe4,0x80,0xe5,0x80,0x66,0xe5,0x80,0xe6,0x80,0xec,0xef,0x6c,0x6f,0xf3,0x6d,0xf4])?;
     t.regs[0]=0x12345600;t.regs[1]=2;t.regs[2]=0x3f8;t.regs[6]=0x400;t.regs[7]=0x600;t.patch=Some((0x500,vec![1,2,3,4]));tests.push(t);
     let mut t=case("enter_overlap",vec![0xc8,0x00,0x00,0x03,0xf4])?;t.regs[4]=0x702;t.regs[5]=0x702;tests.push(t);
+    // Protected mode at CPL 0 in 32-bit code, with a GDT at C00h: null, flat
+    // 32-bit code (08h) and flat 32-bit data (10h). The fixed-image compiler
+    // decodes one code size per case, so this stays in 32-bit code:
+    // MOV DS,AX; JMP FAR 0008:00000110; MOV DWORD [800h],12345678h; HLT.
+    let mut code=vec![0x8e,0xd8,0xea,0x10,0x01,0,0,0x08,0x00];code.resize(0x10,0x90);code.extend([0xc7,0x05,0,8,0,0,0x78,0x56,0x34,0x12,0xf4]);
+    let gdt:Vec<u8>=[0u64,0x00cf_9a00_0000_ffff,0x00cf_9200_0000_ffff].iter().flat_map(|d|d.to_le_bytes()).collect();
+    let mut t=case("pm_far_jump",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.regs[0]=0x10;t.regs[4]=0x700;t.patch=Some((0xc00,gdt.clone()));tests.push(t);
+    // MOV SS,AX with a code selector is #GP(0008h).
+    let mut t=case("pm_ss_gp",vec![0x8e,0xd0,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.regs[0]=0x08;t.patch=Some((0xc00,gdt));tests.push(t);
     let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)

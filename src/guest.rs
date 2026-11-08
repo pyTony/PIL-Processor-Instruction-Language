@@ -93,7 +93,7 @@ impl Image {
         let img_end=u64::from(self.fetch_base)+u64::from(self.end);
         let readable=match cs.access {
             SegmentAccess::Data{expand_down:false,..}=>true,
-            SegmentAccess::Code{readable}=>readable,
+            SegmentAccess::Code{readable,..}=>readable,
             _=>false,
         };
         if readable && last_off<=u64::from(cs.limit) && ((physical>=img_start && physical_end<=img_end)||self.system.iter().any(|&(s,e)|physical>=u64::from(s)&&physical_end<=u64::from(e))) && lin_end<=0x1_0000_0000 {
@@ -109,7 +109,10 @@ impl Image {
     }
     pub fn decode(&self,ram:&Ram,eip:u32)->Result<Decoded,GuestError> {
         let mut r=Reader{image:self,ram,start:eip,pos:eip};
-        let mut wide=false;let mut addr32=false;let mut override_segment=None;let mut repeat=None;let mut locked=false;
+        // A code segment with the D bit set defaults to 32-bit operands and
+        // addresses; 66h and 67h select the other size.
+        let big=self.segments[SegmentRegister::Cs.index()].default_32();
+        let mut wide=big;let mut addr32=big;let mut override_segment=None;let mut repeat=None;let mut locked=false;
         let mut opcode=loop {
             let b=r.byte()?;
             match b {
@@ -117,7 +120,7 @@ impl Image {
                 // segment override and the last repeat prefix take effect.
                 0xf2|0xf3=>repeat=Some(b),
                 0xf0=>locked=true,
-                0x66=>wide=true,0x67=>addr32=true,
+                0x66=>wide=!big,0x67=>addr32=!big,
                 0x26|0x2e|0x36|0x3e|0x64|0x65=>override_segment=Some(match b{0x26=>SegmentRegister::Es,0x2e=>SegmentRegister::Cs,0x36=>SegmentRegister::Ss,0x3e=>SegmentRegister::Ds,0x64=>SegmentRegister::Fs,_=>SegmentRegister::Gs}),
                 _=>break b,
             }
@@ -337,7 +340,6 @@ impl Image {
             }
             0xc4|0xc5=>{
                 let name=if opcode==0xc4{"LES"}else{"LDS"};
-                if !self.real_mode{return Err(GuestError::Decode(format!("{name} requires real-mode context")));}
                 let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode(format!("{name} requires a memory far pointer")));}
                 dst=view(((m>>3)&7)as usize,w);src=dst;
                 let effective=r.effective(m,addr32)?;
@@ -348,7 +350,6 @@ impl Image {
             0x8c|0x8e=>{
                 let m=r.byte()?;let segment=((m>>3)&7)as usize;
                 if segment>=6 || (opcode==0x8e&&segment==1){return Err(GuestError::Decode("invalid segment MOV encoding".into()));}
-                if opcode==0x8e&&!self.real_mode{return Err(GuestError::Decode("segment loads require real-mode context".into()));}
                 let reg_dest_32 = opcode==0x8c && wide && m>>6==3;
                 w = if reg_dest_32 { 32 } else { 16 };
                 dst = view((m&7)as usize, w);
@@ -369,7 +370,6 @@ impl Image {
                 (if opcode==0x8c{format!("MOV {operand},{seg}")}else{format!("MOV {seg},{operand}")},compile(&text,w))
             }
             0x07|0x17|0x1f=>{
-                if !self.real_mode{return Err(GuestError::Decode("segment loads require real-mode context".into()));}
                 let segment=pop_selector.unwrap_or(match opcode{0x07=>SegmentRegister::Es,0x17=>SegmentRegister::Ss,_=>SegmentRegister::Ds});
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
@@ -512,7 +512,6 @@ impl Image {
                     (format!("IMUL {},{}",register_name(dst),operand_name(src,address)),compile(&text,w))
                 }else if matches!(second,0xb2|0xb4|0xb5){
                     let name=match second{0xb2=>"LSS",0xb4=>"LFS",_=>"LGS"};
-                    if !self.real_mode{return Err(GuestError::Decode(format!("{name} requires real-mode context")));}
                     let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode(format!("{name} requires a memory far pointer")));}
                     dst=view(((m>>3)&7)as usize,w);src=dst;
                     let effective=r.effective(m,addr32)?;

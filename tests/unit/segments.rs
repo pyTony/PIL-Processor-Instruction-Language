@@ -33,7 +33,8 @@ fn segment_pop_uses_old_ss_operand_width_and_commits_pointer_and_cache_together(
         let (mut image,mut ram,mut c)=setup(&bytes);image.segments[2]=SegmentCache{base:0x400,limit:0x1ffff,access:SegmentAccess::Data{writable:true,expand_down:false,big}};c.regs[4]=if big{0xfffe}else{0xabcd0800};
         let pointer=c.regs[4];let mask=if big{u32::MAX}else{65535};let at=0x400+(pointer&mask);ram.store(at,MemWidth::from_bits(w).unwrap(),0xabcd0040).unwrap();let old=c.clone();let oldram=ram.clone();
         step(&mut image,&mut ram,&mut c).unwrap();let mut want=old;want.regs[4]=(pointer&!mask)|(pointer.wrapping_add((w/8)as u32)&mask);want.eip=0x100+bytes.len()as u32;assert_eq!(c,want);
-        assert_eq!(ram,oldram);assert_eq!(image.selectors[segment],0x40);assert_eq!(image.segments[segment],SegmentCache::real_mode(0x40));assert_eq!(image.ss_shadow,u8::from(segment==2));
+        assert_eq!(ram,oldram);assert_eq!(image.selectors[segment],0x40);// A real-mode load changes only the base: SS keeps its limit and B bit.
+        assert_eq!(image.segments[segment],if segment==2{SegmentCache{base:0x400,limit:0x1ffff,access:SegmentAccess::Data{writable:true,expand_down:false,big}}}else{SegmentCache::real_mode(0x40)});assert_eq!(image.ss_shadow,u8::from(segment==2));
     }}}
 }
 #[test]
@@ -54,7 +55,7 @@ fn faulting_segment_memory_and_pop_leave_all_state_unchanged(){
 #[test]
 fn invalid_encodings_modes_and_missing_machine_context_are_explicit(){
     for bytes in [vec![0x8e,0xc8],vec![0x8e,0xf0],vec![0x8c,0xf8],vec![0xf0,0x8e,0xd8]]{let (image,ram,_)=setup(&bytes);assert!(image.decode(&ram,0x100).is_err());}
-    let (mut image,ram,_)=setup(&[0x8e,0xd8]);image.real_mode=false;assert!(image.decode(&ram,0x100).is_err());
+    let (mut image,ram,_)=setup(&[0x8e,0xd8]);image.real_mode=false;assert!(image.decode(&ram,0x100).is_ok(),"segment loads decode in protected mode too");
     for text in ["const x 16 0\nwrite_segment 1 x\npreserve_flags all\nretire","read_segment x 6\npreserve_flags all\nretire"]{assert!(compile(text,16).is_err());}
     let p=compile("read_segment x 3\nwrite dst x\npreserve_flags all\nretire",16).unwrap();let v=View{register:0,low:0,width:16};let mut c=Cpu::default();assert!(execute(&p,&mut c,v,v).is_err());
     let (mut image,mut ram,mut c)=setup(&[0x66,0x8c,0xc0]);image.selectors[0]=0x1234;
