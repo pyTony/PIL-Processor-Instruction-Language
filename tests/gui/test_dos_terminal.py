@@ -19,6 +19,35 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_headless_routes_console_before_execution_and_forwards_serial(self):
+        class FakeSession:
+            def __init__(self):
+                self.last = {'status': 'running'}
+                self.com1_out = b''
+                self.commands = []
+            def send(self, command):
+                self.commands.append(command)
+                if command.startswith('run '):
+                    self.com1_out += b'Hello\r\n'
+                    self.last = {'status': 'exit'}
+                return self.last
+        session = FakeSession();port = MagicMock();port.read.return_value = b'X\r'
+        reply = term.run_headless(session, port, 7200, 358)
+        self.assertEqual(reply['status'], 'exit')
+        self.assertEqual(session.commands[:4], ['clock 7200', 'country 358', 'console com1', 'com1 580d'])
+        port.write.assert_called_once_with(b'Hello\r\n')
+
+    def test_multiple_startup_drives_are_sent_before_running(self):
+        self.assertEqual(term.drive_spec('a=disk one.img'), ('A', 'disk one.img'))
+        self.assertEqual(term.drive_spec('B:=disk2.img'), ('B', 'disk2.img'))
+        with self.assertRaises(term.argparse.ArgumentTypeError):
+            term.drive_spec('Z=disk.img')
+        replies = ''.join(json.dumps({'protocol': 1, 'seq': seq, 'ok': True}) + '\n' for seq in range(3))
+        process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(replies), stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process):
+            term.Session('engine', 'program', drives=[('A', 'disk one.img'), ('B', 'disk2.img')])
+        self.assertEqual(process.stdin.getvalue(), 'mount A disk one.img\nmount B disk2.img\n')
+
     def test_speaker_click_is_short_quiet_and_configurable(self):
         import struct
         import wave

@@ -29,6 +29,16 @@ Score: 5" on the release build. That score reflects this interpreter on
 that host, not a calibrated machine. Behaviour checked against the IBM AT BIOS timer handler as RBIL
 INT 08h describes it and the Intel 8259A datasheet (IRR, ISR, EOI).
 
+# Headless terminal and startup drives
+
+`python tools/dos_terminal.py --headless --drive A=disk1.img --drive B=disk2.img images/FD14LITE.img::COMMAND.COM`
+starts a DOS session on the host terminal through COM1 without opening Tk.
+`--drive LETTER=PATH` can be repeated for FAT12/FAT16 image files or writable
+host folders, and accepts letters A: through E:. Drives are mounted before the
+program starts; quote paths that contain spaces. The startup image remains C:
+unless explicitly replaced. Images remain read-only, host folders are writable,
+and video-memory-only programs are not shown in the serial terminal.
+
 # DOS drive IOCTLs — 7 November 2026
 
 INT 21h AX=440Dh CX=0867h reports an accessible drive in the two-byte
