@@ -558,6 +558,9 @@ at CPL 0 and IF only where CPL is at most IOPL.
 `read_msw OUT` reads the explicit bv16 machine-status profile. MSW is retained
 in Image/SegmentState and traces;PE is derived from the normalized real_mode
 state. The monitor/DOS profile initializes the other bits to0010h (ET=1).
+`read_msw32 OUT` reads the same status as bv32 with the modeled CR0.PG bit
+in bit 31. SMSW with a 32-bit register chooses this concrete value for the
+architecturally undefined upper 16 bits; word and memory forms remain bv16.
 This is explicit profile configuration,not a claim about hardware reset or an
 implemented FPU. SMSW stores exactly a word and preserves flags/markers.
 SMSW r32 (66h with a register) writes all of CR0, PG included; 66-prefixed memory forms still write a word. LMSW,UMIP and

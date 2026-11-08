@@ -403,6 +403,8 @@ pub fn cases()->Result<Vec<Case>,String> {
     // MOV [2700h],AX (DS base 100h: linear 2800h, physical 800h, allowed at
     // CPL 0); MOV AX,[0F00h] is #PF at linear 1000h with error code 0.
     let mut t=case("pm_paging",vec![0x66,0xb8,0x11,0,0,0x80,0x0f,0x22,0xc0,0xb8,0x34,0x12,0xa3,0,0x27,0xa1,0,0x0f,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.patch=Some((0,vec![7,0,0,0,0,0,0,0,5,0,0,0]));tests.push(t);
+    let mut t=case("smsw32_paging",vec![0x66,0xb8,0x11,0,0,0x80,0x0f,0x22,0xc0,0x66,0x0f,0x01,0xe3,0xf4])?;
+    t.image.real_mode=false;t.image.msw=0x11;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.patch=Some((0,vec![7,0,0,0]));tests.push(t);
     // IRETD at CPL 0 in 32-bit code: the frame at C18h (after the GDT)
     // returns to 0008:00000110 with IOPL 3, NT clear and IF set.
     let mut code=vec![0xcf];code.resize(0x10,0x90);code.push(0xf4);
