@@ -1,7 +1,10 @@
 # Documented 386 FLAGS bits only; reserved bit1 set, RF/VM absent from image.
+# Any privilege level may push the flags; V86 mode (IOPL rules) stops.
 require_width 16_or_32
-require_ring0
 read_flags raw
+bit vm raw 17
+not no_vm vm
+require no_vm
 const visible 32 32725
 and defined raw visible
 const fixed 32 2

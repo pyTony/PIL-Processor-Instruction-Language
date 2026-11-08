@@ -4,7 +4,7 @@ use address::{SegmentAccess,SegmentRegister};
 
 fn setup(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){
     let(mut image,_)=guest::Image::load(bytes).unwrap();
-    image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};
+    image.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
     let mut ram=Ram::new(0x22000);ram.write_bytes(0x100,bytes).unwrap();
     let cpu=Cpu{regs:[0x12345678,0x87654321,0,0x600,0x800,0x600,8,0],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100};
     (image,ram,cpu)
@@ -78,7 +78,7 @@ fn memory_push_faults_preserve_cpu_ram_and_retirement_markers(){
             3=>ram.protect(0x9ff,1).unwrap(),
             4=>image.segments[2].limit=0x7fe,
             5=>image.segments[2].base=0x22000,
-            _=>image.segments[2].access=SegmentAccess::Data{writable:false,expand_down:false,big:false},
+            _=>image.segments[2].access=SegmentAccess::Data{writable:false,expand_down:false,big:false,dpl:0},
         }
         let old_cpu=cpu.clone();let old_ram=ram.clone();let old_image=image.clone();
         let error=step(&mut image,&mut ram,&mut cpu).unwrap_err();
@@ -100,7 +100,7 @@ fn memory_push_stack_wrap_and_complete_access_spans_are_checked(){
     }
     // Expand-down SS allows the new top only above its lower bound.
     let(mut image,mut ram,mut cpu)=setup(&[0xff,0x37],false);
-    image.segments[SegmentRegister::Ss.index()].access=SegmentAccess::Data{writable:true,expand_down:true,big:false};
+    image.segments[SegmentRegister::Ss.index()].access=SegmentAccess::Data{writable:true,expand_down:true,big:false,dpl:0};
     image.segments[2].limit=0x7fd;step(&mut image,&mut ram,&mut cpu).unwrap();
 }
 #[test]

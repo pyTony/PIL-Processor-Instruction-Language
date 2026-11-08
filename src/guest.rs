@@ -745,13 +745,16 @@ impl Image {
                 let port_name=port.map(|p|format!("0x{p:02x}")).unwrap_or_else(||"DX".into());
                 let label=if input{format!("IN {},{port_name}",register_name(dst))}else{format!("OUT {port_name},{}",register_name(dst))};
                 let text=if input{include_str!("../isa/i386/in_open_bus.pil")}else{include_str!("../isa/i386/out_open_bus.pil")};
-                (label,compile(&instantiate(text,w),w))
+                let port_text=match port{Some(p)=>format!("const port 16 {p}"),None=>"read_gpr port 2 16".into()};
+                (label,compile(&instantiate(text.replace("$IO_PORT",&port_text),w),w))
             }
             0xcc|0xcd|0xce=>{
                 let vector=match opcode{0xcc=>3,0xce=>4,_=>r.byte()?};
                 let label=match opcode{0xcc=>"INT3".to_string(),0xce=>"INTO".to_string(),_=>format!("INT 0x{vector:02x}")};
                 return Ok(Decoded{label,length:r.pos-eip,operation:Operation::Interrupt{vector,overflow:opcode==0xce,next:r.pos}});
             }
+            // HLT is privileged: above CPL 0 in protected mode it is #GP(0).
+            0xf4 if !self.real_mode&&self.segment_state().cpl()!=0=>("HLT".into(),compile("require_ring0\npreserve_flags all\nretire\n",w)),
             0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };

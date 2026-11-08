@@ -9,14 +9,14 @@ fn fixture(s:usize)->AddressContext {
   3=>a.effective=EffectiveAddress::Bits32{base:None,index:Some(Gpr::Ebp),scale:1,displacement:0},
   4=>a.effective=EffectiveAddress::Bits16{form:Address16::BxSi,displacement:0},
   7..=10=>{
-   a.segments[3].limit=3;a.segments[3].access=SegmentAccess::Data{writable:true,expand_down:true,big:s==10};
+   a.segments[3].limit=3;a.segments[3].access=SegmentAccess::Data{writable:true,expand_down:true,big:s==10,dpl:0};
    a.effective=EffectiveAddress::Bits32{base:None,index:None,scale:1,displacement:match s{7=>4,8=>3,9=>0xffff,_=>0x10000}};
   },
-  11=>a.segments[3].access=SegmentAccess::Data{writable:false,expand_down:false,big:false},
+  11=>a.segments[3].access=SegmentAccess::Data{writable:false,expand_down:false,big:false,dpl:0},
   12|13=>a.segments[3].access=SegmentAccess::Code{readable:s==12,conforming:false,big:false,dpl:0},
   14=>a.segments[3].access=SegmentAccess::Unusable,
   15=>a.effective=EffectiveAddress::Bits32{base:None,index:Some(Gpr::Esp),scale:1,displacement:0},
-  16=>{a.override_segment=Some(SegmentRegister::Ss);a.segments[2].access=SegmentAccess::Data{writable:false,expand_down:false,big:false};},
+  16=>{a.override_segment=Some(SegmentRegister::Ss);a.segments[2].access=SegmentAccess::Data{writable:false,expand_down:false,big:false,dpl:0};},
   _=>{},
  }
  if s==5||s==6 {a.segments[selected.index()].limit=3;}

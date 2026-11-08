@@ -1,5 +1,7 @@
 # OUTS (6E/6F): read an element from $SEG:[SI/ESI] (default DS) to the port
 # in DX and advance SI/ESI by DF.
+read_gpr port 2 16
+check_io port $BYTES
 read_flag backward DF
 const step $A $BYTES
 const zero $A 0

@@ -115,3 +115,22 @@ Merged increment 3: #122. Increment 4, on the same branch:
   0Bh (not in the repo) runs 0Ch-10h and stops at POST 11h on the next
   switch to ring 3. The ROM runner now accepts up to 1,000,000,000 steps.
 
+## Increment 5 status
+
+Merged increment 4: #123. Increment 5, on the same branch:
+- src/privilege.rs (shared by both backends and interrupt delivery): far
+  JMP/CALL through 286 and 386 call gates, CALL to an inner level with the
+  TSS stack switch and parameter copy, RETF/IRET to an outer level with
+  SS:ESP popped and data segments nulled.
+- Interrupts and exceptions from ring 3 to a ring 0 handler switch to the
+  TSS stack. #TS is new (ExecError::InvalidTss).
+- Privileged instructions above CPL 0 are #GP(0); CLI/STI check IOPL;
+  POPF keeps IOPL and IF where it may not change them; IN/OUT/INS/OUTS
+  (and Dine's own ports in protected mode) check IOPL and the TSS I/O
+  bitmap.
+- test386 passes POST 20h and stops at POST 21h (V86 mode, increment 6).
+  POST 22h is task switching (increment 7). A local build that skips 21h
+  and 22h runs 0Bh-17h; 17h fails on ARPL not writing back an unchanged
+  memory selector, and with that removed 18h-1Ah run, with 1Ah failing on
+  ENTER at ring 3 on a supervisor stack page.
+

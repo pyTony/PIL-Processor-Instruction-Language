@@ -2,7 +2,7 @@ use super::*;
 use Gpr::*;
 use SegmentRegister::*;
 
-fn data(limit:u32)->SegmentCache {SegmentCache{base:0,limit,access:SegmentAccess::Data{writable:true,expand_down:false,big:false}}}
+fn data(limit:u32)->SegmentCache {SegmentCache{base:0,limit,access:SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:0}}}
 fn mc(segment:SegmentRegister,cache:SegmentCache)->MemoryContext {MemoryContext{segment,cache}}
 #[test]
 fn all_16bit_forms_use_low_halves_and_correct_default_segment() {
@@ -54,7 +54,7 @@ fn ordinary_real_mode_cache_and_full_operand_limit_check() {
 #[test]
 fn data_and_code_permissions_and_null_cache() {
     for write in [false,true] {
-        let readonly=SegmentCache{access:SegmentAccess::Data{writable:false,expand_down:false,big:false},..data(9)};
+        let readonly=SegmentCache{access:SegmentAccess::Data{writable:false,expand_down:false,big:false,dpl:0},..data(9)};
         assert_eq!(mc(Ds,readonly).translate(1,MemWidth::Byte,write,7).is_ok(),!write);
         for readable in [false,true] {
             let code=SegmentCache{access:SegmentAccess::Code{readable,conforming:false,big:false,dpl:0},..data(9)};
@@ -68,7 +68,7 @@ fn data_and_code_permissions_and_null_cache() {
 #[test]
 fn expand_down_limits_use_cache_big_bit_not_address_size() {
     for big in [false,true] {
-        let cache=SegmentCache{access:SegmentAccess::Data{writable:true,expand_down:true,big},..data(0xffef)};
+        let cache=SegmentCache{access:SegmentAccess::Data{writable:true,expand_down:true,big,dpl:0},..data(0xffef)};
         let c=mc(Ss,cache);
         assert!(c.translate(0xffef,MemWidth::Byte,false,7).is_err());
         assert!(c.translate(0xfff0,MemWidth::Dword,true,7).is_ok());

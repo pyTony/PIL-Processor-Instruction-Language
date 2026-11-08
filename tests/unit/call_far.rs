@@ -5,7 +5,7 @@ fn direct(w:u8,selector:u16,target:u32)->Vec<u8>{
  let mut b=vec![];if w==32{b.push(0x66);}b.push(0x9a);b.extend(&target.to_le_bytes()[..(w/8)as usize]);b.extend(selector.to_le_bytes());b
 }
 fn setup(code:&[u8],big:bool)->(guest::Image,Ram,Cpu){
- let(mut i,_)=guest::Image::load(code).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};
+ let(mut i,_)=guest::Image::load(code).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
  let mut r=Ram::new(0x22000);r.write_bytes(0x100,code).unwrap();
  let c=Cpu{regs:[0x12345678,0xabcdef01,2,0x400,if big{0x800}else{0xabcd0800},0x400,8,0],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100};(i,r,c)
 }
@@ -64,9 +64,10 @@ fn far_call_faults_never_commit_either_slot_or_cs_ip_sp(){
 }
 #[test]
 fn far_call_requires_real_mode_and_valid_memory_encoding(){
- // Protected mode at CPL 3 (no gates yet) and V86 mode both stop.
+ // V86 mode stops; at CPL 3 in protected mode the pointer read through a
+ // null DS is #GP(0). (Gates: tests/unit/privilege.rs.)
  for vm in [false,true]{let(mut i,mut r,mut c)=setup(&[0xff,0x1f],false);i.real_mode=vm;if vm{c.eflags|=0x20000;}else{i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}i.segments[3].access=SegmentAccess::Unusable;
-  let old=c.clone();let oldi=i.clone();let oldr=r.clone();assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::InvalidContext));assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
+  let old=c.clone();let oldi=i.clone();let oldr=r.clone();assert_eq!(step(&mut i,&mut r,&mut c),if vm{Err(ExecError::InvalidContext)}else{Err(ExecError::GeneralProtection{eip:0x100,error_code:0})});assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
  }
  for b in [vec![0x9a],vec![0x9a,0,0,0],vec![0x66,0x9a,0,0,0,0,0],vec![0xff,0xd8],vec![0xff,0x1e,0],vec![0x67,0xff,0x1c],vec![0xf0,0x9a,0,0,0,0],vec![0xf3,0xff,0x1f]]{
  let(i,r,_)=setup(&b,false);assert!(i.decode(&r,0x100).is_err());}
@@ -113,7 +114,7 @@ fn generated_far_frames_match_literal_expected_states_including_second_store_fau
    let mut flags=0xed7;let mut undefined=u32::MAX;let mut ip=0x100;
    let mut segments=[{name}::address::SegmentCache::real_mode(0);6];
    segments[2]={name}::address::SegmentCache::real_mode(0x20);
-   segments[2].access={name}::address::SegmentAccess::Data{{writable:true,expand_down:false,big:{}}};
+   segments[2].access={name}::address::SegmentAccess::Data{{writable:true,expand_down:false,big:{},dpl:0}};
    let mut machine={name}::address::SegmentState{{msw:16,segments,selectors:[0,0x1234,0x20,0,0,0],real_mode:true,ss_shadow:1,sti_shadow:1,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false}};let oldmachine=machine.clone();
    let result={name}::execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),{name}::FlowContext{{next_eip:0x108,displacement:0,displacement_bits:8,code_limit:0xffff}},&mut ram,None,&mut machine);
    if fault==0{{

@@ -317,8 +317,7 @@ with the hidden base, limit and descriptor type. Both are part of traces.
   they are #UD.
 - ARPL (arpl.pil) is plain PIL; a memory destination is written back even
   when the RPL stays.
-LLDT and LTR also use `require_ring0`, so above CPL 0 they stop instead of
-raising #GP(0), like the other privileged instructions so far.
+LLDT and LTR also use `require_ring0`, which is #GP(0) above CPL 0.
 
 MOV8C/8E supports register and word-memory transfers; operand-prefix66 does not
 widen memory accesses. MOV r32,Sreg is rejected pending legacy upper-half policy.
@@ -333,6 +332,45 @@ use runtime caches and choose the stack-size variant at each stack instruction.
 References: Intel386 [MOV](https://pdos.csail.mit.edu/6.828/2012/readings/i386/MOV.htm),
 [POP](https://pdos.csail.mit.edu/6.828/2017/readings/i386/POP.htm),and
 [SS inhibition](https://pdos.csail.mit.edu/6.828/2004/readings/i386/s09_02.htm).
+
+## Privilege levels: far transfers, IOPL and I/O permission (increment 5)
+
+These tokens hand the descriptor and stack rules to the shared Rust in
+src/privilege.rs, which both backends embed. Each only reads and checks;
+the transfer it returns is applied when the instruction retires.
+- `far_jump SELECTOR OFFSET` (jmp_far.pil): a code segment at CPL
+  (conforming with DPL <= CPL, or nonconforming with RPL <= CPL and DPL =
+  CPL), or a 286/386 call gate (gate DPL >= CPL and >= RPL, present) to a
+  conforming segment or a nonconforming one at CPL. Otherwise
+  #GP(selector) or #NP(selector); an offset past the new limit is #GP(0).
+- `far_call SELECTOR OFFSET` (call_far.pil) must precede every effect. For
+  a code segment it stages CS and EIP and the description then pushes the
+  return address at the operand size. For a call gate it does the whole
+  transfer and ends the instruction: pushes at the gate's size, on the
+  current stack for a conforming target or one at CPL, else on the stack
+  for the target's DPL from the TSS, with the old SS and ESP and the gate's
+  parameter count of words or dwords copied from the old stack first.
+- `far_return SELECTOR OFFSET OUTER BYTES CLEANUP` (retf.pil,
+  iret_protected.pil): OUTER is the bv32 stack offset past the popped
+  frame and the RETF imm16, BYTES the slot size. The return CS must have
+  RPL >= CPL (conforming: DPL <= RPL; nonconforming: DPL = RPL). RPL = CPL
+  sets ESP to OUTER. RPL > CPL pops ESP and SS from OUTER (SS: writable
+  data, RPL and DPL equal to the new CPL, #GP(selector) or #SS(selector)),
+  adds CLEANUP to the new ESP, and nulls ES, DS, FS and GS where they hold
+  a data or nonconforming code segment more privileged than the new CPL.
+  It writes ESP itself, so the description may not.
+- `require_iopl` (CLI, STI): #GP(0) in protected mode when CPL > IOPL.
+- `check_io PORT BYTES` (IN, OUT, INS, OUTS): in protected mode with CPL >
+  IOPL, every port's bit in the 386 TSS I/O bitmap must be clear; a 286 TSS
+  or a bit past the TSS limit is #GP(0).
+- POPF (popf.pil) changes IOPL only at CPL 0 and IF only where CPL <= IOPL,
+  without a fault, as IRET does. PUSHF and POPF work at any CPL; V86 mode
+  stops them, and the far transfers, until increment 6.
+- HLT above CPL 0 decodes to `require_ring0`, so it is #GP(0).
+
+Descriptor tables, the TSS and an inner-level stack are read and written at
+supervisor level whatever the CPL (`Ram::as_level`, `Ram::store_as`). A
+segment load's accessed-bit store is still made at the current level.
 
 ## Direct-offset and immediate MOV forms (0.24)
 
@@ -380,8 +418,9 @@ profiles;the decoder binds the actual profiles and source segment.
 `read_flags out` snapshots bv32 EFLAGS; `require_real_mode` requires supplied
 machine state with real_mode=true and VM clear, otherwise InvalidContext before
 commit. `require_ring0` requires CPL 0 (real mode, or protected mode with a
-CS cache of DPL 0) and VM clear; CLI, STI, PUSHF, POPF, LGDT/LIDT and the far
-transfers use it, because at CPL 0 they behave as in real mode. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
+CS cache of DPL 0): above it is #GP(0), and VM=1 stops (InvalidContext).
+LGDT/LIDT, LLDT/LTR, MOV CRn and HLT use it; CLI and STI use `require_iopl`,
+and PUSHF, POPF and the far transfers follow the privilege rules above. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
 retirement when true. It cannot precede an early retire guard. Shadows are
 separate SS/STI state, included in full traces; partial REP and faults retain
 both, and full PIL, monitor-I/O and DOS-bridge retirements advance both.
@@ -526,13 +565,12 @@ before staging; retirement commits writes in program order only after all
 instruction checks pass. Overlapping stores use the later store's bytes.
 This is bounded ordinary RAM support, not MMIO or bus-atomic behavior.
 
-`call_far` uses `require_ring0`, pointer loads, two SS stores and
-`far_branch`. Memory pointers contain an operand-sized offset plus a 16-bit
+`call_far` uses pointer loads, `far_call`, then two SS stores. Memory pointers contain an operand-sized offset plus a 16-bit
 selector, even with a 32-bit operand size. The return frame has two operand-sized
 slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
 slot. SS size is independent. A contiguous full-frame check matches RETF;
 split frames across stack wrap and hardware shutdown/exception delivery remain
-outside this prototype. CPL above 0 and V86 calls are rejected before pointer reads.
+outside this prototype. V86 calls are rejected before pointer reads.
 
 ## LES composition (0.34)
 

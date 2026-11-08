@@ -76,6 +76,17 @@ impl Speaker{
 }
 /// Runs the IN or OUT at CS:IP when it is one, returning its length;
 /// `Ok(None)` for any other instruction.
+/// The port and byte count of the unprefixed IN or OUT at CS:EIP, for the
+/// protected-mode I/O permission check before `io` answers it.
+pub(super) fn access(p:&Loaded)->Option<(u16,u8)>{
+    let first=p.image.fetch_signature(&p.ram,p.cpu.eip,1).ok()?[0];
+    let port=match first{
+        0xe4..=0xe7=>u16::from(p.image.fetch_signature(&p.ram,p.cpu.eip,2).ok()?[1]),
+        0xec..=0xef=>(p.cpu.regs[2]&0xffff)as u16,
+        _=>return None,
+    };
+    Some((port,if first&1==0{1}else if p.image.segments[1].default_32(){4}else{2}))
+}
 pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     let Ok(first)=p.image.fetch_signature(&p.ram,p.cpu.eip,1).map(|b|b[0])else{return Ok(None)};
     let(port,length)=match first{
