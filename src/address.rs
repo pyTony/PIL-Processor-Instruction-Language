@@ -166,6 +166,8 @@ pub struct SegmentState {
     pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,
     /// LDTR (0) and TR (1).
     pub ldt_tr:[SystemSegment;2],
+    /// CR0.PG.
+    pub paging:bool,
 }
 impl SegmentState {
     // The mode bit is coherent with the existing normalized mode state.
@@ -173,16 +175,22 @@ impl SegmentState {
     pub fn read_control(&self,register:usize,flags:u32,eip:u32)->Result<u32,ExecError>{
         if flags&0x20000!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
         if self.cpl()!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
-        match register{0=>Ok(u32::from(self.machine_status())),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),_=>Err(ExecError::InvalidContext)}
+        match register{0=>Ok(u32::from(self.machine_status())|(u32::from(self.paging)<<31)),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),_=>Err(ExecError::InvalidContext)}
     }
     pub fn validate_control(&self,register:usize,value:u32,flags:u32,eip:u32)->Result<(),ExecError>{
         self.read_control(register,flags,eip)?;
         if register==0&&value&0x80000001==0x80000000{return Err(ExecError::GeneralProtection{eip,error_code:0});}
-        // PE may be set or cleared; paging (PG) comes with a later increment.
-        if (register==0&&value&!0x1f!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
+        // PE and PG may be set or cleared (PG needs PE); CR0 bits the 386 does
+        // not have stay unsupported, as do CR3's low bits (486 PCD/PWT).
+        if (register==0&&value&!0x8000_001f!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
         Ok(())
     }
-    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>{self.msw=value as u16;self.real_mode=value&1==0;},2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}
+    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>{self.msw=value as u16;self.real_mode=value&1==0;self.paging=value>>31!=0;},2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}
+    /// The RAM paging state these registers select: CR3's directory and
+    /// CPL 3 for user-level accesses, while CR0.PG is set.
+    pub fn ram_paging(&self)->Option<super::memory::Paging>{
+        self.paging.then(||super::memory::Paging{directory:self.controls[1]&!0xfff,user:self.cpl()==3})
+    }
     /// Current privilege level: the DPL of the CS cache in protected mode.
     pub fn cpl(&self)->u8{
         if self.real_mode{return 0;}

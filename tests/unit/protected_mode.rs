@@ -104,10 +104,10 @@ fn far_transfers_check_the_code_descriptor(){
 }
 
 #[test]
-fn cr0_writes_set_and_clear_pe_but_not_paging(){
- // MOV CR0,EAX: PE alone is accepted; PG stays unsupported.
+fn cr0_writes_set_and_clear_pe(){
+ // MOV CR0,EAX: PE alone is accepted; a CR0 bit the 386 lacks is refused.
  let(mut i,mut r,mut c)=machine(&[0x0f,0x22,0xc0]);c.regs[0]=0x11;step(&mut i,&mut r,&mut c).unwrap();assert!(!i.real_mode);
- let(mut i,mut r,mut c)=machine(&[0x0f,0x22,0xc0]);c.regs[0]=0x8000_0011;assert!(matches!(step(&mut i,&mut r,&mut c),Err(ExecError::UnsupportedControl{..})));
+ let(mut i,mut r,mut c)=machine(&[0x0f,0x22,0xc0]);c.regs[0]=0x4000_0011;assert!(matches!(step(&mut i,&mut r,&mut c),Err(ExecError::UnsupportedControl{..})));
  let(mut i,mut r,mut c)=protected(&[0x0f,0x22,0xc0]);c.regs[0]=0x10;step(&mut i,&mut r,&mut c).unwrap();assert!(i.real_mode);
  // At CPL 3 a control-register access is #GP(0).
  let(mut i,mut r,mut c)=protected(&[0x0f,0x20,0xc0]);i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};

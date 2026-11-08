@@ -1,3 +1,28 @@
+# Protected mode, increment 3: paging — 8 November 2026
+
+Protected-mode plan increment 3 (#116 and #117 were increment 2).
+- MOV CR0 sets and clears PG (PG without PE is #GP(0)); MOV r32,CR0 reads
+  it; LMSW keeps it (isa/i386/lmsw.pil now reads all of CR0). SegmentState
+  and Image hold `paging`; traces include it.
+- src/memory.rs: while PG is set, every access (fetch, data, descriptor
+  reads) walks the PDE at CR3 and the PTE, with no TLB. A successful walk
+  sets A in both entries and D in the PTE on a write, through a mark list
+  that `&self` loads add and `settle` writes; a faulting walk sets nothing.
+  CPL 3 faults on supervisor pages and read-only writes; CPL 0-2 may write
+  read-only pages (no WP on the 386).
+- New ExecError::PageFault{eip,address,error_code} (trace code 13,
+  vector 14). AccessFault::error maps bus and page faults in both
+  backends. CR2 and #PF delivery are increment 4; a #PF stops the run.
+- Both backends call ram.set_paging(machine.ram_paging()) before and after
+  each instruction.
+
+Local Linux: 619 Rust tests pass, 1 ignored (5 new in paging.rs; two CR0
+tests now use a reserved bit instead of PG). The generated-backend suite has
+272 cases (1 new: pm_paging). test386 now passes POST 08h and 09h and stops
+at POST 20h on IRET in protected mode (increment 4). SingleStepTests/80386
+was not rerun (real mode never sets PG).
+Next: increment 4, protected-mode exceptions and interrupts through the IDT.
+
 # Protected mode, part 2: LDTR, TR and the descriptor queries — 8 November 2026
 
 Protected-mode plan increment 2, second part (#116 was the first part).

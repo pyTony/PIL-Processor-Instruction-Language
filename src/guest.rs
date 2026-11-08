@@ -55,7 +55,7 @@ pub const SYSTEM_RANGES:usize=10;
 /// `fetch_base+start..fetch_base+end` is the program; `system` holds host-provided
 /// code ranges (such as Dine's case-map routine and interrupt entries) and waiting
 /// parent programs in EXEC that may run interrupt handlers.
-pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2]}
+pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2],pub paging:bool}
 impl Image {
     // Keep the imported physical code window fixed when CS changes.
     pub fn contains_offset(&self,offset:u32)->bool{
@@ -67,8 +67,8 @@ impl Image {
             ||self.system.iter().any(|&(s,e)|at>=u64::from(s)&&at<u64::from(e))
     }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
-    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr}}
-    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;}
+    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging}}
+    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;}
 
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
@@ -79,7 +79,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default()},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -335,7 +335,7 @@ impl Image {
             0x63=>{
                 // ARPL r/m16,r16: #UD in real mode.
                 if self.real_mode{return Err(GuestError::Decode("ARPL (63h) is #UD in real mode".into()));}
-                let m=r.byte()?;w=16;dst=view((m&7)as usize,16);src=view(((m>>3)&7)as usize,16);
+                let m=r.byte()?;dst=view((m&7)as usize,16);src=view(((m>>3)&7)as usize,16);
                 let (input,output)=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});("read_address destination\nload selector destination 16","store destination result")}else{("read selector dst 16","write dst result")};
                 let text=include_str!("../isa/i386/arpl.pil").replace("$INPUT",input).replace("$OUTPUT",output);
                 (format!("ARPL {},{}",operand_name(dst,address),register_name(src)),compile(&text,16))
@@ -462,7 +462,7 @@ impl Image {
                         let text=include_str!("../isa/i386/store_system.pil").replace("$WHICH",&ext.to_string()).replace("$OUTPUT",&output);
                         (format!("{name} {}",operand_name(dst,address)),compile(&text,w))
                     }else{
-                        w=16;dst=view((m&7)as usize,16);src=dst;
+                        dst=view((m&7)as usize,16);src=dst;
                         let text=if ext<4{include_str!("../isa/i386/load_system.pil").replace("$WHICH",&(ext-2).to_string()).replace("$INPUT",input)}
                             else{format!("{}{}",include_str!("../isa/i386/descriptor_rights.pil").replace("$INPUT",input),if ext==4{include_str!("../isa/i386/verr.pil")}else{include_str!("../isa/i386/verw.pil")})};
                         (format!("{name} {}",operand_name(src,address)),compile(&text,16))
@@ -870,8 +870,9 @@ impl Reader<'_> {
         // Image extent is a monitor safety boundary, not an architectural fault.
         let c=MemoryContext{segment:SegmentRegister::Cs,cache:self.image.segments[SegmentRegister::Cs.index()]};
         let linear=c.translate(self.pos,MemWidth::Byte,false,self.start)?;
-        if !self.image.contains_linear(u64::from(self.ram.physical_address(linear))) {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
-        let value=self.ram.load(linear,MemWidth::Byte).map_err(|f|GuestError::Execution(ExecError::MemoryAccess{eip:self.start,address:f.address,bytes:1,write:false}))?;
+        let bus=self.ram.bus_address(linear,false).map_err(|f|GuestError::Execution(f.error(self.start)))?;
+        if !self.image.contains_linear(u64::from(bus)) {return Err(GuestError::Decode(format!("fetch outside loaded image at {:08x}",self.pos)));}
+        let value=self.ram.load(linear,MemWidth::Byte).map_err(|f|GuestError::Execution(f.error(self.start)))?;
         self.pos+=1;Ok(value as u8)
     }
     fn unsigned(&mut self,width:u8)->Result<u32,GuestError> {

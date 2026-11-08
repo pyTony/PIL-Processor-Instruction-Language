@@ -1,17 +1,18 @@
-# Load low CR0 status bits from a word; other status bits and flags stay put.
-# PE cannot be cleared by LMSW. Mode transitions are validated by the machine.
+# Load low CR0 status bits (PE, MP, EM, TS) from a word; every other CR0 bit,
+# PG included, and the flags stay put. PE cannot be cleared by LMSW. Mode
+# transitions are validated by the machine.
 require_width 16
 read input src 16
-read_msw current
-const low_mask 16 15
-const high_mask 16 65520
-const pe_mask 16 1
-and new_low input low_mask
+read_control current 0
+zext wide input 32
+const low_mask 32 15
+const high_mask 32 4294967280
+const pe_mask 32 1
+and new_low wide low_mask
 and old_high current high_mask
 and old_pe current pe_mask
 or low_with_pe new_low old_pe
-or merged old_high low_with_pe
-zext value merged 32
+or value old_high low_with_pe
 write_control 0 value
 preserve_flags all
 retire

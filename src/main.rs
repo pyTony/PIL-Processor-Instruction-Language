@@ -1391,7 +1391,10 @@ fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext
 fn execute_machine_lazy(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState,lazy:&mut LazyFlags)->Result<Option<ProbedMemoryAccess>,ExecError>{
     let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let (o,c)=a.resolve(&cpu.regs)?;(o,Some(c))}else{(0,None)};
     if p.checkpoint_flags{lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);machine.checkpoint_flags(cpu.eip,cpu.eflags,cpu.undefined_flags);}
+    // RAM walks the page tables with CR0.PG, CR3 and CPL as they are now.
+    ram.set_paging(machine.ram_paging());
     let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective),lazy);
+    ram.set_paging(machine.ram_paging());
     if result.is_err()&&p.checkpoint_flags{if let Some((f,u))=machine.recover_flags(){cpu.eflags=f;cpu.undefined_flags=u;*lazy=LazyFlags::None;}}
     result
 }
@@ -1524,13 +1527,13 @@ fn stage_accessed(ram:Option<&Ram>,at:u32,v:u8,eip:u32,stores:&mut [Option<(u32,
 /// Generated code for a segment load (shared helper in address.rs): defines
 /// `selector` and `cache` and stages the accessed-bit store.
 fn emit_segment_load(reg:&str,a:usize)->String{
-    format!("let (selector,cache,accessed)={{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let r=ram.as_deref();let e=*eip;m.load_segment({reg},v{a} as u16,e,&mut |at|{{let r=r.ok_or(ExecError::InvalidContext)?;let lo=r.load(at,MemWidth::Dword).map_err(|f|ExecError::MemoryAccess{{eip:e,address:f.address,bytes:f.bytes as u8,write:f.write}})?;let hi=r.load(at.wrapping_add(4),MemWidth::Dword).map_err(|f|ExecError::MemoryAccess{{eip:e,address:f.address,bytes:f.bytes as u8,write:f.write}})?;Ok(u64::from(lo)|(u64::from(hi)<<32))}})?}};if let Some((at,v))=accessed{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}")
+    format!("let (selector,cache,accessed)={{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let r=ram.as_deref();let e=*eip;m.load_segment({reg},v{a} as u16,e,&mut |at|{{let r=r.ok_or(ExecError::InvalidContext)?;let lo=r.load(at,MemWidth::Dword).map_err(|f|f.error(e))?;let hi=r.load(at.wrapping_add(4),MemWidth::Dword).map_err(|f|f.error(e))?;Ok(u64::from(lo)|(u64::from(hi)<<32))}})?}};if let Some((at,v))=accessed{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}")
 }
 /// Generated code: a closure-like expression reading the 8-byte descriptor at
 /// `at`, for the emitted read_descriptor and load_system tokens.
-const EMIT_DESCRIPTOR_READ:&str="(|at:u32|->Result<u64,ExecError>{let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;let e=*eip;let lo=r.load(at,MemWidth::Dword).map_err(|f|ExecError::MemoryAccess{eip:e,address:f.address,bytes:f.bytes as u8,write:f.write})?;let hi=r.load(at.wrapping_add(4),MemWidth::Dword).map_err(|f|ExecError::MemoryAccess{eip:e,address:f.address,bytes:f.bytes as u8,write:f.write})?;Ok(u64::from(lo)|(u64::from(hi)<<32))})";
+const EMIT_DESCRIPTOR_READ:&str="(|at:u32|->Result<u64,ExecError>{let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;let e=*eip;let lo=r.load(at,MemWidth::Dword).map_err(|f|f.error(e))?;let hi=r.load(at.wrapping_add(4),MemWidth::Dword).map_err(|f|f.error(e))?;Ok(u64::from(lo)|(u64::from(hi)<<32))})";
 fn access_error(eip:u32,f:memory::AccessFault)->ExecError {
-    ExecError::MemoryAccess{eip,address:f.address,bytes:f.bytes as u8,write:f.write}
+    f.error(eip)
 }
 fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,mut ram:Option<&mut Ram>,address:u32,memory_context:Option<address::MemoryContext>,mut machine:Option<&mut address::SegmentState>,effective:Option<address::EffectiveAddress>,lazy:&mut LazyFlags)->Result<Option<ProbedMemoryAccess>,ExecError> {
     if p.uses_memory && ram.is_none() {return Err(ExecError::InvalidContext);}
@@ -2103,8 +2106,8 @@ fn emit_rust_functions(p:&Program)->String {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
-            Token::LoadSegment(o,a,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,MemWidth::{w:?},&pending_stores[..store_index],&[]).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
-            Token::StoreSegment(a,v,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?;pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
+            Token::LoadSegment(o,a,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,MemWidth::{w:?},&pending_stores[..store_index],&[]).map_err(|f|f.error(*eip))? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
+            Token::StoreSegment(a,v,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
             Token::RetireIf(c)=>format!("if v{c}!=0 {{*eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){{m.retired();}}return Ok(());}}"),
             Token::ResumeIf(c)=>format!("if v{c}!=0 {{pending_eip=*eip;pending_resume=true;}}"),
             Token::ReadSegment(o,reg)=>format!("let v{o}: u64 = machine.as_deref().ok_or(ExecError::InvalidContext)?.selectors[{reg}] as u64;"),
@@ -2120,13 +2123,13 @@ fn emit_rust_functions(p:&Program)->String {
             Token::ReadSystem(o,t)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.ldt_tr[{t}].selector as u64;"),
             Token::ReadCpl(o)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.cpl() as u64;"),
             Token::ReadDescriptor(r,f,a)=>format!("let (v{r},v{f}):(u64,u64)={{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let raw=m.find_descriptor(v{a} as u16,&mut |at|{}(at))?;(raw.unwrap_or(0),u64::from(raw.is_some()))}};",EMIT_DESCRIPTOR_READ),
-            Token::LoadSystem(t,a)=>format!("{{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let (loaded,busy)=m.load_system({t},v{a} as u16,*eip,&mut |at|{}(at))?;if let Some((at,v))=busy{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_system=Some(({t},loaded));}}",EMIT_DESCRIPTOR_READ),
+            Token::LoadSystem(t,a)=>format!("{{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let (loaded,busy)=m.load_system({t},v{a} as u16,*eip,&mut |at|{}(at))?;if let Some((at,v))=busy{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_system=Some(({t},loaded));}}",EMIT_DESCRIPTOR_READ),
             Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
             Token::RaiseUnless(c,v)=>format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}"),
             Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
-            Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})? as u64;"),
-            Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;"),
+            Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|f.error(*eip))? as u64;"),
+            Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;"),
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
             Token::ReadDisp(o,w) => format!("let v{o}: u64 = (context.displacement as u32 as u64) & {}u64;",mask(w)),
             Token::CheckSegment(reg,a,n)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
@@ -2168,7 +2171,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|ExecError::MemoryAccess{{eip:*eip,address:f.address,bytes:f.bytes as u8,write:f.write}})?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|f.error(*eip))?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
@@ -2181,7 +2184,9 @@ fn emit_rust_functions(p:&Program)->String {
     out.push_str(&r#"pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
 let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};
 if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
+ram.set_paging(machine.ram_paging());
 let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
+ram.set_paging(machine.ram_paging());
 if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
 result
 }
@@ -2470,6 +2475,9 @@ mod real_mode_form_tests;
 #[cfg(test)]
 #[path = "../tests/unit/protected_mode.rs"]
 mod protected_mode_tests;
+#[cfg(test)]
+#[path = "../tests/unit/paging.rs"]
+mod paging_tests;
 #[cfg(test)]
 #[path = "../tests/unit/system_registers.rs"]
 mod system_registers_tests;
