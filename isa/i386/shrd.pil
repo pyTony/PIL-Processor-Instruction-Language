@@ -1,16 +1,14 @@
 # SHRD: shift dst right, filling from the bottom of src. The 386 masks the count
-# to five bits; a zero count changes no flags. A 16-bit count above 16 leaves
-# the result undefined, so this profile rejects it instead of guessing.
+# to five bits; a zero count changes no flags. The bits are shifted out of a
+# 64-bit value built from src on top and dst below; a 16-bit operation uses
+# src:src:dst, so a count of 17-31 shifts src in again, as the 386 does (the
+# decoder supplies $JOINB and $JOINHIGH for the width).
 $OPERAND
 read b src $W
 $COUNT
 const count_mask 8 31
 and masked raw count_mask
 zext count masked $W
-const width $W $W
-ult over width count
-not fits over
-require fits
 const one $W 1
 const yes 1 1
 const no 1 0
@@ -18,16 +16,22 @@ zero is_zero count
 not active is_zero
 xor count_minus_one count one
 zero single count_minus_one
-zext a_wide a $DOUBLE
-zext b_wide b $DOUBLE
-const half $DOUBLE $W
-shl b_high b_wide half
-or joined b_high a_wide
-zext count_wide count $DOUBLE
-lshr moved joined count_wide
+zext a64 a 64
+zext b64 b 64
+const bshift 64 $W
+shl b_mid b64 bshift
+const s32 64 32
+shl b_shifted b64 s32
+const highmask 64 $JOINHIGH
+and a_top b_shifted highmask
+or ab a_top b_mid
+or joined ab a64
+zext count64 count 64
+lshr moved joined count64
 trunc r moved $W
-sub back count one
-lshr out a back
+const one64 64 1
+sub back count64 one64
+lshr out joined back
 bit cf out 0
 bit sf r $SIGN
 bit old_sign a $SIGN

@@ -965,7 +965,10 @@ fn number(s: &str) -> R<u64> {
     } else { s.parse().map_err(|_| format!("bad number: {s}")) }
 }
 /// Staged RAM stores one PIL program may commit together (PUSHA needs eight).
+// Up to eight staged stores live on the stack; ENTER with a nesting level
+// needs up to 33 (BP, 31 copied frame pointers and the new frame pointer).
 const MAX_STORES:usize=8;
+const MAX_PROGRAM_STORES:usize=33;
 fn width(s: &str) -> R<u8> {
     let w = number(s)?;
     if (1..=64).contains(&w) { Ok(w as u8) } else { Err("width must be 1..64".into()) }
@@ -1106,7 +1109,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["store_segment", register, address, input]=>{
                     let segment=number(register)?;let a=slot(&names,address)?;let v=slot(&names,input)?;
-                    if segment>=6||widths[a]!=32||store_count>=MAX_STORES{return Err("at most eight stores with segment0..5 and bv32 offset required".into());}
+                    if segment>=6||widths[a]!=32||store_count>=MAX_PROGRAM_STORES{return Err("at most 33 stores with segment0..5 and bv32 offset required".into());}
                     let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be8/16/32")?;stored=true;store_count+=1;Token::StoreSegment(a,v,mem,segment as usize)
                 }
                 ["retire_if", predicate]=>{
@@ -1127,7 +1130,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
                 ["raise_unless", predicate, vector]=>{
                     let c=slot(&names,predicate)?;let v=number(vector)?;
-                    if widths[c]!=1||v!=0{return Err("raise_unless needs a bv1 predicate and vector 0 (#DE)".into());}Token::RaiseUnless(c,v as u8)
+                    if widths[c]!=1||!matches!(v,0|5){return Err("raise_unless needs a bv1 predicate and vector 0 (#DE) or 5 (#BR)".into());}Token::RaiseUnless(c,v as u8)
                 }
                 ["require", predicate]=>{
                     let c=slot(&names,predicate)?;if widths[c]!=1{return Err("require needs bv1 predicate".into());}Token::Require(c)
@@ -1149,7 +1152,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     let a=slot(&names,address)?;let v=slot(&names,input)?;
                     if widths[a]!=32 {return Err("memory address must be bv<32>".into());}
                     let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be 8,16,32")?;
-                    if store_count>=MAX_STORES {return Err("at most eight staged RAM stores are supported".into());}
+                    if store_count>=MAX_PROGRAM_STORES {return Err("at most 33 staged RAM stores are supported".into());}
                     stored=true;store_count+=1;Token::Store(a,v,mem)
                 }
                 ["read_ip", out, which, w] => {
@@ -1461,7 +1464,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_control:Option<(usize,u32)>=None;
     let mut pending_table:Option<(usize,u16,u32)>=None;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
-    let mut pending_stores:[Option<(u32,MemWidth,u32)>;MAX_STORES]=[None;MAX_STORES];let mut store_index=0;
+    let mut pending_stores:[Option<(u32,MemWidth,u32)>;MAX_STORES]=[None;MAX_STORES];let mut store_index=0;let mut extra_stores:Vec<(u32,MemWidth,u32)>=Vec::new();
     let mut probed:Option<ProbedMemoryAccess>=None;
     // Keep ordinary instructions on the stack without restricting valid PIL programs.
     let mut value_stack = [Value { bits: 0, width: 0 }; 64];
@@ -1702,7 +1705,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
                 let at=c.translate(values[a].bits as u32,w,true,cpu.eip)?;
-                ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,w).map_err(|f|access_error(cpu.eip,f))?;pending_stores[store_index]=Some((at,w,values[v].bits as u32));store_index+=1;
+                ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,w).map_err(|f|access_error(cpu.eip,f))?;if store_index<MAX_STORES{pending_stores[store_index]=Some((at,w,values[v].bits as u32));}else{extra_stores.push((at,w,values[v].bits as u32));}store_index+=1;
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:true,is_stack:segment==2&&!p.checkpoint_flags});
             }
             Token::RetireIf(c)=>if values[c].bits!=0{cpu.eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){m.retired();}return Ok(probed);},
@@ -1740,7 +1743,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 let offset=values[a].bits as u32;
                 let addr=match memory_context {Some(c)=>c.translate(offset,w,true,cpu.eip)?,None=>offset};
                 m.check_write(addr,w).map_err(|f|access_error(cpu.eip,f))?;
-                pending_stores[store_index]=Some((addr,w,values[v].bits as u32));store_index+=1;
+                if store_index<MAX_STORES{pending_stores[store_index]=Some((addr,w,values[v].bits as u32));}else{extra_stores.push((addr,w,values[v].bits as u32));}store_index+=1;
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:true,is_stack:!p.has_read_address});
             }
             Token::ReadIp(o,next,w) => values[o]=value((if next {context.next_eip} else {cpu.eip}) as u64,w),
@@ -1822,7 +1825,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                         return Err(ExecError::InvalidBinding);
                     }
                 }
-                for (addr,w,v) in pending_stores.into_iter().flatten() {
+                for (addr,w,v) in pending_stores.into_iter().flatten().chain(extra_stores) {
                     ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|access_error(cpu.eip,f))?;
                 }
                 if let Some(x) = pending_dst { cpu.write(dst,x); }
@@ -1968,6 +1971,7 @@ fn emit_rust(p: &Program) -> String {
 // duplicated in each generated instruction module.
 fn emit_rust_functions(p:&Program)->String {
     let mut out=String::new();
+    let stores=p.tokens.iter().filter(|t|matches!(t,Token::Store(..)|Token::StoreSegment(..))).count().max(1);
     out.push_str(&format!(
         "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>, effective: Option<address::EffectiveAddress>) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
@@ -1977,7 +1981,7 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_control: Option<(usize,u32)> = None;\n\
          let mut pending_table: Option<(usize,u16,u32)> = None;\n\
          let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
-         let mut pending_stores: [Option<(u32,MemWidth,u32)>;8] = [None;8];let mut store_index=0;\n\
+         let mut pending_stores: [Option<(u32,MemWidth,u32)>;{}] = [None;{}];let mut store_index=0;\n\
          let mut pending_eip = context.next_eip;\n\
          let mut pending_resume = false;\nlet mut pending_interrupt_shadow = false;\n\
          let mut pending_flags = *flags;\n\
@@ -1985,7 +1989,7 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_dst: Option<u64> = None;\n\
          let mut pending_src: Option<u64> = None;\n\
          let mut pending_registers: Vec<(usize,u8,u64)> = Vec::new();\n",
-        p.operand_width,p.source_width,p.uses_displacement,p.uses_memory));
+        p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
     for t in &p.tokens {
         let line = match *t {
             Token::CheckpointFlags=>"machine.as_deref().ok_or(ExecError::InvalidContext)?;".into(),
@@ -2350,6 +2354,10 @@ mod compare_string_tests;
 #[cfg(test)]
 #[path = "../tests/unit/retf.rs"]
 mod retf_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/real_mode_forms.rs"]
+mod real_mode_form_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/pop_msw.rs"]

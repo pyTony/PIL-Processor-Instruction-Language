@@ -538,9 +538,15 @@ fn bit_test_immediate_memory_writes_only_for_modifying_forms(){
 }
 
 fn double_shift_reference(left:bool,w:u32,a:u64,b:u64,c:u32)->(u64,u32){
+ // The 386 shifts a 16-bit operand within 48 bits, dst:src:src (left) or
+ // src:src:dst (right), so counts 17-31 shift src in again; a 32-bit operand
+ // uses dst:src (left) or src:dst (right).
  let mask=(1u64<<w)-1;let (a,b)=(a&mask,b&mask);
- let r=if left{((a<<c)|(b>>(w-c)))&mask}else{((a>>c)|(b<<(w-c)))&mask};
- let cf=if left{(a>>(w-c))&1}else{(a>>(c-1))&1} as u32;
+ let (r,cf)=if w==16{
+  if left{let x=(a<<32)|(b<<16)|b;(((x<<c)>>32)&mask,(x>>(48-c))&1)}
+  else{let x=(b<<32)|(b<<16)|a;((x>>c)&mask,(x>>(c-1))&1)}
+ }else if left{(((((a<<32)|b)<<c)>>32)&mask,(a>>(32-c))&1)}else{((((b<<32)|a)>>c)&mask,(a>>(c-1))&1)};
+ let cf=cf as u32;
  let sf=((r>>(w-1))&1) as u32;let of=sf^((a>>(w-1))&1) as u32;
  let pf=u32::from((r&0xff).count_ones()%2==0);
  (r,cf|(pf<<2)|(u32::from(r==0)<<6)|(sf<<7)|if c==1{of<<11}else{0})
@@ -557,7 +563,6 @@ fn double_precision_shifts_match_a_reference_for_register_and_memory_forms(){
     let mut cpu=Cpu{regs:[a as u32,ecx,0,0x400,4,5,6,7],eflags:0x8d7,undefined_flags:0,eip:ENTRY};
     let (b_now,masked)=(u64::from(ecx),c&31);
     let result=execute_one(&bytes,&mut cpu,0,false);
-    if w==16&&masked>16{assert!(result.is_err(),"{bytes:02x?}");continue;}
     result.unwrap();
     if masked==0{assert_eq!((cpu.regs[0],cpu.eflags,cpu.undefined_flags),(a as u32,0x8d7,0),"{bytes:02x?}");continue;}
     let (r,flags)=double_shift_reference(left,w,a,b_now,masked);

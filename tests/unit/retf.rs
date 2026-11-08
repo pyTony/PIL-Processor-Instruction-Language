@@ -27,7 +27,7 @@ fn retf_checks_new_code_limit_and_does_not_use_old_limit(){
 fn retf_stack_segment_and_ram_faults_commit_nothing(){
  for w in [16,32]{for big in [false,true]{for failure in 0..4{
   let(mut i,mut r,mut c)=setup(w,big,Some(7));frame(&mut r,w,0x345,1);i.ss_shadow=1;i.sti_shadow=1;
-  match failure{0=>i.segments[2].limit=0x800+(w/4)as u32-2,1=>{i.segments[2].limit=if big{u32::MAX}else{65535};c.regs[4]=if big{u32::MAX-1}else{0xabcdffff};},2=>{i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:true,big};i.segments[2].limit=0x800;},_=>{let n=0xa00+(w/4)as usize-1;let mut short=Ram::new(n);short.write_bytes(0,&r.bytes()[..n]).unwrap();r=short;}}
+  match failure{0=>i.segments[2].limit=0x800+(w/4)as u32-2,1=>{i.segments[2].limit=if big{u32::MAX}else{65535};c.regs[4]=if big{u32::MAX}else{0xabcdffff};},2=>{i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:true,big};i.segments[2].limit=0x800;},_=>{let n=0xa00+(w/4)as usize-1;let mut short=Ram::new(n);short.write_bytes(0,&r.bytes()[..n]).unwrap();r=short;}}
   let old=c.clone();let oldr=r.clone();let oldi=i.clone();let result=step(&mut i,&mut r,&mut c);assert!(result.is_err(),"w={w} big={big} failure={failure}");if failure==0||failure==2||big&&failure==1{assert!(matches!(result,Err(ExecError::StackSegment{..})));}assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
  }}}
 }
@@ -73,8 +73,42 @@ fn iret_pops_ip_cs_and_the_writable_flags_together(){
   assert_eq!((c.eip,i.selectors[1],c.regs[4]),(0x345,0x1234,0xabcd0800+3*slot),"IRET width {w}");
   assert_eq!(c.eflags&0xffff,0x7fd7);
  }
- // A frame that runs past the stack segment faults before anything changes.
+ // A slot that crosses the end of the 16-bit stack segment (SP=FFFFh) faults before anything changes.
  let(mut i,_)=guest::Image::load(&[0xcf]).unwrap();let mut r=Ram::new(0x21000);r.write_bytes(0x100,&[0xcf]).unwrap();
- let mut c=Cpu{regs:[0,0,0,0,0xfffc,0,0,0],eflags:0x0246,undefined_flags:u32::MAX,eip:0x100};let old=c.clone();
+ let mut c=Cpu{regs:[0,0,0,0,0xffff,0,0,0],eflags:0x0246,undefined_flags:u32::MAX,eip:0x100};let old=c.clone();
  assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!(c,old);
+}
+fn run_code(code:&[u8],sp:u32,stack:&[(u32,u8,u32)])->(Result<(),ExecError>,guest::Image,Cpu){
+ // SS base is 200h; each (offset, width, value) is stored at SS:offset.
+ let(mut i,_)=guest::Image::load(code).unwrap();let mut r=Ram::new(0x21000);r.write_bytes(0x100,code).unwrap();
+ for &(at,w,v) in stack{r.store(0x200+at,MemWidth::from_bits(w).unwrap(),v).unwrap();}
+ let mut c=Cpu{regs:[0,0,0,0,sp,0,0,0],eflags:2,undefined_flags:u32::MAX,eip:0x100};let result=step(&mut i,&mut r,&mut c);(result,i,c)
+}
+#[test]
+fn sixteen_bit_stack_slots_wrap_at_the_end_of_the_segment(){
+ // IRET at SP=FFFCh: IP from FFFC, CS from FFFE, FLAGS from 0000; SP becomes 2.
+ let(result,i,c)=run_code(&[0xcf],0xabcd_fffc,&[(0xfffc,16,0x0345),(0xfffe,16,0x1234),(0,16,0x0801)]);
+ result.unwrap();assert_eq!((c.eip,i.selectors[1],c.regs[4],c.eflags&0xffff),(0x345,0x1234,0xabcd_0002,0x0803));
+ // IRETD at SP=FFFCh: EIP from FFFC, CS from 0000, EFLAGS from 0004; SP becomes 8.
+ let(result,i,c)=run_code(&[0x66,0xcf],0xfffc,&[(0xfffc,32,0x0345),(0,32,0xffff_1234),(4,32,0x0000_0001)]);
+ result.unwrap();assert_eq!((c.eip,i.selectors[1],c.regs[4],c.eflags&0xffff),(0x345,0x1234,8,0x0003));
+ // RETF at SP=FFFEh: IP from FFFE, CS from 0000; SP becomes 2.
+ let(result,i,c)=run_code(&[0xcb],0xfffe,&[(0xfffe,16,0x0345),(0,16,0x1234)]);
+ result.unwrap();assert_eq!((c.eip,i.selectors[1],c.regs[4]),(0x345,0x1234,2));
+ // A 32-bit RETF at SP=FFF9h: its CS dword at FFFD crosses the limit, so #SS and nothing changes.
+ let(result,i,c)=run_code(&[0x66,0xcb],0xfff9,&[]);
+ assert!(matches!(result,Err(ExecError::StackSegment{..})),"{result:?}");assert_eq!((c.eip,c.regs[4],i.selectors[1]),(0x100,0xfff9,0));
+ // A 32-bit POP ES at SP=FFFEh reads only the selector word, so it does not fault; SP becomes 2.
+ let(result,i,c)=run_code(&[0x66,0x07],0xfffe,&[(0xfffe,16,0x4321)]);
+ result.unwrap();assert_eq!((i.selectors[0],i.segments[0].base,c.regs[4]),(0x4321,0x43210,2));
+}
+#[test]
+fn popad_with_a_sixteen_bit_stack_takes_the_upper_esp_half_from_its_slot(){
+ // Slots from SP=0100h: EDI, ESI, EBP, (ESP), EBX, EDX, ECX, EAX. The skipped ESP slot holds 5A04_6B18h.
+ let values=[7u32,6,5,0x5a04_6b18,3,2,1,0x1111_0000];let stack:Vec<(u32,u8,u32)>=values.iter().enumerate().map(|(k,&v)|(0x100+4*k as u32,32,v)).collect();
+ let(result,_,c)=run_code(&[0x66,0x61],0xabcd_0100,&stack);result.unwrap();
+ assert_eq!(c.regs,[0x1111_0000,1,2,3,0x5a04_0120,5,6,7]);
+ // POPA (16-bit) keeps the upper half of the old ESP.
+ let stack:Vec<(u32,u8,u32)>=values.iter().enumerate().map(|(k,&v)|(0x100+2*k as u32,16,v&0xffff)).collect();
+ let(result,_,c)=run_code(&[0x61],0xabcd_0100,&stack);result.unwrap();assert_eq!(c.regs[4],0xabcd_0110);
 }

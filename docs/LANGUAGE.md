@@ -152,10 +152,10 @@ fetch or the fall-through limit. The monitor performs CS fetch checks separately
 |---|---|
 | `read_address out` | Caller-supplied address/offset as `bv<32>` |
 | `load out address WIDTH` | 8/16/32-bit little-endian RAM read; address must be `bv<32>` |
-| `store address input` | Stage an 8/16/32-bit RAM store (at most eight), width inferred from input |
+| `store address input` | Stage an 8/16/32-bit RAM store (at most 33), width inferred from input |
 
 Any of these statements, including `read_address` alone, requires a RAM-capable
-execution API. Multiple loads are allowed, but at most eight stores and no loads
+execution API. Multiple loads are allowed, but at most 33 stores and no loads
 after that store. Checks occur in token order. A store checks permission before
 being staged and is published at retirement before infallible CPU-state commits.
 Later faults and overlap conflicts cancel the staged store and CPU effects.
@@ -299,7 +299,7 @@ operations;flags and markers remain intact and stores commit after checks.
 
 `load_segment out SEG offset WIDTH` and `store_segment SEG offset value` use
 explicit loaded caches per access (0..5 =ES,CS,SS,DS,FS,GS). Offsets are bv32;
-widths8/16/32;at most eight ordered staged stores are allowed. Source reads precede the store and
+widths8/16/32;at most 33 ordered staged stores are allowed. Source reads precede the store and
 all effects of a faulting element remain uncommitted. Requires machine context.
 Named GPR reads/writes now also admit low8 values for AL string operations.
 
@@ -424,8 +424,9 @@ InvalidContext;POP uses it to reject the documented processor-family-specific
 
 `raise_unless PREDICATE VECTOR` is the architectural counterpart: a false bv1
 predicate stops the instruction with `ExecError::Exception{eip,vector}` and
-commits nothing, like every other fault. Only vector 0 (#DE) is accepted; DIV,
-IDIV and AAM use it for a zero divisor or a quotient that does not fit. The
+commits nothing, like every other fault. Vectors 0 (#DE) and 5 (#BR) are
+accepted; DIV, IDIV and AAM use 0 for a zero divisor or a quotient that does
+not fit, and BOUND uses 5 for an index outside its bounds. The
 runner, not PIL, then delivers the exception (`src/interrupt.rs`): in real
 mode through the IDTR table with FLAGS, CS and the faulting IP pushed, so the
 handler's IRET restarts the instruction. #GP and #SS faults from segment
@@ -456,7 +457,9 @@ after validation. A source segment override never redirects the stack store.
 
 ### Two-store and far CALL profile (0.32)
 
-A program may stage at most eight `store`/`store_segment` effects in total (PUSHA/PUSHAD uses all eight).
+A program may stage at most 33 `store`/`store_segment` effects in total (PUSHA/PUSHAD uses eight; ENTER
+with nesting level 31 uses 33). The interpreter keeps the first eight on the stack and spills the rest;
+generated Rust sizes its store array to the program.
 All loads must precede the first store. Each store checks its full destination
 before staging; retirement commits writes in program order only after all
 instruction checks pass. Overlapping stores use the later store's bytes.

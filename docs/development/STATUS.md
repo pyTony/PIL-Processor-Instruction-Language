@@ -1,3 +1,37 @@
+# Second real-mode SingleStepTests fix set — 7 November 2026
+
+Continues Tony's priority on real-mode SingleStepTests/80386 fixes.
+- 16-bit SHLD/SHRD counts 17-31 shift the source in again, as the 386 does
+  (48-bit dst:src:src and src:src:dst).
+- Stack slots wrap at 64 KiB one by one: IRET/IRETD, RETF and POPA/POPAD at
+  SP=FFFCh or FFFEh read across 0000h. A single slot that crosses the limit
+  (SP=FFFFh, or a dword at FFFDh) still raises #SS.
+- POP Sreg with o32 reads only the selector word, so SP=FFFEh does not
+  fault.
+- POPAD on a 16-bit stack takes the upper half of ESP from the skipped ESP
+  slot.
+- F2 with STOS/LODS repeats like F3. New: FWAIT (no-op; with CR0.TS and MP
+  set it stops, because #NM is not modelled), CLTS, SALC (D6h), and BOUND
+  with #BR (vector 5; raise_unless now takes 0 or 5).
+- ENTER takes nesting levels 1-31. PIL programs may now stage up to 33
+  stores: eight live on the stack, the rest spill to a Vec, and the
+  generated code sizes its array per program. A 32-bit ENTER on a 16-bit
+  stack writes all of EBP.
+- Unit tests now use 63h (ARPL, #UD in real mode) as their unsupported
+  opcode.
+
+Local Linux: 587 Rust tests pass, 8 of them new. The generated-backend
+suite has 265 cases, 7 of them new. SingleStepTests/80386 run 05 (local):
+pass 1,555,403 -> 1,582,234, with 0 disagreements across 2,274 generated
+programs. Tony's own Windows run on #107 matched run 04 exactly (1,555,403).
+
+Not yet:
+- IN/OUT ports and INS/OUTS (about 14,000 cases; the suite expects an open
+  bus reading FFh). These need a port bus shared with Dine.
+- Writes the 386 makes before a fault (POPA at an odd SP, ENTER).
+- ENTER chains that overlap the new pushes: PIL reads before it stages, so
+  33 cases fail.
+
 # GW-BASIC keyboard IRQ1, decode cache and VGA registers — 7 November 2026
 
 Tony ran his GW-BASIC (own copy, not in the repo) with CUBE2.BAS and cube.bas
