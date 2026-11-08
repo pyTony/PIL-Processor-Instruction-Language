@@ -1,0 +1,8 @@
+# SLDT and STR: the LDTR or TR selector, in protected mode at any privilege
+# level (the decoder refuses both in real mode, where they are #UD). A
+# 32-bit register gets the selector zero-extended; memory gets a word.
+require_protected_mode
+read_system selector $WHICH
+$OUTPUT
+preserve_flags all
+retire

@@ -1,3 +1,27 @@
+# Protected mode, part 2: LDTR, TR and the descriptor queries — 8 November 2026
+
+Protected-mode plan increment 2, second part (#116 was the first part).
+- SegmentState and Image hold LDTR and TR (`ldt_tr`: selector, base, limit,
+  type); traces include them. TI=1 selectors in segment loads read the LDT.
+- LLDT/LTR (CPL 0, protected mode): SegmentState::load_system checks the GDT
+  entry (LDT type 2; available TSS type 1 or 9), #GP(selector) or #NP; LTR
+  stages the TSS busy bit. SLDT/STR at any level; r32 gets zero-extension.
+- SGDT/SIDT in any mode: limit word, then all 32 base bits (Bochs; Intel
+  leaves the top byte undefined with o16). SMSW r32 writes all of CR0.
+- LAR, LSL, VERR, VERW: new tokens read_descriptor (raw bv64 plus found) and
+  read_cpl; the type and privilege rules are PIL (descriptor_rights.pil and
+  one file each). ARPL is plain PIL. The 0F00 group, LAR, LSL and ARPL stay
+  refused in real mode (#UD there); require_protected_mode guards them.
+- Not yet: #GP(0) above CPL 0 for LLDT/LTR (they stop), gates, task switches.
+
+Local Linux: 609 of 610 Rust tests pass (7 new in system_registers.rs; one
+older SMSW boundary test changed, because 0F 01 00 and 66 0F 01 E0 now
+decode). host_cpu_alu still fails on this cloud host only (CI passed it on
+#116). The generated-backend suite has 271 cases (2 new: pm_system,
+pm_ltr_busy). SingleStepTests/80386 has no 0F00-0F03 or 63h real-mode files,
+so it was not rerun. test386 still stops at POST 08h (PE and PG together).
+Next: increment 3, paging.
+
 # Protected mode, part 1: the PE switch and GDT descriptor loads — 8 November 2026
 
 Protected-mode plan increment 2, first part (Tony agreed to start PR 2).

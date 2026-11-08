@@ -1,0 +1,18 @@
+# LAR: on a visible code or data segment, LDT, TSS (286 or 386, available
+# or busy), call gate or task gate, ZF=1 and the destination gets the
+# descriptor's high dword masked to 00FFFF00h (FF00h for 16 bits).
+# Otherwise ZF=0 and the destination stays.
+# System types allowed: 1, 2, 3, 4, 5, 9, 0Bh, 0Ch (mask 1A3Eh).
+const lar_types 16 6718
+zext kind16 kind 16
+lshr type_bits lar_types kind16
+bit system_ok type_bits 0
+or kind_ok segment system_ok
+and allowed kind_ok visible
+and valid found allowed
+const rights_mask 32 16776960
+and rights high rights_mask
+$RESULT
+flag ZF valid
+preserve_flags remaining
+retire

@@ -58,5 +58,15 @@ PR 2 is split in two. The first part, on branch claude/project-thread-ssjwyx:
 - Real-mode loads change only the base, so unreal mode works.
 - test386 still stops at POST 08h, which sets PE and PG together.
 
-The second part adds LLDT/SLDT, LTR/STR, SGDT/SIDT, LAR, LSL, VERR, VERW,
-ARPL and SMSW r32.
+## Increment 2 status (second part)
+
+Merged first part: #116. The second part, on the same branch:
+- LDTR and TR state; LLDT and LTR at CPL 0 check the GDT descriptor and LTR
+  marks the TSS busy. SLDT and STR store the selectors.
+- TI=1 selectors in segment loads read the LDT.
+- SGDT and SIDT (any mode), SMSW r32.
+- LAR, LSL, VERR, VERW and ARPL, protected mode only (#UD in real mode is
+  the decoder's refusal).
+- Not yet: #GP(0) for LLDT/LTR above CPL 0 (they stop, as the other
+  privileged instructions do), task switches, gates. test386 still stops at
+  POST 08h (PE and PG together), so paging (increment 3) is next.
