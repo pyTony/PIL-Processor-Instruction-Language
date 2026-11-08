@@ -38,8 +38,36 @@ Local Linux: 610 of 611 Rust tests pass (5 new: dos_vga_font 3, divide
 handler 2; 4 older tests updated). host_cpu_alu fails on this cloud host
 with and without the change. FD14LITE.img (SHA256 f539d456...) probe at
 10,000 steps unchanged: 151/156 imported, 53 exits.
-After merging dev (paging, LDTR/TR): 626 Rust tests pass, 1 ignored,
+After merging dev (paging, IDT delivery): 635 Rust tests pass, 1 ignored,
 host_cpu_alu included.
+
+# Protected mode, increment 4: IDT delivery and IRET — 8 November 2026
+
+Protected-mode plan increment 4 (#122 was paging).
+- src/interrupt.rs `deliver` (ROM and Dine runners): protected-mode
+  exceptions, INT n, INT3 and INTO go through 286/386 interrupt and trap
+  gates (SegmentState::interrupt_gate, interrupt_target in src/address.rs)
+  to a code segment at the current level or a conforming one. Frames are
+  words or dwords by gate size, with the error code for #DF, #NP, #SS, #GP
+  and #PF; EXT is set unless INT n is delivered. #PF writes CR2.
+- Faults during delivery: delivered in turn, or as #DF (error 0) by the
+  386 table; a fault while delivering #DF is a shutdown (triple fault).
+- New ExecError::SegmentNotPresent{eip,error_code} (trace code 14) replaces
+  Exception{vector:11}, so #NP carries its selector.
+- IRET/IRETD in protected mode: isa/i386/iret_protected.pil, same level;
+  IOPL only at CPL 0, IF only where CPL <= IOPL; NT=1 and VM=1 at CPL 0
+  stop (InvalidContext).
+- Dine's BIOS/DOS INT n intercepts now run in real mode only. The ROM
+  runner accepts --steps up to 1,000,000,000.
+- Not yet: inner-level stack switch through the TSS, IRET to an outer
+  level, task gates, protected-mode IRQs.
+
+Local Linux: 631 Rust tests pass, 1 ignored (9 new in pm_interrupts.rs; two
+#NP expectations now name the selector). The generated-backend suite has 273
+cases (1 new: pm_iret). test386 still stops at POST 20h (its IRETD to ring
+3); POST 20h-22h and 0Bh all need ring 3, so increment 5 is next. A local
+build that skips them runs POST 0Ch-10h and stops at 11h (ring 3 again).
+SingleStepTests/80386 was not rerun (real-mode paths unchanged).
 
 # Protected mode, increment 3: paging — 8 November 2026
 

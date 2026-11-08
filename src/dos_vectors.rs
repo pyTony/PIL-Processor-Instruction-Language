@@ -118,6 +118,12 @@ pub(super) fn enter_break_wrapper(p:&mut Loaded){
 pub(super) fn at_keyboard_entry(p:&Loaded)->bool{linear(p)==ENTRIES+3*9}
 /// Whether CS:IP is INT 08h at its own entry, where the BIOS handler runs.
 pub(super) fn at_timer_entry(p:&Loaded)->bool{linear(p)==ENTRIES+3*8}
+/// Protected-mode delivery through the IDT (see crate::interrupt::deliver).
+pub(super) fn deliver_protected(p:&mut Loaded,event:crate::interrupt::Event)->Result<(),String>{
+    let result=crate::interrupt::deliver(&mut p.cpu,&mut p.image,&mut p.ram,event);
+    p.selectors=p.image.selectors;
+    result
+}
 fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
     let(segment,offset)=target(p,n)?;deliver_to(p,segment,offset,return_ip)
 }
