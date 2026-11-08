@@ -1,6 +1,6 @@
-# Bounded real-mode far CALL; both reads precede the two staged writes.
+# Far CALL, real mode or CPL 0; both reads precede the two staged writes.
 require_width 16_or_32
-require_real_mode
+require_ring0
 $FAR_TARGET
 zext target32 target_value 32
 read_segment old_cs 1

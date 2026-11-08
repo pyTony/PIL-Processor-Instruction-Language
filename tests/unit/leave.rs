@@ -16,6 +16,8 @@ fn leave_faults_preserve_all_pending_effects_and_shadows(){
  for ram_fault in [false,true]{let(mut i,mut r,mut c)=fixture(&[0x66,0xc9],false);i.sti_shadow=1;i.ss_shadow=1;if ram_fault{r=Ram::new(0xa01);r.write_bytes(0x100,&[0x66,0xc9]).unwrap();}else{c.regs[5]=0xffff;}let old=c.clone();let oldr=r.clone();let oldm=i.segment_state();assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i.segment_state(),oldm);}
 }
 #[test]
-fn leave_after_real_mode_ss_load_rebinds_stack_size_and_base(){
- let(mut i,mut r,mut c)=fixture(&[0x8e,0xd0,0xc9],true);c.regs[0]=0x30;c.regs[5]=0xdead0800;r.store(0xb00,MemWidth::Word,0x1234).unwrap();step(&mut i,&mut r,&mut c).unwrap();assert_eq!(i.ss_shadow,1);step(&mut i,&mut r,&mut c).unwrap();assert_eq!((c.regs[4],c.regs[5]),(0xabcd0802,0xdead1234));assert_eq!(i.ss_shadow,0);
+fn leave_after_real_mode_ss_load_keeps_stack_size_and_rebinds_base(){
+ // A real-mode SS load changes only the base: the B bit stays, so LEAVE
+ // still uses all of ESP and EBP (big real mode).
+ let(mut i,mut r,mut c)=fixture(&[0x8e,0xd0,0xc9],true);c.regs[0]=0x30;r.store(0xb00,MemWidth::Word,0x1234).unwrap();step(&mut i,&mut r,&mut c).unwrap();assert_eq!(i.ss_shadow,1);step(&mut i,&mut r,&mut c).unwrap();assert_eq!((c.regs[4],c.regs[5]),(0x802,0x1234));assert_eq!(i.ss_shadow,0);
 }

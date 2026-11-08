@@ -28,6 +28,34 @@ ICW3 04h, ICW4 01h).
 Local Linux: 602 Rust tests pass (4 new); host_cpu_alu fails on this cloud
 host with and without the change (a rotate known-answer on this CPU).
 
+# Protected mode, part 1: the PE switch and GDT descriptor loads — 8 November 2026
+
+Protected-mode plan increment 2, first part (Tony agreed to start PR 2).
+- MOV CR0 and LMSW can set PE; MOV CR0 can clear it. PG still stops with
+  UnsupportedControl. Every cache stays as it was across the switch.
+- SegmentState::load_segment (src/address.rs, shared by both backends):
+  real-mode loads change only the base, so protected-mode limits survive
+  ("unreal mode"); protected-mode loads read the GDT entry, check type,
+  present, RPL/CPL/DPL as the 386 does, and stage the accessed-bit store.
+  Faults: #GP(selector), #NP (vector 11), #SS(selector), null SS/CS #GP(0).
+  TI=1 selectors fault (no LDT yet).
+- MOV/POP Sreg, LDS/LES/LSS/LFS/LGS and far JMP/CALL/RETF work at CPL 0.
+  Gates, TSS descriptors and returns to an outer level stop (InvalidContext).
+- SegmentAccess::Code now has conforming, big (D bit) and dpl. CPL is the CS
+  cache's DPL. A D-bit CS defaults to 32-bit operands and addresses.
+- New PIL token require_ring0 (CLI/STI/PUSHF/POPF/LGDT/LIDT/far transfers);
+  IRET and INT stay real-mode only until increment 4.
+
+Local Linux: 602 of 603 Rust tests pass (4 new in protected_mode.rs, 12
+older tests updated). The one failure, host_cpu_alu, also fails on dev at
+55376c9 (rotate OF for counts above 1 against this host's CPU). The
+generated-backend suite has 269 cases (2 new: pm_far_jump, pm_ss_gp).
+SingleStepTests/80386 run 08: pass 1,621,228 (the rise from 1,600,071 comes
+from dev's rotate OF change), same 130 failures, 0 disagreements. test386
+still stops at POST 08h (PE and PG together), as planned.
+Next (part 2): LLDT/SLDT, LTR/STR, SGDT/SIDT, LAR, LSL, VERR, VERW, ARPL,
+SMSW r32.
+
 # Far pointers that wrap, and branches into their own bytes — 8 November 2026
 
 Tony chose the smaller SingleStepTests/80386 leftovers next.

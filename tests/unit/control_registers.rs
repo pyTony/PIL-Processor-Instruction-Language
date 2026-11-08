@@ -25,7 +25,7 @@ fn control_moves_transfer_all_32_bits_for_every_gpr_and_ignored_size_prefix(){
 }
 #[test]
 fn control_rejections_do_not_commit_cpu_machine_ram_or_undefined_flags(){
-    for (cr,value,gp) in [(0,1,false),(0,0x80000011,false),(0,0x80000010,true),(0,0x20,false),(3,0x12345001,false)]{
+    for (cr,value,gp) in [(0,0x80000011,false),(0,0x80000010,true),(0,0x20,false),(3,0x12345001,false)]{
         let(mut i,mut r,mut c)=setup(&[0x0f,0x22,0xc0|(cr<<3)]);c.regs[0]=value;i.ss_shadow=1;i.sti_shadow=1;
         let old=c.clone();let oldi=i.clone();let oldr=r.clone();let err=step(&mut i,&mut r,&mut c).unwrap_err();
         assert_eq!(err,if gp{ExecError::GeneralProtection{eip:0x100,error_code:0}}else{ExecError::UnsupportedControl{eip:0x100,register:cr,value}});

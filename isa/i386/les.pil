@@ -1,10 +1,9 @@
-# Bounded real-mode LES/LDS/LSS/LFS/LGS. Read the whole pointer before staging
+# LES/LDS/LSS/LFS/LGS. Read the whole pointer before staging
 # either write. $DEST is the segment register index: 0 for ES (LES), 3 for DS
 # (LDS), 2, 4 or 5 for LSS, LFS and LGS. Each field is checked on its own, and
 # the selector offset wraps at the address size, as the 386 does: a 16-bit EA
 # of FFFEh reads the offset word there and the selector at 0000h.
 require_width 16_or_32
-require_real_mode
 read_address pointer
 const size 32 $BYTES
 add selector_end pointer size
