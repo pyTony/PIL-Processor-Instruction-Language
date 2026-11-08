@@ -64,6 +64,23 @@ fn sgdt_sidt_and_smsw_r32_work_in_real_and_protected_mode(){
 }
 
 #[test]
+fn smsw_r32_preserves_paging_in_the_selected_concrete_value_at_both_privilege_levels(){
+ // The upper half is architecturally undefined; this profile chooses CR0.
+ for cpl in [0,3]{
+  let(mut i,mut r,mut c)=protected_at(&[0x66,0x0f,0x01,0xe0],cpl);
+  i.paging=true;c.regs[0]=0x5555_aaaa;c.eflags=0x203;
+  step(&mut i,&mut r,&mut c).unwrap();
+  assert_eq!(c.regs[0],0x8000_0011);assert_eq!(c.eflags,0x203);
+ }
+ // Word register and memory forms remain 16-bit even when paging is set.
+ let(mut i,mut r,mut c)=protected(&[0x0f,0x01,0xe0]);i.paging=true;c.regs[0]=0x5555_aaaa;
+ step(&mut i,&mut r,&mut c).unwrap();assert_eq!(c.regs[0],0x5555_0011);
+ let(mut i,mut r,mut c)=protected(&[0x66,0x0f,0x01,0x26,0,8]);i.paging=true;
+ r.store(0,MemWidth::Dword,7).unwrap();r.store(0x900,MemWidth::Dword,0xdead_beef).unwrap();step(&mut i,&mut r,&mut c).unwrap();
+ assert_eq!(r.load(0x900,MemWidth::Dword).unwrap(),0xdead_0011);
+}
+
+#[test]
 fn protected_only_forms_are_refused_in_real_mode(){
  for code in [vec![0x0f,0x00,0xc0],vec![0x0f,0x00,0xd0],vec![0x0f,0x00,0xe0],vec![0x0f,0x02,0xc0],vec![0x0f,0x03,0xc0],vec![0x63,0xc0]]{
   let(i,r,_)=machine(&code);assert!(i.decode(&r,0x100).is_err(),"{code:02x?} is #UD in real mode");

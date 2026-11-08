@@ -1,3 +1,13 @@
+# SMSW r32 and the first task gate — 8 November 2026
+
+In the 128 KiB test386 POST 22h, the apparent #GP(00A8h) was in the error
+path after a TS-check handler compared `SMSW EAX` with `MOV EBX,CR0` under
+paging. SMSW r32 now chooses the complete modeled CR0 as its concrete value
+for the architecturally undefined high half; word and memory forms retain
+their original behavior. The new PIL token `read_msw32` is unprivileged and
+is shared by interpreted and generated execution. The local 128 KiB ROM
+now reaches `INT 28h` at 0053:E0A18, whose IDT task gate is not yet modeled.
+
 # test386 128 KB ROM in the ROM runner — 8 November 2026
 
 Tony asked for 128 KB ROM support, because only test386 built with ROM128
@@ -2907,5 +2917,3 @@ is not implied by that.
 Next: strengthen decoder coverage, general PC machine state and devices; keep
 full paging, descriptor loading, exception delivery, interrupts, A20 and OS boot
 explicitly outside the current implementation. The debug port is not a UART.
-
-

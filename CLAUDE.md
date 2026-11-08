@@ -1,3 +1,13 @@
+# SMSW r32 with paging — 8 November 2026
+
+The 128 KiB test386 ROM stopped in POST 22h before its first task switch:
+its TS-check handler compares `SMSW EAX` with `MOV EBX,CR0`, including PG.
+The former zero-extended the low MSW and lost bit 31. The high half of SMSW
+r32 is architecturally undefined; this profile selects the modeled full CR0.
+`read_msw32` supplies that value without making SMSW privileged. Word and
+memory forms remain 16-bit. With the local ROM the next stop is INT 28h to
+an unimplemented task gate; task switching itself is not implemented here.
+
 # test386 128 KB ROM in the ROM runner — 8 November 2026
 
 Tony asked for 128 KB ROM support, because only test386 built with ROM128

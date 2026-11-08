@@ -500,12 +500,12 @@ impl Image {
                         (format!("LMSW {}",operand_name(src,address)),compile(&text,w))
                     }else{
                     if (m>>3)&7!=4{return Err(GuestError::Decode("unsupported 0F01 group extension".into()));}
-                    // SMSW r32 writes all of CR0, whose upper bits stay 0
-                    // while paging is not modelled; memory gets a word.
+                    // For r32 choose the full modeled CR0 for the undefined
+                    // upper half. Memory and 16-bit registers get the MSW.
                     let whole=wide&&m>>6==3;
                     w=if whole{32}else{16};dst=view((m&7)as usize,w);src=dst;
                     let mut text=description("smsw").map_err(GuestError::Decode)?;
-                    if whole{text=text.replace("require_width 16","require_width 32").replace("write dst status","zext whole status 32\nwrite dst whole");}
+                    if whole{text=text.replace("require_width 16","require_width 32").replace("read_msw status","read_msw32 status");}
                     if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("write dst status","read_address destination\nstore destination status");}
                     (format!("SMSW {}",operand_name(dst,address)),compile(&text,w))
                     }

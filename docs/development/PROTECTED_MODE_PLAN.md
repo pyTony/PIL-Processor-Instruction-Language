@@ -1,5 +1,11 @@
 # 80386 protected mode plan — 7 November 2026 (status 8 November 2026)
 
+Update: the 128 KiB POST 22h stop at #GP(00A8h) was the ROM's error path,
+after its TS-check handler compared SMSW EAX and CR0 while paging was on.
+The emulator now chooses full modeled CR0 for SMSW r32's undefined upper
+half. It reaches the first actual task gate, INT 28h at 0053:E0A18; task
+switching remains unimplemented. The 64 KiB ENTER failure remains open.
+
 Tony set protected mode as the priority, ahead of the x87 FPU. The plan is
 eight CPU increments and two Dine increments, each a PR against dev with
 expected-state, fault and size-combination tests and green Windows/Linux CI.

@@ -66,6 +66,7 @@ enum Token {
     ReadAddress(usize),
     ReadAddressAfter(usize,usize,usize),
     ReadMsw(usize),
+    ReadMsw32(usize),
     ReadControl(usize,usize),
     WriteControl(usize,usize),
     WriteTable(usize,usize,usize),
@@ -648,6 +649,7 @@ impl Program {
             Token::ReadControl(v,r)=>format!("v{v} = read_control {r}"),
             Token::WriteControl(r,v)=>format!("write_control {r} v{v}"),
             Token::ReadMsw(v) => format!("v{v} = read_msw"),
+            Token::ReadMsw32(v) => format!("v{v} = read_msw32"),
             Token::Require(c) => format!("require v{c}"),
             Token::RaiseUnless(c,v) => format!("raise_unless v{c} {v}"),
             Token::LoadSegment(v, a, m, s) => format!("v{v} = load_segment [v{a}] {} (seg {s})", m.bytes() * 8),
@@ -721,7 +723,7 @@ impl Program {
                     _ if machine.is_none() && matches!(t,
                         Token::CheckpointFlags | Token::RequireRealMode | Token::RequireRing0 | Token::InterruptShadowIf(..)
                         | Token::LoadSegment(..) | Token::StoreSegment(..) | Token::ReadSegment(..)
-                        | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::FarBranch(..) | Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..) | Token::RequireIopl | Token::CheckIo(..)
+                        | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::FarBranch(..) | Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..) | Token::RequireIopl | Token::CheckIo(..)
                         | Token::ReadTable(..) | Token::ReadSystem(..) | Token::ReadCpl(..) | Token::ReadDescriptor(..) | Token::LoadSystem(..) | Token::RequireProtectedMode) => {
                         early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
                     }
@@ -850,6 +852,9 @@ impl Program {
                             values[o] = value(m.machine_status() as u64, 16);
                             note = format!("; v{o} = 0x{:04x}", values[o].bits);
                         }
+                    }
+                    Token::ReadMsw32(o) => {
+                        if let Some(m) = machine { values[o]=value(u64::from(m.machine_status())|(u64::from(m.paging)<<31),32); }
                     }
                     Token::Require(c) => {
                         if values[c].bits == 0 { early_stop = Some(idx); note = "; FAULT (require v=0)".into(); }
@@ -1208,6 +1213,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 ["read_control",out,register]=>{let r=number(register)? as usize;if !matches!(r,0|2|3){return Err("read_control needs CR0, CR2 or CR3".into());}Token::ReadControl(define(&mut names,&mut widths,out,32)?,r)}
                 ["write_control",register,input]=>{let r=number(register)? as usize;let v=slot(&names,input)?;if !matches!(r,0|2|3)||widths[v]!=32||tokens.iter().any(|t|matches!(t,Token::WriteControl(..))){return Err("write_control needs CR0, CR2 or CR3 and bv32, once".into());}Token::WriteControl(r,v)}
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
+                ["read_msw32", out]=>Token::ReadMsw32(define(&mut names,&mut widths,out,32)?),
                 ["require_protected_mode"]=>Token::RequireProtectedMode,
                 ["read_table", limit, base, table]=>{
                     let t=number(table)? as usize;if t>1{return Err("read_table needs table 0..1".into());}
@@ -1390,7 +1396,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
@@ -1534,6 +1540,7 @@ fn probe_program_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContex
             Token::ReadSystem(o,t)=>values[o]=value(machine?.ldt_tr[t].selector as u64,16),
             Token::ReadCpl(o)=>values[o]=value(machine?.cpl() as u64,8),
             Token::ReadMsw(o)=>values[o]=value(machine?.machine_status() as u64,16),
+            Token::ReadMsw32(o)=>{let m=machine?;values[o]=value(u64::from(m.machine_status())|(u64::from(m.paging)<<31),32)},
             Token::Require(c)|Token::RaiseUnless(c,_)=>if values[c].bits==0{return found;},
             Token::ReadAddressAfter(o,reg,a)=>{
                 let mut regs=cpu.regs;regs[reg]=values[a].bits as u32;
@@ -1883,6 +1890,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::WriteControl(r,v)=>{let x=values[v].bits as u32;machine.as_deref().ok_or(ExecError::InvalidContext)?.validate_control(r,x,cpu.eflags,cpu.eip)?;pending_control=Some((r,x));},
             Token::WriteTable(t,l,b)=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some((t,values[l].bits as u16,values[b].bits as u32));},
             Token::ReadMsw(o)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64,16),
+            Token::ReadMsw32(o)=>{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;values[o]=value(u64::from(m.machine_status())|(u64::from(m.paging)<<31),32)},
             Token::RequireProtectedMode=>if machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);},
             Token::ReadTable(l,b,t)=>{let (limit,base)=machine.as_deref().ok_or(ExecError::InvalidContext)?.tables[t];values[l]=value(limit as u64,16);values[b]=value(base as u64,32);}
             Token::ReadSystem(o,t)=>values[o]=value(machine.as_deref().ok_or(ExecError::InvalidContext)?.ldt_tr[t].selector as u64,16),
@@ -2227,6 +2235,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteControl(r,v)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?.validate_control({r},v{v} as u32,*flags,*eip)?;pending_control=Some(({r},v{v} as u32));"),
             Token::WriteTable(t,l,b)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some(({t},v{l} as u16,v{b} as u32));"),
             Token::ReadMsw(o)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.machine_status() as u64;"),
+            Token::ReadMsw32(o)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let v{o}:u64=u64::from(m.machine_status())|(u64::from(m.paging)<<31);"),
             Token::RequireProtectedMode=>"if machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||*flags&0x20000!=0 {return Err(ExecError::InvalidContext);}".into(),
             Token::ReadTable(l,b,t)=>format!("let (v{l},v{b}):(u64,u64)={{let (l,b)=machine.as_deref().ok_or(ExecError::InvalidContext)?.tables[{t}];(l as u64,b as u64)}};"),
             Token::ReadSystem(o,t)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.ldt_tr[{t}].selector as u64;"),
