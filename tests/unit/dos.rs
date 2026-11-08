@@ -2307,3 +2307,46 @@ fn port_accesses_dine_does_not_answer_stop_instead_of_reading_open_bus(){
   assert!(matches!(r.stop,Stop::Service(ref m)if m.contains("not modelled in Dine")),"{bytes:02x?} {:?}",r.stop);assert_eq!(r.loaded.cpu.eip,0x100);
  }
 }
+#[test]
+fn session_mounts_and_unmounts_fat12_floppy_and_host_folders_live(){
+ use std::time::{SystemTime,UNIX_EPOCH};
+ let dir=std::env::temp_dir().join(format!("pil-mount-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+ let host_d=dir.join("usb folder");std::fs::create_dir_all(&host_d).unwrap();
+ std::fs::write(host_d.join("NOTE.TXT"),b"from-usb").unwrap();
+ // Build a 360 KiB FAT12 floppy image with DISK1.TXT = "disk-one"
+ let mut floppy=vec![0u8;720*512];
+ floppy[..3].copy_from_slice(&[0xeb,0x3c,0x90]);
+ floppy[11..13].copy_from_slice(&512u16.to_le_bytes());floppy[13]=1;
+ floppy[14..16].copy_from_slice(&1u16.to_le_bytes());floppy[16]=2;
+ floppy[17..19].copy_from_slice(&112u16.to_le_bytes());
+ floppy[19..21].copy_from_slice(&720u16.to_le_bytes());floppy[21]=0xf9;
+ floppy[22..24].copy_from_slice(&3u16.to_le_bytes());
+ for f in 0..2{
+  let at=512+f*3*512;
+  floppy[at..at+6].copy_from_slice(&[0xf9,0xff,0xff,0xff,0x0f,0x00]);
+ }
+ let root=7*512;
+ floppy[root..root+11].copy_from_slice(b"DISK1   TXT");
+ floppy[root+26..root+28].copy_from_slice(&2u16.to_le_bytes());
+ floppy[root+28..root+32].copy_from_slice(&8u32.to_le_bytes());
+ floppy[14*512..14*512+8].copy_from_slice(b"disk-one");
+ let floppy_path=dir.join("disk1.img");std::fs::write(&floppy_path,&floppy).unwrap();
+ let mut s=session::Session::new(load(&[0xf4],"noop.com").unwrap());
+ let (reply,_)=s.command(1,&format!("mount A {}",floppy_path.display())).unwrap();
+ assert!(reply.contains("\"ok\":true"),"{reply}");
+ let (reply,_)=s.command(2,&format!("mount D {}",host_d.display())).unwrap();
+ assert!(reply.contains("\"ok\":true"),"{reply}");
+ let p=s.loaded().unwrap();
+ assert!(files::program(p,b"A:\\DISK1.TXT").unwrap().is_ok());
+ assert_eq!(&files::program(p,b"A:\\DISK1.TXT").unwrap().unwrap().0[..],b"disk-one");
+ assert_eq!(&files::program(p,b"D:\\NOTE.TXT").unwrap().unwrap().0[..],b"from-usb");
+ let (reply,_)=s.command(3,"unmount D").unwrap();
+ assert!(reply.contains("\"ok\":true"),"{reply}");
+ assert!(files::program(s.loaded().unwrap(),b"D:\\NOTE.TXT").unwrap().is_err());
+ let (reply,_)=s.command(4,"unmount A:").unwrap();
+ assert!(reply.contains("\"ok\":true"),"{reply}");
+ assert!(files::program(s.loaded().unwrap(),b"A:\\DISK1.TXT").unwrap().is_err());
+ let (reply,_)=s.command(5,"mount Zinvalid /tmp").unwrap();
+ assert!(reply.contains("\"ok\":false"),"{reply}");
+ std::fs::remove_dir_all(dir).unwrap();
+}

@@ -120,6 +120,39 @@ impl Drives{
         if n==0{return Some(self.current);}
         self.list.iter().position(|d|d.letter-b'A'+1==n)
     }
+    /// Mounts or replaces drive `letter` (`A`..`E`) with `source`.
+    pub fn mount(&mut self,letter:u8,source:Source)->Result<(),String>{
+        let letter=letter.to_ascii_uppercase();
+        if !(b'A'..=b'E').contains(&letter){return Err("drive must be A:..E:".into());}
+        if let Source::Host(root)=&source{if !root.is_dir(){return Err(format!("mount {} is not a folder",root.display()));}}
+        if self.files.iter().any(|f|f.drive==letter){return Err(format!("drive {}: has open files",char::from(letter)));}
+        if let Some(i)=self.list.iter().position(|d|d.letter==letter){
+            self.list[i].source=source;self.list[i].cwd.clear();
+            for s in &mut self.searches{if s.drive==i{s.drive=usize::MAX;}}
+        }else{
+            self.list.push(Drive{letter,source,cwd:Vec::new()});
+        }
+        Ok(())
+    }
+    /// Unmounts drive `letter` (`A`..`E`), resetting to the boot drive if it was current.
+    pub fn unmount(&mut self,letter:u8)->Result<(),String>{
+        let letter=letter.to_ascii_uppercase();
+        if !(b'A'..=b'E').contains(&letter){return Err("drive must be A:..E:".into());}
+        let Some(i)=self.list.iter().position(|d|d.letter==letter)else{return Err(format!("drive {}: is not mounted",char::from(letter)))};
+        if self.files.iter().any(|f|f.drive==letter){return Err(format!("drive {}: has open files",char::from(letter)));}
+        if i==0{
+            if letter!=b'A'{return Err(format!("cannot unmount boot drive {}:",char::from(letter)));}
+            if matches!(self.list[0].source,Source::Empty){return Err("drive A: is not mounted".into());}
+            self.list[0].source=Source::Empty;self.list[0].cwd.clear();
+            for s in &mut self.searches{if s.drive==0{s.drive=usize::MAX;}}
+            return Ok(());
+        }
+        self.list.remove(i);
+        if self.current==i{self.current=0;}else if self.current>i{self.current-=1;}
+        for s in &mut self.searches{if s.drive==i{s.drive=usize::MAX;}else if s.drive!=usize::MAX&&s.drive>i{s.drive-=1;}}
+        for f in &mut self.files{if let Some(Loc::Memory(d,_))=&mut f.loc{if *d>i{*d-=1;}}}
+        Ok(())
+    }
 }
 fn ok(p:&mut Loaded){p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;}
 fn fail(p:&mut Loaded,code:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(code);p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;}
@@ -745,7 +778,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
         0x0e=>{
             // DL=0 is A:. A drive that does not exist leaves the current one.
             if let Some(i)=p.drive.list.iter().position(|d|d.letter-b'A'==dl){p.drive.current=i;}
-            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(LAST_DRIVE.max(p.drive.list.last().map_or(0,|d|d.letter-b'A'+1)));
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(LAST_DRIVE.max(p.drive.list.iter().map(|d|d.letter-b'A'+1).max().unwrap_or(0)));
         },
         0x29=>parse_name(p)?,
         0x45|0x46=>duplicate(p,ah)?,

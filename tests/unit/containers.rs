@@ -83,3 +83,30 @@ fn fat16_tree_keeps_attributes_stamps_label_and_directories(){
     assert_eq!(&tree.files[0][..],&super::super::dos::hello("com").unwrap()[..]);
     assert_eq!(tree.dirs[1][0].name,*b"PACKAGE ZIP");
 }
+#[test]
+fn fat12_floppy_reads_odd_and_even_cluster_chains_and_tree(){
+    let sectors=720usize;let mut b=vec![0u8;sectors*512];
+    b[..3].copy_from_slice(&[0xeb,0x3c,0x90]);w16(&mut b,11,512);b[13]=1;w16(&mut b,14,1);b[16]=2;w16(&mut b,17,112);w16(&mut b,19,sectors as u16);b[21]=0xf9;w16(&mut b,22,3);
+    let set12=|fat:&mut[u8],c:usize,val:u16|{
+        let at=c+c/2;let cur=u16::from_le_bytes([fat[at],fat[at+1]]);
+        let next=if c&1!=0{(cur&0x000f)|(val<<4)}else{(cur&0xf000)|(val&0x0fff)};
+        fat[at..at+2].copy_from_slice(&next.to_le_bytes());
+    };
+    for f in 0..2{
+        let fat=&mut b[512+f*3*512..512+(f+1)*3*512];
+        set12(fat,0,0xff9);set12(fat,1,0xfff);
+        // Chain spanning even -> odd -> even clusters: 2 -> 3 -> 4 -> EOF
+        set12(fat,2,3);set12(fat,3,4);set12(fat,4,0xfff);
+    }
+    let root=7*512;let data=14*512;
+    let payload:Vec<u8>=(0..1200u32).map(|i|(i*37+11)as u8).collect();
+    b[root..root+32].copy_from_slice(&dirent(b"FLOPPY  BIN",0,2,payload.len()));
+    b[data..data+payload.len()].copy_from_slice(&payload);
+    let tree=fat16_tree(&b).unwrap();
+    assert_eq!(tree.files.len(),1);
+    assert_eq!(&tree.files[0][..],&payload[..]);
+    let archive=parse(&b,false).unwrap();
+    assert_eq!(archive.files.len(),1);
+    assert_eq!(archive.files[0].path,"FLOPPY.BIN");
+    assert_eq!(archive.files[0].bytes,payload);
+}
