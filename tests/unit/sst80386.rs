@@ -330,8 +330,23 @@ fn run(root:&Path,out_dir:&Path)->Result<String,String>{
                                 let id=*variant_ids.entry(key.clone()).or_insert_with(||{variants.push(key);next});
                                 encode(&mut input,id,&p,c);sampled+=1;in_sample=true;
                             }
-                            let (pil,after)=interpret(&mut p,&mut ram).unwrap();
+                            let first_length=d.length;
+                            let (pil,mut after)=interpret(&mut p,&mut ram).unwrap();
                             if in_sample{sampled_pil=Some(pil);}
+                            // A branch into its own encoding (JO rel32 to EIP+1, say) runs
+                            // more instructions before the suite's HLT, as the hardware did.
+                            // A fall-through does not: the HLT was already prefetched, even
+                            // when a REP STOS overwrote it.
+                            let (mut start,mut length)=(c.init[16],first_length);
+                            for _ in 0..4{
+                                if after.fault.is_some()||after.delivered.is_some(){break;}
+                                if p.cpu.eip==start.wrapping_add(length)&0xffff{break;}
+                                let at=(u32::from(p.image.selectors[1])<<4).wrapping_add(p.cpu.eip&0xffff);
+                                if ram.bytes().get(at as usize).map_or(true,|b|*b==0xf4){break;}
+                                start=p.cpu.eip;p.decoded=p.image.decode(&ram,p.cpu.eip);
+                                let Ok(next)=&p.decoded else{break};length=next.length;
+                                match interpret(&mut p,&mut ram){Some((_,a))=>after=a,None=>break}
+                            }
                             judge(c,&after,&p.readback)
                         }
                         &guest::Operation::Interrupt{vector,overflow,next}=>{let a=software_interrupt(&mut p,&mut ram,vector,overflow,next);judge(c,&a,&p.readback)},

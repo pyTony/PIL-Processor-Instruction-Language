@@ -1,3 +1,25 @@
+# Far pointers that wrap, and branches into their own bytes — 8 November 2026
+
+Tony chose the smaller SingleStepTests/80386 leftovers next.
+- Far pointers: LES, LDS, LSS, LFS, LGS and CALL/JMP FAR m16:16 or m16:32
+  check each field on its own. The selector offset wraps at the address
+  size, as the 386 does: a 16-bit EA of FFFEh reads the offset word there
+  and the selector from 0000h. A field that itself crosses FFFFh still
+  raises #GP or #SS (isa/i386/les.pil, far_pointer in src/guest.rs).
+- SingleStepTests runner: when an instruction branches into its own bytes
+  (JO rel32 to EIP+1, RET imm16 returning to itself), it runs on to the
+  suite's HLT, as the hardware did. A fall-through stops there, because the
+  HLT was already prefetched even when a REP STOS overwrote it.
+- Not changed: 9 byte IDIVs where the 386EX returns AL=80h and
+  AH=(AX+80h*divisor) mod 256 instead of #DE. Only 4 distinct inputs show
+  it (quotients -278 to -358); quotients of -193 and -371 still fault, so
+  the rule is not clear.
+
+Local Linux: 597 Rust tests pass (1 new). SingleStepTests/80386 run 07
+(local): pass 1,600,052 -> 1,600,071, 0 disagreements in 2,330 generated
+programs. Left: 112 writes before faults, 9 byte IDIVs, 6 port reads
+(1Fh and 21h on the 386EX), 3 POPA/POPAD register writes before #SS.
+
 # Ports, INS/OUTS and store forwarding from feat/bound-enter-io — 8 November 2026
 
 Tony chose to merge #112 first and then port what only his

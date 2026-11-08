@@ -150,6 +150,23 @@ Result:
 The generated backend ran 2,306 programs with 0 disagreements. Report:
 /mnt/project-files/pil_proof/sst80386-run-06.md (project files, not in git).
 
+Run 07 (8 November 2026, local cloud session, same revision) adds:
+- Far pointers whose selector wraps to offset 0000h (LES/LDS/LSS/LFS/LGS,
+  CALL/JMP FAR m16:16 and m16:32).
+- Runner: a branch into its own bytes runs on to the HLT.
+
+Result:
+- 1,600,071 pass (+19).
+- 130 failures:
+  - 112 memory writes the 386 makes before an #SS or #GP.
+  - 9 byte IDIVs where the 386EX returns AL=80h instead of #DE (rule unclear).
+  - 6 port reads: IN EAX from 1Fh gives 7FFFFFFFh, IN from 21h gives
+    7FFFh on the 386EX.
+  - 3 POPA/POPAD cases that write registers before their #SS.
+
+The generated backend ran 2,330 programs with 0 disagreements. Report:
+/mnt/project-files/pil_proof/sst80386-run-07.md (project files, not in git).
+
 ## Original plan: SingleStepTests CPU adapter
 
 The captures use an Intel80386EX KU80C386EX33 with a16-bit external data bus.

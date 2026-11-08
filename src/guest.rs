@@ -245,7 +245,7 @@ impl Image {
                 let (target,label)=if let Some(m)=far_jump{
                     let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
                     let seg=effective.resolve(&[0;8],override_segment)?.segment.index();
-                    (format!("read_address operand\nzext operand_wide operand 64\ncheck_segment {seg} operand_wide {}\nload target_value operand {w}\nconst slot 32 {}\nadd selector_at operand slot\nload selector selector_at 16",w/8+2,w/8),operand_name(dst,address))
+                    (far_pointer(seg,w,addr32),operand_name(dst,address))
                 }else{
                     let offset=r.unsigned(w)?;let selector=r.unsigned(16)?;
                     (format!("const target_value {w} {offset}\nconst selector 16 {selector}"),format!("{selector:04x}:{offset:08x}"))
@@ -258,7 +258,7 @@ impl Image {
                 let (target,label)=if let Some(m)=far_indirect{
                     let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});
                     let seg=effective.resolve(&[0;8],override_segment)?.segment.index();
-                    (format!("read_address operand\nzext operand_wide operand 64\ncheck_segment {seg} operand_wide {}\nload target_value operand {w}\nconst slot 32 {}\nadd selector_at operand slot\nload selector selector_at 16",w/8+2,w/8),operand_name(dst,address))
+                    (far_pointer(seg,w,addr32),operand_name(dst,address))
                 }else{
                     let offset=r.unsigned(w)?;let selector=r.unsigned(16)?;
                     (format!("const target_value {w} {offset}\nconst selector 16 {selector}"),format!("{selector:04x}:{offset:08x}"))
@@ -341,9 +341,8 @@ impl Image {
                 let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode(format!("{name} requires a memory far pointer")));}
                 dst=view(((m>>3)&7)as usize,w);src=dst;
                 let effective=r.effective(m,addr32)?;
-                let segment=effective.resolve(&[0;8],override_segment)?.segment.index();
                 address=Some(AddressContext{effective,override_segment,segments:self.segments});
-                let text=include_str!("../isa/i386/les.pil").replace("$SEG",&segment.to_string()).replace("$SPAN",&(w/8+2).to_string()).replace("$BYTES",&(w/8).to_string()).replace("$DEST",if opcode==0xc4{"0"}else{"3"});
+                let text=include_str!("../isa/i386/les.pil").replace("$SEG",&effective.resolve(&[0;8],override_segment)?.segment.index().to_string()).replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}).replace("$BYTES",&(w/8).to_string()).replace("$DEST",if opcode==0xc4{"0"}else{"3"});
                 (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
             }
             0x8c|0x8e=>{
@@ -517,10 +516,9 @@ impl Image {
                     let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode(format!("{name} requires a memory far pointer")));}
                     dst=view(((m>>3)&7)as usize,w);src=dst;
                     let effective=r.effective(m,addr32)?;
-                    let segment=effective.resolve(&[0;8],override_segment)?.segment.index();
                     address=Some(AddressContext{effective,override_segment,segments:self.segments});
                     let dest_reg=match second{0xb2=>"2",0xb4=>"4",_=>"5"};
-                    let text=include_str!("../isa/i386/les.pil").replace("$SEG",&segment.to_string()).replace("$SPAN",&(w/8+2).to_string()).replace("$BYTES",&(w/8).to_string()).replace("$DEST",dest_reg);
+                    let text=include_str!("../isa/i386/les.pil").replace("$SEG",&effective.resolve(&[0;8],override_segment)?.segment.index().to_string()).replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}).replace("$BYTES",&(w/8).to_string()).replace("$DEST",dest_reg);
                     (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
                 }else{
                 if !(0x90..=0x9f).contains(&second) {return Err(GuestError::Decode(format!("unsupported opcode 0f {second:02x}")));}
@@ -735,6 +733,13 @@ pub(crate) fn operand_name(view:View,address:Option<AddressContext>)->String {
     let segment=address.effective.resolve(&[0;8],address.override_segment).expect("decoded effective address").segment;
     let segment=format!("{segment:?}").to_ascii_uppercase();let size=match view.width{8=>"byte",16=>"word",_=>"dword"};
     format!("{size} {segment}:[{}]",terms.concat())
+}
+/// Reads a far pointer for CALL FAR/JMP FAR m16:16 or m16:32. Each field is
+/// checked on its own and the selector offset wraps at the address size, as
+/// the 386 does (a 16-bit EA of FFFEh takes the selector from 0000h).
+fn far_pointer(seg:usize,w:u8,addr32:bool)->String{
+    let (bytes,mask)=(w/8,if addr32{u32::MAX}else{0xffff});
+    format!("read_address operand\nconst slot 32 {bytes}\nadd selector_end operand slot\nconst offset_mask 32 {mask}\nand selector_at selector_end offset_mask\nzext wide_offset operand 64\ncheck_segment {seg} wide_offset {bytes}\nzext wide_selector selector_at 64\ncheck_segment {seg} wide_selector 2\nload target_value operand {w}\nload selector selector_at 16")
 }
 fn alu_name(group:u8)->&'static str { ["add","or","adc","sbb","and","sub","xor","cmp"][group as usize] }
 // Bind operand locations before validating tokens; flag semantics remain in PIL.

@@ -1,6 +1,6 @@
 //! Original expectations for real-mode forms found by SingleStepTests/80386:
 //! F2 STOS/LODS, FWAIT, CLTS, SALC, BOUND, ENTER with a nesting level and
-//! open-bus port I/O.
+//! open-bus port I/O, and far pointers whose selector wraps to offset 0000h.
 //! Image::load gives ES base 0, DS base 100h and SS base 200h.
 use super::*;
 fn machine(code:&[u8],regs:[u32;8],flags:u32,ram:&[(u32,u8,u32)])->(guest::Image,Ram,Cpu){
@@ -104,4 +104,28 @@ fn enter_reads_frame_pointers_it_has_just_pushed(){
  let(mut i,mut r,mut c)=machine(&[0xc8,0x00,0x00,0x03],[0,0,0,0,0x102,0x102,0,0],2,&[]);step(&mut i,&mut r,&mut c).unwrap();
  assert_eq!([0x300,0x2fe,0x2fc,0x2fa].map(|a|r.load(a,MemWidth::Word).unwrap()),[0x102,0x102,0x102,0x100]);
  assert_eq!((c.regs[5],c.regs[4]),(0x100,0xfa));
+}
+#[test]
+fn far_pointer_selector_wraps_at_the_address_size(){
+ // 26 C4 37 = LES SI,[ES:BX] with BX=FFFEh: offset word at ES:FFFEh, selector at ES:0000h.
+ let(mut i,mut r,mut c)=machine(&[0x26,0xc4,0x37],[1,2,3,0xfffe,0x800,6,7,8],2,&[(0xfffe,16,0x1234),(0,16,0x5678)]);
+ step(&mut i,&mut r,&mut c).unwrap();assert_eq!((c.regs[6],i.selectors[0],c.eip),(0x1234,0x5678,0x103));
+ // 26 66 0F B2 37 = LSS ESI,[ES:BX] with BX=FFFCh: offset dword at FFFCh, selector at 0000h.
+ let(mut i,mut r,mut c)=machine(&[0x26,0x66,0x0f,0xb2,0x37],[1,2,3,0xfffc,0x800,6,7,8],2,&[(0xfffc,32,0x89ab_cdef),(0,16,0x4321)]);
+ step(&mut i,&mut r,&mut c).unwrap();assert_eq!((c.regs[6],i.selectors[2],c.eip),(0x89ab_cdef,0x4321,0x105));
+ // 26 FF 1F = CALL FAR [ES:BX] with BX=FFFEh: jumps to 5678:1234 and pushes CS, then IP 0103h.
+ let(mut i,mut r,mut c)=machine(&[0x26,0xff,0x1f],[1,2,3,0xfffe,0x800,6,7,8],2,&[(0xfffe,16,0x1234),(0,16,0x5678)]);
+ let cs=i.selectors[1];step(&mut i,&mut r,&mut c).unwrap();
+ assert_eq!((c.eip,i.selectors[1],c.regs[4]),(0x1234,0x5678,0x7fc));assert_eq!((r.load(0x9fc,MemWidth::Word).unwrap(),r.load(0x9fe,MemWidth::Word).unwrap()),(0x103,u32::from(cs)));
+ // 26 FF 2F = JMP FAR [ES:BX] reads the same wrapped pointer.
+ let(mut i,mut r,mut c)=machine(&[0x26,0xff,0x2f],[1,2,3,0xfffe,0x800,6,7,8],2,&[(0xfffe,16,0x1234),(0,16,0x5678)]);
+ step(&mut i,&mut r,&mut c).unwrap();assert_eq!((c.eip,i.selectors[1]),(0x1234,0x5678));
+ // A field that itself crosses FFFFh still raises #GP, and nothing changes:
+ // the offset word at FFFFh, or the selector at FFFFh after an offset at FFFDh.
+ for bx in [0xffffu32,0xfffd]{
+  for code in [[0x26u8,0xc4,0x37],[0x26,0xff,0x1f]]{
+   let(mut i,mut r,mut c)=machine(&code,[1,2,3,bx,0x800,6,7,8],2,&[]);let (old,sel)=(c.clone(),i.selectors);
+   assert!(matches!(step(&mut i,&mut r,&mut c),Err(ExecError::GeneralProtection{..})),"BX={bx:x} {code:x?}");assert_eq!((c,i.selectors),(old,sel));
+  }
+ }
 }
