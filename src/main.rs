@@ -13,6 +13,7 @@ mod host_io;
 mod debugger;
 mod guest;
 mod dos;
+mod dos_config;
 mod fpu;
 mod containers;
 mod inflate;
@@ -2298,7 +2299,8 @@ const CLI_HELP:&str = "PIL - Processor Instruction Language
 Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
 
 DOS and ROM:
-  --dos-session [--mount DIR] [--args TEXT] PROGRAM
+  --pildos-startup [CONFIG]          Read configured program and arguments as JSON
+  --dos-session [--config FILE] [--mount DIR] [--args TEXT] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
   --run-rom PATH [--steps N]          Run a 64 KiB ROM
@@ -2342,6 +2344,11 @@ For a DOS window use: python tools/dos_terminal.py --help
 ";
 fn main() -> R<()> {
     let mut dos_args:Vec<_>=std::env::args().collect();
+    if dos_args.get(1).map(String::as_str)==Some("--pildos-startup"){
+        if dos_args.len()>3{return Err("usage: pil --pildos-startup [CONFIG]".into());}
+        let(program,args)=dos_config::startup(dos_args.get(2).map(String::as_str))?;
+        println!("{{\"program\":{},\"args\":{}}}",dos::session::quote(&program),args.as_deref().map(dos::session::quote).unwrap_or_else(||"null".into()));return Ok(());
+    }
     if dos_args.len()==1 || matches!(dos_args.get(1).map(String::as_str),Some("--help"|"-h")){
         if dos_args.len()>2{return Err("--help accepts no arguments".into());}
         print!("{CLI_HELP}");return Ok(());
@@ -2398,14 +2405,14 @@ fn main() -> R<()> {
         f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
-        let usage="usage: pil --dos-session [--mount HOST_FOLDER] [--args COMMAND_LINE] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
-        let(mut mount,mut tail,mut rest)=(None,None,&dos_args[2..]);
+        let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        let(mut mount,mut tail,mut config,mut rest)=(None,None,None,&dos_args[2..]);
         while let[flag,value,more@..]=rest{
-            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),_=>break}
+            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),"--config" if config.is_none()=>config=Some(value.as_str()),_=>break}
             rest=more;
         }
         let[program]=rest else{return Err(usage.into())};
-        return dos::session::serve(program,mount,tail,&stop_log).map_err(Into::into);
+        return dos::session::serve(program,mount,tail,&stop_log,config).map_err(Into::into);
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;

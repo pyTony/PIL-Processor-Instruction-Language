@@ -19,6 +19,27 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_cargo_engine_reads_config_and_runs_configured_program(self):
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / 'tail.com').write_bytes(TAIL)
+            (base / 'cdrive').mkdir()
+            config = base / 'pildos.conf'
+            config.write_text('program=tail.com\nargs=/C configured\nC=cdrive\ncountry=358\n', encoding='utf-8')
+            # An explicit config takes precedence over a stale environment setting.
+            with patch.dict(term.os.environ, {'PILDOS_CONFIG': str(base / 'missing.conf')}):
+                program, args = term.configured_startup(engine, config)
+                self.assertEqual(Path(program), base / 'tail.com')
+                self.assertEqual(args, '/C configured')
+                session = term.Session(engine, program, args=args, config=config)
+                try:
+                    reply = session.send('run 1000')
+                    self.assertEqual(reply['status'], 'exit')
+                    self.assertEqual(term.screen_rows(reply)[0][0].rstrip(), ' /C configured')
+                finally:
+                    session.close()
+
     def test_headless_routes_console_before_execution_and_forwards_serial(self):
         class FakeSession:
             def __init__(self):

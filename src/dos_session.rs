@@ -10,8 +10,8 @@ fn parse_drive_letter(text:&str)->Option<u8>{
         _=>None,
     }
 }
-fn open_mount_source(path:&str)->Result<Source,String>{
-    let p=Path::new(path);
+pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
+    let normalized=crate::dos_config::host_path(path);let p=normalized.as_path();
     let is_image=p.extension().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("img")||x.eq_ignore_ascii_case("ima"));
     if is_image&&p.is_file(){
         let data=super::super::containers::read_image(p)?;
@@ -207,7 +207,7 @@ impl Session{
         Ok((self.reply(seq,ok,&text,&output)?,quit))
     }
 }
-pub(super) fn quote(text:&str)->String{
+pub(crate) fn quote(text:&str)->String{
     let mut out=String::from("\"");
     for c in text.chars(){match c{'"'=>out.push_str("\\\""),'\\'=>out.push_str("\\\\"),'\n'=>out.push_str("\\n"),'\r'=>out.push_str("\\r"),'\t'=>out.push_str("\\t"),c if (c as u32)<0x20=>out.push_str(&format!("\\u{:04x}",c as u32)),c=>out.push(c)}}
     out.push('"');out
@@ -215,7 +215,7 @@ pub(super) fn quote(text:&str)->String{
 /// `--dos-session [--mount DIR] [--args TEXT] PATH`: PATH is a file or
 /// IMAGE::INNER inside a container. A FAT16 image becomes read-only drive C:
 /// and DIR the next drive; TEXT is the program's command line.
-pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str)->Result<(),String>{
+pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config:Option<&str>)->Result<(),String>{
     let mut logger=stoplog::Logger::new(log_path,path);
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;
@@ -234,6 +234,8 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str)->Resu
     // Z: holds files in memory for the session, and TEMP points there.
     drives.push(Source::Memory(MemDir::default()));
     let mut loaded=load_with_drives(&bytes,path,drives,inner)?;
+    let skip=mount.map(|_|if inner.is_some(){b'D'}else{b'C'});
+    crate::dos_config::apply(&mut loaded,config,skip)?;
     if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
     serial::attach(&mut loaded)?;
     let mut session=Session::new(loaded);

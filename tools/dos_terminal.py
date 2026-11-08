@@ -53,21 +53,8 @@ from pil_debugger import find_engine  # noqa: E402
 
 
 def find_dos_engine(explicit=None):
-    """Use the newest applicable DOS engine, including the local Windows build."""
-    if explicit:
-        return find_engine(explicit)
-    try:
-        standard = find_engine()
-    except FileNotFoundError:
-        standard = None
-    candidate = Path(__file__).resolve().parent.parent / 'programs/compiled/pil-engine-v2.exe'
-    windows_target = sys.platform == 'win32' or bool(os.environ.get('WSL_INTEROP'))
-    config_active = bool(os.environ.get('PILDOS_CONFIG')) or Path('pildos.conf').is_file()
-    if windows_target and candidate.is_file() and (config_active or standard is None or candidate.stat().st_mtime > standard.stat().st_mtime):
-        return candidate
-    if standard is None:
-        raise FileNotFoundError('Build PIL first, or select its executable with --engine PATH')
-    return standard
+    """Use an ordinary Cargo build, or the engine explicitly requested."""
+    return find_engine(explicit)
 
 MAX_REPLY = 8 * 1024 * 1024  # VGA frame plus escaped DOS and serial output
 SLICE = 20000

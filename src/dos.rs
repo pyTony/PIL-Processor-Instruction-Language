@@ -209,6 +209,15 @@ fn environment(path:&[u8],drive:u8,temp:Option<u8>)->Vec<u8>{
     env
 }
 pub use files::{MemDir,Source};
+/// Adjust the initial environment when configuration supplies the DOS drive.
+pub(crate) fn select_startup_drive(p:&mut Loaded,letter:u8)->Result<(),String>{
+    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let tail=b"COMSPEC=A:\\COMMAND.COM\0".len()+if p.drive.memory_letter().is_some(){b"TEMP=Z:\\\0".len()}else{0}+3;
+    for at in [env+8,env+tail as u32]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    p.drive.select_default(letter)?;
+    for at in [env+8,env+tail as u32]{p.ram.store(at,MemWidth::Byte,u32::from(letter)).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    Ok(())
+}
 use nls::COUNTRIES;
 /// Puts `text` in the PSP command tail at 80h as COMMAND.COM passes it: a
 /// count, a leading space, the text and CR. Printable ASCII only, up to 125

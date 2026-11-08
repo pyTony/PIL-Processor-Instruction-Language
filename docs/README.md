@@ -6,6 +6,9 @@ and development plans. The complete documentation lives on the
 The [main branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/main) is a separate
 runtime delivery and contains a smaller set of user documentation.
 
+For DOS startup, drive mounts and command-line overrides, see
+[DOS environment configuration](DOS_CONFIG.md).
+
 ## Current increment: 0.34.0-alpha.1
 
 AH02 character capture, AX3700 switch query and real-mode LES are implemented;
