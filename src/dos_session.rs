@@ -20,15 +20,19 @@ fn open_mount_source(path:&str)->Result<Source,String>{
     if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
     Err(format!("mount {path} is not a folder or .img/.ima image"))
 }
-pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,exceptions:Vec<ExceptionSite>,exception_count:usize}
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool}
 impl Session{
-    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,exceptions:Vec::new(),exception_count:0}}
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,exceptions:Vec::new(),exception_count:0,idle_hint:false}}
     fn live(&self)->bool{matches!(self.stop,Stop::Budget|Stop::WaitingForInput)}
     /// Runs up to `budget` steps; output already reaches the screen through Dine.
     pub fn run(&mut self,budget:usize)->Result<Vec<u8>,String>{
         if !self.live(){return Ok(Vec::new());}
         let loaded=self.loaded.take().ok_or("session state lost")?;
         let probe=run(loaded,budget)?;
+        // A hint only: polling programs continue running, but a frontend may
+        // reduce its execution rate while the screen is unchanged.
+        let polls=probe.instructions.get("DOS INT16/AH01").copied().unwrap_or(0)+probe.instructions.get("DOS INT16/AH11").copied().unwrap_or(0);
+        self.idle_hint=probe.completed>=1000&&polls.saturating_mul(200)>probe.completed&&probe.output.is_empty();
         self.exception_count+=probe.exception_count;
         self.exceptions.extend(probe.exceptions.into_iter().take(64-self.exceptions.len()));
         self.steps+=probe.completed;self.stop=probe.stop;self.loaded=Some(probe.loaded);
@@ -96,8 +100,8 @@ impl Session{
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
-        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
-            quote(text),quote(&detail),self.steps,quote(&String::from_utf8_lossy(output))))
+        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
+            quote(text),quote(&detail),self.steps,self.idle_hint,quote(&String::from_utf8_lossy(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
     pub fn command(&mut self,seq:u64,line:&str)->Result<(String,bool),String>{

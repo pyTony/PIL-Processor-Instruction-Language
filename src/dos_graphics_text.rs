@@ -33,18 +33,19 @@ pub(super) fn is_graphics(mode:u32)->bool{matches!(mode,4|5|6|0x13)||super::supe
 fn glyph_row(cell:u32,r:u32)->usize{match cell{16=>(r/2)as usize,14=>(r.div_ceil(2)).min(7)as usize,_=>r as usize}}
 /// A copy of the framebuffer of a graphics mode; the plan diffs it at the end.
 /// Planar modes copy each plane's used bytes through the host plane alias.
-struct Frame{mode:u32,base:u32,old:Vec<u8>,bytes:Vec<u8>,columns:u32,rows:u32,cell:u32,plane_bytes:usize}
+struct Frame{mode:u32,base:u32,old:Vec<u8>,bytes:Vec<u8>,columns:u32,rows:u32,cell:u32,plane_bytes:usize,page_offset:usize}
 impl Frame{
     fn read(p:&Loaded)->Result<Self,String>{
         let mode=byte(p,0x449)?;
         if let Some(g)=super::super::planar::geometry(mode){
             let planar=p.ram.planar().ok_or("planar memory is not mapped")?;let n=g.bytes();
-            let old:Vec<u8>=(0..4).flat_map(|k|planar.plane(k)[..n].iter().copied()).collect();
-            return Ok(Self{mode,base:crate::memory::PLANE_ALIAS,bytes:old.clone(),old,columns:g.columns(),rows:g.rows,cell:g.cell,plane_bytes:n});
+            let page=byte(p,0x462)?;let offset=super::super::planar::page_offset(mode,page)?;
+            let old:Vec<u8>=(0..4).flat_map(|k|planar.plane(k)[offset..offset+n].iter().copied()).collect();
+            return Ok(Self{mode,base:crate::memory::PLANE_ALIAS,bytes:old.clone(),old,columns:g.columns(),rows:g.rows,cell:g.cell,plane_bytes:n,page_offset:offset});
         }
         let(base,len)=match mode{4|5|6=>(VIDEO,0x4000),0x13=>(0xa0000,64000),_=>return Err(format!("mode {mode:02x}h is not a graphics mode"))};
         let old=p.ram.bytes().get(base as usize..(base+len)as usize).ok_or("framebuffer outside RAM")?.to_vec();
-        Ok(Self{mode,base,bytes:old.clone(),old,columns:if mode==6{80}else{40},rows:25,cell:8,plane_bytes:0})
+        Ok(Self{mode,base,bytes:old.clone(),old,columns:if mode==6{80}else{40},rows:25,cell:8,plane_bytes:0,page_offset:0})
     }
     fn columns(&self)->u32{self.columns}
     fn planar(&self)->bool{self.plane_bytes!=0}
@@ -98,7 +99,7 @@ impl Frame{
     fn writes(&self)->Writes{
         self.bytes.iter().zip(&self.old).enumerate().filter(|(_,(n,o))|n!=o)
             .map(|(i,(n,_))|{
-                let at=if self.planar(){(i/self.plane_bytes*crate::vga_planar::PLANE+i%self.plane_bytes)as u32}else{i as u32};
+                let at=if self.planar(){(i/self.plane_bytes*crate::vga_planar::PLANE+self.page_offset+i%self.plane_bytes)as u32}else{i as u32};
                 (self.base+at,MemWidth::Byte,u32::from(*n))
             }).collect()
     }
@@ -119,10 +120,11 @@ fn glyph(p:&Loaded,ch:u32)->Result<[u8;8],String>{
     for(n,row)in glyph.iter_mut().enumerate(){*row=byte(p,at+n as u32)? as u8;}
     Ok(glyph)
 }
-/// Cursor of the active page, which is page 0 in every graphics mode here.
+/// Cursor of the BIOS active page.
 fn cursor(p:&Loaded,frame:&Frame)->Result<(u32,u32),String>{
-    if byte(p,0x462)?!=0{return Err("graphics modes have only display page 0".into());}
-    let position=p.ram.load(0x450,MemWidth::Word).map_err(|e|format!("BIOS cursor read: {e:?}"))?;
+    let page=byte(p,0x462)?;if page>=8{return Err("graphics page outside 0..7".into());}
+    if !frame.planar()&&page!=0{return Err("graphics modes have only display page 0".into());}
+    let position=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor read: {e:?}"))?;
     let(row,col)=(position>>8,position&255);
     if row>=frame.rows||col>=frame.columns(){return Err(format!("BIOS cursor outside the {}x{} graphics text grid",frame.rows,frame.columns()));}
     Ok((row,col))
@@ -148,7 +150,7 @@ pub(super) fn teletype(p:&Loaded,bytes:&[u8],color:u32,dos_tabs:bool)->Result<Wr
             if row==frame.rows{let last=frame.rows-1;frame.scroll((0,0,last,cols-1),1,0,true);row=last;}
         }
     }
-    let mut writes=frame.writes();writes.push((0x450,MemWidth::Word,(row<<8)|col));
+    let mut writes=frame.writes();writes.push((0x450+byte(p,0x462)?*2,MemWidth::Word,(row<<8)|col));
     Ok(writes)
 }
 /// AH09h/AH0Ah: `count` copies of AL from the cursor in colour BL, without

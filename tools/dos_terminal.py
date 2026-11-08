@@ -862,6 +862,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     def tick():
         try:
             reply = session.last
+            previous = reply
             sent = False
             state['settle'] = max(0, state['settle'] - 1)
             while keys and reply['status'] in ('running', 'waiting_input'):
@@ -882,6 +883,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 if sent.startswith('shift'):
                     break
                 state['settle'] = SETTLE
+            incoming = b''
             if com1:
                 incoming = com1.read()
                 for at in range(0, len(incoming), 100):
@@ -890,9 +892,14 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             if reply['status'] in ('running', 'waiting_input'):
                 reply = session.send(f'run {SLICE}')
                 until = time.monotonic() + FRAME
-                while reply['status'] == 'running' and not keys and time.monotonic() < until:
+                idle = (not sent and not keys and not incoming and reply.get('idle_hint', False) and
+                        all(reply.get(k) == previous.get(k) for k in
+                            ('screen', 'graphics_planar', 'graphics_cga', 'graphics13')))
+                while reply['status'] == 'running' and not keys and not idle and time.monotonic() < until:
                     speaker.observe(reply)
                     reply = session.send(f'run {BURST}')
+            else:
+                idle = False
             if com1 and session.com1_out:
                 com1.write(session.com1_out)
                 session.com1_out = b''
@@ -900,7 +907,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
             return
-        root.after(1 if session.last['status'] == 'running' else 40, tick)
+        root.after(1 if session.last['status'] == 'running' and not idle else 40, tick)
 
     def close():
         if com1 and hasattr(com1, 'close'):
