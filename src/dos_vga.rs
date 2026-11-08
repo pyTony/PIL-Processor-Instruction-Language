@@ -27,8 +27,10 @@ fn default_palette()->[[u8;3];256]{
     p
 }
 #[derive(Clone,Debug)]
-pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(super) idle:Controllers }
-impl Default for Vga {fn default()->Self{Self{attr:EGA_ATTR,attr_index:0x20,attr_data:false,cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3)}}}
+pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(super) idle:Controllers,
+    /// Text-mode font memory (plane 2, see dos_vga_font) while A0000h does not show it.
+    pub(super) font:Option<crate::vga_planar::Planar> }
+impl Default for Vga {fn default()->Self{Self{attr:EGA_ATTR,attr_index:0x20,attr_data:false,cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None}}}
 /// Sequencer and graphics controller registers outside the planar modes,
 /// where the planes are not mapped. The BIOS mode set loads the mode's
 /// standard values. Programs may write the registers that only steer planar
@@ -36,9 +38,13 @@ impl Default for Vga {fn default()->Self{Self{attr:EGA_ATTR,attr_index:0x20,attr
 /// mode, bit mask): they read back, and video memory keeps the mode's own
 /// layout until the next mode set, as GW-BASIC expects when it programs them
 /// ahead of SCREEN 7-9. Registers that remap or reshape video memory (memory
-/// mode, miscellaneous, shift and 256-colour bits) stay refused.
+/// mode, miscellaneous, shift and 256-colour bits) stay refused, except in
+/// the text modes, where a program may map the font plane at A0000h (see
+/// dos_vga_font).
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub(super) struct Controllers{pub seq:[u8;5],pub gc:[u8;9],pub seq_index:u8,pub gc_index:u8}
+pub(super) struct Controllers{pub seq:[u8;5],pub gc:[u8;9],pub seq_index:u8,pub gc_index:u8,
+    /// The text modes' own memory map (GC 06h bits 2-3), None in graphics modes.
+    pub text_map:Option<u8>}
 impl Controllers{
     pub fn standard(mode:u32)->Self{
         let(seq,gc)=match mode{
@@ -47,10 +53,21 @@ impl Controllers{
             0x13=>([3,1,0x0f,0,0x0e],[0,0,0,0,0,0x40,5,0x0f,0xff]),
             _=>([3,0,3,0,2],[0,0,0,0,0,0x10,0x0e,0,0xff]),
         };
-        Self{seq,gc,seq_index:0,gc_index:0}
+        let text_map=matches!(mode,0..=3|7).then_some(gc[6]&0x0c);
+        Self{seq,gc,seq_index:0,gc_index:0,text_map}
     }
     /// Whether a write keeps the memory layout of the current mode.
     pub fn allowed(&self,sequencer:bool,index:usize,value:u8)->bool{
+        if let Some(map)=self.text_map{
+            match(sequencer,index){
+                // Odd/even and extended memory may change; chain-4 may not.
+                (true,4)=>return value&0x08==0,
+                // The memory map may move to A0000h and back; alphanumeric
+                // mode and the shift/256-colour bits stay.
+                (false,6)=>return value&0x01==self.gc[6]&0x01&&(value&0x0c==map||value&0x0c<=0x04),
+                _=>{},
+            }
+        }
         match(sequencer,index){
             (true,2)=>true,
             (false,0..=4|7|8)=>true,

@@ -392,8 +392,9 @@ fn ascii_adjust_instructions_match_the_sdm_and_aam_zero_faults(){
         let r=run(p,5).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
         assert_eq!((r.loaded.cpu.regs[0],r.loaded.cpu.eflags&1),(0xabcd_0000|want,cf),"{code:02x?} {ax:04x}");
     }
-    // AAM 0 is a divide error: nothing changes.
-    let mut p=load(&[0xd4,0x00,0xf4],"z.com").unwrap();p.cpu.regs[0]=0x55;let cpu=p.cpu.clone();
+    // AAM 0 is a divide error: nothing changes (vector 0 cleared, so the
+    // fault stops the run instead of reaching the DOS default handler).
+    let mut p=load(&[0xd4,0x00,0xf4],"z.com").unwrap();p.cpu.regs[0]=0x55;p.ram.store(0,MemWidth::Dword,0).unwrap();let cpu=p.cpu.clone();
     let r=run(p,5).unwrap();assert!(matches!(r.stop,Stop::Fault(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu,cpu);
 }
 #[test]
@@ -451,12 +452,39 @@ fn divide_error_enters_the_handler_with_the_div_address_and_restarts_it(){
     assert_eq!(r.instructions.get("#DE (vector 00h)"),Some(&1));
     assert_eq!(r.exception_count,1);assert_eq!(r.exceptions[0].eip,0x117);
 }
+fn screen_row(p:&Loaded,row:u32)->String{
+    (0..80).map(|c|char::from(p.ram.load(0xb8000+(row*80+c)*2,MemWidth::Byte).unwrap()as u8)).collect::<String>().trim_end().to_string()
+}
 #[test]
-fn without_a_program_handler_a_divide_error_still_stops_the_run(){
-    let mut p=load(&[0x31,0xc9,0xf7,0xf1,0xfa,0xf4],"de.com").unwrap();p.cpu.eflags=0x202;
-    let r=run(p,10).unwrap();
-    assert!(matches!(&r.stop,Stop::Fault(m) if m.contains("Exception")&&m.contains("vector: 0")),"{:?}",r.stop);
-    assert_eq!(r.loaded.cpu.eip,0x102,"nothing committed");
+fn without_a_program_handler_a_divide_error_reaches_the_dos_default_handler(){
+    // MOV BX,5678h; PUSH BX; XOR CX,CX; DIV CX at 0105h. Vector 0 holds its
+    // entry, so the FreeDOS default handler prints the message and 13 stack
+    // words (IP, CS, FLAGS, then 5678h and the PSP's zero word) and ends the
+    // program with errorlevel 127.
+    let mut p=load(&[0xbb,0x78,0x56,0x53,0x31,0xc9,0xf7,0xf1,0xfa,0xf4],"de.com").unwrap();p.cpu.eflags=0x202;
+    assert_eq!(p.ram.load(0,MemWidth::Dword).unwrap(),entry(0));
+    let r=run(p,20).unwrap();
+    assert!(matches!(r.stop,Stop::Exit(0x7f)),"{:?}",r.stop);
+    assert_eq!(r.instructions.get("#DE (vector 00h)"),Some(&1));
+    assert_eq!((r.exception_count,r.exceptions[0].eip,r.exceptions[0].vector),(1,0x106,0));
+    assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x4c7f);
+    let p=&r.loaded;
+    assert_eq!(screen_row(p,1),"Interrupt divide by zero, stack:");
+    let words=screen_row(p,2);let words:Vec<&str>=words.split(' ').collect();
+    assert_eq!(words.len(),13,"{words:?}");
+    assert_eq!(&words[..5],&["0106",&format!("{PSP:04X}"),"0246","5678","0000"]);
+    assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),3<<8,"cursor after the final CR LF");
+}
+#[test]
+fn the_default_divide_handler_needs_the_bios_int10_and_a_null_vector_still_stops(){
+    // A program that hooked INT 10h: the kernel's print would reach its handler.
+    let code=with_hook(0x10,&[0x31,0xc9,0xf7,0xf1],&[0xcf]);
+    let r=run(load(&code,"de10.com").unwrap(),40).unwrap();
+    assert!(matches!(&r.stop,Stop::Service(m) if m.contains("INT 10h")),"{:?}",r.stop);
+    // A vector a program cleared to 0000:0000 is not the kernel's handler.
+    let code=[0x31,0xc0,0x8e,0xc0,0x26,0x66,0xc7,0x06,0,0,0,0,0,0,0x31,0xc9,0xf7,0xf1,0xfa,0xf4];
+    let r=run(load(&code,"de0.com").unwrap(),40).unwrap();
+    assert!(matches!(&r.stop,Stop::Fault(m) if m.contains("vector: 0")),"{:?}",r.stop);
 }
 #[test]
 fn idiv_overflow_and_aam_zero_are_divide_errors_too(){

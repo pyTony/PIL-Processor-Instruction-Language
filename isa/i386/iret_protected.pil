@@ -1,8 +1,9 @@
-# Protected-mode interrupt return to the same privilege level: read EIP, CS
-# and EFLAGS, then branch through the code descriptor as RETF does. A
-# selector whose RPL is above CPL (a return to an outer level, with SS:ESP
-# on the stack) stops in far_branch; NT=1 (a task return) and, for IRETD at
-# CPL 0, VM=1 in the popped flags (a return to virtual-8086 mode) stop here.
+# Protected-mode interrupt return: read EIP, CS and EFLAGS, then return
+# through far_return as RETF does (privilege.rs): at the same level, or to
+# an outer one with ESP and SS popped from above the frame and data
+# segments the outer level may not use nulled. NT=1 (a task return) and,
+# for IRETD at CPL 0, VM=1 in the popped flags (a return to virtual-8086
+# mode) stop here. The flag rules below use the CPL before the return.
 # The status flags, TF, DF, NT and OF come from the frame. IOPL changes only
 # at CPL 0, and IF only where CPL is at most the current IOPL; elsewhere both
 # keep their values, as the 386 does. RF is not modelled.
@@ -26,10 +27,10 @@ read_cpl cpl
 zero ring0 cpl
 $VM_CHECK
 zext target32 target_value 32
-far_branch selector target32
 const frame_bytes $S $FRAME
-add new_sp old_sp frame_bytes
-write_gpr 4 new_sp
+add outer_sp old_sp frame_bytes
+zext outer outer_sp 32
+far_return selector target32 outer $BYTES 0
 read_flag iopl_low IOPL0
 read_flag iopl_high IOPL1
 zext iopl_low8 iopl_low 8

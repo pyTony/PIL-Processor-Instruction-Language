@@ -192,6 +192,12 @@ fn teletype(p:&mut Loaded)->Result<(),String>{
     let writes=teletype_plan(p,active_page(p)?,&[p.cpu.regs[0]as u8],false)?;
     commit(p,&writes)
 }
+/// INT 10h AH=0Eh for several bytes on the active page, as a DOS kernel
+/// prints with it; `color` is BL, the foreground in graphics modes.
+pub(super) fn bios_teletype(p:&Loaded,bytes:&[u8],color:u32)->Result<Writes,String>{
+    if graphics_text::is_graphics(byte(p,0x449)?){return graphics_text::teletype(p,bytes,color,false);}
+    teletype_plan(p,active_page(p)?,bytes,false)
+}
 /// DOS console output also reaches the active page, as through INT29/AH0E;
 /// with the ANSI driver loaded its escape sequences are interpreted.
 pub(super) fn dos_screen(p:&Loaded,bytes:&[u8])->Result<Writes,String>{
@@ -260,7 +266,7 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
     if super::planar::geometry(al&0x7f).is_some(){return super::planar::set_mode(p,al&0x7f,al&0x80!=0);}
     let result=set_other_mode(p,al);
     // Leaving a planar mode unmaps the planes; A000h is ordinary RAM again.
-    if result.is_ok(){p.ram.set_planar(None);p.vga.idle=super::vga::Controllers::standard(al&0x7f);}
+    if result.is_ok(){p.ram.set_planar(None);p.vga.font=None;p.vga.idle=super::vga::Controllers::standard(al&0x7f);}
     result
 }
 fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{

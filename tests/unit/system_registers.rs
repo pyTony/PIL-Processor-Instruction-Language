@@ -94,8 +94,8 @@ fn lldt_and_ltr_check_the_descriptor_and_mark_the_tss_busy(){
  let(result,i,_,_)=run(&[0x0f,0x00,0xd0],|_,c|c.regs[0]=0x23);result.unwrap();assert_eq!(i.ldt_tr[0].selector,0x23);
  // A memory operand: LLDT [0800h].
  let(mut i,mut r,mut c)=protected(&[0x0f,0x00,0x16,0x00,0x08]);r.store(0x900,MemWidth::Word,0x20).unwrap();step(&mut i,&mut r,&mut c).unwrap();assert_eq!(i.ldt_tr[0].base,LDT);
- // Above CPL 0 both stop (the #GP(0) path is not modelled yet).
- let(mut i,mut r,mut c)=protected_at(&[0x0f,0x00,0xd0],3);c.regs[0]=0x20;assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::InvalidContext));
+ // Above CPL 0 it is #GP(0).
+ let(mut i,mut r,mut c)=protected_at(&[0x0f,0x00,0xd0],3);c.regs[0]=0x20;assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::GeneralProtection{eip:0x100,error_code:0}));
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn segment_loads_read_the_ldt(){
  let with_ldt=|i:&mut guest::Image,c:&mut Cpu|{i.ldt_tr[0]=SystemSegment{selector:0x20,base:LDT,limit:0x17,kind:2};c.regs[0]=0x0c;};
  // MOV DS,AX with 0Ch: the 16-bit data segment at 20000h in the LDT.
  let(result,i,r,_)=run(&[0x8e,0xd8],with_ldt);result.unwrap();
- assert_eq!((i.selectors[3],i.segments[3]),(0x0c,SegmentCache{base:0x20000,limit:0xffff,access:SegmentAccess::Data{writable:true,expand_down:false,big:false}}));
+ assert_eq!((i.selectors[3],i.segments[3]),(0x0c,SegmentCache{base:0x20000,limit:0xffff,access:SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:0}}));
  assert_eq!(r.load(LDT+8+5,MemWidth::Byte).unwrap(),0x93,"the LDT entry is marked accessed");
  // Without an LDT, or past its limit, a TI=1 selector is #GP(selector).
  let(result,_,_,_)=run(&[0x8e,0xd8],|_,c|c.regs[0]=0x0c);assert_eq!(result,gp(0x0c));
@@ -182,6 +182,6 @@ fn arpl_raises_the_destination_rpl(){
  // ARPL [0800h],BX writes the word back; a read-only segment faults.
  let(mut i,mut r,mut c)=protected(&[0x63,0x1e,0x00,0x08]);r.store(0x900,MemWidth::Word,0x0020).unwrap();c.regs[3]=1;step(&mut i,&mut r,&mut c).unwrap();
  assert_eq!(r.load(0x900,MemWidth::Word).unwrap(),0x21);
- let(mut i,mut r,mut c)=protected(&[0x63,0x1e,0x00,0x08]);i.segments[3].access=SegmentAccess::Data{writable:false,expand_down:false,big:false};c.regs[3]=1;
+ let(mut i,mut r,mut c)=protected(&[0x63,0x1e,0x00,0x08]);i.segments[3].access=SegmentAccess::Data{writable:false,expand_down:false,big:false,dpl:0};c.regs[3]=1;
  assert_eq!(step(&mut i,&mut r,&mut c),gp(0));
 }

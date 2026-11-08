@@ -2,7 +2,7 @@
 use super::*;
 use address::{SegmentAccess};
 fn setup(code:&[u8],big:bool)->(guest::Image,Ram,Cpu){
- let(mut i,_)=guest::Image::load(code).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};
+ let(mut i,_)=guest::Image::load(code).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
  let mut r=Ram::new(0x22000);r.write_bytes(0x100,code).unwrap();
  let c=Cpu{regs:[0x12345678,0xabcdef01,0x55555555,0x600,0x800,0x800,8,0],eflags:0xad7,undefined_flags:u32::MAX,eip:0x100};(i,r,c)
 }

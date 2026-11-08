@@ -30,11 +30,11 @@ fn memory_segment_moves_use_old_segment_and_word_access_even_with_66(){
 fn segment_pop_uses_old_ss_operand_width_and_commits_pointer_and_cache_together(){
     for big in [false,true]{for w in [16,32]{for (segment,opcode) in [(0,vec![0x07]),(2,vec![0x17]),(3,vec![0x1f]),(4,vec![0x0f,0xa1]),(5,vec![0x0f,0xa9])]{
         let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.extend(opcode);
-        let (mut image,mut ram,mut c)=setup(&bytes);image.segments[2]=SegmentCache{base:0x400,limit:0x1ffff,access:SegmentAccess::Data{writable:true,expand_down:false,big}};c.regs[4]=if big{0xfffe}else{0xabcd0800};
+        let (mut image,mut ram,mut c)=setup(&bytes);image.segments[2]=SegmentCache{base:0x400,limit:0x1ffff,access:SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0}};c.regs[4]=if big{0xfffe}else{0xabcd0800};
         let pointer=c.regs[4];let mask=if big{u32::MAX}else{65535};let at=0x400+(pointer&mask);ram.store(at,MemWidth::from_bits(w).unwrap(),0xabcd0040).unwrap();let old=c.clone();let oldram=ram.clone();
         step(&mut image,&mut ram,&mut c).unwrap();let mut want=old;want.regs[4]=(pointer&!mask)|(pointer.wrapping_add((w/8)as u32)&mask);want.eip=0x100+bytes.len()as u32;assert_eq!(c,want);
         assert_eq!(ram,oldram);assert_eq!(image.selectors[segment],0x40);// A real-mode load changes only the base: SS keeps its limit and B bit.
-        assert_eq!(image.segments[segment],if segment==2{SegmentCache{base:0x400,limit:0x1ffff,access:SegmentAccess::Data{writable:true,expand_down:false,big}}}else{SegmentCache::real_mode(0x40)});assert_eq!(image.ss_shadow,u8::from(segment==2));
+        assert_eq!(image.segments[segment],if segment==2{SegmentCache{base:0x400,limit:0x1ffff,access:SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0}}}else{SegmentCache::real_mode(0x40)});assert_eq!(image.ss_shadow,u8::from(segment==2));
     }}}
 }
 #[test]

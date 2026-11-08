@@ -64,7 +64,10 @@ pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<
     }
     if word&&!matches!(port,0x3c4|0x3ce){return Err("VGA word access must start at index port 3C4h or 3CEh".into());}
     let sequencer=port<0x3ce;
-    let Some(planar)=p.ram.planar() else{return idle_io(p,sequencer,port&1==0,input,value,word).map(Some);};
+    // Outside the planar modes (where a text mode may still map its font
+    // plane at A0000h) the controllers are the idle set.
+    let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?;
+    let(true,Some(planar))=(geometry(mode).is_some(),p.ram.planar()) else{return idle_io(p,sequencer,port&1==0,input,value,word).map(Some);};
     let mut next=planar.clone();
     let mut index=if sequencer{next.seq_index}else{next.gc_index};
     let mut access=|data:bool,value:u8|->Result<u8,String>{
@@ -107,7 +110,7 @@ fn idle_io(p:&mut Loaded,sequencer:bool,even:bool,input:bool,value:u16,word:bool
     let lo=access(!even,value as u8)?;
     let hi=if word{access(true,(value>>8)as u8)?}else{0};
     if sequencer{next.seq_index=index;}else{next.gc_index=index;}
-    p.vga.idle=next;
+    p.vga.idle=next;super::vga_font::sync(p);
     Ok(u16::from(lo)|u16::from(hi)<<8)
 }
 /// INT 10h AH=0Ch/0Dh in a planar mode, page 0. Bit 7 of AL XORs.

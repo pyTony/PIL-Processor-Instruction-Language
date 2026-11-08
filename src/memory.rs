@@ -39,7 +39,9 @@ pub struct Ram {
     readonly:Vec<std::ops::Range<usize>>,
     a20_enabled:bool,
     planar:Option<Box<super::vga_planar::Planar>>,
-    paging:Option<Paging>,
+    /// A Cell so that `as_level` can make one access supervisor-level (a
+    /// descriptor or TSS read at CPL 3) through `&self`.
+    paging:std::cell::Cell<Option<Paging>>,
     /// Accessed and dirty bits a page walk has set but `&self` methods could
     /// not yet write: (physical byte, bits to OR). Reads see them at once;
     /// `settle` writes them, and every `&mut` method settles first.
@@ -50,10 +52,28 @@ pub struct Ram {
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),a20_enabled:true,planar:None,paging:None,marks:Default::default()}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default()}}
     /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
     /// modelled: every access walks the tables as they are in memory.
-    pub fn set_paging(&mut self,paging:Option<Paging>){self.settle();self.paging=paging;}
+    pub fn set_paging(&mut self,paging:Option<Paging>){self.settle();self.paging.set(paging);}
+    /// Runs `f` with accesses at user level (`user`) or supervisor level,
+    /// whatever CPL selected: the 386 reads descriptor tables and the TSS,
+    /// and pushes on an inner-level stack, at supervisor level.
+    pub fn as_level<T>(&self,user:bool,f:impl FnOnce(&Self)->T)->T{
+        let saved=self.paging.get();
+        self.paging.set(saved.map(|p|Paging{user,..p}));
+        let result=f(self);
+        self.paging.set(saved);
+        result
+    }
+    /// A store at user or supervisor level (see `as_level`).
+    pub fn store_as(&mut self,user:bool,address:u32,width:MemWidth,value:u32)->Result<(),AccessFault>{
+        let saved=self.paging.get();
+        self.paging.set(saved.map(|p|Paging{user,..p}));
+        let result=self.store(address,width,value);
+        self.paging.set(saved);
+        result
+    }
     /// Writes the accessed and dirty bits that walks have marked.
     pub fn settle(&mut self){for (at,bits) in self.marks.get_mut().drain(..){if let Some(b)=self.data.get_mut(at){*b|=bits;}}}
     fn byte(&self,index:usize)->u8{
@@ -75,7 +95,7 @@ impl Ram {
     /// set for a write, bit 2 for user level. Only a walk that succeeds sets
     /// the accessed bits of both entries, and the PTE's dirty bit on a write.
     pub fn translate(&self,linear:u32,write:bool)->Result<u32,AccessFault>{
-        let Some(paging)=self.paging else{return Ok(linear);};
+        let Some(paging)=self.paging.get() else{return Ok(linear);};
         let code=(u8::from(write)<<1)|(u8::from(paging.user)<<2);
         let fault=|p:u8|AccessFault{address:linear,bytes:1,write,page:Some(code|p)};
         let pde_at=(paging.directory&!0xfff).wrapping_add((linear>>22)*4);
@@ -114,7 +134,7 @@ impl Ram {
     /// A contiguous bus span, or None when it crosses an A20 boundary.
     pub fn contiguous_slice(&self,address:u32,bytes:usize)->Option<&[u8]>{
         // Paged fetches go byte by byte, so the walk marks the code page.
-        if self.paging.is_some(){return None;}
+        if self.paging.get().is_some(){return None;}
         if !self.a20_enabled&&bytes>0x100000-(address as usize&0xfffff){return None;}
         let start=self.physical_address(address)as usize;let end=start.checked_add(bytes)?;self.data.get(start..end)
     }
@@ -140,7 +160,7 @@ impl Ram {
     fn check_bus(&self,address:u32,bytes:usize,write:bool)->Result<(),AccessFault>{
         let fault=AccessFault::bus(address,bytes,write);
         if u64::from(address).checked_add(bytes as u64).is_none_or(|end|end>0x1_0000_0000){return Err(fault);}
-        if self.paging.is_some(){
+        if self.paging.get().is_some(){
             // Byte by byte: a page fault names the first byte that faults.
             for i in 0..bytes as u32{
                 let at=self.locate(address+i,write)?;
@@ -161,7 +181,7 @@ impl Ram {
     pub fn load(&self,address:u32,width:MemWidth)->Result<u32,AccessFault> {
         let bytes=width.bytes()as usize;self.check_bus(address,bytes,false)?;
         let mut value=0u32;
-        if self.paging.is_some(){
+        if self.paging.get().is_some(){
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,false)?as usize;
                 let byte=match self.window(index){Some(at)=>self.planar.as_deref().unwrap().read(at),None=>self.byte(index)};
@@ -201,7 +221,7 @@ impl Ram {
     pub fn store(&mut self,address:u32,width:MemWidth,value:u32)->Result<(),AccessFault> {
         self.settle();
         let bytes=width.bytes()as usize;self.check_bus(address,bytes,true)?;
-        if self.paging.is_some(){
+        if self.paging.get().is_some(){
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
                 match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>self.data[index]=byte}
@@ -224,7 +244,7 @@ impl Ram {
     pub fn write_bytes(&mut self,address:u32,data:&[u8])->Result<(),AccessFault> {
         self.settle();
         self.check_bus(address,data.len(),true)?;
-        if self.paging.is_some(){
+        if self.paging.get().is_some(){
             for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;self.data[index]=b;}
             self.settle();
             return Ok(());

@@ -1,6 +1,6 @@
 use super::*;
 use address::SegmentAccess;
-fn fixture(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){let(mut i,_)=guest::Image::load(bytes).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};let mut r=Ram::new(0x40000);r.write_bytes(0x100,bytes).unwrap();(i,r,Cpu{regs:[0x12345678,0,0,0,0xabcd0400,if big{0x800}else{0xdead0800},0,0],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100})}
+fn fixture(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){let(mut i,_)=guest::Image::load(bytes).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};let mut r=Ram::new(0x40000);r.write_bytes(0x100,bytes).unwrap();(i,r,Cpu{regs:[0x12345678,0,0,0,0xabcd0400,if big{0x800}else{0xdead0800},0,0],eflags:0xed7,undefined_flags:u32::MAX,eip:0x100})}
 fn step(i:&mut guest::Image,r:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{if let guest::Operation::Pil{program,dst,src,flow,address}=i.decode(r,c.eip).unwrap().operation{let mut m=i.segment_state();let res=execute_machine(&program,c,dst,src,flow,r,address,&mut m);if res.is_ok(){i.set_segment_state(m);}res}else{panic!()}}
 #[test]
 fn leave_independent_operand_stack_sizes_and_readonly_source(){

@@ -1,7 +1,7 @@
 //! Independent state checks for real-mode flags, STI delay and counter branches.
 use super::*;
 use address::{SegmentAccess,SegmentState};
-fn setup(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){let(mut i,_)=guest::Image::load(bytes).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big};let mut r=Ram::new(0x21000);r.write_bytes(0x100,bytes).unwrap();(i,r,Cpu{regs:[0x12345678,0,0,0,if big{0x800}else{0xabcd0800},0,0x800,0xa00],eflags:0xad7,undefined_flags:u32::MAX,eip:0x100})}
+fn setup(bytes:&[u8],big:bool)->(guest::Image,Ram,Cpu){let(mut i,_)=guest::Image::load(bytes).unwrap();i.segments[2].access=SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};let mut r=Ram::new(0x21000);r.write_bytes(0x100,bytes).unwrap();(i,r,Cpu{regs:[0x12345678,0,0,0,if big{0x800}else{0xabcd0800},0,0x800,0xa00],eflags:0xad7,undefined_flags:u32::MAX,eip:0x100})}
 fn step(i:&mut guest::Image,r:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{let d=i.decode(r,c.eip).unwrap();if let guest::Operation::Pil{program,dst,src,flow,address}=d.operation{let mut m=i.segment_state();let result=execute_machine(&program,c,dst,src,flow,r,address,&mut m);if result.is_ok(){i.set_segment_state(m);}result}else{panic!()}}
 fn op(w:u8,code:u8)->Vec<u8>{if w==32{vec![0x66,code]}else{vec![code]}}
 #[test]
@@ -24,7 +24,9 @@ fn stack_flag_faults_preserve_cpu_ram_and_both_shadows(){
 }
 #[test]
 fn real_mode_guards_reject_protected_and_vm_context_without_effects(){
- for code in [0xfa,0xfb,0x9c,0x9d]{for vm in [false,true]{let(mut i,mut r,mut c)=setup(&[code],false);if vm{c.eflags|=0x20000;}else{i.real_mode=false;i.segments[1].access=address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}let old=c.clone();let oldr=r.clone();let oldm=i.segment_state();assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::InvalidContext));assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i.segment_state(),oldm);}}
+ // V86 mode stops for all four; CLI and STI at CPL 3 with IOPL 0 are #GP(0).
+ // (PUSHF and POPF at CPL 3 are allowed: tests/unit/privilege.rs.)
+ for code in [0xfa,0xfb,0x9c,0x9d]{for vm in [false,true]{if !vm&&code>=0x9c{continue;}let(mut i,mut r,mut c)=setup(&[code],false);if vm{c.eflags|=0x20000;}else{i.real_mode=false;i.segments[1].access=address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}let old=c.clone();let oldr=r.clone();let oldm=i.segment_state();assert_eq!(step(&mut i,&mut r,&mut c),if vm{Err(ExecError::InvalidContext)}else{Err(ExecError::GeneralProtection{eip:0x100,error_code:0})});assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i.segment_state(),oldm);}}
 }
 #[test]
 fn counter_branch_uses_address_size_without_changing_count_or_flags(){

@@ -24,7 +24,7 @@ fn protected(code:&[u8])->(guest::Image,Ram,Cpu){
 fn step(i:&mut guest::Image,r:&mut Ram,c:&mut Cpu)->Result<(),ExecError>{
  let d=i.decode(r,c.eip).unwrap();if let guest::Operation::Pil{program,dst,src,flow,address}=d.operation{let mut m=i.segment_state();let result=execute_machine(&program,c,dst,src,flow,r,address,&mut m);if result.is_ok(){i.set_segment_state(m);}result}else{panic!("PIL expected at {:x}",c.eip)}
 }
-fn flat(big:bool,writable:bool)->SegmentAccess{SegmentAccess::Data{writable,expand_down:false,big}}
+fn flat(big:bool,writable:bool)->SegmentAccess{SegmentAccess::Data{writable,expand_down:false,big,dpl:0}}
 
 #[test]
 fn switch_to_protected_mode_run_32_bit_code_and_return_to_unreal_mode(){
@@ -93,7 +93,7 @@ fn far_transfers_check_the_code_descriptor(){
  // EA 00 01 sel = JMP FAR sel:0100 from 16-bit protected-mode code.
  let jmp=|selector:u16|{let s=selector.to_le_bytes();protected(&[0xea,0x00,0x01,s[0],s[1]])};
  let(mut i,mut r,mut c)=jmp(0x18);step(&mut i,&mut r,&mut c).unwrap();assert_eq!((i.selectors[1],c.eip),(0x18,0x100));
- for (selector,want) in [(0x10u16,Err(ExecError::GeneralProtection{eip:0x100,error_code:0x10})),(0,Err(ExecError::GeneralProtection{eip:0x100,error_code:0})),(0x1b,Err(ExecError::InvalidContext))]{
+ for (selector,want) in [(0x10u16,Err(ExecError::GeneralProtection{eip:0x100,error_code:0x10})),(0,Err(ExecError::GeneralProtection{eip:0x100,error_code:0})),(0x1b,Err(ExecError::GeneralProtection{eip:0x100,error_code:0x18}))]{
   let(mut i,mut r,mut c)=jmp(selector);let(old_i,old_r,old_c)=(i.clone(),r.clone(),c.clone());assert_eq!(step(&mut i,&mut r,&mut c),want,"selector {selector:x}");assert_eq!((i,r,c),(old_i,old_r,old_c));
  }
  // An offset past the new limit is #GP(0) after the descriptor checks.

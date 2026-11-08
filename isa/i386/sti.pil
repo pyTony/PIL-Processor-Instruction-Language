@@ -1,4 +1,6 @@
-require_ring0
+# STI: #GP(0) in protected mode when CPL is above IOPL; IF set from 0
+# delays interrupts by one instruction.
+require_iopl
 read_flag old IF
 not enable_delay old
 interrupt_shadow_if enable_delay

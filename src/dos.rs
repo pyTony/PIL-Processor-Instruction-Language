@@ -53,6 +53,8 @@ mod rtc;
 mod vga;
 #[path="dos_planar.rs"]
 mod planar;
+#[path="dos_vga_font.rs"]
+mod vga_font;
 #[path="dos_serial.rs"]
 mod serial;
 #[path="dos_break.rs"]
@@ -351,11 +353,15 @@ fn exception(p:&mut Loaded,e:&super::flow::ExecError,lazy:&mut super::LazyFlags)
         let event=crate::interrupt::Event::fault(e,p.cpu.eip)?;
         return Some(vectors::deliver_protected(p,event).map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}));
     }
-    if vectors::answered(p,vector)!=Ok(false){return None;}
+    // A divide error with vector 0 still at its entry goes to the DOS
+    // kernel's default handler there (services::divide_error).
+    let kernel=vector==0&&vectors::at_own_entry(p,0)==Ok(true);
+    if !kernel&&vectors::answered(p,vector)!=Ok(false){return None;}
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     let site=ExceptionSite::capture(p,vector,&format!("{e:?}"));
     let eip=p.cpu.eip;
-    Some(vectors::deliver_fault(p,vector,eip).map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}))
+    let delivered=if kernel{vectors::deliver_fault_to_entry(p,vector,eip)}else{vectors::deliver_fault(p,vector,eip)};
+    Some(delivered.map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}))
 }
 pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
     let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
@@ -473,9 +479,21 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             }
         }}
         } // DOS-only services and synthetic interrupt entries
+        // Protected mode above IOPL: the TSS I/O bitmap decides, before Dine answers.
+        if !p.image.real_mode{if let Some((port,bytes))=ports::access(&p){
+            let machine=p.image.segment_state();let eip=p.cpu.eip;let ram=&p.ram;
+            if let Err(e)=machine.io_permitted(p.cpu.eflags,port,bytes,eip,&mut |at|ram.as_level(false,|r|r.load(at,crate::memory::MemWidth::Byte)).map(|v|v as u8).map_err(|f|f.error(eip))){
+                match exception(&mut p,&e,&mut lazy){
+                    Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
+                    Some(Err(message))=>break Stop::Fault(message),
+                    None=>break Stop::Fault(format!("{e:?}")),
+                }
+            }
+        }}
         match ports::io(&mut p){
             Ok(Some(length))=>{
-                p.cpu.eip=(p.cpu.eip+length)&0xffff;p.image.retired();completed+=1;execution_steps+=1;
+                let wrap=if p.image.segments[1].default_32(){u32::MAX}else{0xffff};
+                p.cpu.eip=p.cpu.eip.wrapping_add(length)&wrap;p.image.retired();completed+=1;execution_steps+=1;
                 *instructions.entry(if length==1{"IN/OUT DX".into()}else{"IN/OUT imm8".into()}).or_insert(0)+=1;continue;
             },
             Ok(None)=>{},

@@ -169,3 +169,18 @@ through the attribute palette, colour plane enable, colour select and DAC.
 
 `programs/dos/MANDVGA.COM` draws a mode 12h Mandelbrot through write mode 2
 and the bit mask; `tools/verify_mandel_vga.py` checks all four planes.
+
+## Text-mode font memory (plane 2) — 8 November 2026
+
+src/dos_vga_font.rs. In the text modes a program may switch the sequencer
+and graphics controller to plane addressing at A0000h (map mask 04h,
+memory mode with odd/even off and no chain-4, GC mode with odd/even off,
+miscellaneous with memory map 00 or 01, read map 2) to read and write
+32-byte glyph slots, as Norton SysInfo 8 does. While those registers are
+set, the four planes are Ram's planar window, with the vga_planar engine
+(latches, write modes, map mask, read map). Any other combination unmaps
+them, and A0000h is ordinary RAM again; the planes are kept until the next
+text-mode set, which clears them. Plane 2 starts as zeros: Dine's BIOS has
+no 8x16 font, and the terminal draws text with the host font, so glyphs a
+program writes are kept and read back but not shown. With the 128 KiB map
+only A0000h-AFFFFh reaches the planes.

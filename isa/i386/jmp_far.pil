@@ -1,10 +1,15 @@
-# Far JMP (EA ptr16:16/32, FF /5 m16:16/32), real mode or CPL 0. The caller
-# substitutes the target reader, which defines target_value and selector;
-# a memory pointer is read whole before the transfer.
+# Far JMP (EA ptr16:16/32, FF /5 m16:16/32). The caller substitutes the
+# target reader, which defines target_value and selector; a memory pointer
+# is read whole before the transfer. far_jump (privilege.rs) takes a code
+# segment at CPL or a call gate to one; it never changes the level.
 require_width 16_or_32
-require_ring0
+# V86 mode (VM=1) is not modelled yet.
+read_flags entry
+bit vm entry 17
+not no_vm vm
+require no_vm
 $FAR_TARGET
 zext target32 target_value 32
-far_branch selector target32
+far_jump selector target32
 preserve_flags all
 retire

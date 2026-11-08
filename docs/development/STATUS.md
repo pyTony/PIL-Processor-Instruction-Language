@@ -1,3 +1,85 @@
+# Protected mode, increment 5: privilege levels — 8 November 2026
+
+Protected-mode plan increment 5 (#123 was IDT delivery).
+- New src/privilege.rs, shared by both backends (embedded in generated
+  Rust) and interrupt delivery: far JMP and CALL through 286/386 call
+  gates; CALL to an inner level takes SS:ESP for the target DPL from the
+  TSS and copies the gate's parameter count; RETF (with imm16) and IRET to
+  an outer level pop SS:ESP and null ES/DS/FS/GS more privileged than the
+  new CPL. New PIL tokens far_jump, far_call, far_return.
+- Interrupts and exceptions from ring 3 to a nonconforming ring 0 handler
+  switch to the TSS stack and push the old SS and ESP.
+- New ExecError::InvalidTss{eip,error_code} (#TS, vector 10, trace code
+  15). SegmentAccess::Data now keeps the descriptor DPL.
+- Privileged instructions above CPL 0 are #GP(0) instead of stopping
+  (require_ring0; HLT too). CLI/STI use require_iopl. PUSHF/POPF work at
+  any CPL; POPF changes IOPL only at CPL 0 and IF only where CPL <= IOPL.
+- I/O permission (check_io, and Dine's own port handling in protected
+  mode): above IOPL the 386 TSS I/O bitmap decides; a 286 TSS or a bit past
+  the TSS limit is #GP(0).
+- Descriptor-table, TSS and inner-stack accesses are supervisor-level
+  (Ram::as_level, store_as). Not yet: a segment load's accessed-bit store
+  at CPL 3 is still made at user level.
+- Not yet: V86 mode (increment 6), task gates and TSS jumps (7).
+
+Local Linux: 638 Rust tests pass, 1 ignored, release and debug (7 new in
+privilege.rs; 8 older expectations changed from a stop to #GP). The
+generated-backend suite has 274 cases (1 new: pm_rings; four CPL 3 cases
+now end in #GP). test386 passes POST 20h and stops at POST 21h on IRETD to
+V86 mode. A local build that skips POST 21h-22h (scratchpad only) runs
+0Bh-17h and stops at POST 17h on ARPL with a read-only memory operand
+(the 386 does not write back an unchanged selector; arpl.pil does). With
+that one ARPL removed it runs 18h-1Ah and stops in POST 1Ah (ENTER at
+ring 3 on a supervisor stack page).
+SingleStepTests/80386 run 09 (local; real-mode far CALL/JMP/RETF now go
+through privilege.rs): pass 1,621,228 as in run 08, 0 generated-backend
+disagreements in 2,379 programs. Its generated runner needed the PageFault,
+SegmentNotPresent and InvalidTss arms (it had not been rerun since #122).
+After merging dev (SysInfo 8): 642 Rust tests pass, 1 ignored (release).
+
+# SysInfo 8: text-mode font plane, DOS default divide handler — 8 November 2026
+
+Tony's DOS benchmark menu (driveD\dosbench), option k (Norton System
+Information 8.0, MARKS\SI8\SYSINFO.EXE with NLIB200.RTL) gave two stops in
+his stop log: "VGA sequencer register 04h value 07h" at 4EFE:0016 and a
+divide error at 3365:0086 (F7 F3, DIV BX with BX=0).
+- 4EFE:0016 is not mode X. It is the standard font-access sequence (map
+  mask 04h, memory mode 07h, GC mode 00h, miscellaneous 04h, read map 02h),
+  which SysInfo uses to put its own glyphs (61 of them: frames, scroll bars,
+  check boxes) into plane 2 in text mode. src/dos_vga_font.rs: while the
+  registers select A0000h with odd/even and chain-4 off, the four planes
+  are Ram's planar window (same engine as vga_planar); otherwise they are
+  kept aside and A0000h is ordinary RAM again. A text-mode set clears them.
+  Chain-4, graphics mode, the mono map and shift/256-colour bits stay
+  refused in text mode. Not modelled: the BIOS 8x16 font (plane 2 starts
+  as zeros) and showing program glyphs (the terminal draws with the host
+  font, so SysInfo's frames appear as CP437 box characters).
+- 3365:0086 is SysInfo's I/O delay calibration: PIT channel 0 counts read
+  around 100 LOOPs, minus an empty measurement. Under the host-time PIT the
+  difference can be 0 on a fast host (Tony's twice; never in 3 local runs),
+  and 100/0 faults. Vector 0 now starts at its entry (F000:F000), and a #DE
+  there runs the FreeDOS kernel's default handler (entry.asm
+  reloc_call_int0_handler): "Interrupt divide by zero, stack:" plus 13
+  stack words in hex through BIOS teletype, then exit with errorlevel 127.
+  A program's own INT 0 handler is used as before; with INT 10h hooked, or
+  vector 0 cleared to 0000:0000, it still stops.
+- SysInfo's next stops, answered as the FreeDOS kernel does: INT 21h
+  AH=DCh (unsupported function, AL=00h), AX=5F44h and other AH=5Fh
+  redirector calls except 07h/08h (CF=1, AX=0001h, from int2f.asm's
+  "redirected INT21/5F44"), INT 2Fh AX=D701h (no Banyan VINES) and B800h
+  (no network) return unchanged.
+- Next SysInfo stop (local run, not fixed): a byte write to C000:0000 at
+  3517:72D6. Dine's C000-FFFF area is read-only RAM, so a write faults;
+  on real hardware a ROM write is ignored. That is a memory-model change
+  in src/memory.rs, shared by both backends.
+
+Local Linux: 610 of 611 Rust tests pass (5 new: dos_vga_font 3, divide
+handler 2; 4 older tests updated). host_cpu_alu fails on this cloud host
+with and without the change. FD14LITE.img (SHA256 f539d456...) probe at
+10,000 steps unchanged: 151/156 imported, 53 exits.
+After merging dev (paging, IDT delivery): 635 Rust tests pass, 1 ignored,
+host_cpu_alu included.
+
 # Protected mode, increment 4: IDT delivery and IRET — 8 November 2026
 
 Protected-mode plan increment 4 (#122 was paging).

@@ -23,6 +23,9 @@ pub enum ExecError {
     /// #NP (vector 11): a descriptor that is not present; the error code
     /// names its selector.
     SegmentNotPresent { eip: u32, error_code: u16 },
+    /// #TS (vector 10): the TSS cannot supply an inner-level stack; the
+    /// error code names the TSS or the stack selector.
+    InvalidTss { eip: u32, error_code: u16 },
 }
 
 impl FlowContext {
