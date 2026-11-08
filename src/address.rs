@@ -103,6 +103,11 @@ impl Descriptor {
         SegmentCache { base: self.base, limit: self.limit, access }
     }
 }
+/// An IDT interrupt or trap gate: target selector and offset, whether it is
+/// a trap gate (IF stays as it is) and whether it is a 386 gate (32-bit
+/// frame and offset) rather than a 286 one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Gate { pub selector: u16, pub offset: u32, pub trap: bool, pub big: bool }
 /// A segment register load, ready to commit: the visible selector, the new
 /// hidden cache and, in protected mode, the descriptor's access byte to mark
 /// accessed (address, new value) when it is not already.
@@ -237,7 +242,7 @@ impl SegmentState {
                     if rpl>cpl{return Err(ExecError::InvalidContext);}
                     if d.dpl()!=cpl{return Err(gp(code));}
                 }
-                if !d.present(){return Err(ExecError::Exception{eip,vector:11});}
+                if !d.present(){return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
                 visible=(selector&!3)|u16::from(cpl);
             }
             2=>{
@@ -247,7 +252,7 @@ impl SegmentState {
             _=>{
                 if d.code()&&!readable_or_writable{return Err(gp(code));}
                 if (!d.code()||!conforming)&&(rpl>d.dpl()||cpl>d.dpl()){return Err(gp(code));}
-                if !d.present(){return Err(ExecError::Exception{eip,vector:11});}
+                if !d.present(){return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
             }
         }
         let mut cache=d.cache();
@@ -288,9 +293,50 @@ impl SegmentState {
         let kind=d.access&0x1f;
         let valid=if which==0{kind==2}else{kind==1||kind==9};
         if !valid{return Err(gp(code));}
-        if !d.present(){return Err(ExecError::Exception{eip,vector:11});}
+        if !d.present(){return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
         let busy=(which==1).then_some((at.wrapping_add(5),d.access|2));
         Ok((SystemSegment{selector,base:d.base,limit:d.limit,kind:kind|if which==1{2}else{0}},busy))
+    }
+    /// The interrupt or trap gate for `vector` in the IDT, checked as the
+    /// 386 does before it reads the target: the vector inside the IDTR limit,
+    /// a 286 or 386 interrupt or trap gate, for INT n/INT3/INTO (`software`)
+    /// a gate DPL of at least CPL, and the present bit. Faults name the IDT
+    /// entry (vector*8+2) with EXT (bit 0) set when an exception or external
+    /// event is being delivered. Task gates are not modelled yet.
+    pub fn interrupt_gate(&self,vector:u8,software:bool,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<Gate,ExecError>{
+        let code=u16::from(vector)*8+2+u16::from(!software);
+        let gp=ExecError::GeneralProtection{eip,error_code:code};
+        let (limit,base)=self.tables[1];
+        let at=u32::from(vector)*8;
+        if at+7>u32::from(limit){return Err(gp);}
+        let raw=read(base.wrapping_add(at))?;
+        let access=(raw>>40) as u8;
+        let big=match access&0x1f{0x06|0x07=>false,0x0e|0x0f=>true,0x05=>return Err(ExecError::InvalidContext),_=>return Err(gp)};
+        if software&&((access>>5)&3)<self.cpl(){return Err(gp);}
+        if access&0x80==0{return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
+        let low=(raw&0xffff) as u32;
+        let offset=if big{low|(((raw>>48)as u32)<<16)}else{low};
+        Ok(Gate{selector:(raw>>16) as u16,offset,trap:access&1!=0,big})
+    }
+    /// The code segment an interrupt gate names, for delivery at the current
+    /// privilege level: a present code segment with DPL at most CPL that is
+    /// conforming or has DPL equal to CPL. A nonconforming segment of a more
+    /// privileged level needs the TSS stack switch, which is not modelled
+    /// yet. Selector faults carry EXT as in `interrupt_gate`.
+    pub fn interrupt_target(&self,selector:u16,software:bool,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<SegmentLoad,ExecError>{
+        let ext=u16::from(!software);
+        let code=(selector&0xfffc)|ext;
+        let gp=|code:u16|ExecError::GeneralProtection{eip,error_code:code};
+        let cpl=self.cpl();
+        let Some(at)=self.descriptor_address(selector) else{return Err(gp(if selector&0xfffc==0{ext}else{code}));};
+        let d=Descriptor::decode(read(at)?);
+        if !d.segment()||!d.code()||d.dpl()>cpl{return Err(gp(code));}
+        if !d.present(){return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
+        let conforming=d.access&4!=0;
+        if !conforming&&d.dpl()<cpl{return Err(ExecError::InvalidContext);}
+        let mut cache=d.cache();
+        if let SegmentAccess::Code{ref mut dpl,..}=cache.access{*dpl=cpl;}
+        Ok(((selector&!3)|u16::from(cpl),cache,(d.access&1==0).then_some((at.wrapping_add(5),d.access|1))))
     }
     pub fn checkpoint_flags(&mut self,eip:u32,flags:u32,undefined:u32){if self.flag_checkpoint.map(|v|v.0)!=Some(eip){self.flag_checkpoint=Some((eip,flags,undefined));}}
     pub fn recover_flags(&mut self)->Option<(u32,u32)>{self.flag_checkpoint.take().map(|(_,f,u)|(f,u))}

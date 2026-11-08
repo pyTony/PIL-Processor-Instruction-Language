@@ -20,6 +20,9 @@ pub enum ExecError {
     /// #PF (vector 14): the faulting linear address (for CR2) and the error
     /// code (bit 0 protection, bit 1 write, bit 2 user).
     PageFault { eip: u32, address: u32, error_code: u16 },
+    /// #NP (vector 11): a descriptor that is not present; the error code
+    /// names its selector.
+    SegmentNotPresent { eip: u32, error_code: u16 },
 }
 
 impl FlowContext {

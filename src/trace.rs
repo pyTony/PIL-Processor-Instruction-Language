@@ -8,6 +8,7 @@ pub fn fault(eip:u32,error:ExecError)->[u32;5] {
         ExecError::UnsupportedControl{eip,register,value}=>[11,eip,register as u32,value,0],
         ExecError::Exception{eip,vector}=>[12,eip,u32::from(vector),0,0],
         ExecError::PageFault{eip,address,error_code}=>[13,eip,address,u32::from(error_code),0],
+        ExecError::SegmentNotPresent{eip,error_code}=>[14,eip,u32::from(error_code),0,0],
         ExecError::InvalidBinding=>[8,eip,0,0,0],ExecError::InvalidContext=>[9,eip,0,0,0],
     }
 }

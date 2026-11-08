@@ -2013,6 +2013,7 @@ fn description(name: &str) -> R<String> {
         "ret" => Some(include_str!("../isa/i386/ret.pil")),
         "retf" => Some(include_str!("../isa/i386/retf.pil")),
         "iret" => Some(include_str!("../isa/i386/iret.pil")),
+        "iret_protected" => Some(include_str!("../isa/i386/iret_protected.pil")),
         "call_far" => Some(include_str!("../isa/i386/call_far.pil")),
         "movs" => Some(include_str!("../isa/i386/movs.pil")),
         "stos" => Some(include_str!("../isa/i386/stos.pil")),
@@ -2485,6 +2486,9 @@ mod real_mode_form_tests;
 #[cfg(test)]
 #[path = "../tests/unit/protected_mode.rs"]
 mod protected_mode_tests;
+#[cfg(test)]
+#[path = "../tests/unit/pm_interrupts.rs"]
+mod pm_interrupt_tests;
 #[cfg(test)]
 #[path = "../tests/unit/paging.rs"]
 mod paging_tests;

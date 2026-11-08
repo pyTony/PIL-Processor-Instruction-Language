@@ -175,8 +175,9 @@ source EIP. Invalid supplied bindings/cache context are caller errors.
 `MemoryAccess` reports EIP, address, byte count and direction for RAM bounds or
 host-defined read-only protection. With CR0.PG set, RAM walks the 386 page
 tables on every access, and a missing or protected page is `PageFault` with
-the linear address and the 386 error code. It is not delivered yet: CR2 and
-protected-mode exception handlers come later. Device/MMIO side
+the linear address and the 386 error code; the runner writes CR2 and
+delivers it through the IDT. A descriptor that is not present is
+`SegmentNotPresent` (#NP) with its selector as error code. Device/MMIO side
 effects, more than two stores, LOCK and REP checkpoints need a future effect contract;
 this staging model is not universal transactional rollback.
 
@@ -485,7 +486,13 @@ not fit, and BOUND uses 5 for an index outside its bounds. The
 runner, not PIL, then delivers the exception (`src/interrupt.rs`): in real
 mode through the IDTR table with FLAGS, CS and the faulting IP pushed, so the
 handler's IRET restarts the instruction. #GP and #SS faults from segment
-limit checks are delivered the same way (vectors 0Dh and 0Ch).
+limit checks are delivered the same way (vectors 0Dh and 0Ch). In protected
+mode the runner uses the IDT: a 286 or 386 interrupt or trap gate to a code
+segment at the current level (or a conforming one), with EFLAGS, CS, EIP
+and the error code pushed as words or dwords by gate size, and #DF or a
+shutdown for faults during delivery. Protected-mode IRET is
+isa/i386/iret_protected.pil: the same-level return, with IOPL changed only
+at CPL 0 and IF only where CPL is at most IOPL.
 
 `read_msw OUT` reads the explicit bv16 machine-status profile. MSW is retained
 in Image/SegmentState and traces;PE is derived from the normalized real_mode

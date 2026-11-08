@@ -84,7 +84,7 @@ fn lldt_and_ltr_check_the_descriptor_and_mark_the_tss_busy(){
  // selector past the GDT limit all fault with nothing changed.
  let mut busy=DESCRIPTORS[5];busy|=0x0200_0000_0000;
  let(mut i,mut r,mut c)=protected(&[0x0f,0x00,0xd8]);r.write_bytes(GDT+0x28,&busy.to_le_bytes()).unwrap();c.regs[0]=0x28;assert_eq!(step(&mut i,&mut r,&mut c),gp(0x28));
- for (op,selector,want) in [(0xd0u8,0x28u32,gp(0x28)),(0xd8,0x20,gp(0x20)),(0xd0,0x50,Err(ExecError::Exception{eip:0x100,vector:11})),
+ for (op,selector,want) in [(0xd0u8,0x28u32,gp(0x28)),(0xd8,0x20,gp(0x20)),(0xd0,0x50,Err(ExecError::SegmentNotPresent{eip:0x100,error_code:0x50})),
   (0xd0,0x24,gp(0x24)),(0xd8,0x2c,gp(0x2c)),(0xd0,0x68,gp(0x68)),(0xd8,0x00,gp(0)),(0xd8,0x10,gp(0x10))]{
   let(result,_,_,_)=run(&[0x0f,0x00,op],|_,c|c.regs[0]=selector);assert_eq!(result,want,"0F 00 {op:02x} with {selector:x}");
  }

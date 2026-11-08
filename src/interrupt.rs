@@ -6,12 +6,19 @@
 //! instruction's own address as the return address. Software interrupts
 //! (INT n, INT3, INTO) return to the next instruction.
 //!
-//! Only real mode is modelled so far. The vector comes from the interrupt
-//! table at IDTR (reset value base 0, limit 03FFh); FLAGS, CS and IP are
-//! pushed as 16-bit words through SS:SP, then IF and TF are cleared. Error
-//! codes are never pushed in real mode. A frame that cannot be pushed, or a
-//! vector beyond the IDTR limit, is reported as a shutdown instead of being
-//! delivered as #DF: double-fault delivery is not modelled yet.
+//! Real mode: the vector comes from the interrupt table at IDTR (reset value
+//! base 0, limit 03FFh); FLAGS, CS and IP are pushed as 16-bit words through
+//! SS:SP, then IF and TF are cleared. Error codes are never pushed in real
+//! mode. A frame that cannot be pushed, or a vector beyond the IDTR limit, is
+//! reported as a shutdown.
+//!
+//! Protected mode (`deliver`): the IDT entry must be a 286 or 386 interrupt
+//! or trap gate to a code segment of the current privilege level (or a
+//! conforming one); EFLAGS, CS, EIP and the error code, if any, are pushed
+//! as words or dwords by the gate size. A fault while delivering is itself
+//! delivered, as a double fault (#DF) where the 386 makes one, and a fault
+//! while delivering #DF is a shutdown (triple fault). Task gates, the stack
+//! switch to an inner level and virtual-8086 mode stop the run.
 use super::address::{MemoryContext,SegmentCache,SegmentRegister};
 use super::flow::ExecError;
 use super::guest::Image;
@@ -29,6 +36,7 @@ pub fn vector(error:&ExecError)->Option<u8>{
         ExecError::StackSegment{..}=>Some(12),
         ExecError::GeneralProtection{..}=>Some(13),
         ExecError::PageFault{..}=>Some(14),
+        ExecError::SegmentNotPresent{..}=>Some(11),
         _=>None,
     }
 }
@@ -39,6 +47,113 @@ pub fn vector(error:&ExecError)->Option<u8>{
 /// undefined, as it does for other undefined flags.
 pub fn after_fault(cpu:&mut Cpu,error:&ExecError){
     if matches!(error,ExecError::Exception{vector:0,..}){cpu.undefined_flags|=0x8d5;}
+}
+
+/// An interrupt or exception to deliver in protected mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Event{
+    pub vector:u8,
+    /// Pushed after EIP for #DF, #TS, #NP, #SS, #GP and #PF.
+    pub error_code:Option<u16>,
+    /// The EIP the frame returns to: the faulting instruction for a fault,
+    /// the next one for INT n, INT3 and INTO.
+    pub return_eip:u32,
+    /// INT n, INT3 or INTO: the gate's DPL is checked, and faults during
+    /// delivery have EXT clear.
+    pub software:bool,
+    /// #PF's linear address, which goes to CR2.
+    pub cr2:Option<u32>,
+}
+impl Event{
+    /// INT n, INT3 or INTO returning to `next`.
+    pub fn software(vector:u8,next:u32)->Self{Self{vector,error_code:None,return_eip:next,software:true,cr2:None}}
+    /// The exception an architectural fault raises, returning to the
+    /// faulting instruction at `eip`. Model stops have none.
+    pub fn fault(error:&ExecError,eip:u32)->Option<Self>{
+        let vector=vector(error)?;
+        let (error_code,cr2)=match *error{
+            ExecError::GeneralProtection{error_code,..}|ExecError::StackSegment{error_code,..}|ExecError::SegmentNotPresent{error_code,..}=>(Some(error_code),None),
+            ExecError::PageFault{address,error_code,..}=>(Some(error_code),Some(address)),
+            _=>(None,None),
+        };
+        Some(Self{vector,error_code,return_eip:eip,software:false,cr2})
+    }
+}
+/// How the 386 combines a fault raised while delivering another (Intel's
+/// double-fault table): benign, contributory (#DE, #TS, #NP, #SS, #GP) or
+/// a page fault.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Class{Benign,Contributory,Page}
+fn class(vector:u8)->Class{match vector{0|10..=13=>Class::Contributory,14=>Class::Page,_=>Class::Benign}}
+
+/// Delivers `event`. In real mode this is the IVT frame; in protected mode
+/// the IDT gate, with a fault during delivery handled as the 386 does.
+/// Errors are model stops; a "shutdown" message is the triple fault.
+pub fn deliver(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:Event)->Result<(),String>{
+    if image.real_mode{return deliver_real(cpu,image,ram,event.vector,event.return_eip);}
+    if let Some(address)=event.cr2{image.controls[0]=address;}
+    let mut current=event;
+    loop{
+        let error=match protected_frame(cpu,image,ram,&current){Ok(())=>return Ok(()),Err(e)=>e};
+        let Some(next)=Event::fault(&error,cpu.eip) else{
+            return Err(format!("{error:?} while delivering vector {:02x}h is not modelled",current.vector));
+        };
+        // CR2 is written when the page fault is recognised, even if it then
+        // turns into a double fault.
+        if let Some(address)=next.cr2{image.controls[0]=address;}
+        if current.vector==8{return Err(format!("shutdown: {error:?} while delivering a double fault (triple fault)"));}
+        let double=matches!((class(current.vector),class(next.vector)),(Class::Contributory,Class::Contributory)|(Class::Page,Class::Contributory|Class::Page));
+        current=if double{Event{vector:8,error_code:Some(0),cr2:None,..next}}else{Event{cr2:None,..next}};
+    }
+}
+
+/// One protected-mode delivery attempt. Every read, check and stack write
+/// is tried before anything changes, so on error nothing has.
+fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Result<(),ExecError>{
+    if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
+    let eip=cpu.eip;
+    let machine=image.segment_state();
+    ram.set_paging(machine.ram_paging());
+    let result=(||{
+        let r:&Ram=ram;
+        let mut read=|at:u32|->Result<u64,ExecError>{
+            let lo=r.load(at,MemWidth::Dword).map_err(|f|f.error(eip))?;
+            let hi=r.load(at.wrapping_add(4),MemWidth::Dword).map_err(|f|f.error(eip))?;
+            Ok(u64::from(lo)|(u64::from(hi)<<32))
+        };
+        let gate=machine.interrupt_gate(event.vector,event.software,eip,&mut read)?;
+        let (selector,cache,accessed)=machine.interrupt_target(gate.selector,event.software,eip,&mut read)?;
+        if gate.offset>cache.limit{return Err(ExecError::GeneralProtection{eip,error_code:0});}
+        if let Some((at,_))=accessed{r.check_write(at,MemWidth::Byte).map_err(|f|f.error(eip))?;}
+        let ss=machine.segments[SegmentRegister::Ss.index()];
+        let mask=if matches!(ss.access,super::address::SegmentAccess::Data{big:true,..}){u32::MAX}else{0xffff};
+        let (width,bytes)=if gate.big{(MemWidth::Dword,4)}else{(MemWidth::Word,2)};
+        let context=MemoryContext{segment:SegmentRegister::Ss,cache:ss};
+        let mut sp=cpu.regs[4];
+        let values=[Some(cpu.eflags),Some(u32::from(machine.selectors[SegmentRegister::Cs.index()])),Some(event.return_eip),event.error_code.map(u32::from)];
+        let mut writes=Vec::with_capacity(4);
+        for value in values.into_iter().flatten(){
+            sp=(sp&!mask)|(sp.wrapping_sub(bytes)&mask);
+            let at=context.translate(sp&mask,width,true,eip)?;
+            r.check_write(at,width).map_err(|f|f.error(eip))?;
+            writes.push((at,value));
+        }
+        Ok((gate,selector,cache,accessed,sp,writes))
+    })();
+    let (gate,selector,cache,accessed,sp,writes)=match result{Ok(v)=>v,Err(e)=>{ram.set_paging(machine.ram_paging());return Err(e);}};
+    let width=if gate.big{MemWidth::Dword}else{MemWidth::Word};
+    if let Some((at,value))=accessed{ram.store(at,MemWidth::Byte,u32::from(value)).map_err(|f|f.error(eip))?;}
+    for (at,value) in writes{ram.store(at,width,value).map_err(|f|f.error(eip))?;}
+    cpu.regs[4]=sp;
+    // TF, NT, RF and VM clear; an interrupt gate clears IF too.
+    let clear=0x0003_4100|if gate.trap{0}else{0x200};
+    cpu.eflags&=!clear;cpu.undefined_flags&=!clear;
+    let index=SegmentRegister::Cs.index();
+    image.selectors[index]=selector;image.segments[index]=cache;
+    cpu.eip=if gate.big{gate.offset}else{gate.offset&0xffff};
+    image.retired();
+    ram.set_paging(image.segment_state().ram_paging());
+    Ok(())
 }
 
 /// Short mnemonic for a vector, for reports.
@@ -83,7 +198,6 @@ pub fn real_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,segment:u16,offset:
 }
 
 /// Delivers vector `n` in real mode through the IDTR table.
-#[cfg_attr(not(test),allow(dead_code))]
 pub fn deliver_real(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,n:u8,return_ip:u32)->Result<(),String>{
     let(segment,offset)=real_vector(image,ram,n)?;
     real_frame(cpu,image,ram,segment,offset,return_ip)
