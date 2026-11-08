@@ -290,8 +290,8 @@ impl Image {
             0xcf=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 // VM sits in bit 17, so only IRETD's flags dword can carry it.
-                let vm_check=if w==32{"bit vm packed 17\nand vm_return vm ring0\nnot no_vm_return vm_return\nrequire no_vm_return"}else{""};
-                let text=description(if self.real_mode{"iret"}else{"iret_protected"}).map_err(GuestError::Decode)?.replace("$VM_CHECK",vm_check).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/8*3).to_string());
+                let vm_check=if w==32{"bit vm packed 17\nand vm_return vm ring0"}else{"const vm_return 1 0"};
+                let text=description(if self.real_mode||self.segment_state().v86(){"iret"}else{"iret_protected"}).map_err(GuestError::Decode)?.replace("$VM_CHECK",vm_check).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/8*3).to_string());
                 (if w==32{"IRETD".into()}else{"IRET".into()},compile(&instantiate(text,w),w))
             }
             0xc2|0xc3=>{
@@ -336,7 +336,7 @@ impl Image {
             }
             0x63=>{
                 // ARPL r/m16,r16: #UD in real mode.
-                if self.real_mode{return Err(GuestError::Decode("ARPL (63h) is #UD in real mode".into()));}
+                if self.real_mode||self.segment_state().v86(){return Err(GuestError::Decode("ARPL (63h) is #UD in real and virtual-8086 mode".into()));}
                 let m=r.byte()?;dst=view((m&7)as usize,16);src=view(((m>>3)&7)as usize,16);
                 let (input,output)=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});("read_address destination\nload selector destination 16","store destination result")}else{("read selector dst 16","write dst result")};
                 let text=include_str!("../isa/i386/arpl.pil").replace("$INPUT",input).replace("$OUTPUT",output);
@@ -450,7 +450,7 @@ impl Image {
                 }else if second==0x00{
                     // SLDT, STR, LLDT, LTR, VERR and VERW are #UD in real mode.
                     let m=r.byte()?;let ext=(m>>3)&7;
-                    if self.real_mode{return Err(GuestError::Decode("0F00 group (SLDT/STR/LLDT/LTR/VERR/VERW) is #UD in real mode".into()));}
+                    if self.real_mode||self.segment_state().v86(){return Err(GuestError::Decode("0F00 group (SLDT/STR/LLDT/LTR/VERR/VERW) is #UD in real and virtual-8086 mode".into()));}
                     if ext>5{return Err(GuestError::Decode("unsupported 0F00 group extension".into()));}
                     let name=["SLDT","STR","LLDT","LTR","VERR","VERW"][ext as usize];
                     let memory=m>>6!=3;
@@ -473,7 +473,7 @@ impl Image {
                     // LAR and LSL: #UD in real mode.
                     let name=if second==0x02{"LAR"}else{"LSL"};
                     let m=r.byte()?;
-                    if self.real_mode{return Err(GuestError::Decode(format!("{name} is #UD in real mode")));}
+                    if self.real_mode||self.segment_state().v86(){return Err(GuestError::Decode(format!("{name} is #UD in real and virtual-8086 mode")));}
                     dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,16);
                     let source_label=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});let label=operand_name(src,address);src=dst;label}else{register_name(src).into()};
                     let input=if address.is_some(){"read_address source\nload selector source 16"}else{"read selector src 16"};

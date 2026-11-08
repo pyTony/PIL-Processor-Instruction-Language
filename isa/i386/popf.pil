@@ -1,12 +1,17 @@
 # Restore writable 386 bits, preserve RF/VM and reserved state. In
 # protected mode IOPL changes only at CPL 0 and IF only where CPL is at most
 # IOPL; elsewhere they keep their values without a fault, as on the 386.
-# Real mode counts as CPL 0; V86 mode (IOPL rules) stops.
+# Real mode counts as CPL 0. In virtual-8086 mode (CPL 3) POPF needs
+# IOPL 3, else #GP(0); there it changes IF but not IOPL.
 require_width 16_or_32
 read_flags entry
 bit vm entry 17
 not no_vm vm
-require no_vm
+bit v86_iopl0 entry 12
+bit v86_iopl1 entry 13
+and v86_iopl3 v86_iopl0 v86_iopl1
+or iopl_allowed no_vm v86_iopl3
+raise_unless iopl_allowed 13
 read_cpl cpl
 zero ring0 cpl
 read_flag iopl_low IOPL0

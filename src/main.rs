@@ -39,17 +39,17 @@ enum Shift { Left, Right, Arithmetic }
 #[derive(Clone, Copy, Debug)]
 enum Binary { Add, Sub, Mul, Div, Rem, Xor, And, Or }
 #[derive(Clone, Copy, Debug)]
-enum Flag { CF, PF, AF, ZF, SF, TF, IF, DF, OF, IOPL0, IOPL1, NT }
+enum Flag { CF, PF, AF, ZF, SF, TF, IF, DF, OF, IOPL0, IOPL1, NT, VM }
 impl Flag {
     fn bit(self) -> u8 { match self {
         Self::CF => 0, Self::PF => 2, Self::AF => 4,
-        Self::ZF => 6, Self::SF => 7, Self::TF => 8, Self::IF => 9, Self::DF => 10, Self::OF => 11, Self::IOPL0 => 12, Self::IOPL1 => 13, Self::NT => 14,
+        Self::ZF => 6, Self::SF => 7, Self::TF => 8, Self::IF => 9, Self::DF => 10, Self::OF => 11, Self::IOPL0 => 12, Self::IOPL1 => 13, Self::NT => 14, Self::VM => 17,
     }}
 }
 fn parse_flag(name: &str) -> R<Flag> {
     match name {
         "CF" => Ok(Flag::CF), "PF" => Ok(Flag::PF), "AF" => Ok(Flag::AF),
-        "TF" => Ok(Flag::TF), "IF" => Ok(Flag::IF), "IOPL0" => Ok(Flag::IOPL0), "IOPL1" => Ok(Flag::IOPL1), "NT" => Ok(Flag::NT),
+        "TF" => Ok(Flag::TF), "IF" => Ok(Flag::IF), "IOPL0" => Ok(Flag::IOPL0), "IOPL1" => Ok(Flag::IOPL1), "NT" => Ok(Flag::NT), "VM" => Ok(Flag::VM),
         "ZF" => Ok(Flag::ZF), "SF" => Ok(Flag::SF), "DF" => Ok(Flag::DF), "OF" => Ok(Flag::OF),
         _ => Err(format!("unknown flag: {name}")),
     }
@@ -100,7 +100,7 @@ enum Token {
     // outer stack offset, slot width, imm16), checked by privilege.rs.
     FarJump(usize,usize),
     FarCall(usize,usize),
-    FarReturn(usize,usize,usize,MemWidth,u32),
+    FarReturn(usize,usize,usize,MemWidth,u32,Option<usize>),
     // CLI/STI: #GP(0) in protected mode when CPL > IOPL.
     RequireIopl,
     // IN/OUT/INS/OUTS: the I/O permission check for a port and byte count.
@@ -315,7 +315,7 @@ fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         |Token::ResumeIf(a)|Token::Require(a)|Token::RaiseUnless(a,_)|Token::CheckSegment(_,a,_)
         |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
         Token::WriteControl(_,a)|Token::ReadDescriptor(_,_,a)|Token::LoadSystem(_,a)|Token::CheckIo(a,_)=>used(a),
-        Token::FarReturn(a,b,c,_,_)=>used(a)||used(b)||used(c),
+        Token::FarReturn(a,b,c,_,_,v)=>used(a)||used(b)||used(c)||v.as_ref().is_some_and(used),
         Token::WriteTable(_,a,b)=>used(a)||used(b),
         Token::Binary(_,_,a,b)|Token::Shift(_,_,a,b)|Token::Less(_,a,b)
         |Token::BranchIf(a,b)|Token::FarBranch(a,b)|Token::FarJump(a,b)|Token::FarCall(a,b)|Token::Store(a,b,_)
@@ -665,7 +665,7 @@ impl Program {
             Token::FarBranch(t, s) => format!("far_branch v{t}:v{s}"),
             Token::FarJump(t, s) => format!("far_jump v{t}:v{s}"),
             Token::FarCall(t, s) => format!("far_call v{t}:v{s}"),
-            Token::FarReturn(t, s, o, w, c) => format!("far_return v{t}:v{s} outer v{o} {} +{c}", w.bytes() * 8),
+            Token::FarReturn(t, s, o, w, c, v) => format!("far_return v{t}:v{s} outer v{o} {} +{c}{}", w.bytes() * 8, v.map(|v|format!(" v86 v{v}")).unwrap_or_default()),
             Token::RequireIopl => "require_iopl".into(),
             Token::CheckIo(a, n) => format!("check_io v{a} {n}"),
             Token::CheckSegment(s, a, n) => format!("check_segment {s} v{a} {n}"),
@@ -724,13 +724,13 @@ impl Program {
                         early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
                     }
                     Token::RequireRing0 => {
-                        if machine.unwrap().cpl() != 0 || cpu.eflags & 0x20000 != 0 {
+                        if machine.unwrap().cpl() != 0 {
                             early_stop = Some(idx); note = "; FAULT (CPL 0 required)".into();
                         } else { note = "; CPL 0 ok".into(); }
                     }
                     Token::RequireIopl => {
                         let m = machine.unwrap();
-                        if cpu.eflags & 0x20000 != 0 || (!m.real_mode && u32::from(m.cpl()) > (cpu.eflags >> 12) & 3) {
+                        if !m.real_mode && u32::from(m.cpl()) > (cpu.eflags >> 12) & 3 {
                             early_stop = Some(idx); note = "; FAULT (CPL above IOPL)".into();
                         } else { note = "; IOPL ok".into(); }
                     }
@@ -1223,7 +1223,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["raise_unless", predicate, vector]=>{
                     let c=slot(&names,predicate)?;let v=number(vector)?;
-                    if widths[c]!=1||!matches!(v,0|5){return Err("raise_unless needs a bv1 predicate and vector 0 (#DE) or 5 (#BR)".into());}Token::RaiseUnless(c,v as u8)
+                    if widths[c]!=1||!matches!(v,0|5|13){return Err("raise_unless needs a bv1 predicate and vector 0 (#DE), 5 (#BR) or 13 (#GP(0))".into());}Token::RaiseUnless(c,v as u8)
                 }
                 ["require", predicate]=>{
                     let c=slot(&names,predicate)?;if widths[c]!=1{return Err("require needs bv1 predicate".into());}Token::Require(c)
@@ -1276,13 +1276,14 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if call&&tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..))){return Err("far_call must precede every effect".into());}
                     branched=true;segment_written=true;if call{Token::FarCall(a,b)}else{Token::FarJump(a,b)}
                 }
-                ["far_return", selector, offset, outer, bytes, cleanup]=>{
+                ["far_return", selector, offset, outer, bytes, cleanup, rest @ ..] if rest.len()<=1=>{
                     let a=slot(&names,selector)?;let b=slot(&names,offset)?;let c=slot(&names,outer)?;
+                    let vm=match rest{[v]=>{let v=slot(&names,v)?;if widths[v]!=1{return Err("far_return's V86 operand must be bv1".into());}Some(v)},_=>None};
                     let w=match number(bytes)?{2=>MemWidth::Word,4=>MemWidth::Dword,_=>return Err("far_return slot width must be 2 or 4 bytes".into())};
                     let n=number(cleanup)?;
                     if widths[a]!=16||widths[b]!=32||widths[c]!=32||n>0xffff||branched||segment_written||![16,32].contains(&operand_width){return Err("one far_return requires bv16 selector,bv32 offset and outer offset, imm16 and no other segment/branch effect".into());}
                     if tokens.iter().any(|t|matches!(t,Token::WriteGpr(4,..))){return Err("far_return writes ESP itself".into());}
-                    branched=true;segment_written=true;Token::FarReturn(a,b,c,w,n as u32)
+                    branched=true;segment_written=true;Token::FarReturn(a,b,c,w,n as u32,vm)
                 }
                 ["require_iopl"]=>Token::RequireIopl,
                 ["check_io", port, bytes]=>{
@@ -1832,8 +1833,8 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::CheckpointFlags=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;},
             Token::ReadFlags(o)=>values[o]=value(cpu.eflags as u64,32),
             Token::RequireRealMode=>if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);},
-            Token::RequireRing0=>{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}if m.cpl()!=0{return Err(ExecError::GeneralProtection{eip:cpu.eip,error_code:0});}},
-            Token::RequireIopl=>{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}if !m.real_mode&&u32::from(m.cpl())>(cpu.eflags>>12)&3{return Err(ExecError::GeneralProtection{eip:cpu.eip,error_code:0});}},
+            Token::RequireRing0=>{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if m.cpl()!=0{return Err(ExecError::GeneralProtection{eip:cpu.eip,error_code:0});}},
+            Token::RequireIopl=>{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if !m.real_mode&&u32::from(m.cpl())>(cpu.eflags>>12)&3{return Err(ExecError::GeneralProtection{eip:cpu.eip,error_code:0});}},
             Token::CheckIo(a,n)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;let eip=cpu.eip;
                 m.io_permitted(cpu.eflags,values[a].bits as u16,n,eip,&mut |at|r.as_level(false,|r|r.load(at,MemWidth::Byte)).map(|v|v as u8).map_err(|f|f.error(eip)))?;
@@ -1886,7 +1887,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 pending_system=Some((t,loaded));
             }
             Token::Require(c)=>if values[c].bits==0{return Err(ExecError::InvalidContext);},
-            Token::RaiseUnless(c,v)=>if values[c].bits==0{return Err(ExecError::Exception{eip:cpu.eip,vector:v});},
+            Token::RaiseUnless(c,v)=>if values[c].bits==0{return Err(if v==13{ExecError::GeneralProtection{eip:cpu.eip,error_code:0}}else{ExecError::Exception{eip:cpu.eip,vector:v}});},
             Token::ReadAddressAfter(o,reg,a)=>{
                 let mut regs=cpu.regs;regs[reg]=values[a].bits as u32;
                 let ea=effective.ok_or(ExecError::InvalidContext)?;
@@ -1918,7 +1919,6 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::FarBranch(a,b)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
-                if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
                 let r=ram.as_deref();let eip=cpu.eip;
                 let (selector,cache,accessed)=m.load_segment(1,values[a].bits as u16,eip,&mut |at|read_descriptor(r,at,eip))?;let target=values[b].bits as u32;
                 if target>cache.limit{return Err(ExecError::GeneralProtection{eip:cpu.eip,error_code:0});}
@@ -1927,17 +1927,14 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::FarJump(a,b)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
-                if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
                 pending_transfer=Some(privilege::far_jump(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,values[a].bits as u16,values[b].bits as u32,cpu.eip)?);
             }
-            Token::FarReturn(a,b,c,w,n)=>{
+            Token::FarReturn(a,b,c,w,n,v)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
-                if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
-                pending_transfer=Some(privilege::far_return(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,&cpu.regs,values[a].bits as u16,values[b].bits as u32,values[c].bits as u32,w,n,cpu.eip)?);
+                pending_transfer=Some(privilege::far_return(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,&cpu.regs,values[a].bits as u16,values[b].bits as u32,values[c].bits as u32,w,n,v.is_some_and(|v|values[v].bits!=0),cpu.eip)?);
             }
             Token::FarCall(a,b)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
-                if cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);}
                 let mut direct=None;let eip=cpu.eip;
                 if let Some(t)=privilege::far_call(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,&cpu.regs,values[a].bits as u16,context.next_eip,eip,&mut direct)?{
                     // A call gate: the whole transfer, nothing else of the description.
@@ -2194,12 +2191,12 @@ fn emit_rust_functions(p:&Program)->String {
             Token::CheckpointFlags=>"machine.as_deref().ok_or(ExecError::InvalidContext)?;".into(),
             Token::ReadFlags(o)=>format!("let v{o}:u64 = *flags as u64;"),
             Token::RequireRealMode=>"if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||*flags&0x20000!=0 {return Err(ExecError::InvalidContext);}".into(),
-            Token::RequireRing0=>"if *flags&0x20000!=0 {return Err(ExecError::InvalidContext);} if machine.as_deref().ok_or(ExecError::InvalidContext)?.cpl()!=0 {return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}".into(),
-            Token::RequireIopl=>"if *flags&0x20000!=0 {return Err(ExecError::InvalidContext);} {let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if !m.real_mode&&u32::from(m.cpl())>(*flags>>12)&3 {return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}}".into(),
+            Token::RequireRing0=>"if machine.as_deref().ok_or(ExecError::InvalidContext)?.cpl()!=0 {return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}".into(),
+            Token::RequireIopl=>"{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if !m.real_mode&&u32::from(m.cpl())>(*flags>>12)&3 {return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}}".into(),
             Token::CheckIo(a,n)=>format!("{{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;let e=*eip;m.io_permitted(*flags,v{a} as u16,{n},e,&mut |at|r.as_level(false,|r|r.load(at,MemWidth::Byte)).map(|v|v as u8).map_err(|f|f.error(e)))?;}}"),
-            Token::FarJump(a,b)=>format!("if *flags&0x20000!=0{{return Err(ExecError::InvalidContext);}}pending_transfer=Some(privilege::far_jump(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,v{a} as u16,v{b} as u32,*eip)?);"),
-            Token::FarReturn(a,b,c,w,n)=>format!("if *flags&0x20000!=0{{return Err(ExecError::InvalidContext);}}pending_transfer=Some(privilege::far_return(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,v{a} as u16,v{b} as u32,v{c} as u32,MemWidth::{w:?},{n},*eip)?);"),
-            Token::FarCall(a,b)=>format!("if *flags&0x20000!=0{{return Err(ExecError::InvalidContext);}}let mut direct=None;if let Some(t)=privilege::far_call(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,v{a} as u16,context.next_eip,*eip,&mut direct)?{{let m=machine.as_deref_mut().ok_or(ExecError::InvalidContext)?;t.commit(regs,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;m.retired();return Ok(());}}let (selector,cache,accessed)=direct.ok_or(ExecError::InvalidContext)?;if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}if let Some((at,v))=accessed{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;"),
+            Token::FarJump(a,b)=>format!("pending_transfer=Some(privilege::far_jump(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,v{a} as u16,v{b} as u32,*eip)?);"),
+            Token::FarReturn(a,b,c,w,n,v)=>format!("pending_transfer=Some(privilege::far_return(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,v{a} as u16,v{b} as u32,v{c} as u32,MemWidth::{w:?},{n},{},*eip)?);",v.map(|v|format!("v{v}!=0")).unwrap_or("false".into())),
+            Token::FarCall(a,b)=>format!("let mut direct=None;if let Some(t)=privilege::far_call(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,v{a} as u16,context.next_eip,*eip,&mut direct)?{{let m=machine.as_deref_mut().ok_or(ExecError::InvalidContext)?;t.commit(regs,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;m.retired();return Ok(());}}let (selector,cache,accessed)=direct.ok_or(ExecError::InvalidContext)?;if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}if let Some((at,v))=accessed{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;"),
             Token::InterruptShadowIf(c)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_interrupt_shadow=v{c}!=0;"),
             Token::Read(o,b,w) => {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
@@ -2224,7 +2221,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::ReadDescriptor(r,f,a)=>format!("let (v{r},v{f}):(u64,u64)={{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let raw=m.find_descriptor(v{a} as u16,&mut |at|{}(at))?;(raw.unwrap_or(0),u64::from(raw.is_some()))}};",EMIT_DESCRIPTOR_READ),
             Token::LoadSystem(t,a)=>format!("{{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let (loaded,busy)=m.load_system({t},v{a} as u16,*eip,&mut |at|{}(at))?;if let Some((at,v))=busy{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_system=Some(({t},loaded));}}",EMIT_DESCRIPTOR_READ),
             Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
-            Token::RaiseUnless(c,v)=>format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}"),
+            Token::RaiseUnless(c,v)=>if v==13{format!("if v{c}==0{{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}")}else{format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}")},
             Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
             Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|f.error(*eip))? as u64;"),
@@ -2232,7 +2229,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
             Token::ReadDisp(o,w) => format!("let v{o}: u64 = (context.displacement as u32 as u64) & {}u64;",mask(w)),
             Token::CheckSegment(reg,a,n)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
-            Token::FarBranch(a,b)=>format!("if *flags&0x20000!=0{{return Err(ExecError::InvalidContext);}}{}if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;",emit_segment_load("1",a)),
+            Token::FarBranch(a,b)=>format!("{}if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;",emit_segment_load("1",a)),
             Token::BranchIf(a,c) => format!("if v{c} != 0 {{ if v{a} as u32 > context.code_limit {{ return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}}); }} pending_eip = v{a} as u32; }}"),
             Token::Const(o,x) => format!("let v{o}: u64 = {}u64;",x.bits),
             Token::PreserveFlags(m) => format!("// Preserve flag mask {m:#x}, including undefined status."),
@@ -2596,6 +2593,9 @@ mod pm_interrupt_tests;
 #[cfg(test)]
 #[path = "../tests/unit/privilege.rs"]
 mod privilege_tests;
+#[cfg(test)]
+#[path = "../tests/unit/v86.rs"]
+mod v86_tests;
 #[cfg(test)]
 #[path = "../tests/unit/paging.rs"]
 mod paging_tests;

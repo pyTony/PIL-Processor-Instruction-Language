@@ -3,11 +3,6 @@
 # is read whole before the transfer. far_jump (privilege.rs) takes a code
 # segment at CPL or a call gate to one; it never changes the level.
 require_width 16_or_32
-# V86 mode (VM=1) is not modelled yet.
-read_flags entry
-bit vm entry 17
-not no_vm vm
-require no_vm
 $FAR_TARGET
 zext target32 target_value 32
 far_jump selector target32
