@@ -2202,6 +2202,8 @@ DOS and ROM:
   --dos-list [--all] IMAGE|ZIP        List container entries
   --dos-read IMAGE|ZIP INNER [DEST]   Read/extract one entry
   --dos-extract IMAGE|ZIP NEW_DIR     Extract a container
+  --dos-unpack-drive IMAGE NEW_DIR    Copy a FAT image into a new writable folder
+  --dos-drive-name IMAGE              Suggest a labelled host-folder name
 
 Debugger and checks:
   --repl [--load PATH]               Interactive debugger
@@ -2269,6 +2271,14 @@ fn main() -> R<()> {
     if dos_args.get(1).map(String::as_str)==Some("--dos-extract"){
         if dos_args.len()!=4{return Err("usage: pil --dos-extract IMAGE.img|ARCHIVE.zip NEW_DIRECTORY".into());}
         println!("{}",containers::extract(std::path::Path::new(&dos_args[2]),std::path::Path::new(&dos_args[3]))?);return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-unpack-drive"){
+        if dos_args.len()!=4{return Err("usage: pil --dos-unpack-drive IMAGE.img NEW_DIRECTORY".into());}
+        println!("{}",containers::extract_drive(std::path::Path::new(&dos_args[2]),std::path::Path::new(&dos_args[3]))?);return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-drive-name"){
+        if dos_args.len()!=3{return Err("usage: pil --dos-drive-name IMAGE.img".into());}
+        println!("{}",containers::drive_image_name(std::path::Path::new(&dos_args[2]))?);return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--write-dos-mandel"){
         if dos_args.len()!=3{return Err("usage: pil --write-dos-mandel PATH".into());}

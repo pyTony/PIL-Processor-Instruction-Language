@@ -45,6 +45,41 @@ fn extracting_requires_a_new_directory_and_preserves_files(){
     use std::time::{SystemTime,UNIX_EPOCH};let dir=std::env::temp_dir().join(format!("pil-container-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir_all(&dir).unwrap();let zip=dir.join("input.zip");std::fs::write(&zip,stored("BIN/A.COM",b"original")).unwrap();let out=dir.join("output");extract(&zip,&out).unwrap();assert_eq!(std::fs::read(out.join("BIN/A.COM")).unwrap(),b"original");assert!(extract(&zip,&out).is_err());assert_eq!(std::fs::read(out.join("BIN/A.COM")).unwrap(),b"original");std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
+fn drive_import_preserves_layout_and_never_overwrites_or_changes_the_image(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let dir=std::env::temp_dir().join(format!("pil-drive-import-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&dir).unwrap();
+    let mut bytes=image(false);let root=35*512;
+    bytes[root+64..root+96].copy_from_slice(&dirent(b"TEST DISK  ",8,0,0));
+    // An empty directory must be retained, unlike generic package extraction.
+    bytes[root+96..root+128].copy_from_slice(&dirent(b"EMPTY      ",16,5,0));
+    for f in 0..2{w16(&mut bytes,512+f*17*512+5*2,0xffff);}
+    let source=dir.join("disk.img");std::fs::write(&source,&bytes).unwrap();
+    let name=drive_image_name(&source).unwrap();assert!(name.starts_with("TEST_DISK-"));
+    let mut other=bytes.clone();other[100]^=1;let other_source=dir.join("other.img");std::fs::write(&other_source,other).unwrap();
+    let other_name=drive_image_name(&other_source).unwrap();assert!(other_name.starts_with("TEST_DISK-"));assert_ne!(name,other_name);
+    let out=dir.join("drive");extract_drive(&source,&out).unwrap();
+    assert!(out.join("EMPTY").is_dir());
+    assert_eq!(std::fs::read(out.join("PKGS/PACKAGE.ZIP")).unwrap(),stored("BIN/HELLO.COM",&super::super::dos::hello("com").unwrap()));
+    assert!(!out.join("PKGS/PACKAGE.ZIP.contents").exists());
+    std::fs::write(out.join("HELLO.COM"),b"modified").unwrap();
+    assert!(extract_drive(&source,&out).is_err());
+    assert_eq!(std::fs::read(out.join("HELLO.COM")).unwrap(),b"modified");
+    assert_eq!(std::fs::read(&source).unwrap(),bytes);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn drive_import_rejects_duplicate_and_unsafe_paths_before_creating_destination(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let dir=std::env::temp_dir().join(format!("pil-drive-invalid-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir(&dir).unwrap();
+    for name in [*b"HELLO   COM",*b"CON     TXT",*b"BAD/    TXT"]{
+        let mut bytes=image(false);let root=35*512;bytes[root+64..root+96].copy_from_slice(&dirent(&name,0,2,1));
+        let source=dir.join("bad.img");std::fs::write(&source,bytes).unwrap();let out=dir.join("out");
+        assert!(extract_drive(&source,&out).is_err());assert!(!out.exists());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
 fn image_probe_deduplicates_byte_identical_executables(){
     use std::time::{SystemTime,UNIX_EPOCH};let path=std::env::temp_dir().join(format!("pil-image-{}-{}.img",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));std::fs::write(&path,image(true)).unwrap();let text=super::super::dos::report(&[path.to_string_lossy().into_owned()],100).unwrap();assert!(text.contains("candidates=2 added_unique=1"),"{text}");assert!(text.contains("SUMMARY imported=1/1 exited=1"));std::fs::remove_file(path).unwrap();
 }
