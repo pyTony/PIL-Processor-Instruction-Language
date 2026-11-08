@@ -53,6 +53,8 @@ mod rtc;
 mod vga;
 #[path="dos_planar.rs"]
 mod planar;
+#[path="dos_vga_font.rs"]
+mod vga_font;
 #[path="dos_serial.rs"]
 mod serial;
 #[path="dos_break.rs"]
@@ -348,11 +350,15 @@ fn exception(p:&mut Loaded,e:&super::flow::ExecError,lazy:&mut super::LazyFlags)
         let event=crate::interrupt::Event::fault(e,p.cpu.eip)?;
         return Some(vectors::deliver_protected(p,event).map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}));
     }
-    if vectors::answered(p,vector)!=Ok(false){return None;}
+    // A divide error with vector 0 still at its entry goes to the DOS
+    // kernel's default handler there (services::divide_error).
+    let kernel=vector==0&&vectors::at_own_entry(p,0)==Ok(true);
+    if !kernel&&vectors::answered(p,vector)!=Ok(false){return None;}
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     let site=ExceptionSite::capture(p,vector,&format!("{e:?}"));
     let eip=p.cpu.eip;
-    Some(vectors::deliver_fault(p,vector,eip).map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}))
+    let delivered=if kernel{vectors::deliver_fault_to_entry(p,vector,eip)}else{vectors::deliver_fault(p,vector,eip)};
+    Some(delivered.map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}))
 }
 pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
     let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);

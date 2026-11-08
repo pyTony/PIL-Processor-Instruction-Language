@@ -6,7 +6,7 @@ use crate::host_io::Output;
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     let ah=(p.cpu.regs[0]>>8)as u8;
     let result=dispatch_inner(p,vector,out);
-    if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x60|0x65..=0x67|0x69) && p.cpu.eflags&1!=0 {
+    if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x5f|0x60|0x65..=0x67|0x69) && p.cpu.eflags&1!=0 {
         p.dos_error=p.cpu.regs[0]as u16;
     }
     result
@@ -19,6 +19,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
     let ah=(p.cpu.regs[0]>>8)as u8;
     if vector==0x21&&(p.break_check||matches!(ah,1..=5|8..=0x0b)){console::dos_break_check(p)?;}
     match(vector,ah){
+        (0x00,_)=>divide_error(p),
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
         (0x21,0x02)=>{console::dos_break_check(p)?;put_char(p,out,p.cpu.regs[2]as u8)?;Ok(None)},
         (0x21,ah @ (0x01|0x07|0x08))=>{read_char(p,out,ah)?;Ok(None)},
@@ -335,7 +336,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // The default multiplex handler leaves the caller's state unchanged.
             Ok(None)
         },
-        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x160a|0x1680..=0x168f|0x1700..=0x17ff|0x1a00|0x4300|0x4680|0x4a10|0x4a11|0x4a33|0xae00|0xb700|0xb706|0xb707|0xb710|0xd44d|0xd44e|0xd44f)=>{
+        (0x2f,_) if matches!(p.cpu.regs[0]&0xffff,0x0100|0x0600|0x1000|0x1100|0x1500|0x150b|0x1600|0x160a|0x1680..=0x168f|0x1700..=0x17ff|0x1a00|0x4300|0x4680|0x4a10|0x4a11|0x4a33|0xae00|0xb700|0xb706|0xb707|0xb710|0xb800|0xd44d|0xd44e|0xd44f|0xd701)=>{
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
             // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS (unless loaded) or
@@ -349,6 +350,8 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // 1500h/150Bh keep BX (not ADADh): no MSCDEX, no CD-ROM drives.
             // 1000h keeps AL=00h: SHARE is not installed.
             // D200h keeps AL=00h: Quarterdeck RPCI is not installed.
+            // D701h keeps AX nonzero: no Banyan VINES. B800h keeps AL=00h: no
+            // MS-Net/LAN Manager network.
             Ok(None)
         },
         // Colour VGA BIOS (Tony's choice, 7 November 2026): palette/DAC (10h),
@@ -450,6 +453,20 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // No long-file-name API: AL=00h, CF=1, so AX=7100h (FreeDOS without LFN).
             p.cpu.regs[0]&=!255;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
+        },
+        (0x21,0x5f) if !matches!(p.cpu.regs[0]as u8,7|8)=>{
+            // Redirector calls go to INT 2Fh AX=111Eh. With no network
+            // redirector the FreeDOS kernel's own INT 2Fh answers AX=0001h
+            // with CF=1 (int2f.asm, "redirected INT21/5F44"), so DOS returns
+            // invalid function: CF=1, AX=0001h (inthndlr.c case 0x5f).
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+            Ok(None)
+        },
+        (0x21,0xdc)=>{
+            // Not a DOS function (Novell NetWare's connection number): the
+            // FreeDOS kernel answers unsupported functions with AL=00h
+            // (inthndlr.c, default case), which callers read as no network.
+            p.cpu.regs[0]&=!255;Ok(None)
         },
         (0x15,0x88)=>{
             // No memory above 1 MB: 0 KB of extended memory.
@@ -903,4 +920,24 @@ fn console_read(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|n as u32;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     Ok(())
 }
-
+/// INT 00h at its entry: the FreeDOS kernel's default divide-error handler
+/// (entry.asm, reloc_call_int0_handler). It prints "Interrupt divide by zero,
+/// stack:" and the 13 words at SS:SP (the fault's IP, CS and FLAGS, then the
+/// program's stack) in hex through INT 10h AH=0Eh with BX=0070h, then ends
+/// the program with INT 21h AX=4C7Fh (errorlevel 127).
+fn divide_error(p:&mut Loaded)->Result<Option<u8>,String>{
+    if !vectors::answered(p,0x10)?{return Err("divide error: the DOS default handler prints through INT 10h, which the program has hooked; that is not modelled".into());}
+    let ss=MemoryContext{segment:SegmentRegister::Ss,cache:p.image.segments[SegmentRegister::Ss.index()]};
+    let sp=p.cpu.regs[4]&0xffff;
+    let mut text=b"\r\nInterrupt divide by zero, stack:\r\n".to_vec();
+    for k in 0..13u32{
+        let at=ss.translate(sp.wrapping_add(2*k)&0xffff,MemWidth::Word,false,p.cpu.eip).map_err(|e|format!("divide error stack read: {e:?}"))?;
+        let word=p.ram.load(at,MemWidth::Word).map_err(|e|format!("divide error stack read: {e:?}"))?;
+        text.extend(format!("{word:04X} ").bytes());
+    }
+    text.extend(b"\r\n");
+    let writes=console::bios_teletype(p,&text,0x70)?;
+    console::check(p,&writes)?;console::store(p,&writes)?;
+    p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x4c7f;
+    Ok(Some(0x7f))
+}
