@@ -1,3 +1,31 @@
+# Protected mode, part 2: LDTR, TR and the descriptor queries — 8 November 2026
+
+Protected-mode plan increment 2, second part (#116 was the first part).
+- SegmentState and Image hold LDTR and TR (`ldt_tr`: selector, base, limit,
+  type); traces include them. TI=1 selectors in segment loads read the LDT.
+- LLDT/LTR (CPL 0, protected mode): SegmentState::load_system checks the GDT
+  entry (LDT type 2; available TSS type 1 or 9), #GP(selector) or #NP; LTR
+  stages the TSS busy bit. SLDT/STR at any level; r32 gets zero-extension.
+- SGDT/SIDT in any mode: limit word, then all 32 base bits (Bochs; Intel
+  leaves the top byte undefined with o16). SMSW r32 writes all of CR0.
+- LAR, LSL, VERR, VERW: new tokens read_descriptor (raw bv64 plus found) and
+  read_cpl; the type and privilege rules are PIL (descriptor_rights.pil and
+  one file each). ARPL is plain PIL. The 0F00 group, LAR, LSL and ARPL stay
+  refused in real mode (#UD there); require_protected_mode guards them.
+- Not yet: #GP(0) above CPL 0 for LLDT/LTR (they stop), gates, task switches.
+
+- Host-CPU oracle (Tony's choice): ROL/ROR OF for counts above 1 is no
+  longer compared with the host CPU. Intel leaves it undefined and runners
+  differ (some keep the old OF), so host_cpu_alu failed on some runners
+  since 55376c9. PIL still defines it by the 386EX rule; SST checks it.
+
+Local Linux: 614 Rust tests pass, 1 ignored (7 new in system_registers.rs; one
+older SMSW boundary test changed, because 0F 01 00 and 66 0F 01 E0 now
+decode). The generated-backend suite has 271 cases (2 new: pm_system,
+pm_ltr_busy). SingleStepTests/80386 has no 0F00-0F03 or 63h real-mode files,
+so it was not rerun. test386 still stops at POST 08h (PE and PG together).
+Next: increment 3, paging.
+
 # PIC reinitialization (ICW1-ICW4) for CWSDPMI — 8 November 2026
 
 Tony's DOS benchmark menu (driveD\dosbench, option e, Quake timedemo

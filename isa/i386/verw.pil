@@ -1,0 +1,10 @@
+# VERW: ZF=1 when the selector names a visible writable data segment;
+# otherwise ZF=0.
+not data code
+and data_segment segment data
+and writable data_segment read_write
+and allowed writable visible
+and valid found allowed
+flag ZF valid
+preserve_flags remaining
+retire

@@ -107,6 +107,11 @@ impl Descriptor {
 /// hidden cache and, in protected mode, the descriptor's access byte to mark
 /// accessed (address, new value) when it is not already.
 pub type SegmentLoad = (u16, SegmentCache, Option<(u32, u8)>);
+/// LDTR or TR: the visible selector and the hidden base, limit and
+/// descriptor type (2 for an LDT, 0Bh for a busy 386 TSS, 3 for a busy 286
+/// TSS). A null LDTR has selector 0 and limit 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SystemSegment { pub selector: u16, pub base: u32, pub limit: u32, pub kind: u8 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemoryContext { pub segment: SegmentRegister, pub cache: SegmentCache }
 impl MemoryContext {
@@ -159,6 +164,8 @@ impl AddressContext {
 pub struct SegmentState {
     pub segments:[SegmentCache;6],pub selectors:[u16;6],
     pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,
+    /// LDTR (0) and TR (1).
+    pub ldt_tr:[SystemSegment;2],
 }
 impl SegmentState {
     // The mode bit is coherent with the existing normalized mode state.
@@ -187,8 +194,8 @@ impl SegmentState {
     /// ordinary real-mode cache. In protected mode the descriptor is read
     /// from the GDT through `read` (a linear 8-byte read) and checked as the
     /// 386 does for MOV/POP/LDS-style loads (DS/ES/FS/GS, SS) and for a far
-    /// JMP/CALL/RETF to a code segment at the same privilege (CS). LDT
-    /// selectors, gates and privilege changes are not modelled yet.
+    /// JMP/CALL/RETF to a code segment at the same privilege (CS). TI=1
+    /// selectors read the LDT. Gates and privilege changes are not modelled yet.
     pub fn load_segment(&self,reg:usize,selector:u16,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<SegmentLoad,ExecError>{
         if self.real_mode{
             let cache=match self.segments[reg]{
@@ -204,11 +211,7 @@ impl SegmentState {
             return if matches!(reg,0|3|4|5){Ok((selector,SegmentCache{base:0,limit:0,access:SegmentAccess::Unusable},None))}else{Err(gp(0))};
         }
         let code=selector&0xfffc;
-        // No LDT is loaded yet (LDTR stays null), so a TI=1 selector faults.
-        if selector&4!=0{return Err(gp(code));}
-        let (limit,base)=self.tables[0];
-        if u32::from(index)+7>u32::from(limit){return Err(gp(code));}
-        let at=base.wrapping_add(u32::from(index));
+        let Some(at)=self.descriptor_address(selector) else{return Err(gp(code));};
         let d=Descriptor::decode(read(at)?);
         if !d.segment(){
             // Call gates, task gates and TSS descriptors come with later increments.
@@ -242,6 +245,44 @@ impl SegmentState {
         let mut cache=d.cache();
         if reg==1{if let SegmentAccess::Code{ref mut dpl,..}=cache.access{if conforming{*dpl=cpl;}}}
         Ok((visible,cache,(d.access&1==0).then_some((at.wrapping_add(5),d.access|1))))
+    }
+    /// The linear address of the GDT or LDT entry a selector names, or None
+    /// for a null GDT selector, a TI=1 selector with no LDT loaded, or an
+    /// index past the table limit.
+    pub fn descriptor_address(&self,selector:u16)->Option<u32>{
+        let index=u32::from(selector&0xfff8);
+        let (base,limit)=if selector&4!=0{
+            let ldt=self.ldt_tr[0];
+            if ldt.selector&0xfffc==0{return None;}
+            (ldt.base,ldt.limit)
+        }else{
+            if index==0{return None;}
+            (self.tables[0].1,u32::from(self.tables[0].0))
+        };
+        (index+7<=limit).then(||base.wrapping_add(index))
+    }
+    /// The raw descriptor a selector names, for LAR, LSL, VERR and VERW,
+    /// which check it themselves and never fault on a bad selector.
+    pub fn find_descriptor(&self,selector:u16,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<Option<u64>,ExecError>{
+        self.descriptor_address(selector).map(&mut *read).transpose()
+    }
+    /// LLDT (`which`=0) or LTR (`which`=1) at CPL 0 in protected mode: the
+    /// new LDTR or TR and, for LTR, the access byte to store with the TSS
+    /// marked busy. A null selector empties LDTR; LTR faults on it.
+    pub fn load_system(&self,which:usize,selector:u16,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<(SystemSegment,Option<(u32,u8)>),ExecError>{
+        let code=selector&0xfffc;
+        let gp=|code:u16|ExecError::GeneralProtection{eip,error_code:code};
+        if code==0{return if which==0{Ok((SystemSegment{selector,..SystemSegment::default()},None))}else{Err(gp(0))};}
+        // Both tables live in the GDT: a TI=1 selector faults.
+        if selector&4!=0{return Err(gp(code));}
+        let at=self.descriptor_address(selector).ok_or(gp(code))?;
+        let d=Descriptor::decode(read(at)?);
+        let kind=d.access&0x1f;
+        let valid=if which==0{kind==2}else{kind==1||kind==9};
+        if !valid{return Err(gp(code));}
+        if !d.present(){return Err(ExecError::Exception{eip,vector:11});}
+        let busy=(which==1).then_some((at.wrapping_add(5),d.access|2));
+        Ok((SystemSegment{selector,base:d.base,limit:d.limit,kind:kind|if which==1{2}else{0}},busy))
     }
     pub fn checkpoint_flags(&mut self,eip:u32,flags:u32,undefined:u32){if self.flag_checkpoint.map(|v|v.0)!=Some(eip){self.flag_checkpoint=Some((eip,flags,undefined));}}
     pub fn recover_flags(&mut self)->Option<(u32,u32)>{self.flag_checkpoint.take().map(|(_,f,u)|(f,u))}
