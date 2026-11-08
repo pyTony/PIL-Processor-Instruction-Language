@@ -1124,6 +1124,16 @@ fn session_commands_run_queue_keys_and_report_the_screen(){
  assert!(s.command(9,"quit").unwrap().1);
 }
 #[test]
+fn keyboard_poll_hint_keeps_guest_running_and_accepts_input(){
+ // Poll INT 16h until a key arrives, read it, then exit.
+ let code=[0xb4,1,0xcd,0x16,0x74,0xfa,0xb4,0,0xcd,0x16,0xb8,0,0x4c,0xcd,0x21];
+ let mut s=session::Session::new(load(&code,"poll.com").unwrap());
+ let(reply,_)=s.command(1,"run 20000").unwrap();
+ assert!(reply.contains("\"idle_hint\":true")&&reply.contains("\"status\":\"running\""));
+ assert!(s.key(b'x',0x2d).unwrap());
+ let(reply,_)=s.command(2,"run 20000").unwrap();assert!(reply.contains("\"status\":\"exit\""));
+}
+#[test]
 fn session_routes_console_to_com1_before_guest_execution(){
  let code=[0xb4,2,0xb2,b'H',0xcd,0x21,0xb4,1,0xcd,0x21,0xb4,0x4c,0xcd,0x21];
  let mut p=load(&code,"headless.com").unwrap();serial::attach(&mut p).unwrap();
@@ -2218,6 +2228,21 @@ fn planar_mode_sets_fill_the_bios_data_area_and_map_the_planes(){
  let mut p=graphics_mode(0x12);p.ram.store(0xa0010,MemWidth::Byte,0x3c).unwrap();
  int10(&mut p,0x0090,0,0,0);assert_eq!(p.ram.planar().unwrap().peek(2,0x10),0x3c);
  int10(&mut p,0x0010,0,0,0);assert_eq!(p.ram.planar().unwrap().peek(2,0x10),0);
+}
+#[test]
+fn planar_pages_keep_pixels_text_and_display_separate(){
+ let mut p=graphics_mode(0x10);
+ int10(&mut p,0x0c03,0,0,0);
+ int10(&mut p,0x0c0c,0x0100,0,0);
+ assert_eq!(p.ram.planar().unwrap().pixel(0,0),3);
+ assert_eq!(p.ram.planar().unwrap().pixel(0x8000,0),12);
+ let (_,_,page0,_)=planar::snapshot(&p).unwrap();assert!(page0.starts_with("80"));
+ int10(&mut p,0x0501,0,0,0);
+ let (_,_,page1,_)=planar::snapshot(&p).unwrap();assert!(page1.starts_with("00"));
+ int10(&mut p,0x0e41,7,0,0);
+ assert_eq!(p.ram.planar().unwrap().pixel(0,0),3);
+ assert_eq!(p.ram.load(0x452,MemWidth::Word).unwrap(),1);
+ p.cpu.regs[0]=0x0502;assert!(service(&mut p,0x10,&mut vec![]).is_err());
 }
 #[test]
 fn planar_bios_pixels_combine_four_planes(){
