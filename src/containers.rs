@@ -66,14 +66,16 @@ fn zip(data:&[u8])->Result<Archive,String>{
     }
     if at!=eocd{return Err("ZIP central directory size mismatch".into());}Ok(archive)
 }
-struct Fat<'a>{data:&'a[u8],fat:&'a[u8],cluster_base:usize,unit:usize,clusters:usize,dirs:BTreeSet<usize>,archive:Archive}
+struct Fat<'a>{data:&'a[u8],fat:&'a[u8],cluster_base:usize,unit:usize,clusters:usize,fat16:bool,dirs:BTreeSet<usize>,archive:Archive}
 impl Fat<'_>{
     fn chain(&self,mut c:usize)->Result<Vec<u8>,String>{
         let mut seen=BTreeSet::new();let mut out=Vec::new();
-        while c<0xfff8{
+        let eoc=if self.fat16{0xfff8}else{0xff8};
+        while c<eoc{
             if c<2||c>=self.clusters+2||!seen.insert(c){return Err("invalid/looped FAT16 cluster chain".into());}
             if out.len()+self.unit>MAX_ENTRY{return Err("FAT16 chain exceeds entry limit".into());}
-            out.extend_from_slice(range(self.data,self.cluster_base+(c-2)*self.unit,self.unit)?);c=usize::from(u16(self.fat,c*2)?);
+            out.extend_from_slice(range(self.data,self.cluster_base+(c-2)*self.unit,self.unit)?);
+            c=if self.fat16{usize::from(u16(self.fat,c*2)?)}else{let w=u16(self.fat,c+c/2)?;usize::from(if c&1!=0{w>>4}else{w&0x0fff})};
         }Ok(out)
     }
     fn walk(&mut self,raw:&[u8],prefix:&str,depth:usize)->Result<(),String>{
@@ -96,19 +98,21 @@ impl Fat<'_>{
         }Ok(())
     }
 }
-/// A FAT16 volume's metadata: the walker over its clusters, the root directory
-/// span and the volume's offset in the image.
+/// A FAT12 or FAT16 volume's metadata: the walker over its clusters, the root
+/// directory span and the volume's offset in the image.
 fn fat_volume(data:&[u8])->Result<(Fat<'_>,usize,usize,usize),String>{
-    if range(data,510,2)?!=b"\x55\xaa"{return Err("image has no DOS boot signature".into());}
+    let superfloppy=u16(data,11)?==512&&u16(data,17)?!=0&&u16(data,22)?!=0;
+    let floppy_bpb=superfloppy&&matches!(data.first(),Some(0xeb|0xe9))&&matches!(data.get(21),Some(0xf0|0xf8..=0xff));
+    if range(data,510,2)?!=b"\x55\xaa"&&!floppy_bpb{return Err("image has no DOS boot signature".into());}
     let mut base=0;let mut partition_end=data.len();
-    // A valid FAT16 superfloppy BPB has no partition table requirement.
-    if u16(data,11)?!=512||u16(data,17)?==0||u16(data,22)?==0{
+    // A valid FAT12/FAT16 superfloppy BPB has no partition table requirement.
+    if !superfloppy{
         let mut found=None;
-        for i in 0..4{let e=range(data,446+i*16,16)?;if matches!(e[4],4|6|0x0e){let start=(u32(e,8)?as usize).checked_mul(512).ok_or("partition start overflow")?;let bytes=(u32(e,12)?as usize).checked_mul(512).ok_or("partition size overflow")?;found=Some((start,start.checked_add(bytes).ok_or("partition overflow")?));break;}}
-        let(s,end)=found.ok_or("no supported FAT16 partition;FAT12/FAT32/ISO are not implemented")?;base=s;partition_end=end;
+        for i in 0..4{let e=range(data,446+i*16,16)?;if matches!(e[4],1|4|6|0x0e){let start=(u32(e,8)?as usize).checked_mul(512).ok_or("partition start overflow")?;let bytes=(u32(e,12)?as usize).checked_mul(512).ok_or("partition size overflow")?;found=Some((start,start.checked_add(bytes).ok_or("partition overflow")?));break;}}
+        let(s,end)=found.ok_or("no supported FAT12/FAT16 partition;FAT32/ISO are not implemented")?;base=s;partition_end=end;
         if partition_end>data.len(){return Err("FAT16 partition extends beyond image".into());}
     }
-    let b=range(data,base,512)?;if b[510..512]!=[0x55,0xaa]||u16(b,11)?!=512{return Err("invalid FAT16 boot sector".into());}
+    let b=range(data,base,512)?;if (b[510..512]!=[0x55,0xaa]&&!floppy_bpb)||u16(b,11)?!=512{return Err("invalid FAT16 boot sector".into());}
     let unit=usize::from(b[13])*512;let reserved=usize::from(u16(b,14)?);let nf=usize::from(b[16]);let roots=usize::from(u16(b,17)?);let spf=usize::from(u16(b,22)?);
     let total=if u16(b,19)?==0{u32(b,32)?as usize}else{usize::from(u16(b,19)?)};
     if unit==0||!unit.is_power_of_two()||unit>65536||reserved==0||!(1..=2).contains(&nf)||roots==0||spf==0{return Err("invalid/unsupported FAT16 BPB".into());}
@@ -118,8 +122,10 @@ fn fat_volume(data:&[u8])->Result<(Fat<'_>,usize,usize,usize),String>{
     if nf==2&&fat!=range(data,fat_start+spf*512,spf*512)?{return Err("FAT16 copies disagree".into());}
     let root_start=fat_start+nf*spf*512;let root_bytes=((roots*32+511)/512)*512;let cluster_base=root_start+root_bytes;
     let clusters=volume_end.checked_sub(cluster_base).ok_or("FAT16 metadata exceeds volume")?/unit;
-    if !(4085..65525).contains(&clusters)||fat.len()/2<clusters+2{return Err("not a valid FAT16 cluster layout".into());}
-    Ok((Fat{data:range(data,0,volume_end)?,fat,cluster_base,unit,clusters,dirs:BTreeSet::new(),archive:Archive::new()},root_start,roots*32,base))
+    let fat16=if (1..4085).contains(&clusters)&&fat.len()>=((clusters+2)*3).div_ceil(2){false}
+        else if (4085..65525).contains(&clusters)&&fat.len()/2>=clusters+2{true}
+        else{return Err("not a valid FAT12/FAT16 cluster layout".into());};
+    Ok((Fat{data:range(data,0,volume_end)?,fat,cluster_base,unit,clusters,fat16,dirs:BTreeSet::new(),archive:Archive::new()},root_start,roots*32,base))
 }
 fn fat16(data:&[u8])->Result<Archive,String>{
     let(mut fs,root_start,root_len,base)=fat_volume(data)?;

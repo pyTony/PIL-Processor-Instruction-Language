@@ -3,7 +3,23 @@
 //! and sends keys; all execution stays in the PIL interpreter and Dine.
 use super::*;
 use std::io::{BufRead,Write as _};
-const MAX_LINE:usize=256;
+const MAX_LINE:usize=1024;
+fn parse_drive_letter(text:&str)->Option<u8>{
+    match text.as_bytes(){
+        [l]|[l,b':'] if l.is_ascii_alphabetic()=>Some(l.to_ascii_uppercase()),
+        _=>None,
+    }
+}
+fn open_mount_source(path:&str)->Result<Source,String>{
+    let p=Path::new(path);
+    let is_image=p.extension().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("img")||x.eq_ignore_ascii_case("ima"));
+    if is_image&&p.is_file(){
+        let data=super::super::containers::read_image(p)?;
+        return Ok(Source::Image(std::sync::Arc::new(super::super::containers::fat16_tree(&data)?)));
+    }
+    if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
+    Err(format!("mount {path} is not a folder or .img/.ima image"))
+}
 pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,exceptions:Vec<ExceptionSite>,exception_count:usize}
 impl Session{
     pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,exceptions:Vec::new(),exception_count:0}}
@@ -113,6 +129,33 @@ impl Session{
             },
             // `ansi on`: load the ANSI.SYS-style CON driver, as DEVICE=ANSI.SYS would.
             ["ansi","on"]=>{super::console::ansi::install(self.loaded.as_mut().ok_or("session state lost")?)?;(true,String::new(),false)},
+            // `mount DRIVE PATH`: mount or replace drive A..E with a host folder or .img/.ima image.
+            ["mount",drive,..]=>{
+                let path=line.trim_start().strip_prefix("mount").unwrap_or("").trim_start().strip_prefix(drive).unwrap_or("").trim();
+                match parse_drive_letter(drive){
+                    Some(letter) if !path.is_empty()=>{
+                        let p=self.loaded.as_mut().ok_or("session state lost")?;
+                        match open_mount_source(path).and_then(|src|p.drive.mount(letter,src)){
+                            Ok(())=>(true,format!("{}: {path}",char::from(letter)),false),
+                            Err(e)=>(false,e,false),
+                        }
+                    },
+                    _=>(false,"mount needs drive A..E and a folder or .img/.ima path".into(),false),
+                }
+            },
+            ["mount"]=>(false,"mount needs drive A..E and a folder or .img/.ima path".into(),false),
+            // `unmount DRIVE`: detach drive A..E when no files are open on it.
+            ["unmount",drive]=>match parse_drive_letter(drive){
+                Some(letter)=>{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    match p.drive.unmount(letter){
+                        Ok(())=>(true,format!("{}: unmounted",char::from(letter)),false),
+                        Err(e)=>(false,e,false),
+                    }
+                },
+                None=>(false,"unmount needs drive A..E".into(),false),
+            },
+            ["unmount"]=>(false,"unmount needs drive A..E".into(),false),
             // `com1 HEX`: bytes arriving at COM1 from the host terminal.
             ["com1",hex]=>match(0..hex.len()).step_by(2).map(|i|hex.get(i..i+2).and_then(|b|u8::from_str_radix(b,16).ok())).collect::<Option<Vec<u8>>>(){
                 Some(bytes) if !bytes.is_empty()=>match self.loaded.as_mut().and_then(|p|p.com1.as_mut()){
@@ -158,7 +201,7 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str)->Resu
         },
         None=>read_file(Path::new(path))?,
     };
-    if let Some(mount)=mount{drives.push(Source::Host(std::path::PathBuf::from(mount)));}
+    if let Some(mount)=mount{drives.push(open_mount_source(mount)?);}
     // Z: holds files in memory for the session, and TEMP points there.
     drives.push(Source::Memory(MemDir::default()));
     let mut loaded=load_with_drives(&bytes,path,drives,inner)?;

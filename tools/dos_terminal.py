@@ -345,6 +345,20 @@ def key_command(code):
     return 'key {} {}'.format(*code)
 
 
+def mount_command(drive, path):
+    letter = str(drive).strip().rstrip(':').upper()
+    if letter not in ('A', 'B', 'C', 'D', 'E') or not str(path).strip():
+        raise ValueError(f'mount needs drive A..E and a path, got {drive!r} {path!r}')
+    return f'mount {letter} {str(path).strip()}'
+
+
+def unmount_command(drive):
+    letter = str(drive).strip().rstrip(':').upper()
+    if letter not in ('A', 'B', 'C', 'D', 'E'):
+        raise ValueError(f'unmount needs drive A..E, got {drive!r}')
+    return f'unmount {letter}'
+
+
 def screen_rows(reply):
     """Rows of (text, attributes) from a session reply's character/attribute bytes."""
     cells = bytes.fromhex(reply['screen'])
@@ -811,13 +825,46 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         session.close()
         root.destroy()
 
+    def mount_image(letter):
+        from tkinter import filedialog
+        chosen = filedialog.askopenfilename(
+            parent=root, title=f'Mount floppy or disk image on {letter}:',
+            filetypes=[('Disk images', '*.img *.ima *.IMG *.IMA'), ('All files', '*.*')])
+        if chosen:
+            reply = session.send(mount_command(letter, chosen))
+            root.title(f"PIL DOS — {program} ({reply.get('text', '')})")
+            draw(reply)
+
+    def mount_folder(letter):
+        from tkinter import filedialog
+        chosen = filedialog.askdirectory(parent=root, title=f'Mount host folder on {letter}:')
+        if chosen:
+            reply = session.send(mount_command(letter, chosen))
+            root.title(f"PIL DOS — {program} ({reply.get('text', '')})")
+            draw(reply)
+
+    def unmount_drive(letter):
+        reply = session.send(unmount_command(letter))
+        root.title(f"PIL DOS — {program} ({reply.get('text', '')})")
+        draw(reply)
+
     root.bind('<Key>', on_key)
     root.bind('<KeyRelease>', on_release)
     root.bind('<FocusOut>', lost_focus)
     menu = tk.Menu(root, tearoff=0)
     menu.add_command(label='Copy (Ctrl+Shift+C)', command=copy)
     menu.add_command(label='Paste (Ctrl+Shift+V)', command=paste)
-    text.bind('<Button-3>', lambda event: menu.tk_popup(event.x_root, event.y_root))
+    menu.add_separator()
+    drives_menu = tk.Menu(menu, tearoff=0)
+    for drv in ('A', 'B', 'D', 'E'):
+        sub = tk.Menu(drives_menu, tearoff=0)
+        sub.add_command(label=f'Mount Floppy / Image (.img/.ima) on {drv}:...', command=lambda d=drv: mount_image(d))
+        sub.add_command(label=f'Mount Host Folder on {drv}:...', command=lambda d=drv: mount_folder(d))
+        sub.add_command(label=f'Unmount {drv}:', command=lambda d=drv: unmount_drive(d))
+        drives_menu.add_cascade(label=f'Drive {drv}:', menu=sub)
+    menu.add_cascade(label='Drives', menu=drives_menu)
+    for widget in (text, graphics, status):
+        widget.bind('<Button-3>', lambda event: menu.tk_popup(event.x_root, event.y_root))
     root.protocol('WM_DELETE_WINDOW', close)
     draw(session.last)
     root.after(10, tick)

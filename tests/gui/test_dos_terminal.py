@@ -415,6 +415,18 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.to_cp437('dir\nä€'), b'dir\r\x84')
         self.assertEqual(term.from_cp437(b'\x1b[1m\xc9\xcd'), '\x1b[1m╔═')
 
+    def test_mount_and_unmount_commands_validate_drives_and_paths(self):
+        self.assertEqual(term.mount_command('a:', '/media/usb/disk1.img'), 'mount A /media/usb/disk1.img')
+        self.assertEqual(term.mount_command('D', 'C:\\My Floppies'), 'mount D C:\\My Floppies')
+        self.assertEqual(term.unmount_command('b:'), 'unmount B')
+        for bad in ('Z', 'F', ''):
+            with self.assertRaises(ValueError):
+                term.mount_command(bad, '/tmp')
+            with self.assertRaises(ValueError):
+                term.unmount_command(bad)
+        with self.assertRaises(ValueError):
+            term.mount_command('A', '   ')
+
     def test_console_com1_drops_vt_key_sequences_but_keeps_esc(self):
         self.assertEqual(term.strip_vt_keys(b'dir\x1b[A\x1b[1;5C\x1bOP\x1b[2~x'), b'dirx')
         self.assertEqual(term.strip_vt_keys(b'\x1b'), b'\x1b')
