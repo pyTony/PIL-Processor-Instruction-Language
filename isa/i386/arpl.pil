@@ -1,8 +1,9 @@
 # ARPL: when the destination selector's RPL is below the source's, raise it
 # to the source RPL and set ZF; otherwise ZF=0 and the selector stays.
 # Protected mode only (the decoder refuses it in real mode, where 63h is
-# #UD). A memory destination is written back either way, as a
-# read-modify-write.
+# #UD). A memory destination is written only when the RPL changes: the
+# 386 does not write back an unchanged selector, so a read-only segment
+# faults only then (test386 POST 17h).
 require_protected_mode
 $INPUT
 read source src 16

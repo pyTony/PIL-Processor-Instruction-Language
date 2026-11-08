@@ -92,6 +92,7 @@ enum Token {
     WriteGpr(usize, usize, u8),
     Load(usize, usize, MemWidth),
     Store(usize, usize, MemWidth),
+    StoreIf(usize, usize, usize, MemWidth),
     ReadIp(usize, bool, u8),
     ReadDisp(usize, u8),
     BranchIf(usize, usize),
@@ -320,7 +321,7 @@ fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         Token::Binary(_,_,a,b)|Token::Shift(_,_,a,b)|Token::Less(_,a,b)
         |Token::BranchIf(a,b)|Token::FarBranch(a,b)|Token::FarJump(a,b)|Token::FarCall(a,b)|Token::Store(a,b,_)
         |Token::StoreSegment(a,b,_,_)|Token::WriteIf(a,b)|Token::WriteSourceIf(a,b)=>used(a)||used(b),
-        Token::Select(_,a,b,c)|Token::FlagIf(_,a,b,c)=>used(a)||used(b)||used(c),
+        Token::Select(_,a,b,c)|Token::FlagIf(_,a,b,c)|Token::StoreIf(a,b,c,_)=>used(a)||used(b)||used(c),
         _=>false,
     })
 }
@@ -659,6 +660,7 @@ impl Program {
             Token::WriteGpr(r, v, w) => format!("write_gpr r{r} v{v} {w}"),
             Token::Load(v, a, m) => format!("v{v} = load [v{a}] {}", m.bytes() * 8),
             Token::Store(a, v, m) => format!("store [v{a}] v{v} {}", m.bytes() * 8),
+            Token::StoreIf(a, v, c, m) => format!("store_if [v{a}] v{v} {} (when v{c})", m.bytes() * 8),
             Token::ReadIp(v, _, w) => format!("v{v} = read_ip {w}"),
             Token::ReadDisp(v, w) => format!("v{v} = read_disp {w}"),
             Token::BranchIf(t, c) => format!("branch_if v{t} (when v{c})"),
@@ -887,7 +889,8 @@ impl Program {
                             } else { early_stop = Some(idx); note = format!("; RAM read fault at 0x{addr:08x}"); }
                         } else { early_stop = Some(idx); note = "; segment fault".into(); }
                     }
-                    Token::Store(a, v, w) => {
+                    Token::StoreIf(_, _, c, _) if values[c].bits == 0 => { note = "; store skipped".into(); }
+                    Token::Store(a, v, w) | Token::StoreIf(a, v, _, w) => {
                         let offset = values[a].bits as u32;
                         let addr_res = match memory_context {
                             Some(c) => c.translate(offset, w, true, cpu.eip),
@@ -1191,7 +1194,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["retire_if", predicate]=>{
                     let c=slot(&names,predicate)?;
-                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
+                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
                     Token::RetireIf(c)
                 }
                 ["resume_if", predicate]=>{
@@ -1248,6 +1251,14 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if store_count>=MAX_PROGRAM_STORES {return Err("at most 33 staged RAM stores are supported".into());}
                     stored=true;store_count+=1;Token::Store(a,v,mem)
                 }
+                ["store_if", address, input, predicate] => {
+                    let a=slot(&names,address)?;let v=slot(&names,input)?;let c=slot(&names,predicate)?;
+                    if widths[a]!=32 {return Err("memory address must be bv<32>".into());}
+                    if widths[c]!=1 {return Err("store_if predicate must be bv<1>".into());}
+                    let mem=MemWidth::from_bits(widths[v]).ok_or("memory width must be 8,16,32")?;
+                    if store_count>=MAX_PROGRAM_STORES {return Err("at most 33 staged RAM stores are supported".into());}
+                    stored=true;store_count+=1;Token::StoreIf(a,v,c,mem)
+                }
                 ["read_ip", out, which, w] => {
                     let next=match *which {"next"=>true,"current"=>false,_=>return Err("read_ip needs current or next".into())};
                     let w=width(w)?;
@@ -1273,7 +1284,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if widths[a]!=16||widths[b]!=32||branched||segment_written||![16,32].contains(&operand_width){return Err("one far transfer requires bv16 selector,bv32 offset and no other segment/branch effect".into());}
                     let call=fields[0]=="far_call";
                     // A gate CALL ends the instruction here, so nothing may be staged before it.
-                    if call&&tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..))){return Err("far_call must precede every effect".into());}
+                    if call&&tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..))){return Err("far_call must precede every effect".into());}
                     branched=true;segment_written=true;if call{Token::FarCall(a,b)}else{Token::FarJump(a,b)}
                 }
                 ["far_return", selector, offset, outer, bytes, cleanup, rest @ ..] if rest.len()<=1=>{
@@ -1381,7 +1392,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
     let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
-    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
+    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
     let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
     let has_read_address=tokens.iter().any(|t|matches!(t,Token::ReadAddress(_)));
@@ -1536,7 +1547,8 @@ fn probe_program_access(p:&Program,cpu:&Cpu,dst:View,src:View,context:FlowContex
                 values[o]=value(v as u64,w.bits());
                 merge_probed_access(&mut found,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:false,is_stack:!has_read_address});
             }
-            Token::Store(a,_,w)=>{
+            Token::StoreIf(_,_,c,_) if values[c].bits==0=>{}
+            Token::Store(a,_,w)|Token::StoreIf(a,_,_,w)=>{
                 let offset=values[a].bits as u32;
                 let addr=match memory_context{Some(c)=>c.translate(offset,w,true,cpu.eip).ok()?,None=>offset};
                 merge_probed_access(&mut found,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:true,is_stack:!has_read_address});
@@ -1902,7 +1914,8 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                 values[o]=value(v as u64,w.bits());
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:false,is_stack:!p.has_read_address});
             }
-            Token::Store(a,v,w)=>{
+            Token::StoreIf(_,_,c,_) if values[c].bits==0=>{}
+            Token::Store(a,v,w)|Token::StoreIf(a,v,_,w)=>{
                 let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
                 let offset=values[a].bits as u32;
                 let addr=match memory_context {Some(c)=>c.translate(offset,w,true,cpu.eip)?,None=>offset};
@@ -2165,7 +2178,7 @@ fn emit_rust(p: &Program) -> String {
 fn emit_rust_functions(p:&Program)->String {
     let mut out=String::new();
     // A segment load may stage one more byte store: the descriptor's accessed bit.
-    let stores=p.tokens.iter().filter(|t|matches!(t,Token::Store(..)|Token::StoreSegment(..)|Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)|Token::LoadSystem(..))).count().max(1);
+    let stores=p.tokens.iter().filter(|t|matches!(t,Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)|Token::LoadSystem(..))).count().max(1);
     out.push_str(&format!(
         "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>, effective: Option<address::EffectiveAddress>) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
@@ -2226,6 +2239,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
             Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|f.error(*eip))? as u64;"),
             Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;"),
+            Token::StoreIf(a,v,c,w)=>format!("if v{c}!=0{{let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;}}"),
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
             Token::ReadDisp(o,w) => format!("let v{o}: u64 = (context.displacement as u32 as u64) & {}u64;",mask(w)),
             Token::CheckSegment(reg,a,n)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),

@@ -153,6 +153,7 @@ fetch or the fall-through limit. The monitor performs CS fetch checks separately
 | `read_address out` | Caller-supplied address/offset as `bv<32>` |
 | `load out address WIDTH` | 8/16/32-bit little-endian RAM read; address must be `bv<32>` |
 | `store address input` | Stage an 8/16/32-bit RAM store (at most 33), width inferred from input |
+| `store_if address input predicate` | Same, only when the `bv<1>` predicate is one; otherwise no translation, write check or store |
 
 Any of these statements, including `read_address` alone, requires a RAM-capable
 execution API. Multiple loads are allowed, with at most 33 stores. A plain `load`
@@ -315,8 +316,9 @@ with the hidden base, limit and descriptor type. Both are part of traces.
 - `require_protected_mode` stops (InvalidContext) in real mode or V86 mode.
   The decoder refuses the 0F00 group, LAR, LSL and ARPL in real mode, where
   they are #UD.
-- ARPL (arpl.pil) is plain PIL; a memory destination is written back even
-  when the RPL stays.
+- ARPL (arpl.pil) is plain PIL; a memory destination is written with
+  `store_if` only when the RPL changes, as on the 386, so an unchanged
+  selector in a read-only segment does not fault.
 LLDT and LTR also use `require_ring0`, which is #GP(0) above CPL 0.
 
 MOV8C/8E supports register and word-memory transfers; operand-prefix66 does not
