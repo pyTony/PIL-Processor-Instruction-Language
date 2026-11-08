@@ -492,14 +492,19 @@ pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
 fn timer_pending(p:&mut Loaded,now:u32)->Result<(),String>{
     if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0{return Ok(());}
     if !p.speaker.pic.timer_ready(){return Ok(());}
-    if !vectors::answered(p,0x08)?{
+    // IRQ0's vector is INT 08h unless the PIC has been reinitialized.
+    let vector=p.speaker.pic.timer_vector();
+    if !vectors::answered(p,vector)?{
         // The interrupt arrives between instructions: IRET resumes the
         // current IP. The handler's EOI (its own, or the BIOS wrapper's
         // after chaining) takes IRQ0 out of service.
-        vectors::deliver_irq(p,0x08)?;
+        vectors::deliver_irq(p,vector)?;
         p.speaker.pic.acknowledge_timer();
         return Ok(());
     }
+    // Dine's BIOS timer work stands only behind INT 08h; another vector
+    // still at its Dine entry (or 0) has no IRQ0 handler behind it.
+    if vector!=0x08{return Err(format!("IRQ0 through INT {vector:02X}h (PIC base moved), which has no program handler, is not modelled"));}
     let hook=!vectors::answered(p,0x1c)?;
     p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
@@ -548,7 +553,7 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
             // the run loop delivers pending hooks between guest instructions.
             // Nor into a program's INT 08h handler: its chained BIOS ticks
             // are the count.
-            if vectors::answered(p,0x1c)?&&vectors::answered(p,0x08)?{timer_interrupt(p)?;}
+            if vectors::answered(p,0x1c)?&&vectors::answered(p,p.speaker.pic.timer_vector())?{timer_interrupt(p)?;}
             let now=p.timer_ticks;
             let flagged=p.ram.load(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover read: {e:?}"))?!=0;
             (now,now,u32::from(flagged))

@@ -1,3 +1,33 @@
+# PIC reinitialization (ICW1-ICW4) for CWSDPMI — 8 November 2026
+
+Tony's DOS benchmark menu (driveD\dosbench, option e, Quake timedemo
+640x480) stopped with "PIC initialization command 11h is not modelled" at
+25B5:11F6. That is CWSDPMI, Quake's DPMI host, moving the master PIC's
+vector base before it switches to protected mode (ICW1 11h, ICW2 base,
+ICW3 04h, ICW4 01h).
+- src/dos_pic.rs now takes the 8259A initialization sequence for the AT
+  wiring: ICW1 with edge triggering, cascade mode and ICW4; ICW2 sets the
+  vector base (low three bits ignored); ICW3 must be 04h on the master and
+  ID 2 on the slave; ICW4 is 8086 mode, with or without automatic EOI. ICW1
+  clears the mask, IRR and ISR and sets reads back to the IRR. Level
+  triggering, single mode, other cascade wiring, buffered mode, special
+  fully nested mode and an OCW to port 20h halfway through the sequence
+  still stop. No IRQ is taken until the sequence ends.
+- IRQ0 and IRQ1 go through the master's base (INT 08h/09h after the BIOS).
+  Moved elsewhere, they enter a program's handler at the new vector; if
+  that vector has no program handler, the IRQ stops the run (Dine's BIOS
+  timer and keyboard work stays behind INT 08h/09h only). Automatic EOI
+  leaves nothing in service.
+- Next blocker for Quake (local run, Tony's QUAKE.EXE and CWSDPMI.EXE from
+  driveD, FD14LITE.img SHA256 f539d456... FreeCOM /C): MOV CR0,EAX with
+  EAX=11h (PE=1) at 25B5:2B01 after 76,324 steps, followed by a far JMP to
+  selector 18h. That is CWSDPMI entering protected mode, which is protected
+  mode plan PR 2 and later (descriptor tables, protected-mode segment
+  loads); after that Quake also needs the x87 FPU.
+
+Local Linux: 602 Rust tests pass (4 new); host_cpu_alu fails on this cloud
+host with and without the change (a rotate known-answer on this CPU).
+
 # IRQ0 through a program's INT 08h handler — 7 November 2026
 
 TOPBENCH 0.38a installs its own INT 08h handler and stopped there. Now, under
@@ -72,8 +102,8 @@ state. Writes to other clock fields and RTC control modes remain unsupported.
 The DOS machine models the primary and secondary PIC mask registers and the
 IRR/ISR read selection. PIT IRQ0 can become pending while masked or while IF
 is clear; the existing BIOS timer path acknowledges it, and its synthetic
-INT 1Ch wrapper sends EOI. No other hardware IRQ inputs, PIC reinitialization,
-polling, priority rotation or special-mask mode are implemented. The BIOS timer
+INT 1Ch wrapper sends EOI. No other hardware IRQ inputs, PIC reinitialization
+(added 8 November 2026, see above), polling, priority rotation or special-mask mode are implemented. The BIOS timer
 shortcut still catches up to sampled host time, rather than modelling a full
 cycle-accurate 8259/PIT pair. Unsupported commands stop explicitly.
 
