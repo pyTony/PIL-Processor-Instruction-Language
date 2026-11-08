@@ -37,6 +37,40 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(session.commands[:4], ['clock 7200', 'country 358', 'console com1', 'com1 580d'])
         port.write.assert_called_once_with(b'Hello\r\n')
 
+    def test_headless_defaults_com1_and_ctty_args(self):
+        with patch.object(term, 'open_com1') as mock_open, \
+             patch.object(term, 'Session') as mock_session, \
+             patch.object(term, 'run_headless', return_value={'status': 'exit'}):
+            term.main(['--headless', 'images/FD14LITE.img::COMMAND.COM'])
+            mock_open.assert_called_once_with('console')
+            mock_session.assert_called_once()
+            _, kwargs = mock_session.call_args
+            self.assertEqual(mock_session.call_args[0][3], '/K CTTY COM1')
+
+    def test_headless_fallback_injects_ctty_when_waiting_input_without_traffic(self):
+        class FakeWaitingSession:
+            def __init__(self):
+                self.last = {'status': 'running'}
+                self.com1_out = b''
+                self.commands = []
+                self.runs = 0
+            def send(self, command):
+                self.commands.append(command)
+                if command.startswith('run '):
+                    self.runs += 1
+                    if self.runs == 1:
+                        self.last = {'status': 'waiting_input'}
+                    else:
+                        self.com1_out += b'C:\\>'
+                        self.last = {'status': 'exit'}
+                return self.last
+        session = FakeWaitingSession();port = MagicMock();port.read.return_value = b''
+        reply = term.run_headless(session, port, 0)
+        self.assertEqual(reply['status'], 'exit')
+        # Verify key commands for 'ctty com1\r' were sent
+        keys_sent = [cmd for cmd in session.commands if cmd.startswith('key ')]
+        self.assertEqual(len(keys_sent), 10) # 'c','t','t','y',' ','c','o','m','1','\r'
+
     def test_multiple_startup_drives_are_sent_before_running(self):
         self.assertEqual(term.drive_spec('a=disk one.img'), ('A', 'disk one.img'))
         self.assertEqual(term.drive_spec('B:=disk2.img'), ('B', 'disk2.img'))

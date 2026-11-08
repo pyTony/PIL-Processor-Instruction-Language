@@ -166,8 +166,9 @@ pub(super) fn palette(p:&mut Loaded)->Result<(),String>{
     Ok(())
 }
 /// AX=1130h: font information. BH=0/1 return the INT 1Fh/43h vectors, BH=3
-/// the 8x8 ROM font (00h-7Fh); CX is the current character height and DL
-/// the last text row. Font loading (other AL) is not modelled.
+/// the 8x8 ROM font (00h-7Fh) and BH=4 its upper half (80h-FFh); CX is the
+/// current character height and DL the last text row. Font loading (other
+/// AL) is not modelled.
 pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
     if al!=0x30{return Err(format!("INT 10h AX=11{al:02X}h (font load) is not modelled"));}
@@ -175,6 +176,7 @@ pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let pointer=match bh{
         0|1=>p.ram.load(if bh==0{0x1f*4}else{0x43*4},MemWidth::Dword).map_err(|e|format!("{e:?}"))?,
         3=>0xf000_fa6e,
+        4=>super::console::graphics_text::UPPER_FONT,
         _=>return Err(format!("INT 10h AX=1130h BH={bh:02X}h: only the 8x8 ROM font is present")),
     };
     let height=p.ram.load(0x485,MemWidth::Word).map_err(|e|format!("{e:?}"))?;
