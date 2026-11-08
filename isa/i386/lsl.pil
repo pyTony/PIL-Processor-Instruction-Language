@@ -1,0 +1,27 @@
+# LSL: on a visible code or data segment, LDT or TSS (no gates), ZF=1 and
+# the destination gets the byte-granular limit (a G=1 limit is scaled to
+# limit*4096+FFFh; a 16-bit destination keeps the low word). Otherwise ZF=0
+# and the destination stays.
+# System types allowed: 1, 2, 3, 9, 0Bh (mask 0A0Eh).
+const lsl_types 16 2574
+zext kind16 kind 16
+lshr type_bits lsl_types kind16
+bit system_ok type_bits 0
+or kind_ok segment system_ok
+and allowed kind_ok visible
+and valid found allowed
+const low_mask 32 65535
+and limit_low low low_mask
+const high_mask 32 983040
+and limit_high high high_mask
+or limit_raw limit_low limit_high
+bit granular high 23
+const k12 32 12
+shl limit_pages limit_raw k12
+const page_mask 32 4095
+or limit_scaled limit_pages page_mask
+select rights granular limit_scaled limit_raw
+$RESULT
+flag ZF valid
+preserve_flags remaining
+retire

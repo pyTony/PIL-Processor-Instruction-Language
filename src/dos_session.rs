@@ -136,6 +136,16 @@ impl Session{
             },
             // `ansi on`: load the ANSI.SYS-style CON driver, as DEVICE=ANSI.SYS would.
             ["ansi","on"]=>{super::console::ansi::install(self.loaded.as_mut().ok_or("session state lost")?)?;(true,String::new(),false)},
+            ["console","com1"]=>{
+                let p=self.loaded.as_mut().ok_or("session state lost")?;
+                if self.steps!=0{return Err("console com1 must be selected before execution".into());}
+                if p.com1.is_none(){return Err("COM1 is not attached".into());}
+                let table=u32::from(p.psp)*16+0x18;
+                p.ram.check_write(table,MemWidth::Word).map_err(|e|format!("console handles: {e:?}"))?;
+                p.ram.store(table,MemWidth::Word,0x0303).map_err(|e|format!("console handles: {e:?}"))?;
+                p.com1.as_mut().unwrap().info|=0x23;
+                (true,String::new(),false)
+            },
             // `mount DRIVE PATH`: mount or replace drive A..E with a host folder or .img/.ima image.
             ["mount",drive,..]=>{
                 let path=line.trim_start().strip_prefix("mount").unwrap_or("").trim_start().strip_prefix(drive).unwrap_or("").trim();

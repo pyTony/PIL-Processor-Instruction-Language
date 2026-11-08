@@ -25,7 +25,7 @@ fn control_moves_transfer_all_32_bits_for_every_gpr_and_ignored_size_prefix(){
 }
 #[test]
 fn control_rejections_do_not_commit_cpu_machine_ram_or_undefined_flags(){
-    for (cr,value,gp) in [(0,0x80000011,false),(0,0x80000010,true),(0,0x20,false),(3,0x12345001,false)]{
+    for (cr,value,gp) in [(0,0x40000011,false),(0,0x80000010,true),(0,0x20,false),(3,0x12345001,false)]{
         let(mut i,mut r,mut c)=setup(&[0x0f,0x22,0xc0|(cr<<3)]);c.regs[0]=value;i.ss_shadow=1;i.sti_shadow=1;
         let old=c.clone();let oldi=i.clone();let oldr=r.clone();let err=step(&mut i,&mut r,&mut c).unwrap_err();
         assert_eq!(err,if gp{ExecError::GeneralProtection{eip:0x100,error_code:0}}else{ExecError::UnsupportedControl{eip:0x100,register:cr,value}});
@@ -64,18 +64,18 @@ fn emitted_control_moves_share_state_and_reject_mode_change_atomically(){
 fn main(){
  for value in [0,0x1000,0xfffff000]{
   let mut regs=[0x12345678;8];regs[6]=value;let before=regs;let mut flags=0xad7;let mut undefined=0;let mut ip=0x100;let mut ram=write::Ram::new(4096);
-  let mut machine=write::address::SegmentState{segments:[write::address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:16,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None};
+  let mut machine=write::address::SegmentState{segments:[write::address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:16,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false};
   let flow=write::FlowContext{next_eip:0x103,displacement:0,displacement_bits:32,code_limit:65535};
   write::execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(6,0),(6,0),flow,&mut ram,None,&mut machine).unwrap();
   assert_eq!(regs,before);assert_eq!((flags,undefined,ip),(0x202,0x8d5,0x103));assert_eq!(machine.controls,[0,value]);
  }
- let mut regs=[0x80000011;8];let before=regs;let mut flags=0xad7;let mut undefined=0x10000;let mut ip=0x100;let mut ram=cr0::Ram::new(4096);
- let mut machine=cr0::address::SegmentState{segments:[cr0::address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:16,real_mode:true,ss_shadow:1,sti_shadow:1,tables:[(0,0);2],controls:[0,0x1000],flag_checkpoint:None};let old=machine;
+ let mut regs=[0x40000011;8];let before=regs;let mut flags=0xad7;let mut undefined=0x10000;let mut ip=0x100;let mut ram=cr0::Ram::new(4096);
+ let mut machine=cr0::address::SegmentState{segments:[cr0::address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:16,real_mode:true,ss_shadow:1,sti_shadow:1,tables:[(0,0);2],controls:[0,0x1000],flag_checkpoint:None,ldt_tr:Default::default(),paging:false};let old=machine;
  let flow=cr0::FlowContext{next_eip:0x103,displacement:0,displacement_bits:32,code_limit:65535};
- assert!(matches!(cr0::execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine),Err(cr0::ExecError::UnsupportedControl{eip:0x100,register:0,value:0x80000011})));
+ assert!(matches!(cr0::execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine),Err(cr0::ExecError::UnsupportedControl{eip:0x100,register:0,value:0x40000011})));
  assert_eq!(regs,before);assert_eq!((flags,undefined,ip),(0xad7,0x10000,0x100));assert_eq!(machine,old);
  let mut regs=[0;8];let mut flags=0xad7;let mut undefined=0;let mut ip=0x100;let mut ram=read::Ram::new(4096);
- let mut machine=read::address::SegmentState{segments:[read::address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:16,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0,0xdeadb000],flag_checkpoint:None};
+ let mut machine=read::address::SegmentState{segments:[read::address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:16,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0,0xdeadb000],flag_checkpoint:None,ldt_tr:Default::default(),paging:false};
  let flow=read::FlowContext{next_eip:0x103,displacement:0,displacement_bits:32,code_limit:65535};
  read::execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(7,0),(7,0),flow,&mut ram,None,&mut machine).unwrap();assert_eq!(regs[7],0xdeadb000);assert_eq!(flags,0x202);assert_eq!(undefined,0x8d5);
 }

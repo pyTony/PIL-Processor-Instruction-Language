@@ -28,6 +28,7 @@ pub fn vector(error:&ExecError)->Option<u8>{
         ExecError::Exception{vector,..}=>Some(*vector),
         ExecError::StackSegment{..}=>Some(12),
         ExecError::GeneralProtection{..}=>Some(13),
+        ExecError::PageFault{..}=>Some(14),
         _=>None,
     }
 }

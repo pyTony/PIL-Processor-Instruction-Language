@@ -114,7 +114,7 @@ fn generated_far_frames_match_literal_expected_states_including_second_store_fau
    let mut segments=[{name}::address::SegmentCache::real_mode(0);6];
    segments[2]={name}::address::SegmentCache::real_mode(0x20);
    segments[2].access={name}::address::SegmentAccess::Data{{writable:true,expand_down:false,big:{}}};
-   let mut machine={name}::address::SegmentState{{msw:16,segments,selectors:[0,0x1234,0x20,0,0,0],real_mode:true,ss_shadow:1,sti_shadow:1,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None}};let oldmachine=machine.clone();
+   let mut machine={name}::address::SegmentState{{msw:16,segments,selectors:[0,0x1234,0x20,0,0,0],real_mode:true,ss_shadow:1,sti_shadow:1,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false}};let oldmachine=machine.clone();
    let result={name}::execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),{name}::FlowContext{{next_eip:0x108,displacement:0,displacement_bits:8,code_limit:0xffff}},&mut ram,None,&mut machine);
    if fault==0{{
     result.unwrap();let mut want=oldregs;want[4]-={};assert_eq!(regs,want);assert_eq!(ip,0x345);

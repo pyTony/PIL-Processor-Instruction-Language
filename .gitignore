@@ -16,6 +16,8 @@ __pycache__/
 # The project's own DOS programs live in programs/dos. See docs/DRIVE_D.md.
 /driveD/
 /DriveD/
+# Writable copies of imported DOS images.
+/drives/
 
 # SingleStepTests 80386 test data (third-party), kept next to the checkout.
 /80386.zip

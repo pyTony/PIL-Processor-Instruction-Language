@@ -27,7 +27,7 @@ fn pil_trace_stops_at_the_same_mode_segment_and_branch_checks_as_execution(){
         let p=compile(source,16).unwrap();
         let mut cpu=Cpu{regs:[0;8],eflags:flags,undefined_flags:0,eip:128};
         let mut ram=Ram::new(0x20000);
-        let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0,real_mode:mode.unwrap_or(true),ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None};
+        let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0,real_mode:mode.unwrap_or(true),ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false};
         let view=View{register:0,low:0,width:16};
         let context=FlowContext{next_eip:130,displacement:0,displacement_bits:8,code_limit:limit};
         let old_cpu=cpu.clone();let old_ram=ram.clone();let old_machine=machine;
@@ -435,12 +435,12 @@ fn generated_flow_matches_interpreter() {
     for name in CONDITIONS_NAMES {for w in [16,32] {
         let p=branch_program(name,w);let (dst,src)=views(w);
         source.push_str(&format!("mod p{id} {{ {} }}\n",emit_rust(&p)));
-        dispatch.push_str(&format!("{id} => p{id}::execute_with_flow(&mut regs,&mut f,&mut undefined,&mut ip,(0,0),(1,0),p{id}::FlowContext{{next_eip:next,displacement:disp,displacement_bits:bits,code_limit:limit}}).map_err(|e|match e {{p{id}::ExecError::GeneralProtection{{eip,error_code}} => (1,eip,error_code as u32),p{id}::ExecError::StackSegment{{eip,error_code}}=>(5,eip,error_code as u32),p{id}::ExecError::MemoryAccess{{eip,..}}=>(4,eip,0),p{id}::ExecError::InvalidContext=>(2,0,0),p{id}::ExecError::InvalidBinding=>(3,0,0),p{id}::ExecError::UnsupportedControl{{eip,..}}=>(6,eip,0),p{id}::ExecError::Exception{{eip,vector}}=>(7,eip,u32::from(vector))}}),\n"));
+        dispatch.push_str(&format!("{id} => p{id}::execute_with_flow(&mut regs,&mut f,&mut undefined,&mut ip,(0,0),(1,0),p{id}::FlowContext{{next_eip:next,displacement:disp,displacement_bits:bits,code_limit:limit}}).map_err(|e|match e {{p{id}::ExecError::GeneralProtection{{eip,error_code}} => (1,eip,error_code as u32),p{id}::ExecError::StackSegment{{eip,error_code}}=>(5,eip,error_code as u32),p{id}::ExecError::MemoryAccess{{eip,..}}=>(4,eip,0),p{id}::ExecError::InvalidContext=>(2,0,0),p{id}::ExecError::InvalidBinding=>(3,0,0),p{id}::ExecError::UnsupportedControl{{eip,..}}=>(6,eip,0),p{id}::ExecError::Exception{{eip,vector}}=>(7,eip,u32::from(vector)),p{id}::ExecError::PageFault{{eip,..}}=>(8,eip,0)}}),\n"));
         for flag_bits in 0..64 {
             for (next,disp,bits,limit) in [(0x1234_5678,-128,8,u32::MAX),(0, -1,8,u32::MAX),(u32::MAX,1,8,u32::MAX),(0x100,127,8,0x100),(0x100,128,8,u32::MAX),(0x100,1,w,0x101)] {
                 let initial=condition_flags(flag_bits);let mut c=Cpu::default();c.eip=0x100;c.regs[0]=7;c.regs[1]=9;c.eflags=initial;c.undefined_flags=16;
                 let status=match execute_flow(&p,&mut c,dst,src,FlowContext{next_eip:next,displacement:disp,displacement_bits:bits,code_limit:limit}) {
-                    Ok(())=>(0,0,0),Err(ExecError::GeneralProtection{eip,error_code})=>(1,eip,error_code as u32),Err(ExecError::StackSegment{eip,error_code})=>(5,eip,error_code as u32),Err(ExecError::MemoryAccess{eip,..})=>(4,eip,0),Err(ExecError::InvalidContext)=>(2,0,0),Err(ExecError::InvalidBinding)=>(3,0,0),Err(ExecError::UnsupportedControl{eip,..})=>(6,eip,0),Err(ExecError::Exception{eip,vector})=>(7,eip,u32::from(vector)),
+                    Ok(())=>(0,0,0),Err(ExecError::GeneralProtection{eip,error_code})=>(1,eip,error_code as u32),Err(ExecError::StackSegment{eip,error_code})=>(5,eip,error_code as u32),Err(ExecError::MemoryAccess{eip,..})=>(4,eip,0),Err(ExecError::InvalidContext)=>(2,0,0),Err(ExecError::InvalidBinding)=>(3,0,0),Err(ExecError::UnsupportedControl{eip,..})=>(6,eip,0),Err(ExecError::Exception{eip,vector})=>(7,eip,u32::from(vector)),Err(ExecError::PageFault{eip,..})=>(8,eip,0),
                 };
                 for n in [id,initial,next,disp as u32,bits as u32,limit,c.eip,c.regs[0],c.regs[1],c.eflags,c.undefined_flags,status.0,status.1,status.2] {cases.extend_from_slice(&n.to_le_bytes());}
             }

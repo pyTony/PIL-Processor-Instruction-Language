@@ -379,6 +379,25 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("pm_far_jump",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.regs[0]=0x10;t.regs[4]=0x700;t.patch=Some((0xc00,gdt.clone()));tests.push(t);
     // MOV SS,AX with a code selector is #GP(0008h).
     let mut t=case("pm_ss_gp",vec![0x8e,0xd0,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.regs[0]=0x08;t.patch=Some((0xc00,gdt));tests.push(t);
+    // LDTR, TR and the descriptor queries in 32-bit protected-mode code. GDT
+    // at C00h: null, flat code (08h), flat data (10h), an LDT at C40h (18h),
+    // a 386 TSS (20h) and DPL 3 data with a byte limit of 1234h (28h); the
+    // LDT holds flat data (selector 04h).
+    let system_gdt:Vec<u8>=[0u64,0x00cf_9a00_0000_ffff,0x00cf_9200_0000_ffff,0x0000_8200_0c40_0007,0x0000_8900_0e00_0067,0x0000_f200_0000_1234].iter().flat_map(|d|d.to_le_bytes()).collect();
+    let mut tables=system_gdt.clone();tables.resize(0x40,0);tables.extend(0x00cf_9200_0000_ffffu64.to_le_bytes());
+    let code=vec![0x66,0xb8,0x18,0,0x0f,0,0xd0,0x66,0xb8,0x20,0,0x0f,0,0xd8,0x0f,0,0xc3,0x0f,0,0x0d,0,8,0,0,0x0f,1,0x05,0x10,8,0,0,
+        0x66,0xb9,4,0,0x8e,0xc1,0x0f,2,0xd1,0x0f,3,0xf0,0x66,0xb8,0x28,0,0x0f,0,0xe8,0x0f,0,0xe0,0x0f,1,0xe7,0x66,0xb8,3,0,0x63,0xc1,0xf4];
+    let mut t=case("pm_system",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x2f,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.regs[4]=0x700;t.patch=Some((0xc00,tables));tests.push(t);
+    // LTR of a busy TSS is #GP(0020h).
+    let mut busy=system_gdt;busy[0x25]=0x8b;
+    let mut t=case("pm_ltr_busy",vec![0x0f,0,0xd8,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x2f,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.regs[0]=0x20;t.patch=Some((0xc00,busy));tests.push(t);
+    // Paging in 4 KiB of RAM: the dword at 0 is both the page directory
+    // entry and the page table entry for page 0 (frame 0, user, writable),
+    // PTE 1 is absent and PTE 2 maps linear 2000h read-only to frame 0. In
+    // 16-bit code at CPL 0: MOV EAX,80000011h; MOV CR0,EAX; MOV AX,1234h;
+    // MOV [2700h],AX (DS base 100h: linear 2800h, physical 800h, allowed at
+    // CPL 0); MOV AX,[0F00h] is #PF at linear 1000h with error code 0.
+    let mut t=case("pm_paging",vec![0x66,0xb8,0x11,0,0,0x80,0x0f,0x22,0xc0,0xb8,0x34,0x12,0xa3,0,0x27,0xa1,0,0x0f,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.patch=Some((0,vec![7,0,0,0,0,0,0,0,5,0,0,0]));tests.push(t);
     let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
@@ -455,7 +474,7 @@ fn guard(s:&State,start:u32,bytes:&[u8],cache:SegmentCache,end:u32)->Result<(),[
   let physical=u64::from(cache.base)+u64::from(offset);if physical<0x100 || physical>=u64::from(end){return Err([7,start,0,0,0]);}
   let context=MemoryContext{segment:SegmentRegister::Cs,cache};
   let at=context.translate(offset,MemWidth::Byte,false,start).map_err(|e|trace::fault(start,e))?;
-  let actual=s.ram.load(at,MemWidth::Byte).map_err(|e|trace::fault(start,ExecError::MemoryAccess{eip:start,address:e.address,bytes:1,write:false}))?;
+  let actual=s.ram.load(at,MemWidth::Byte).map_err(|e|trace::fault(start,e.error(start)))?;
   if actual!=u32::from(*expected){return Err([7,start,0,0,0]);}
  }Ok(())
 }

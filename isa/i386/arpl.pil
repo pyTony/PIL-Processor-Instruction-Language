@@ -1,0 +1,20 @@
+# ARPL: when the destination selector's RPL is below the source's, raise it
+# to the source RPL and set ZF; otherwise ZF=0 and the selector stays.
+# Protected mode only (the decoder refuses it in real mode, where 63h is
+# #UD). A memory destination is written back either way, as a
+# read-modify-write.
+require_protected_mode
+$INPUT
+read source src 16
+const m3 16 3
+and dst_rpl selector m3
+and src_rpl source m3
+ult raise dst_rpl src_rpl
+const clear_rpl 16 65532
+and kept selector clear_rpl
+or adjusted kept src_rpl
+select result raise adjusted selector
+$OUTPUT
+flag ZF raise
+preserve_flags remaining
+retire

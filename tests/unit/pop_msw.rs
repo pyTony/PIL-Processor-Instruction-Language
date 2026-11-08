@@ -77,7 +77,7 @@ fn smsw_memory_always_stores_word_with_address_and_segment_overrides(){
 #[test]
 fn smsw_faults_and_encoding_boundaries_are_transactional(){
  let b=[0x0f,1,0x26,0,6];let(mut i,mut r,mut c)=setup(&b,false);r.protect(0x700,2).unwrap();let old=c.clone();let oldr=r.clone();let oldi=i.clone();assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
- for b in [vec![0x0f,1,0],vec![0x66,0x0f,1,0xe0],vec![0x0f,1,0x26,0],vec![0xf0,0x0f,1,0xe0]]{let(i,r)=guest::Image::load(&b).unwrap();assert!(i.decode(&r,0x100).is_err());}
+ for b in [vec![0x0f,1,0xc0],vec![0x0f,1,0x28],vec![0x0f,1,0x26,0],vec![0xf0,0x0f,1,0xe0]]{let(i,r)=guest::Image::load(&b).unwrap();assert!(i.decode(&r,0x100).is_err());}
 }
 #[test]
 fn msw_state_is_retained_across_other_instructions_and_part_of_traces(){

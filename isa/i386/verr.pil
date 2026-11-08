@@ -1,0 +1,10 @@
+# VERR: ZF=1 when the selector names a visible data segment or a readable
+# code segment; otherwise ZF=0.
+not data code
+or readable data read_write
+and readable_segment segment readable
+and allowed readable_segment visible
+and valid found allowed
+flag ZF valid
+preserve_flags remaining
+retire

@@ -173,8 +173,10 @@ Multi-byte spans do not wrap at the offset limit; base+offset wraps to 32 bits.
 Segmentation failures report `GeneralProtection(0)` or `StackSegment(0)` at the
 source EIP. Invalid supplied bindings/cache context are caller errors.
 `MemoryAccess` reports EIP, address, byte count and direction for RAM bounds or
-host-defined read-only protection. It is not x86 page-fault delivery: no paging,
-CR2, descriptor loads or exception handlers are implemented. Device/MMIO side
+host-defined read-only protection. With CR0.PG set, RAM walks the 386 page
+tables on every access, and a missing or protected page is `PageFault` with
+the linear address and the 386 error code. It is not delivered yet: CR2 and
+protected-mode exception handlers come later. Device/MMIO side
 effects, more than two stores, LOCK and REP checkpoints need a future effect contract;
 this staging model is not universal transactional rollback.
 
@@ -279,12 +281,44 @@ commits it with the GPR and memory effects. Both backends call the shared
   later access is #GP(0)); in SS or CS it is #GP(0). Data registers need a
   data or readable code segment with RPL and CPL not above DPL (conforming
   code excepted); SS needs a writable data segment with RPL = DPL = CPL. A
-  selector past the GDT limit, a system descriptor or a TI=1 selector (no LDT
-  yet) is #GP(selector). Not present is #NP (vector 11), or #SS(selector)
+  selector past its table's limit, a system descriptor or a TI=1 selector
+  with no LDT loaded is #GP(selector). TI=1 selectors read the LDT that LLDT
+  loaded; entry 0 of an LDT is an ordinary descriptor. Not present is #NP (vector 11), or #SS(selector)
   for SS. The load stages one more byte store that sets the descriptor's
   accessed bit.
 Use execute_machine / emitted execute_with_machine with SegmentState; contextless
 wrappers reject these tokens.
+
+### Descriptor tables, LDTR and TR
+
+SegmentState holds `ldt_tr`: LDTR (0) and TR (1), each a visible selector
+with the hidden base, limit and descriptor type. Both are part of traces.
+- `read_table LIMIT BASE T` reads GDTR (0) or IDTR (1) as bv16 and bv32 for
+  SGDT and SIDT (isa/i386/store_table.pil). They store the limit word and then
+  the whole base dword, also with a 16-bit operand (Intel leaves the top byte
+  undefined; this follows Bochs). Any privilege level, real mode included.
+- `read_system OUT T` reads the LDTR (0) or TR (1) selector as bv16 for SLDT
+  and STR (store_system.pil). A 32-bit register gets it zero-extended; memory
+  gets a word.
+- `load_system T SELECTOR` stages LLDT (0) or LTR (1) through the shared
+  `SegmentState::load_system` (load_system.pil). The selector must name a GDT
+  entry: an LDT (type 2) for LLDT, an available TSS (type 1 or 9) for LTR.
+  Otherwise #GP(selector); not present is #NP. A null selector empties LDTR
+  and is #GP(0) for LTR. LTR stages one byte store that marks the TSS busy.
+- `read_descriptor RAW FOUND SELECTOR` reads the raw bv64 descriptor and a
+  bv1 that is 0 for a null selector or one past its table's limit (no
+  fault). `read_cpl OUT` gives the CPL as bv8. LAR, LSL, VERR and VERW check
+  the type and privilege in PIL with these (descriptor_rights.pil followed by
+  lar.pil, lsl.pil, verr.pil or verw.pil) and set only ZF. The present bit
+  is not checked.
+- `require_protected_mode` stops (InvalidContext) in real mode or V86 mode.
+  The decoder refuses the 0F00 group, LAR, LSL and ARPL in real mode, where
+  they are #UD.
+- ARPL (arpl.pil) is plain PIL; a memory destination is written back even
+  when the RPL stays.
+LLDT and LTR also use `require_ring0`, so above CPL 0 they stop instead of
+raising #GP(0), like the other privileged instructions so far.
+
 MOV8C/8E supports register and word-memory transfers; operand-prefix66 does not
 widen memory accesses. MOV r32,Sreg is rejected pending legacy upper-half policy.
 POP ES/SS/DS/FS/GS reads through old SS using the original stack-address width,
@@ -458,8 +492,7 @@ in Image/SegmentState and traces;PE is derived from the normalized real_mode
 state. The monitor/DOS profile initializes the other bits to0010h (ET=1).
 This is explicit profile configuration,not a claim about hardware reset or an
 implemented FPU. SMSW stores exactly a word and preserves flags/markers.
-Operand-size-prefixed register forms are rejected pending legacy upper-half
-policy;66-prefixed memory forms still write a word. LMSW,UMIP and
+SMSW r32 (66h with a register) writes all of CR0, PG included; 66-prefixed memory forms still write a word. LMSW,UMIP and
 privilege transitions remain unimplemented. See the bounded control-register
 profile below for CR0 writes.
 
@@ -526,11 +559,12 @@ UnsupportedControl profile stop, not a hardware #UD or #GP claim.
 CR0 writes can change PE, MP, EM, TS and ET. Setting PE enters protected
 mode with every segment cache unchanged (CS keeps its real-mode cache until
 a far transfer loads a descriptor); clearing it returns to real mode with the
-caches kept as well. LMSW can set PE but not clear it. PG and other reserved
-bit requests stop with UnsupportedControl before any state commits. PG=1 with
-PE=0 produces GeneralProtection. Control-register access from V86 mode or at
-CPL above 0 produces GeneralProtection. There is no page translation or TLB
-yet, and CR2 is not updated by page faults.
+caches kept as well. LMSW can set PE but not clear it, and keeps PG. MOV
+CR0 sets and clears PG; RAM then translates every access through the page
+directory at CR3 (no TLB is modelled). Other reserved bit requests stop with
+UnsupportedControl before any state commits. PG=1 with PE=0 produces
+GeneralProtection. Control-register access from V86 mode or at CPL above 0
+produces GeneralProtection. CR2 is not yet updated by page faults.
 
 Reference: Intel 80386 PRM
 [MOV special registers](https://people.freebsd.org/~jhb/386htm/MOVRS.htm),

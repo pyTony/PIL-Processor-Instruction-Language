@@ -1123,6 +1123,15 @@ fn session_commands_run_queue_keys_and_report_the_screen(){
  for (n,bad) in ["run 0","run x","key 300 1","dance"].iter().enumerate(){let (reply,_)=s.command(4+n as u64,bad).unwrap();assert!(reply.contains("\"ok\":false"),"{bad}: {reply}");}
  assert!(s.command(9,"quit").unwrap().1);
 }
+#[test]
+fn session_routes_console_to_com1_before_guest_execution(){
+ let code=[0xb4,2,0xb2,b'H',0xcd,0x21,0xb4,1,0xcd,0x21,0xb4,0x4c,0xcd,0x21];
+ let mut p=load(&code,"headless.com").unwrap();serial::attach(&mut p).unwrap();
+ let mut s=session::Session::new(p);s.command(1,"console com1").unwrap();
+ let(reply,_)=s.command(2,"run 100").unwrap();assert!(reply.contains("\"status\":\"waiting_input\"")&&reply.contains("\"com1\":\"48\""),"{reply}");
+ s.command(3,"com1 78").unwrap();let(reply,_)=s.command(4,"run 100").unwrap();
+ assert!(reply.contains("exit code 120")&&reply.contains("\"com1\":\"78\""),"{reply}");
+}
 fn call(p:&mut Loaded,ax:u32,cx:u32,path:&[u8])->(u32,u32){
  let psp=u32::from(PSP)*16;let mut z=path.to_vec();z.push(0);p.ram.write_bytes(psp+0x200,&z).unwrap();
  p.cpu.regs[0]=ax;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x200;p.cpu.eflags=0x202;service(p,0x21,&mut vec![]).unwrap();

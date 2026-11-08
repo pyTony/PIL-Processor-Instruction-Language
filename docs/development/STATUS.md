@@ -38,6 +38,61 @@ Local Linux: 610 of 611 Rust tests pass (5 new: dos_vga_font 3, divide
 handler 2; 4 older tests updated). host_cpu_alu fails on this cloud host
 with and without the change. FD14LITE.img (SHA256 f539d456...) probe at
 10,000 steps unchanged: 151/156 imported, 53 exits.
+After merging dev (paging, LDTR/TR): 626 Rust tests pass, 1 ignored,
+host_cpu_alu included.
+
+# Protected mode, increment 3: paging — 8 November 2026
+
+Protected-mode plan increment 3 (#116 and #117 were increment 2).
+- MOV CR0 sets and clears PG (PG without PE is #GP(0)); MOV r32,CR0 reads
+  it; LMSW keeps it (isa/i386/lmsw.pil now reads all of CR0). SegmentState
+  and Image hold `paging`; traces include it.
+- src/memory.rs: while PG is set, every access (fetch, data, descriptor
+  reads) walks the PDE at CR3 and the PTE, with no TLB. A successful walk
+  sets A in both entries and D in the PTE on a write, through a mark list
+  that `&self` loads add and `settle` writes; a faulting walk sets nothing.
+  CPL 3 faults on supervisor pages and read-only writes; CPL 0-2 may write
+  read-only pages (no WP on the 386).
+- New ExecError::PageFault{eip,address,error_code} (trace code 13,
+  vector 14). AccessFault::error maps bus and page faults in both
+  backends. CR2 and #PF delivery are increment 4; a #PF stops the run.
+- Both backends call ram.set_paging(machine.ram_paging()) before and after
+  each instruction.
+
+Local Linux: 619 Rust tests pass, 1 ignored (5 new in paging.rs; two CR0
+tests now use a reserved bit instead of PG). The generated-backend suite has
+272 cases (1 new: pm_paging). test386 now passes POST 08h and 09h and stops
+at POST 20h on IRET in protected mode (increment 4). SingleStepTests/80386
+was not rerun (real mode never sets PG).
+Next: increment 4, protected-mode exceptions and interrupts through the IDT.
+
+# Protected mode, part 2: LDTR, TR and the descriptor queries — 8 November 2026
+
+Protected-mode plan increment 2, second part (#116 was the first part).
+- SegmentState and Image hold LDTR and TR (`ldt_tr`: selector, base, limit,
+  type); traces include them. TI=1 selectors in segment loads read the LDT.
+- LLDT/LTR (CPL 0, protected mode): SegmentState::load_system checks the GDT
+  entry (LDT type 2; available TSS type 1 or 9), #GP(selector) or #NP; LTR
+  stages the TSS busy bit. SLDT/STR at any level; r32 gets zero-extension.
+- SGDT/SIDT in any mode: limit word, then all 32 base bits (Bochs; Intel
+  leaves the top byte undefined with o16). SMSW r32 writes all of CR0.
+- LAR, LSL, VERR, VERW: new tokens read_descriptor (raw bv64 plus found) and
+  read_cpl; the type and privilege rules are PIL (descriptor_rights.pil and
+  one file each). ARPL is plain PIL. The 0F00 group, LAR, LSL and ARPL stay
+  refused in real mode (#UD there); require_protected_mode guards them.
+- Not yet: #GP(0) above CPL 0 for LLDT/LTR (they stop), gates, task switches.
+
+- Host-CPU oracle (Tony's choice): ROL/ROR OF for counts above 1 is no
+  longer compared with the host CPU. Intel leaves it undefined and runners
+  differ (some keep the old OF), so host_cpu_alu failed on some runners
+  since 55376c9. PIL still defines it by the 386EX rule; SST checks it.
+
+Local Linux: 614 Rust tests pass, 1 ignored (7 new in system_registers.rs; one
+older SMSW boundary test changed, because 0F 01 00 and 66 0F 01 E0 now
+decode). The generated-backend suite has 271 cases (2 new: pm_system,
+pm_ltr_busy). SingleStepTests/80386 has no 0F00-0F03 or 63h real-mode files,
+so it was not rerun. test386 still stops at POST 08h (PE and PG together).
+Next: increment 3, paging.
 
 # PIC reinitialization (ICW1-ICW4) for CWSDPMI — 8 November 2026
 
