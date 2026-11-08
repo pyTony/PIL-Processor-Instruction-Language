@@ -1,3 +1,21 @@
+# ARPL leaves an unchanged memory selector alone — 8 November 2026
+
+Follow-up to increment 6 (#128). test386 POST 17h runs ARPL [mem],BX with
+DS read-only and an RPL that already matches: the 386 neither writes nor
+faults (Bochs faults, which is why test386 has a BOCHS switch for it).
+- New PIL token `store_if address input predicate`: a store staged only
+  when the bv1 predicate is one; when it is zero there is no translation,
+  write check or store. Interpreter, generated Rust and the explain view.
+- isa/i386/arpl.pil stores a memory destination with `store_if ... raise`;
+  the register form is unchanged.
+
+Local Linux: 651 Rust tests pass, 1 ignored, release and debug (the ARPL
+test gains the unchanged-selector case, writable and read-only). The
+generated-backend suite has 276 cases (1 new: pm_arpl). test386 now passes
+POST 17h-19h and stops in POST 1Ah (ENTER at ring 3 on a supervisor stack
+page, seen earlier with a local build). SingleStepTests/80386 was not rerun:
+it has no 63h files, and other stores take the same path as before.
+
 # Protected mode, increment 6: virtual-8086 mode — 8 November 2026
 
 Protected-mode plan increment 6 (#124 was privilege levels).

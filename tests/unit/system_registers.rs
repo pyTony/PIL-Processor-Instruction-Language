@@ -184,4 +184,13 @@ fn arpl_raises_the_destination_rpl(){
  assert_eq!(r.load(0x900,MemWidth::Word).unwrap(),0x21);
  let(mut i,mut r,mut c)=protected(&[0x63,0x1e,0x00,0x08]);i.segments[3].access=SegmentAccess::Data{writable:false,expand_down:false,big:false,dpl:0};c.regs[3]=1;
  assert_eq!(step(&mut i,&mut r,&mut c),gp(0));
+ // An unchanged selector is not written back (test386 POST 17h): RPL 3 in
+ // memory against BX RPL 1 leaves the word, clears ZF and does not fault
+ // on a read-only segment.
+ for writable in [true,false]{
+  let(mut i,mut r,mut c)=protected(&[0x63,0x1e,0x00,0x08]);r.store(0x900,MemWidth::Word,0x0023).unwrap();
+  i.segments[3].access=SegmentAccess::Data{writable,expand_down:false,big:false,dpl:0};c.regs[3]=1;c.eflags|=ZF;
+  assert_eq!(step(&mut i,&mut r,&mut c),Ok(()),"writable={writable}");
+  assert_eq!((r.load(0x900,MemWidth::Word).unwrap(),c.eflags&ZF),(0x23,0));
+ }
 }
