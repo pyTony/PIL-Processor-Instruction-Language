@@ -1,3 +1,37 @@
+# Protected mode, increment 6: virtual-8086 mode — 8 November 2026
+
+Protected-mode plan increment 6 (#124 was privilege levels).
+- V86 mode is protected mode with a V86 CS cache (SegmentCache::v86: base
+  selector*16, limit FFFFh, DPL 3; SegmentState::v86) and EFLAGS.VM. CPL
+  is 3 there, for privilege and paging checks alike.
+- IRETD at CPL 0 with VM in the popped flags enters it: far_return takes
+  an optional bv1 operand and pops ESP, SS, ES, DS, FS and GS; PIL sets VM
+  with the new `flag VM`. Elsewhere VM in an IRET frame is ignored.
+- In V86 mode segment loads, far JMP/CALL/RETF and IRET (iret.pil) work as
+  in real mode; ARPL, LAR, LSL and the 0F00 group are refused as in real
+  mode. CLI, STI, PUSHF, POPF, IRET, INT n, INT3 and INTO need IOPL 3,
+  else #GP(0) (raise_unless now takes vector 13 for #GP(0)); POPF and IRET
+  never change IOPL there. HLT and MOV CRn are #GP(0); I/O always goes
+  through the TSS I/O bitmap.
+- Interrupts and exceptions from V86 mode (src/interrupt.rs) go only to a
+  nonconforming ring 0 handler (else #GP(selector)), on the TSS ring 0
+  stack, pushing GS, FS, DS and ES before SS, ESP, EFLAGS, CS and EIP and
+  then nulling those four. Dine and the ROM runner deliver from V86 mode
+  through the IDT.
+- Not yet: task gates and TSS jumps (increment 7). The fixed-image
+  generated backend decodes each instruction once at the starting mode, so
+  its V86 case keeps 16-bit code on both sides of the IRETD.
+
+Local Linux: 650 Rust tests pass, 1 ignored, release and debug (6 new in
+v86.rs; 3 older tests that faked V86 with VM in real mode now use a V86 CS
+cache). The generated-backend suite has 275 cases (1 new: pm_v86).
+test386 passes POST 21h (its V86 tests); POST 22h has no tests in the
+64 KB ROM, so it runs on through 0Bh-16h and stops at POST 17h on the
+ARPL write-back to a read-only memory operand (known since increment 5).
+SingleStepTests/80386 run 10 (local; iret.pil, PUSHF/POPF and the far
+transfer descriptions changed): pass 1,621,228 as in run 09, 0
+generated-backend disagreements in 2,379 programs.
+
 # CUBE3 header text: AH09h on the page in BH — 8 November 2026
 
 Tony's CUBE3.BAS (SCREEN 9 with two pages) showed no header lines, only one

@@ -134,3 +134,26 @@ Merged increment 4: #123. Increment 5, on the same branch:
   memory selector, and with that removed 18h-1Ah run, with 1Ah failing on
   ENTER at ring 3 on a supervisor stack page.
 
+
+## Increment 6 status
+
+Merged increment 5: #124. Increment 6, on the same branch:
+- Virtual-8086 mode is protected mode with a V86 CS cache (base
+  selector*16, limit FFFFh, DPL 3; `SegmentState::v86`) and VM set. CPL is
+  3 there, so paging checks it as a user.
+- IRETD at CPL 0 with VM in the popped flags enters it, popping ESP, SS,
+  ES, DS, FS and GS (privilege.rs `far_return`, new optional operand).
+- In V86 mode segment loads, far JMP/CALL/RETF and IRET work as in real
+  mode. CLI, STI, PUSHF, POPF, IRET, INT n, INT3 and INTO need IOPL 3, else
+  #GP(0); POPF and IRET never change IOPL there. HLT and MOV CRn are
+  #GP(0). I/O always goes through the TSS bitmap.
+- Interrupts and exceptions from V86 mode go to a nonconforming ring 0
+  handler only (#GP(selector) otherwise) on the TSS ring 0 stack, with GS,
+  FS, DS and ES pushed and then nulled; IRETD returns.
+- test386 passes POST 21h. POST 22h has no tests in the 64 KB ROM, so it
+  goes on to 0Bh-16h and stops at POST 17h on the ARPL write-back to a
+  read-only memory operand (known since increment 5). Next blockers there:
+  that ARPL, then ENTER at ring 3 on a supervisor stack page (POST 1Ah).
+- The fixed-image generated backend decodes each instruction once, at the
+  starting mode: its V86 case runs 16-bit code on both sides of the IRETD
+  and ends on MOV CR0 rather than HLT (HLT decoded at CPL 0 halts there).

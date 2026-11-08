@@ -4,11 +4,6 @@
 # below runs. A code segment comes back for the pushes here, at the operand
 # size on the current stack; both are checked before either is staged.
 require_width 16_or_32
-# V86 mode (VM=1) is not modelled yet.
-read_flags entry
-bit vm entry 17
-not no_vm vm
-require no_vm
 $FAR_TARGET
 zext target32 target_value 32
 far_call selector target32

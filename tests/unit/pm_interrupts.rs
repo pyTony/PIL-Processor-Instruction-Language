@@ -204,11 +204,10 @@ fn iretd_at_the_same_level_restores_eip_cs_and_eflags(){
 }
 
 #[test]
-fn iret_task_returns_and_returns_to_v86_mode_stop(){
+fn iret_task_returns_stop_and_vm_in_the_frame_counts_only_at_cpl0(){
     let (mut cpu,mut image,mut ram)=iret(0x0000_0002,false);cpu.eflags|=0x4000;
     assert_eq!(step(&mut image,&mut ram,&mut cpu),Err(ExecError::InvalidContext),"NT=1 is a task return");
-    let (mut cpu,mut image,mut ram)=iret(0x0002_0002,false);
-    assert_eq!(step(&mut image,&mut ram,&mut cpu),Err(ExecError::InvalidContext),"VM=1 is a return to V86 mode");
+    // VM=1 at CPL 0 is the return to virtual-8086 mode (tests/unit/v86.rs).
     // At CPL 3 the VM bit in the frame is ignored.
     let (mut cpu,mut image,mut ram)=iret(0x0002_0002,true);
     step(&mut image,&mut ram,&mut cpu).unwrap();assert_eq!(cpu.eflags&0x20000,0);

@@ -115,7 +115,7 @@ enum Target{
 }
 fn far_target(machine:&SegmentState,ram:&Ram,selector:u16,eip:u32)->Result<Target,ExecError>{
     let mut read=|at:u32|read_descriptor(ram,at,eip);
-    if machine.real_mode{return Ok(Target::Code(machine.load_segment(1,selector,eip,&mut read)?));}
+    if machine.real_mode||machine.v86(){return Ok(Target::Code(machine.load_segment(1,selector,eip,&mut read)?));}
     let code=selector&0xfffc;
     if code==0&&selector&4==0{return Err(gp(eip,0));}
     let at=machine.descriptor_address(selector).ok_or(gp(eip,code))?;
@@ -234,13 +234,31 @@ pub fn far_call(machine:&SegmentState,ram:&Ram,regs:&[u32;8],selector:u16,next:u
 /// writable data segment with RPL and DPL equal to the new CPL, ESP gets
 /// `cleanup` added, and ES, DS, FS and GS are nulled when they hold a data
 /// or nonconforming code segment more privileged than the new CPL. In real
-/// mode CS gets its real-mode cache and ESP = `outer`.
-pub fn far_return(machine:&SegmentState,ram:&Ram,regs:&[u32;8],selector:u16,offset:u32,outer:u32,width:MemWidth,cleanup:u32,eip:u32)->Result<Transfer,ExecError>{
+/// mode CS gets its real-mode cache and ESP = `outer`; in virtual-8086
+/// mode its V86 cache.
+///
+/// `v86` is set for an IRETD at CPL 0 whose popped EFLAGS has VM: the
+/// return to virtual-8086 mode. ESP, SS, ES, DS, FS and GS are popped as
+/// dwords from `outer` and every segment register gets its V86 cache; EIP
+/// must be within FFFFh. The caller sets VM.
+pub fn far_return(machine:&SegmentState,ram:&Ram,regs:&[u32;8],selector:u16,offset:u32,outer:u32,width:MemWidth,cleanup:u32,v86:bool,eip:u32)->Result<Transfer,ExecError>{
     let ss=machine.segments[2];
     let mask=stack_mask(&ss);
     let old_esp=regs[4];
     let mut transfer=Transfer::default();
-    if machine.real_mode{
+    if v86&&!machine.real_mode&&!machine.v86()&&machine.cpl()==0{
+        let mut popped=[0u32;6];
+        for (i,slot) in popped.iter_mut().enumerate(){*slot=read_stack(ram,ss,outer.wrapping_add(4*i as u32)&mask,MemWidth::Dword,false,eip)?;}
+        let cs=SegmentCache::v86(selector);
+        transfer.eip=checked_eip(&cs,offset,eip)?;
+        transfer.segments.push((1,selector,cs));
+        for (reg,value) in [(2,popped[1]),(0,popped[2]),(3,popped[3]),(4,popped[4]),(5,popped[5])]{
+            transfer.segments.push((reg,value as u16,SegmentCache::v86(value as u16)));
+        }
+        transfer.esp=Some(popped[0]);
+        return Ok(transfer);
+    }
+    if machine.real_mode||machine.v86(){
         let (visible,cache,_)=machine.load_segment(1,selector,eip,&mut |at|read_descriptor(ram,at,eip))?;
         transfer.eip=checked_eip(&cache,offset,eip)?;
         transfer.segments.push((1,visible,cache));

@@ -3,8 +3,17 @@
 # stack-address width, so a 16-bit frame at SP=FFFCh reads FFFC, FFFE and 0000;
 # a single slot that crosses the segment limit still faults. The CS slot is a
 # full operand-size slot (a 32-bit one at SP=FFFDh crosses the limit and faults).
+# Virtual-8086 mode uses this description too: there IRET needs IOPL 3,
+# else #GP(0), and leaves IOPL (and VM) unchanged.
 require_width 16_or_32
-require_real_mode
+read_flags entry
+bit vm entry 17
+not no_vm vm
+bit v86_iopl0 entry 12
+bit v86_iopl1 entry 13
+and v86_iopl3 v86_iopl0 v86_iopl1
+or iopl_allowed no_vm v86_iopl3
+raise_unless iopl_allowed 13
 read_gpr old_sp 4 $S
 zext stack_offset old_sp 32
 load_segment target_value 2 stack_offset $W
@@ -39,10 +48,11 @@ bit f10 packed 10
 flag DF f10
 bit f11 packed 11
 flag OF f11
+const yes 1 1
 bit f12 packed 12
-flag IOPL0 f12
+flag_if IOPL0 f12 yes no_vm
 bit f13 packed 13
-flag IOPL1 f13
+flag_if IOPL1 f13 yes no_vm
 bit f14 packed 14
 flag NT f14
 retire

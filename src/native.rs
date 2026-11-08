@@ -419,6 +419,18 @@ pub fn cases()->Result<Vec<Case>,String> {
     t.image.ldt_tr[1]=super::address::SystemSegment{selector:0x28,base:0xd00,limit:0x67,kind:0x0b};
     t.image.selectors[1]=0x08;t.image.selectors[2]=0x10;
     t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xe00;t.patch=Some((0xb00,rings));tests.push(t);
+    // V86 mode: IRETD in 16-bit code at CPL 0 (so that the instructions
+    // after it decode with the same default sizes in the fixed-image
+    // backend), with VM in the frame at E00h (EIP 10h, CS
+    // 10h, EFLAGS with VM, IOPL 3 and IF, ESP 100h, SS 60h, ES/DS/FS/GS
+    // 70h); then in V86 mode MOV AX,1234h; MOV [10h],AX (linear 710h);
+    // PUSHF; POPF; CLI; STI; PUSH 0; POPF (IOPL stays 3); MOV DS,AX; and
+    // MOV CR0,EAX, which is #GP(0) in V86 mode. (HLT would be too, but this
+    // backend decodes it once, at the starting CPL 0.)
+    let mut code=vec![0x66,0xcf];code.resize(0x10,0x90);code.extend([0xb8,0x34,0x12,0xa3,0x10,0x00,0x9c,0x9d,0xfa,0xfb,0x6a,0x00,0x9d,0x8e,0xd8,0x0f,0x22,0xc0]);
+    let mut frame=Vec::new();for v in [0x10u32,0x10,0x0002_3202,0x100,0x60,0x70,0x70,0x70,0x70]{frame.extend(v.to_le_bytes());}
+    let mut t=case("pm_v86",code)?;t.image.real_mode=false;t.image.msw=0x11;
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:0xffff,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:0}};t.regs[4]=0xe00;t.patch=Some((0xe00,frame));tests.push(t);
     let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)

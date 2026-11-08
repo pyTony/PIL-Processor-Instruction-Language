@@ -358,15 +358,34 @@ the transfer it returns is applied when the instruction retires.
   data, RPL and DPL equal to the new CPL, #GP(selector) or #SS(selector)),
   adds CLEANUP to the new ESP, and nulls ES, DS, FS and GS where they hold
   a data or nonconforming code segment more privileged than the new CPL.
-  It writes ESP itself, so the description may not.
-- `require_iopl` (CLI, STI): #GP(0) in protected mode when CPL > IOPL.
+  It writes ESP itself, so the description may not. An optional sixth
+  operand, a bv1 (iret_protected.pil), asks for the return to
+  virtual-8086 mode: when it is 1 at CPL 0, ESP, SS, ES, DS, FS and GS are
+  popped as dwords from OUTER, every segment register gets its V86 cache
+  and EIP must be within FFFFh. The description sets VM itself
+  (`flag VM`).
+- `require_iopl` (CLI, STI): #GP(0) in protected mode when CPL > IOPL
+  (so in virtual-8086 mode, CPL 3, unless IOPL is 3).
 - `check_io PORT BYTES` (IN, OUT, INS, OUTS): in protected mode with CPL >
-  IOPL, every port's bit in the 386 TSS I/O bitmap must be clear; a 286 TSS
-  or a bit past the TSS limit is #GP(0).
+  IOPL, and always in virtual-8086 mode, every port's bit in the 386 TSS
+  I/O bitmap must be clear; a 286 TSS or a bit past the TSS limit is
+  #GP(0).
 - POPF (popf.pil) changes IOPL only at CPL 0 and IF only where CPL <= IOPL,
-  without a fault, as IRET does. PUSHF and POPF work at any CPL; V86 mode
-  stops them, and the far transfers, until increment 6.
+  without a fault, as IRET does. PUSHF and POPF work at any CPL; in
+  virtual-8086 mode they, and IRET (iret.pil), need IOPL 3 and are
+  otherwise #GP(0) (`raise_unless ... 13`).
 - HLT above CPL 0 decodes to `require_ring0`, so it is #GP(0).
+
+Virtual-8086 mode (increment 6) is protected mode with a V86 CS cache
+(`SegmentCache::v86`: base selector*16, limit FFFFh, DPL 3) and EFLAGS.VM
+set; `SegmentState::v86` reads it and CPL is 3. Segment loads make V86
+caches, far JMP/CALL/RETF and IRET behave as in real mode, the decoder
+treats ARPL, LAR, LSL and the 0F00 group as in real mode, and `flag VM` is
+the one PIL write of VM. INT n, INT3 and INTO need IOPL 3 (else #GP(0));
+interrupts and exceptions go through the IDT to a nonconforming ring 0
+handler only (else #GP(selector)), on the TSS ring 0 stack with GS, FS, DS
+and ES pushed before SS, ESP, EFLAGS, CS and EIP, and with those four
+registers nulled as VM clears (src/interrupt.rs).
 
 Descriptor tables, the TSS and an inner-level stack are read and written at
 supervisor level whatever the CPL (`Ram::as_level`, `Ram::store_as`). A
@@ -418,7 +437,7 @@ profiles;the decoder binds the actual profiles and source segment.
 `read_flags out` snapshots bv32 EFLAGS; `require_real_mode` requires supplied
 machine state with real_mode=true and VM clear, otherwise InvalidContext before
 commit. `require_ring0` requires CPL 0 (real mode, or protected mode with a
-CS cache of DPL 0): above it is #GP(0), and VM=1 stops (InvalidContext).
+CS cache of DPL 0): above it, V86 mode included, it is #GP(0).
 LGDT/LIDT, LLDT/LTR, MOV CRn and HLT use it; CLI and STI use `require_iopl`,
 and PUSHF, POPF and the far transfers follow the privilege rules above. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
 retirement when true. It cannot precede an early retire guard. Shadows are
@@ -489,7 +508,7 @@ SELECTOR is bv16,OFFSET bv32. In real mode the new cache is the ordinary one
 a non-conforming one with DPL = CPL and RPL <= CPL; the new selector's RPL is
 CPL). Gates, TSS descriptors and RPL above CPL (a return to an outer level)
 stop with InvalidContext, because they are not modelled yet. The effect
-rejects V86 and offsets beyond the new limit (#GP(0)).
+loads a V86 cache in virtual-8086 mode; an offset beyond the new limit is #GP(0).
 It cannot mix with another segment update or branch. Changes commit at retire.
 
 Original retf.pil uses these effects plus ordered SS loads and named SP writes.
@@ -519,8 +538,9 @@ InvalidContext;POP uses it to reject the documented processor-family-specific
 
 `raise_unless PREDICATE VECTOR` is the architectural counterpart: a false bv1
 predicate stops the instruction with `ExecError::Exception{eip,vector}` and
-commits nothing, like every other fault. Vectors 0 (#DE) and 5 (#BR) are
-accepted; DIV, IDIV and AAM use 0 for a zero divisor or a quotient that does
+commits nothing, like every other fault. Vectors 0 (#DE), 5 (#BR) and 13
+(#GP(0), as `ExecError::GeneralProtection` with error code 0) are
+accepted; PUSHF, POPF and IRET use 13 for the V86 IOPL rule; DIV, IDIV and AAM use 0 for a zero divisor or a quotient that does
 not fit, and BOUND uses 5 for an index outside its bounds. The
 runner, not PIL, then delivers the exception (`src/interrupt.rs`): in real
 mode through the IDTR table with FLAGS, CS and the faulting IP pushed, so the
@@ -570,7 +590,7 @@ selector, even with a 32-bit operand size. The return frame has two operand-size
 slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
 slot. SS size is independent. A contiguous full-frame check matches RETF;
 split frames across stack wrap and hardware shutdown/exception delivery remain
-outside this prototype. V86 calls are rejected before pointer reads.
+outside this prototype. In V86 mode the call is the real-mode one.
 
 ## LES composition (0.34)
 

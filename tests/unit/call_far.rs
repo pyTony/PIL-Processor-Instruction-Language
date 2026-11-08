@@ -64,10 +64,10 @@ fn far_call_faults_never_commit_either_slot_or_cs_ip_sp(){
 }
 #[test]
 fn far_call_requires_real_mode_and_valid_memory_encoding(){
- // V86 mode stops; at CPL 3 in protected mode the pointer read through a
- // null DS is #GP(0). (Gates: tests/unit/privilege.rs.)
- for vm in [false,true]{let(mut i,mut r,mut c)=setup(&[0xff,0x1f],false);i.real_mode=vm;if vm{c.eflags|=0x20000;}else{i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}i.segments[3].access=SegmentAccess::Unusable;
-  let old=c.clone();let oldi=i.clone();let oldr=r.clone();assert_eq!(step(&mut i,&mut r,&mut c),if vm{Err(ExecError::InvalidContext)}else{Err(ExecError::GeneralProtection{eip:0x100,error_code:0})});assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
+ // At CPL 3 in protected mode the pointer read through a null DS is
+ // #GP(0). (Gates: tests/unit/privilege.rs; V86 mode: tests/unit/v86.rs.)
+ {let(mut i,mut r,mut c)=setup(&[0xff,0x1f],false);i.real_mode=false;i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};i.segments[3].access=SegmentAccess::Unusable;
+  let old=c.clone();let oldi=i.clone();let oldr=r.clone();assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::GeneralProtection{eip:0x100,error_code:0}));assert_eq!(c,old);assert_eq!(r,oldr);assert_eq!(i,oldi);
  }
  for b in [vec![0x9a],vec![0x9a,0,0,0],vec![0x66,0x9a,0,0,0,0,0],vec![0xff,0xd8],vec![0xff,0x1e,0],vec![0x67,0xff,0x1c],vec![0xf0,0x9a,0,0,0,0],vec![0xf3,0xff,0x1f]]{
  let(i,r,_)=setup(&b,false);assert!(i.decode(&r,0x100).is_err());}
