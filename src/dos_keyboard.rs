@@ -41,7 +41,7 @@ impl Keyboard{
 /// Whether keys go through IRQ1 to a program's INT 09h handler. A handler
 /// left behind in memory Dine cannot run (a resident program's) is passed
 /// by, as before: keys then go straight into the ring.
-pub(super) fn hooked(p:&Loaded)->Result<bool,String>{Ok(!p.rom_mode&&vectors::reachable(p,0x09)?)}
+pub(super) fn hooked(p:&Loaded)->Result<bool,String>{Ok(!p.rom_mode&&vectors::reachable(p,p.speaker.pic.keyboard_vector())?)}
 /// The make code of the key that produced a BIOS scan code: Ctrl, Alt and
 /// Shift variants (F11/F12, Ctrl+arrows, Alt+digits, ...) come from the same
 /// physical key. 0 is an Alt+keypad character, stored when Alt goes up.
@@ -88,7 +88,7 @@ pub(super) fn interrupt(p:&mut Loaded,force:bool)->Result<bool,String>{
     if p.speaker.kbd.queue.is_empty(){return Ok(false);}
     if !force&&(p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0){return Ok(false);}
     if !p.speaker.pic.keyboard_ready(){return Ok(false);}
-    vectors::deliver_irq(p,0x09)?;
+    vectors::deliver_irq(p,p.speaker.pic.keyboard_vector())?;
     let k=&mut p.speaker.kbd;
     k.latch=k.queue.pop_front();k.unread=true;
     p.speaker.pic.acknowledge_keyboard();

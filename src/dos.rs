@@ -546,7 +546,7 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 // execution continues after it. Programs use this to idle.
                 // A program's own INT 08h handler takes that tick under the host clock.
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                let program_irq=!p.rom_mode&&p.clock_offset.is_some()&&vectors::answered(&p,8)==Ok(false);
+                let program_irq=!p.rom_mode&&p.clock_offset.is_some()&&vectors::answered(&p,p.speaker.pic.timer_vector())==Ok(false);
                 if !program_irq{p.timer_ticks=(p.timer_ticks+1)%TICKS_PER_DAY;}
                 p.cpu.eip=(p.cpu.eip+decoded.length)&0xffff;p.image.retired();
                 if program_irq{if let Err(message)=services::halt_tick(&mut p){break Stop::Service(message);}}

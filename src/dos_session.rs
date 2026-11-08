@@ -42,6 +42,10 @@ impl Session{
         let word=u16::from(scan)<<8|u16::from(ascii);
         // A program's own INT 09h handler sees the key arrive through IRQ1.
         if keyboard::hooked(p)?{return keyboard::key(p,word);}
+        // The BIOS ring stands behind INT 09h only; IRQ1 moved elsewhere
+        // with no program handler there is not modelled.
+        let vector=p.speaker.pic.keyboard_vector();
+        if vector!=0x09{return Err(format!("IRQ1 through INT {vector:02X}h (PIC base moved), which has no program handler, is not modelled"));}
         console::enqueue(p,word)
     }
     /// The active text page as character/attribute pairs, its width and the cursor.
@@ -172,7 +176,7 @@ impl Session{
             // arrive through IRQ1 and the BIOS keyboard handler calls INT 1Bh.
             ["break"]=>{
                 let p=self.loaded.as_mut().ok_or("session state lost")?;
-                let through_irq=keyboard::hooked(p)?||(super::vectors::answered(p,0x09)?&&super::vectors::reachable(p,0x1b)?);
+                let through_irq=keyboard::hooked(p)?||(super::vectors::answered(p,p.speaker.pic.keyboard_vector())?&&super::vectors::reachable(p,0x1b)?);
                 if through_irq{
                     match keyboard::ctrl_break(p)?{
                         true=>(true,String::new(),false),
