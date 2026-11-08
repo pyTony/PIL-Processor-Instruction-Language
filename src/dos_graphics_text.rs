@@ -40,14 +40,17 @@ fn glyph_row(cell:u32,r:u32)->usize{match cell{16=>(r/2)as usize,14=>(r.div_ceil
 /// Planar modes copy each plane's used bytes through the host plane alias.
 struct Frame{mode:u32,base:u32,old:Vec<u8>,bytes:Vec<u8>,columns:u32,rows:u32,cell:u32,plane_bytes:usize,page_offset:usize}
 impl Frame{
-    fn read(p:&Loaded)->Result<Self,String>{
+    /// The frame of `page`; only planar modes have more than page 0.
+    fn read(p:&Loaded,page:u32)->Result<Self,String>{
         let mode=byte(p,0x449)?;
+        if page>=8{return Err("graphics page outside 0..7".into());}
         if let Some(g)=super::super::planar::geometry(mode){
             let planar=p.ram.planar().ok_or("planar memory is not mapped")?;let n=g.bytes();
-            let page=byte(p,0x462)?;let offset=super::super::planar::page_offset(mode,page)?;
+            let offset=super::super::planar::page_offset(mode,page)?;
             let old:Vec<u8>=(0..4).flat_map(|k|planar.plane(k)[offset..offset+n].iter().copied()).collect();
             return Ok(Self{mode,base:crate::memory::PLANE_ALIAS,bytes:old.clone(),old,columns:g.columns(),rows:g.rows,cell:g.cell,plane_bytes:n,page_offset:offset});
         }
+        if page!=0{return Err("graphics modes have only display page 0".into());}
         let(base,len)=match mode{4|5|6=>(VIDEO,0x4000),0x13=>(0xa0000,64000),_=>return Err(format!("mode {mode:02x}h is not a graphics mode"))};
         let old=p.ram.bytes().get(base as usize..(base+len)as usize).ok_or("framebuffer outside RAM")?.to_vec();
         Ok(Self{mode,base,bytes:old.clone(),old,columns:if mode==6{80}else{40},rows:25,cell:8,plane_bytes:0,page_offset:0})
@@ -125,14 +128,18 @@ fn glyph(p:&Loaded,ch:u32)->Result<[u8;8],String>{
     for(n,row)in glyph.iter_mut().enumerate(){*row=byte(p,at+n as u32)? as u8;}
     Ok(glyph)
 }
-/// Cursor of the BIOS active page.
-fn cursor(p:&Loaded,frame:&Frame)->Result<(u32,u32),String>{
-    let page=byte(p,0x462)?;if page>=8{return Err("graphics page outside 0..7".into());}
-    if !frame.planar()&&page!=0{return Err("graphics modes have only display page 0".into());}
+/// Cursor of `page`, the page `frame` was read from.
+fn cursor(p:&Loaded,frame:&Frame,page:u32)->Result<(u32,u32),String>{
     let position=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor read: {e:?}"))?;
     let(row,col)=(position>>8,position&255);
     if row>=frame.rows||col>=frame.columns(){return Err(format!("BIOS cursor outside the {}x{} graphics text grid",frame.rows,frame.columns()));}
     Ok((row,col))
+}
+/// The page AH08h-AH0Ah use: BH in the EGA/VGA planar modes, which have
+/// several pages, as the IBM EGA BIOS and SeaBIOS take it; the CGA modes and
+/// mode 13h have page 0 only, and their BIOSes ignore BH.
+fn bh_page(p:&Loaded)->Result<u32,String>{
+    if super::super::planar::geometry(byte(p,0x449)?).is_some(){Ok((p.cpu.regs[3]>>8)&255)}else{byte(p,0x462)}
 }
 /// Teletype (AH0Eh, and DOS console output, which FreeDOS sends through
 /// INT 29h as AH0Eh with BX=0007h) in a graphics mode: BEL does nothing here,
@@ -140,8 +147,8 @@ fn cursor(p:&Loaded,frame:&Frame)->Result<(u32,u32),String>{
 /// last row scrolls the whole screen up 8 scanlines, filling with colour 0.
 pub(super) fn teletype(p:&Loaded,bytes:&[u8],color:u32,dos_tabs:bool)->Result<Writes,String>{
     if !dos_tabs&&bytes.contains(&9){return Err("BIOS teletype TAB policy is not part of this profile".into());}
-    let mut frame=Frame::read(p)?;let cols=frame.columns();
-    let(mut row,mut col)=cursor(p,&frame)?;
+    let mut frame=Frame::read(p,byte(p,0x462)?)?;let cols=frame.columns();
+    let(mut row,mut col)=cursor(p,&frame,byte(p,0x462)?)?;
     for &b in bytes{
         let n=if b==9{8-col%8}else{1};
         for _ in 0..n{
@@ -162,8 +169,8 @@ pub(super) fn teletype(p:&Loaded,bytes:&[u8],color:u32,dos_tabs:bool)->Result<Wr
 /// moving the cursor. The run may continue onto later rows but not past the
 /// screen, which the BIOS implementations treat differently.
 pub(super) fn write_chars(p:&Loaded)->Result<Writes,String>{
-    let mut frame=Frame::read(p)?;let cols=frame.columns();
-    let(row,col)=cursor(p,&frame)?;
+    let page=bh_page(p)?;let mut frame=Frame::read(p,page)?;let cols=frame.columns();
+    let(row,col)=cursor(p,&frame,page)?;
     let count=p.cpu.regs[1]&0xffff;let first=row*cols+col;
     if count>frame.rows*cols-first{return Err("BIOS repeated write exceeds the graphics screen".into());}
     let shape=glyph(p,p.cpu.regs[0]&255)?;let color=p.cpu.regs[3]as u8;
@@ -174,7 +181,7 @@ pub(super) fn write_chars(p:&Loaded)->Result<Writes,String>{
 /// but 0), searching 00h-7Fh, then the INT 1Fh table when one is installed.
 /// AL=0 when nothing matches; AH=0, as graphics cells have no attribute.
 pub(super) fn read_char(p:&Loaded)->Result<u32,String>{
-    let frame=Frame::read(p)?;let(row,col)=cursor(p,&frame)?;
+    let page=bh_page(p)?;let frame=Frame::read(p,page)?;let(row,col)=cursor(p,&frame,page)?;
     let h=frame.cell;
     let cell:Vec<u8>=(0..h).map(|r|(0..8).fold(0u8,|bits,b|if frame.get(col*8+b,row*h+r)!=0{bits|0x80>>b}else{bits})).collect();
     let upper=p.ram.load(0x1f*4,MemWidth::Dword).map_err(|e|format!("INT 1Fh vector read: {e:?}"))?!=0;
@@ -187,7 +194,7 @@ pub(super) fn read_char(p:&Loaded)->Result<u32,String>{
 /// AH06h/AH07h in a graphics mode: the window is in character cells; vacated
 /// rows take the pixel value in BH.
 pub(super) fn scroll(p:&Loaded,up:bool)->Result<Writes,String>{
-    let mut frame=Frame::read(p)?;let cols=frame.columns();
+    let mut frame=Frame::read(p,byte(p,0x462)?)?;let cols=frame.columns();
     let(cx,dx)=(p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
     let(top,left)=(cx>>8,cx&255);let(bottom,right)=((dx>>8).min(frame.rows-1),(dx&255).min(cols-1));
     if top>bottom||left>right{return Ok(Vec::new());}
