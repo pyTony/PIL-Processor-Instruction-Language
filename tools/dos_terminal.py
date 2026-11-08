@@ -352,7 +352,7 @@ def key_command(code):
 
 def mount_command(drive, path):
     letter = str(drive).strip().rstrip(':').upper()
-    if letter not in ('A', 'B', 'C', 'D', 'E') or not str(path).strip():
+    if letter not in ('A', 'B', 'C', 'D', 'E') or not str(path).strip() or any(c in str(path) for c in '\r\n'):
         raise ValueError(f'mount needs drive A..E and a path, got {drive!r} {path!r}')
     return f'mount {letter} {str(path).strip()}'
 
@@ -378,7 +378,7 @@ def screen_rows(reply):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None):
         options = (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
@@ -388,6 +388,14 @@ class Session:
         self.last = self._read()
         if ansi:
             self.send('ansi on')
+        try:
+            for letter, path in (drives or []):
+                reply = self.send(mount_command(letter, path))
+                if not reply.get('ok'):
+                    raise ValueError(reply.get('text', 'drive mount failed'))
+        except Exception:
+            self.close()
+            raise
 
     def _read(self):
         line = self.process.stdout.readline(MAX_REPLY)
@@ -475,10 +483,18 @@ class ConsolePort:
         if not sys.stdin or not sys.stdin.isatty():
             raise RuntimeError('--com1 console needs the terminal started from a console window')
         self.input = queue.Queue()
+        self._terminal = None
         if sys.platform == 'win32':
             self._enable_vt()
             reader = self._read_windows
         else:
+            import atexit
+            import termios
+            import tty
+            fd = sys.stdin.fileno()
+            self._terminal = (fd, termios.tcgetattr(fd))
+            atexit.register(self.close)
+            tty.setraw(fd)
             reader = self._read_posix
         threading.Thread(target=reader, daemon=True).start()
 
@@ -501,14 +517,8 @@ class ConsolePort:
                 self.input.put(to_cp437(char))
 
     def _read_posix(self):
-        import atexit
         import os
-        import termios
-        import tty
         fd = sys.stdin.fileno()
-        saved = termios.tcgetattr(fd)
-        atexit.register(termios.tcsetattr, fd, termios.TCSADRAIN, saved)
-        tty.setraw(fd)
         decoder = codecs.getincrementaldecoder('utf-8')('ignore')
         while True:
             data = os.read(fd, 64)
@@ -533,7 +543,11 @@ class ConsolePort:
         return data
 
     def close(self):
-        pass
+        if self._terminal is not None:
+            import termios
+            fd, saved = self._terminal
+            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+            self._terminal = None
 
 
 class TcpPort:
@@ -605,7 +619,37 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5):
+def run_headless(session, com1, offset, country=None):
+    """Route DOS input and output over COM1 before running the guest."""
+    session.send(f'clock {offset}')
+    if country:
+        session.send(f'country {country}')
+    reply = session.send('console com1')
+    while reply['status'] in ('running', 'waiting_input'):
+        incoming = com1.read()
+        for at in range(0, len(incoming), 100):
+            reply = session.send('com1 ' + incoming[at:at + 100].hex())
+        reply = session.send(f'run {SLICE}')
+        if session.com1_out:
+            com1.write(session.com1_out)
+            session.com1_out = b''
+        if reply['status'] == 'waiting_input' and not incoming:
+            time.sleep(0.01)
+    return reply
+
+
+def drive_spec(value):
+    letter, sep, path = value.partition('=')
+    if not sep:
+        raise argparse.ArgumentTypeError('drive must be LETTER=PATH, for example A=disk.img')
+    try:
+        mount_command(letter, path)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return (letter.strip().rstrip(':').upper(), path)
+
+
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -624,7 +668,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -886,6 +930,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('program', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH')
     parser.add_argument('--mount', help='host folder shown as the next drive (D: after an image); DOS writes reach it')
+    parser.add_argument('--drive', action='append', type=drive_spec, metavar='LETTER=PATH',
+                        help='mount an image or folder on drive A through E before startup; repeat for more drives')
     parser.add_argument('--args', metavar='COMMAND_LINE',
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
     parser.add_argument('--speaker-volume', type=speaker_volume, default=5, metavar='0..100',
@@ -896,6 +942,7 @@ def main(argv=None):
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
+    parser.add_argument('--headless', action='store_true', help='run without a window, using this terminal for COM1')
     parser.add_argument('--engine', help='pil executable (default: newest build)')
     parser.add_argument('--ignore-unassigned-out', action='store_true', help='ignore and log OUT to unassigned ports; known devices still stop')
     parser.add_argument('--stop-log', default='PILdos-stops.jsonl', metavar='PATH', help='append stop diagnostics (default: PILdos-stops.jsonl)')
@@ -905,10 +952,26 @@ def main(argv=None):
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
-    com1 = open_com1(args.com1) if args.com1 else None
+    if args.headless and args.com1 not in (None, 'console'):
+        parser.error('--headless currently requires --com1 console')
+    com1 = open_com1(args.com1 or 'console') if args.headless else (open_com1(args.com1) if args.com1 else None)
+    if args.headless:
+        session = None
+        try:
+            session = Session(find_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
+                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive)
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country)
+            if reply['status'] != 'exit':
+                print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
+                raise SystemExit(1)
+        finally:
+            if session:
+                session.close()
+            com1.close()
+        return
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume)
+    make_app(root, find_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive)
     root.mainloop()
 
 
