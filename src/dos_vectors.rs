@@ -14,13 +14,14 @@ use super::*;
 pub(super) const ENTRIES:u32=0xff000;
 const SEGMENT:u16=0xf000;
 const FIRST:u16=0xf000;
-/// The vectors that start at an entry: the timer and its user hook, the
+/// The vectors that start at an entry: the divide error (the DOS kernel's
+/// default handler, see services::divide_error), the timer and its user hook, the
 /// keyboard IRQ, the BIOS video, equipment, memory, disk, serial, system, keyboard, printer and
 /// clock services, Ctrl-Break, and the DOS calls (20h, 21h, idle 28h, fast
 /// console 29h, network 2Ah, multiplex 2Fh). Data pointers (1Dh-1Fh, 41h,
 /// 43h, 46h), the DOS-kept 22h-24h and the free and user vectors stay as
 /// they were.
-pub(super) const ANSWERED:[u8;19]=[0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
+pub(super) const ANSWERED:[u8;20]=[0x00,0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
 /// The INT stubs end before the small synthetic IRQ0 BIOS wrapper.
 const ENTRY_END:u32=ENTRIES+3*256;
 const TIMER_OFFSET:u16=0xf300;
@@ -67,6 +68,16 @@ fn stack(p:&Loaded,offset:u32,write:bool)->Result<u32,String>{
 /// and the target are checked before anything changes.
 pub(super) fn deliver(p:&mut Loaded,n:u8)->Result<(),String>{
     deliver_at(p,n,(p.cpu.eip+2)&0xffff)
+}
+/// A fault whose vector still holds its entry: the frame is pushed as for
+/// any fault and execution continues at the entry, where Dine answers it.
+pub(super) fn deliver_fault_to_entry(p:&mut Loaded,n:u8,fault_ip:u32)->Result<(),String>{
+    let at=entry(n);deliver_to(p,(at>>16)as u16,at&0xffff,fault_ip&0xffff)
+}
+/// Whether vector n holds its own entry (not 0 and not a program's handler).
+pub(super) fn at_own_entry(p:&Loaded,n:u8)->Result<bool,String>{
+    if p.rom_mode{return Ok(false);}
+    Ok(p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?==entry(n))
 }
 /// Fault/exception delivery (such as #UD, vector 06h) with the faulting EIP.
 pub(super) fn deliver_fault(p:&mut Loaded,n:u8,fault_ip:u32)->Result<(),String>{

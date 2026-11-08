@@ -116,10 +116,11 @@ fn vga_controllers_outside_planar_modes_keep_steering_registers_and_refuse_layou
     for v in [0x0001u16,0x0002,0x0f07,0x0005]{io(&mut p,0x3ce,false,v,true).unwrap();}
     io(&mut p,0x3c4,false,2,false).unwrap();assert_eq!(io(&mut p,0x3c5,true,0,false).unwrap(),Some(0x0f));
     io(&mut p,0x3ce,false,5,false).unwrap();assert_eq!(io(&mut p,0x3cf,true,0,false).unwrap(),Some(0));
-    // Memory mode, miscellaneous and the 256-colour bit stay refused, all or nothing.
+    // Chain-4, graphics mode and the 256-colour bit stay refused, all or nothing
+    // (the text-mode font window is in dos_vga_font's tests).
     let old=p.vga.idle.clone();
-    assert!(io(&mut p,0x3c4,false,0x0604,true).is_err());
-    assert!(io(&mut p,0x3ce,false,0x0406,true).is_err());
+    assert!(io(&mut p,0x3c4,false,0x0e04,true).is_err());
+    assert!(io(&mut p,0x3ce,false,0x0506,true).is_err());
     assert!(io(&mut p,0x3ce,false,0x4005,true).is_err());
     assert_eq!(p.vga.idle,old);
     // A mode set loads the mode's own values again.

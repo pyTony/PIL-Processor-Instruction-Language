@@ -109,7 +109,7 @@ fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
-    let b=[0xb4,0x5f,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
+    let b=[0xb4,0xe0,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
     let r=run(load(&[0xfa,0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
     let r=run(load(&[0x9a,0,0,0,0xa0],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));assert_eq!(r.completed,1);
 }
@@ -1196,8 +1196,9 @@ fn idiv_truncates_toward_zero_and_keeps_the_dividend_sign_in_the_remainder(){
  let r=run(load(&code,"idiv.com").unwrap(),20).unwrap();
  // -7/2 = -3 r -1; -100000/7 = -14285 r -5.
  assert_eq!((r.loaded.cpu.regs[6]&0xffff,r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[2]&0xffff),(0xfffd,0xc833,0xfffb));
- // 128/1 does not fit a signed byte: divide error, which stops the run.
- let r=run(load(&[0xb8,0x80,0x00,0xb1,0x01,0xf6,0xf9,0xfa,0xf4],"idivde.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Fault(_)),"{:?}",r.stop);
+ // 128/1 does not fit a signed byte: divide error, which the DOS default
+ // handler ends with errorlevel 127.
+ let r=run(load(&[0xb8,0x80,0x00,0xb1,0x01,0xf6,0xf9,0xfa,0xf4],"idivde.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Exit(0x7f)),"{:?}",r.stop);
 }
 #[test]
 fn country_information_is_us_code_page_437_with_a_working_case_map(){
@@ -2239,8 +2240,8 @@ fn guest_programs_the_graphics_controller_with_word_outs(){
  let r=run(load(&code,"chain.com").unwrap(),20).unwrap();
  assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the planar profile")),"{:?}",r.stop);
  assert_eq!(r.loaded.ram.planar().unwrap().seq[4],6);
- // Outside the planar modes the map mask is kept, but a memory-mode change is refused.
- let code=[0xba,0xc4,0x03,0xb8,0x02,0x0f,0xef,0xb8,0x04,0x06,0xef,0xfa,0xf4];
+ // Outside the planar modes the map mask is kept, but chain-4 is refused.
+ let code=[0xba,0xc4,0x03,0xb8,0x02,0x0f,0xef,0xb8,0x04,0x0e,0xef,0xfa,0xf4];
  let r=run(load(&code,"text.com").unwrap(),20).unwrap();
  assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the 16-colour planar modes")),"{:?}",r.stop);
 }
