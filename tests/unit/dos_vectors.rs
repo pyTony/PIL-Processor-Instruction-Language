@@ -518,3 +518,24 @@ fn a_rom_takes_its_divide_error_through_the_vector_it_set_up(){
     assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[1]&0xffff,r.loaded.cpu.regs[4]&0xffff),(9,1,0x100));
     assert_eq!(r.loaded.ram.load(0x10000+0xfa,MemWidth::Word).unwrap(),0xe01f,"pushed IP = the DIV at E01Fh");
 }
+#[test]
+fn reinitialized_pic_delivers_irq0_through_its_new_vector(){
+    // CWSDPMI-style ICW1 11h, ICW2 50h, ICW3 04h, ICW4 01h moves IRQ0 to INT 50h.
+    let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xcf]),(0x40,&[0xcf])]);let mut p=load(&code,"remap.com").unwrap();
+    for(port,value)in [(0x20,0x11),(0x21,0x50),(0x21,0x04),(0x21,0x01)]{p.speaker.pic.write(port,value).unwrap();}
+    assert_eq!((p.speaker.pic.timer_vector(),p.speaker.pic.keyboard_vector()),(0x50,0x51));
+    // A program INT 08h handler is no longer IRQ0's.
+    p.ram.store(8*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();
+    p.cpu.eflags=0x202;let before=(p.cpu.eip,p.cpu.regs[4],p.ram.load(0x46c,MemWidth::Dword).unwrap());
+    // INT 50h still 0: no handler behind IRQ0, so the run stops unchanged.
+    let e=super::super::services::timer_interrupt_at(&mut p,42).unwrap_err();assert!(e.contains("INT 50h"),"{e}");
+    assert_eq!((p.cpu.eip,p.cpu.regs[4],p.ram.load(0x46c,MemWidth::Dword).unwrap()),before);
+    // With a handler at INT 50h, IRQ0 enters it; the BIOS tick is not counted.
+    p.ram.store(0x50*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
+    super::super::services::timer_interrupt_at(&mut p,43).unwrap();
+    assert_eq!(p.cpu.eip,0x130);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),before.2);
+    p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20),1);
+    // IRQ1 follows the base as well.
+    assert!(!super::super::keyboard::hooked(&p).unwrap());
+    p.ram.store(0x51*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();assert!(super::super::keyboard::hooked(&p).unwrap());
+}
