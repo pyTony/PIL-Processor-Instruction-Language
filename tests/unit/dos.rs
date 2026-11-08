@@ -2245,6 +2245,23 @@ fn planar_pages_keep_pixels_text_and_display_separate(){
  p.cpu.regs[0]=0x0502;assert!(service(&mut p,0x10,&mut vec![]).is_err());
 }
 #[test]
+fn planar_character_writes_use_the_page_in_bh(){
+ // GW-BASIC's SCREEN 9,,1,0 prints on hidden page 1 while page 0 is shown:
+ // AH02h and AH09h with BH=1 must leave page 0 alone.
+ let mut p=graphics_mode(0x10);
+ int10(&mut p,0x0200,0x0100,0,0x0203);
+ assert_eq!(p.ram.load(0x452,MemWidth::Word).unwrap(),0x0203);
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
+ int10(&mut p,0x0941,0x010e,1,0);
+ let planar=p.ram.planar().unwrap();let cell=(2*14)*80+3;
+ assert!((0..14).any(|r|planar.peek(1,0x8000+cell+r*80)!=0));
+ assert!((0..0x8000).all(|i|(0..4).all(|k|planar.peek(k,i)==0)));
+ p.cpu.regs[0]=0x0800;p.cpu.regs[3]=0x0100;service(&mut p,0x10,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[0]&255,0x41);
+ p.cpu.regs[0]=0x0800;p.cpu.regs[3]=0;service(&mut p,0x10,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[0]&255,0);
+}
+#[test]
 fn planar_bios_pixels_combine_four_planes(){
  let mut p=graphics_mode(0x12);
  int10(&mut p,0x0c0b,0,639,479);
