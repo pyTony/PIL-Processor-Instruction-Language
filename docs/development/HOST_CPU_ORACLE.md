@@ -209,6 +209,10 @@ Rotate data uses count modulo width; policy uses count&31. Masked-zero
 preserves all flags;otherwise CF is defined,OF defined only at masked count1
 and undefined at larger counts. PF/AF/ZF/SF are preserved,including markers.
 CLC/STC define CF and preserve every other bit/marker and full nativeRAX.
+Since 55376c9, PIL defines rotate OF for every nonzero count (the 386EX
+rule: MSB xor CF for ROL, the two top bits for ROR). The host comparison
+(`hardware_policy` in tests/unit/host_cpu.rs) still checks only CF at counts
+above 1, because host CPUs differ there: some runners keep the old OF.
 
 ## 0.16 verified delivery evidence
 

@@ -14,10 +14,14 @@ Protected-mode plan increment 2, second part (#116 was the first part).
   refused in real mode (#UD there); require_protected_mode guards them.
 - Not yet: #GP(0) above CPL 0 for LLDT/LTR (they stop), gates, task switches.
 
-Local Linux: 609 of 610 Rust tests pass (7 new in system_registers.rs; one
+- Host-CPU oracle (Tony's choice): ROL/ROR OF for counts above 1 is no
+  longer compared with the host CPU. Intel leaves it undefined and runners
+  differ (some keep the old OF), so host_cpu_alu failed on some runners
+  since 55376c9. PIL still defines it by the 386EX rule; SST checks it.
+
+Local Linux: 614 Rust tests pass, 1 ignored (7 new in system_registers.rs; one
 older SMSW boundary test changed, because 0F 01 00 and 66 0F 01 E0 now
-decode). host_cpu_alu still fails on this cloud host only (CI passed it on
-#116). The generated-backend suite has 271 cases (2 new: pm_system,
+decode). The generated-backend suite has 271 cases (2 new: pm_system,
 pm_ltr_busy). SingleStepTests/80386 has no 0F00-0F03 or 63h real-mode files,
 so it was not rerun. test386 still stops at POST 08h (PE and PG together).
 Next: increment 3, paging.

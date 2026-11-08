@@ -27,6 +27,14 @@ fn case_policy(op:usize,w:u8,count:u32)->FlagPolicy{
         else{FlagPolicy{defined:0x801,preserved:!0x801,undefined:0}}
     }else{flag_policy(op)}
 }
+/// The policy the host CPU can confirm. For ROL/ROR counts above 1, Intel
+/// leaves OF undefined and host CPUs differ (some keep the old OF), so only
+/// CF is compared with hardware there; PIL still defines OF by the 386EX
+/// rule, which the SingleStepTests/80386 runs check.
+fn hardware_policy(op:usize,w:u8,count:u32)->FlagPolicy{
+    let p=case_policy(op,w,count);
+    if matches!(op,17|18)&&count&31>1{FlagPolicy{defined:p.defined&!0x800,..p}}else{p}
+}
 fn divergence(actual:&Cpu,expected:&Cpu,policy:FlagPolicy)->Option<String>{
     for (i,name) in ["EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI"].iter().enumerate(){
         if actual.regs[i]!=expected.regs[i]{return Some(format!("{name}: PIL={:08x},hardware={:08x}",actual.regs[i],expected.regs[i]));}
@@ -173,7 +181,7 @@ fn harness_selfcheck()->Result<(),String>{
         (15,8,0x80,8,1,0xff,0x85),(16,16,0x7fff,2,0,0xfffe,0x801),
         (16,32,0xffffffff,2,1,0xfffffffe,0),
         (17,8,0x81,1,0,3,0x801),(18,8,0x81,1,0,0xc0,1),
-        (17,8,0x81,8,0,0x81,1),(18,8,0x80,8,0,0x80,0x801),
+        (17,8,0x81,8,0,0x81,1),(18,8,0x80,8,0,0x80,1),
         (17,8,0x81,0,0,0x81,0),(17,32,0x80000000,1,1,1,0x801),
         (19,16,0,0,1,0,0),(20,16,0,0,0,0,1),
         (22,16,0x1234,0,0,0x1234,1),(22,16,0x1234,0,1,0x1234,0),
@@ -184,7 +192,7 @@ fn harness_selfcheck()->Result<(),String>{
     ]{
         if matches!(op,23|24)&&!has_byte_flags(){continue;}
         let h=hardware(op,w,a,b,carry);check_hardware(&h,op,w,a,b,carry)?;
-        if h.a&mask(w)!=result||h.output_flags&u64::from(case_policy(op,w,b as u32).defined)!=flags{return Err(format!("native harness known-answer failure: {h:?}"));}
+        if h.a&mask(w)!=result||h.output_flags&u64::from(hardware_policy(op,w,b as u32).defined)!=flags{return Err(format!("native harness known-answer failure: {h:?}"));}
     }Ok(())
 }
 fn encoded(op:usize,w:u8,native:bool)->Vec<u8>{
@@ -249,7 +257,7 @@ fn verify_at(dir:&std::path::Path)->Result<(),String>{
         if matches!(op,23|24){pairs.clear();for byte in 0..=255{for low in [0,127,128,255]{pairs.push((byte,low));}}}
         let metadata:&[u32]=if op>=9{&[0,ARITH]}else if op>=5{&[ARITH&!1,ARITH]}else{&[ARITH&!1]};
         for &undefined_in in metadata{for carry in [0,1]{for &(a,b)in &pairs{
-            let policy=case_policy(op,w,b);
+            let policy=hardware_policy(op,w,b);
             let a=(0x13579bdfu64<<32)|u64::from(if matches!(op,23|24){0xa5c30000|(a<<8)|a}else{initial_low(a,w,false)});
             let b=(0xfedcba98u64<<32)|u64::from(initial_low(b,w,true));
             let d=(0x0badf00du64<<32)|0x2468ac00|carry;
@@ -292,6 +300,7 @@ fn host_cpu_rotate_masks_use_masked_not_modulo_width_count(){
         assert_eq!((p.defined&p.preserved)|(p.defined&p.undefined)|(p.preserved&p.undefined),0);
         if n==0{assert_eq!((p.defined,p.preserved,p.undefined),(0,u32::MAX,0));}
         else{assert_eq!(p.defined,0x801);assert_eq!(p.preserved,!0x801);assert_eq!(p.undefined,0);}
+        assert_eq!(hardware_policy(op,w,count).defined,if n>1{1}else{p.defined},"hardware confirms OF only for count 1");
     }}}
     for op in [19,20]{let p=flag_policy(op);assert_eq!((p.defined,p.preserved,p.undefined),(1,!1,0));}
 }
