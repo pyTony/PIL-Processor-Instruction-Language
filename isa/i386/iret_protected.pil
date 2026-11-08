@@ -1,0 +1,67 @@
+# Protected-mode interrupt return to the same privilege level: read EIP, CS
+# and EFLAGS, then branch through the code descriptor as RETF does. A
+# selector whose RPL is above CPL (a return to an outer level, with SS:ESP
+# on the stack) stops in far_branch; NT=1 (a task return) and, for IRETD at
+# CPL 0, VM=1 in the popped flags (a return to virtual-8086 mode) stop here.
+# The status flags, TF, DF, NT and OF come from the frame. IOPL changes only
+# at CPL 0, and IF only where CPL is at most the current IOPL; elsewhere both
+# keep their values, as the 386 does. RF is not modelled.
+require_width 16_or_32
+require_protected_mode
+read_flag task NT
+not no_task task
+require no_task
+read_gpr old_sp 4 $S
+zext stack_offset old_sp 32
+load_segment target_value 2 stack_offset $W
+const slot $S $BYTES
+add selector_sp old_sp slot
+zext selector_offset selector_sp 32
+load_segment selector_value 2 selector_offset $W
+trunc selector selector_value 16
+add flags_sp selector_sp slot
+zext flags_offset flags_sp 32
+load_segment packed 2 flags_offset $W
+read_cpl cpl
+zero ring0 cpl
+$VM_CHECK
+zext target32 target_value 32
+far_branch selector target32
+const frame_bytes $S $FRAME
+add new_sp old_sp frame_bytes
+write_gpr 4 new_sp
+read_flag iopl_low IOPL0
+read_flag iopl_high IOPL1
+zext iopl_low8 iopl_low 8
+zext iopl_high8 iopl_high 8
+const one 8 1
+shl iopl_high_shifted iopl_high8 one
+or iopl iopl_low8 iopl_high_shifted
+ult if_locked iopl cpl
+not if_writable if_locked
+const yes 1 1
+bit f0 packed 0
+flag CF f0
+bit f2 packed 2
+flag PF f2
+bit f4 packed 4
+flag AF f4
+bit f6 packed 6
+flag ZF f6
+bit f7 packed 7
+flag SF f7
+bit f8 packed 8
+flag TF f8
+bit f9 packed 9
+flag_if IF f9 yes if_writable
+bit f10 packed 10
+flag DF f10
+bit f11 packed 11
+flag OF f11
+bit f12 packed 12
+flag_if IOPL0 f12 yes ring0
+bit f13 packed 13
+flag_if IOPL1 f13 yes ring0
+bit f14 packed 14
+flag NT f14
+retire

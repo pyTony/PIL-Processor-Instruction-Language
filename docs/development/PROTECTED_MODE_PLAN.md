@@ -89,3 +89,29 @@ Merged increment 2: #116 and #117. Increment 3, on the same branch:
 - test386 now passes POST 08h and 09h and stops at POST 20h, on an IRET in
   protected mode (increment 4). Its paging tests (POST 11h) run after that.
 - Not yet: RAM above 1 MiB for Dine (increment 9).
+
+## Increment 4 status
+
+Merged increment 3: #122. Increment 4, on the same branch:
+- src/interrupt.rs `deliver`: exceptions, INT n, INT3 and INTO in protected
+  mode go through 286 and 386 interrupt and trap gates in the IDT, with the
+  386 checks in order (IDT limit, gate type, gate DPL for INT n, present),
+  then the target code segment (code, DPL at most CPL, present). Error
+  codes for #DF, #NP, #SS, #GP and #PF are pushed; EXT is set unless INT n
+  is being delivered. #PF writes CR2.
+- A fault during delivery is delivered in turn, or as #DF (error code 0)
+  for contributory after contributory and for #PF after #PF or a
+  contributory fault; a fault during #DF is a shutdown (triple fault).
+- New ExecError::SegmentNotPresent carries #NP's selector.
+- IRET/IRETD in protected mode (isa/i386/iret_protected.pil) return at the
+  same level. NT=1 (task return) and VM=1 at CPL 0 (return to V86 mode)
+  stop.
+- Not yet: the TSS stack switch to an inner level (a CPL 3 interrupt to a
+  ring 0 handler), IRET to an outer level, task gates, IRQs in protected
+  mode (Dine stops there).
+- test386: the order of POST codes is 08h, 09h, 20h, 21h, 22h, 0Bh-0Fh,
+  10h-1Ch, so increment 5 (ring 3) comes before anything after 09h. POST 20h
+  starts with an IRETD to ring 3. A local build that skips POST 20h-22h and
+  0Bh (not in the repo) runs 0Ch-10h and stops at POST 11h on the next
+  switch to ring 3. The ROM runner now accepts up to 1,000,000,000 steps.
+

@@ -289,7 +289,9 @@ impl Image {
             }
             0xcf=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
-                let text=description("iret").map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/8*3).to_string());
+                // VM sits in bit 17, so only IRETD's flags dword can carry it.
+                let vm_check=if w==32{"bit vm packed 17\nand vm_return vm ring0\nnot no_vm_return vm_return\nrequire no_vm_return"}else{""};
+                let text=description(if self.real_mode{"iret"}else{"iret_protected"}).map_err(GuestError::Decode)?.replace("$VM_CHECK",vm_check).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/8*3).to_string());
                 (if w==32{"IRETD".into()}else{"IRET".into()},compile(&instantiate(text,w),w))
             }
             0xc2|0xc3=>{

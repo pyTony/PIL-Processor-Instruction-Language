@@ -27,6 +27,8 @@ const CON_LINE:u16=0x0300;
 const TICKS_PER_DAY:u32=0x0018_00b0;
 pub const MAX_FILE:usize=1024*1024;
 pub const MAX_STEPS:usize=1_000_000;
+/// test386 runs tens of millions of instructions (its LEA test alone).
+pub const MAX_ROM_STEPS:usize=1_000_000_000;
 #[cfg(test)]
 const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
 #[path="dos_services.rs"]
@@ -338,7 +340,15 @@ fn opcode_key(bytes:&[u8])->String{
 /// installed), or a mode where delivery is not modelled yet.
 fn exception(p:&mut Loaded,e:&super::flow::ExecError,lazy:&mut super::LazyFlags)->Option<Result<ExceptionSite,String>>{
     let vector=crate::interrupt::vector(e)?;
-    if !p.image.real_mode||p.cpu.eflags&0x20000!=0||vectors::answered(p,vector)!=Ok(false){return None;}
+    if p.cpu.eflags&0x20000!=0{return None;}
+    if !p.image.real_mode{
+        // Protected mode: always through the IDT; Dine answers nothing there.
+        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+        let site=ExceptionSite::capture(p,vector,&format!("{e:?}"));
+        let event=crate::interrupt::Event::fault(e,p.cpu.eip)?;
+        return Some(vectors::deliver_protected(p,event).map(|()|{crate::interrupt::after_fault(&mut p.cpu,e);site}));
+    }
+    if vectors::answered(p,vector)!=Ok(false){return None;}
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     let site=ExceptionSite::capture(p,vector,&format!("{e:?}"));
     let eip=p.cpu.eip;
@@ -350,7 +360,7 @@ pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
     probe.output=output.into_bytes();Ok(probe)
 }
 pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output)->Result<Probe,String>{
-    if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
+    if !(1..=if p.rom_mode{MAX_ROM_STEPS}else{MAX_STEPS}).contains(&budget){return Err(if p.rom_mode{"ROM step budget must be 1..1000000000"}else{"DOS step budget must be 1..1000000"}.into());}
     let _profile_run=crate::profile::span("dos_run");
     let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();
     let mut exceptions=Vec::new();let mut exception_count=0;
@@ -389,12 +399,15 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         }
         let linear=p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip);
         if (vectors::ENTRIES..vectors::END).contains(&linear){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
-        match vectors::leave(&mut p){
+        // Dine's BIOS and DOS entries and its INT n services are real-mode
+        // only; in protected mode INT n goes through the IDT below.
+        let dine=p.image.real_mode;
+        match if dine{vectors::leave(&mut p)}else{Ok(false)}{
             Ok(true)=>{execution_steps+=1;completed+=1;*instructions.entry("IRET (Dine interrupt entry)".into()).or_insert(0)+=1;continue;},
             Ok(false)=>{},
             Err(message)=>break Stop::Service(message),
         }
-        if let Ok(encoded)=p.image.fetch_signature(&p.ram,p.cpu.eip,2){if encoded[0]==0xcd{
+        if let Ok(encoded)=p.image.fetch_signature(&p.ram,p.cpu.eip,2){if dine&&encoded[0]==0xcd{
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             let vector=encoded[1];
             if vector==8&&vectors::at_timer_entry(&p){
@@ -515,10 +528,11 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             },
             Err(GuestError::Decode(detail))=>{
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if !detail.starts_with("fetch outside loaded image") && vectors::answered(&p,6)==Ok(false) {
+                if !detail.starts_with("fetch outside loaded image") && (!p.image.real_mode&&p.cpu.eflags&0x20000==0||vectors::answered(&p,6)==Ok(false)) {
                     let fault_eip=p.cpu.eip;
                     let site=ExceptionSite::capture(&p,6,&detail);
-                    match vectors::deliver_fault(&mut p,6,fault_eip){
+                    let delivered=if p.image.real_mode{vectors::deliver_fault(&mut p,6,fault_eip)}else{vectors::deliver_protected(&mut p,crate::interrupt::Event{vector:6,error_code:None,return_eip:fault_eip,software:false,cr2:None})};
+                    match delivered{
                         Ok(())=>{
                             exception_count+=1;if exceptions.len()<64{exceptions.push(site);}
                             execution_steps+=1;completed+=1;
@@ -555,12 +569,19 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             Operation::Halt=>break Stop::Monitor("HLT with IF=0 never resumes; monitor stop is not DOS process termination".into()),
             Operation::Interrupt{vector,overflow,next}=>{
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                let next=*next&0xffff;let vector=*vector;
+                let vector=*vector;let protected=!p.image.real_mode&&p.cpu.eflags&0x20000==0;
+                let next=if protected{*next}else{*next&0xffff};
                 let label=decoded.label.split_whitespace().next().unwrap_or("INT").to_string();
                 if *overflow&&p.cpu.eflags&0x800==0{
                     // INTO with OF=0 does nothing.
                     p.cpu.eip=next;p.image.retired();completed+=1;execution_steps+=1;
                     *instructions.entry(label).or_insert(0)+=1;continue;
+                }
+                if protected{
+                    match vectors::deliver_protected(&mut p,crate::interrupt::Event::software(vector,next)){
+                        Ok(())=>{completed+=1;execution_steps+=1;*instructions.entry(label).or_insert(0)+=1;continue;},
+                        Err(message)=>break Stop::Fault(message),
+                    }
                 }
                 match vectors::answered(&p,vector){
                     Ok(false)=>match vectors::deliver_fault(&mut p,vector,next){
