@@ -16,6 +16,8 @@ __pycache__/
 # The project's own DOS programs live in programs/dos. See docs/DRIVE_D.md.
 /driveD/
 /DriveD/
+/pildos.conf
+/programs/compiled/
 # Writable copies of imported DOS images.
 /drives/
 

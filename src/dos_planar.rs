@@ -22,6 +22,12 @@ pub(super) fn geometry(mode:u32)->Option<Geometry>{
         _=>return None,
     })
 }
+/// Page storage in each 64 KiB plane, including BIOS alignment padding.
+pub(super) fn page_offset(mode:u32,page:u32)->Result<usize,String>{
+    let stride=match mode{0x0d=>0x2000,0x0e=>0x4000,0x10=>0x8000,0x12=>0x10000,_=>return Err("not a planar mode".into())};
+    if page>=0x10000/stride{return Err(format!("graphics page {page} outside mode {mode:02x}h"));}
+    Ok((page*stride)as usize)
+}
 fn err(e:crate::memory::AccessFault)->String{format!("BIOS video write: {e:?}")}
 fn commit(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,w,_) in writes{p.ram.check_write(at,w).map_err(err)?;}
@@ -108,9 +114,9 @@ fn idle_io(p:&mut Loaded,sequencer:bool,even:bool,input:bool,value:u16,word:bool
 pub(super) fn pixel(p:&mut Loaded,mode:u32,write:bool)->Result<(),String>{
     let g=geometry(mode).ok_or("not a planar mode")?;
     let(x,y)=(p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
-    if (p.cpu.regs[3]>>8)&255!=0{return Err("graphics pixel page must be zero".into());}
+    let page=(p.cpu.regs[3]>>8)&255;let page_offset=page_offset(mode,page)?;
     if x>=g.width||y>=g.height{return Err("graphics pixel outside mode bounds".into());}
-    let(offset,bit)=((y*g.line_bytes()+x/8)as usize,x%8);
+    let(offset,bit)=(page_offset+(y*g.line_bytes()+x/8)as usize,x%8);
     let planar=p.ram.planar_mut().ok_or("planar memory is not mapped")?;
     let old=planar.pixel(offset,bit);
     if write{
@@ -157,8 +163,9 @@ pub(super) fn palette(p:&mut Loaded)->Result<(),String>{
     Ok(())
 }
 /// AX=1130h: font information. BH=0/1 return the INT 1Fh/43h vectors, BH=3
-/// the 8x8 ROM font (00h-7Fh); CX is the current character height and DL
-/// the last text row. Font loading (other AL) is not modelled.
+/// the 8x8 ROM font (00h-7Fh) and BH=4 its upper half (80h-FFh); CX is the
+/// current character height and DL the last text row. Font loading (other
+/// AL) is not modelled.
 pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
     if al!=0x30{return Err(format!("INT 10h AX=11{al:02X}h (font load) is not modelled"));}
@@ -166,6 +173,7 @@ pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let pointer=match bh{
         0|1=>p.ram.load(if bh==0{0x1f*4}else{0x43*4},MemWidth::Dword).map_err(|e|format!("{e:?}"))?,
         3=>0xf000_fa6e,
+        4=>super::console::graphics_text::UPPER_FONT,
         _=>return Err(format!("INT 10h AX=1130h BH={bh:02X}h: only the 8x8 ROM font is present")),
     };
     let height=p.ram.load(0x485,MemWidth::Word).map_err(|e|format!("{e:?}"))?;
@@ -197,7 +205,8 @@ pub(super) fn combination(p:&mut Loaded)->Result<(),String>{
 pub(super) fn snapshot(p:&Loaded)->Option<(u32,Geometry,String,String)>{
     let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;let g=geometry(mode)?;let planar=p.ram.planar()?;
     let mut hex=String::with_capacity(8*g.bytes());
-    for n in 0..4{for b in &planar.plane(n)[..g.bytes()]{hex.push_str(&format!("{b:02x}"));}}
+    let start=usize::from(p.vga.start());
+    for n in 0..4{for i in 0..g.bytes(){let b=planar.peek(n,(start+i)&0xffff);hex.push_str(&format!("{b:02x}"));}}
     let rgb:String=p.vga.planar_rgb().iter().flatten().map(|c|format!("{c:02x}")).collect();
     Some((mode,g,hex,rgb))
 }

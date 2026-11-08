@@ -17,9 +17,9 @@ const FIRST:u16=0xf000;
 /// The vectors that start at an entry: the timer and its user hook, the
 /// keyboard IRQ, the BIOS video, equipment, memory, disk, serial, system, keyboard, printer and
 /// clock services, Ctrl-Break, and the DOS calls (20h, 21h, idle 28h, fast
-/// console 29h, network 2Ah, multiplex 2Fh). Data pointers (1Dh-1Fh, 41h,
+/// console 29h, network 2Ah, multiplex 2Fh). Data pointers (1Dh-1Eh, 41h,
 /// 43h, 46h), the DOS-kept 22h-24h and the free and user vectors stay as
-/// they were.
+/// they were. INT 1Fh points to the upper graphics font.
 pub(super) const ANSWERED:[u8;19]=[0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
 /// The INT stubs end before the small synthetic IRQ0 BIOS wrapper.
 const ENTRY_END:u32=ENTRIES+3*256;

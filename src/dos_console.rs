@@ -13,7 +13,9 @@ fn commit(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     if writes.iter().any(|(at,_,_)|matches!(*at,0x44e|0x450..=0x45f|0x460|0x462)){
         let start=read(p,0x44e)?/2;let page=byte(p,0x462)?&7;let cursor=read(p,0x450+page*2)?;
         let cols=read(p,0x44a)?.clamp(1,80);
-        p.vga.bios_sync(Some(start as u16),Some((start+(cursor>>8)*cols+(cursor&255))as u16),Some(read(p,0x460)? as u16));
+        let planar=super::planar::geometry(byte(p,0x449)?).is_some();
+        let video_start=if planar{if writes.iter().any(|(at,_,_)|*at==0x44e){Some(read(p,0x44e)? as u16)}else{None}}else{Some(start as u16)};
+        p.vga.bios_sync(video_start,Some((start+(cursor>>8)*cols+(cursor&255))as u16),Some(read(p,0x460)? as u16));
     }
     Ok(())
 }
@@ -289,7 +291,11 @@ fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
 fn select_page(p:&mut Loaded)->Result<(),String>{
     let page=p.cpu.regs[0]&255;
     if page>=8{return Err("BIOS video page must be 0..7".into());}
-    commit(p,&[(0x462,MemWidth::Byte,page),(0x44e,MemWidth::Word,page*PAGE)])
+    let mode=byte(p,0x449)?;
+    let offset=if super::planar::geometry(mode).is_some(){super::planar::page_offset(mode,page)? as u32}else{page*PAGE};
+    commit(p,&[(0x462,MemWidth::Byte,page),(0x44e,MemWidth::Word,offset)])?;
+    if super::planar::geometry(mode).is_some(){p.vga.bios_sync(Some(offset as u16),None,None);}
+    Ok(())
 }
 fn video_mode(p:&mut Loaded)->Result<(),String>{
     let(mode,cols,page)=(byte(p,0x449)?,byte(p,0x44a)?,active_page(p)?);
