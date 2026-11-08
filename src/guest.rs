@@ -122,9 +122,9 @@ impl Image {
                 _=>break b,
             }
         };
-        // On the 386, F2 with MOVS, STOS and LODS repeats by count like F3 and
-        // does not test ZF (SingleStepTests/80386 confirms all three).
-        if repeat.is_some()&&!matches!(opcode,0xa4|0xa5|0xaa|0xab|0xac|0xad|0xa6|0xa7|0xae|0xaf){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}
+        // On the 386, F2 with MOVS, STOS, LODS, INS and OUTS repeats by count
+        // like F3 and does not test ZF (SingleStepTests/80386 confirms it).
+        if repeat.is_some()&&!matches!(opcode,0x6c..=0x6f|0xa4..=0xa7|0xaa..=0xaf){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}
         // LOCK is valid only on a read-modify-write memory destination; the
         // single-executor RAM model makes every instruction indivisible, so it
         // changes nothing else. XCHG checks its memory operand itself.
@@ -192,15 +192,17 @@ impl Image {
                 let stack_bits:u8=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let n=u32::from(w/8);let level32=u32::from(level);
                 // Level L copies L-1 enclosing frame pointers, then pushes the new one.
-                let mut loads=String::new();let mut stores=String::new();
+                // Each pointer is read after the earlier pushes are staged, as the
+                // 386 does, so a chain that overlaps the new frame reads them.
+                let mut stores=String::new();
                 for k in 1..level32{
-                    loads+=&format!("const back{k} $S {}\nsub link{k} chain_bp back{k}\nzext link_at{k} link{k} 32\nload_segment copy{k} 2 link_at{k} $W\n",k*n);
+                    stores+=&format!("const back{k} $S {}\nsub link{k} chain_bp back{k}\nzext link_at{k} link{k} 32\nload_segment copy{k} 2 link_at{k} $W\n",k*n);
                     stores+=&format!("const down{k} $S {}\nsub slot{k} frame down{k}\nzext slot_at{k} slot{k} 32\nstore_segment 2 slot_at{k} copy{k}\n",k*n);
                 }
                 let frame_value=match w.cmp(&stack_bits){std::cmp::Ordering::Greater=>"zext frame_value frame $W",std::cmp::Ordering::Less=>"trunc frame_value frame $W",_=>"zext frame_value frame $W"};
                 if level32>0{stores+=&format!("{frame_value}\nconst down_last $S {}\nsub last frame down_last\nzext last_at last 32\nstore_segment 2 last_at frame_value\n",level32*n);}
                 let pointer=if w>stack_bits{"zext frame_pointer frame 32"}else{"zext frame_pointer frame $S"};
-                let text=include_str!("../isa/i386/enter.pil").replace("$COPY_LOADS",loads.trim_end()).replace("$COPY_STORES",stores.trim_end()).replace("$FRAME_POINTER",pointer).replace("$PUSHED",&(level32*n).to_string()).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let text=include_str!("../isa/i386/enter.pil").replace("$COPY_STORES",stores.trim_end()).replace("$FRAME_POINTER",pointer).replace("$PUSHED",&(level32*n).to_string()).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("ENTER 0x{size:04x},{level}"),compile(&instantiate(&text,w),w))
             }
             0xd7=>{
@@ -292,10 +294,10 @@ impl Image {
                 let text=include_str!("../isa/i386/ret.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (if opcode==0xc2{format!("RET 0x{cleanup:04x}")}else{"RET".into()},compile(&instantiate(text,w),w))
             }
-            0xa4|0xa5|0xaa|0xab|0xac|0xad=>{
+            0x6c..=0x6f|0xa4|0xa5|0xaa|0xab|0xac|0xad=>{
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;let a=if addr32{32}else{16};
-                let name=match opcode{0xa4|0xa5=>"movs",0xaa|0xab=>"stos",_=>"lods"};
-                let body=match name{"movs"=>include_str!("../isa/i386/movs.pil"),"stos"=>include_str!("../isa/i386/stos.pil"),_=>include_str!("../isa/i386/lods.pil")};
+                let name=match opcode{0x6c|0x6d=>"ins",0x6e|0x6f=>"outs",0xa4|0xa5=>"movs",0xaa|0xab=>"stos",_=>"lods"};
+                let body=match name{"ins"=>include_str!("../isa/i386/ins.pil"),"outs"=>include_str!("../isa/i386/outs.pil"),"movs"=>include_str!("../isa/i386/movs.pil"),"stos"=>include_str!("../isa/i386/stos.pil"),_=>include_str!("../isa/i386/lods.pil")};
                 let body=body.replace("$SEG",&override_segment.unwrap_or(SegmentRegister::Ds).index().to_string()).replace("$A",&a.to_string()).replace("$BYTES",&(w/8).to_string());
                 let text=if repeat.is_some(){super::repeat_description(&body,a)}else{body};
                 let mnemonic=format!("{}{}",name.to_ascii_uppercase(),match w{8=>"B",16=>"W",_=>"D"});
@@ -676,9 +678,21 @@ impl Image {
                 (label,compile(&text,w))
                 }
             }
-            0xe4|0xe6=>{
-                let port=r.byte()?;if port!=0xe9{return Err(GuestError::Decode(format!("unsupported monitor port {port:02x}")));}
-                return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
+            0xe4..=0xe7|0xec..=0xef=>{
+                // Port E9h in a monitor-sized image is the debugger's mock serial
+                // port. Any other port is an open bus: IN reads all ones and OUT
+                // goes nowhere, as SingleStepTests/80386 records. Dine answers its
+                // own device ports before the decoder runs.
+                if opcode&1==0{w=8;}dst=view(0,w);src=dst;
+                let port=if opcode<0xe8{Some(r.byte()?)}else{None};
+                if matches!((opcode,port),(0xe4|0xe6,Some(0xe9)))&&self.end<=RAM_BYTES as u32{
+                    return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
+                }
+                let input=opcode&2==0;
+                let port_name=port.map(|p|format!("0x{p:02x}")).unwrap_or_else(||"DX".into());
+                let label=if input{format!("IN {},{port_name}",register_name(dst))}else{format!("OUT {port_name},{}",register_name(dst))};
+                let text=if input{include_str!("../isa/i386/in_open_bus.pil")}else{include_str!("../isa/i386/out_open_bus.pil")};
+                (label,compile(&instantiate(text,w),w))
             }
             0xcc|0xcd|0xce=>{
                 let vector=match opcode{0xcc=>3,0xce=>4,_=>r.byte()?};

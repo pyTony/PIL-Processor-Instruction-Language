@@ -155,8 +155,9 @@ fetch or the fall-through limit. The monitor performs CS fetch checks separately
 | `store address input` | Stage an 8/16/32-bit RAM store (at most 33), width inferred from input |
 
 Any of these statements, including `read_address` alone, requires a RAM-capable
-execution API. Multiple loads are allowed, but at most 33 stores and no loads
-after that store. Checks occur in token order. A store checks permission before
+execution API. Multiple loads are allowed, with at most 33 stores. A plain `load`
+may not follow a store; a `load_segment` may, and sees the bytes of the stores
+staged before it (store forwarding). Checks occur in token order. A store checks permission before
 being staged and is published at retirement before infallible CPU-state commits.
 Later faults and overlap conflicts cancel the staged store and CPU effects.
 Unaligned RAM accesses are supported.
@@ -460,7 +461,7 @@ after validation. A source segment override never redirects the stack store.
 A program may stage at most 33 `store`/`store_segment` effects in total (PUSHA/PUSHAD uses eight; ENTER
 with nesting level 31 uses 33). The interpreter keeps the first eight on the stack and spills the rest;
 generated Rust sizes its store array to the program.
-All loads must precede the first store. Each store checks its full destination
+Plain `load` statements must precede the first store; `load_segment` may follow one and reads the staged bytes. Each store checks its full destination
 before staging; retirement commits writes in program order only after all
 instruction checks pass. Overlapping stores use the later store's bytes.
 This is bounded ordinary RAM support, not MMIO or bus-atomic behavior.

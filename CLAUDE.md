@@ -1,3 +1,32 @@
+# Ports, INS/OUTS and store forwarding from feat/bound-enter-io — 8 November 2026
+
+Tony chose to merge #112 first and then port what only his
+feat/bound-enter-io branch had.
+- Ports with no device form an open bus: IN reads FFh, FFFFh or FFFFFFFFh,
+  and OUT goes nowhere (isa/i386/in_open_bus.pil, out_open_bus.pil).
+- INS and OUTS are new (isa/i386/ins.pil, outs.pil), and F2 or F3 repeats
+  them.
+- Port E9h in a monitor-sized image stays the debugger's mock serial port.
+- Dine still answers its own unprefixed IN/OUT before the decoder runs. A
+  port access that gets past that (a prefixed IN/OUT, INS or OUTS) now
+  stops as a service the session does not model, instead of reading the
+  open bus.
+- Store forwarding: a `load_segment` after a staged store reads the staged
+  bytes (Ram::load_staged). ENTER now reads each frame pointer after the
+  earlier pushes, as the 386 does, so chains that overlap the new frame
+  match.
+- The SingleStepTests runner now judges HLT (F4) cases.
+- Not ported: rotate OF for counts above 1. Intel documents it as
+  undefined, and this host's CPU disagrees with the 386EX value, so the
+  host-CPU oracle failed.
+
+Local Linux: 597 Rust tests pass (3 new); the generated-backend suite has
+267 cases (2 new: port_io, enter_overlap). SingleStepTests/80386 run 06
+(local): pass 1,582,234 -> 1,600,052; nothing is left undecoded; 0
+disagreements in 2,306 generated programs.
+
+What still fails is listed in EXTERNAL_TEST_SUITES.md under run 06.
+
 # Second real-mode SingleStepTests fix set — 7 November 2026
 
 Continues Tony's priority on real-mode SingleStepTests/80386 fixes.

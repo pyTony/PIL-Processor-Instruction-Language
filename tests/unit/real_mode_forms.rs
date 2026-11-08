@@ -1,5 +1,6 @@
 //! Original expectations for real-mode forms found by SingleStepTests/80386:
-//! F2 STOS/LODS, FWAIT, CLTS, SALC, BOUND and ENTER with a nesting level.
+//! F2 STOS/LODS, FWAIT, CLTS, SALC, BOUND, ENTER with a nesting level and
+//! open-bus port I/O.
 //! Image::load gives ES base 0, DS base 100h and SS base 200h.
 use super::*;
 fn machine(code:&[u8],regs:[u32;8],flags:u32,ram:&[(u32,u8,u32)])->(guest::Image,Ram,Cpu){
@@ -81,4 +82,26 @@ fn enter_with_a_nesting_level_copies_enclosing_frame_pointers(){
  step(&mut i,&mut r,&mut c).unwrap();assert_eq!((c.regs[5],c.regs[4]),(0xfc,0xfc));
  // Level 32 is level 0 (the level is taken modulo 32).
  let(mut i,mut r,mut c)=machine(&[0xc8,0x00,0x00,0x20],[0,0,0,0,0x100,0x4444,0,0],2,&[]);step(&mut i,&mut r,&mut c).unwrap();assert_eq!((c.regs[5],c.regs[4]),(0xfe,0xfe));
+}
+#[test]
+fn ports_without_a_device_read_all_ones_and_ignore_writes(){
+ // IN reads FFh/FFFFh/FFFFFFFFh into AL/AX/EAX; OUT changes nothing.
+ for (bytes,eax,want) in [(vec![0xe4,0x80],0x1234_5600u32,0x1234_56ffu32),(vec![0xe5,0x80],0x1234_0000,0x1234_ffff),(vec![0x66,0xe5,0x80],0,0xffff_ffff),
+  (vec![0xec],0x1234_5600,0x1234_56ff),(vec![0xed],0x1234_0000,0x1234_ffff),(vec![0x66,0xed],0,0xffff_ffff),(vec![0xe6,0x80],0x1234_5678,0x1234_5678),(vec![0x66,0xef],0x1234_5678,0x1234_5678)]{
+  let(mut i,mut r,mut c)=machine(&bytes,[eax,0,0x3f8,0,0x800,0,0,0],0x8d7,&[]);let oldr=r.clone();step(&mut i,&mut r,&mut c).unwrap();
+  assert_eq!((c.regs[0],c.eflags,c.eip),(want,0x8d7,0x100+bytes.len() as u32),"{bytes:02x?}");assert_eq!(r,oldr);
+ }
+ // F3 6D = REP INSW, CX=2, DI=10h: writes FFFFh at ES:10h and 12h. F2 6E = REP OUTSB (F2 repeats too), CX=3, SI=20h.
+ let(mut i,mut r,mut c)=machine(&[0xf3,0x6d],[0,2,0x3f8,0,0x800,0,0,0x10],2,&[]);run_out(&mut i,&mut r,&mut c);
+ assert_eq!((c.regs[1],c.regs[7]),(0,0x14));assert_eq!([0x10,0x12,0x14].map(|a|r.load(a,MemWidth::Word).unwrap()),[0xffff,0xffff,0]);
+ let(mut i,mut r,mut c)=machine(&[0xf2,0x6e],[0,3,0x3f8,0,0x800,0,0x20,0],0x402,&[]);run_out(&mut i,&mut r,&mut c);
+ assert_eq!((c.regs[1],c.regs[6]),(0,0x1d));
+}
+#[test]
+fn enter_reads_frame_pointers_it_has_just_pushed(){
+ // C8 00 00 03 = ENTER 0,3 with SP=0102h and BP=0102h: BP is pushed at 0100h, then the
+ // copies read [BP-2] (the BP just pushed, 0102h) and [BP-4] (the first copy, 0102h).
+ let(mut i,mut r,mut c)=machine(&[0xc8,0x00,0x00,0x03],[0,0,0,0,0x102,0x102,0,0],2,&[]);step(&mut i,&mut r,&mut c).unwrap();
+ assert_eq!([0x300,0x2fe,0x2fc,0x2fa].map(|a|r.load(a,MemWidth::Word).unwrap()),[0x102,0x102,0x102,0x100]);
+ assert_eq!((c.regs[5],c.regs[4]),(0x100,0xfa));
 }

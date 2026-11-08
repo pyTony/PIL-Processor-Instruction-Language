@@ -3,16 +3,15 @@
 # above zero, point BP/EBP at the saved value and reserve the frame. SS address
 # size selects SP/BP or ESP/EBP for addressing; operand size selects the pushed
 # width. A 32-bit ENTER on a 16-bit stack writes all of EBP (upper half zero),
-# as the 386 does. The decoder expands the copy placeholders below into one
-# load per copied pointer and the pushes after BP, for the masked level.
-# The copied pointers are read before any push is staged.
+# as the 386 does. The decoder expands the copy placeholder below into the
+# pushes after BP for the masked level: each copied pointer is read after the
+# earlier pushes are staged, so a chain that overlaps them reads the new bytes.
 require_width 16_or_32
 read_gpr old_sp 4 $S
 read_gpr chain_bp 5 $S
 read_gpr old_bp 5 $W
 const step $S $BYTES
 sub frame old_sp step
-$COPY_LOADS
 zext at frame 32
 store_segment 2 at old_bp
 $COPY_STORES

@@ -129,6 +129,27 @@ Result:
 The generated backend ran 2,274 programs with 0 disagreements. Report:
 /mnt/project-files/pil_proof/sst80386-run-05.md (project files, not in git).
 
+Run 06 (8 November 2026, local cloud session, same revision) adds:
+- Open-bus IN/OUT and INS/OUTS.
+- Store forwarding, so nested ENTER reads its own pushes.
+- Judged HLT cases.
+
+Result:
+- 1,600,052 pass (+17,818), with nothing left undecoded.
+- 150,514 undefined-flag-only.
+- 7,890 undefined SIB.
+- 94 HLT fetch faults and 1 revoked case.
+- 149 failures:
+  - 112 memory writes the 386 makes before an #SS or #GP (partial ENTER and
+    PUSHAD, and A6/A7/AE/AF with 67h).
+  - 9 byte IDIVs.
+  - 8 JCC EIP cases.
+  - 6 IN EAX from port 1Fh, which reads 7FFFFFFFh on the 386EX.
+  - 14 others.
+
+The generated backend ran 2,306 programs with 0 disagreements. Report:
+/mnt/project-files/pil_proof/sst80386-run-06.md (project files, not in git).
+
 ## Original plan: SingleStepTests CPU adapter
 
 The captures use an Intel80386EX KU80C386EX33 with a16-bit external data bus.
