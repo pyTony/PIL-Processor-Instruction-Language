@@ -26,12 +26,10 @@ impl Planar {
         Self{planes:vec![0;4*PLANE],latch:std::cell::Cell::new([0;4]),seq:[3,1,0x0f,0,6],gc:[0,0,0,0,0,0,5,0x0f,0xff],seq_index:0,gc_index:0}
     }
     pub fn plane(&self,n:usize)->&[u8]{&self.planes[n*PLANE..(n+1)*PLANE]}
-    pub fn latches(&self)->[u8;4]{self.latch.get()}
     /// Host access to one plane byte (BIOS pixel and text services), without
     /// latches or registers.
     pub fn peek(&self,plane:usize,offset:usize)->u8{self.planes[plane*PLANE+offset]}
     pub fn poke(&mut self,plane:usize,offset:usize,value:u8){self.planes[plane*PLANE+offset]=value;}
-    pub fn clear(&mut self){self.planes.fill(0);self.latch.set([0;4]);}
     /// Guest read: load the latches, then read mode 0 (the plane in Read Map
     /// Select) or read mode 1 (bits whose colour matches Colour Compare in
     /// the planes Colour Don't Care selects).

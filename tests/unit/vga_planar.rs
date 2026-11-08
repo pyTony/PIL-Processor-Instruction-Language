@@ -7,7 +7,7 @@ fn filled(values:[u8;4])->Planar{let mut p=Planar::new();for n in 0..4{p.poke(n,
 #[test]
 fn reads_load_latches_and_select_a_plane_or_compare_colours(){
     let mut p=filled([0x0f,0x33,0x55,0xff]);
-    p.gc[4]=2;assert_eq!(p.read(7),0x55);assert_eq!(p.latches(),[0x0f,0x33,0x55,0xff]);
+    p.gc[4]=2;assert_eq!(p.read(7),0x55);assert_eq!(p.latch.get(),[0x0f,0x33,0x55,0xff]);
     // Read mode 1, colour compare 0Fh: bits set in all planes,
     // 0Fh & 33h & 55h & FFh = 01h. Colour 1011b: p0 & p1 & !p2 & p3 = 02h.
     p.gc[5]=8;p.gc[2]=0x0f;assert_eq!(p.read(7),0x01);
@@ -54,7 +54,7 @@ fn ram_routes_the_window_only_while_planar_memory_is_mapped(){
     for n in 0..4{assert_eq!(ram.planar().unwrap().peek(n,5),0x34);assert_eq!(ram.planar().unwrap().peek(n,6),0x12);}
     ram.planar_mut().unwrap().gc[4]=1;ram.store(PLANE_ALIAS+0x10000+5,MemWidth::Byte,0x77).unwrap();
     assert_eq!(ram.load(0xa0005,MemWidth::Byte).unwrap(),0x77);
-    assert_eq!(ram.planar().unwrap().latches(),[0x34,0x77,0x34,0x34]);
+    assert_eq!(ram.planar().unwrap().latch.get(),[0x34,0x77,0x34,0x34]);
     assert_eq!(ram.load(0xb0000,MemWidth::Byte).unwrap(),0,"outside the 64 KiB window");
     ram.set_planar(None);assert_eq!(ram.load(0xa0005,MemWidth::Byte).unwrap(),0x5a);
 }
