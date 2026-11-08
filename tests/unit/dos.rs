@@ -33,7 +33,7 @@ fn dos_vector_faults_leave_cpu_ram_and_segments_unchanged(){
 }
 #[test]
 fn dos_vector_bridge_retires_and_reads_guest_ivt_edits(){
- let mut p=load(&[0xcd,0x21,0xf1],"vectors.com").unwrap();p.cpu.regs[0]=0x35ff;
+ let mut p=load(&[0xcd,0x21,0x63],"vectors.com").unwrap();p.cpu.regs[0]=0x35ff;
  p.ram.store(1020,MemWidth::Dword,0x43218765).unwrap();
  let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{..}));
  assert_eq!((r.completed,r.pil_steps,r.dos_calls),(1,0,1));assert_eq!(r.loaded.cpu.eip,0x102);
@@ -104,8 +104,8 @@ fn windows_new_format_signatures_are_rejected_and_zm_is_accepted(){
 #[test]
 fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
     // Typical startup now loads DS before reaching an intentionally unsupported opcode.
-    let mut b=exe(&[0xb8,0,0,0x8e,0xd8,0xf1],&[(1,0)]);put_word(&mut b,16,0x100);
-    let r=run(load(&b,"startup.exe").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode f1"));assert_eq!(r.completed,2);assert_eq!(r.loaded.cpu.eip,5);assert_eq!(r.loaded.cpu.regs[0],u32::from(LOAD));assert_eq!(r.file_offset,Some(37));assert_eq!(r.loaded.selectors[3],LOAD);assert_eq!(r.stop_bytes[0],0xf1);
+    let mut b=exe(&[0xb8,0,0,0x8e,0xd8,0x63],&[(1,0)]);put_word(&mut b,16,0x100);
+    let r=run(load(&b,"startup.exe").unwrap(),100).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 63"));assert_eq!(r.completed,2);assert_eq!(r.loaded.cpu.eip,5);assert_eq!(r.loaded.cpu.regs[0],u32::from(LOAD));assert_eq!(r.file_offset,Some(37));assert_eq!(r.loaded.selectors[3],LOAD);assert_eq!(r.stop_bytes[0],0x63);
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
@@ -135,8 +135,8 @@ fn unterminated_or_oversized_dos_output_is_all_or_none(){
 #[test]
 fn corpus_report_ranks_first_blockers_and_keeps_service_failures_separate(){
     use std::time::{SystemTime,UNIX_EPOCH};let dir=std::env::temp_dir().join(format!("pil-dos-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir_all(&dir).unwrap();let mut paths=Vec::new();
-    for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0xf1]),("gap2.com",vec![0xf1]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
-    let text=report(&paths,100).unwrap();assert!(text.contains(&format!("DOS executable probe v{}; step budget=100 per program",env!("CARGO_PKG_VERSION"))));assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode f1"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
+    for(name,bytes)in [("hello world.com",hello("com").unwrap()),("gap1.com",vec![0x63]),("gap2.com",vec![0x63]),("service.com",vec![0xcd,0x10])]{let p=dir.join(name);std::fs::write(&p,bytes).unwrap();paths.push(p.to_str().unwrap().to_owned());}
+    let text=report(&paths,100).unwrap();assert!(text.contains(&format!("DOS executable probe v{}; step budget=100 per program",env!("CARGO_PKG_VERSION"))));assert!(text.contains("SUMMARY imported=4/4 exited=1"));assert!(text.contains("2 opcode 63"));assert!(text.contains("Hello, DOS!\\r\\n"));assert!(text.contains("Service("));assert!(report(&[],100).is_err());assert!(report(&paths,0).is_err());std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn dos_version_queries_preserve_upper_registers_flags_and_use_psp_override(){
 }
 #[test]
 fn dos_version_query_retires_bridge_then_reaches_next_blocker_or_exit(){
- let r=run(load(&[0xb8,0,0x30,0xcd,0x21,0xf1],"version.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode f1"));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(2,1,1));assert_eq!(r.loaded.cpu.regs[0],0x1606);
+ let r=run(load(&[0xb8,0,0x30,0xcd,0x21,0x63],"version.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::MissingEncoding{ref key,..}if key=="opcode 63"));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(2,1,1));assert_eq!(r.loaded.cpu.regs[0],0x1606);
  let r=run(load(&[0xb8,1,0x30,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21],"version.com").unwrap(),10).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!((r.completed,r.pil_steps,r.dos_calls),(4,2,2));
 }
 #[test]
@@ -934,12 +934,13 @@ fn lds_and_enter_have_literal_results(){
  assert_eq!(r.loaded.cpu.regs[5],0x11110000|(sp-2));assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp-2-0x1e);
  let ss=u32::from(r.loaded.selectors[SegmentRegister::Ss.index()])*16;
  assert_eq!(r.loaded.ram.load(ss+sp-2,MemWidth::Word).unwrap(),0xabcd);
- // ENTER 0010,1 pushes old BP and the new frame pointer, then subtracts 0010h.
- let mut p=load(&[0xc8,0x10,0x00,0x01,0xfa,0xf4],"enter1.com").unwrap();p.cpu.regs[5]=0x2222cdef;
- let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
- assert_eq!(r.loaded.cpu.regs[5],0x22220000|(sp-2));assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp-4-0x10);
- assert_eq!(r.loaded.ram.load(ss+sp-2,MemWidth::Word).unwrap(),0xcdef);
- assert_eq!(r.loaded.ram.load(ss+sp-4,MemWidth::Word).unwrap(),sp-2);
+ // ENTER 0010,2 with BP=ABCD and [SS:ABCB]=5555: push ABCD, copy [ABCB], push the frame
+ // pointer FFFC; BP=FFFC, SP=FFFC-4-10h.
+ let mut p=load(&[0xc8,0x10,0x00,0x02,0xf4],"enter2.com").unwrap();p.cpu.regs[5]=0x1111abcd;
+ let ss=u32::from(p.selectors[SegmentRegister::Ss.index()])*16;p.ram.store(ss+0xabcb,MemWidth::Word,0x5555).unwrap();
+ let sp=p.cpu.regs[4]&0xffff;let r=run(p,10).unwrap();
+ assert_eq!(r.loaded.cpu.regs[5],0x11110000|(sp-2));assert_eq!(r.loaded.cpu.regs[4]&0xffff,sp-6-0x10);
+ assert_eq!([sp-2,sp-4,sp-6].map(|o|r.loaded.ram.load(ss+o,MemWidth::Word).unwrap()),[0xabcd,0x5555,sp-2]);
 }
 #[test]
 fn handle_write_psp_query_and_absent_extensions(){
@@ -2235,8 +2236,8 @@ fn guest_programs_the_graphics_controller_with_word_outs(){
  let r=run(load(&code,"chain.com").unwrap(),20).unwrap();
  assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the planar profile")),"{:?}",r.stop);
  assert_eq!(r.loaded.ram.planar().unwrap().seq[4],6);
- // Outside the planar modes the sequencer is not modelled.
- let code=[0xba,0xc4,0x03,0xb0,0x02,0xee,0xfa,0xf4];
+ // Outside the planar modes the map mask is kept, but a memory-mode change is refused.
+ let code=[0xba,0xc4,0x03,0xb8,0x02,0x0f,0xef,0xb8,0x04,0x06,0xef,0xfa,0xf4];
  let r=run(load(&code,"text.com").unwrap(),20).unwrap();
  assert!(matches!(&r.stop,Stop::Service(e)|Stop::Fault(e) if e.contains("outside the 16-colour planar modes")),"{:?}",r.stop);
 }
@@ -2298,6 +2299,15 @@ fn planar_text_uses_tall_cells_and_scrolls_them(){
  assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x1d00);
 }
 #[test]
+fn port_accesses_dine_does_not_answer_stop_instead_of_reading_open_bus(){
+ // Dine answers unprefixed IN/OUT itself; a prefixed IN, INS or OUTS reaches the decoder's
+ // open bus, which Dine must not use for its devices.
+ for bytes in [vec![0x66,0xe5,0x60],vec![0x6c],vec![0xf3,0x6f]]{
+  let r=run(load(&bytes,"port.com").unwrap(),10).unwrap();
+  assert!(matches!(r.stop,Stop::Service(ref m)if m.contains("not modelled in Dine")),"{bytes:02x?} {:?}",r.stop);assert_eq!(r.loaded.cpu.eip,0x100);
+ }
+}
+#[test]
 fn session_mounts_and_unmounts_fat12_floppy_and_host_folders_live(){
  use std::time::{SystemTime,UNIX_EPOCH};
  let dir=std::env::temp_dir().join(format!("pil-mount-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
@@ -2321,7 +2331,6 @@ fn session_mounts_and_unmounts_fat12_floppy_and_host_folders_live(){
  floppy[root+28..root+32].copy_from_slice(&8u32.to_le_bytes());
  floppy[14*512..14*512+8].copy_from_slice(b"disk-one");
  let floppy_path=dir.join("disk1.img");std::fs::write(&floppy_path,&floppy).unwrap();
- // Program opens A:\DISK1.TXT, reads 8 bytes, writes to stdout, then opens D:\NOTE.TXT, reads 8 bytes, writes to stdout, and exits.
  let mut s=session::Session::new(load(&[0xf4],"noop.com").unwrap());
  let (reply,_)=s.command(1,&format!("mount A {}",floppy_path.display())).unwrap();
  assert!(reply.contains("\"ok\":true"),"{reply}");

@@ -39,7 +39,10 @@ impl Session{
     /// Queues one key as the BIOS stores it: scan code in the high byte, ASCII low.
     pub fn key(&mut self,ascii:u8,scan:u8)->Result<bool,String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
-        console::enqueue(p,u16::from(scan)<<8|u16::from(ascii))
+        let word=u16::from(scan)<<8|u16::from(ascii);
+        // A program's own INT 09h handler sees the key arrive through IRQ1.
+        if keyboard::hooked(p)?{return keyboard::key(p,word);}
+        console::enqueue(p,word)
     }
     /// The active text page as character/attribute pairs, its width and the cursor.
     pub fn screen(&self)->Result<(Vec<u8>,u32,(u32,u32)),String>{
@@ -165,12 +168,20 @@ impl Session{
                 _=>(false,"com1 needs bytes in hex".into(),false),
             },
             // `break`: Ctrl+Break, as the BIOS and DOS's INT 1Bh handler take it.
+            // When the program owns INT 09h or INT 1Bh, Ctrl and Scroll Lock
+            // arrive through IRQ1 and the BIOS keyboard handler calls INT 1Bh.
             ["break"]=>{
                 let p=self.loaded.as_mut().ok_or("session state lost")?;
-                match brk::ctrl_break(p){
+                let through_irq=keyboard::hooked(p)?||(super::vectors::answered(p,0x09)?&&super::vectors::reachable(p,0x1b)?);
+                if through_irq{
+                    match keyboard::ctrl_break(p)?{
+                        true=>(true,String::new(),false),
+                        false=>(false,"keyboard scan codes still waiting for the program".into(),false),
+                    }
+                }else{match brk::ctrl_break(p){
                     Ok(())=>(true,String::new(),false),
                     Err(message)=>(false,message,false),
-                }
+                }}
             },
             ["quit"]=>(true,String::new(),true),
             _=>(false,format!("unknown command: {line}"),false),

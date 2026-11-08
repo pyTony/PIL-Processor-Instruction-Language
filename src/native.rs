@@ -37,7 +37,7 @@ pub fn cases()->Result<Vec<Case>,String> {
 
     let mut memory=case("readonly_store",vec![0x66,0x89,0x07,0xf4])?;memory.regs[0]=0xdeadbeef;memory.regs[3]=0x400;memory.protect=Some((0x500,4));tests.push(memory);
     let mut branch=case("branch_fault",vec![0x74,0x7f,0xf4])?;branch.flags=0x246;branch.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(branch);
-    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0xf1]));tests.push(changed);
+    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0x63]));tests.push(changed);
     tests.push(case("rx_wait",vec![0xe4,0xe9,0xf4])?);
     let mut blocked=case("tx_blocked",vec![0xe6,0xe9,0xf4])?;blocked.regs[0]=65;blocked.tx=vec![42;256];tests.push(blocked);
     // Cover each ALU group, memory direction, immediate sign extension and unary
@@ -184,7 +184,7 @@ pub fn cases()->Result<Vec<Case>,String> {
         let mut t=case(match(w,big){(16,false)=>"iret16_ss16",(16,true)=>"iret16_ss32",(32,false)=>"iret32_ss16",_=>"iret32_ss32"},bytes)?;
         t.regs[4]=0x800;t.flags=0x246;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,data));tests.push(t);
     }}
-    let mut t=case("iret_frame_fault",vec![0xcf,0xf4])?;t.regs[4]=0xfffc;tests.push(t);
+    let mut t=case("iret_frame_fault",vec![0xcf,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("retf_alias_branch",vec![0xcb,0x74,1,0x40,0xf4])?;t.regs[4]=0x800;t.flags=0x246;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
     let mut t=case("retf_alias_cs_store",vec![0xcb,0x2e,0xc6,6,0,8,0x42,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
     let mut t=case("retf_outside_window",vec![0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,2,1,0]));tests.push(t);
@@ -356,18 +356,19 @@ pub fn cases()->Result<Vec<Case>,String> {
     // count above 16, which this profile rejects.
     let mut t=case("double_shift",vec![0x0f,0xa5,0xc2,0x66,0x0f,0xad,0xc2,0x0f,0xa4,0x07,0x04,0x66,0x0f,0xac,0x07,0x1f,0xf4])?;
     t.regs[0]=0x80014002;t.regs[1]=0x00000005;t.regs[2]=0x12348765;t.regs[3]=0x400;t.flags=0x8d7;t.patch=Some((0x500,vec![0x34,0x12,0x78,0x56]));tests.push(t);
-    let mut t=case("double_shift_reject",vec![0x0f,0xa5,0xc2,0xf4])?;t.regs[1]=17;tests.push(t);
-    let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
-    let mut t=case("bound_ok",vec![0x62,0x07,0x66,0x62,0x07,0xf4])?;
-    t.regs[0]=0x0005_0003;t.regs[3]=0x400;t.patch=Some((0x500,vec![0x01,0x00,0x05,0x00,0x00,0x00,0x06,0x00]));tests.push(t);
-    let mut t=case("bound_fault",vec![0x62,0x07,0xf4])?;
-    t.regs[0]=11;t.regs[3]=0x400;t.patch=Some((0x500,vec![0xfb,0xff,0x0a,0x00]));tests.push(t);
-    let mut t=case("enter_nested",vec![0xc8,0x10,0x00,0x02,0xf4])?;
-    t.regs[4]=0xabcd0800;t.regs[5]=0x12340810;t.patch=Some((0xa0e,vec![0x34,0x12]));tests.push(t);
+    // Forms added for SingleStepTests/80386: SALC, BOUND, nested ENTER, POPAD on a 16-bit stack, F2 STOS.
+    let mut t=case("salc_set",vec![0xf9,0xd6,0xf4])?;t.regs[0]=0x1234_5678;tests.push(t);
+    let mut t=case("salc_clear",vec![0xf8,0xd6,0xf4])?;t.regs[0]=0x1234_5678;tests.push(t);
+    let mut t=case("bound_inside",vec![0x62,0x06,0x00,0x04,0xf4])?;t.regs[0]=3;t.patch=Some((0x500,vec![0xfb,0xff,0x0a,0x00]));tests.push(t);
+    let mut t=case("bound_fault",vec![0x62,0x06,0x00,0x04,0xf4])?;t.regs[0]=0x20;t.patch=Some((0x500,vec![0xfb,0xff,0x0a,0x00]));tests.push(t);
+    let mut t=case("enter_nested",vec![0x66,0xc8,0x08,0x00,0x03,0xf4])?;t.regs[4]=0xabcd_0700;t.regs[5]=0x1234_06f0;t.patch=Some((0x8e8,vec![0x22,0x22,0x22,0x22,0x11,0x11,0x11,0x11]));tests.push(t);
+    let mut t=case("popad_ss16",vec![0x66,0x61,0xf4])?;t.regs[4]=0xabcd_0700;t.patch=Some((0x900,(0u8..32).map(|b|b.wrapping_mul(37)).collect()));tests.push(t);
+    let mut t=case("rep_f2_stos",vec![0xf2,0xaa,0xf4])?;t.regs[0]=0x5a;t.regs[1]=3;t.regs[7]=0x800;tests.push(t);
     let mut t=case("port_io",vec![0xe4,0x80,0xe5,0x80,0x66,0xe5,0x80,0xe6,0x80,0xec,0xef,0x6c,0x6f,0xf3,0x6d,0xf4])?;
     t.regs[0]=0x12345600;t.regs[1]=2;t.regs[2]=0x3f8;t.regs[6]=0x400;t.regs[7]=0x600;t.patch=Some((0x500,vec![1,2,3,4]));tests.push(t);
-    let mut t=case("wait_salc_clts_f2",vec![0x9b,0xf9,0xd6,0xf8,0xd6,0x0f,0x06,0xf2,0xaa,0xf2,0xac,0xf4])?;
-    t.image.msw=0x001a;t.regs[0]=0x12345678;t.regs[1]=2;t.regs[6]=0x400;t.regs[7]=0x500;t.patch=Some((0x500,vec![0x11,0x22]));tests.push(t);
+    let mut t=case("enter_overlap",vec![0xc8,0x00,0x00,0x03,0xf4])?;t.regs[4]=0x702;t.regs[5]=0x702;tests.push(t);
+    let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
+    let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {

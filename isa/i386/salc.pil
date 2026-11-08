@@ -1,9 +1,8 @@
-# Set AL on Carry (undocumented 8086-386 D6h): AL = 0xFF if CF=1 else 0x00.
-require_width 8
-read_flag cf CF
-const ff 8 255
+# SALC (undocumented D6h): AL = FFh when CF is set, else 00h. Flags stay put.
+read_flag carry CF
+const ones 8 255
 const zero 8 0
-select r cf ff zero
-write dst r
+select filled carry ones zero
+write dst filled
 preserve_flags all
 retire

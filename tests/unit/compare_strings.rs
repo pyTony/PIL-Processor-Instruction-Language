@@ -40,7 +40,7 @@ fn memory_setcc_bp_ss_override_readonly_fault_and_no_false_store_elision(){
 #[test]
 fn compare_checkpoints_are_traced_prefix_rules_and_budgets_are_bounded(){
  for text in ["checkpoint_flags\ncheckpoint_flags\npreserve_flags all\nretire","const x 1 1\ncheckpoint_flags\npreserve_flags all\nretire"]{assert!(compile(text,8).is_err());}
- for bytes in [vec![0xf2,0x90],vec![0xf3,0x90]]{let(i,r,_)=setup(&bytes);assert!(i.decode(&r,0x100).is_err());}
+ for bytes in [vec![0xf3,0x90]]{let(i,r,_)=setup(&bytes);assert!(i.decode(&r,0x100).is_err());}
  let(i,_,c)=setup(&[0x90]);let m=i.segment_state();let mut n=m;n.flag_checkpoint=Some((c.eip,1,2));let record=|m:&address::SegmentState|{let mut b=Vec::new();trace::record_machine(&mut b,0,[0;5],&c.regs,c.eflags,c.undefined_flags,c.eip,&[],&[],&[],m);b};assert!(native::verify_traces(&record(&m),&record(&n)).is_err());
  let mut p=dos::load(&[0xf3,0xae],"compare.com").unwrap();p.cpu.regs[1]=3;p.cpu.regs[7]=0x200;let result=dos::run(p,1).unwrap();assert_eq!(result.stop,dos::Stop::Budget);assert_eq!((result.completed,result.pil_steps),(0,1));assert!(result.loaded.image.flag_checkpoint.is_some());
 }

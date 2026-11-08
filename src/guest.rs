@@ -122,7 +122,8 @@ impl Image {
                 _=>break b,
             }
         };
-        // F2 and F3 repeat all string instructions; only CMPS/SCAS test ZF.
+        // On the 386, F2 with MOVS, STOS, LODS, INS and OUTS repeats by count
+        // like F3 and does not test ZF (SingleStepTests/80386 confirms it).
         if repeat.is_some()&&!matches!(opcode,0x6c..=0x6f|0xa4..=0xa7|0xaa..=0xaf){return Err(GuestError::Decode("unsupported repeat-prefix/instruction combination".into()));}
         // LOCK is valid only on a read-modify-write memory destination; the
         // single-executor RAM model makes every instruction indivisible, so it
@@ -186,34 +187,22 @@ impl Image {
                 let text=include_str!("../isa/i386/pop_memory.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$HIGH_MASK",if stack_bits==16{"4294901760"}else{"0"}).replace("$WRAP_GUARD",guard);
                 (format!("POP {}",operand_name(dst,address)),compile(&instantiate(text,w),w))
             }
-            0x62=>{
-                let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode("BOUND requires a memory bounds pair".into()));}
-                dst=view(((m>>3)&7)as usize,w);src=dst;
-                let effective=r.effective(m,addr32)?;
-                address=Some(AddressContext{effective,override_segment,segments:self.segments});
-                let text=include_str!("../isa/i386/bound.pil").replace("$A",if addr32{"32"}else{"16"});
-                (format!("BOUND {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
-            }
             0xc8=>{
                 let size=r.unsigned(16)?;let level=r.byte()?&31;
-                let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
-                let frame_ptr=match (w,stack_bits){
-                    (16,16)|(32,32)=>"or frame_ptr sp0 sp0",
-                    (16,32)=>"trunc frame_ptr sp0 16",
-                    _=>"read_gpr old_esp 4 32\nconst high_mask 32 4294901760\nand esp_high old_esp high_mask\nzext sp0_wide sp0 32\nor frame_ptr esp_high sp0_wide",
-                };
-                let mut nesting=String::new();
-                if level>=2{nesting.push_str("read_gpr bp0 5 $S\n");}
-                for i in 1..level{
-                    let prev=i-1;
-                    nesting.push_str(&format!("sub bp{i} bp{prev} step\nzext bp_at{i} bp{i} 32\nload_segment disp{i} 2 bp_at{i} $W\nsub sp{i} sp{prev} step\nzext sp_at{i} sp{i} 32\nstore_segment 2 sp_at{i} disp{i}\n"));
+                let stack_bits:u8=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
+                let n=u32::from(w/8);let level32=u32::from(level);
+                // Level L copies L-1 enclosing frame pointers, then pushes the new one.
+                // Each pointer is read after the earlier pushes are staged, as the
+                // 386 does, so a chain that overlaps the new frame reads them.
+                let mut stores=String::new();
+                for k in 1..level32{
+                    stores+=&format!("const back{k} $S {}\nsub link{k} chain_bp back{k}\nzext link_at{k} link{k} 32\nload_segment copy{k} 2 link_at{k} $W\n",k*n);
+                    stores+=&format!("const down{k} $S {}\nsub slot{k} frame down{k}\nzext slot_at{k} slot{k} 32\nstore_segment 2 slot_at{k} copy{k}\n",k*n);
                 }
-                if level>=1{
-                    let prev=level-1;
-                    nesting.push_str(&format!("sub sp{level} sp{prev} step\nzext sp_at{level} sp{level} 32\nstore_segment 2 sp_at{level} frame_ptr"));
-                }
-                let sp_after=format!("sp{level}");
-                let text=include_str!("../isa/i386/enter.pil").replace("$FRAME_PTR",frame_ptr).replace("$NESTING",&nesting).replace("$SP_AFTER",&sp_after).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let frame_value=match w.cmp(&stack_bits){std::cmp::Ordering::Greater=>"zext frame_value frame $W",std::cmp::Ordering::Less=>"trunc frame_value frame $W",_=>"zext frame_value frame $W"};
+                if level32>0{stores+=&format!("{frame_value}\nconst down_last $S {}\nsub last frame down_last\nzext last_at last 32\nstore_segment 2 last_at frame_value\n",level32*n);}
+                let pointer=if w>stack_bits{"zext frame_pointer frame 32"}else{"zext frame_pointer frame $S"};
+                let text=include_str!("../isa/i386/enter.pil").replace("$COPY_STORES",stores.trim_end()).replace("$FRAME_POINTER",pointer).replace("$PUSHED",&(level32*n).to_string()).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("ENTER 0x{size:04x},{level}"),compile(&instantiate(&text,w),w))
             }
             0xd7=>{
@@ -340,6 +329,12 @@ impl Image {
                 let text=if memory{format!("read_address addr\nconst v {w} {immediate}\nstore addr v\npreserve_flags all\nretire")}else{format!("const v {w} {immediate}\nwrite dst v\npreserve_flags all\nretire")};
                 (format!("MOV {},0x{immediate:0digits$x}",operand_name(dst,address),digits=(w/4)as usize),compile(&text,w))
             }
+            0x62=>{
+                let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode("BOUND requires a memory bounds pair".into()));}
+                dst=view(((m>>3)&7)as usize,w);src=dst;
+                address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
+                (format!("BOUND {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(include_str!("../isa/i386/bound.pil").replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}),w),w))
+            }
             0xc4|0xc5=>{
                 let name=if opcode==0xc4{"LES"}else{"LDS"};
                 if !self.real_mode{return Err(GuestError::Decode(format!("{name} requires real-mode context")));}
@@ -406,7 +401,8 @@ impl Image {
                 let stack_bits=if matches!(self.segments[SegmentRegister::Ss.index()].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
                 let file=if opcode==0x60{include_str!("../isa/i386/pusha.pil")}else{include_str!("../isa/i386/popa.pil")};
-                let text=file.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let (keep,take)=match (stack_bits,w){(16,32)=>("0","4294901760"),(16,_)=>("4294901760","0"),_=>("0","0")};
+                let text=file.replace("$KEEP_ESP",keep).replace("$TAKE_ESP",take).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("{}{}",if opcode==0x60{"PUSHA"}else{"POPA"},if w==32{"D"}else{""}),compile(&instantiate(text,w),w))
             }
             0xb0..=0xbf=>{
@@ -427,9 +423,7 @@ impl Image {
             }
             0x0f=>{
                 let second=r.byte()?;
-                if second==0x06{
-                    ("CLTS".into(),compile(&description("clts").map_err(GuestError::Decode)?,w))
-                }else if matches!(second,0x20|0x22){
+                if matches!(second,0x20|0x22){
                     let m=r.byte()?;let control=((m>>3)&7)as usize;
                     if m>>6!=3||!matches!(control,0|2|3){return Err(GuestError::Decode("MOV control requires register operands and CR0, CR2 or CR3".into()));}
                     dst=view((m&7)as usize,32);src=dst;
@@ -461,6 +455,8 @@ impl Image {
                     (format!("SMSW {}",operand_name(dst,address)),compile(&text,w))
                     }
                     }
+                }else if second==0x06{
+                    ("CLTS".into(),compile(include_str!("../isa/i386/clts.pil"),w))
                 }else if (0x80..=0x8f).contains(&second){
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
                     let name=format!("j{}",CONDITIONS[(second&15) as usize]);
@@ -500,7 +496,9 @@ impl Image {
                     let (count,count_label)=if second&1==0{let imm=r.byte()?;(format!("const raw 8 {imm}"),format!("0x{imm:02x}"))}else{("read_gpr raw 1 8".into(),"CL".into())};
                     let (operand,write)=if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
                     let (name,text)=if second<0xa8{("SHLD",include_str!("../isa/i386/shld.pil"))}else{("SHRD",include_str!("../isa/i386/shrd.pil"))};
-                    let text=text.replace("$OPERAND",operand).replace("$COUNT",&count).replace("$WRITE",write);
+                    // A 16-bit double shift works on 48 bits on the 386: dst:src:src (SHLD), src:src:dst (SHRD).
+                    let (join_b,join_low,join_top,join_high)=if w==16{("16","65535","48","281470681743360")}else{("0","0","64","0")};
+                    let text=text.replace("$OPERAND",operand).replace("$COUNT",&count).replace("$WRITE",write).replace("$JOINB",join_b).replace("$JOINLOW",join_low).replace("$JOINTOP",join_top).replace("$JOINHIGH",join_high);
                     (format!("{name} {},{},{count_label}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
                 }else if matches!(second,0xbc|0xbd){
                     let m=r.byte()?;dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,w);
@@ -615,11 +613,8 @@ impl Image {
                 (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
             }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
-            0x9b=>("WAIT".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
-            0xd6=>{
-                w=8;dst=view(0,w);src=dst;
-                ("SALC".into(),compile(&description("salc").map_err(GuestError::Decode)?,w))
-            }
+            0x9b=>("FWAIT".into(),compile(include_str!("../isa/i386/fwait.pil"),w)),
+            0xd6=>{w=8;dst=view(0,w);src=dst;("SALC".into(),compile(include_str!("../isa/i386/salc.pil"),w))}
             0x40..=0x4f=>{
                 dst=view((opcode&7) as usize,w);src=dst;
                 let name=if opcode<0x48{"inc"}else{"dec"};
@@ -684,17 +679,20 @@ impl Image {
                 }
             }
             0xe4..=0xe7|0xec..=0xef=>{
+                // Port E9h in a monitor-sized image is the debugger's mock serial
+                // port. Any other port is an open bus: IN reads all ones and OUT
+                // goes nowhere, as SingleStepTests/80386 records. Dine answers its
+                // own device ports before the decoder runs.
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;
                 let port=if opcode<0xe8{Some(r.byte()?)}else{None};
                 if matches!((opcode,port),(0xe4|0xe6,Some(0xe9)))&&self.end<=RAM_BYTES as u32{
                     return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
                 }
-                let is_in=opcode&2==0;
+                let input=opcode&2==0;
                 let port_name=port.map(|p|format!("0x{p:02x}")).unwrap_or_else(||"DX".into());
-                let reg_name=register_name(dst);
-                let label=if is_in{format!("IN {reg_name},{port_name}")}else{format!("OUT {port_name},{reg_name}")};
-                let text=if is_in{format!("const v {w} {}\nwrite dst v\npreserve_flags all\nretire",super::mask(w))}else{format!("read v dst {w}\npreserve_flags all\nretire")};
-                (label,compile(&text,w))
+                let label=if input{format!("IN {},{port_name}",register_name(dst))}else{format!("OUT {port_name},{}",register_name(dst))};
+                let text=if input{include_str!("../isa/i386/in_open_bus.pil")}else{include_str!("../isa/i386/out_open_bus.pil")};
+                (label,compile(&instantiate(text,w),w))
             }
             0xcc|0xcd|0xce=>{
                 let vector=match opcode{0xcc=>3,0xce=>4,_=>r.byte()?};

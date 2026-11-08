@@ -55,6 +55,8 @@ mod planar;
 mod serial;
 #[path="dos_break.rs"]
 mod brk;
+#[path="dos_keyboard.rs"]
+mod keyboard;
 #[path="dos_vectors.rs"]
 mod vectors;
 use services::dispatch as service;
@@ -376,6 +378,15 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}
         }
+        // A scan code waiting for a program's INT 09h handler (IRQ1).
+        if p.speaker.kbd.pending(){
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            match keyboard::interrupt(&mut p,false){
+                Ok(true)=>{execution_steps+=1;*instructions.entry("IRQ1 to INT 09h".into()).or_insert(0)+=1;continue;},
+                Ok(false)=>{},
+                Err(message)=>break Stop::Service(message),
+            }
+        }
         let linear=p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip);
         if (vectors::ENTRIES..vectors::END).contains(&linear){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match vectors::leave(&mut p){
@@ -389,6 +400,13 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             if vector==8&&vectors::at_timer_entry(&p){
                 match services::bios_timer(&mut p){
                     Ok(())=>{execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 08h (timer tick)".into()).or_insert(0)+=1;continue;},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+            if vector==9&&vectors::at_keyboard_entry(&p){
+                match keyboard::bios(&mut p){
+                    Ok(keyboard::Bios::Done)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
+                    Ok(keyboard::Bios::Break)=>{vectors::enter_break_wrapper(&mut p);execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (Ctrl+Break, INT 1Bh)".into()).or_insert(0)+=1;continue;},
                     Err(message)=>break Stop::Service(message),
                 }
             }
@@ -411,6 +429,13 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             }
             let key=format!("DOS INT{vector:02x}/AH{:02x}",(p.cpu.regs[0]>>8)&255);
             match console::waiting(&mut p,vector){
+                // The BIOS waits with interrupts on, so a scan code still on
+                // its way reaches INT 09h first; the read then runs again.
+                Ok(true) if p.speaker.kbd.pending()=>match keyboard::interrupt(&mut p,true){
+                    Ok(true)=>{execution_steps+=1;*instructions.entry("IRQ1 to INT 09h".into()).or_insert(0)+=1;continue;},
+                    Ok(false)=>break Stop::WaitingForInput,
+                    Err(message)=>break Stop::Service(message),
+                },
                 Ok(true)=>break Stop::WaitingForInput,
                 Err(message)=>break Stop::Service(message),
                 Ok(false)=>{},
@@ -506,6 +531,10 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
                 break if detail.starts_with("fetch outside loaded image"){Stop::Boundary(detail)}else{Stop::MissingEncoding{key:opcode_key(&site_bytes(&p)),detail}};
             }
         };
+        // The decoder treats ports as an open bus (for SingleStepTests); Dine
+        // answers its device ports itself in ports::io, so any port access
+        // that reaches here (a prefixed IN/OUT, INS or OUTS) is not modelled.
+        if is_port_access(&decoded.label){break Stop::Service(format!("{} at {:04x}:{:04x}: this port access is not modelled in Dine",decoded.label,p.selectors[1],p.cpu.eip));}
         let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
@@ -681,3 +710,9 @@ pub fn format_rom_report(result: &Probe) -> String {
 #[cfg(test)]
 #[path="../tests/unit/dos.rs"]
 mod tests;
+
+/// IN, OUT, INS and OUTS labels as the decoder writes them.
+fn is_port_access(label:&str)->bool{
+    let name=label.strip_prefix("REP ").unwrap_or(label);
+    name.starts_with("IN ")||name.starts_with("OUT ")||name.starts_with("INS")||name.starts_with("OUTS")
+}

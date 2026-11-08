@@ -100,6 +100,55 @@ repeated prefixes and reach the known 16-bit count-above-16 refusal. The
 generated runner now embeds src/vga_planar.rs (it stopped building after
 the VGA planar change); 2,265 programs, 0 disagreements. Report:
 /mnt/project-files/pil_proof/sst80386-run-04.md (project files, not in git).
+Tony's own Windows run on the merged #107 gave the same 1,555,403 pass and 0
+generated-backend disagreements.
+
+Run 05 (7 November 2026, local cloud session, same revision) changes these:
+- 16-bit SHLD/SHRD counts above 16.
+- 16-bit stack slots wrap one at a time (IRET, RETF, POPA/POPAD), and POP Sreg
+  o32 reads only a word.
+- POPAD on a 16-bit stack takes ESP's upper half from its slot.
+- F2 STOS/LODS, FWAIT, CLTS, SALC and BOUND (#BR) are new, and so is ENTER
+  with a nesting level.
+
+Result:
+- 1,582,234 pass (+26,831).
+- 17,723 not decoded: IN/OUT and INS/OUTS ports, about 14,000 of them, and
+  the monitor-port forms.
+- 150,514 undefined-flag-only: the 8,180 16-bit SHLD/SHRD cases with a count
+  above 16 now reach their undefined OF/AF.
+- 7,890 undefined SIB.
+- 144 failures:
+  - 113 memory writes. The 386 writes some bytes before it faults, and ENTER
+    reads chains that overlap its own pushes.
+  - 9 byte IDIVs (386EX quirk).
+  - 8 JCC EIP cases.
+  - 14 others.
+- 94 HLT fetch faults, 100 monitor operations and 1 revoked case.
+
+The generated backend ran 2,274 programs with 0 disagreements. Report:
+/mnt/project-files/pil_proof/sst80386-run-05.md (project files, not in git).
+
+Run 06 (8 November 2026, local cloud session, same revision) adds:
+- Open-bus IN/OUT and INS/OUTS.
+- Store forwarding, so nested ENTER reads its own pushes.
+- Judged HLT cases.
+
+Result:
+- 1,600,052 pass (+17,818), with nothing left undecoded.
+- 150,514 undefined-flag-only.
+- 7,890 undefined SIB.
+- 94 HLT fetch faults and 1 revoked case.
+- 149 failures:
+  - 112 memory writes the 386 makes before an #SS or #GP (partial ENTER and
+    PUSHAD, and A6/A7/AE/AF with 67h).
+  - 9 byte IDIVs.
+  - 8 JCC EIP cases.
+  - 6 IN EAX from port 1Fh, which reads 7FFFFFFFh on the 386EX.
+  - 14 others.
+
+The generated backend ran 2,306 programs with 0 disagreements. Report:
+/mnt/project-files/pil_proof/sst80386-run-06.md (project files, not in git).
 
 ## Original plan: SingleStepTests CPU adapter
 

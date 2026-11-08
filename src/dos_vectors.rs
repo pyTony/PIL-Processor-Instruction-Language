@@ -14,20 +14,24 @@ use super::*;
 pub(super) const ENTRIES:u32=0xff000;
 const SEGMENT:u16=0xf000;
 const FIRST:u16=0xf000;
-/// The vectors that start at an entry: the timer and its user hook, the BIOS
-/// video, equipment, memory, disk, serial, system, keyboard, printer and
+/// The vectors that start at an entry: the timer and its user hook, the
+/// keyboard IRQ, the BIOS video, equipment, memory, disk, serial, system, keyboard, printer and
 /// clock services, Ctrl-Break, and the DOS calls (20h, 21h, idle 28h, fast
 /// console 29h, network 2Ah, multiplex 2Fh). Data pointers (1Dh-1Fh, 41h,
 /// 43h, 46h), the DOS-kept 22h-24h and the free and user vectors stay as
 /// they were.
-pub(super) const ANSWERED:[u8;18]=[0x08,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
+pub(super) const ANSWERED:[u8;19]=[0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
 /// The INT stubs end before the small synthetic IRQ0 BIOS wrapper.
 const ENTRY_END:u32=ENTRIES+3*256;
 const TIMER_OFFSET:u16=0xf300;
 // IRQ0 enters here with the interrupted FLAGS/CS/IP on the stack. Save the
 // registers BIOS itself uses across INT 1Ch, then return from the hardware IRQ.
 const TIMER_CODE:&[u8]=&[0x66,0x50,0x1e,0xcd,0x1c,0x1f,0xb0,0x20,0xe6,0x20,0x66,0x58,0xcf];
-pub(super) const END:u32=ENTRY_END+TIMER_CODE.len() as u32;
+// The BIOS keyboard handler's Ctrl+Break, when a program owns INT 1Bh: call
+// it, then EOI and return from IRQ1 through the frame already on the stack.
+const BREAK_OFFSET:u16=TIMER_OFFSET+TIMER_CODE.len() as u16;
+const BREAK_CODE:&[u8]=&[0x50,0xcd,0x1b,0xb0,0x20,0xe6,0x20,0x58,0xcf];
+pub(super) const END:u32=ENTRY_END+(TIMER_CODE.len()+BREAK_CODE.len()) as u32;
 /// The far pointer of vector n's entry.
 pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::from(n))}
 /// Writes the entries (into the read-only BIOS area, before it is protected)
@@ -35,7 +39,7 @@ pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::f
 pub(super) fn install(ram:&mut Ram)->Result<(),String>{
     let mut code=vec![0u8;3*256];
     for n in 0..=255u8{code[3*usize::from(n)..][..3].copy_from_slice(&[0xcd,n,0xcf]);}
-    code.extend_from_slice(TIMER_CODE);
+    code.extend_from_slice(TIMER_CODE);code.extend_from_slice(BREAK_CODE);
     ram.write_bytes(ENTRIES,&code).map_err(|e|format!("interrupt entries: {e:?}"))?;
     for n in ANSWERED{ram.store(u32::from(n)*4,MemWidth::Dword,entry(n)).map_err(|e|format!("INT {n:02x}h vector: {e:?}"))?;}
     Ok(())
@@ -76,6 +80,8 @@ fn target(p:&Loaded,n:u8)->Result<(u16,u32),String>{
     if !fetchable{return Err(format!("INT {n:02x}h handler at {segment:04x}:{offset:04x} is outside the running program"));}
     Ok((segment,offset))
 }
+/// Whether vector n leads to a program's handler inside code Dine can run.
+pub(super) fn reachable(p:&Loaded,n:u8)->Result<bool,String>{Ok(!answered(p,n)?&&target(p,n).is_ok())}
 pub(super) fn deliver_timer(p:&mut Loaded)->Result<(),String>{
     if !p.image.real_mode||p.cpu.eflags&0x20000!=0{return Err("timer hook outside real mode is not modelled".into());}
     target(p,0x1c)?;
@@ -92,6 +98,13 @@ pub(super) fn deliver_irq(p:&mut Loaded,n:u8)->Result<(),String>{
 pub(super) fn enter_timer_wrapper(p:&mut Loaded){
     set_cs(p,SEGMENT);p.cpu.eip=u32::from(TIMER_OFFSET);p.image.retired();
 }
+/// Continue the BIOS INT 09h handler's Ctrl+Break in its wrapper (INT 1Bh,
+/// EOI, IRET), which returns through the frame already on the stack.
+pub(super) fn enter_break_wrapper(p:&mut Loaded){
+    set_cs(p,SEGMENT);p.cpu.eip=u32::from(BREAK_OFFSET);p.image.retired();
+}
+/// Whether CS:IP is INT 09h at its own entry, where the BIOS handler runs.
+pub(super) fn at_keyboard_entry(p:&Loaded)->bool{linear(p)==ENTRIES+3*9}
 /// Whether CS:IP is INT 08h at its own entry, where the BIOS handler runs.
 pub(super) fn at_timer_entry(p:&Loaded)->bool{linear(p)==ENTRIES+3*8}
 fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{

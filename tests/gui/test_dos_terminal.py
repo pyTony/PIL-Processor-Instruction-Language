@@ -399,6 +399,11 @@ class DosTerminalTests(unittest.TestCase):
                     finally:
                         session.close()
 
+    def test_refused_keys_wait_only_for_room(self):
+        self.assertTrue(term.is_retryable('BIOS keyboard buffer full'))
+        self.assertTrue(term.is_retryable('keyboard scan codes still waiting for the program'))
+        self.assertFalse(term.is_retryable("the program hooked INT 1Bh; calling it for Ctrl+Break is not modelled"))
+
     def test_args_reach_the_program_command_line(self):
         engine = term.find_engine()
         with tempfile.TemporaryDirectory() as d:

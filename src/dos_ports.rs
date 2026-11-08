@@ -49,6 +49,8 @@ pub struct Speaker{
     retrace:u32,
     ignored_out:std::collections::BTreeSet<u16>,
     fast_a20:u8,kbc_a20:bool,kbc_write_output:bool,kbc_reply:Option<u8>,
+    /// Scan codes on their way to port 60h and IRQ1.
+    pub(super) kbd:keyboard::Keyboard,
 }
 impl Speaker{
     fn update_a20(&self,ram:&mut Ram){ram.set_a20_enabled(self.kbc_a20||self.fast_a20&2!=0);}
@@ -152,8 +154,10 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         let s=&mut p.speaker;
         if input{
             let value=match port{
-                0x64=>u8::from(s.kbc_reply.is_some()), // output full; input always ready
-                0x60=>s.kbc_reply.take().ok_or("IN 60h without a pending keyboard-controller response")?,
+                // Output full (a controller reply or a scan code); input always ready.
+                0x64=>u8::from(s.kbc_reply.is_some()||s.kbd.full()),
+                // A controller reply first, else the keyboard's last scan code.
+                0x60=>match s.kbc_reply.take(){Some(reply)=>reply,None=>s.kbd.read()},
                 _=>s.fast_a20,
             };
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);

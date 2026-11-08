@@ -1,3 +1,115 @@
+# Ports, INS/OUTS and store forwarding from feat/bound-enter-io — 8 November 2026
+
+Tony chose to merge #112 first and then port what only his
+feat/bound-enter-io branch had.
+- Ports with no device form an open bus: IN reads FFh, FFFFh or FFFFFFFFh,
+  and OUT goes nowhere (isa/i386/in_open_bus.pil, out_open_bus.pil).
+- INS and OUTS are new (isa/i386/ins.pil, outs.pil), and F2 or F3 repeats
+  them.
+- Port E9h in a monitor-sized image stays the debugger's mock serial port.
+- Dine still answers its own unprefixed IN/OUT before the decoder runs. A
+  port access that gets past that (a prefixed IN/OUT, INS or OUTS) now
+  stops as a service the session does not model, instead of reading the
+  open bus.
+- Store forwarding: a `load_segment` after a staged store reads the staged
+  bytes (Ram::load_staged). ENTER now reads each frame pointer after the
+  earlier pushes, as the 386 does, so chains that overlap the new frame
+  match.
+- The SingleStepTests runner now judges HLT (F4) cases.
+- Not ported: rotate OF for counts above 1. Intel documents it as
+  undefined, and this host's CPU disagrees with the 386EX value, so the
+  host-CPU oracle failed.
+
+Local Linux: 596 Rust tests pass (3 new); the generated-backend suite has
+267 cases (2 new: port_io, enter_overlap). SingleStepTests/80386 run 06
+(local): pass 1,582,234 -> 1,600,052; nothing is left undecoded; 0
+disagreements in 2,306 generated programs.
+
+What still fails is listed in EXTERNAL_TEST_SUITES.md under run 06.
+
+# Second real-mode SingleStepTests fix set — 7 November 2026
+
+Continues Tony's priority on real-mode SingleStepTests/80386 fixes.
+- 16-bit SHLD/SHRD counts 17-31 shift the source in again, as the 386 does
+  (48-bit dst:src:src and src:src:dst).
+- Stack slots wrap at 64 KiB one by one: IRET/IRETD, RETF and POPA/POPAD at
+  SP=FFFCh or FFFEh read across 0000h. A single slot that crosses the limit
+  (SP=FFFFh, or a dword at FFFDh) still raises #SS.
+- POP Sreg with o32 reads only the selector word, so SP=FFFEh does not
+  fault.
+- POPAD on a 16-bit stack takes the upper half of ESP from the skipped ESP
+  slot.
+- F2 with STOS/LODS repeats like F3. New: FWAIT (no-op; with CR0.TS and MP
+  set it stops, because #NM is not modelled), CLTS, SALC (D6h), and BOUND
+  with #BR (vector 5; raise_unless now takes 0 or 5).
+- ENTER takes nesting levels 1-31. PIL programs may now stage up to 33
+  stores: eight live on the stack, the rest spill to a Vec, and the
+  generated code sizes its array per program. A 32-bit ENTER on a 16-bit
+  stack writes all of EBP.
+- Unit tests now use 63h (ARPL, #UD in real mode) as their unsupported
+  opcode.
+
+Local Linux: 587 Rust tests pass, 8 of them new. The generated-backend
+suite has 265 cases, 7 of them new. SingleStepTests/80386 run 05 (local):
+pass 1,555,403 -> 1,582,234, with 0 disagreements across 2,274 generated
+programs. Tony's own Windows run on #107 matched run 04 exactly (1,555,403).
+
+Not yet:
+- IN/OUT ports and INS/OUTS (about 14,000 cases; the suite expects an open
+  bus reading FFh). These need a port bus shared with Dine.
+- Writes the 386 makes before a fault (POPA at an odd SP, ENTER).
+- ENTER chains that overlap the new pushes: PIL reads before it stages, so
+  33 cases fail.
+
+# GW-BASIC keyboard IRQ1, decode cache and VGA registers — 7 November 2026
+
+Tony ran his GW-BASIC (own copy, not in the repo) with CUBE2.BAS and cube.bas
+in the Dine terminal: slow, Ctrl+Break and Esc did nothing, and SCREEN 9
+stopped on a VGA register write.
+
+- Speed: the decode cache held 256 instructions and emptied itself when full.
+  GW-BASIC's interpreter, floating point and LINE code run about 4,100
+  distinct instructions in a steady loop, so nearly every step recompiled PIL.
+  CAPACITY is now 8,192 (about 49 MB resident for GW-BASIC). Local Linux
+  release, 30M steps of CUBE2 in SCREEN 2: 157 s before, 6 s after.
+- Keyboard IRQ1 (src/dos_keyboard.rs): GW-BASIC hooks INT 09h, reads port
+  60h and 0040:0017 itself, and chains other keys through INT EFh to the
+  vector it saved. While a program's INT 09h handler is reachable, session
+  keys arrive as scan codes in port 60h (64h bit 0 full) and IRQ1 between
+  instructions with IF=1, unmasked and nothing of equal or higher priority in
+  service. INT 09h is now one of the answered vectors (entry F000:F01B): the
+  BIOS handler stores the key's BIOS word, keeps the Ctrl/Shift/Alt bits on
+  make/break codes, and sends EOI. A blocking INT 16h or DOS read takes a
+  waiting code even with IF=0, as the BIOS's own STI would.
+- Ctrl+Break arrives as the XT codes Ctrl+Scroll Lock (1Dh first if Ctrl is
+  not already held, 46h, C6h, 9Dh). The BIOS handler empties the ring, stores
+  0000h and sets 0040:0071 bit 7; a program INT 1Bh handler now runs from a
+  BIOS wrapper (PUSH AX, INT 1Bh, EOI, POP AX, IRET) instead of refusing.
+  GW-BASIC shows "Break in 420" / "Ok", and SYSTEM typed at Ok exits.
+- VGA controllers outside the planar modes (dos_vga::Controllers): ports
+  3C4h/3C5h and 3CEh/3CFh keep map mask, set/reset, compare, rotate, read
+  map, write mode and bit mask values, as GW-BASIC programs them in text mode
+  before SCREEN 9. Video memory keeps the mode's layout until the next mode
+  set, which reloads standard values. Memory mode, miscellaneous, shift and
+  256-colour bit changes stay refused. cube.bas now draws in mode 10h.
+- Terminal: a refused key or break used to stay at the head of the key queue
+  forever, holding back every later key; it is now dropped and shown on the
+  status line (a full keyboard still waits).
+- Not changed: the terminal already shows 200-line modes at 4:3; CUBE2's tall
+  cube comes from its own FOV, written for 350 lines.
+
+Not modelled: E0h-prefixed AT codes, typematic repeat, LEDs, keyboard
+commands, 0040:0096/0097, scan-code translation for codes that arrive with no
+BIOS word. After Ctrl+Break in SCREEN 9, GW-BASIC's cursor (character FFh)
+stops the run: 350/480-line modes still draw 80h-FFh only from an INT 1Fh
+table, because the original font has 00h-7Fh only.
+
+Local Linux: 581 Rust tests (6 new keyboard tests), 42 GUI tests; 585 after merging dev with #107. FD14LITE.img
+(SHA256 f539d456...) probe at 10,000 steps unchanged: 151/156, 53 exits, same
+STOP lines. GWBASIC.EXE SHA256 e1e9fe30...b6b43aeaf3 (Tony's copy).
+CUBE2.BAS in Tony's driveD had two CR bytes inserted before LF bytes (a CRLF
+conversion), giving "Syntax error in 18243".
+
 # Real-mode decoder forms from SingleStepTests — 7 November 2026
 
 Tony made real-mode fixes found by SingleStepTests/80386 the priority ahead

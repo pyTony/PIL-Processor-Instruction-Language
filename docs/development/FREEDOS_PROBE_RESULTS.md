@@ -398,3 +398,10 @@ exits, one first missing encoding (0F 01). Differences:
   because the BIOS data area holds the VGA 16-line character height.
 - DISKCOPY.EXE, REPLACE.EXE and SWSUBST.EXE stop at a slightly different
   point within the same step budget (3-12 more retired instructions).
+
+## Keyboard IRQ1 and decode cache size — 7 November 2026
+
+Local Linux release, FD14LITE.img SHA256
+f539d456b792594bc3ca59d4e0f4c23d4f1fee73370c1390b2da245400718d36, 10,000
+steps: imports 151/156, 53 exits, every STOP line identical to dev 409ab84.
+INT 09h now starts at its entry (F000:F01B); no probed program reads it.
