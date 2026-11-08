@@ -1,6 +1,8 @@
-//! Flat RAM, no segmentation, page tables or guest #PF delivery. The one
-//! memory-mapped device is optional EGA/VGA planar memory (vga_planar) behind
-//! A0000h-AFFFFh, present only while a 16-colour planar mode is set.
+//! RAM addressed by linear address. While paging is on (CR0.PG), every
+//! access walks the two-level 386 page tables (see `translate`); otherwise a
+//! linear address is the bus address. The one memory-mapped device is
+//! optional EGA/VGA planar memory (vga_planar) behind A0000h-AFFFFh, present
+//! only while a 16-colour planar mode is set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemWidth { Byte, Word, Dword }
 impl MemWidth {
@@ -11,7 +13,25 @@ impl MemWidth {
     pub fn bytes(self)->u8 {match self {Self::Byte=>1,Self::Word=>2,Self::Dword=>4}}
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AccessFault {pub address:u32,pub bytes:usize,pub write:bool}
+pub struct AccessFault {pub address:u32,pub bytes:usize,pub write:bool,
+    /// A page fault (#PF) and its error code (P, W/R, U/S bits); `address`
+    /// is then the faulting linear address that goes to CR2. None is a bus
+    /// fault: the access left RAM or hit write-protected memory.
+    pub page:Option<u8>}
+impl AccessFault {
+    fn bus(address:u32,bytes:usize,write:bool)->Self{Self{address,bytes,write,page:None}}
+    /// The CPU-level error at instruction `eip`.
+    pub fn error(self,eip:u32)->super::ExecError{
+        match self.page{
+            Some(code)=>super::ExecError::PageFault{eip,address:self.address,error_code:u16::from(code)},
+            None=>super::ExecError::MemoryAccess{eip,address:self.address,bytes:self.bytes as u8,write:self.write},
+        }
+    }
+}
+/// Paging state while CR0.PG is set: the page directory base (CR3) and
+/// whether accesses are user-level (CPL 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Paging {pub directory:u32,pub user:bool}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ram {
@@ -19,13 +39,62 @@ pub struct Ram {
     readonly:Vec<std::ops::Range<usize>>,
     a20_enabled:bool,
     planar:Option<Box<super::vga_planar::Planar>>,
+    paging:Option<Paging>,
+    /// Accessed and dirty bits a page walk has set but `&self` methods could
+    /// not yet write: (physical byte, bits to OR). Reads see them at once;
+    /// `settle` writes them, and every `&mut` method settles first.
+    marks:std::cell::RefCell<Vec<(usize,u8)>>,
 }
 /// Host-only alias of the four planes (plane n at PLANE_ALIAS + n*10000h),
 /// for BIOS services that write pixels without the graphics controller. Real-
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),a20_enabled:true,planar:None}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),a20_enabled:true,planar:None,paging:None,marks:Default::default()}}
+    /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
+    /// modelled: every access walks the tables as they are in memory.
+    pub fn set_paging(&mut self,paging:Option<Paging>){self.settle();self.paging=paging;}
+    /// Writes the accessed and dirty bits that walks have marked.
+    pub fn settle(&mut self){for (at,bits) in self.marks.get_mut().drain(..){if let Some(b)=self.data.get_mut(at){*b|=bits;}}}
+    fn byte(&self,index:usize)->u8{
+        let mut b=self.data[index];
+        for &(at,bits) in self.marks.borrow().iter(){if at==index{b|=bits;}}
+        b
+    }
+    /// A page-table entry at a physical address, with marks applied.
+    fn entry(&self,at:u32,linear:u32,write:bool)->Result<u32,AccessFault>{
+        let at=self.physical_address(at);
+        let range=self.range(at,4,false).map_err(|_|AccessFault::bus(linear,1,write))?;
+        Ok(range.fold((0u32,0u32),|(v,i),index|(v|(u32::from(self.byte(index))<<(8*i)),i+1)).0)
+    }
+    /// The bus address of linear byte `linear` (before the A20 gate). With
+    /// paging on: the PDE at CR3 + bits 31-22 * 4, then the PTE at its frame +
+    /// bits 21-12 * 4. A missing entry is #PF with error bit 0 clear; a user
+    /// access to a supervisor page, or a user write to a read-only page, is
+    /// #PF with bit 0 set (the 386 does not check writes at CPL 0-2). Bit 1 is
+    /// set for a write, bit 2 for user level. Only a walk that succeeds sets
+    /// the accessed bits of both entries, and the PTE's dirty bit on a write.
+    pub fn translate(&self,linear:u32,write:bool)->Result<u32,AccessFault>{
+        let Some(paging)=self.paging else{return Ok(linear);};
+        let code=(u8::from(write)<<1)|(u8::from(paging.user)<<2);
+        let fault=|p:u8|AccessFault{address:linear,bytes:1,write,page:Some(code|p)};
+        let pde_at=(paging.directory&!0xfff).wrapping_add((linear>>22)*4);
+        let pde=self.entry(pde_at,linear,write)?;
+        if pde&1==0{return Err(fault(0));}
+        let pte_at=(pde&!0xfff).wrapping_add(((linear>>12)&0x3ff)*4);
+        let pte=self.entry(pte_at,linear,write)?;
+        if pte&1==0{return Err(fault(0));}
+        let both=pde&pte;
+        if paging.user&&(both&4==0||(write&&both&2==0)){return Err(fault(1));}
+        let mut marks=self.marks.borrow_mut();
+        if pde&0x20==0{marks.push((self.physical_address(pde_at)as usize,0x20));}
+        let bits:u8=0x20|if write{0x40}else{0};
+        if pte&u32::from(bits)!=u32::from(bits){marks.push((self.physical_address(pte_at)as usize,bits));}
+        Ok((pte&!0xfff)|(linear&0xfff))
+    }
+    /// The physical byte (A20 applied) behind a linear byte.
+    pub fn bus_address(&self,linear:u32,write:bool)->Result<u32,AccessFault>{self.locate(linear,write)}
+    fn locate(&self,linear:u32,write:bool)->Result<u32,AccessFault>{Ok(self.physical_address(self.translate(linear,write)?))}
     pub fn bytes(&self)->&[u8] {&self.data}
     pub fn a20_enabled(&self)->bool{self.a20_enabled}
     pub fn planar(&self)->Option<&super::vga_planar::Planar>{self.planar.as_deref()}
@@ -44,11 +113,13 @@ impl Ram {
     pub fn physical_address(&self,address:u32)->u32{if self.a20_enabled{address}else{address&!0x10_0000}}
     /// A contiguous bus span, or None when it crosses an A20 boundary.
     pub fn contiguous_slice(&self,address:u32,bytes:usize)->Option<&[u8]>{
+        // Paged fetches go byte by byte, so the walk marks the code page.
+        if self.paging.is_some(){return None;}
         if !self.a20_enabled&&bytes>0x100000-(address as usize&0xfffff){return None;}
         let start=self.physical_address(address)as usize;let end=start.checked_add(bytes)?;self.data.get(start..end)
     }
     fn range(&self,address:u32,bytes:usize,write:bool)->Result<std::ops::Range<usize>,AccessFault> {
-        let fault=AccessFault{address,bytes,write};
+        let fault=AccessFault::bus(address,bytes,write);
         let start=usize::try_from(address).map_err(|_|fault)?;
         let end=start.checked_add(bytes).ok_or(fault)?;
         if end>self.data.len() {return Err(fault);}
@@ -58,6 +129,7 @@ impl Ram {
         Ok(start..end)
     }
     pub fn protect(&mut self,address:u32,bytes:usize)->Result<(),AccessFault> {
+        self.settle();
         let range=self.range(address,bytes,false)?;
         if !range.is_empty() {self.readonly.push(range);}
         Ok(())
@@ -66,9 +138,17 @@ impl Ram {
         self.check_bus(address,width.bytes()as usize,true)
     }
     fn check_bus(&self,address:u32,bytes:usize,write:bool)->Result<(),AccessFault>{
-        let fault=AccessFault{address,bytes,write};
-        if self.alias(address,bytes).is_some(){return Ok(());}
+        let fault=AccessFault::bus(address,bytes,write);
         if u64::from(address).checked_add(bytes as u64).is_none_or(|end|end>0x1_0000_0000){return Err(fault);}
+        if self.paging.is_some(){
+            // Byte by byte: a page fault names the first byte that faults.
+            for i in 0..bytes as u32{
+                let at=self.locate(address+i,write)?;
+                self.range(at,1,write).map_err(|_|fault)?;
+            }
+            return Ok(());
+        }
+        if self.alias(address,bytes).is_some(){return Ok(());}
         let mut done=0usize;
         while done<bytes{
             let guest=address+done as u32;
@@ -81,6 +161,14 @@ impl Ram {
     pub fn load(&self,address:u32,width:MemWidth)->Result<u32,AccessFault> {
         let bytes=width.bytes()as usize;self.check_bus(address,bytes,false)?;
         let mut value=0u32;
+        if self.paging.is_some(){
+            for shift in 0..bytes{
+                let index=self.locate(address+shift as u32,false)?as usize;
+                let byte=match self.window(index){Some(at)=>self.planar.as_deref().unwrap().read(at),None=>self.byte(index)};
+                value|=u32::from(byte)<<(shift*8);
+            }
+            return Ok(value);
+        }
         if let Some(offset)=self.alias(address,bytes){
             let p=self.planar.as_deref().unwrap();
             for shift in 0..bytes{let at=offset+shift;value|=u32::from(p.peek(at/super::vga_planar::PLANE,at%super::vga_planar::PLANE))<<(shift*8);}
@@ -102,16 +190,25 @@ impl Ram {
         let bytes=width.bytes()as u32;
         for &(at,w,v) in staged.iter().flatten().chain(extra.iter()){
             for b in 0..w.bytes()as u32{
-                let phys=self.physical_address(at.wrapping_add(b));
+                let Ok(phys)=self.locate(at.wrapping_add(b),true) else{continue;};
                 for i in 0..bytes{
-                    if self.physical_address(address.wrapping_add(i))==phys{value=(value&!(0xff<<(i*8)))|(((v>>(b*8))&0xff)<<(i*8));}
+                    if self.locate(address.wrapping_add(i),false).ok()==Some(phys){value=(value&!(0xff<<(i*8)))|(((v>>(b*8))&0xff)<<(i*8));}
                 }
             }
         }
         Ok(value)
     }
     pub fn store(&mut self,address:u32,width:MemWidth,value:u32)->Result<(),AccessFault> {
+        self.settle();
         let bytes=width.bytes()as usize;self.check_bus(address,bytes,true)?;
+        if self.paging.is_some(){
+            for shift in 0..bytes{
+                let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
+                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>self.data[index]=byte}
+            }
+            self.settle();
+            return Ok(());
+        }
         if let Some(offset)=self.alias(address,bytes){
             let p=self.planar.as_deref_mut().unwrap();
             for shift in 0..bytes{let at=offset+shift;p.poke(at/super::vga_planar::PLANE,at%super::vga_planar::PLANE,(value>>(shift*8))as u8);}
@@ -125,7 +222,13 @@ impl Ram {
     }
     // Debugger bulk writes have the same full-range permission check.
     pub fn write_bytes(&mut self,address:u32,data:&[u8])->Result<(),AccessFault> {
+        self.settle();
         self.check_bus(address,data.len(),true)?;
+        if self.paging.is_some(){
+            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;self.data[index]=b;}
+            self.settle();
+            return Ok(());
+        }
         let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.data[start..start+chunk].copy_from_slice(&data[done..done+chunk]);done+=chunk;}Ok(())
     }
 }

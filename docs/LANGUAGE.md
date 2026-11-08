@@ -173,8 +173,10 @@ Multi-byte spans do not wrap at the offset limit; base+offset wraps to 32 bits.
 Segmentation failures report `GeneralProtection(0)` or `StackSegment(0)` at the
 source EIP. Invalid supplied bindings/cache context are caller errors.
 `MemoryAccess` reports EIP, address, byte count and direction for RAM bounds or
-host-defined read-only protection. It is not x86 page-fault delivery: no paging,
-CR2, descriptor loads or exception handlers are implemented. Device/MMIO side
+host-defined read-only protection. With CR0.PG set, RAM walks the 386 page
+tables on every access, and a missing or protected page is `PageFault` with
+the linear address and the 386 error code. It is not delivered yet: CR2 and
+protected-mode exception handlers come later. Device/MMIO side
 effects, more than two stores, LOCK and REP checkpoints need a future effect contract;
 this staging model is not universal transactional rollback.
 
@@ -490,8 +492,7 @@ in Image/SegmentState and traces;PE is derived from the normalized real_mode
 state. The monitor/DOS profile initializes the other bits to0010h (ET=1).
 This is explicit profile configuration,not a claim about hardware reset or an
 implemented FPU. SMSW stores exactly a word and preserves flags/markers.
-SMSW r32 (66h with a register) writes all of CR0, whose upper bits are 0
-while paging is not modelled; 66-prefixed memory forms still write a word. LMSW,UMIP and
+SMSW r32 (66h with a register) writes all of CR0, PG included; 66-prefixed memory forms still write a word. LMSW,UMIP and
 privilege transitions remain unimplemented. See the bounded control-register
 profile below for CR0 writes.
 
@@ -558,11 +559,12 @@ UnsupportedControl profile stop, not a hardware #UD or #GP claim.
 CR0 writes can change PE, MP, EM, TS and ET. Setting PE enters protected
 mode with every segment cache unchanged (CS keeps its real-mode cache until
 a far transfer loads a descriptor); clearing it returns to real mode with the
-caches kept as well. LMSW can set PE but not clear it. PG and other reserved
-bit requests stop with UnsupportedControl before any state commits. PG=1 with
-PE=0 produces GeneralProtection. Control-register access from V86 mode or at
-CPL above 0 produces GeneralProtection. There is no page translation or TLB
-yet, and CR2 is not updated by page faults.
+caches kept as well. LMSW can set PE but not clear it, and keeps PG. MOV
+CR0 sets and clears PG; RAM then translates every access through the page
+directory at CR3 (no TLB is modelled). Other reserved bit requests stop with
+UnsupportedControl before any state commits. PG=1 with PE=0 produces
+GeneralProtection. Control-register access from V86 mode or at CPL above 0
+produces GeneralProtection. CR2 is not yet updated by page faults.
 
 Reference: Intel 80386 PRM
 [MOV special registers](https://people.freebsd.org/~jhb/386htm/MOVRS.htm),

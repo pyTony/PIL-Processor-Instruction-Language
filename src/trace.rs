@@ -7,6 +7,7 @@ pub fn fault(eip:u32,error:ExecError)->[u32;5] {
         ExecError::MemoryAccess{eip,address,bytes,write}=>[6,eip,address,bytes as u32,u32::from(write)],
         ExecError::UnsupportedControl{eip,register,value}=>[11,eip,register as u32,value,0],
         ExecError::Exception{eip,vector}=>[12,eip,u32::from(vector),0,0],
+        ExecError::PageFault{eip,address,error_code}=>[13,eip,address,u32::from(error_code),0],
         ExecError::InvalidBinding=>[8,eip,0,0,0],ExecError::InvalidContext=>[9,eip,0,0,0],
     }
 }
@@ -26,6 +27,7 @@ pub fn record_machine(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],fla
     for (limit,base) in machine.tables {state.extend_from_slice(&limit.to_le_bytes());state.extend_from_slice(&base.to_le_bytes());}
     for value in machine.controls {state.extend_from_slice(&value.to_le_bytes());}
     for t in machine.ldt_tr {state.extend_from_slice(&t.selector.to_le_bytes());state.extend_from_slice(&t.base.to_le_bytes());state.extend_from_slice(&t.limit.to_le_bytes());state.push(t.kind);}
+    state.push(u8::from(machine.paging));
     record_state(out,case,status,regs,flags,undefined,eip,ram,rx,tx,&state);
 }
 fn record_state(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],flags:u32,undefined:u32,eip:u32,ram:&[u8],rx:&[u8],tx:&[u8],state:&[u8]){

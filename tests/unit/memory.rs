@@ -11,7 +11,7 @@ fn little_endian_unaligned_round_trips() {
 #[test]
 fn full_range_is_checked_before_storing() {
     let mut m=Ram::new(8);m.store(4,MemWidth::Dword,1).unwrap();let old=m.clone();
-    assert_eq!(m.store(5,MemWidth::Dword,2),Err(AccessFault{address:5,bytes:4,write:true}));
+    assert_eq!(m.store(5,MemWidth::Dword,2),Err(AccessFault{address:5,bytes:4,write:true,page:None}));
     assert_eq!(m,old);assert!(m.load(7,MemWidth::Word).is_err());
 }
 #[test]

@@ -17,6 +17,9 @@ pub enum ExecError {
     GeneralProtection { eip: u32, error_code: u16 },
     /// An exception without an error code, such as #DE (vector 0).
     Exception { eip: u32, vector: u8 },
+    /// #PF (vector 14): the faulting linear address (for CR2) and the error
+    /// code (bit 0 protection, bit 1 write, bit 2 user).
+    PageFault { eip: u32, address: u32, error_code: u16 },
 }
 
 impl FlowContext {
