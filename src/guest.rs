@@ -338,7 +338,7 @@ impl Image {
                 // ARPL r/m16,r16: #UD in real mode.
                 if self.real_mode||self.segment_state().v86(){return Err(GuestError::Decode("ARPL (63h) is #UD in real and virtual-8086 mode".into()));}
                 let m=r.byte()?;dst=view((m&7)as usize,16);src=view(((m>>3)&7)as usize,16);
-                let (input,output)=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});("read_address destination\nload selector destination 16","store destination result")}else{("read selector dst 16","write dst result")};
+                let (input,output)=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});("read_address destination\nload selector destination 16","store_if destination result raise")}else{("read selector dst 16","write dst result")};
                 let text=include_str!("../isa/i386/arpl.pil").replace("$INPUT",input).replace("$OUTPUT",output);
                 (format!("ARPL {},{}",operand_name(dst,address),register_name(src)),compile(&text,16))
             }

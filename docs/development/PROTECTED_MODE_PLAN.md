@@ -154,6 +154,9 @@ Merged increment 5: #124. Increment 6, on the same branch:
   goes on to 0Bh-16h and stops at POST 17h on the ARPL write-back to a
   read-only memory operand (known since increment 5). Next blockers there:
   that ARPL, then ENTER at ring 3 on a supervisor stack page (POST 1Ah).
+- Follow-up: ARPL writes a memory destination only when the RPL changes
+  (new PIL `store_if`). test386 now runs POST 17h-19h and stops in POST
+  1Ah, the ENTER case above.
 - The fixed-image generated backend decodes each instruction once, at the
   starting mode: its V86 case runs 16-bit code on both sides of the IRETD
   and ends on MOV CR0 rather than HLT (HLT decoded at CPL 0 halts there).
