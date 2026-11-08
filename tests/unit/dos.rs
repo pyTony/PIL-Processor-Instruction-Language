@@ -2168,8 +2168,22 @@ fn repeated_graphics_characters_xor_read_back_and_stay_on_screen(){
  p.ram.store(0x450,MemWidth::Word,0x0028).unwrap();p.cpu.regs[0]=0x0e41;assert!(service(&mut p,0x10,&mut vec![]).is_err());
 }
 #[test]
-fn upper_half_characters_need_an_int_1f_table(){
- let mut p=graphics_mode(6);let before=p.ram.clone();
+fn upper_half_characters_come_from_the_int_1f_table(){
+ let mut p=graphics_mode(6);
+ // INT 1Fh starts at Dine's own read-only 80h-FFh table (C000:1000), as a
+ // VGA BIOS points it at its own; GW-BASIC draws 94h and FFh in graphics.
+ assert_eq!(p.ram.load(0x1f*4,MemWidth::Dword).unwrap(),0xc000_1000);
+ for ch in 0x80..=0xffu8{for(r,row)in glyph_rows(ch).into_iter().enumerate(){
+  assert_eq!(p.ram.load(0xc1000+u32::from(ch-0x80)*8+r as u32,MemWidth::Byte).unwrap(),u32::from(row),"glyph {ch:02X} row {r}");
+ }}
+ assert!(p.ram.check_write(0xc1000,MemWidth::Byte).is_err());
+ let shapes:std::collections::BTreeSet<[u8;8]>=(0x21..0xff).filter(|&c|c!=0x7f).map(glyph_rows).collect();assert_eq!(shapes.len(),0xff-0x21-1,"printable glyphs are distinct");
+ int10(&mut p,0x0e94,1,0,0);
+ for(r,v)in glyph_rows(0x94).iter().enumerate(){assert_eq!(p.ram.load(cga_line(r as u32,0),MemWidth::Byte).unwrap(),u32::from(*v));}
+ p.ram.store(0x450,MemWidth::Word,0).unwrap();int10(&mut p,0x0800,0,0,0);assert_eq!(p.cpu.regs[0]&255,0x94);
+ int10(&mut p,0x1130,0x0400,0,0);assert_eq!((p.selectors[SegmentRegister::Es.index()],p.cpu.regs[5]&0xffff),(0xc000,0x1000));
+ // A vector set to 0 leaves no table: the call stops rather than drawing the interrupt table.
+ p.ram.store(0x1f*4,MemWidth::Dword,0).unwrap();p.ram.store(0x450,MemWidth::Word,0).unwrap();let before=p.ram.clone();
  p.cpu.regs[0]=0x0e80;p.cpu.regs[3]=1;
  let e=service(&mut p,0x10,&mut vec![]).unwrap_err();assert!(e.contains("INT 1Fh"),"{e}");assert_eq!(p.ram,before);
  // A table at 2000:0000 supplies 80h onward, as GRAFTABL would.
