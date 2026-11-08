@@ -32,6 +32,20 @@ SingleStepTests/80386 run 10 (local; iret.pil, PUSHF/POPF and the far
 transfer descriptions changed): pass 1,621,228 as in run 09, 0
 generated-backend disagreements in 2,379 programs.
 
+# CUBE3 header text: AH09h on the page in BH — 8 November 2026
+
+Tony's CUBE3.BAS (SCREEN 9 with two pages) showed no header lines, only one
+letter flashing in the left column. GW-BASIC prints on the hidden page with
+INT 10h AH=02h and AH=09h, BH=active page. In planar modes Dine read the
+cursor and drew the glyph on the displayed page (0040:0062) instead, so every
+character landed in one cell of the shown page. AH=08h/09h/0Ah now use the
+page in BH in modes 0Dh/0Eh/10h/12h, as the IBM EGA BIOS does; CGA modes and
+13h keep page 0, and AH=0Eh and scrolling stay on the displayed page.
+
+Local Linux: 645 Rust tests pass, 1 ignored (1 new). Tony's GWBASIC.EXE with
+CUBE3.BAS (local, not in the repo): both header lines on every shown frame,
+no stray letter.
+
 # Protected mode, increment 5: privilege levels — 8 November 2026
 
 Protected-mode plan increment 5 (#123 was IDT delivery).
