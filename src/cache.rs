@@ -11,7 +11,12 @@ pub const CAPACITY:usize=8192;
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
 pub struct Stats {pub hits:u64,pub misses:u64,pub invalidations:u64,pub evictions:u64}
 #[derive(Clone,Debug)]
-struct Entry {image:Image,signature:[u8;15],decoded:Rc<Decoded>}
+struct Entry {image:Image,signature:[u8;15],decoded:Rc<Decoded>,code_stamp:Option<super::memory::CodeStamp>}
+impl Entry {
+    fn unchanged(&self,image:&Image,ram:&Ram,eip:u32)->bool{
+        !image.paging&&self.code_stamp.is_some_and(|stamp|image.segments[1].base.checked_add(eip).is_some_and(|at|ram.code_unchanged(stamp,at,self.decoded.length as usize)))
+    }
+}
 #[derive(Clone,Debug)]
 pub struct DecodeCache {enabled:bool,capacity:usize,entries:BTreeMap<u32,Entry>,fast:Box<[Option<(u32,Entry)>]>,stats:Stats}
 impl Default for DecodeCache {
@@ -33,6 +38,7 @@ impl DecodeCache {
         let slot=((eip^(eip>>8)) as usize)&(CAPACITY-1);
         if let Some((cached_eip,entry))=&self.fast[slot] {
             if *cached_eip==eip && entry.image==*image {
+                if entry.unchanged(image,ram,eip){self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));}
                 if let Ok(signature)=image.fetch_signature(ram,eip,entry.decoded.length) {
                     if signature==entry.signature {
                         self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));
@@ -42,9 +48,11 @@ impl DecodeCache {
         }
         if let Some(entry)=self.entries.get(&eip) {
             if entry.image==*image {
-                // Re-fetch every encoded byte through the current fetch checks.
-                // This catches poke, guest stores, overlap and changed lengths
-                // without requiring every future RAM writer to notify the cache.
+                if entry.unchanged(image,ram,eip){
+                    self.fast[slot]=Some((eip,entry.clone()));self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));
+                }
+                // Once a watched code page is written, retain the original
+                // byte checks permanently for that page.
                 match image.fetch_signature(ram,eip,entry.decoded.length) {
                     Ok(signature) if signature==entry.signature=>{
                         self.fast[slot]=Some((eip,entry.clone()));
@@ -66,7 +74,8 @@ impl DecodeCache {
         if self.entries.len()>=self.capacity {
             self.stats.evictions+=self.entries.len() as u64;self.entries.clear();self.fast.fill(None);
         }
-        let entry=Entry{image:image.clone(),signature,decoded:Rc::clone(&decoded)};
+        let code_stamp=if image.paging{None}else{image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,decoded.length as usize))};
+        let entry=Entry{image:image.clone(),signature,decoded:Rc::clone(&decoded),code_stamp};
         self.fast[slot]=Some((eip,entry.clone()));
         self.entries.insert(eip,entry);
         Ok(decoded)

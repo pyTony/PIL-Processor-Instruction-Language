@@ -3,6 +3,63 @@ use super::super::guest::ENTRY;
 use super::super::address::{SegmentAccess,SegmentRegister};
 
 #[test]
+fn untouched_code_is_trusted_until_first_write_and_then_stays_checked(){
+    let (image,_)=Image::load(&[0x40,0xf4]).unwrap();let mut ram=Ram::new(0x4000);
+    ram.write_bytes(ENTRY,&[0x40,0xf4]).unwrap();let mut cache=DecodeCache::default();
+    let old=cache.fetch(&image,&ram,ENTRY).unwrap();
+    let stamp=cache.entries[&ENTRY].code_stamp.unwrap();
+    assert!(ram.code_unchanged(stamp,ENTRY,1));
+    // Writes to another physical page do not change the code's tag.
+    ram.store(0x3000,super::super::MemWidth::Dword,42).unwrap();
+    assert!(ram.code_unchanged(stamp,ENTRY,1));
+    assert!(Rc::ptr_eq(&old,&cache.fetch(&image,&ram,ENTRY).unwrap()));
+    // An aliased guest write is still an ordinary successful RAM write.
+    ram.store(ENTRY,super::super::MemWidth::Byte,0x41).unwrap();
+    assert!(!ram.code_unchanged(stamp,ENTRY,1));
+    assert!(ram.watch_code(ENTRY,1).is_none());
+    assert_eq!(cache.fetch(&image,&ram,ENTRY).unwrap().label,"INC CX");
+    ram.write_bytes(ENTRY,&[0x42]).unwrap();
+    assert_eq!(cache.fetch(&image,&ram,ENTRY).unwrap().label,"INC DX");
+}
+
+#[test]
+fn code_watch_covers_cross_page_spans_a20_aliases_and_ram_identity(){
+    let mut ram=Ram::new(0x110000);
+    let cross=ram.watch_code(4095,2).unwrap();
+    ram.store(4096,super::super::MemWidth::Byte,1).unwrap();
+    assert!(!ram.code_unchanged(cross,4095,2));
+    ram.set_a20_enabled(false);
+    let alias=ram.watch_code(0x100100,1).unwrap();
+    ram.store(0x100,super::super::MemWidth::Byte,0x90).unwrap();
+    assert!(!ram.code_unchanged(alias,0x100100,1));
+    let clean=ram.watch_code(0x4000,1).unwrap();
+    assert!(!ram.clone().code_unchanged(clean,0x4000,1));
+    let unrelated=Ram::new(0x110000);
+    assert!(!unrelated.code_unchanged(clean,0x4000,1));
+}
+
+#[test]
+fn paging_accessed_bit_writes_invalidate_watched_physical_code(){
+    let mut ram=Ram::new(0x5000);
+    ram.store(0x1000,super::super::MemWidth::Dword,0x2007).unwrap();
+    ram.store(0x2000,super::super::MemWidth::Dword,0x3007).unwrap();
+    let stamp=ram.watch_code(0x1000,4).unwrap();
+    ram.set_paging(Some(super::super::memory::Paging{directory:0x1000,user:false}));
+    ram.load(0,super::super::MemWidth::Byte).unwrap();
+    ram.set_paging(None); // settles the PDE/PTE accessed bits
+    assert!(!ram.code_unchanged(stamp,0x1000,4));
+}
+
+#[test]
+fn failed_code_write_keeps_protection_and_cache_validation(){
+    let (image,mut ram)=Image::load(&[0x40]).unwrap();let mut cache=DecodeCache::default();
+    cache.fetch(&image,&ram,ENTRY).unwrap();let stamp=cache.entries[&ENTRY].code_stamp.unwrap();
+    ram.protect(ENTRY,1).unwrap();let before=ram.clone();
+    assert!(ram.store(ENTRY,super::super::MemWidth::Byte,0x41).is_err());
+    assert_eq!(ram,before);assert!(ram.code_unchanged(stamp,ENTRY,1));
+}
+
+#[test]
 fn valid_instruction_reuses_the_same_decoded_program() {
     let (image,ram)=Image::load(&[0xb8,1,0,0xf4]).unwrap();let mut c=DecodeCache::default();
     let a=c.fetch(&image,&ram,ENTRY).unwrap();let b=c.fetch(&image,&ram,ENTRY).unwrap();
