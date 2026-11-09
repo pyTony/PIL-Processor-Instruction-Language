@@ -10,13 +10,14 @@ The 30th text row must hold the caption in the 8x8 ROM font, each row shown
 twice in the 16-line cells, in colour 7. Any key must return to text mode.
 """
 from pathlib import Path
+import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dos_terminal import Session, find_engine
 
 root = Path(__file__).resolve().parents[1]
-engine = root / 'target' / 'release' / ('pil.exe' if sys.platform == 'win32' else 'pil')
+engine = Path(os.environ.get('PIL_TEST_ENGINE', root / 'target' / 'release' / ('pil.exe' if sys.platform == 'win32' else 'pil')))
 CAPTION = b'VGA 640x480 Mandelbrot  any key=exit'
 STEP = 42
 

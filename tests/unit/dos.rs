@@ -1336,7 +1336,18 @@ fn exec_runs_a_com_and_a_relocated_exe_and_returns_their_codes(){
   0x00,0x00,0x52,0x01,0x00,0x00,0x57,0x01,0x00,0x00,0x57,0x01,0x00,0x00,0x03,0x20,0x68,0x69,0x0d,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
  let mut code=parent.to_vec();code.extend(b"CHILD.COM\0CHILD.EXE\0NONE.COM\0");
  let p=load_with_drives(&code,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
- let r=run(p,200).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ struct Identities(Vec<ProgramIdentity>);
+ impl InstructionBackend for Identities{
+  fn execute(&mut self,id:&ProgramIdentity,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::flow::ExecError>>{
+   if !self.0.contains(id){self.0.push(id.clone());}None
+  }
+ }
+ let mut seen=Identities(Vec::new());let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+ let r=run_with_backend(p,200,&mut output,Some(&mut seen)).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert!(seen.0.iter().any(|id|id.path.as_deref()==Some(b"C:\\CHILD.COM")));
+ assert!(seen.0.iter().any(|id|id.path.as_deref()==Some(b"C:\\CHILD.EXE")));
+ assert_eq!(r.loaded.active_program.path,None);
+ assert_eq!(r.loaded.active_program.bytes.as_slice(),code.as_slice());
  let regs=&r.loaded.cpu.regs;assert_eq!((regs[6]&0xffff,regs[7]&0xffff,regs[5]&0xffff),(3,7,2));
  // Back in the parent: its PSP again, the children's blocks free, no frames left.
  assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
@@ -1485,7 +1496,7 @@ fn host_folder_takes_creates_writes_deletes_renames_and_directories(){
  // Directories: make, refuse twice, rename into, remove only when empty and not current.
  assert_eq!(call(&mut p,0x3900,0,b"sub").1,0);assert_eq!(call(&mut p,0x3900,0,b"SUB"),(5,1));
  p.ram.write_bytes(psp+0x300,b"SUB\\NEW.TXT\0").unwrap();p.cpu.regs[7]=0x300;
- assert_eq!(call(&mut p,0x5600,0,b"OUT.TXT").1,0);assert!(dir.join("SUB/NEW.TXT").is_file()&&!dir.join("OUT.TXT").exists());
+ let renamed=call(&mut p,0x5600,0,b"OUT.TXT");assert_eq!(renamed.1,0,"rename returned {renamed:?}");assert!(dir.join("SUB/NEW.TXT").is_file()&&!dir.join("OUT.TXT").exists());
  assert_eq!(call(&mut p,0x3a00,0,b"SUB"),(5,1),"not empty");
  assert_eq!(call(&mut p,0x5600,0,b"MISSING.TXT"),(2,1));
  // AH60 gives the full name; AH41 deletes; AH4E/4F go on after a deleted file.

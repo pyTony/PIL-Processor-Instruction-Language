@@ -5,7 +5,7 @@
 use super::*;
 /// What the parent needs back when its child ends.
 #[derive(Clone,Debug)]
-pub struct Frame{cpu:Cpu,selectors:[u16;6],pub(super) image:Image,open_handles:u32,dta:(u16,u16),psp:u16}
+pub struct Frame{cpu:Cpu,selectors:[u16;6],pub(super) image:Image,open_handles:u32,dta:(u16,u16),psp:u16,active_program:ProgramIdentity}
 /// Nesting limit for programs started by programs.
 const MAX_DEPTH:usize=8;
 fn fail(p:&mut Loaded,code:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|code;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;}
@@ -141,7 +141,8 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     p.ram.write_bytes(u32::from(load)*16,&module).map_err(|e|format!("EXEC module: {e:?}"))?;
     // Save the parent, then enter the child with DS=ES=PSP.
     let parent_window=(p.image.fetch_base+p.image.start,p.image.fetch_base+p.image.end);
-    p.exec.push(Frame{cpu:p.cpu.clone(),selectors:p.selectors,image:p.image.clone(),open_handles:p.open_handles,dta:p.dta,psp:p.psp});
+    p.exec.push(Frame{cpu:p.cpu.clone(),selectors:p.selectors,image:p.image.clone(),open_handles:p.open_handles,dta:p.dta,psp:p.psp,active_program:p.active_program.clone()});
+    p.active_program=ProgramIdentity{path:Some(path),bytes:file};
     let mut system=p.image.system;
     if let Some(slot)=system.iter_mut().find(|(s,e)|*s==0&&*e==0){*slot=parent_window;}
     p.image.system=system;
@@ -180,7 +181,7 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
     p.cpu=frame.cpu;p.cpu.eip=(p.cpu.eip+2)&0xffff;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     let (msw,controls)=(p.image.msw,p.image.controls);
     p.selectors=frame.selectors;p.image=frame.image;p.image.msw=msw;p.image.controls=controls;p.image.retired();
-    p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.psp;
+    p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.psp;p.active_program=frame.active_program;
     // Files only the child's handles referred to are closed with it.
     files::drop_unreferenced(p)
 }

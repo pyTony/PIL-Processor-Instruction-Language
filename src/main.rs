@@ -13,6 +13,10 @@ mod host_io;
 mod debugger;
 mod guest;
 mod dos;
+mod dos_compile;
+#[cfg(pil_shadow_backend)]
+#[allow(dead_code, unused_mut, unused_variables, unused_imports, unused_assignments)]
+mod shadow_backend { include!(concat!(env!("OUT_DIR"), "/pil_shadow.rs")); }
 mod dos_config;
 mod fpu;
 mod containers;
@@ -2352,6 +2356,7 @@ Code generation and examples:
   --write-factorials PATH           Write a factorial example
   --write-loop PATH                 Write a loop example
   --write-dos-hello com|exe PATH     Write a DOS hello (new file only)
+  --emit-dos-backend INPUT OUTPUT    Profile a DOS COM/EXE and emit a partial Rust backend
   --demo-branch                     Show a conditional branch example
 
 Options (before COMMAND):
@@ -2364,6 +2369,17 @@ For a DOS window use: python tools/dos_terminal.py --help
 ";
 fn main() -> R<()> {
     let mut dos_args:Vec<_>=std::env::args().collect();
+    if dos_args.get(1).map(String::as_str)==Some("--emit-dos-backend"){
+        if dos_args.len()!=4{return Err("usage: pil --emit-dos-backend INPUT.COM|INPUT.EXE OUTPUT.rs".into());}
+        let path=std::path::Path::new(&dos_args[2]);
+        let name=path.file_name().and_then(|n|n.to_str()).ok_or("DOS program name must be Unicode")?;
+        let bytes=dos::read_file(path)?;
+        let (source,status)=dos_compile::emit(&bytes,name)?;
+        use std::io::Write;
+        let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
+        file.write_all(source.as_bytes()).map_err(|e|e.to_string())?;
+        println!("{status}; wrote {}",dos_args[3]);return Ok(());
+    }
     if dos_args.get(1).map(String::as_str)==Some("--pildos-startup"){
         if dos_args.len()>3{return Err("usage: pil --pildos-startup [CONFIG]".into());}
         let(program,args)=dos_config::startup(dos_args.get(2).map(String::as_str))?;

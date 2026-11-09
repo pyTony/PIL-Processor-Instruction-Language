@@ -1,3 +1,31 @@
+# Observed DOS native blocks — 9 November 2026
+
+The DOS recorder profiles the requested executable through bounded slices,
+then builds the observed PIL code as one Rust module linked with Dine.
+Generated sequences of up to 16 instructions now execute before per-instruction
+decoding. Inlined helpers permit Rust optimization across a sequence; stores
+and control transfers terminate it. Entry checks executable, machine/fetch
+context and code bytes; small budgets, changed code, REP, paging and installed
+timer handlers retain the instruction path. EXEC saves/restores program identity.
+
+`python tools/build_dos_shadow.py programs/dos/MANDVGA.COM --verify` builds a
+host-specific service under shadow/<os>-<cpu>/<guest-sha256>, with a manifest.
+The existing frontend provides graphics. See docs/DOS_NATIVE.md for the build,
+verification commands, scope and remaining work.
+
+Local Windows x86-64 release, 3 samples: interpreted median 8.942918 s,
+native-block median 2.696277 s (3.317x). Each native draw executes 9,312,992
+blocks / 37,555,373 guest instructions in blocks. Complete VGA planes, palette,
+caption, exposed CPU state, step counts, key exit and text-mode restoration
+match. Three generated guard/state tests pass. Timing includes graphics and
+protocol transfer, excludes setup/profile/build; not 386 cycle timing.
+Other local checks: 660 Rust tests pass, 2 ignored; standalone runtime export
+and comparison pass. Independent native VGA oracle: 296,960 pixels, caption
+and key exit pass. Python frontend tests: 48 pass; the localhost TCP test is
+blocked by this session's network permissions (WinError 10013).
+This is bounded block execution with fallback, not yet standalone translated
+applications linked only to a DOS library or background dynamic loading.
+
 # SMSW r32 with paging — 8 November 2026
 
 The 128 KiB test386 ROM stopped in POST 22h before its first task switch:

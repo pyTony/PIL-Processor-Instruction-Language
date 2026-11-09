@@ -20,15 +20,25 @@ pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
     if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
     Err(format!("mount {path} is not a folder or .img/.ima image"))
 }
-pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool}
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,backend:Option<Box<dyn InstructionBackend>>}
 impl Session{
-    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,exceptions:Vec::new(),exception_count:0,idle_hint:false}}
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,exceptions:Vec::new(),exception_count:0,idle_hint:false,backend:None}}
+    /// Keep the executor for the whole session, including across frontend slices.
+    #[allow(dead_code)]
+    pub(crate) fn with_backend(loaded:Loaded,backend:Box<dyn InstructionBackend>)->Self{
+        let mut session=Self::new(loaded);session.backend=Some(backend);session
+    }
     fn live(&self)->bool{matches!(self.stop,Stop::Budget|Stop::WaitingForInput)}
     /// Runs up to `budget` steps; output already reaches the screen through Dine.
     pub fn run(&mut self,budget:usize)->Result<Vec<u8>,String>{
         if !self.live(){return Ok(Vec::new());}
         let loaded=self.loaded.take().ok_or("session state lost")?;
-        let probe=run(loaded,budget)?;
+        let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let mut probe=match self.backend.as_mut(){
+            Some(backend)=>run_with_backend(loaded,budget,&mut output,Some(backend.as_mut()))?,
+            None=>run_with_backend(loaded,budget,&mut output,None)?,
+        };
+        probe.output=output.into_bytes();
         // A hint only: polling programs continue running, but a frontend may
         // reduce its execution rate while the screen is unchanged.
         let polls=probe.instructions.get("DOS INT16/AH01").copied().unwrap_or(0)+probe.instructions.get("DOS INT16/AH11").copied().unwrap_or(0);
@@ -100,6 +110,8 @@ impl Session{
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
+        let(blocks,native)=self.backend.as_ref().map_or((0,0),|b|b.block_stats());
+        let diagnostic=format!("{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}");
         Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&String::from_utf8_lossy(output))))
     }
@@ -238,6 +250,9 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     crate::dos_config::apply(&mut loaded,config,skip)?;
     if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
     serial::attach(&mut loaded)?;
+    #[cfg(pil_shadow_backend)]
+    let mut session=Session::with_backend(loaded,Box::new(crate::shadow_backend::Backend::default()));
+    #[cfg(not(pil_shadow_backend))]
     let mut session=Session::new(loaded);
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
