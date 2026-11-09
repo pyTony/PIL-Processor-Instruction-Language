@@ -1,0 +1,35 @@
+# Shared start of LAR, LSL, VERR and VERW (the decoder puts it in front of
+# each). None of them faults on a bad selector: a null selector or one past
+# its table's limit is simply not found. The present bit is not checked.
+# `visible` is the 386 privilege test: DPL at least CPL and RPL, or a
+# conforming code segment, which is visible at any level.
+require_protected_mode
+$INPUT
+read_descriptor raw found selector
+const k32 64 32
+lshr high_raw raw k32
+trunc high high_raw 32
+trunc low raw 32
+const k8 32 8
+lshr access_shifted high k8
+trunc access access_shifted 8
+bit segment access 4
+bit code_bit access 3
+bit conforming_bit access 2
+bit read_write access 1
+and code segment code_bit
+and conforming code conforming_bit
+const type_mask 8 15
+and kind access type_mask
+const k5 8 5
+lshr dpl_shifted access k5
+const m3 8 3
+and dpl dpl_shifted m3
+read_cpl cpl
+trunc selector_low selector 8
+and rpl selector_low m3
+ult below_cpl dpl cpl
+ult below_rpl dpl rpl
+or hidden below_cpl below_rpl
+not privileged hidden
+or visible privileged conforming

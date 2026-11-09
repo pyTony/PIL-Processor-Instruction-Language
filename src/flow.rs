@@ -13,7 +13,19 @@ pub enum ExecError {
     StackSegment { eip: u32, error_code: u16 },
     InvalidBinding,
     InvalidContext,
+    UnsupportedControl { eip:u32, register:u8, value:u32 },
     GeneralProtection { eip: u32, error_code: u16 },
+    /// An exception without an error code, such as #DE (vector 0).
+    Exception { eip: u32, vector: u8 },
+    /// #PF (vector 14): the faulting linear address (for CR2) and the error
+    /// code (bit 0 protection, bit 1 write, bit 2 user).
+    PageFault { eip: u32, address: u32, error_code: u16 },
+    /// #NP (vector 11): a descriptor that is not present; the error code
+    /// names its selector.
+    SegmentNotPresent { eip: u32, error_code: u16 },
+    /// #TS (vector 10): the TSS cannot supply an inner-level stack; the
+    /// error code names the TSS or the stack selector.
+    InvalidTss { eip: u32, error_code: u16 },
 }
 
 impl FlowContext {

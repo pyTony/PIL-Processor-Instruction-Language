@@ -1,4 +1,4 @@
-//! Original Q12 guest image and host reference/image output; no VGA emulation.
+//! Original Q12 guest image and host reference/image output.
 use std::{collections::BTreeMap,fs,path::PathBuf};
 pub fn validate(size:u32,iterations:u32)->Result<(),String>{
     if !(2..=256).contains(&size)||!size.is_power_of_two(){return Err("Mandelbrot size must be a power of two in 2..256".into());}
@@ -13,8 +13,16 @@ impl Assembler{
     fn finish(mut self)->Result<Vec<u8>,String>{for(at,name)in self.fixups{let target=*self.labels.get(name).ok_or("unknown assembly label")?;let delta=i16::try_from(target as i64-(at+2) as i64).map_err(|_|"branch out of range")?;self.bytes[at..at+2].copy_from_slice(&delta.to_le_bytes());}Ok(self.bytes)}
 }
 pub fn guest_bytes(size:u32,iterations:u32)->Result<Vec<u8>,String>{
+    guest_image(size,iterations,false)
+}
+pub fn guest_vga_bytes(size:u32,iterations:u32)->Result<Vec<u8>,String>{
+    if size>128{return Err("VGA demo size must be at most 128".into());}
+    guest_image(size,iterations,true)
+}
+fn guest_image(size:u32,iterations:u32,vga:bool)->Result<Vec<u8>,String>{
     validate(size,iterations)?;let step=12288/size as i32;
     let mut a=Assembler{bytes:Vec::new(),labels:BTreeMap::new(),fixups:Vec::new()};
+    if vga{a.emit(&[0xb8,0x13,0,0xcd,0x10,0xb8,0x00,0xa0,0x8e,0xc0]);}
     a.imm(&[0x66,0xbf],0); // EDI=row
     a.imm(&[0x66,0xbb],-6144);a.emit(&[0x66,0x89,0x1e,0x04,0x05]); // DS:504 cy
     a.label("row");a.imm(&[0x66,0xbe],0); // ESI=column
@@ -30,10 +38,10 @@ pub fn guest_bytes(size:u32,iterations:u32)->Result<Vec<u8>,String>{
     a.emit(&[0x66,0x45]);a.imm(&[0x66,0x81,0xfd],iterations as i32);a.jump(Some(2),"iterate");
     a.imm(&[0x66,0xb8],0);a.jump(None,"emit");
     a.label("escape");a.emit(&[0x66,0x89,0xe8,0x66,0xc1,0xe0,2]);
-    a.label("emit");a.emit(&[0xe6,0xe9]);
+    a.label("emit");if vga{a.emit(&[0x66,0x69,0xd7,0x40,0x01,0,0,0x66,0x01,0xf2]);a.imm(&[0x66,0x81,0xc2],(((200-size)/2)*320+(320-size)/2) as i32);a.emit(&[0x26,0x67,0x88,0x02]);}else{a.emit(&[0xe6,0xe9]);}
     a.imm(&[0x66,0x81,0x06,0,5],step);a.emit(&[0x66,0x46]);a.imm(&[0x66,0x81,0xfe],size as i32);a.jump(Some(2),"pixel");
     a.imm(&[0x66,0x81,0x06,4,5],step);a.emit(&[0x66,0x47]);a.imm(&[0x66,0x81,0xff],size as i32);a.jump(Some(2),"row");
-    a.emit(&[0xf4]);a.finish()
+    if vga{a.emit(&[0xb4,0x00,0xcd,0x16,0xb8,0x03,0,0xcd,0x10,0xb8,0,0x4c,0xcd,0x21]);}else{a.emit(&[0xf4]);}a.finish()
 }
 // Mathematical reference: no decoder, CPU tokens or assembly execution.
 pub fn reference(size:u32,iterations:u32)->Result<Vec<u8>,String>{

@@ -1,25 +1,52 @@
+# PIL 0.36.0-alpha.1
+
+Runtime-only delivery of merged dev commit 29a78e8e21450c554d7337d337bc21ae7d8ddc97.
+This delivery is exported from committed source, not the working native-program experiment.
+
+## Guarded instruction blocks and code cache
+
+- Tag instruction capabilities and use RAM-free generated helpers for proven
+  register-only instructions. Follow guarded blocks for at most 256 instructions
+  per call, within the caller's remaining execution budget.
+- Accept ordinary real-mode relocation while retaining code-byte, segment-limit,
+  executable-window, paging, and interrupt scheduling guards.
+- The interpreter trusts untouched physical code pages and skips repeated byte
+  comparisons. The first write returns the affected page to byte validation.
+  Guest write permissions and self-modifying-code behavior are preserved.
+- Ordinary release builds do not scan shadow directories or include guest-specific
+  code. Native binary loading and the separate standalone DOS compiler are excluded.
+
+This runtime also includes the intervening committed dev CPU, DOS, interrupt,
+paging, and VGA changes since the previous main delivery. It is a complete runtime
+projection; it is not a cherry-pick of the cache changes onto the older runtime.
+
+Validation of the block increment on Windows: 667 Rust tests passed, 2 ignored,
+and four generated loop guard/state tests passed. A narrow local interpreter loop
+benchmark improved from 31.677 ms to 29.380 ms; this is not a general speed claim.
+Standalone delivery verification is recorded in the delivery pull request.
+No new DOS corpus, legacy hardware, ARM, or cross-platform run is claimed here.
+
 # PIL 0.35.0-alpha.1
 
-- Extract DOS compatibility contracts into dos_services.rs. The batch runner
-  calls them through a host output provider; default capture stays deterministic
-  and bounded at16KiB. Full/disconnected providers stop before output, AL or
-  instruction retirement effects. Other DOS contracts remain unchanged.
-- Add --debug-service: local stdin commands and versioned NDJSON snapshots from
-  the existing Rust debugger. Guest bytes are separate from command text. Run
-  quanta are capped at256 execution steps; a64KiB guest-history cap bounds long
-  sessions. Input framing and raw-image reads are bounded; errors preserve state.
-- Add optional Python/Tk desktop debugger: instruction/breakpoint view, changed
-  registers, memory/stack/flags/segment inspector, guest console and command
-  Listener. One outstanding command, queued UI events and cooperative Pause;
-  no Python CPU/interpreter or asynchronous thread-exception stop mechanism.
-- The window supports existing monitor demos and raw1..3840-byte images.
-  DOS COM/MZ probing uses the compatibility layer in batch mode; DOS single-step
-  GUI sessions, BIOS text screens and DOS input providers remain separate work.
-- Windows/Linux CI40636999983 passed337 Rust tests, four Python tests,
-  backend/frontend integration,199 full-state cases (7,330,906 trace bytes),
-  standalone/native packages and full Mandelbrot checks. Windows also passed
-  the real Tk widget/Pause smoke test. No new guest instruction, full FreeDOS-
-  image, legacy hardware or ARM run is claimed.
+## 0.35: Unsigned division (DIV) and foundational BIOS / DOS service shims
+
+### Unsigned Division (DIV F6/F7 /6)
+- Supported at all operand widths (8-bit, 16-bit, and 32-bit with 66h prefix) for both register and memory addressing modes.
+- PIL tokens expanded with binary `div` and `rem` operations.
+- Exact divide-by-zero and quotient-overflow bounds checking.
+- Undefined arithmetic flags (CF, OF, SF, ZF, AF, PF) follow Intel SDM classification.
+
+### Expanded DOS / BIOS probe services
+- **BIOS Video (INT 10h):** Added AH=08h (read character and attribute) and AH=03h (read cursor position and scanlines).
+- **BIOS Equipment & Memory (INT 11h, INT 12h):** Returns standard PC equipment list word with pointing device flag, and 640 KB conventional memory size.
+- **BIOS System Timer (INT 1Ah):** Added AH=00h deterministic monotonically advancing tick counter synchronized with BDA `0x046C` and midnight rollover `0x0470` (`1,573,040` ticks/day).
+- **DOS File API (INT 21h):** Added bounded path/mode-validated failure shim for AH=3Dh (validates access mode `0..=2` and readable ASCIIZ path at `DS:DX` before returning `CF=1, AX=0x0002`/`0x0003`) and PSP-tracked handle close for AH=3Eh (tracks standard handles `0..=4` in `PSP:0018..002B`, returning `CF=1, AX=0x0006` on invalid or already-closed handles).
+- **Probe report interpretation:** Clean probe exits increased from 11 to 14 under these bounded shim contracts, FreeCOM shells advance past timer/handle initialization loops, and `MEMSTAT` computes and displays formatted decimal output.
+
+### Interactive Debugger & GUI Enhancements
+- **PIL token stepping (`pilstep` / `ps` / `Step PIL F8`):** Step individual PIL tokens within the current guest instruction, inspecting live intermediate values and staged effects before atomic retirement.
+- **Affected memory cell highlighting:** Resolves and highlights the exact memory cell (`1`, `2`, `4`, or `6` bytes) read or written by the instruction in both hex and ASCII columns, displaying width-matched hex, decimal, raw bytes, and character representations.
+- **Container browser & bounded `.hex` loader:** Non-blocking background browsing/probing of `.img`/`.ima`/`.zip` containers and early-bounded `.hex` and `.bin` program loading.
 
 # PIL 0.34.0-alpha.1
 

@@ -21,30 +21,53 @@ fn dump(d:&Debugger,at:u32,size:usize)->String{
  if available==0{return "outside RAM".into();}
  d.dump_memory(at,available as u64,super::super::memory::MemWidth::Byte,false).unwrap_or_else(|e|e)
 }
+fn follow_memory_view(d:&Debugger,view:&mut u32){
+ if let Some((access,_,_))=d.active_memory_effect(){
+  if !access.is_stack{
+   let end=access.address.saturating_add(u32::from(access.bytes));
+   if access.address<*view || end>view.saturating_add(64){
+    let max_start=d.ram.bytes().len().saturating_sub(64) as u32;
+    *view=(access.address & !0x3f).min(max_start);
+   }
+  }
+ }
+}
+fn memory_effect_json(d:&Debugger)->String{
+ match (d.active_memory_effect(),d.format_memory_effect()){
+  (Some((access,stage,raw)),Some(summary))=>format!("{{\"address\":{},\"bytes\":{},\"write\":{},\"is_stack\":{},\"stage\":{},\"raw\":{},\"summary\":{}}}",access.address,access.bytes,access.write,access.is_stack,quote(stage),numbers(raw.iter()),quote(&summary)),
+  _=>"null".into(),
+ }
+}
 fn reply(d:&Debugger,seq:u64,ok:bool,quit:bool,text:&str,kind:&str,bytes:&[u8],view:u32)->String{
  let selectors=d.image.as_ref().map(|i|i.selectors).unwrap_or([0;6]);
  let segments=d.image.as_ref().map(|image|image.segments.iter().enumerate().map(|(n,s)|format!("{}={:04x} base={:08x} limit={:08x}",["ES","CS","SS","DS","FS","GS"][n],image.selectors[n],s.base,s.limit)).collect::<Vec<_>>().join("\n")).unwrap_or_else(||"predecoded monitor demo".into());
  let stack=d.image.as_ref().and_then(|i|{let ss=i.segments[2];let big=matches!(ss.access,super::super::address::SegmentAccess::Data{big:true,..});ss.base.checked_add(if big{d.cpu.regs[4]}else{d.cpu.regs[4]&0xffff})}).unwrap_or(d.cpu.regs[4]);
- let listing=d.listing(d.cpu.eip,16).unwrap_or_else(|e|e);
- format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"quit\":{quit},\"text\":{},\"status\":{},\"guest_output\":{},\"state\":{{\"version\":{},\"demo\":{},\"registers\":{},\"eip\":{},\"flags\":{},\"undefined_flags\":{},\"selectors\":{},\"segments\":{},\"breakpoints\":{},\"listing\":{},\"memory_address\":{view},\"memory\":{},\"stack_address\":{stack},\"stack\":{},\"ram_size\":{},\"cache\":{}}}}}",quote(text),quote(kind),numbers(bytes.iter()),quote(env!("CARGO_PKG_VERSION")),quote(&d.demo),numbers(d.cpu.regs),d.cpu.eip,d.cpu.eflags,d.cpu.undefined_flags,numbers(selectors),quote(&segments),numbers(d.breakpoints.iter()),quote(&listing),quote(&dump(d,view,64)),quote(&dump(d,stack,32)),d.ram.bytes().len(),quote(&d.cache.summary()))
+ let listing_start=if let Some(image)=&d.image{
+  if d.cpu.eip>=image.start && d.cpu.eip<image.end{image.start}else{d.cpu.eip}
+ }else{
+  d.instructions.keys().next().copied().unwrap_or(d.cpu.eip)
+ };
+ let listing=d.listing(listing_start,128).unwrap_or_else(|_|d.listing(d.cpu.eip,16).unwrap_or_else(|e|e));
+ format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"quit\":{quit},\"text\":{},\"status\":{},\"guest_output\":{},\"state\":{{\"version\":{},\"demo\":{},\"registers\":{},\"eip\":{},\"flags\":{},\"undefined_flags\":{},\"selectors\":{},\"segments\":{},\"breakpoints\":{},\"listing\":{},\"memory_address\":{view},\"memory\":{},\"stack_address\":{stack},\"stack\":{},\"ram_size\":{},\"cache\":{},\"pil\":{},\"memory_effect\":{}}}}}",quote(text),quote(kind),numbers(bytes.iter()),quote(env!("CARGO_PKG_VERSION")),quote(&d.demo),numbers(d.cpu.regs),d.cpu.eip,d.cpu.eflags,d.cpu.undefined_flags,numbers(selectors),quote(&segments),numbers(d.breakpoints.iter()),quote(&listing),quote(&dump(d,view,64)),quote(&dump(d,stack,32)),d.ram.bytes().len(),quote(&d.cache.summary()),quote(&d.current_pil()),memory_effect_json(d))
 }
 fn command(d:&mut Debugger,line:&str,view:&mut u32)->Result<(String,bool,&'static str),String>{
  let words:Vec<_>=line.split_whitespace().collect();
  match words.as_slice(){
   ["snapshot"]|[]=>Ok((String::new(),false,"ready")),
-  ["step"]|["s"]=>{budget(d,1)?;let stop=d.step();Ok((Debugger::stop_text(&stop),false,status(&stop)))},
-  ["run"]|["continue"]|["c"]=>{let(n,stop)=d.run(budget(d,MAX_QUANTUM)?)?;Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
-  ["run",n]|["continue",n]|["c",n]=>{let n=number(n)?;if n==0||n>MAX_QUANTUM as u64{return Err("service run budget must be1..256".into());}let(n,stop)=d.run(budget(d,n as usize)?)?;Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
+  ["step"]|["s"]=>{budget(d,1)?;let stop=d.step();follow_memory_view(d,view);Ok((Debugger::stop_text(&stop),false,status(&stop)))},
+  ["pilstep"]|["ps"]=>{budget(d,1)?;let(msg,stop)=d.step_pil();follow_memory_view(d,view);Ok((msg,false,status(&stop)))},
+  ["run"]|["continue"]|["c"]=>{let(n,stop)=d.run(budget(d,MAX_QUANTUM)?)?;follow_memory_view(d,view);Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
+  ["run",n]|["continue",n]|["c",n]=>{let n=number(n)?;if n==0||n>MAX_QUANTUM as u64{return Err("service run budget must be1..256".into());}let(n,stop)=d.run(budget(d,n as usize)?)?;follow_memory_view(d,view);Ok((format!("{n} completed steps; {}",Debugger::stop_text(&stop)),false,status(&stop)))},
   ["view",at]=>{let at=u32::try_from(number(at)?).map_err(|_|"view address must fit32 bits")?;if at as usize>=d.ram.bytes().len(){return Err("view address outside RAM".into());}*view=at;Ok((format!("memory view at {at:08x}"),false,"ready"))},
-  ["help"]=>Ok(("step | run [1..256] | snapshot | demo NAME | reset | regs | flags | list | view ADDRESS | mem/mem8/mem16/mem32 | set REG VALUE | break/delete ADDRESS | breaks | serial rx HEX... | serial tx/status/clear | cache | check | quit".into(),false,"ready")),
-  [name,..] if matches!(*name,"demo"|"reset"|"regs"|"flags"|"eip"|"set"|"break"|"delete"|"breaks"|"serial"|"cache"|"check"|"list"|"mem"|"mem8"|"mem16"|"mem32"|"quit"|"exit"|"q")=>{let(text,quit)=d.command_mode(line,false)?;if *view as usize>=d.ram.bytes().len(){*view=0;}Ok((text,quit,"ready"))},
+  ["help"]=>Ok(("step | pilstep | run [1..256] | snapshot | demo NAME | load PATH | reset | regs | flags | list | pil | view ADDRESS | mem/mem8/mem16/mem32 | set REG VALUE | break/delete ADDRESS | breaks | serial rx HEX... | serial tx/status/clear | cache | check | quit".into(),false,"ready")),
+  [name,..] if matches!(*name,"demo"|"load"|"reset"|"regs"|"flags"|"eip"|"set"|"break"|"delete"|"breaks"|"serial"|"cache"|"check"|"list"|"pil"|"mem"|"mem8"|"mem16"|"mem32"|"quit"|"exit"|"q")=>{let(text,quit)=d.command_mode(line,false)?;if *view as usize>=d.ram.bytes().len(){*view=0;}follow_memory_view(d,view);Ok((text,quit,"ready"))},
   _=>Err("command is not available in the bounded debugger service; type help".into())
  }
 }
 pub fn serve<R:BufRead,W:Write>(mut input:R,mut output:W,path:Option<&str>)->io::Result<()>{
  let mut d=Debugger::new("counter").map_err(io::Error::other)?;
  if let Some(path)=path{
-  let mut bytes=Vec::new();std::fs::File::open(path)?.take((super::super::guest::RAM_BYTES-super::super::guest::ENTRY as usize+1)as u64).read_to_end(&mut bytes)?;
+  let bytes=super::read_guest_image_file(path)?;
   d.load_image(&bytes,path).map_err(io::Error::other)?;
  }
  let mut view=if d.ram.bytes().len()>0x100{0x100}else{0};let mut seq=0u64;

@@ -1,0 +1,27 @@
+# BOUND r16/r32, m16&16/m32&32: the signed index in the register must lie
+# within the signed lower bound at EA and upper bound at EA+size (inclusive).
+# Otherwise #BR (vector 5), a fault: nothing changes and the saved IP is the
+# BOUND instruction. Signed order is compared by flipping the sign bits. The
+# upper-bound offset wraps at the address size (16-bit EA FFFEh reads 0000h).
+require_width 16_or_32
+read index dst $W
+read_address lower_at
+load lower lower_at $W
+const size 32 $BYTES
+add upper_end lower_at size
+const offset_mask 32 $OFFSET_MASK
+and upper_at upper_end offset_mask
+load upper upper_at $W
+const one $W 1
+const top $W $SIGN
+shl sign one top
+xor biased_index index sign
+xor biased_lower lower sign
+xor biased_upper upper sign
+ult below biased_index biased_lower
+ult above biased_upper biased_index
+or outside below above
+not inside outside
+raise_unless inside 5
+preserve_flags all
+retire

@@ -4,10 +4,10 @@ $ErrorActionPreference = 'Stop'
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     $buildRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
-    if ($Check) { & "$buildRoot/debug/pil-proof.exe" --selftest }
+    if ($Check) { & "$buildRoot/debug/pil.exe" --selftest }
     else {
         if (!$Program) { $Program = "$buildRoot/programs/selftest.bin" }
-        & "$buildRoot/debug/pil-proof.exe" --repl --load $Program
+        & "$buildRoot/debug/pil.exe" --repl --load $Program
     }
-    if ($LASTEXITCODE -ne 0) { throw 'pil-proof failed' }
+    if ($LASTEXITCODE -ne 0) { throw 'pil failed' }
 } finally { Pop-Location }

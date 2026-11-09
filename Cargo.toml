@@ -1,6 +1,7 @@
 [package]
-name = "pil-proof"
-version = "0.35.0-alpha.1"
+name = "pil"
+version = "0.36.0-alpha.1"
 edition = "2021"
 
 [dependencies]
+thiserror = "1.0"

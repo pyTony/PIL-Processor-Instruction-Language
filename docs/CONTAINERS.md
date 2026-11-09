@@ -10,22 +10,22 @@ Build and use the same profile. Default Termux/Linux build:
 
 ```sh
 sh tools/build.sh
-./target/debug/pil-proof --dos-list FD14LITE.img
-./target/debug/pil-proof --dos-probe --steps 10000 FD14LITE.img > target/freedos-report.txt
-./target/debug/pil-proof --dos-extract FD14LITE.img freedos-files
+./target/debug/pil --dos-list FD14LITE.img
+./target/debug/pil --dos-probe --steps 10000 FD14LITE.img > target/freedos-report.txt
+./target/debug/pil --dos-extract FD14LITE.img freedos-files
 ```
 
 `freedos-files` must not already exist. The image is never modified. For release
-use `sh tools/build.sh --release` and `target/release/pil-proof`. PowerShell
-uses `.\tools\build.ps1` and `.\target\debug\pil-proof.exe` (or `-Release`
+use `sh tools/build.sh --release` and `target/release/pil`. PowerShell
+uses `.\tools\build.ps1` and `.\target\debug\pil.exe` (or `-Release`
 and the release path).
 
 A ZIP package works with the same commands:
 
 ```sh
-./target/debug/pil-proof --dos-list CHOICE.ZIP
-./target/debug/pil-proof --dos-probe CHOICE.ZIP
-./target/debug/pil-proof --dos-extract CHOICE.ZIP choice-files
+./target/debug/pil --dos-list CHOICE.ZIP
+./target/debug/pil --dos-probe CHOICE.ZIP
+./target/debug/pil --dos-extract CHOICE.ZIP choice-files
 ```
 
 The REPL's isolated `dosprobe PATH [steps]` also accepts these container paths.
@@ -113,4 +113,4 @@ Windows/Linux CI40470152015 passed210 tests and independent CLI/package checks.
 The compiled Linux reader extracted all2,147 files from the actual supplied image
 byte-identically to Python. The corrected runtime imported151 DOS programs and
 rejected5LE inputs;one exited and the rest exposed encoding/service/access blockers.
-See the [measured FreeDOS results](https://github.com/pyTony/pil_proof/blob/dev/docs/development/FREEDOS_PROBE_RESULTS.md).
+See the [measured FreeDOS results](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/development/FREEDOS_PROBE_RESULTS.md).

@@ -8,13 +8,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
     $buildRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
     New-Item -ItemType Directory -Force "$buildRoot/programs" | Out-Null
-    & "$buildRoot/$profile/pil-proof.exe" --write-selftest "$buildRoot/programs/selftest.bin"
+    & "$buildRoot/$profile/pil.exe" --write-selftest "$buildRoot/programs/selftest.bin"
     if ($LASTEXITCODE -ne 0) { throw 'selftest image generation failed' }
-    & "$buildRoot/$profile/pil-proof.exe" --write-hello "$buildRoot/programs/hello.bin"
+    & "$buildRoot/$profile/pil.exe" --write-hello "$buildRoot/programs/hello.bin"
     if ($LASTEXITCODE -ne 0) { throw 'hello image generation failed' }
-    & "$buildRoot/$profile/pil-proof.exe" --write-factorials "$buildRoot/programs/factorials.bin"
+    & "$buildRoot/$profile/pil.exe" --write-factorials "$buildRoot/programs/factorials.bin"
     if ($LASTEXITCODE -ne 0) { throw 'factorial image generation failed' }
-    & "$buildRoot/$profile/pil-proof.exe" --write-loop "$buildRoot/programs/loop.bin"
+    & "$buildRoot/$profile/pil.exe" --write-loop "$buildRoot/programs/loop.bin"
     if ($LASTEXITCODE -ne 0) { throw 'loop image generation failed' }
-    Write-Output "Built $buildRoot/$profile/pil-proof.exe and $buildRoot/programs/selftest.bin"
+    Write-Output "Built $buildRoot/$profile/pil.exe and $buildRoot/programs/selftest.bin"
 } finally { Pop-Location }

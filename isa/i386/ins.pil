@@ -1,0 +1,18 @@
+# INS (6C/6D): read an open-bus port value (all ones) into ES:[DI/EDI] and
+# advance DI/EDI by DF. Segment overrides do not change the ES destination.
+read_gpr port 2 16
+check_io port $BYTES
+read_flag backward DF
+const step $A $BYTES
+const zero $A 0
+sub backwards zero step
+select stride backward backwards step
+read_gpr di 7 $A
+const zero_val $W 0
+not element zero_val
+zext destination di 32
+store_segment 0 destination element
+add new_di di stride
+write_gpr 7 new_di
+preserve_flags all
+retire

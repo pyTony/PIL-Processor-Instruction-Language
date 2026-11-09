@@ -1,22 +1,39 @@
-# PIL 386 debugger
+# PIL 0.36.0-alpha.1 runtime
 
-## 0.35: DOS compatibility providers and desktop debugger
 
-Existing DOS service contracts now use a host output-provider boundary. An
-optional debugger window drives the existing Rust engine through structured
-snapshots, with separate guest output and command channels.
+This runtime comes from merged dev commit `29a78e8` and includes the guarded
+block and unchanged-code-page upgrades. See [release notes](docs/RELEASE_NOTES.md).
+Program-specific shadow loading and the standalone native compiler are excluded.
 
-```sh
-sh tools/build.sh --release
-python tools/pil_debugger.py
+Build on Windows with `cargo build --release --locked`. The DOS frontend is
+`python tools/dos_terminal.py`; `PILdos.vbs` and `PILdos.sh` provide shortcuts.
+The original demo programs are in `programs/dos/`. Personal `DriveD`, writable
+`drives`, shadow outputs, and `images/FD14LITE.img` are local data, not included.
+Reuse your existing image and drives by passing their full paths, for example:
+
+```powershell
+python tools/dos_terminal.py --engine target/release/pil.exe --country 358 --mount C:\Users\admin\PIL-Processor-Instruction-Language\driveD --args '/K D:\AUTOEXEC.BAT' C:\Users\admin\PIL-Processor-Instruction-Language\images\FD14LITE.img::COMMAND.COM
 ```
 
-On Windows build with `.\tools\build.ps1 -Release`, then run the same Python
-command. Python3.10+ with Tk and a graphical desktop is needed for the window;
-the Rust CLI and batch probe still work without Python/Tk. Use `--engine PATH`
-for a custom build directory. The GUI currently loads monitor demos/raw binaries;
-COM/MZ remains a batch DOS probe. See the desktop-debugger section of the guide.
+## 0.35: Unsigned division (DIV) and foundational BIOS / DOS service shims
 
+### Unsigned Division (DIV F6/F7 /6)
+- Supported at all operand widths (8-bit, 16-bit, and 32-bit with 66h prefix) for both register and memory addressing modes.
+- PIL tokens expanded with binary `div` and `rem` operations.
+- Exact divide-by-zero and quotient-overflow bounds checking.
+- Undefined arithmetic flags (CF, OF, SF, ZF, AF, PF) follow Intel SDM classification.
+
+### Expanded DOS / BIOS probe services
+- **BIOS Video (INT 10h):** Added AH=08h (read character and attribute) and AH=03h (read cursor position and scanlines).
+- **BIOS Equipment & Memory (INT 11h, INT 12h):** Returns standard PC equipment list word with pointing device flag, and 640 KB conventional memory size.
+- **BIOS System Timer (INT 1Ah):** Added AH=00h deterministic monotonically advancing tick counter synchronized with BDA `0x046C` and midnight rollover `0x0470` (`1,573,040` ticks/day).
+- **DOS File API (INT 21h):** Added bounded path/mode-validated failure shim for AH=3Dh (validates access mode `0..=2` and readable ASCIIZ path at `DS:DX` before returning `CF=1, AX=0x0002`/`0x0003`) and PSP-tracked handle close for AH=3Eh (tracks standard handles `0..=4` in `PSP:0018..002B`, returning `CF=1, AX=0x0006` on invalid or already-closed handles).
+- **Probe report interpretation:** Clean probe exits increased from 11 to 14 under these bounded shim contracts, FreeCOM shells advance past timer/handle initialization loops, and `MEMSTAT` computes and displays formatted decimal output.
+
+### Interactive Debugger & GUI Enhancements
+- **PIL token stepping (`pilstep` / `ps` / `Step PIL F8`):** Step individual PIL tokens within the current guest instruction, inspecting live intermediate values and staged effects before atomic retirement.
+- **Affected memory cell highlighting:** Resolves and highlights the exact memory cell (`1`, `2`, `4`, or `6` bytes) read or written by the instruction in both hex and ASCII columns, displaying width-matched hex, decimal, raw bytes, and character representations.
+- **Container browser & bounded `.hex` loader:** Non-blocking background browsing/probing of `.img`/`.ima`/`.zip` containers and early-bounded `.hex` and `.bin` program loading.
 
 ## 0.34: DOS character output, switch query and LES
 
@@ -27,7 +44,7 @@ faults. Reports print the runtime version and per-program step budget.
 BIOS screen reads, CPU interrupt delivery, protected-mode pointer loads and
 execution outside the loaded-image fetch window remain separate work.
 
-[Windows/Linux verification](https://github.com/pyTony/pil_proof/actions/runs/40624671136)
+[Windows/Linux verification](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions/runs/40624671136)
 passed328 Rust tests,199 full-state cases and standalone/package/Mandelbrot checks.
 
 
@@ -40,12 +57,12 @@ ordinary RAM and registers through the shared PIL transaction, including
 explicit LOCK memory forms. MMIO and concurrent bus masters remain unmodeled.
 
 This is a runtime-only delivery. Automated tests and CI live on the
-[dev branch](https://github.com/pyTony/pil_proof/tree/dev). `cargo test` here
+[dev branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/dev). `cargo test` here
 intentionally runs zero tests; see [automated verification](#automated-verification).
 
 ## Documentation
 
-[Complete documentation overview](https://github.com/pyTony/pil_proof/blob/dev/docs/README.md)
+[Complete documentation overview](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/README.md)
 provides the map to all language, design, verification and planning documents.
 
 | Read this | What it covers |
@@ -76,12 +93,12 @@ provides the map to all language, design, verification and planning documents.
 After a release build, start it directly in PowerShell:
 
 ```powershell
-.\target\release\pil-proof.exe --repl
+.\target\release\pil.exe --repl
 ```
 
 If you built with `$env:CARGO_TARGET_DIR = "target/windows"`, use
-`.\target\windows\release\pil-proof.exe --repl` instead. Linux/Termux:
-`./target/release/pil-proof --repl`. For a debug build, replace `release` with
+`.\target\windows\release\pil.exe --repl` instead. Linux/Termux:
+`./target/release/pil --repl`. For a debug build, replace `release` with
 `debug`. These commands start the existing binary without rebuilding.
 
 At the `pil>` prompt, enter one command per line:
@@ -164,7 +181,7 @@ and [references and credits](docs/REFERENCES_AND_CREDITS.md).
 
 This branch contains the portable build/run source, descriptions embedded in
 the binary, helper scripts, sample program and user documentation. Development
-is maintained on [dev](https://github.com/pyTony/pil_proof/tree/dev).
+is maintained on [dev](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/dev).
 
 No external Cargo dependencies are required. Host builds use Rust's standard
 library. A Termux build runs on the phone; Linux/Windows desktop executables
@@ -246,8 +263,8 @@ sh tools/bench.sh 10000 5
 Windows: `./tools/bench.ps1 -Iterations 10000 -Samples 5`.
 The report identifies build profile, version and host OS/architecture. Compare
 runs on the same host/profile; CPU scheduling and phone power state affect time.
-`pil-proof --numeric-test` runs small automatic correctness checks.
-`pil-proof --stress 100` runs the factorial stress test from the shell.
+`pil --numeric-test` runs small automatic correctness checks.
+`pil --stress 100` runs the factorial stress test from the shell.
 
 The build also writes factorials.bin and loop.bin in target/programs. Their
 instruction listings are in programs/. Native archives include those binaries
@@ -309,7 +326,7 @@ build profile. These are host wall-time results, not 386 clock cycles.
 ## Alpha: compiled Rust backend proof
 
 See [feature matrix](docs/FEATURE_MATRIX.md) for the supported, partial and planned
-areas in 0.35.0-alpha.1. This is an alpha of the host execution proof, not an OS
+areas in 0.34.0-alpha.1. This is an alpha of the host execution proof, not an OS
 boot release or ESP32 firmware.
 
 From a source checkout, build in release mode and compare the engines:
@@ -348,7 +365,7 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Verifier and direct PC baseline
 
-`pil-proof --verify-backends` runs the 39-case compiled-Rust/interpreter
+`pil --verify-backends` runs the 39-case compiled-Rust/interpreter
 trace verifier without timing samples. `--compare-backends` must pass that
 verifier before it starts either backend's measured comparison. A mismatch or
 compiler error returns a nonzero exit status.
@@ -579,8 +596,8 @@ validation. The interpreter and generated runner execute the same tokens.
 
 This is a runtime-only source delivery. `cargo test` here intentionally runs no
 development tests. The automated suite and Windows/Linux CI live on the
-[dev branch](https://github.com/pyTony/pil_proof/tree/dev) and the
-[Actions page](https://github.com/pyTony/pil_proof/actions). CI checks both the
+[dev branch](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/dev) and the
+[Actions page](https://github.com/pyTony/PIL-Processor-Instruction-Language/actions). CI checks both the
 full development suite and an isolated runtime export. DELIVERY.json identifies
 the development source revision used for this delivery.
 

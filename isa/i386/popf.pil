@@ -1,6 +1,29 @@
-# Real-mode subset: restore writable 386 bits, preserve RF/VM and reserved state.
+# Restore writable 386 bits, preserve RF/VM and reserved state. In
+# protected mode IOPL changes only at CPL 0 and IF only where CPL is at most
+# IOPL; elsewhere they keep their values without a fault, as on the 386.
+# Real mode counts as CPL 0. In virtual-8086 mode (CPL 3) POPF needs
+# IOPL 3, else #GP(0); there it changes IF but not IOPL.
 require_width 16_or_32
-require_real_mode
+read_flags entry
+bit vm entry 17
+not no_vm vm
+bit v86_iopl0 entry 12
+bit v86_iopl1 entry 13
+and v86_iopl3 v86_iopl0 v86_iopl1
+or iopl_allowed no_vm v86_iopl3
+raise_unless iopl_allowed 13
+read_cpl cpl
+zero ring0 cpl
+read_flag iopl_low IOPL0
+read_flag iopl_high IOPL1
+zext iopl_low8 iopl_low 8
+zext iopl_high8 iopl_high 8
+const one 8 1
+shl iopl_high_shifted iopl_high8 one
+or iopl iopl_low8 iopl_high_shifted
+ult if_locked iopl cpl
+not if_writable if_locked
+const yes 1 1
 read_gpr old_sp 4 $S
 zext offset old_sp 32
 load_segment packed 2 offset $W
@@ -20,15 +43,15 @@ flag SF f7
 bit f8 packed 8
 flag TF f8
 bit f9 packed 9
-flag IF f9
+flag_if IF f9 yes if_writable
 bit f10 packed 10
 flag DF f10
 bit f11 packed 11
 flag OF f11
 bit f12 packed 12
-flag IOPL0 f12
+flag_if IOPL0 f12 yes ring0
 bit f13 packed 13
-flag IOPL1 f13
+flag_if IOPL1 f13 yes ring0
 bit f14 packed 14
 flag NT f14
 retire

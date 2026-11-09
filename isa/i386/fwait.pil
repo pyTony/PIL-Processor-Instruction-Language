@@ -1,0 +1,11 @@
+# FWAIT/WAIT with no coprocessor attached: nothing to wait for, so it retires
+# like NOP. With CR0.TS and CR0.MP both set the 386 raises #NM (device not
+# available); that exception is not modelled yet, so the step stops instead.
+read_msw status
+bit ts status 3
+bit mp status 1
+and both ts mp
+not clear both
+require clear
+preserve_flags all
+retire

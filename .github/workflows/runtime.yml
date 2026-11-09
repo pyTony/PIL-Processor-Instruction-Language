@@ -1,0 +1,22 @@
+name: Runtime checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  runtime:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: cargo run --release --locked -- --selftest
+      - run: cargo run --release --locked -- --verify-backends
+      - run: python tools/dos_terminal.py --help
+      - run: python tools/pil_debugger.py --help

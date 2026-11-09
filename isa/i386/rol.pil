@@ -7,12 +7,9 @@ const turn_mask $W $SIGN
 and turns count turn_mask
 const width $W $W
 sub complement width turns
-const one $W 1
 const yes 1 1
 zero is_zero count
 not active is_zero
-xor count_minus_one count one
-zero single count_minus_one
 shl left a turns
 lshr right a complement
 or r left right
@@ -21,6 +18,6 @@ bit top r $SIGN
 xor of top cf
 write dst r
 flag_if CF cf yes active
-flag_if OF of single active
+flag_if OF of yes active
 preserve_flags remaining
 retire
