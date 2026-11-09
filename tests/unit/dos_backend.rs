@@ -1,6 +1,31 @@
 use super::*;
 use crate::host_io::Output;
 
+#[test]
+fn unsupported_native_sites_skip_hooks_and_preserve_lazy_interpreter_state(){
+    struct Unavailable;
+    impl InstructionBackend for Unavailable{
+        fn may_block(&mut self,_:&ProgramIdentity,_:&Image,_:&Ram,_:u32)->bool{false}
+        fn may_execute(&mut self,_:&ProgramIdentity,_:&Image,_:&Ram,_:u32)->bool{false}
+        fn block(&mut self,_:&ProgramIdentity,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,_:usize)->Option<(usize,Result<(),crate::ExecError>)>{panic!("unavailable native block must not run")}
+        fn execute(&mut self,_:&ProgramIdentity,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::ExecError>>{panic!("unavailable native instruction must not run")}
+    }
+    let bytes=[0xb9,32,0,0xb8,0,0,0x83,0xc0,1,0xe2,0xfb,0xb8,0,0x4c,0xcd,0x21];
+    let mut a=load(&bytes,"LAZY.COM").unwrap();let mut b=a.clone();let mut backend=Unavailable;
+    for budget in [1,2,4,17,23].into_iter().cycle().take(40){
+        let mut x=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let mut y=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let left=run_with_backend(a,budget,&mut x,None).unwrap();
+        let right=run_with_backend(b,budget,&mut y,Some(&mut backend)).unwrap();
+        assert_eq!(left.loaded.cpu,right.loaded.cpu);assert_eq!(left.loaded.image,right.loaded.image);
+        assert_eq!(left.loaded.ram.bytes(),right.loaded.ram.bytes());assert_eq!(left.stop,right.stop);
+        assert_eq!(left.completed,right.completed);assert_eq!(x.bytes(),y.bytes());
+        if matches!(left.stop,Stop::Exit(0)){assert_eq!(left.loaded.cpu.regs[1],0);return;}
+        a=left.loaded;b=right.loaded;
+    }
+    panic!("fixture did not exit")
+}
+
 // Independent handwritten Rust workload using Dine's actual VGA controller
 // and memory-mapped latch operations. This is a comparison reference, not
 // generated guest code; the caption and keyboard path remain in the DOS run.

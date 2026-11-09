@@ -387,6 +387,10 @@ pub fn run_with_output(p:Loaded,budget:usize,output:&mut impl crate::host_io::Ou
 /// An optional executor for decoded PIL instructions. A miss falls back to the
 /// interpreter; DOS services and instruction retirement stay in the shared loop.
 pub(crate) trait InstructionBackend {
+    /// Conservative eligibility hints: false skips native dispatch without
+    /// forcing pending interpreter flags. True still requires normal guards.
+    fn may_block(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
+    fn may_execute(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
     fn block_stats(&self)->(u64,u64){(0,0)}
     fn block(&mut self,_program:&ProgramIdentity,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,program:&ProgramIdentity,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
@@ -565,6 +569,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             Ok(None)|Err(_)=>{},
         }
         if let Some(b)=backend.as_deref_mut(){
+            if b.may_block(&p.active_program,&p.image,&p.ram,p.cpu.eip){
             // Multi-instruction execution is opt-in. Interrupt shadows and
             // installed timer handlers retain instruction-level scheduling.
             let mut machine=p.image.segment_state();
@@ -578,6 +583,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                     if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
                     if n>0{continue;}
                 }
+            }
             }
         }
         let decoded=match {let _span=crate::profile::span("decode_cache");p.cache.fetch(&p.image,&p.ram,p.cpu.eip)}{
@@ -614,8 +620,10 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             Operation::Pil{program,dst,src,flow,address}=>{
                 let mut machine=p.image.segment_state();
                 let native=if let Some(b)=backend.as_deref_mut(){
-                    lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                    b.execute(&p.active_program,&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
+                    if b.may_execute(&p.active_program,&p.image,&p.ram,p.cpu.eip){
+                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                        b.execute(&p.active_program,&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
+                    }else{None}
                 }else{None};
                 let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|())}};
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result

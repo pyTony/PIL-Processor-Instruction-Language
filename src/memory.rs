@@ -33,6 +33,29 @@ impl AccessFault {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Paging {pub directory:u32,pub user:bool}
 
+// Host cache metadata, never guest write protection. A page is trusted until
+// its first write after being watched, then permanently uses byte validation.
+#[derive(Clone,Copy,Debug)]
+pub(crate) struct CodeStamp {owner:u64,address:u32,bytes:usize,a20:bool}
+struct CodeWatch {owner:u64,pages:Vec<std::cell::Cell<u8>>}
+impl CodeWatch {
+    fn new(bytes:usize)->Self{
+        static NEXT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
+        Self{owner:NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed),pages:(0..bytes.div_ceil(4096)).map(|_|std::cell::Cell::new(0)).collect()}
+    }
+    fn write(&self,start:usize,bytes:usize){
+        if bytes==0{return;}
+        for page in start/4096..=(start+bytes-1)/4096 {
+            if let Some(state)=self.pages.get(page){if state.get()==1{state.set(2);}}
+        }
+    }
+}
+impl Clone for CodeWatch {fn clone(&self)->Self{let mut copy=Self::new(0);copy.pages=self.pages.clone();copy}}
+// Cache bookkeeping is not architectural RAM state.
+impl PartialEq for CodeWatch {fn eq(&self,_:&Self)->bool{true}}
+impl Eq for CodeWatch {}
+impl std::fmt::Debug for CodeWatch {fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("CodeWatch")}}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ram {
     data:Vec<u8>,
@@ -46,13 +69,31 @@ pub struct Ram {
     /// not yet write: (physical byte, bits to OR). Reads see them at once;
     /// `settle` writes them, and every `&mut` method settles first.
     marks:std::cell::RefCell<Vec<(usize,u8)>>,
+    code_watch:CodeWatch,
 }
 /// Host-only alias of the four planes (plane n at PLANE_ALIAS + n*10000h),
 /// for BIOS services that write pixels without the graphics controller. Real-
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default()}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes)}}
+    fn code_pages(&self,address:u32,bytes:usize)->Option<std::ops::RangeInclusive<usize>>{
+        if bytes==0{return None;}
+        self.contiguous_slice(address,bytes)?;
+        let start=self.physical_address(address)as usize;let end=start+bytes;
+        if self.planar.is_some()&&start<0xb0000&&end>0xa0000{return None;}
+        Some(start/4096..=(end-1)/4096)
+    }
+    pub(crate) fn watch_code(&self,address:u32,bytes:usize)->Option<CodeStamp>{
+        let pages=self.code_pages(address,bytes)?;
+        if pages.clone().any(|i|self.code_watch.pages[i].get()==2){return None;}
+        for i in pages{self.code_watch.pages[i].set(1);}
+        Some(CodeStamp{owner:self.code_watch.owner,address,bytes,a20:self.a20_enabled})
+    }
+    pub(crate) fn code_unchanged(&self,stamp:CodeStamp,address:u32,bytes:usize)->bool{
+        stamp.owner==self.code_watch.owner&&stamp.address==address&&stamp.bytes==bytes&&stamp.a20==self.a20_enabled&&
+            self.code_pages(address,bytes).is_some_and(|mut pages|pages.all(|i|self.code_watch.pages[i].get()==1))
+    }
     /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
     /// modelled: every access walks the tables as they are in memory.
     pub fn set_paging(&mut self,paging:Option<Paging>){self.settle();self.paging.set(paging);}
@@ -75,7 +116,7 @@ impl Ram {
         result
     }
     /// Writes the accessed and dirty bits that walks have marked.
-    pub fn settle(&mut self){for (at,bits) in self.marks.get_mut().drain(..){if let Some(b)=self.data.get_mut(at){*b|=bits;}}}
+    pub fn settle(&mut self){for (at,bits) in self.marks.get_mut().drain(..){if let Some(b)=self.data.get_mut(at){self.code_watch.write(at,1);*b|=bits;}}}
     fn byte(&self,index:usize)->u8{
         let mut b=self.data[index];
         for &(at,bits) in self.marks.borrow().iter(){if at==index{b|=bits;}}
@@ -224,7 +265,7 @@ impl Ram {
         if self.paging.get().is_some(){
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
-                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>self.data[index]=byte}
+                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
             }
             self.settle();
             return Ok(());
@@ -236,7 +277,7 @@ impl Ram {
         }
         for shift in 0..bytes {
             let index=self.physical_address(address+shift as u32)as usize;let byte=(value>>(shift*8)) as u8;
-            match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>self.data[index]=byte}
+            match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
         }
         Ok(())
     }
@@ -245,11 +286,11 @@ impl Ram {
         self.settle();
         self.check_bus(address,data.len(),true)?;
         if self.paging.get().is_some(){
-            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;self.data[index]=b;}
+            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;self.code_watch.write(index,1);self.data[index]=b;}
             self.settle();
             return Ok(());
         }
-        let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.data[start..start+chunk].copy_from_slice(&data[done..done+chunk]);done+=chunk;}Ok(())
+        let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.code_watch.write(start,chunk);self.data[start..start+chunk].copy_from_slice(&data[done..done+chunk]);done+=chunk;}Ok(())
     }
 }
 
