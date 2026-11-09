@@ -5,6 +5,11 @@ pub fn fault(eip:u32,error:ExecError)->[u32;5] {
         ExecError::GeneralProtection{eip,error_code}=>[4,eip,error_code as u32,0,0],
         ExecError::StackSegment{eip,error_code}=>[5,eip,error_code as u32,0,0],
         ExecError::MemoryAccess{eip,address,bytes,write}=>[6,eip,address,bytes as u32,u32::from(write)],
+        ExecError::UnsupportedControl{eip,register,value}=>[11,eip,register as u32,value,0],
+        ExecError::Exception{eip,vector}=>[12,eip,u32::from(vector),0,0],
+        ExecError::PageFault{eip,address,error_code}=>[13,eip,address,u32::from(error_code),0],
+        ExecError::SegmentNotPresent{eip,error_code}=>[14,eip,u32::from(error_code),0,0],
+        ExecError::InvalidTss{eip,error_code}=>[15,eip,u32::from(error_code),0,0],
         ExecError::InvalidBinding=>[8,eip,0,0,0],ExecError::InvalidContext=>[9,eip,0,0,0],
     }
 }
@@ -16,11 +21,15 @@ pub fn record_machine(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],fla
     let mut state=Vec::new();
     for (selector,cache) in machine.selectors.iter().zip(machine.segments){
         state.extend_from_slice(&selector.to_le_bytes());state.extend_from_slice(&cache.base.to_le_bytes());state.extend_from_slice(&cache.limit.to_le_bytes());
-        let access=match cache.access{super::address::SegmentAccess::Unusable=>0,super::address::SegmentAccess::Code{readable}=>1|(u8::from(readable)<<1),super::address::SegmentAccess::Data{writable,expand_down,big}=>4|(u8::from(writable)<<3)|(u8::from(expand_down)<<4)|(u8::from(big)<<5)};state.push(access);
+        let access=match cache.access{super::address::SegmentAccess::Unusable=>0,super::address::SegmentAccess::Code{readable,conforming,big,dpl}=>1|(u8::from(readable)<<1)|(u8::from(conforming)<<2)|(u8::from(big)<<5)|(dpl<<6),super::address::SegmentAccess::Data{writable,expand_down,big,dpl}=>4|(u8::from(writable)<<3)|(u8::from(expand_down)<<4)|(u8::from(big)<<5)|(dpl<<6)};state.push(access);
     }
     state.extend_from_slice(&[u8::from(machine.real_mode),machine.ss_shadow,machine.sti_shadow]);
     state.push(u8::from(machine.flag_checkpoint.is_some()));let (ip,f,u)=machine.flag_checkpoint.unwrap_or((0,0,0));for n in [ip,f,u]{state.extend_from_slice(&n.to_le_bytes());}
     state.extend_from_slice(&machine.msw.to_le_bytes());
+    for (limit,base) in machine.tables {state.extend_from_slice(&limit.to_le_bytes());state.extend_from_slice(&base.to_le_bytes());}
+    for value in machine.controls {state.extend_from_slice(&value.to_le_bytes());}
+    for t in machine.ldt_tr {state.extend_from_slice(&t.selector.to_le_bytes());state.extend_from_slice(&t.base.to_le_bytes());state.extend_from_slice(&t.limit.to_le_bytes());state.push(t.kind);}
+    state.push(u8::from(machine.paging));
     record_state(out,case,status,regs,flags,undefined,eip,ram,rx,tx,&state);
 }
 fn record_state(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],flags:u32,undefined:u32,eip:u32,ram:&[u8],rx:&[u8],tx:&[u8],state:&[u8]){

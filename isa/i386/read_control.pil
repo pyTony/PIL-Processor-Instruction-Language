@@ -1,0 +1,11 @@
+# 80386 control moves always transfer 32 bits; arithmetic flags undefined.
+require_width 32
+read_control result $CR
+write dst result
+undef_flag CF
+undef_flag PF
+undef_flag AF
+undef_flag ZF
+undef_flag SF
+undef_flag OF
+retire

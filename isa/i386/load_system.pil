@@ -1,0 +1,10 @@
+# LLDT and LTR: CPL 0 in protected mode. address.rs checks the descriptor
+# in the GDT (an LDT for LLDT, an available TSS for LTR, present, #GP or
+# #NP with the selector otherwise); LTR stages the TSS's busy bit. A null
+# selector empties LDTR, and LTR faults on it.
+require_protected_mode
+require_ring0
+$INPUT
+load_system $WHICH selector
+preserve_flags all
+retire

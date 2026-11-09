@@ -1,9 +1,10 @@
-# Read through old SS and update SP using the old stack-address width.
+# Read through old SS and update SP using the old stack-address width. Only the
+# selector word is read, also for a 32-bit pop (the 386 reads no upper half, so
+# SP=FFFEh does not fault).
 require_width 16_or_32
 read_gpr old_sp 4 $S
 zext offset old_sp 32
-load data offset $W
-trunc selector data 16
+load selector offset 16
 write_segment $SEG selector
 const step $S $BYTES
 add new_sp old_sp step

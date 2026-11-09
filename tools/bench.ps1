@@ -6,6 +6,6 @@ try {
     $buildRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
     $benchArgs = @('--bench', $Iterations, $Samples)
     if ($Uncached) { $benchArgs += '--uncached' }
-    & "$buildRoot/release/pil-proof.exe" @benchArgs
+    & "$buildRoot/release/pil.exe" @benchArgs
     if ($LASTEXITCODE -ne 0) { throw 'benchmark failed' }
 } finally { Pop-Location }

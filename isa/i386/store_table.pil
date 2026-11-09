@@ -1,0 +1,15 @@
+# SGDT and SIDT: store the limit word, then the base dword. Any privilege
+# level, real mode included. With a 16-bit operand Intel leaves the top
+# byte of the stored base undefined; this profile stores all 32 bits, as
+# Bochs does for the 386.
+require_width 16_or_32
+read_address pointer
+zext span pointer 64
+check_segment $SEG span 6
+read_table limit base $TABLE
+store pointer limit
+const two 32 2
+add base_at pointer two
+store base_at base
+preserve_flags all
+retire

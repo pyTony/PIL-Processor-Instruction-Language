@@ -1,0 +1,10 @@
+# IN AL/AX/EAX from a port with no device behind it: the open bus reads all
+# ones, as SingleStepTests/80386 records. Upper register bits and flags stay.
+# In protected mode above IOPL the TSS I/O bitmap must allow the port.
+$IO_PORT
+check_io port $BYTES
+const zero $W 0
+not ones zero
+write dst ones
+preserve_flags all
+retire

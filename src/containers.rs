@@ -61,19 +61,21 @@ fn zip(data:&[u8])->Result<Archive,String>{
         let payload=local.checked_add(30+ln+le).ok_or("ZIP local offset overflow")?;
         if payload.checked_add(compressed).is_none_or(|end|end>start){return Err("ZIP payload crosses directory boundary".into());}
         let input=range(data,payload,compressed)?;
-        let bytes=match method{0=>{if compressed!=size{return Err("ZIP stored-size mismatch".into());}input.to_vec()},8=>super::inflate::decode(input,size)?,_=>return Err(format!("ZIP compression method{method} is unsupported (use stored/deflate)"))};
+        let bytes=match method{0=>{if compressed!=size{return Err("ZIP stored-size mismatch".into());}input.to_vec()},8=>super::inflate::decode(input,size)?,_=>return Err(format!("ZIP compression method {method} is unsupported (use stored/deflate)"))};
         if crc32(&bytes)!=crc{return Err(format!("ZIP CRC32 mismatch: {name}"));}archive.add(name,bytes)?;
     }
     if at!=eocd{return Err("ZIP central directory size mismatch".into());}Ok(archive)
 }
-struct Fat<'a>{data:&'a[u8],fat:&'a[u8],cluster_base:usize,unit:usize,clusters:usize,dirs:BTreeSet<usize>,archive:Archive}
+struct Fat<'a>{data:&'a[u8],fat:&'a[u8],cluster_base:usize,unit:usize,clusters:usize,fat16:bool,dirs:BTreeSet<usize>,archive:Archive}
 impl Fat<'_>{
     fn chain(&self,mut c:usize)->Result<Vec<u8>,String>{
         let mut seen=BTreeSet::new();let mut out=Vec::new();
-        while c<0xfff8{
+        let eoc=if self.fat16{0xfff8}else{0xff8};
+        while c<eoc{
             if c<2||c>=self.clusters+2||!seen.insert(c){return Err("invalid/looped FAT16 cluster chain".into());}
             if out.len()+self.unit>MAX_ENTRY{return Err("FAT16 chain exceeds entry limit".into());}
-            out.extend_from_slice(range(self.data,self.cluster_base+(c-2)*self.unit,self.unit)?);c=usize::from(u16(self.fat,c*2)?);
+            out.extend_from_slice(range(self.data,self.cluster_base+(c-2)*self.unit,self.unit)?);
+            c=if self.fat16{usize::from(u16(self.fat,c*2)?)}else{let w=u16(self.fat,c+c/2)?;usize::from(if c&1!=0{w>>4}else{w&0x0fff})};
         }Ok(out)
     }
     fn walk(&mut self,raw:&[u8],prefix:&str,depth:usize)->Result<(),String>{
@@ -96,17 +98,21 @@ impl Fat<'_>{
         }Ok(())
     }
 }
-fn fat16(data:&[u8])->Result<Archive,String>{
-    if range(data,510,2)?!=b"\x55\xaa"{return Err("image has no DOS boot signature".into());}
+/// A FAT12 or FAT16 volume's metadata: the walker over its clusters, the root
+/// directory span and the volume's offset in the image.
+fn fat_volume(data:&[u8])->Result<(Fat<'_>,usize,usize,usize),String>{
+    let superfloppy=u16(data,11)?==512&&u16(data,17)?!=0&&u16(data,22)?!=0;
+    let floppy_bpb=superfloppy&&matches!(data.first(),Some(0xeb|0xe9))&&matches!(data.get(21),Some(0xf0|0xf8..=0xff));
+    if range(data,510,2)?!=b"\x55\xaa"&&!floppy_bpb{return Err("image has no DOS boot signature".into());}
     let mut base=0;let mut partition_end=data.len();
-    // A valid FAT16 superfloppy BPB has no partition table requirement.
-    if u16(data,11)?!=512||u16(data,17)?==0||u16(data,22)?==0{
+    // A valid FAT12/FAT16 superfloppy BPB has no partition table requirement.
+    if !superfloppy{
         let mut found=None;
-        for i in 0..4{let e=range(data,446+i*16,16)?;if matches!(e[4],4|6|0x0e){let start=(u32(e,8)?as usize).checked_mul(512).ok_or("partition start overflow")?;let bytes=(u32(e,12)?as usize).checked_mul(512).ok_or("partition size overflow")?;found=Some((start,start.checked_add(bytes).ok_or("partition overflow")?));break;}}
-        let(s,end)=found.ok_or("no supported FAT16 partition;FAT12/FAT32/ISO are not implemented")?;base=s;partition_end=end;
+        for i in 0..4{let e=range(data,446+i*16,16)?;if matches!(e[4],1|4|6|0x0e){let start=(u32(e,8)?as usize).checked_mul(512).ok_or("partition start overflow")?;let bytes=(u32(e,12)?as usize).checked_mul(512).ok_or("partition size overflow")?;found=Some((start,start.checked_add(bytes).ok_or("partition overflow")?));break;}}
+        let(s,end)=found.ok_or("no supported FAT12/FAT16 partition;FAT32/ISO are not implemented")?;base=s;partition_end=end;
         if partition_end>data.len(){return Err("FAT16 partition extends beyond image".into());}
     }
-    let b=range(data,base,512)?;if b[510..512]!=[0x55,0xaa]||u16(b,11)?!=512{return Err("invalid FAT16 boot sector".into());}
+    let b=range(data,base,512)?;if (b[510..512]!=[0x55,0xaa]&&!floppy_bpb)||u16(b,11)?!=512{return Err("invalid FAT16 boot sector".into());}
     let unit=usize::from(b[13])*512;let reserved=usize::from(u16(b,14)?);let nf=usize::from(b[16]);let roots=usize::from(u16(b,17)?);let spf=usize::from(u16(b,22)?);
     let total=if u16(b,19)?==0{u32(b,32)?as usize}else{usize::from(u16(b,19)?)};
     if unit==0||!unit.is_power_of_two()||unit>65536||reserved==0||!(1..=2).contains(&nf)||roots==0||spf==0{return Err("invalid/unsupported FAT16 BPB".into());}
@@ -116,12 +122,59 @@ fn fat16(data:&[u8])->Result<Archive,String>{
     if nf==2&&fat!=range(data,fat_start+spf*512,spf*512)?{return Err("FAT16 copies disagree".into());}
     let root_start=fat_start+nf*spf*512;let root_bytes=((roots*32+511)/512)*512;let cluster_base=root_start+root_bytes;
     let clusters=volume_end.checked_sub(cluster_base).ok_or("FAT16 metadata exceeds volume")?/unit;
-    if !(4085..65525).contains(&clusters)||fat.len()/2<clusters+2{return Err("not a valid FAT16 cluster layout".into());}
-    let mut fs=Fat{data:range(data,0,volume_end)?,fat,cluster_base,unit,clusters,dirs:BTreeSet::new(),archive:Archive::new()};
-    fs.walk(range(data,root_start,roots*32)?,"",0)?;fs.archive.notes.push(format!("FAT16 volume atLBA{};{} files before package expansion",base/512,fs.archive.files.len()));Ok(fs.archive)
+    let fat16=if (1..4085).contains(&clusters)&&fat.len()>=((clusters+2)*3).div_ceil(2){false}
+        else if (4085..65525).contains(&clusters)&&fat.len()/2>=clusters+2{true}
+        else{return Err("not a valid FAT12/FAT16 cluster layout".into());};
+    Ok((Fat{data:range(data,0,volume_end)?,fat,cluster_base,unit,clusters,fat16,dirs:BTreeSet::new(),archive:Archive::new()},root_start,roots*32,base))
+}
+fn fat16(data:&[u8])->Result<Archive,String>{
+    let(mut fs,root_start,root_len,base)=fat_volume(data)?;
+    fs.walk(range(data,root_start,root_len)?,"",0)?;fs.archive.notes.push(format!("FAT16 volume at LBA {}; {} files before package expansion",base/512,fs.archive.files.len()));Ok(fs.archive)
+}
+/// One directory entry of a FAT volume as DOS returns it from a search.
+#[derive(Clone,Debug)]
+pub struct FatEntry{pub name:[u8;11],pub attr:u8,pub time:u16,pub date:u16,pub size:u32,pub node:FatNode}
+/// A subdirectory (index into `FatTree::dirs`) or a file (into `FatTree::files`).
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum FatNode{Dir(usize),File(usize)}
+/// A FAT16 volume's directories (the root first), file contents, volume
+/// label, cluster size in sectors and cluster count. `.` and `..` are left out.
+#[derive(Debug)]
+pub struct FatTree{pub dirs:Vec<Vec<FatEntry>>,pub files:Vec<std::sync::Arc<Vec<u8>>>,pub label:Option<[u8;11]>,pub sectors_per_cluster:u16,pub clusters:u16}
+pub fn fat16_tree(data:&[u8])->Result<FatTree,String>{
+    let(fs,root_start,root_len,_)=fat_volume(data)?;
+    let mut tree=FatTree{dirs:Vec::new(),files:Vec::new(),label:None,sectors_per_cluster:(fs.unit/512)as u16,clusters:fs.clusters.min(0xffff)as u16};
+    let(mut pending,mut seen,mut total)=(vec![(range(data,root_start,root_len)?.to_vec(),0usize)],BTreeSet::new(),0usize);
+    tree.dirs.push(Vec::new());
+    while let Some((raw,index))=pending.pop(){
+        for e in raw.chunks_exact(32){
+            if e[0]==0{break;}if e[0]==0xe5||e[11]&0x0f==0x0f{continue;}
+            let mut name=[0u8;11];name.copy_from_slice(&e[..11]);if name[0]==5{name[0]=0xe5;}
+            if e[11]&8!=0{if index==0&&tree.label.is_none(){tree.label=Some(name);}continue;}
+            if name[0]==b'.'{continue;}
+            let(attr,time,date,cluster,size)=(e[11],u16(e,22)?,u16(e,24)?,usize::from(u16(e,26)?),u32(e,28)?);
+            let node=if attr&16!=0{
+                if tree.dirs.len()>=MAX_FILES||!seen.insert(cluster){return Err("FAT16 directory loop/count limit".into());}
+                tree.dirs.push(Vec::new());pending.push((fs.chain(cluster)?,tree.dirs.len()-1));FatNode::Dir(tree.dirs.len()-1)
+            }else{
+                if size as usize>MAX_ENTRY||tree.files.len()>=MAX_FILES{return Err("FAT16 file exceeds entry/count limit".into());}
+                let mut bytes=if cluster==0&&size==0{Vec::new()}else{fs.chain(cluster)?};
+                if bytes.len()<size as usize{return Err("FAT16 chain shorter than directory size".into());}bytes.truncate(size as usize);
+                total+=bytes.len();if total>MAX_TOTAL{return Err("FAT16 volume exceeds total size limit".into());}
+                tree.files.push(std::sync::Arc::new(bytes));FatNode::File(tree.files.len()-1)
+            };
+            tree.dirs[index].push(FatEntry{name,attr,time,date,size:if attr&16!=0{0}else{size},node});
+        }
+    }
+    Ok(tree)
+}
+/// Reads an image file whole, within the container input limit.
+pub fn read_image(path:&Path)->Result<Vec<u8>,String>{
+    let file=std::fs::File::open(path).map_err(|e|e.to_string())?;let mut data=Vec::new();file.take((MAX_INPUT+1)as u64).read_to_end(&mut data).map_err(|e|e.to_string())?;
+    if data.len()>MAX_INPUT{return Err("container exceeds 64 MiB input limit".into());}Ok(data)
 }
 pub fn parse(data:&[u8],is_zip:bool)->Result<Archive,String>{
-    if data.len()>MAX_INPUT{return Err("container exceeds64MiB input limit".into());}
+    if data.len()>MAX_INPUT{return Err("container exceeds 64 MiB input limit".into());}
     let mut archive=if is_zip{zip(data)?}else{fat16(data)?};
     // Exactly one nested package level. Keep original ZIP bytes as well.
     let originals=archive.files.len();
@@ -139,11 +192,26 @@ pub fn open(path:&Path)->Result<Option<Archive>,String>{
     parse(&data,ext=="zip").map(Some)
 }
 pub fn executable(path:&str)->bool{let lower=path.to_ascii_lowercase();lower.ends_with(".com")||lower.ends_with(".exe")}
-pub fn listing(path:&Path)->Result<String,String>{
+pub fn split_container_path(path:&str)->Option<(&str,&str)>{
+    let mut parts=path.splitn(2,"::");
+    let container=parts.next()?;let inner=parts.next()?;
+    if inner.is_empty(){return None;}Some((container,inner))
+}
+pub fn read_entry(container:&Path,inner_path:&str)->Result<Vec<u8>,String>{
+    let a=open(container)?.ok_or("use .img/.ima FAT16 image or .zip archive")?;
+    let target=safe_name(inner_path)?;
+    for e in a.files{
+        if e.path.eq_ignore_ascii_case(&target){return Ok(e.bytes);}
+    }
+    Err(format!("file not found in container: {inner_path}"))
+}
+pub fn listing(path:&Path)->Result<String,String>{listing_filtered(path,true)}
+pub fn listing_all(path:&Path)->Result<String,String>{listing_filtered(path,false)}
+fn listing_filtered(path:&Path,exec_only:bool)->Result<String,String>{
     let a=open(path)?.ok_or("use .img/.ima FAT16 image or .zip archive")?;let mut s=String::new();
     for n in &a.notes{writeln!(s,"NOTE {n}").unwrap();}
     writeln!(s,"CONTAINER {}: {} files, {} executable candidates",path.display(),a.files.len(),a.files.iter().filter(|e|executable(&e.path)).count()).unwrap();
-    for e in &a.files{if executable(&e.path){writeln!(s,"{:>9} {}",e.bytes.len(),e.path).unwrap();}}Ok(s)
+    for e in &a.files{if !exec_only||executable(&e.path){writeln!(s,"{:>9} {}",e.bytes.len(),e.path).unwrap();}}Ok(s)
 }
 pub fn extract(path:&Path,destination:&Path)->Result<String,String>{
     let a=open(path)?.ok_or("use .img/.ima FAT16 image or .zip archive")?;
@@ -153,4 +221,52 @@ pub fn extract(path:&Path,destination:&Path)->Result<String,String>{
     for e in &a.files{let target=destination.join(&e.path);if let Some(parent)=target.parent(){std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
         use std::io::Write;let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&target).map_err(|e|e.to_string())?;file.write_all(&e.bytes).map_err(|e|e.to_string())?;}
     let mut s=format!("Extracted {} files to {} (original paths;ZIP packages under .zip.contents)\n",a.files.len(),destination.display());for n in a.notes{writeln!(s,"NOTE {n}").unwrap();}Ok(s)
+}
+/// Copy the visible FAT directory tree to a new host directory for writable DOS access.
+/// This deliberately does not expand ZIP files or recreate disk-level metadata.
+pub fn extract_drive(path:&Path,destination:&Path)->Result<String,String>{
+    let data=read_image(path)?;
+    let tree=fat16_tree(&data)?;
+    let mut paths=Vec::new();
+    let mut seen=BTreeSet::new();
+    let mut pending=vec![(0usize,String::new())];
+    while let Some((index,prefix))=pending.pop(){
+        for entry in &tree.dirs[index]{
+            if !entry.name.is_ascii(){return Err("non-ASCII FAT short names cannot be copied to a host drive".into());}
+            let base=std::str::from_utf8(&entry.name[..8]).unwrap().trim_end();
+            let ext=std::str::from_utf8(&entry.name[8..]).unwrap().trim_end();
+            let name=if ext.is_empty(){base.to_string()}else{format!("{base}.{ext}")};
+            if name.contains('/')||name.contains('\\'){return Err("invalid FAT short name".into());}
+            let name=safe_name(&name)?;
+            let relative=if prefix.is_empty(){name}else{format!("{prefix}/{name}")};
+            safe_name(&relative)?;
+            if !seen.insert(relative.to_ascii_lowercase()){return Err(format!("duplicate/case-aliased FAT path: {relative}"));}
+            paths.push((relative.clone(),entry.node));
+            if let FatNode::Dir(child)=entry.node{pending.push((child,relative));}
+        }
+    }
+    // Parents precede children: entries are added before their directories are visited.
+    std::fs::create_dir(destination).map_err(|e|format!("drive import requires a new directory {}: {e}",destination.display()))?;
+    for (relative,node) in &paths{
+        let target=destination.join(relative);
+        let result=match node{
+            FatNode::Dir(_)=>std::fs::create_dir(&target),
+            FatNode::File(i)=>{
+                use std::io::Write;
+                std::fs::OpenOptions::new().write(true).create_new(true).open(&target).and_then(|mut f|f.write_all(&tree.files[*i]))
+            },
+        };
+        result.map_err(|e|format!("drive import failed at {}: {e}; the incomplete destination must be removed before retrying",target.display()))?;
+    }
+    Ok(format!("Copied FAT files to {} (original image unchanged)",destination.display()))
+}
+/// A stable host-folder name that distinguishes images with the same label.
+pub fn drive_image_name(path:&Path)->Result<String,String>{
+    let data=read_image(path)?;
+    let tree=fat16_tree(&data)?;
+    let label=tree.label.as_ref().and_then(|n|std::str::from_utf8(n).ok()).map(str::trim)
+        .filter(|s|!s.is_empty()).or_else(||path.file_stem().and_then(|s|s.to_str())).unwrap_or("disk");
+    let label:String=label.chars().take(32).map(|c|if c.is_ascii_alphanumeric()||c=='-'||c=='_'{c}else{'_'}).collect();
+    let label=if label.is_empty(){"disk"}else{&label};
+    Ok(format!("{label}-{:08x}",crc32(&data)))
 }

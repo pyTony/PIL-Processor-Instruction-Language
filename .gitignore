@@ -1,2 +1,10 @@
 /target/
 /images/
+/driveD/
+/DriveD/
+/drives/
+/shadow/
+/pildos.conf
+/PILdos-stops.jsonl
+__pycache__/
+*.py[cod]

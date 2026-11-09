@@ -1,11 +1,11 @@
 # PIL reference — implemented language
 
-[All PIL documentation](https://github.com/pyTony/pil_proof/blob/dev/docs/README.md)
+[All PIL documentation](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/README.md)
 
 This is the reference for the executable PIL grammar in the current repository,
 checked against the parser, interpreter and Rust emitter in
-[src/main.rs](https://github.com/pyTony/pil_proof/blob/dev/src/main.rs).
-The [original v0.1 proposal](https://github.com/pyTony/pil_proof/blob/dev/docs/design/processor_instruction_language_v01.md)
+[src/main.rs](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/src/main.rs).
+The [original v0.1 proposal](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/design/processor_instruction_language_v01.md)
 is a separate design document. Its architecture declarations, encoding DSL,
 effect graphs, helpers and restart checkpoints are not executable syntax.
 
@@ -50,6 +50,8 @@ from `conditions.pil` and `setcc.pil`/`jcc.pil`; no general `include` directive 
 | `sext out input WIDTH` | Equal-width copy or sign extension |
 | `trunc out input WIDTH` | Equal-width copy or narrowing |
 | `add/sub/mul/xor/and/or out left right` | Equal-width operands; result has that width |
+| `div out left right` | Unsigned integer division (`left / right`, yielding 0 if divisor is zero) |
+| `rem out left right` | Unsigned integer remainder (`left % right`, yielding 0 if divisor is zero) |
 | `not out input` | Bitwise complement at input width |
 | `shl/lshr/ashr out input count` | Total shift; count can have any valid bit-vector width |
 | `ult out left right` | Unsigned comparison of equal-width values; `bv<1>` result |
@@ -150,11 +152,13 @@ fetch or the fall-through limit. The monitor performs CS fetch checks separately
 |---|---|
 | `read_address out` | Caller-supplied address/offset as `bv<32>` |
 | `load out address WIDTH` | 8/16/32-bit little-endian RAM read; address must be `bv<32>` |
-| `store address input` | Stage an 8/16/32-bit RAM store (at most two), width inferred from input |
+| `store address input` | Stage an 8/16/32-bit RAM store (at most 33), width inferred from input |
+| `store_if address input predicate` | Same, only when the `bv<1>` predicate is one; otherwise no translation, write check or store |
 
 Any of these statements, including `read_address` alone, requires a RAM-capable
-execution API. Multiple loads are allowed, but at most two stores and no loads
-after that store. Checks occur in token order. A store checks permission before
+execution API. Multiple loads are allowed, with at most 33 stores. A plain `load`
+may not follow a store; a `load_segment` may, and sees the bytes of the stores
+staged before it (store forwarding). Checks occur in token order. A store checks permission before
 being staged and is published at retirement before infallible CPU-state commits.
 Later faults and overlap conflicts cancel the staged store and CPU effects.
 Unaligned RAM accesses are supported.
@@ -170,8 +174,11 @@ Multi-byte spans do not wrap at the offset limit; base+offset wraps to 32 bits.
 Segmentation failures report `GeneralProtection(0)` or `StackSegment(0)` at the
 source EIP. Invalid supplied bindings/cache context are caller errors.
 `MemoryAccess` reports EIP, address, byte count and direction for RAM bounds or
-host-defined read-only protection. It is not x86 page-fault delivery: no paging,
-CR2, descriptor loads or exception handlers are implemented. Device/MMIO side
+host-defined read-only protection. With CR0.PG set, RAM walks the 386 page
+tables on every access, and a missing or protected page is `PageFault` with
+the linear address and the 386 error code; the runner writes CR2 and
+delivers it through the IDT. A descriptor that is not present is
+`SegmentNotPresent` (#NP) with its selector as error code. Device/MMIO side
 effects, more than two stores, LOCK and REP checkpoints need a future effect contract;
 this staging model is not universal transactional rollback.
 
@@ -262,13 +269,58 @@ default with --emit-rust. The decoder substitutes the actual SS size/register.
 
 Register aliases FF /6 and 8F /0 share the same PUSH/POP descriptions.
 
-## Mutable real-mode segment state
+## Mutable segment state
 
 `read_segment out INDEX` snapshots a visible selector (ES,CS,SS,DS,FS,GS =0..5)
-as bv16. `write_segment INDEX value` stages one bv16 non-CS selector load,
-rebuilds its ordinary real-mode cache and commits with GPR/memory effects.
+as bv16. `write_segment INDEX value` stages one bv16 non-CS selector load and
+commits it with the GPR and memory effects. Both backends call the shared
+`SegmentState::load_segment` (src/address.rs):
+- In real mode only the base changes (selector * 16). The limit and
+  attributes stay, so limits loaded in protected mode survive the return to
+  real mode ("unreal mode"). CS gets the ordinary real-mode cache.
+- In protected mode the 8-byte GDT entry is read at GDTR base + index * 8 and
+  checked as the 386 does. A null selector loads into DS, ES, FS and GS (a
+  later access is #GP(0)); in SS or CS it is #GP(0). Data registers need a
+  data or readable code segment with RPL and CPL not above DPL (conforming
+  code excepted); SS needs a writable data segment with RPL = DPL = CPL. A
+  selector past its table's limit, a system descriptor or a TI=1 selector
+  with no LDT loaded is #GP(selector). TI=1 selectors read the LDT that LLDT
+  loaded; entry 0 of an LDT is an ordinary descriptor. Not present is #NP (vector 11), or #SS(selector)
+  for SS. The load stages one more byte store that sets the descriptor's
+  accessed bit.
 Use execute_machine / emitted execute_with_machine with SegmentState; contextless
-wrappers reject these tokens. Protected-mode loads are explicitly unsupported.
+wrappers reject these tokens.
+
+### Descriptor tables, LDTR and TR
+
+SegmentState holds `ldt_tr`: LDTR (0) and TR (1), each a visible selector
+with the hidden base, limit and descriptor type. Both are part of traces.
+- `read_table LIMIT BASE T` reads GDTR (0) or IDTR (1) as bv16 and bv32 for
+  SGDT and SIDT (isa/i386/store_table.pil). They store the limit word and then
+  the whole base dword, also with a 16-bit operand (Intel leaves the top byte
+  undefined; this follows Bochs). Any privilege level, real mode included.
+- `read_system OUT T` reads the LDTR (0) or TR (1) selector as bv16 for SLDT
+  and STR (store_system.pil). A 32-bit register gets it zero-extended; memory
+  gets a word.
+- `load_system T SELECTOR` stages LLDT (0) or LTR (1) through the shared
+  `SegmentState::load_system` (load_system.pil). The selector must name a GDT
+  entry: an LDT (type 2) for LLDT, an available TSS (type 1 or 9) for LTR.
+  Otherwise #GP(selector); not present is #NP. A null selector empties LDTR
+  and is #GP(0) for LTR. LTR stages one byte store that marks the TSS busy.
+- `read_descriptor RAW FOUND SELECTOR` reads the raw bv64 descriptor and a
+  bv1 that is 0 for a null selector or one past its table's limit (no
+  fault). `read_cpl OUT` gives the CPL as bv8. LAR, LSL, VERR and VERW check
+  the type and privilege in PIL with these (descriptor_rights.pil followed by
+  lar.pil, lsl.pil, verr.pil or verw.pil) and set only ZF. The present bit
+  is not checked.
+- `require_protected_mode` stops (InvalidContext) in real mode or V86 mode.
+  The decoder refuses the 0F00 group, LAR, LSL and ARPL in real mode, where
+  they are #UD.
+- ARPL (arpl.pil) is plain PIL; a memory destination is written with
+  `store_if` only when the RPL changes, as on the 386, so an unchanged
+  selector in a read-only segment does not fault.
+LLDT and LTR also use `require_ring0`, which is #GP(0) above CPL 0.
+
 MOV8C/8E supports register and word-memory transfers; operand-prefix66 does not
 widen memory accesses. MOV r32,Sreg is rejected pending legacy upper-half policy.
 POP ES/SS/DS/FS/GS reads through old SS using the original stack-address width,
@@ -282,6 +334,64 @@ use runtime caches and choose the stack-size variant at each stack instruction.
 References: Intel386 [MOV](https://pdos.csail.mit.edu/6.828/2012/readings/i386/MOV.htm),
 [POP](https://pdos.csail.mit.edu/6.828/2017/readings/i386/POP.htm),and
 [SS inhibition](https://pdos.csail.mit.edu/6.828/2004/readings/i386/s09_02.htm).
+
+## Privilege levels: far transfers, IOPL and I/O permission (increment 5)
+
+These tokens hand the descriptor and stack rules to the shared Rust in
+src/privilege.rs, which both backends embed. Each only reads and checks;
+the transfer it returns is applied when the instruction retires.
+- `far_jump SELECTOR OFFSET` (jmp_far.pil): a code segment at CPL
+  (conforming with DPL <= CPL, or nonconforming with RPL <= CPL and DPL =
+  CPL), or a 286/386 call gate (gate DPL >= CPL and >= RPL, present) to a
+  conforming segment or a nonconforming one at CPL. Otherwise
+  #GP(selector) or #NP(selector); an offset past the new limit is #GP(0).
+- `far_call SELECTOR OFFSET` (call_far.pil) must precede every effect. For
+  a code segment it stages CS and EIP and the description then pushes the
+  return address at the operand size. For a call gate it does the whole
+  transfer and ends the instruction: pushes at the gate's size, on the
+  current stack for a conforming target or one at CPL, else on the stack
+  for the target's DPL from the TSS, with the old SS and ESP and the gate's
+  parameter count of words or dwords copied from the old stack first.
+- `far_return SELECTOR OFFSET OUTER BYTES CLEANUP` (retf.pil,
+  iret_protected.pil): OUTER is the bv32 stack offset past the popped
+  frame and the RETF imm16, BYTES the slot size. The return CS must have
+  RPL >= CPL (conforming: DPL <= RPL; nonconforming: DPL = RPL). RPL = CPL
+  sets ESP to OUTER. RPL > CPL pops ESP and SS from OUTER (SS: writable
+  data, RPL and DPL equal to the new CPL, #GP(selector) or #SS(selector)),
+  adds CLEANUP to the new ESP, and nulls ES, DS, FS and GS where they hold
+  a data or nonconforming code segment more privileged than the new CPL.
+  It writes ESP itself, so the description may not. An optional sixth
+  operand, a bv1 (iret_protected.pil), asks for the return to
+  virtual-8086 mode: when it is 1 at CPL 0, ESP, SS, ES, DS, FS and GS are
+  popped as dwords from OUTER, every segment register gets its V86 cache
+  and EIP must be within FFFFh. The description sets VM itself
+  (`flag VM`).
+- `require_iopl` (CLI, STI): #GP(0) in protected mode when CPL > IOPL
+  (so in virtual-8086 mode, CPL 3, unless IOPL is 3).
+- `check_io PORT BYTES` (IN, OUT, INS, OUTS): in protected mode with CPL >
+  IOPL, and always in virtual-8086 mode, every port's bit in the 386 TSS
+  I/O bitmap must be clear; a 286 TSS or a bit past the TSS limit is
+  #GP(0).
+- POPF (popf.pil) changes IOPL only at CPL 0 and IF only where CPL <= IOPL,
+  without a fault, as IRET does. PUSHF and POPF work at any CPL; in
+  virtual-8086 mode they, and IRET (iret.pil), need IOPL 3 and are
+  otherwise #GP(0) (`raise_unless ... 13`).
+- HLT above CPL 0 decodes to `require_ring0`, so it is #GP(0).
+
+Virtual-8086 mode (increment 6) is protected mode with a V86 CS cache
+(`SegmentCache::v86`: base selector*16, limit FFFFh, DPL 3) and EFLAGS.VM
+set; `SegmentState::v86` reads it and CPL is 3. Segment loads make V86
+caches, far JMP/CALL/RETF and IRET behave as in real mode, the decoder
+treats ARPL, LAR, LSL and the 0F00 group as in real mode, and `flag VM` is
+the one PIL write of VM. INT n, INT3 and INTO need IOPL 3 (else #GP(0));
+interrupts and exceptions go through the IDT to a nonconforming ring 0
+handler only (else #GP(selector)), on the TSS ring 0 stack with GS, FS, DS
+and ES pushed before SS, ESP, EFLAGS, CS and EIP, and with those four
+registers nulled as VM clears (src/interrupt.rs).
+
+Descriptor tables, the TSS and an inner-level stack are read and written at
+supervisor level whatever the CPL (`Ram::as_level`, `Ram::store_as`). A
+segment load's accessed-bit store is still made at the current level.
 
 ## Direct-offset and immediate MOV forms (0.24)
 
@@ -297,7 +407,7 @@ operations;flags and markers remain intact and stores commit after checks.
 
 `load_segment out SEG offset WIDTH` and `store_segment SEG offset value` use
 explicit loaded caches per access (0..5 =ES,CS,SS,DS,FS,GS). Offsets are bv32;
-widths8/16/32;at most two ordered staged stores are allowed. Source reads precede the store and
+widths8/16/32;at most 33 ordered staged stores are allowed. Source reads precede the store and
 all effects of a faulting element remain uncommitted. Requires machine context.
 Named GPR reads/writes now also admit low8 values for AL string operations.
 
@@ -328,7 +438,10 @@ profiles;the decoder binds the actual profiles and source segment.
 
 `read_flags out` snapshots bv32 EFLAGS; `require_real_mode` requires supplied
 machine state with real_mode=true and VM clear, otherwise InvalidContext before
-commit. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
+commit. `require_ring0` requires CPL 0 (real mode, or protected mode with a
+CS cache of DPL 0): above it, V86 mode included, it is #GP(0).
+LGDT/LIDT, LLDT/LTR, MOV CRn and HLT use it; CLI and STI use `require_iopl`,
+and PUSHF, POPF and the far transfers follow the privilege rules above. `interrupt_shadow_if bv1` stages one STI-delay effect, set after full
 retirement when true. It cannot precede an early retire guard. Shadows are
 separate SS/STI state, included in full traces; partial REP and faults retain
 both, and full PIL, monitor-I/O and DOS-bridge retirements advance both.
@@ -390,9 +503,14 @@ Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/w
 an incoming segment cache without reading memory. OFFSET is bv64 to reject
 wraparound before narrowing to a32-bit address. SS violations use the existing
 StackSegment model error; it does not deliver a guest exception frame.
-`far_branch SELECTOR OFFSET` stages a real-mode CS cache/selector and EIP update.
-SELECTOR is bv16,OFFSET bv32; the new ordinary real-mode cache has limitFFFFh.
-The effect rejects protected/V86 contexts and offsets beyond that new limit.
+`far_branch SELECTOR OFFSET` stages a CS cache/selector and EIP update.
+SELECTOR is bv16,OFFSET bv32. In real mode the new cache is the ordinary one
+(limit FFFFh). In protected mode the code descriptor is read and checked by
+`load_segment` (same privilege only: a conforming segment with DPL <= CPL, or
+a non-conforming one with DPL = CPL and RPL <= CPL; the new selector's RPL is
+CPL). Gates, TSS descriptors and RPL above CPL (a return to an outer level)
+stop with InvalidContext, because they are not modelled yet. The effect
+loads a V86 cache in virtual-8086 mode; an offset beyond the new limit is #GP(0).
 It cannot mix with another segment update or branch. Changes commit at retire.
 
 Original retf.pil uses these effects plus ordered SS loads and named SP writes.
@@ -420,14 +538,34 @@ CPU/RAM/segment state. `require PREDICATE` rejects a false bv1 condition with
 InvalidContext;POP uses it to reject the documented processor-family-specific
 16-bit SP wrap case for ESP-based32-bit destination addressing.
 
+`raise_unless PREDICATE VECTOR` is the architectural counterpart: a false bv1
+predicate stops the instruction with `ExecError::Exception{eip,vector}` and
+commits nothing, like every other fault. Vectors 0 (#DE), 5 (#BR) and 13
+(#GP(0), as `ExecError::GeneralProtection` with error code 0) are
+accepted; PUSHF, POPF and IRET use 13 for the V86 IOPL rule; DIV, IDIV and AAM use 0 for a zero divisor or a quotient that does
+not fit, and BOUND uses 5 for an index outside its bounds. The
+runner, not PIL, then delivers the exception (`src/interrupt.rs`): in real
+mode through the IDTR table with FLAGS, CS and the faulting IP pushed, so the
+handler's IRET restarts the instruction. #GP and #SS faults from segment
+limit checks are delivered the same way (vectors 0Dh and 0Ch). In protected
+mode the runner uses the IDT: a 286 or 386 interrupt or trap gate to a code
+segment at the current level (or a conforming one), with EFLAGS, CS, EIP
+and the error code pushed as words or dwords by gate size, and #DF or a
+shutdown for faults during delivery. Protected-mode IRET is
+isa/i386/iret_protected.pil: the same-level return, with IOPL changed only
+at CPL 0 and IF only where CPL is at most IOPL.
+
 `read_msw OUT` reads the explicit bv16 machine-status profile. MSW is retained
 in Image/SegmentState and traces;PE is derived from the normalized real_mode
 state. The monitor/DOS profile initializes the other bits to0010h (ET=1).
+`read_msw32 OUT` reads the same status as bv32 with the modeled CR0.PG bit
+in bit 31. SMSW with a 32-bit register chooses this concrete value for the
+architecturally undefined upper 16 bits; word and memory forms remain bv16.
 This is explicit profile configuration,not a claim about hardware reset or an
 implemented FPU. SMSW stores exactly a word and preserves flags/markers.
-Operand-size-prefixed register forms are rejected pending legacy upper-half
-policy;66-prefixed memory forms still write a word. CR0 writes,LMSW,UMIP and
-privilege transitions are not implemented by this increment.
+SMSW r32 (66h with a register) writes all of CR0, PG included; 66-prefixed memory forms still write a word. LMSW,UMIP and
+privilege transitions remain unimplemented. See the bounded control-register
+profile below for CR0 writes.
 
 References: Intel80386
 [POP](https://pdos.csail.mit.edu/6.828/2018/readings/i386/POP.htm) and
@@ -444,23 +582,60 @@ after validation. A source segment override never redirects the stack store.
 
 ### Two-store and far CALL profile (0.32)
 
-A program may stage at most two `store`/`store_segment` effects in total.
-All loads must precede the first store. Each store checks its full destination
+A program may stage at most 33 `store`/`store_segment` effects in total (PUSHA/PUSHAD uses eight; ENTER
+with nesting level 31 uses 33). The interpreter keeps the first eight on the stack and spills the rest;
+generated Rust sizes its store array to the program.
+Plain `load` statements must precede the first store; `load_segment` may follow one and reads the staged bytes. Each store checks its full destination
 before staging; retirement commits writes in program order only after all
 instruction checks pass. Overlapping stores use the later store's bytes.
 This is bounded ordinary RAM support, not MMIO or bus-atomic behavior.
 
-`call_far` uses existing `require_real_mode`, pointer loads, two SS stores and
-`far_branch`. Memory pointers contain an operand-sized offset plus a 16-bit
+`call_far` uses pointer loads, `far_call`, then two SS stores. Memory pointers contain an operand-sized offset plus a 16-bit
 selector, even with a 32-bit operand size. The return frame has two operand-sized
 slots, with CS above IP/EIP and a deterministic zero upper half for the wide CS
 slot. SS size is independent. A contiguous full-frame check matches RETF;
 split frames across stack wrap and hardware shutdown/exception delivery remain
-outside this prototype. Protected/V86 calls are rejected before pointer reads.
+outside this prototype. In V86 mode the call is the real-mode one.
 
 ## LES composition (0.34)
 
-`les.pil` composes require_real_mode, read_address, widened check_segment,
-two loads, one bound GPR write and write_segment0. No instruction-specific
+`les.pil` composes read_address, two per-field check_segment checks, two
+loads, one bound GPR write and write_segment (ES, DS, SS, FS or GS). No instruction-specific
 interpreter/emitter operation is introduced. The full pointer span is checked
 before reading; any second-field fault prevents both staged register effects.
+
+### Real-mode control-register profile
+
+`read_control OUT REGISTER` reads bv32 CR0, CR2 or CR3. `write_control REGISTER
+VALUE` stages one bv32 control-register write until retirement. Registers are
+numbered 0, 2 and 3; other numbers and non-bv32 write values are rejected by
+the PIL compiler. Incoming state is read even after a staged write, matching
+other PIL effects. Missing machine state is an InvalidContext diagnostic.
+
+The 80386 MOV forms 0F20/0F22 always transfer full 32-bit GPRs, independently
+of operand/address-size prefixes. This profile accepts only register ModR/M
+forms; reserved control registers, LOCK and REP are rejected. Following the
+1986 Intel PRM, six arithmetic flags become undefined; PIL's concrete
+undefined-flag policy clears their bits and marks them undefined. Other flags
+and metadata are preserved. This is distinct from later x86 flag policies.
+
+CR0 shares the existing MSW storage used by SMSW and FPU EM/TS checks. CR2 and
+CR3 are additional machine state, included in image/cache identities, binary
+backend traces and stop-log `control_registers` (ordered CR0, CR2, CR3).
+They survive DOS EXEC/return as CPU state. CR2 accepts all 32 bits; CR3 accepts
+aligned 4 KiB directory bases. Nonzero reserved low CR3 bits are an explicit
+UnsupportedControl profile stop, not a hardware #UD or #GP claim.
+
+CR0 writes can change PE, MP, EM, TS and ET. Setting PE enters protected
+mode with every segment cache unchanged (CS keeps its real-mode cache until
+a far transfer loads a descriptor); clearing it returns to real mode with the
+caches kept as well. LMSW can set PE but not clear it, and keeps PG. MOV
+CR0 sets and clears PG; RAM then translates every access through the page
+directory at CR3 (no TLB is modelled). Other reserved bit requests stop with
+UnsupportedControl before any state commits. PG=1 with PE=0 produces
+GeneralProtection. Control-register access from V86 mode or at CPL above 0
+produces GeneralProtection. CR2 is not yet updated by page faults.
+
+Reference: Intel 80386 PRM
+[MOV special registers](https://people.freebsd.org/~jhb/386htm/MOVRS.htm),
+[system registers](https://www.ardent-tool.com/CPU/docs/Intel/386/manuals/prref386/s04_01.htm).

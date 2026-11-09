@@ -1,0 +1,8 @@
+# Copy to pildos.conf and edit paths. See docs/DOS_CONFIG.md.
+# Requires your local image, driveD folder and driveD/AUTOEXEC.BAT.
+# Paths are relative to this file. Images are read-only; folders are writable.
+program=images/FD14LITE.img::COMMAND.COM
+args=/K D:\AUTOEXEC.BAT
+C=images/FD14LITE.img
+D=driveD
+country=358

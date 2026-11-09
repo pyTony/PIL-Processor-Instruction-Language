@@ -1,4 +1,5 @@
-require_real_mode
+# CLI: #GP(0) in protected mode when CPL is above IOPL.
+require_iopl
 const clear 1 0
 flag IF clear
 preserve_flags all

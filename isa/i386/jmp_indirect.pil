@@ -1,0 +1,10 @@
+# JMP r/m16 or r/m32 (FF /4). The caller substitutes the target reader,
+# which reads the new offset from a register or memory. The offset is
+# zero-extended and checked against CS.limit by branch_if.
+require_width 16_or_32
+$TARGET
+zext target target_value 32
+const take 1 1
+branch_if target take
+preserve_flags all
+retire

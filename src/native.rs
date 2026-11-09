@@ -7,6 +7,9 @@ pub struct Case {
     pub name:&'static str,pub bytes:Vec<u8>,pub image:Image,pub regs:[u32;8],pub flags:u32,
     pub rx:Vec<u8>,pub tx:Vec<u8>,pub protect:Option<(u32,usize)>,pub patch:Option<(u32,Vec<u8>)>,
 }
+/// Protected mode at CPL 3: far transfers and flag instructions there need
+/// gates and IOPL checks that are not modelled yet, so they stop.
+fn cpl3(t:&mut Case){t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}
 fn case(name:&'static str,bytes:Vec<u8>)->Result<Case,String> {
     let (image,_)=Image::load(&bytes)?;
     Ok(Case{name,bytes,image,regs:[0;8],flags:0x202,rx:Vec::new(),tx:Vec::new(),protect:None,patch:None})
@@ -37,7 +40,7 @@ pub fn cases()->Result<Vec<Case>,String> {
 
     let mut memory=case("readonly_store",vec![0x66,0x89,0x07,0xf4])?;memory.regs[0]=0xdeadbeef;memory.regs[3]=0x400;memory.protect=Some((0x500,4));tests.push(memory);
     let mut branch=case("branch_fault",vec![0x74,0x7f,0xf4])?;branch.flags=0x246;branch.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(branch);
-    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0x62]));tests.push(changed);
+    let mut changed=case("code_guard",guest::hello_bytes()?)?;changed.patch=Some((0x100,vec![0x63]));tests.push(changed);
     tests.push(case("rx_wait",vec![0xe4,0xe9,0xf4])?);
     let mut blocked=case("tx_blocked",vec![0xe6,0xe9,0xf4])?;blocked.regs[0]=65;blocked.tx=vec![42;256];tests.push(blocked);
     // Cover each ALU group, memory direction, immediate sign extension and unary
@@ -104,13 +107,13 @@ pub fn cases()->Result<Vec<Case>,String> {
     for big in [false,true]{for w in [16,32]{
         let mut bytes=Vec::new();for instruction in [vec![0x54],vec![0x58],vec![0x6a,0x80],vec![0x5b],vec![0x1e],vec![0x5f]]{if w==32{bytes.push(0x66);}bytes.extend(instruction);}bytes.push(0xf4);
         let mut t=case(match(big,w){(false,16)=>"stack16_16",(false,_)=>"stack16_32",(true,16)=>"stack32_16",_=>"stack32_32"},bytes)?;
-        t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.flags=0xed7;tests.push(t);
+        t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.flags=0xed7;tests.push(t);
     }}
     let mut t=case("stack_readonly",vec![0x50,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
     let mut t=case("stack_boundary",vec![0x50,0xf4])?;t.regs[4]=1;tests.push(t);
     let mut t=case("segment_roundtrip",vec![0xb8,0x40,0,0x8e,0xd8,0x8c,0xdb,0x1e,0x07,0x8c,0xc1,0x0f,0xa0,0x0f,0xa9,0xf4])?;t.regs[4]=0x800;t.flags=0xed7;tests.push(t);
     let t=case("segment_memory",vec![0xb8,0x40,0,0x8e,0xd8,0x8c,0x1e,0,2,0x8e,0x06,0,2,0x26,0x8b,0x16,0,2,0xf4])?;tests.push(t);
-    let mut t=case("segment_ss",vec![0xb8,0x30,0,0x8e,0xd0,0x50,0x1f,0x8c,0xda,0xf4])?;t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true};tests.push(t);
+    let mut t=case("segment_ss",vec![0xb8,0x30,0,0x8e,0xd0,0x50,0x1f,0x8c,0xda,0xf4])?;t.regs[4]=0x800;t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};tests.push(t);
     let mut t=case("segment_fault",vec![0x17,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("segment_pop32",vec![0x66,0x68,0x40,0,0xcd,0xab,0x66,0x1f,0x8c,0xd8,0xf4])?;t.regs[4]=0x800;tests.push(t);
     let mut t=case("segment_store_readonly",vec![0x8c,0x1e,0,8,0xf4])?;t.protect=Some((0x900,2));tests.push(t);
@@ -120,7 +123,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     let t=case("moffs_boundary",vec![0xa1,0xff,0xff,0xf4])?;tests.push(t);
     for big in [false,true]{for w in [16,32]{
         let mut bytes=Vec::new();if w==32{bytes.push(0x66);}bytes.push(0xe8);bytes.push(1);bytes.extend(vec![0;(w/8-1)as usize]);bytes.push(0xf4);if w==32{bytes.push(0x66);}bytes.extend([0xb8,0x34,0x12]);if w==32{bytes.extend([0x78,0x56]);bytes.push(0x66);}bytes.push(0xc3);
-        let mut t=case(match(big,w){(false,16)=>"calls16_16",(false,_)=>"calls16_32",(true,16)=>"calls32_16",_=>"calls32_32"},bytes)?;t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.flags=0xed7;tests.push(t);
+        let mut t=case(match(big,w){(false,16)=>"calls16_16",(false,_)=>"calls16_32",(true,16)=>"calls32_16",_=>"calls32_32"},bytes)?;t.regs[4]=0x800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.flags=0xed7;tests.push(t);
     }}
     let mut t=case("call_register",vec![0xff,0xd0,0xf4,0x90,0x90,0x41,0xc3])?;t.regs[0]=0x105;t.regs[4]=0x800;tests.push(t);
     let mut t=case("call_memory",vec![0xff,0x16,0,8,0xf4,0x41,0xc3])?;t.regs[4]=0x800;t.patch=Some((0x900,vec![5,1]));tests.push(t);
@@ -133,19 +136,23 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("rep_backward",vec![0xf3,0xa5,0xf4])?;t.regs[1]=3;t.regs[6]=0x810;t.regs[7]=0xa10;t.flags=0xed7;t.patch=Some((0x900,(0..64u8).collect()));tests.push(t);
     let mut t=case("rep_partial_fault",vec![0xf3,0xa4,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![10,20,30]));t.protect=Some((0xa01,1));t.image.ss_shadow=1;tests.push(t);
     let mut t=case("rep_zero",vec![0xf3,0xa4,0xf4])?;t.regs[1]=0xabcd0000;t.image.segments[0].access=super::address::SegmentAccess::Unusable;t.image.segments[3].access=super::address::SegmentAccess::Unusable;tests.push(t);
+    let mut t=case("f2_rep_movs",vec![0xf2,0xa5,0xb9,3,0,0xf2,0xa4,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.flags=0xad7;t.patch=Some((0x900,(0..32u8).collect()));tests.push(t);
+    let mut t=case("f2_rep_movs_fault",vec![0xf2,0xa5,0xf4])?;t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![1,2,3,4,5,6]));t.protect=Some((0xa02,2));tests.push(t);
+    let mut t=case("lmsw_real",vec![0xb8,0x0e,0,0x0f,1,0xf0,0xf4])?;t.flags=0xad7;tests.push(t);
+    let mut t=case("lmsw_transition",vec![0xb8,0x11,0,0x0f,1,0xf0,0xf4])?;t.flags=0xad7;tests.push(t);
     for big in [false,true]{for w in [16,32]{
         let mut bytes=vec![0xfa];if w==32{bytes.push(0x66);}bytes.push(0x9c);bytes.push(0xf9);if w==32{bytes.push(0x66);}bytes.push(0x9d);bytes.extend([0xfb,0xfb,0x90,0xf4]);
-        let mut t=case(match(big,w){(false,16)=>"flagstack16_16",(false,_)=>"flagstack16_32",(true,16)=>"flagstack32_16",_=>"flagstack32_32"},bytes)?;t.regs[4]=0x800;t.flags=0x17dd7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};tests.push(t);
+        let mut t=case(match(big,w){(false,16)=>"flagstack16_16",(false,_)=>"flagstack16_32",(true,16)=>"flagstack32_16",_=>"flagstack32_32"},bytes)?;t.regs[4]=0x800;t.flags=0x17dd7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};tests.push(t);
     }}
     let mut t=case("pushf_readonly",vec![0x9c,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fe,2));tests.push(t);
     let mut t=case("popf_limit",vec![0x9d,0xf4])?;t.regs[4]=0xffff;t.image.sti_shadow=1;tests.push(t);
-    let mut t=case("control_mode_reject",vec![0xfb,0xf4])?;t.image.real_mode=false;tests.push(t);
+    let mut t=case("control_mode_reject",vec![0xfb,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     let mut t=case("sti_rep_fault",vec![0xfa,0xfb,0xf3,0xaa,0xf4])?;t.regs[1]=2;t.regs[7]=0xa00;t.protect=Some((0xa01,1));tests.push(t);
     for addr32 in [false,true]{for zero in [false,true]{let mut bytes=vec![];if addr32{bytes.push(0x67);}bytes.extend([0xe3,1,0x40,0xf4]);let mut t=case(match(addr32,zero){(false,false)=>"jcxz_nonzero",(false,true)=>"jcxz_zero",(true,false)=>"jecxz_nonzero",_=>"jecxz_zero"},bytes)?;t.regs[1]=if zero{if addr32{0}else{0xabcd0000}}else{1};tests.push(t);}}
-    for big in [false,true]{for w in [16,32]{let bytes=if w==32{vec![0x66,0xc9,0xf4]}else{vec![0xc9,0xf4]};let mut t=case(match(big,w){(false,16)=>"leave16_16",(false,_)=>"leave16_32",(true,16)=>"leave32_16",_=>"leave32_32"},bytes)?;t.regs[4]=0x400;t.regs[5]=if big{0x800}else{0xabcd0800};t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0x34,0x12,0x78,0x56]));t.flags=0xed7;tests.push(t);}}
+    for big in [false,true]{for w in [16,32]{let bytes=if w==32{vec![0x66,0xc9,0xf4]}else{vec![0xc9,0xf4]};let mut t=case(match(big,w){(false,16)=>"leave16_16",(false,_)=>"leave16_32",(true,16)=>"leave32_16",_=>"leave32_32"},bytes)?;t.regs[4]=0x400;t.regs[5]=if big{0x800}else{0xabcd0800};t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,vec![0x34,0x12,0x78,0x56]));t.flags=0xed7;tests.push(t);}}
     let mut t=case("leave_fault",vec![0xc9,0xf4])?;t.regs[5]=0xffff;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("leave_readonly",vec![0xc9,0xf4])?;t.regs[5]=0x800;t.patch=Some((0xa00,vec![0x34,0x12]));t.protect=Some((0xa00,2));tests.push(t);
-    let mut t=case("leave_after_ss_load",vec![0xb8,0x30,0,0x8e,0xd0,0xc9,0xf4])?;t.regs[5]=0xabcd0800;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true};t.patch=Some((0xb00,vec![0x34,0x12]));tests.push(t);
+    let mut t=case("leave_after_ss_load",vec![0xb8,0x30,0,0x8e,0xd0,0xc9,0xf4])?;t.regs[5]=0xabcd0800;t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.patch=Some((0xb00,vec![0x34,0x12]));tests.push(t);
     for w in [8,16,32]{for a32 in [false,true]{let mut bytes=Vec::new();for (prefix,op) in [(None,0xa6u8),(None,0xae),(Some(0xf3),0xa6),(Some(0xf2),0xae)]{bytes.extend([0xb9,2,0]);if w==32{bytes.push(0x66);}if a32{bytes.push(0x67);}if let Some(prefix)=prefix{bytes.push(prefix);}bytes.push(op|u8::from(w!=8));}bytes.push(0xf4);let mut t=case(match(w,a32){(8,false)=>"compare8_16",(8,true)=>"compare8_32",(16,false)=>"compare16_16",(16,true)=>"compare16_32",(32,false)=>"compare32_16",_=>"compare32_32"},bytes)?;t.regs[0]=0;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![0;64]));tests.push(t);}}
     for prefix in [0xf2,0xf3]{for op in [0xa6u8,0xae]{let mut t=case(match(prefix,op){(0xf2,0xa6)=>"repne_cmps_fault",(0xf3,0xa6)=>"repe_cmps_fault",(0xf2,_)=>"repne_scas_fault",_=>"repe_scas_fault"},vec![prefix,op,0xf4])?;t.regs[0]=u32::from(prefix==0xf2);t.regs[1]=3;t.regs[6]=0x800;t.regs[7]=0xa00;t.patch=Some((0x900,vec![t.regs[0]as u8;3]));t.image.segments[0].limit=0xa00;t.image.sti_shadow=1;t.flags=0xad7;tests.push(t);}}
     let mut t=case("compare_zero",vec![0xf3,0xae,0xf2,0xa6,0xf4])?;t.regs[1]=0xabcd0000;t.image.segments[0].access=super::address::SegmentAccess::Unusable;tests.push(t);
@@ -164,22 +171,32 @@ pub fn cases()->Result<Vec<Case>,String> {
         t.regs[0]=0x12345678;t.regs[1]=0xabcdef01;t.regs[7]=0xfedcba98;t.flags=0xad7;tests.push(t);
     }
     let t=case("cs_real_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;tests.push(t);
-    let mut t=case("cs_protected_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.image.real_mode=false;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true};tests.push(t);
+    let mut t=case("cs_protected_write",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.image.real_mode=false;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};tests.push(t);
     let mut t=case("cs_readonly",vec![0x2e,0xc6,6,0,8,0x42,0xf4])?;t.protect=Some((0x800,1));tests.push(t);
     for w in [16,32]{for big in [false,true]{for cleanup in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.push(if cleanup{0xca}else{0xcb});if cleanup{bytes.extend([7,0]);}bytes.extend([0x41,0xf4]);
         let target=0x100+bytes.len()as u32-2-16;let mut data=if w==16{(target as u16).to_le_bytes().to_vec()}else{target.to_le_bytes().to_vec()};if w==16{data.extend([1,0]);}else{data.extend([1,0,0xcd,0xab]);}
-        let mut t=case(match(w,big,cleanup){(16,false,false)=>"retf16_ss16",(16,false,true)=>"retfi16_ss16",(16,true,false)=>"retf16_ss32",(16,true,true)=>"retfi16_ss32",(32,false,false)=>"retf32_ss16",(32,false,true)=>"retfi32_ss16",(32,true,false)=>"retf32_ss32",_=>"retfi32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,data));tests.push(t);
+        let mut t=case(match(w,big,cleanup){(16,false,false)=>"retf16_ss16",(16,false,true)=>"retfi16_ss16",(16,true,false)=>"retf16_ss32",(16,true,true)=>"retfi16_ss32",(32,false,false)=>"retf32_ss16",(32,false,true)=>"retfi32_ss16",(32,true,false)=>"retf32_ss32",_=>"retfi32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,data));tests.push(t);
     }}}
+    for w in [16,32]{for big in [false,true]{
+        // IRET to 0001:target with flags 0ED7h (DF, IF, OF and arithmetic flags), from 0246h.
+        let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0xcf,0x41,0xf4]);
+        let target=0x100+bytes.len()as u32-2-16;
+        let mut data=if w==16{(target as u16).to_le_bytes().to_vec()}else{target.to_le_bytes().to_vec()};
+        if w==16{data.extend([1,0,0xd7,0x0e]);}else{data.extend([1,0,0xcd,0xab,0xd7,0x0e,0x34,0x12]);}
+        let mut t=case(match(w,big){(16,false)=>"iret16_ss16",(16,true)=>"iret16_ss32",(32,false)=>"iret32_ss16",_=>"iret32_ss32"},bytes)?;
+        t.regs[4]=0x800;t.flags=0x246;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,data));tests.push(t);
+    }}
+    let mut t=case("iret_frame_fault",vec![0xcf,0xf4])?;t.regs[4]=0xffff;tests.push(t);
     let mut t=case("retf_alias_branch",vec![0xcb,0x74,1,0x40,0xf4])?;t.regs[4]=0x800;t.flags=0x246;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
     let mut t=case("retf_alias_cs_store",vec![0xcb,0x2e,0xc6,6,0,8,0x42,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xf1,0,1,0]));tests.push(t);
     let mut t=case("retf_outside_window",vec![0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,2,1,0]));tests.push(t);
     let mut t=case("retf_target_fault",vec![0x66,0xcb,0xf4])?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0,0,1,0,1,0,0,0]));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("retf_frame_fault",vec![0xcb,0xf4])?;t.regs[4]=0xffff;tests.push(t);
-    let mut t=case("retf_mode_reject",vec![0xcb,0xf4])?;t.image.real_mode=false;tests.push(t);
+    let mut t=case("retf_mode_reject",vec![0xcb,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     for w in [16,32]{for big in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0x8f,4,0x24,0xf4]);
-        let mut t=case(match(w,big){(16,false)=>"popmem16_ss16",(16,true)=>"popmem16_ss32",(32,false)=>"popmem32_ss16",_=>"popmem32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
+        let mut t=case(match(w,big){(16,false)=>"popmem16_ss16",(16,true)=>"popmem16_ss32",(32,false)=>"popmem32_ss16",_=>"popmem32_ss32"},bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
     }}
     for w in [16,32]{let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x64,0x8f,6,0,4,0xf4]);let mut t=case(if w==16{"popmem_fs16"}else{"popmem_fs32"},bytes)?;t.regs[4]=0x800;t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);}
     for (name,msw,real) in [("smsw_zero",0,true),("smsw_supplied",0xa5a0,true),("smsw_protected",0xa5a0,false)]{let mut t=case(name,vec![0x0f,1,0xe0,0x0f,1,0xe3,0xf4])?;t.image.msw=msw;t.image.real_mode=real;t.regs[0]=0x12345678;t.regs[3]=0xabcdef01;t.flags=0xed7;tests.push(t);}
@@ -191,7 +208,7 @@ pub fn cases()->Result<Vec<Case>,String> {
     for w in [16,32]{for big in [false,true]{
         let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0x67,0xff,0x34,0x24,0xf4]);
         let mut t=case(match(w,big){(16,false)=>"pushmem16_ss16",(16,true)=>"pushmem16_ss32",(32,false)=>"pushmem32_ss16",_=>"pushmem32_ss32"},bytes)?;
-        t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};
+        t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
         t.patch=Some((0xa00,vec![0xef,0xbe,0xad,0xde]));tests.push(t);
     }}
     for w in [16,32]{
@@ -208,7 +225,7 @@ pub fn cases()->Result<Vec<Case>,String> {
         if indirect{bytes.extend([0xff,0x1e,0,4]);}else{bytes.push(0x9a);bytes.extend(&0x100u32.to_le_bytes()[..(w/8)as usize]);bytes.extend([1,0]);}
         bytes.push(0xf4);while bytes.len()<16{bytes.push(0x90);}bytes.push(0x41);if w==32{bytes.push(0x66);}bytes.push(0xcb);
         let name=match(w,big,indirect){(16,false,false)=>"far_imm16_ss16",(16,true,false)=>"far_imm16_ss32",(32,false,false)=>"far_imm32_ss16",(32,true,false)=>"far_imm32_ss32",(16,false,true)=>"far_mem16_ss16",(16,true,true)=>"far_mem16_ss32",(32,false,true)=>"far_mem32_ss16",_=>"far_mem32_ss32"};
-        let mut t=case(name,bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big};
+        let mut t=case(name,bytes)?;t.regs[4]=0x800;t.flags=0xed7;t.image.segments[2].access=super::address::SegmentAccess::Data{writable:true,expand_down:false,big,dpl:0};
         if indirect{let mut ptr=0x100u32.to_le_bytes()[..(w/8)as usize].to_vec();ptr.extend([1,0]);t.patch=Some((0x500,ptr));}tests.push(t);
     }}}
     for w in [16,32]{
@@ -216,10 +233,16 @@ pub fn cases()->Result<Vec<Case>,String> {
         let mut t=case(if w==16{"far_esp16"}else{"far_esp32"},bytes)?;t.regs[4]=0x800;
         let mut ptr=0x100u32.to_le_bytes()[..(w/8)as usize].to_vec();ptr.extend([1,0]);t.patch=Some((0xa00,ptr));tests.push(t);
     }
+    for (name,mut bytes,ptr) in [("jmpfar_imm16",vec![0xea,0,1,1,0,0xf4],None),("jmpfar_mem16",vec![0xff,0x2e,0,4,0xf4],Some(vec![0,1,1,0])),("jmpfar_mem32",vec![0x66,0xff,0x2e,0,4,0xf4],Some(vec![0,1,0,0,1,0]))]{
+        while bytes.len()<16{bytes.push(0x90);}bytes.extend([0x41,0xf4]);
+        let mut t=case(name,bytes)?;t.flags=0xed7;t.patch=ptr.map(|p|(0x500,p));tests.push(t);
+    }
+    tests.push(case("jmpfar_pointer_boundary",vec![0xff,0x2e,0xfd,0xff,0xf4])?);
+    let mut t=case("jmpfar_mode_reject",vec![0xea,0,1,1,0,0xf4])?;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     let mut t=case("far_second_store_fault",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.protect=Some((0x9fc,2));t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
     let mut t=case("far_pointer_boundary",vec![0xff,0x1e,0xfd,0xff,0xf4])?;t.regs[4]=0x800;tests.push(t);
     let mut t=case("far_target_fault",vec![0x66,0x9a,0,0,1,0,1,0,0xf4])?;t.regs[4]=0x800;tests.push(t);
-    let mut t=case("far_mode_reject",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.image.real_mode=false;tests.push(t);
+    let mut t=case("far_mode_reject",vec![0x9a,0,1,1,0,0xf4])?;t.regs[4]=0x800;t.image.real_mode=false;cpl3(&mut t);tests.push(t);
     let mut t=case("far_outside_window",vec![0x9a,0,0,0xff,0xff,0xf4])?;t.regs[4]=0x800;tests.push(t);
     tests.push(case("mandelbrot2",super::mandelbrot::guest_bytes(2,4)?)?);
     let mut near=case("near_branch_fault",vec![0x0f,0x84,0xff,0x7f])?;near.flags=0x242;near.image.segments[SegmentRegister::Cs.index()].limit=0x103;tests.push(near);
@@ -246,6 +269,176 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("same_width_gp",vec![0x0f,0xbf,0x07,0xf4])?;t.regs[3]=0xffff;t.regs[0]=0x12345678;tests.push(t);
     let mut t=case("same_width_ss",vec![0x0f,0xbf,0x46,0,0xf4])?;t.regs[5]=0xffff;t.regs[0]=0x12345678;tests.push(t);
     let mut t=case("same_width_ram",vec![0x0f,0xb7,0x07,0xf4])?;t.regs[3]=0xf00;t.regs[0]=0x12345678;tests.push(t);
+    let mut t=case("div8",vec![0xf6,0xf1,0xf6,0xf5,0xf6,0x37,0xf6,0xf0,0xf4])?;
+    t.regs[0]=0x1234fefe;t.regs[1]=0x5678ffff;t.regs[2]=0xdeadbeef;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xff]));t.protect=Some((0x500,1));tests.push(t);
+    let mut t=case("div16",vec![0xf7,0xf1,0xf7,0x37,0xf7,0xf0,0xf4])?;
+    t.regs[0]=0x1234ffff;t.regs[1]=0x5678ffff;t.regs[2]=0xabcdfffe;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xff,0xff]));t.protect=Some((0x500,2));tests.push(t);
+    let mut t=case("div32",vec![0x66,0xf7,0xf1,0x66,0xf7,0x37,0x66,0xf7,0xf0,0xf4])?;
+    t.regs[0]=0xffffffff;t.regs[1]=0xffffffff;t.regs[2]=0xfffffffe;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xff,0xff,0xff,0xff]));t.protect=Some((0x500,4));tests.push(t);
+    let mut t=case("div_zero8",vec![0xf6,0xf1,0xf4])?;
+    t.regs[0]=0x12340005;t.regs[1]=0;t.regs[2]=0xabcdef01;t.flags=0xed7;t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("div_overflow8",vec![0xf6,0xf1,0xf4])?;
+    t.regs[0]=0x12340100;t.regs[1]=1;t.regs[2]=0xabcdef01;t.flags=0xed7;t.image.ss_shadow=1;t.image.sti_shadow=1;tests.push(t);
+    let mut t=case("div_overflow16",vec![0xf7,0xf1,0xf4])?;
+    t.regs[0]=0;t.regs[1]=1;t.regs[2]=1;t.flags=0xed7;tests.push(t);
+    let mut t=case("div_overflow32",vec![0x66,0xf7,0xf1,0xf4])?;
+    t.regs[0]=0;t.regs[1]=1;t.regs[2]=1;t.flags=0xed7;tests.push(t);
+    let mut t=case("div_gp_fault",vec![0xf7,0x37,0xf4])?;
+    t.regs[0]=0x12345678;t.regs[2]=0;t.regs[3]=0xffff;tests.push(t);
+    let mut t=case("idiv8",vec![0xf6,0xf9,0xf6,0x3f,0xf6,0xf8,0xf4])?;
+    t.regs[0]=0x1234fff9;t.regs[1]=0x56780002;t.regs[2]=0xdeadbeef;t.regs[3]=0x500;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xfd]));t.protect=Some((0x500,1));tests.push(t);
+    let mut t=case("idiv16",vec![0xf7,0xf9,0xf4])?;
+    t.regs[0]=0x12347960;t.regs[1]=0x56780007;t.regs[2]=0xabcdfffe;t.flags=0x2;tests.push(t);
+    let mut t=case("idiv16_memory",vec![0xf7,0x3f,0xf4])?;
+    t.regs[0]=0x12340064;t.regs[2]=0xabcd0000;t.regs[3]=0x500;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0xf6,0xff]));t.protect=Some((0x500,2));tests.push(t);
+    let mut t=case("idiv32",vec![0x66,0xf7,0xf9,0xf4])?;
+    t.regs[0]=0xfffffff9;t.regs[1]=2;t.regs[2]=0xffffffff;t.flags=0xed7;tests.push(t);
+    let mut t=case("idiv_min16",vec![0xf7,0xf9,0xf4])?;
+    t.regs[0]=0x8000;t.regs[1]=1;t.regs[2]=0xffff;t.flags=0xed7;tests.push(t);
+    let mut t=case("idiv_overflow8",vec![0xf6,0xf9,0xf4])?;
+    t.regs[0]=0x12340080;t.regs[1]=1;t.flags=0xed7;tests.push(t);
+    let mut t=case("idiv_zero16",vec![0xf7,0xf9,0xf4])?;
+    t.regs[0]=0x1234;t.regs[1]=0;t.regs[2]=0x5678;t.flags=0xed7;tests.push(t);
+    let mut t=case("mul8",vec![0xf6,0xe1,0xf6,0x27,0xf6,0xe0,0xf4])?;
+    t.regs[0]=0x123456ff;t.regs[1]=0x5678ff02;t.regs[2]=0xdeadbeef;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![0x80]));t.protect=Some((0x500,1));tests.push(t);
+    let mut t=case("mul16",vec![0xf7,0xe1,0xf7,0x27,0xf7,0xe2,0xf4])?;
+    t.regs[0]=0x1234ffff;t.regs[1]=0x5678ffff;t.regs[2]=0xabcd0001;t.regs[3]=0x400;t.flags=0x2;
+    t.patch=Some((0x500,vec![0x00,0x00]));t.protect=Some((0x500,2));tests.push(t);
+    let mut t=case("mul32",vec![0x66,0xf7,0xe1,0x66,0xf7,0x27,0xf4])?;
+    t.regs[0]=0xffffffff;t.regs[1]=0xffffffff;t.regs[2]=0x12345678;t.regs[3]=0x400;t.flags=0xed7;
+    t.patch=Some((0x500,vec![2,0,0,0]));t.protect=Some((0x500,4));tests.push(t);
+    let mut t=case("mul_gp_fault",vec![0xf7,0x27,0xf4])?;
+    t.regs[0]=0x12345678;t.regs[2]=0x9abcdef0;t.regs[3]=0xffff;tests.push(t);
+    let mut t=case("loop16",vec![0xe2,0xfe,0xb9,0x03,0x00,0xe0,0xfe,0xe1,0xfe,0xe0,0xfe,0xf4])?;
+    t.regs[1]=0xabcd0003;t.flags=0x42;tests.push(t);
+    let mut t=case("loop_ecx",vec![0x67,0xe2,0xfd,0x67,0xe0,0xfd,0xf4])?;
+    t.regs[1]=0x00000002;t.flags=0x42;tests.push(t);
+    let mut t=case("rcl_rcr",vec![0xd0,0xd0,0xd1,0xd9,0xd3,0xd0,0x66,0xc1,0xd8,0x05,0xd2,0xd1,0x66,0xd1,0xd3,0xf4])?;
+    t.regs[0]=0x80358035;t.regs[1]=0x00090011;t.regs[3]=0x87654321;t.flags=0x203;tests.push(t);
+    let mut t=case("rcl_memory_readonly",vec![0xd1,0x17,0xf4])?;t.regs[3]=0x400;t.patch=Some((0x500,vec![0x01,0x80]));t.protect=Some((0x500,2));t.flags=0x203;tests.push(t);
+    let mut t=case("daa_das",vec![0x27,0x2f,0x27,0x2f,0x27,0xf4])?;t.regs[0]=0x1234009a;t.flags=0x213;tests.push(t);
+    // AAA, AAS, AAM 10, AAD 10, AAM 7, AAD 7 on one AX; then AAM 0 faults (#DE).
+    let mut t=case("ascii_adjust",vec![0x37,0x3f,0xd4,0x0a,0xd5,0x0a,0xd4,0x07,0xd5,0x07,0xf4])?;t.regs[0]=0x1234_02fb;t.flags=0x213;tests.push(t);
+    let mut t=case("aam_zero",vec![0xd4,0x00,0xf4])?;t.regs[0]=0x55;tests.push(t);
+    let mut t=case("pusha16",vec![0x60,0x31,0xc0,0x31,0xdb,0x61,0xf4])?;
+    t.regs=[0x11111111,0x22222222,0x33333333,0x44444444,0x800,0x66666666,0x77777777,0x88888888];tests.push(t);
+    let mut t=case("pushad32",vec![0x66,0x60,0x66,0x31,0xc0,0x66,0x61,0xf4])?;
+    t.regs=[0x11111111,0x22222222,0x33333333,0x44444444,0x800,0x66666666,0x77777777,0x88888888];tests.push(t);
+    let mut t=case("pusha_readonly_stack",vec![0x60,0xf4])?;t.regs[4]=0x800;t.regs[0]=0x1234;t.protect=Some((0x9f0,2));tests.push(t);
+    let mut t=case("popa_high_stack_fault",vec![0x61,0xf4])?;t.regs[4]=0xfff8;tests.push(t);
+    // JMP AX -> 0x104; JMP [BX] -> 0x108 from RAM; JMP ECX -> 0x10d. Skipped bytes are HLT.
+    let mut t=case("jmp_indirect",vec![0xff,0xe0,0xf4,0xf4,0xff,0x27,0xf4,0xf4,0x66,0xff,0xe1,0xf4,0xf4,0xf4])?;
+    t.regs[0]=0xabcd0104;t.regs[1]=0x0000010d;t.regs[3]=0x400;t.patch=Some((0x500,vec![0x08,0x01]));tests.push(t);
+    let mut t=case("jmp_indirect_limit_fault",vec![0xff,0xe0,0xf4])?;t.regs[0]=0x180;t.image.segments[SegmentRegister::Cs.index()].limit=0x102;tests.push(t);
+    for (name,bytes) in [("lds16",vec![0xc5,0x1f,0xf4]),("lds32",vec![0x66,0xc5,0x1f,0xf4])]{
+        let mut t=case(name,bytes)?;t.regs[3]=0x700;t.flags=0xed7;t.patch=Some((0x800,vec![0xef,0xbe,0xad,0xde,0xdc,0xfe]));tests.push(t);
+    }
+    for (name,bytes) in [("enter16",vec![0xc8,0x1e,0x00,0x00,0xf4]),("enter32",vec![0x66,0xc8,0x00,0x01,0x00,0xf4])]{
+        let mut t=case(name,bytes)?;t.regs[4]=0xabcd0800;t.regs[5]=0x12345678;tests.push(t);
+    }
+    let mut t=case("enter_readonly_stack",vec![0xc8,0x1e,0x00,0x00,0xf4])?;t.regs[4]=0x800;t.regs[5]=0x1234;t.protect=Some((0x9fe,2));tests.push(t);
+    // IMUL r/m (one operand): 8/16/32-bit register and memory, fitting and overflowing.
+    let mut t=case("imul1",vec![0xf6,0xeb,0xf7,0xea,0xf7,0x2f,0x66,0xf7,0xe9,0xf4])?;
+    t.regs[0]=0x12340080;t.regs[1]=0xfffffffd;t.regs[2]=0x56780003;t.regs[3]=0x11110402;t.flags=0x2;t.patch=Some((0x502,vec![0x00,0x80]));tests.push(t);
+    let mut t=case("imul1_gp_fault",vec![0xf7,0x2f,0xf4])?;t.regs[3]=0xffff;tests.push(t);
+    // XLAT with BX, with EBX (67h) and with an ES override.
+    let mut t=case("xlat",vec![0xd7,0x67,0xd7,0x26,0xd7,0xf4])?;
+    t.regs[0]=0xabcd0002;t.regs[3]=0x400;t.patch=Some((0x500,vec![7,6,5,4,3,2,1,0]));tests.push(t);
+    // BT/BTS/BTR/BTC: the AC-probe BTC EAX,ESI from report 44, register forms
+    // and immediate memory forms, then a read-only BTS that must fault.
+    let mut t=case("bit_test",vec![0x66,0x0f,0xbb,0xf0,0x0f,0xa3,0xc8,0x66,0x0f,0xab,0xc8,0x0f,0xb3,0xc8,0x0f,0xba,0x27,0x0f,0x66,0x0f,0xba,0x3f,0x1f,0xf4])?;
+    t.regs[0]=0x00240001;t.regs[1]=0x25;t.regs[3]=0x400;t.regs[6]=18;t.flags=0x8d7;t.patch=Some((0x500,vec![0x01,0x80,0,0]));tests.push(t);
+    let mut t=case("bit_test_readonly",vec![0x0f,0xba,0x2f,0x01,0xf4])?;t.regs[3]=0x400;t.protect=Some((0x500,4));tests.push(t);
+    // SHLD/SHRD by CL and by immediate, on registers and memory, then a 16-bit
+    // count above 16, which this profile rejects.
+    let mut t=case("double_shift",vec![0x0f,0xa5,0xc2,0x66,0x0f,0xad,0xc2,0x0f,0xa4,0x07,0x04,0x66,0x0f,0xac,0x07,0x1f,0xf4])?;
+    t.regs[0]=0x80014002;t.regs[1]=0x00000005;t.regs[2]=0x12348765;t.regs[3]=0x400;t.flags=0x8d7;t.patch=Some((0x500,vec![0x34,0x12,0x78,0x56]));tests.push(t);
+    // Forms added for SingleStepTests/80386: SALC, BOUND, nested ENTER, POPAD on a 16-bit stack, F2 STOS.
+    let mut t=case("salc_set",vec![0xf9,0xd6,0xf4])?;t.regs[0]=0x1234_5678;tests.push(t);
+    let mut t=case("salc_clear",vec![0xf8,0xd6,0xf4])?;t.regs[0]=0x1234_5678;tests.push(t);
+    let mut t=case("bound_inside",vec![0x62,0x06,0x00,0x04,0xf4])?;t.regs[0]=3;t.patch=Some((0x500,vec![0xfb,0xff,0x0a,0x00]));tests.push(t);
+    let mut t=case("bound_fault",vec![0x62,0x06,0x00,0x04,0xf4])?;t.regs[0]=0x20;t.patch=Some((0x500,vec![0xfb,0xff,0x0a,0x00]));tests.push(t);
+    let mut t=case("enter_nested",vec![0x66,0xc8,0x08,0x00,0x03,0xf4])?;t.regs[4]=0xabcd_0700;t.regs[5]=0x1234_06f0;t.patch=Some((0x8e8,vec![0x22,0x22,0x22,0x22,0x11,0x11,0x11,0x11]));tests.push(t);
+    let mut t=case("popad_ss16",vec![0x66,0x61,0xf4])?;t.regs[4]=0xabcd_0700;t.patch=Some((0x900,(0u8..32).map(|b|b.wrapping_mul(37)).collect()));tests.push(t);
+    let mut t=case("rep_f2_stos",vec![0xf2,0xaa,0xf4])?;t.regs[0]=0x5a;t.regs[1]=3;t.regs[7]=0x800;tests.push(t);
+    let mut t=case("port_io",vec![0xe4,0x80,0xe5,0x80,0x66,0xe5,0x80,0xe6,0x80,0xec,0xef,0x6c,0x6f,0xf3,0x6d,0xf4])?;
+    t.regs[0]=0x12345600;t.regs[1]=2;t.regs[2]=0x3f8;t.regs[6]=0x400;t.regs[7]=0x600;t.patch=Some((0x500,vec![1,2,3,4]));tests.push(t);
+    let mut t=case("enter_overlap",vec![0xc8,0x00,0x00,0x03,0xf4])?;t.regs[4]=0x702;t.regs[5]=0x702;tests.push(t);
+    // Protected mode at CPL 0 in 32-bit code, with a GDT at C00h: null, flat
+    // 32-bit code (08h) and flat 32-bit data (10h). The fixed-image compiler
+    // decodes one code size per case, so this stays in 32-bit code:
+    // MOV DS,AX; JMP FAR 0008:00000110; MOV DWORD [800h],12345678h; HLT.
+    let mut code=vec![0x8e,0xd8,0xea,0x10,0x01,0,0,0x08,0x00];code.resize(0x10,0x90);code.extend([0xc7,0x05,0,8,0,0,0x78,0x56,0x34,0x12,0xf4]);
+    let gdt:Vec<u8>=[0u64,0x00cf_9a00_0000_ffff,0x00cf_9200_0000_ffff].iter().flat_map(|d|d.to_le_bytes()).collect();
+    let gdt_iret=gdt.clone();
+    let mut t=case("pm_far_jump",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.regs[0]=0x10;t.regs[4]=0x700;t.patch=Some((0xc00,gdt.clone()));tests.push(t);
+    // MOV SS,AX with a code selector is #GP(0008h).
+    let mut t=case("pm_ss_gp",vec![0x8e,0xd0,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.regs[0]=0x08;t.patch=Some((0xc00,gdt));tests.push(t);
+    // LDTR, TR and the descriptor queries in 32-bit protected-mode code. GDT
+    // at C00h: null, flat code (08h), flat data (10h), an LDT at C40h (18h),
+    // a 386 TSS (20h) and DPL 3 data with a byte limit of 1234h (28h); the
+    // LDT holds flat data (selector 04h).
+    let system_gdt:Vec<u8>=[0u64,0x00cf_9a00_0000_ffff,0x00cf_9200_0000_ffff,0x0000_8200_0c40_0007,0x0000_8900_0e00_0067,0x0000_f200_0000_1234].iter().flat_map(|d|d.to_le_bytes()).collect();
+    let mut tables=system_gdt.clone();tables.resize(0x40,0);tables.extend(0x00cf_9200_0000_ffffu64.to_le_bytes());
+    let code=vec![0x66,0xb8,0x18,0,0x0f,0,0xd0,0x66,0xb8,0x20,0,0x0f,0,0xd8,0x0f,0,0xc3,0x0f,0,0x0d,0,8,0,0,0x0f,1,0x05,0x10,8,0,0,
+        0x66,0xb9,4,0,0x8e,0xc1,0x0f,2,0xd1,0x0f,3,0xf0,0x66,0xb8,0x28,0,0x0f,0,0xe8,0x0f,0,0xe0,0x0f,1,0xe7,0x66,0xb8,3,0,0x63,0xc1,0xf4];
+    let mut t=case("pm_system",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x2f,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.regs[4]=0x700;t.patch=Some((0xc00,tables));tests.push(t);
+    // ARPL with a read-only DS (base 100h) in 16-bit code: ARPL [800h],BX leaves the
+    // unchanged selector 0023h alone; ARPL [802h],BX must raise 0020h to
+    // 0021h, and the write is #GP(0).
+    let mut t=case("pm_arpl",vec![0x63,0x1e,0x00,0x08,0x63,0x1e,0x02,0x08,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.image.segments[3].access=super::address::SegmentAccess::Data{writable:false,expand_down:false,big:false,dpl:0};t.regs[3]=1;t.patch=Some((0x900,vec![0x23,0,0x20,0]));tests.push(t);
+    // LTR of a busy TSS is #GP(0020h).
+    let mut busy=system_gdt;busy[0x25]=0x8b;
+    let mut t=case("pm_ltr_busy",vec![0x0f,0,0xd8,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x2f,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.regs[0]=0x20;t.patch=Some((0xc00,busy));tests.push(t);
+    // Paging in 4 KiB of RAM: the dword at 0 is both the page directory
+    // entry and the page table entry for page 0 (frame 0, user, writable),
+    // PTE 1 is absent and PTE 2 maps linear 2000h read-only to frame 0. In
+    // 16-bit code at CPL 0: MOV EAX,80000011h; MOV CR0,EAX; MOV AX,1234h;
+    // MOV [2700h],AX (DS base 100h: linear 2800h, physical 800h, allowed at
+    // CPL 0); MOV AX,[0F00h] is #PF at linear 1000h with error code 0.
+    let mut t=case("pm_paging",vec![0x66,0xb8,0x11,0,0,0x80,0x0f,0x22,0xc0,0xb8,0x34,0x12,0xa3,0,0x27,0xa1,0,0x0f,0xf4])?;t.image.real_mode=false;t.image.msw=0x11;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.patch=Some((0,vec![7,0,0,0,0,0,0,0,5,0,0,0]));tests.push(t);
+    let mut t=case("smsw32_paging",vec![0x66,0xb8,0x11,0,0,0x80,0x0f,0x22,0xc0,0x66,0x0f,0x01,0xe3,0xf4])?;
+    t.image.real_mode=false;t.image.msw=0x11;t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.patch=Some((0,vec![7,0,0,0]));tests.push(t);
+    // IRETD at CPL 0 in 32-bit code: the frame at C18h (after the GDT)
+    // returns to 0008:00000110 with IOPL 3, NT clear and IF set.
+    let mut code=vec![0xcf];code.resize(0x10,0x90);code.push(0xf4);
+    let mut frame=gdt_iret.clone();for v in [0x110u32,0x08,0x3ed7]{frame.extend(v.to_le_bytes());}
+    let mut t=case("pm_iret",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x17,0xc00);t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xc18;t.patch=Some((0xc00,frame));tests.push(t);
+    // Rings in 32-bit code: IRETD at CPL 0 to ring 3 (frame at E00h: EIP
+    // 110h, CS 1Bh, EFLAGS, ESP B00h, SS 23h), which nulls DS/ES/FS/GS; then
+    // CALL FAR 0033:0 through a DPL 3 call gate copying one dword to
+    // 0008:0120, on the ring 0 stack at TSS ESP0 F00h; HLT there at CPL 0.
+    let gate:u64=0x0000_ec01_0008_0120;
+    let mut rings=vec![0u8;0x320];
+    for (n,d) in [0u64,0x00cf_9a00_0000_ffff,0x00cf_9200_0000_ffff,0x00cf_fa00_0000_ffff,0x00cf_f200_0000_ffff,0x0000_8b00_0d00_0067,gate].iter().enumerate(){rings[0x100+8*n..0x108+8*n].copy_from_slice(&d.to_le_bytes());}
+    rings[0..4].copy_from_slice(&0xcafe_babeu32.to_le_bytes());
+    rings[0x204..0x208].copy_from_slice(&0xf00u32.to_le_bytes());rings[0x208..0x20a].copy_from_slice(&0x10u16.to_le_bytes());
+    for (n,v) in [0x110u32,0x1b,0x202,0xb00,0x23].iter().enumerate(){rings[0x300+4*n..0x304+4*n].copy_from_slice(&v.to_le_bytes());}
+    let mut code=vec![0xcf];code.resize(0x10,0x90);code.extend([0x9a,0,0,0,0,0x33,0,0xf4]);code.resize(0x20,0x90);code.push(0xf4);
+    let mut t=case("pm_rings",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x37,0xc00);
+    t.image.ldt_tr[1]=super::address::SystemSegment{selector:0x28,base:0xd00,limit:0x67,kind:0x0b};
+    t.image.selectors[1]=0x08;t.image.selectors[2]=0x10;
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xe00;t.patch=Some((0xb00,rings));tests.push(t);
+    // V86 mode: IRETD in 16-bit code at CPL 0 (so that the instructions
+    // after it decode with the same default sizes in the fixed-image
+    // backend), with VM in the frame at E00h (EIP 10h, CS
+    // 10h, EFLAGS with VM, IOPL 3 and IF, ESP 100h, SS 60h, ES/DS/FS/GS
+    // 70h); then in V86 mode MOV AX,1234h; MOV [10h],AX (linear 710h);
+    // PUSHF; POPF; CLI; STI; PUSH 0; POPF (IOPL stays 3); MOV DS,AX; and
+    // MOV CR0,EAX, which is #GP(0) in V86 mode. (HLT would be too, but this
+    // backend decodes it once, at the starting CPL 0.)
+    let mut code=vec![0x66,0xcf];code.resize(0x10,0x90);code.extend([0xb8,0x34,0x12,0xa3,0x10,0x00,0x9c,0x9d,0xfa,0xfb,0x6a,0x00,0x9d,0x8e,0xd8,0x0f,0x22,0xc0]);
+    let mut frame=Vec::new();for v in [0x10u32,0x10,0x0002_3202,0x100,0x60,0x70,0x70,0x70,0x70]{frame.extend(v.to_le_bytes());}
+    let mut t=case("pm_v86",code)?;t.image.real_mode=false;t.image.msw=0x11;
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:0xffff,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:0}};t.regs[4]=0xe00;t.patch=Some((0xe00,frame));tests.push(t);
+    let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
+    let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
 }
 fn validate(iterations:u32,samples:u32)->Result<(),String> {
@@ -263,7 +456,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
         dispatch.push_str(&format!("{physical}=>{{if let Err(status)=guard(s,s.eip,&{bytes:?},s.machine.segments[1],{}){{return status;}}\n",case.image.end));
         match decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
-                code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&program)));
+                code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {} }}\n",super::emit_rust_functions(&program)));
                 let dynamic_flow=format!("FlowContext{{next_eip:s.eip+{},code_limit:s.machine.segments[1].limit,..{flow:?}}}",decoded.length);
                 dispatch.push_str(&format!("let flow_context={dynamic_flow};\n"));
                 let args=format!("&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context",dst.register,dst.low,src.register,src.low);
@@ -272,7 +465,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
                     let mut alternate=case.image.clone();let old_big=matches!(alternate.segments[2].access,super::address::SegmentAccess::Data{big:true,..});
                     if let super::address::SegmentAccess::Data{ref mut big,..}=alternate.segments[2].access{*big=!old_big;}
                     if let Operation::Pil{program:p,dst:d,src:r,flow:_,address:a}=alternate.decode(&ram,ip).map_err(|e|format!("alternate stack decode: {e:?}"))?.operation{
-                        code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address}}; {} }}\n",super::emit_rust_functions(&p)));
+                        code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {} }}\n",super::emit_rust_functions(&p)));
                         let alternate_call=format!("alt{ip:x}::execute_with_machine(&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context,&mut s.ram,{a:?},&mut s.machine)",d.register,d.low,r.register,r.low);
                         call=format!("if matches!(s.machine.segments[2].access,SegmentAccess::Data{{big:true,..}})=={old_big}{{{call}}}else{{{alternate_call}}}");
                     }
@@ -281,7 +474,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
             }
             Operation::Input{next}=>{let delta=next-ip;dispatch.push_str(&format!("if let Some(b)=s.rx.pop_front(){{s.regs[0]=(s.regs[0]&!255)|u32::from(b);s.eip=s.eip+{delta};s.machine.retired();[0,0,0,0,0]}}else{{[2,s.eip,0,0,0]}}"));},
             Operation::Output{next}=>{let delta=next-ip;dispatch.push_str(&format!("if s.tx.len()==256{{[3,s.eip,0,0,0]}}else{{s.tx.push_back(s.regs[0] as u8);s.eip=s.eip+{delta};s.machine.retired();[0,0,0,0,0]}}"));},
-            Operation::Halt=>dispatch.push_str("[1,s.eip,0,0,0]"),
+            Operation::Halt|Operation::Interrupt{..}=>dispatch.push_str("[1,s.eip,0,0,0]"),
         }
         dispatch.push_str("},\n");ip+=decoded.length;
     }
@@ -294,8 +487,10 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
 fn runner_source()->String {
     let mut source=String::from("// Generated from validated PIL; fixed-image native Rust proof, not a JIT.\n#![allow(dead_code,unused_variables,unused_mut,unused_imports)]\nuse std::collections::VecDeque;\n");
     source.push_str("mod flow {\n");source.push_str(include_str!("flow.rs"));source.push_str("\n}\nuse flow::{ExecError,FlowContext};\n");
+    source.push_str("mod vga_planar {\n");source.push_str(include_str!("vga_planar.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod memory {\n");source.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
     source.push_str("mod address {\n");source.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*,SegmentAccess::*};\n");
+    source.push_str("mod privilege {\n");source.push_str(include_str!("privilege.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod trace {\n");source.push_str(include_str!("trace.rs"));source.push_str("\n}\n");
     source.push_str(RUNNER);
     source
@@ -319,7 +514,7 @@ fn guard(s:&State,start:u32,bytes:&[u8],cache:SegmentCache,end:u32)->Result<(),[
   let physical=u64::from(cache.base)+u64::from(offset);if physical<0x100 || physical>=u64::from(end){return Err([7,start,0,0,0]);}
   let context=MemoryContext{segment:SegmentRegister::Cs,cache};
   let at=context.translate(offset,MemWidth::Byte,false,start).map_err(|e|trace::fault(start,e))?;
-  let actual=s.ram.load(at,MemWidth::Byte).map_err(|e|trace::fault(start,ExecError::MemoryAccess{eip:start,address:e.address,bytes:1,write:false}))?;
+  let actual=s.ram.load(at,MemWidth::Byte).map_err(|e|trace::fault(start,e.error(start)))?;
   if actual!=u32::from(*expected){return Err([7,start,0,0,0]);}
  }Ok(())
 }

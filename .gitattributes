@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# GW-BASIC ASCII programs require DOS CRLF in every checkout.
+programs/dos/*.BAS -text
