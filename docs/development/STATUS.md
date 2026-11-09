@@ -1,3 +1,39 @@
+# Observed DOS native blocks — 9 November 2026
+
+The DOS profiling writer now records up to 120 million interpreted steps,
+ending on exit, input wait or another stop, and emits one Rust module for all
+observed instruction sites of the requested executable. Inlined sequences of
+up to 16 instructions execute directly from Dine before decode-cache lookup;
+stores and control transfers end a sequence. Code/machine/fetch-window guards,
+retirement budgets, precise fault prefixes and interpreter fallback are kept.
+Every recorded offset can be a block entry; changed code falls back.
+
+Tools: build_dos_shadow.py stores source, host-native service and target/hash
+manifest in shadow/<os>-<cpu>/<guest-sha256>; verify_dos_shadow.py compares
+complete Mandelbrot sessions and writes a timing report. The linked service
+uses the existing DOS/BIOS/VGA frontend protocol, including key exit and text
+mode restoration. The release exporter includes build.rs.
+
+Local Windows x86-64 release: 94 observed MANDVGA sites; three generated
+guard/state tests pass. In 3 complete comparisons, interpreted times were
+8.942918, 8.972603, 8.865118 s; native-block times 2.838639, 2.687725,
+2.696277 s. Median improvement 3.317x, with 9,312,992 native blocks and
+37,555,373 guest instructions in blocks per draw. VGA planes, palette, caption,
+exposed CPU state, step counts, key exit and text-mode restoration match.
+Timing includes rendering/protocol transfer and excludes profiling/build/setup.
+Other local checks: 660 Rust tests pass, 2 ignored; standalone runtime export,
+debugger, COM/MZ hello and backend comparison pass. The independent native VGA
+oracle verifies 296,960 pixels, caption and key exit. Python frontend tests:
+48 pass, one localhost TCP test blocked by sandbox network permissions
+(WinError 10013). Workspace temporary directories avoid the sandbox default
+temp folder's rename/cleanup restrictions. Windows/Linux hosted CI is pending.
+
+Still open: region/loop generation spanning blocks, persistent collection during
+normal interactive sessions, dynamic loading after background builds, and
+standalone translated executables using a separately linked DOS library.
+See ../DOS_NATIVE.md for reproducible commands and limits. No new Linux/ARM
+run or desktop-window visual verification is claimed here.
+
 # SMSW r32 and the first task gate — 8 November 2026
 
 In the 128 KiB test386 POST 22h, the apparent #GP(00A8h) was in the error

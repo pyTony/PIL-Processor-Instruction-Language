@@ -66,6 +66,10 @@ mod vectors;
 use services::dispatch as service;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
+/// Identity of the DOS program currently executing. The path is only known
+/// when DOS resolved a mounted file; standalone imports may not have one.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) struct ProgramIdentity{pub path:Option<Vec<u8>>,pub bytes:std::sync::Arc<Vec<u8>>}
 pub struct Loaded{
     arena:Arena,
     pub format:Format,pub cpu:Cpu,pub ram:Ram,pub image:Image,
@@ -88,6 +92,7 @@ pub struct Loaded{
     /// The program's own file, which opens read-only by its upper-case base
     /// name from any directory, and the drive with the files AH3D opened.
     pub own_file:std::sync::Arc<Vec<u8>>,pub own_name:Vec<u8>,pub drive:files::Drives,
+    pub(crate) active_program:ProgramIdentity,
     /// The running program's PSP, the parents waiting in EXEC, the last
     /// child's return code for AH4D, and console bytes AH3F read but did not
     /// return yet.
@@ -123,7 +128,7 @@ impl Clone for Loaded{
         module_base:self.module_base,allocated_end:self.allocated_end,trailing_bytes:self.trailing_bytes,timer_ticks:self.timer_ticks,timer_tick_adjust:self.timer_tick_adjust,
         open_handles:self.open_handles,dos_error:self.dos_error,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
         input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
-        own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),return_code:self.return_code,
+        own_name:self.own_name.clone(),drive:self.drive.clone(),active_program:self.active_program.clone(),psp:self.psp,exec:self.exec.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
         cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
@@ -320,7 +325,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     let mut system=[(0,0);SYSTEM_RANGES];
     system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
     system[1]=(vectors::ENTRIES,vectors::END);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -376,7 +381,17 @@ pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
     let mut probe=run_with_output(p,budget,&mut output)?;
     probe.output=output.into_bytes();Ok(probe)
 }
-pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output)->Result<Probe,String>{
+pub fn run_with_output(p:Loaded,budget:usize,output:&mut impl crate::host_io::Output)->Result<Probe,String>{
+    run_with_backend(p,budget,output,None)
+}
+/// An optional executor for decoded PIL instructions. A miss falls back to the
+/// interpreter; DOS services and instruction retirement stay in the shared loop.
+pub(crate) trait InstructionBackend {
+    fn block_stats(&self)->(u64,u64){(0,0)}
+    fn block(&mut self,_program:&ProgramIdentity,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
+    fn execute(&mut self,program:&ProgramIdentity,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
+}
+pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,mut backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
     if !(1..=if p.rom_mode{MAX_ROM_STEPS}else{MAX_STEPS}).contains(&budget){return Err(if p.rom_mode{"ROM step budget must be 1..1000000000"}else{"DOS step budget must be 1..1000000"}.into());}
     let _profile_run=crate::profile::span("dos_run");
     let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();
@@ -549,6 +564,22 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
             // The ordinary decoder retains ownership of malformed/non-x87 fetches.
             Ok(None)|Err(_)=>{},
         }
+        if let Some(b)=backend.as_deref_mut(){
+            // Multi-instruction execution is opt-in. Interrupt shadows and
+            // installed timer handlers retain instruction-level scheduling.
+            let mut machine=p.image.segment_state();
+            let guest_timer=p.clock_offset.is_some()&&vectors::answered(&p,p.speaker.pic.timer_vector())!=Ok(true);
+            if machine.ss_shadow==0&&machine.sti_shadow==0&&!guest_timer{
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                if let Some((n,result))=b.block(&p.active_program,&p.image,&mut p.cpu,&mut p.ram,&mut machine,budget-execution_steps){
+                    p.image.set_segment_state(machine);p.selectors=machine.selectors;
+                    execution_steps+=n;completed+=n;pil_steps+=n;
+                    *instructions.entry("native block instructions".into()).or_insert(0)+=n;
+                    if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
+                    if n>0{continue;}
+                }
+            }
+        }
         let decoded=match {let _span=crate::profile::span("decode_cache");p.cache.fetch(&p.image,&p.ram,p.cpu.eip)}{
             Ok(d)=>d,Err(GuestError::Execution(e))=>match exception(&mut p,&e,&mut lazy){
                 Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
@@ -581,7 +612,12 @@ pub fn run_with_output(mut p:Loaded,budget:usize,output:&mut impl crate::host_io
         let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
-                let mut machine=p.image.segment_state();let result={let _span=crate::profile::span("pil_execute");super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|())};
+                let mut machine=p.image.segment_state();
+                let native=if let Some(b)=backend.as_deref_mut(){
+                    lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                    b.execute(&p.active_program,&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
+                }else{None};
+                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|())}};
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
@@ -765,6 +801,10 @@ pub fn format_rom_report(result: &Probe) -> String {
 #[cfg(test)]
 #[path="../tests/unit/dos.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path="../tests/unit/dos_backend.rs"]
+mod backend_tests;
 
 /// IN, OUT, INS and OUTS labels as the decoder writes them.
 fn is_port_access(label:&str)->bool{

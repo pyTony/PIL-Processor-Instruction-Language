@@ -82,6 +82,7 @@ questions; proposed syntax and plans are not implementation claims.
 |---|---|
 | [FAT16 and ZIP containers](CONTAINERS.md) | Open FreeDOS images,expand packages,list/extract files and feed the DOS probe |
 | [DOS COM/EXE probe](DOS_PROBE.md) | Import DOS executables, run original hello examples and rank first instruction/service blockers |
+| [Observed DOS native blocks](DOS_NATIVE.md) | Build observed guest code with Dine, verify graphics and compare native blocks with the interpreter |
 | [Debugger guide](DEBUGGER.md) | Launchers, commands, demos, memory inspection, serial, comparisons and supported instruction forms |
 | [Feature matrix](../delivery/source/FEATURE_MATRIX.md) | Supported, partial and planned delivery features |
 | [Release notes](../delivery/source/RELEASE_NOTES.md) | User-facing changes by delivered version |
