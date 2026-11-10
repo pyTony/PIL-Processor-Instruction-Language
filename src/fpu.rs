@@ -1,6 +1,10 @@
 //! Replaceable numerics-coprocessor boundary. The default machine has no FPU.
 //! No host floating-point operations or fabricated x87 results are used.
 use crate::{Cpu, guest::Image, memory::Ram};
+#[path = "fpu_decode.rs"]
+mod operations;
+#[allow(unused_imports)]
+pub use operations::{classify, DecodeError, Operation};
 #[path = "fpu_state.rs"]
 mod state;
 #[allow(unused_imports)]
