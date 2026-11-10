@@ -575,3 +575,25 @@ class DosTerminalTests(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
+
+
+class KeyEdgesTests(unittest.TestCase):
+    def test_guest_press_remains_held_until_real_release(self):
+        events = term.KeyEvents(True)
+        self.assertEqual(events.press('Escape', (27, 1)), 'keydown 27 1')
+        self.assertEqual(events.pressed, {'Escape': (27, 1)})
+        self.assertEqual(events.release('Escape'), 'keyup 27 1')
+        self.assertIsNone(events.release('Escape'))
+        self.assertEqual(events.pressed, {})
+
+    def test_console_and_older_engines_keep_the_legacy_key_command(self):
+        for events, raw in [(term.KeyEvents(False), True), (term.KeyEvents(True), False)]:
+            self.assertEqual(events.press('a', (97, 30), raw), 'key 97 30')
+            self.assertIsNone(events.release('a'))
+
+    def test_focus_loss_releases_all_guest_keys_with_original_codes(self):
+        events = term.KeyEvents(True)
+        events.press('a', (65, 30))
+        events.press('Up', (0, 72))
+        self.assertEqual(events.release_all(), ['keyup 65 30', 'keyup 0 72'])
+        self.assertEqual(events.release_all(), [])
