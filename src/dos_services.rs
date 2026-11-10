@@ -290,6 +290,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
+        (0x1a,ah @ (0x02|0x04))=>{
+            let [century,year,month,day,hour,minute,second]=p.rtc.bios(p.clock_offset);
+            let (cx,dx)=if ah==2{(u32::from(hour)<<8|u32::from(minute),u32::from(second)<<8)}
+                else{(u32::from(century)<<8|u32::from(year),u32::from(month)<<8|u32::from(day))};
+            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|cx;
+            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|dx;
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
         (0x21,ah @ (0x38|0x65|0x66))=>{nls::service(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==0x0c&&p.cpu.regs[1]&0xffff==0x036a=>{
@@ -318,6 +326,15 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             let signature=p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS PSP read: {e:?}"))?;
             if signature!=0x20cd{return Err(format!("DOS set PSP to {segment:04x}h, which holds no PSP, is not modelled"));}
             p.psp=segment;
+            let mut handles=0u32;
+            for h in 0..20u16{
+                if let Ok(addr)=jft(p,h){
+                    if let Ok(entry)=p.ram.load(addr,MemWidth::Byte){
+                        if entry as u8!=0xff{handles|=1<<h;}
+                    }
+                }
+            }
+            p.open_handles=handles;
             Ok(None)
         },
         (0x21,0x51|0x62)=>{
@@ -325,6 +342,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
             Ok(None)
         },
+        (0x21,0x55)=>{exec::create_child_psp(p)?;Ok(None)},
         (0x28|0x2a,_)=>{
             // DOS idle (28h) and the network hook (2Ah) end in the kernel's
             // IRET when nothing has hooked them (FreeDOS kernel.asm): no
