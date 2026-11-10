@@ -209,3 +209,78 @@ fn present_80387_em_trap_precedes_execution() {
     assert_eq!(result.loaded.cpu.eip,0x100);
     assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
 }
+
+
+#[test]
+fn present_80387_dos_loads_and_stores_ieee_f32_f64() {
+    // FNINIT; FLD m64 [0200h]; FSTP m64 [0208h];
+    // FLD m32 [0210h]; FSTP m32 [0214h]; INT 20h.
+    let bytes=[0xdb,0xe3, 0xdd,0x06,0x00,0x02, 0xdd,0x1e,0x08,0x02,
+               0xd9,0x06,0x10,0x02, 0xd9,0x1e,0x14,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-ieee.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let value64=0xbff8_0000_0000_0000u64; // -1.5
+    p.ram.store(base+0x200,MemWidth::Dword,value64 as u32).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,(value64>>32)as u32).unwrap();
+    p.ram.store(base+0x210,MemWidth::Dword,0x3f80_0001).unwrap();
+    let result=dos::run(p,20).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let low=result.loaded.ram.load(base+0x208,MemWidth::Dword).unwrap()as u64;
+    let high=result.loaded.ram.load(base+0x20c,MemWidth::Dword).unwrap()as u64;
+    assert_eq!(low|(high<<32),value64);
+    assert_eq!(result.loaded.ram.load(base+0x214,MemWidth::Dword).unwrap(),0x3f80_0001);
+    assert_eq!(result.loaded.fpu.state().unwrap().top(),0);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_fstp_m32_rounds_ties_to_even_and_sets_precision_flag() {
+    // FLD m64; FSTP m32; INT 20h. The double is 1+2^-24,
+    // exactly between 1.0f32 and the next float; round to even 1.0.
+    let bytes=[0xdd,0x06,0x00,0x02, 0xd9,0x1e,0x08,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-round.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Dword,0x1000_0000).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,0x3ff0_0000).unwrap();
+    let result=dos::run(p,15).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x208,MemWidth::Dword).unwrap(),0x3f80_0000);
+    assert_eq!(result.loaded.fpu.state().unwrap().status&0x20,0x20);
+}
+
+#[test]
+fn present_80387_32bit_sib_addressing_uses_reg_scale_and_disp32() {
+    // 67 DD 04 8D 00 02 00 00 = FLD m64 [ECX*4+0200h]
+    // followed by FSTP m64 [0200h], so output overwrites the first slot.
+    let bytes=[0x67,0xdd,0x04,0x8d,0,2,0,0, 0xdd,0x1e,0,2, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-sib.com").unwrap();
+    p.fpu=Fpu::present();p.cpu.regs[1]=2;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x208,MemWidth::Dword,0x0000_0000).unwrap();
+    p.ram.store(base+0x20c,MemWidth::Dword,0x4008_0000).unwrap(); // 3.0
+    let result=dos::run(p,15).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap(),0);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Dword).unwrap(),0x4008_0000);
+}
+
+#[test]
+fn present_80387_faulted_fstp_keeps_memory_and_stack_intact() {
+    let bytes=[0xd9,0xe8, 0xdd,0x1e,0x00,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-protected.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Dword,0xdeadbeef).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,0xcafebabe).unwrap();
+    p.ram.protect(base+0x205,1).unwrap();
+    let result=dos::run(p,15).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s) if s.contains("80387 memory operand")));
+    assert_eq!(result.completed,1);
+    assert_eq!(result.loaded.cpu.eip,0x102);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap(),0xdeadbeef);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Dword).unwrap(),0xcafebabe);
+    assert_eq!(result.loaded.fpu.state().unwrap().st(0),
+               Some(Extended80::from_bits(1u64<<63,0x3fff)));
+}
