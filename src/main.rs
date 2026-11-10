@@ -14,6 +14,7 @@ mod debugger;
 mod guest;
 mod dos;
 mod dos_compile;
+mod dos_encoding;
 #[cfg(pil_shadow_backend)]
 #[allow(dead_code, unused_mut, unused_variables, unused_imports, unused_assignments)]
 mod shadow_backend { include!(concat!(env!("OUT_DIR"), "/pil_shadow.rs")); }
