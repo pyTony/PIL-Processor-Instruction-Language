@@ -1,3 +1,33 @@
+# Create Child PSP (INT 21h, AH=55h) — 10 November 2026
+
+Turbo Pascal IDE in-memory execution (Ctrl+F9) prepares child processes without
+invoking EXEC (AH=4Bh) by allocating a program block with AH=48h and creating
+a child PSP with INT 21h AH=55h.
+
+- `src/dos_exec.rs`: `create_child_psp` constructs the 256-byte child PSP at `DX`
+  with top-of-memory segment `SI` (DOS 3.0+). The child inherits the parent's
+  first 20 file handles, environment segment pointer (PSP:002Ch), default FCBs
+  (PSP:005Ch, 006Ch), and command tail (PSP:0080h). Termination, Ctrl-C, and
+  Critical Error vectors (INT 22h, 23h, 24h) are copied from the IVT. The parent
+  PSP segment is linked at PSP:0016h.
+- Memory ownership: if `DX` is an allocated block in the MCB arena, ownership is
+  transferred to the child (`p.arena.set_owner(dx, dx)`).
+- Boundaries & validation: `DX` segments inside the IVT/BDA (< 0050:0000), beyond
+  conventional RAM (>= A000:0000), targeting the active PSP itself, targeting
+  unallocated free arena memory, or targeting write-protected RAM are rejected
+  with explicit errors.
+- Active PSP switch: `p.psp` switches to `DX`, `p.open_handles` reflects the
+  inherited JFT handles, `p.dta` resets to `(DX, 0080h)`, and AL is destroyed
+  (0F0h) while CF is preserved.
+- Remaining Turbo Pascal IDE blockers:
+  - In-memory child termination: when an in-memory compiled program terminates
+    via `AH=4Ch` without an `exec::Frame`, execution currently stops rather than
+    returning control to the IDE via `PSP:000Ah` (INT 22h).
+  - Floating-point numerics: compiling or running with `{$N+}` requires the
+    80387 coprocessor execution core (phases 2+ under development).
+  - Full interactive Ctrl+F9 execution is not claimed until end-to-end IDE runs
+    are verified.
+
 # PIC reinitialization (ICW1-ICW4) for CWSDPMI — 8 November 2026
 
 Tony's DOS benchmark menu (driveD\dosbench, option e, Quake timedemo

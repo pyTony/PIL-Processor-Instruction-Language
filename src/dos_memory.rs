@@ -26,7 +26,21 @@ impl Arena{
     }
     fn largest(&self)->u16{self.blocks.iter().filter(|b|b.owner==0).map(|b|b.size).max().unwrap_or(0)}
     /// An allocated block by its segment, whichever PSP owns it (FreeDOS checks only the MCB).
-    fn owned(&self,segment:u16)->Option<usize>{self.blocks.iter().position(|b|b.header+1==segment&&b.owner!=0)}
+    pub(super) fn owned(&self,segment:u16)->Option<usize>{self.blocks.iter().position(|b|b.header+1==segment&&b.owner!=0)}
+    /// True if `segment` falls within any free block in the arena.
+    pub(super) fn in_free(&self,segment:u16)->bool{
+        self.blocks.iter().any(|b|b.owner==0&&segment>b.header&&segment<=b.header+b.size)
+    }
+    /// Returns the owner of the block starting at `segment`.
+    #[cfg(test)]
+    pub(super) fn block_owner(&self,segment:u16)->Option<u16>{
+        self.blocks.iter().find(|b|b.header+1==segment).map(|b|b.owner)
+    }
+    /// Returns the first segment of the first free block in the arena.
+    #[cfg(test)]
+    pub(super) fn first_free_segment(&self)->Option<u16>{
+        self.blocks.iter().find(|b|b.owner==0).map(|b|b.header+1)
+    }
     /// Hands the block at `segment` to `owner` (EXEC gives the child its blocks).
     pub(super) fn set_owner(&mut self,ram:&mut Ram,segment:u16,owner:u16)->Result<(),String>{
         let i=self.owned(segment).ok_or("EXEC block is not allocated")?;self.blocks[i].owner=owner;

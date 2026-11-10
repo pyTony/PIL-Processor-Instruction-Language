@@ -2531,3 +2531,140 @@ fn bios_rtc_time_and_date_are_bcd_preserve_registers_and_share_the_session_clock
  assert_eq!(p.cpu.regs[1]&65535,(u32::from(p.rtc.read(None,4).unwrap())<<8)|u32::from(p.rtc.read(None,2).unwrap()));
  assert_eq!(p.cpu.regs[2]&65535,u32::from(p.rtc.read(None,0).unwrap())<<8);
 }
+
+#[test]
+fn child_psp_initializes_fields_and_inherits_parent_state(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ // Shrink initial COM block to 0x40 paragraphs so memory is available for child
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.eflags&1,0);
+ // Set custom vectors in IVT
+ p.ram.store(0x22*4,MemWidth::Dword,0x1234_5678).unwrap();
+ p.ram.store(0x23*4,MemWidth::Dword,0x2345_6789).unwrap();
+ p.ram.store(0x24*4,MemWidth::Dword,0x3456_789a).unwrap();
+ // Set command tail in parent PSP
+ let parent_base=u32::from(PSP)*16;
+ p.ram.write_bytes(parent_base+0x80,&[4,b'T',b'E',b'S',b'T',0x0d]).unwrap();
+ // Allocate child memory block
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x20;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.eflags&1,0);
+ let child=p.cpu.regs[0]as u16;
+ assert!(child>PSP);
+ // Call AH=55h to create child PSP
+ p.cpu.regs[0]=0x55aa;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=0x4000;
+ p.cpu.eflags=0x202;p.cpu.undefined_flags=0;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // Return conventions: AL destroyed (0xf0), CF unchanged, active PSP switched
+ assert_eq!(p.cpu.regs[0]as u8,0xf0);
+ assert_eq!(p.cpu.eflags&1,0);
+ assert_eq!(p.psp,child);
+ assert_eq!(p.dta,(child,0x80));
+ // Check child PSP contents in RAM
+ let child_base=u32::from(child)*16;
+ assert_eq!(&p.ram.bytes()[child_base as usize..child_base as usize+2],&[0xcd,0x20]);
+ assert_eq!(p.ram.load(child_base+2,MemWidth::Word).unwrap()as u16,0x4000); // SI memory end
+ assert_eq!(p.ram.load(child_base+0x0a,MemWidth::Dword).unwrap(),0x1234_5678); // INT 22h
+ assert_eq!(p.ram.load(child_base+0x0e,MemWidth::Dword).unwrap(),0x2345_6789); // INT 23h
+ assert_eq!(p.ram.load(child_base+0x12,MemWidth::Dword).unwrap(),0x3456_789a); // INT 24h
+ assert_eq!(p.ram.load(child_base+0x16,MemWidth::Word).unwrap()as u16,PSP); // Parent PSP
+ assert_eq!(&p.ram.bytes()[child_base as usize+0x18..child_base as usize+0x1d],&[0,1,2,3,4]); // JFT
+ assert_eq!(p.ram.load(child_base+0x2c,MemWidth::Word).unwrap()as u16,ENV); // Env segment
+ assert_eq!(p.ram.load(child_base+0x32,MemWidth::Word).unwrap()as u16,20); // JFT size
+ assert_eq!(p.ram.load(child_base+0x34,MemWidth::Word).unwrap()as u16,0x18); // JFT offset
+ assert_eq!(p.ram.load(child_base+0x36,MemWidth::Word).unwrap()as u16,child); // JFT segment
+ assert_eq!(p.ram.load(child_base+0x40,MemWidth::Word).unwrap()as u16,DOS_COMPAT_VERSION);
+ assert_eq!(&p.ram.bytes()[child_base as usize+0x50..child_base as usize+0x53],&[0xcd,0x21,0xcb]);
+ assert_eq!(&p.ram.bytes()[child_base as usize+0x80..child_base as usize+0x86],&[4,b'T',b'E',b'S',b'T',0x0d]);
+}
+
+#[test]
+fn child_psp_transfers_mcb_ownership_for_allocated_block(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ // Shrink initial COM block
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // Allocate block for child
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x10;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.eflags&1,0);
+ let child=p.cpu.regs[0]as u16;
+ let mcb_header=u32::from(child-1)*16;
+ // Before AH=55h: owner is parent PSP
+ assert_eq!(p.ram.load(mcb_header+1,MemWidth::Word).unwrap()as u16,PSP);
+ assert_eq!(p.arena.block_owner(child),Some(PSP));
+ // Create child PSP
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x10);
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // After AH=55h: owner in RAM and arena is child segment
+ assert_eq!(p.ram.load(mcb_header+1,MemWidth::Word).unwrap()as u16,child);
+ assert_eq!(p.arena.block_owner(child),Some(child));
+}
+
+#[test]
+fn child_psp_parent_linkage_and_switching(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ // Shrink initial COM block
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x20;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.eflags&1,0);
+ let child=p.cpu.regs[0]as u16;
+ // AH=55h creates child and sets current PSP to child
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x20);
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.psp,child);
+ // Query current PSP via AH=51h and AH=62h
+ for ah in [0x51,0x62]{
+  p.cpu.regs[0]=ah<<8;
+  service(&mut p,0x21,&mut vec![]).unwrap();
+  assert_eq!(p.cpu.regs[3]&0xffff,u32::from(child));
+ }
+ // Switch back to parent via AH=50h
+ p.cpu.regs[0]=0x5000;p.cpu.regs[3]=u32::from(PSP);
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.psp,PSP);
+ // Query current PSP via AH=51h: returns parent PSP
+ p.cpu.regs[0]=0x5100;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[3]&0xffff,u32::from(PSP));
+ // Switch back to child via AH=50h
+ p.cpu.regs[0]=0x5000;p.cpu.regs[3]=u32::from(child);
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.psp,child);
+}
+
+#[test]
+fn child_psp_rejects_invalid_and_boundary_segments(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ // Shrink initial COM block
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // Segment 0 (IVT): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=0;p.cpu.regs[6]=0x100;
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // Segment 0x40 (BDA): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=0x40;p.cpu.regs[6]=0x100;
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // Beyond conventional RAM: rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=0xa000;p.cpu.regs[6]=0xa100;
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=0xffff;p.cpu.regs[6]=0xffff;
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // Same as current PSP: rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(PSP);p.cpu.regs[6]=0x2000;
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // In unallocated free memory: rejected
+ let free_seg=p.arena.first_free_segment().unwrap();
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(free_seg);p.cpu.regs[6]=u32::from(free_seg+0x10);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // Read-only protected memory: rejected
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x10;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ let seg=p.cpu.regs[0]as u16;
+ p.ram.protect(u32::from(seg)*16,256).unwrap();
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(seg);p.cpu.regs[6]=u32::from(seg+0x10);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+}
