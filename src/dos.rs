@@ -541,7 +541,8 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
                 match p.fpu.execute(&instruction,&mut p.cpu,&mut p.ram,&p.image){
                     super::fpu::Outcome::Completed=>{
-                        p.cpu.eip=(p.cpu.eip+instruction.length)&0xffff;
+                        let mask=if p.image.segments[SegmentRegister::Cs.index()].default_32(){u32::MAX}else{0xffff};
+                        p.cpu.eip=p.cpu.eip.wrapping_add(instruction.length)&mask;
                         p.image.retired();completed+=1;execution_steps+=1;
                         *instructions.entry(p.fpu.name().into()).or_insert(0)+=1;
                         continue;
@@ -566,6 +567,20 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                                 instruction.bytes[..instruction.length as usize].iter()
                                     .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" "))),
                         }
+                    },
+                    super::fpu::Outcome::Unsupported=>{
+                        break Stop::Fault(format!(
+                            "80387 unsupported instruction; CS:IP={:04x}:{:08x}; bytes={}",
+                            p.selectors[1],p.cpu.eip,
+                            instruction.bytes[..instruction.length as usize].iter()
+                                .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")));
+                    },
+                    super::fpu::Outcome::StackFault(error)=>{
+                        break Stop::Fault(format!(
+                            "80387 stack fault ({error:?}); masked exception semantics not yet implemented; CS:IP={:04x}:{:08x}; bytes={}",
+                            p.selectors[1],p.cpu.eip,
+                            instruction.bytes[..instruction.length as usize].iter()
+                                .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")));
                     },
                 }
             },
