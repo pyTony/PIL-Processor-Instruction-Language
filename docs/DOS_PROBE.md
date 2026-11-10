@@ -1,3 +1,54 @@
+# Create Child PSP (INT 21h, AH=55h) — 10 November 2026
+
+Turbo Pascal IDE in-memory execution (Ctrl+F9) prepares child processes without
+invoking EXEC (AH=4Bh) by allocating a program block with AH=48h and creating
+a child PSP with INT 21h AH=55h.
+
+- `src/dos_exec.rs`: `create_child_psp` constructs the 256-byte child PSP at `DX`
+  with top-of-memory segment `SI` (DOS 3.0+). The child inherits the parent's
+  first 20 file handles, environment segment pointer (PSP:002Ch), default FCBs
+  (PSP:005Ch, 006Ch), and command tail (PSP:0080h). Termination, Ctrl-C, and
+  Critical Error vectors (INT 22h, 23h, 24h) are copied from the IVT. The parent
+  PSP segment is linked at PSP:0016h.
+- Block allocation & ownership: `DX` must fall within an allocated MCB block
+  owned by the caller (`owner == p.psp`). If `DX == header + 1` (exact block base),
+  the MCB header owner word is preflighted for writeability and ownership of the
+  block is transferred to the child (`p.arena.set_owner`). If `DX > header + 1`
+  (interior/borrowed PSP within the parent's block, as used by Turbo Pascal IDE
+  in-memory Ctrl+F9 runs), the PSP is created without fabricating an MCB or
+  calling `set_owner`, preserving the parent's MCB block ownership.
+- Boundary validation: The destination block must have at least 16 paragraphs
+  remaining from `DX` to the block end (`DX + 0x10 <= header + size + 1`).
+  Overlapping an MCB header (`DX == header`), too-near-end interior segments,
+  targeting free memory (`owner == 0`), foreign-owned memory, or segments outside
+  the tracked MCB arena are rejected before any memory writes occur.
+- SI allocation limit validation: In DOS 3.0+, `SI` specifies the allocation
+  limit (`DX:[0002h]`); it is validated against the actual allocation boundary:
+  `memory_end` must be `<= header + size + 1` and `>= DX + 0x10`. Any invalid `SI`
+  or insufficient remaining space is rejected without mutating memory.
+- Preflight & atomic commit: For exact MCB base allocations, `p.ram.check_write`
+  preflights the 2-byte MCB header owner word at `(DX-1)*16+1` before any PSP
+  bytes are written to RAM. `Arena::set_owner` writes the MCB owner word to RAM
+  before updating its internal owner state, ensuring an error cannot leave a
+  partially written PSP or an arena/RAM ownership mismatch.
+- Diagnostic logging: `[DOS AH=55h]` logs raw `DX`, `SI`, parent PSP, and matched
+  MCB header, size, owner, and `exact_base` to aid in debugging IDE regressions.
+- Segment boundaries & safety: `DX` segments inside the IVT/BDA (< 0050:0000),
+  beyond conventional RAM (>= A000:0000), targeting untracked conventional memory
+  outside the MCB arena, targeting the active PSP itself, or targeting
+  write-protected RAM are rejected with explicit errors.
+- Active PSP switch: `p.psp` switches to `DX`, `p.open_handles` reflects the
+  inherited JFT handles, `p.dta` resets to `(DX, 0080h)`, and AL is destroyed
+  (0F0h) while CF is preserved.
+- Remaining Turbo Pascal IDE blockers:
+  - In-memory child termination: when an in-memory compiled program terminates
+    via `AH=4Ch` without an `exec::Frame`, execution currently stops rather than
+    returning control to the IDE via `PSP:000Ah` (INT 22h).
+  - Floating-point numerics: compiling or running with `{$N+}` requires the
+    80387 coprocessor execution core (phases 2+ under development).
+  - Full interactive Ctrl+F9 execution is not claimed until end-to-end IDE runs
+    are verified.
+
 # PIC reinitialization (ICW1-ICW4) for CWSDPMI — 8 November 2026
 
 Tony's DOS benchmark menu (driveD\dosbench, option e, Quake timedemo
