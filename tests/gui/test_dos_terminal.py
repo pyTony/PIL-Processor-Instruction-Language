@@ -19,6 +19,20 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_buffered_and_full_frames_decode_cp437_consistently(self):
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / 'cp437.com'
+            program.write_bytes(bytes.fromhex('b402b284cd21cd20'))
+            for command in ['run 100', 'run 100 buffered']:
+                session = term.Session(engine, program, stop_log='')
+                try:
+                    reply = session.send(command)
+                    self.assertEqual(reply['status'], 'exit')
+                    self.assertEqual(reply['output'], 'ä')
+                finally:
+                    session.close()
+
     def test_cga_mode_control_blanks_and_selects_blink_or_bright_background(self):
         reply = dict(screen='418f', columns=1, text_blink=True, video_enabled=True)
         self.assertEqual(term.screen_rows(reply, blink_on=True), [('A', [15])])
