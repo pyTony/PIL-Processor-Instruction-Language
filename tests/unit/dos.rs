@@ -2736,3 +2736,25 @@ fn child_psp_validates_si_against_allocation_boundary(){
  assert!(service(&mut p,0x21,&mut vec![]).is_ok());
  assert_eq!(p.ram.load(u32::from(child)*16+2,MemWidth::Word).unwrap()as u16,child+0x20);
 }
+
+#[test]
+fn child_psp_rejects_protected_mcb_owner_and_preserves_memory_and_arena(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // Allocate 0x20 paragraphs for child
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x20;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ let child=p.cpu.regs[0]as u16;
+ // Protect ONLY the 2-byte MCB header owner word at (child-1)*16 + 1
+ let mcb_owner_addr=u32::from(child-1)*16+1;
+ p.ram.protect(mcb_owner_addr,2).unwrap();
+ let ram_before=p.ram.clone();
+ // Call AH=55h
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x20);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // Preflight check must fail before any write to child PSP body or arena state change
+ assert_eq!(p.ram,ram_before);
+ assert_eq!(p.arena.block_owner(child),Some(PSP));
+ assert_eq!(p.psp,PSP);
+}

@@ -228,6 +228,8 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
     if memory_end<child+0x10{
         return Err(format!("DOS create child PSP SI={memory_end:04x}h is smaller than child PSP boundary {:04x}h",child+0x10));
     }
+    let mcb_owner_addr=u32::from(header)*16+1;
+    p.ram.check_write(mcb_owner_addr,MemWidth::Word).map_err(|e|format!("child MCB owner write check: {e:?}"))?;
     let parent=u32::from(p.psp)*16;
     let mut psp=[0u8;256];
     psp[..2].copy_from_slice(&[0xcd,0x20]);

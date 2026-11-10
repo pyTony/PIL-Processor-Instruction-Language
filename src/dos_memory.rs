@@ -43,8 +43,10 @@ impl Arena{
     }
     /// Hands the block at `segment` to `owner` (EXEC gives the child its blocks).
     pub(super) fn set_owner(&mut self,ram:&mut Ram,segment:u16,owner:u16)->Result<(),String>{
-        let i=self.owned(segment).ok_or("EXEC block is not allocated")?;self.blocks[i].owner=owner;
-        ram.write_bytes(u32::from(self.blocks[i].header)*16+1,&owner.to_le_bytes()).map_err(|e|format!("DOS MCB owner write: {e:?}"))
+        let i=self.owned(segment).ok_or("EXEC block is not allocated")?;
+        ram.write_bytes(u32::from(self.blocks[i].header)*16+1,&owner.to_le_bytes()).map_err(|e|format!("DOS MCB owner write: {e:?}"))?;
+        self.blocks[i].owner=owner;
+        Ok(())
     }
     /// Frees every block `owner` holds except `keep` (a TSR's resident block).
     pub(super) fn release(&mut self,ram:&mut Ram,owner:u16,keep:Option<u16>)->Result<(),String>{

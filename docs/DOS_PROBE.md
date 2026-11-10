@@ -16,6 +16,11 @@ a child PSP with INT 21h AH=55h.
   header, targeting free arena memory (`owner == 0`), or targeting memory owned
   by another program is rejected before any memory writes occur. On success,
   MCB ownership of the block is transferred to the child (`p.arena.set_owner`).
+- Preflight & atomic commit: `p.ram.check_write` preflights the 2-byte MCB header
+  owner word at `(child-1)*16+1` before any PSP bytes are written to RAM.
+  `Arena::set_owner` writes the MCB owner word to RAM before updating its internal
+  owner state, ensuring an error cannot leave a partially written PSP or an
+  arena/RAM ownership mismatch.
 - Allocation bounds & SI validation: The block must have a minimum size of 16
   paragraphs (`size >= 0x10`, 256 bytes for the PSP). In DOS 3.0+, `SI`
   specifies the allocation limit (`DX:[0002h]`); it is validated against the
