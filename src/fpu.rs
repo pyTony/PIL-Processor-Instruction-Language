@@ -13,6 +13,10 @@ pub use state::{Extended80, StackError, Tag, X87State};
 mod present;
 #[allow(unused_imports)]
 pub use present::PresentFpu;
+#[path = "fpu_convert.rs"]
+mod convert;
+#[path = "fpu_address.rs"]
+mod address;
 
 #[derive(Clone, Debug, Default)]
 pub struct AbsentFpu;
@@ -51,7 +55,7 @@ impl Fpu {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome { Completed, NotAvailable, Unsupported, StackFault(StackError) }
+pub enum Outcome { Completed, NotAvailable, Unsupported, StackFault(StackError), MemoryFault }
 
 #[derive(Clone, Debug)]
 pub struct Instruction {
@@ -65,11 +69,17 @@ pub struct Instruction {
 /// Decode the CPU's ESC envelope, without interpreting the coprocessor opcode.
 /// Fetch only bytes belonging to this instruction; WAIT is a separate instruction.
 /// Prefix/address sizes follow the existing real-mode decoder's profile.
-pub fn decode<E>(mut fetch: impl FnMut(u32) -> Result<u8, E>) -> Result<Option<Instruction>, E> {
+pub fn decode<E>(fetch: impl FnMut(u32) -> Result<u8, E>) -> Result<Option<Instruction>, E> {
+    decode_with_default(fetch,false)
+}
+/// CS.D selects the default address size; 67h inverts it for memory ESC forms.
+pub fn decode_with_default<E>(mut fetch: impl FnMut(u32) -> Result<u8, E>,
+                              default_32: bool) -> Result<Option<Instruction>, E> {
     let mut bytes = [0; 15];
     let mut length = 0usize;
-    let mut addr32 = false;
+    let mut addr32 = default_32;
     let mut wide = false;
+    let mut address_override = false;
     let mut segment = false;
     let opcode = loop {
         if length == 15 { return Ok(None); }
@@ -78,7 +88,7 @@ pub fn decode<E>(mut fetch: impl FnMut(u32) -> Result<u8, E>) -> Result<Option<I
         length += 1;
         match b {
             0x66 if !wide => wide = true,
-            0x67 if !addr32 => addr32 = true,
+            0x67 if !address_override => { addr32 = !addr32; address_override = true; },
             0x26 | 0x2e | 0x36 | 0x3e | 0x64 | 0x65 if !segment => segment = true,
             // Leave LOCK, REP and duplicate prefixes to the ordinary decoder.
             _ => break b,
