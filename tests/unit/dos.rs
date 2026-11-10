@@ -177,7 +177,7 @@ fn dos_version_failed_psp_read_changes_no_registers_or_output(){
 
 /// RAM equal outside the active text page and its cursor word.
 fn same_outside_screen(a:&Ram,b:&Ram)->bool{
- let(x,y)=(a.bytes(),b.bytes());x.len()==y.len()&&x.iter().zip(y).enumerate().all(|(i,(u,v))|u==v||(0xb8000..0xb8fa0).contains(&i)||(0x450..0x452).contains(&i))
+ let(x,y)=(a.bytes(),b.bytes());x.len()==y.len()&&x[..0x450]==y[..0x450]&&x[0x452..0xb8000]==y[0x452..0xb8000]&&x[0xb8fa0..]==y[0xb8fa0..]
 }
 #[test]
 fn dos_character_output_preserves_other_state_and_returns_character(){
@@ -1018,9 +1018,9 @@ fn tsr_date_strategy_lfn_and_extended_memory(){
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x41,0x00,0xcd,0x21,0xfa,0xf4],"upperonly.com").unwrap(),10).unwrap();assert_eq!((r.loaded.alloc_strategy,r.loaded.cpu.eflags&1),(0x41,0));
  // AX=5803 (link UMBs) fails: no UMB chain.
  let r=run(load(&[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xfa,0xf4],"umb.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
- // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=0, CF=0.
+ // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=15360 KiB, CF=0.
  let r=run(load(&[0xb8,0x47,0x71,0xcd,0x21,0xfa,0xf4],"lfn.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x7100);assert_eq!(r.loaded.cpu.eflags&1,1);
- let r=run(load(&[0xb4,0x88,0xf9,0xcd,0x15,0xfa,0xf4],"ext.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0);assert_eq!(r.loaded.cpu.eflags&1,0);
+ let r=run(load(&[0xb4,0x88,0xf9,0xcd,0x15,0xfa,0xf4],"ext.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,15360);assert_eq!(r.loaded.cpu.eflags&1,0);
 }
 #[test]
 fn bios_rom_identity_and_hlt_idle(){
@@ -2449,4 +2449,70 @@ fn session_mounts_and_unmounts_fat12_floppy_and_host_folders_live(){
  let (reply,_)=s.command(5,"mount Zinvalid /tmp").unwrap();
  assert!(reply.contains("\"ok\":false"),"{reply}");
  std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn short_file_reads_validate_returned_bytes_instead_of_requested_cx(){
+ let mut p=load_with_drives(&[0xcd,0x21,0xf4],"short.com",vec![Source::Memory(Default::default())],None).unwrap();
+ let (handle,cf)=call(&mut p,0x3d00,0,b"short.com");assert_eq!(cf,0);
+ p.cpu.regs[3]=handle;p.cpu.regs[2]=15;p.cpu.regs[1]=65535;p.cpu.regs[0]=0x3f00;
+ service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0]&65535,p.cpu.eflags&1),(3,0));
+ assert_eq!(p.ram.load(u32::from(PSP)*16+15,MemWidth::Word).unwrap(),0x21cd);
+ // EOF: no bytes are written even if CX would cross the segment end.
+ p.cpu.regs[2]=65535;p.cpu.regs[1]=65535;p.cpu.regs[0]=0x3f00;
+ service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0]&65535,p.cpu.eflags&1),(0,0));
+ // Seek back, then a genuinely crossing returned span fails without advancing.
+ p.cpu.regs[0]=0x4200;p.cpu.regs[1]=0;p.cpu.regs[2]=0;service(&mut p,0x21,&mut vec![]).unwrap();
+ p.cpu.regs[0]=0x3f00;p.cpu.regs[1]=3;p.cpu.regs[2]=65535;let ram=p.ram.clone();
+ service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0]&65535,p.cpu.eflags&1),(5,1));assert_eq!(p.ram,ram);
+ p.cpu.regs[0]=0x3f00;p.cpu.regs[2]=0x400;
+ service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&65535,3);
+}
+#[test]
+fn absent_dos_extender_probes_preserve_signature_registers_and_report_failure(){
+ for ax in [0xbf00,0xbf01,0xbf02,0xbfdc,0xbfde]{
+  let mut p=load(&[0xcd,0x15],"probe.com").unwrap();p.cpu.regs=[0xabcd0000|ax,0x12345678,0,0,0xfffe,1,2,3];p.cpu.eflags=0x246;
+  let before=p.cpu.clone();service(&mut p,0x15,&mut vec![]).unwrap();
+  let mut want=before;want.regs[0]=(want.regs[0]&!0xff00)|0x8600;want.eflags|=1;assert_eq!(p.cpu,want);
+ }
+}
+#[test]
+fn extended_memory_size_matches_cmos_and_remains_outside_the_dos_arena(){
+ let mut p=load(&[0xcd,0x15],"memory.com").unwrap();p.cpu.regs[0]=0xabcd8800;
+ service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0xabcd3c00);
+ p.ram.set_a20_enabled(true);p.ram.store(0xffffff,MemWidth::Byte,0x5a).unwrap();
+ assert_eq!(p.ram.load(0xffffff,MemWidth::Byte).unwrap(),0x5a);assert_eq!(p.allocated_end,0xa0000);
+ for (index,want) in [(0x17,0),(0x18,0x3c),(0x30,0),(0x31,0x3c)]{
+  p.cmos_index=index;p.cpu.eip=0x100;p.ram.write_bytes(0x10100,&[0xe4,0x71]).unwrap();
+  ports::io(&mut p).unwrap();assert_eq!(p.cpu.regs[0]&255,want);
+ }
+}
+#[test]
+fn prefixed_word_vga_output_in_32bit_code_has_the_correct_width_and_length(){
+ let mut p=load(&[0x66,0xef],"ports.com").unwrap();
+ p.image.segments[1].access=crate::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};
+ p.cpu.regs[2]=0x3c4;p.cpu.regs[0]=0x0f02;
+ assert_eq!(ports::access(&p),Some((0x3c4,2)));assert_eq!(ports::io(&mut p).unwrap(),Some(2));assert_eq!(p.vga.idle.seq[2],15);
+ p.ram.write_bytes(0x10100,&[0xef,0x90]).unwrap();assert_eq!(ports::access(&p),Some((0x3c4,4)));assert!(ports::io(&mut p).is_err());
+}
+
+#[test]
+fn mode13_unchaining_preserves_pixels_plane_masks_and_page_flips(){
+ let mut p=load(&[0xf4],"unchain.com").unwrap();p.cpu.regs[0]=0x13;service(&mut p,0x10,&mut vec![]).unwrap();
+ p.ram.write_bytes(0xa0000,&[1,2,3,4,5,6,7,8]).unwrap();
+ planar::io(&mut p,0x3c4,false,0x0604,true).unwrap();
+ assert_eq!(&planar::mode13_snapshot(&p).unwrap()[..16],"0102030405060708");
+ for n in 0..4{planar::io(&mut p,0x3c4,false,((1<<n)<<8)|2,true).unwrap();p.ram.store(0xa4000,MemWidth::Byte,0x20+n).unwrap();}
+ p.vga.io(0x3d4,false,12).unwrap();p.vga.io(0x3d5,false,0x40).unwrap();
+ assert_eq!(&planar::mode13_snapshot(&p).unwrap()[..8],"20212223");
+ planar::io(&mut p,0x3c4,false,0x0e04,true).unwrap();assert_eq!(p.ram.load(0xa0001,MemWidth::Byte).unwrap(),2);
+ planar::io(&mut p,0x3c4,false,0x0f02,true).unwrap();p.ram.store(0xa0001,MemWidth::Byte,0x77).unwrap();assert_eq!(p.ram.planar().unwrap().peek(1,0),0x77);
+ p.cpu.regs[0]=0x93;service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(&planar::mode13_snapshot(&p).unwrap()[..8],"01770304");
+ assert_eq!(p.ram.planar().unwrap().peek(3,0x4000),0x23,"no-clear mode set keeps all plane memory");
+ p.cpu.regs[0]=0x13;service(&mut p,0x10,&mut vec![]).unwrap();assert!(p.ram.planar().is_none());assert!(p.ram.bytes()[0xa0000..0xafa00].iter().all(|b|*b==0));
+}
+#[test]
+fn floppy_motor_off_write_does_not_claim_a_disk_controller(){
+ for value in [0,4,8,12]{let mut p=load(&[0xee],"motor.com").unwrap();p.cpu.regs[2]=0x3f2;p.cpu.regs[0]=value;assert_eq!(ports::io(&mut p).unwrap(),Some(1));}
+ let mut p=load(&[0xee],"motor.com").unwrap();p.cpu.regs[2]=0x3f2;p.cpu.regs[0]=0x1c;assert!(ports::io(&mut p).is_err());
 }

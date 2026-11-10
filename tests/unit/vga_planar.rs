@@ -58,3 +58,14 @@ fn ram_routes_the_window_only_while_planar_memory_is_mapped(){
     assert_eq!(ram.load(0xb0000,MemWidth::Byte).unwrap(),0,"outside the 64 KiB window");
     ram.set_planar(None);assert_eq!(ram.load(0xa0005,MemWidth::Byte).unwrap(),0x5a);
 }
+
+#[test]
+fn chain4_selects_address_low_bits_and_still_respects_map_mask(){
+ let mut p=Planar::new();p.seq[4]=14;
+ for n in 0..4{p.write(28+n,0x10+n as u8);}
+ assert_eq!([0,1,2,3].map(|n|p.peek(n,7)),[0x10,0x11,0x12,0x13]);
+ p.gc[4]=3;assert_eq!(p.read(28),0x10,"chain address overrides read-map select");
+ p.seq[2]=1;p.write(29,0xff);assert_eq!(p.peek(1,7),0x11);
+ p.seq[4]=6;p.seq[2]=15;p.write(28,0x88);
+ assert_eq!([0,1,2,3].map(|n|p.peek(n,28)),[0x88;4]);
+}

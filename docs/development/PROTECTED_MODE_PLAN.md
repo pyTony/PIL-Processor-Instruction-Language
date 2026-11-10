@@ -257,3 +257,31 @@ cd /path/to/PIL-Processor-Instruction-Language
 cargo run --release -- --run-rom ../test386.asm/test386-128.bin --steps 100000000
 ```
 The runner prints each POST code written to port 190h and the stop reason.
+
+
+## DOS games increment, 10 November 2026
+
+Dine now supplies 16 MiB physical RAM, with the original 640 KiB DOS MCB
+arena unchanged. AH=88h and CMOS 17h/18h/30h/31h report the same 15 MiB
+extended area; A20 starts disabled. The executable system windows admit
+extender-loaded code above 1 MiB. There is no XMS driver or external DPMI host.
+
+Hardware IRQ0/IRQ1 follow the PIC vector into the protected IDT, retaining
+IF, instruction-shadow, mask and EOI handling. Operand-size-prefixed I/O
+uses the correct width. Mode 13h can switch between chain-4 and unchained
+four-plane storage; 320x200 scanout interleaves plane bytes and uses the
+CRTC start address for page flips. Other VGA timings stay unsupported.
+
+Local release runs of the user's DOS Doom v1.9 render changing gameplay;
+ESC opens the menu through IRQ1. This is not a completed timedemo result.
+3DBench 1.0 renders its scene and shows a score (4.4 fps observed in one
+capture; host-clock/runtime settings affect it). These files remain local.
+The original AH3F stop was an invalid check against requested CX rather than
+the actual returned byte count. Motor-off writes to 03F2h are accepted;
+other floppy-controller operations remain unsupported.
+
+ENTER now checks write access to its final stack-pointer byte even without
+a store there. Paging/segment fault rollback, a successful retry and generated
+Rust execution are tested. The locally decoded test386 HEX ROM still stops
+at POST 1Ah; its ENTER diagnostic is not claimed fixed. Task switching remains
+open. See DOS_GAMES.md for reproduction and limits.

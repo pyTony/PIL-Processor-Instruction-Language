@@ -131,3 +131,109 @@ fn user_level_data_access_to_a_supervisor_page_is_a_protection_fault(){
  i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};
  step(&mut i,&mut r,&mut c).unwrap();
 }
+
+// ENTER pushes its frame at linear 3000h (user-writable physical A000h),
+// then allocates down into 2000h (physical 9000h). The first push is valid;
+// only the otherwise untouched final SP encounters the protected page.
+fn enter_frame(w:u8,stack32:bool,size:u16,pte:u32)->(guest::Image,Ram,Cpu){
+ let mut bytes=vec![];if w==32{bytes.push(0x66);}bytes.extend([0xc8,size as u8,(size>>8)as u8,0]);
+ let(mut i,mut r,mut c)=protected(&bytes);
+ r.store(PT0+12,MemWidth::Dword,0xa000|7).unwrap();
+ r.store(PT0+8,MemWidth::Dword,pte).unwrap();
+ r.store(0xa000,MemWidth::Dword,0xa5a5_a5a5).unwrap();
+ r.store(0x9fff,MemWidth::Byte,0x5a).unwrap();
+ r.store(0x1fff,MemWidth::Byte,0x6b).unwrap();
+ i.paging=true;i.controls[1]=PD;
+ i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};
+ i.segments[2]=address::SegmentCache{base:0,limit:0xffff,access:SegmentAccess::Data{writable:true,expand_down:false,big:stack32,dpl:3}};
+ c.regs[4]=0x3000+u32::from(w/8)|if stack32{0}else{0xabcd_0000};c.regs[5]=0x4567;
+ c.eflags=0xad7;c.undefined_flags=0x10;
+ (i,r,c)
+}
+
+#[test]
+fn enter_final_stack_pointer_checks_user_write_access_before_committing(){
+ for w in [16,32]{for stack32 in [false,true]{for (pte,code) in [(0x9000|3,7),(0x9000|5,7),(0,6)]{
+  let(mut i,mut r,mut c)=enter_frame(w,stack32,1,pte);
+  i.ss_shadow=1;let old=c.clone();let old_image=i.clone();
+  assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::PageFault{eip:0x100,address:0x2fff,error_code:code}),"w={w} stack32={stack32}");
+  assert_eq!(c,old);assert_eq!(i,old_image);
+  assert_eq!(dword(&r,0xa000),0xa5a5_a5a5,"the earlier frame push must not commit");
+  // Fix the mapping and retry the exact same instruction.
+  r.set_paging(None);r.store(PT0+8,MemWidth::Dword,0x9000|7).unwrap();
+  step(&mut i,&mut r,&mut c).unwrap();
+  assert_eq!(c.regs[4],(old.regs[4]&if stack32{0}else{0xffff_0000})|0x2fff);
+  assert_eq!(c.regs[5],0x3000);assert_eq!(i.ss_shadow,0);
+  assert_eq!((c.eflags,c.undefined_flags),(old.eflags,old.undefined_flags));
+  assert_eq!(dword(&r,0xa000)&if w==16{0xffff}else{u32::MAX},0x4567);
+  let mut flat=r.clone();flat.set_paging(None);assert_eq!(flat.load(0x9fff,MemWidth::Byte).unwrap(),0x5a,"probe must not store a byte");
+ }}}
+}
+
+#[test]
+fn enter_probes_one_final_byte_not_the_operand_width_or_the_whole_allocation(){
+ for w in [16,32]{for stack32 in [false,true]{
+  // Final SP is the last byte of user page 1. Page 2 is absent but is
+  // neither pushed to nor probed, despite lying inside the allocated area.
+  let(mut i,mut r,mut c)=enter_frame(w,stack32,0x1001,0);
+  step(&mut i,&mut r,&mut c).unwrap();assert_eq!(c.regs[4]&0xffff,0x1fff);
+  let mut flat=r.clone();flat.set_paging(None);assert_eq!(flat.load(0x1fff,MemWidth::Byte).unwrap(),0x6b);
+ }}
+}
+
+#[test]
+fn enter_checks_the_final_stack_limit_and_keeps_push_fault_priority(){
+ let(mut i,mut r,mut c)=enter_frame(32,true,0x1000,0);
+ // The initial push at 3000h is valid in an expand-down segment; final
+ // SP=2000h is at its excluded limit, before any final-address page walk.
+ i.segments[2]=address::SegmentCache{base:0,limit:0x2000,access:SegmentAccess::Data{writable:true,expand_down:true,big:true,dpl:3}};
+ let old=c.clone();
+ assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::StackSegment{eip:0x100,error_code:0}));
+ assert_eq!(c,old);assert_eq!(dword(&r,0xa000),0xa5a5_a5a5);
+ let(mut i,mut r,mut c)=enter_frame(32,true,1,0x9003);
+ r.store(PT0+12,MemWidth::Dword,0).unwrap();
+ assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::PageFault{eip:0x100,address:0x3000,error_code:6}),"initial push fault precedes final SP check");
+}
+
+#[test]
+fn enter_final_probe_uses_v86_user_permissions_and_386_supervisor_rules(){
+ let(mut i,mut r,mut c)=enter_frame(32,false,1,0x9003);
+ i.segments=[address::SegmentCache::v86(0);6];i.selectors=[0;6];c.eflags|=0x20000;
+ assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::PageFault{eip:0x100,address:0x2fff,error_code:7}));
+ let(mut i,mut r,mut c)=enter_frame(32,true,1,0x9005);
+ i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};
+ step(&mut i,&mut r,&mut c).unwrap();assert_eq!(c.regs[4],0x2fff,"386 CPL0 may write a readonly page");
+}
+
+#[test]
+fn emitted_enter_checks_the_final_byte_before_committing_the_frame(){
+ use std::{fs,process::Command,time::{SystemTime,UNIX_EPOCH}};
+ let(i,r,c)=enter_frame(32,true,1,0x9003);
+ let d=i.decode(&r,c.eip).unwrap();let guest::Operation::Pil{program,..}=d.operation else{panic!("ENTER PIL expected")};
+ let mut source=emit_rust(&program);
+ source.push_str(r#"
+fn main(){
+ use address::{SegmentState,SegmentCache,SegmentAccess,SystemSegment};
+ let mut ram=Ram::new(0x20000);
+ for(at,v)in [(0x10000,0x11007),(0x11000,7),(0x11004,0x1007),(0x11008,0x9003),(0x1100c,0xa007),(0xa000,0xa5a5a5a5)]{ram.store(at,MemWidth::Dword,v).unwrap();}
+ let flat=SegmentCache{base:0,limit:0xffff,access:SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:3}};
+ let mut m=SegmentState{segments:[flat;6],selectors:[3;6],msw:0x11,real_mode:false,ss_shadow:1,sti_shadow:0,tables:[(0,0);2],controls:[0,0x10000],flag_checkpoint:None,ldt_tr:[SystemSegment::default();2],paging:true};
+ m.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};
+ let mut regs=[0;8];regs[4]=0x3004;regs[5]=0x4567;
+ let mut flags=0xad7;let mut undefined=0x10;let mut ip=0x100;
+ let flow=FlowContext{next_eip:0x105,displacement:0,displacement_bits:8,code_limit:0xffff};
+ let old=(regs,flags,undefined,ip,m.clone());
+ let error=execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut m).unwrap_err();
+ assert_eq!(error,ExecError::PageFault{eip:0x100,address:0x2fff,error_code:7});assert_eq!((regs,flags,undefined,ip,m.clone()),old);
+ ram.set_paging(None);assert_eq!(ram.load(0xa000,MemWidth::Dword).unwrap(),0xa5a5a5a5);
+ ram.store(0x11008,MemWidth::Dword,0x9007).unwrap();ram.store(0x9fff,MemWidth::Byte,0x5a).unwrap();
+ execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut m).unwrap();
+ assert_eq!((regs[4],regs[5],flags,undefined,ip,m.ss_shadow),(0x2fff,0x3000,0xad7,0x10,0x105,0));
+ ram.set_paging(None);assert_eq!(ram.load(0x9fff,MemWidth::Byte).unwrap(),0x5a);assert_eq!(ram.load(0xa000,MemWidth::Dword).unwrap(),0x4567);
+}
+"#);
+ let dir=std::env::temp_dir().join(format!("pil-enter-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));fs::create_dir_all(&dir).unwrap();
+ let path=dir.join("check.rs");fs::write(&path,source).unwrap();let bin=dir.join(if cfg!(windows){"check.exe"}else{"check"});
+ let output=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into())).args(["--edition=2021","-O"]).arg(path).arg("-o").arg(&bin).output().unwrap();
+ assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));assert!(Command::new(bin).status().unwrap().success());fs::remove_dir_all(dir).unwrap();
+}

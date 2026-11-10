@@ -41,7 +41,7 @@ impl Keyboard{
 /// Whether keys go through IRQ1 to a program's INT 09h handler. A handler
 /// left behind in memory Dine cannot run (a resident program's) is passed
 /// by, as before: keys then go straight into the ring.
-pub(super) fn hooked(p:&Loaded)->Result<bool,String>{Ok(!p.rom_mode&&vectors::reachable(p,p.speaker.pic.keyboard_vector())?)}
+pub(super) fn hooked(p:&Loaded)->Result<bool,String>{Ok(!p.rom_mode&&(!p.image.real_mode||vectors::reachable(p,p.speaker.pic.keyboard_vector())?))}
 /// The make code of the key that produced a BIOS scan code: Ctrl, Alt and
 /// Shift variants (F11/F12, Ctrl+arrows, Alt+digits, ...) come from the same
 /// physical key. 0 is an Alt+keypad character, stored when Alt goes up.
