@@ -2643,3 +2643,18 @@ fn floppy_motor_off_write_does_not_claim_a_disk_controller(){
  for value in [0,4,8,12]{let mut p=load(&[0xee],"motor.com").unwrap();p.cpu.regs[2]=0x3f2;p.cpu.regs[0]=value;assert_eq!(ports::io(&mut p).unwrap(),Some(1));}
  let mut p=load(&[0xee],"motor.com").unwrap();p.cpu.regs[2]=0x3f2;p.cpu.regs[0]=0x1c;assert!(ports::io(&mut p).is_err());
 }
+
+#[test]
+fn bios_rtc_time_and_date_are_bcd_preserve_registers_and_share_the_session_clock(){
+ let mut p=load(&[0xcd,0x1a],"rtc.com").unwrap();
+ p.rtc.set_dos_date(None,0,2024,2,29);p.rtc.set_dos_time(None,0,23*3600+59*60+58);
+ for (ah,cx,dx) in [(2,0x2359,0x5800),(4,0x2024,0x0229)]{
+  p.cpu.regs=[0xabcd0000|(ah<<8)|0x5a,0x1234dead,0x5678beef,3,4,5,6,7];p.cpu.eflags=0xad7;p.cpu.undefined_flags=u32::MAX;
+  let mut expected=p.cpu.clone();expected.regs[1]=0x12340000|cx;expected.regs[2]=0x56780000|dx;expected.eflags&=!1;expected.undefined_flags&=!1;
+  let ram=p.ram.clone();let image=p.image.clone();let rtc=p.rtc.clone();
+  service(&mut p,0x1a,&mut vec![]).unwrap();assert_eq!(p.cpu,expected);assert_eq!(p.ram,ram);assert_eq!(p.image,image);assert_eq!(p.rtc,rtc);
+ }
+ p.cpu.regs[0]=0x0200;service(&mut p,0x1a,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs[1]&65535,(u32::from(p.rtc.read(None,4).unwrap())<<8)|u32::from(p.rtc.read(None,2).unwrap()));
+ assert_eq!(p.cpu.regs[2]&65535,u32::from(p.rtc.read(None,0).unwrap())<<8);
+}
