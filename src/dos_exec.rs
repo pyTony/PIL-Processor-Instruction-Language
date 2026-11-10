@@ -203,8 +203,30 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
     if child==p.psp{
         return Err("DOS create child PSP at current PSP is not modelled".into());
     }
-    if p.arena.in_free(child){
+    let Some((header,owner,size))=p.arena.find_segment(child) else{
+        return Err(format!("DOS create child PSP at {child:04x}h outside tracked MCB arena is not modelled"));
+    };
+    if child==header{
+        return Err(format!("DOS create child PSP at {child:04x}h overlaps MCB header at {header:04x}h"));
+    }
+    if owner==0{
         return Err(format!("DOS create child PSP at {child:04x}h in unallocated memory is not modelled"));
+    }
+    if owner!=p.psp{
+        return Err(format!("DOS create child PSP at {child:04x}h in memory owned by {owner:04x}h, not caller {:04x}h",p.psp));
+    }
+    if child!=header+1{
+        return Err(format!("DOS create child PSP at {child:04x}h inside allocated block {:04x}h is not modelled: exact MCB base required",header+1));
+    }
+    if size<0x10{
+        return Err(format!("DOS create child PSP at {child:04x}h in block of {size} paragraph(s) is too small for 256-byte PSP"));
+    }
+    let alloc_end=child+size;
+    if memory_end>alloc_end{
+        return Err(format!("DOS create child PSP SI={memory_end:04x}h exceeds allocated block boundary {alloc_end:04x}h"));
+    }
+    if memory_end<child+0x10{
+        return Err(format!("DOS create child PSP SI={memory_end:04x}h is smaller than child PSP boundary {:04x}h",child+0x10));
     }
     let parent=u32::from(p.psp)*16;
     let mut psp=[0u8;256];
@@ -240,9 +262,7 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
     psp[0x6c..0x7c].copy_from_slice(&fcb2);
     psp[0x80..0x100].copy_from_slice(&tail);
     p.ram.write_bytes(base,&psp).map_err(|e|format!("child PSP write: {e:?}"))?;
-    if p.arena.owned(child).is_some(){
-        p.arena.set_owner(&mut p.ram,child,child)?;
-    }
+    p.arena.set_owner(&mut p.ram,child,child)?;
     p.psp=child;
     p.open_handles=handles;
     p.dta=(child,0x80);

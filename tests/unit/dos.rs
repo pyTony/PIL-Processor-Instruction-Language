@@ -2553,7 +2553,7 @@ fn child_psp_initializes_fields_and_inherits_parent_state(){
  let child=p.cpu.regs[0]as u16;
  assert!(child>PSP);
  // Call AH=55h to create child PSP
- p.cpu.regs[0]=0x55aa;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=0x4000;
+ p.cpu.regs[0]=0x55aa;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x20);
  p.cpu.eflags=0x202;p.cpu.undefined_flags=0;
  service(&mut p,0x21,&mut vec![]).unwrap();
  // Return conventions: AL destroyed (0xf0), CF unchanged, active PSP switched
@@ -2564,7 +2564,7 @@ fn child_psp_initializes_fields_and_inherits_parent_state(){
  // Check child PSP contents in RAM
  let child_base=u32::from(child)*16;
  assert_eq!(&p.ram.bytes()[child_base as usize..child_base as usize+2],&[0xcd,0x20]);
- assert_eq!(p.ram.load(child_base+2,MemWidth::Word).unwrap()as u16,0x4000); // SI memory end
+ assert_eq!(p.ram.load(child_base+2,MemWidth::Word).unwrap()as u16,child+0x20); // SI memory end
  assert_eq!(p.ram.load(child_base+0x0a,MemWidth::Dword).unwrap(),0x1234_5678); // INT 22h
  assert_eq!(p.ram.load(child_base+0x0e,MemWidth::Dword).unwrap(),0x2345_6789); // INT 23h
  assert_eq!(p.ram.load(child_base+0x12,MemWidth::Dword).unwrap(),0x3456_789a); // INT 24h
@@ -2667,4 +2667,72 @@ fn child_psp_rejects_invalid_and_boundary_segments(){
  p.ram.protect(u32::from(seg)*16,256).unwrap();
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(seg);p.cpu.regs[6]=u32::from(seg+0x10);
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
+}
+
+#[test]
+fn child_psp_rejects_allocated_block_smaller_than_psp_and_preserves_memory(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // Allocate a block of 1 paragraph (16 bytes), which cannot hold 256-byte PSP
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=1;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.eflags&1,0);
+ let child=p.cpu.regs[0]as u16;
+ let ram_before=p.ram.clone();
+ // AH=55h must reject: block is smaller than 0x10 paragraphs
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+1);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // RAM and MCB integrity must be completely unchanged
+ assert_eq!(p.ram,ram_before);
+ assert_eq!(p.arena.block_owner(child),Some(PSP));
+}
+
+#[test]
+fn child_psp_rejects_mcb_overlap_interior_and_other_program_memory(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x20;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ let child=p.cpu.regs[0]as u16;
+ let ram_before=p.ram.clone();
+ // Overlapping MCB header (child - 1): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child-1);p.cpu.regs[6]=u32::from(child+0x20);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // Inside allocated block, not exact MCB base (child + 1): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child+1);p.cpu.regs[6]=u32::from(child+0x20);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // Block owned by another program: simulate caller as child, trying to create PSP in parent memory
+ p.psp=child;
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(PSP);p.cpu.regs[6]=u32::from(PSP+0x40);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ p.psp=PSP;
+ // Untracked conventional memory (below arena, e.g. 0x0600): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=0x0600;p.cpu.regs[6]=0x0700;
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ assert_eq!(p.ram,ram_before);
+}
+
+#[test]
+fn child_psp_validates_si_against_allocation_boundary(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // Allocate 0x20 paragraphs for child
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x20;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ let child=p.cpu.regs[0]as u16;
+ let ram_before=p.ram.clone();
+ // SI exceeds allocation boundary (child + 0x21 > child + 0x20): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x21);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ // SI is smaller than PSP size (child + 0x08 < child + 0x10): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x08);
+ assert!(service(&mut p,0x21,&mut vec![]).is_err());
+ assert_eq!(p.ram,ram_before);
+ // SI at exact boundary: succeeds
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x20);
+ assert!(service(&mut p,0x21,&mut vec![]).is_ok());
+ assert_eq!(p.ram.load(u32::from(child)*16+2,MemWidth::Word).unwrap()as u16,child+0x20);
 }

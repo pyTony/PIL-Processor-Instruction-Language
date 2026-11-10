@@ -10,12 +10,22 @@ a child PSP with INT 21h AH=55h.
   (PSP:005Ch, 006Ch), and command tail (PSP:0080h). Termination, Ctrl-C, and
   Critical Error vectors (INT 22h, 23h, 24h) are copied from the IVT. The parent
   PSP segment is linked at PSP:0016h.
-- Memory ownership: if `DX` is an allocated block in the MCB arena, ownership is
-  transferred to the child (`p.arena.set_owner(dx, dx)`).
-- Boundaries & validation: `DX` segments inside the IVT/BDA (< 0050:0000), beyond
-  conventional RAM (>= A000:0000), targeting the active PSP itself, targeting
-  unallocated free arena memory, or targeting write-protected RAM are rejected
-  with explicit errors.
+- Exact MCB base & ownership: `DX` must be the exact base of an allocated MCB
+  block (`child == header + 1`) owned by the caller (`owner == p.psp`).
+  Sub-allocating a PSP inside another block's interior, overlapping an MCB
+  header, targeting free arena memory (`owner == 0`), or targeting memory owned
+  by another program is rejected before any memory writes occur. On success,
+  MCB ownership of the block is transferred to the child (`p.arena.set_owner`).
+- Allocation bounds & SI validation: The block must have a minimum size of 16
+  paragraphs (`size >= 0x10`, 256 bytes for the PSP). In DOS 3.0+, `SI`
+  specifies the allocation limit (`DX:[0002h]`); it is validated against the
+  actual allocation boundary: `memory_end` must be `<= child + size` and
+  `>= child + 0x10`. Any invalid `SI` or insufficient block size is rejected
+  without mutating memory.
+- Segment boundaries & safety: `DX` segments inside the IVT/BDA (< 0050:0000),
+  beyond conventional RAM (>= A000:0000), targeting untracked conventional memory
+  outside the MCB arena, targeting the active PSP itself, or targeting
+  write-protected RAM are rejected with explicit errors.
 - Active PSP switch: `p.psp` switches to `DX`, `p.open_handles` reflects the
   inherited JFT handles, `p.dta` resets to `(DX, 0080h)`, and AL is destroyed
   (0F0h) while CF is preserved.
