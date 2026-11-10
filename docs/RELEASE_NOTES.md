@@ -1,3 +1,24 @@
+# PIL 0.37.0-alpha.1
+
+Runtime projection of dev source commit 21d114676ff783eb53ef52aafc5f75ad0e08d894.
+
+DOS Doom and Superscape 3DBench now render through the ordinary release
+interpreter. No shadow programs or game assets are included.
+
+- Check AH3F short-read bounds against the bytes returned.
+- Supply 16 MiB physical RAM (15 MiB extended) with coherent AH88/CMOS
+  reporting; retain the 640 KiB DOS arena and initial disabled A20.
+- Deliver protected-mode timer/keyboard IRQs through the IDT, keeping
+  PIC masks, instruction shadows and EOI; handle prefixed word port I/O.
+- Support 320x200 unchained VGA planes, plane masks and page starts.
+- Reject absent DOS-extender probes without claiming a resident driver.
+- Probe ENTER's final stack-pointer byte for write access before commit.
+
+Local Windows release: changing Doom gameplay and an ESC-opened menu;
+3DBench renders its scene and displays a score. No completed Doom timedemo
+score, sound output, full test386 ROM pass or task switching is claimed.
+See [DOS games](DOS_GAMES.md) for reproduction and current limits.
+
 # PIL 0.36.0-alpha.1
 
 Runtime-only delivery of merged dev commit 29a78e8e21450c554d7337d337bc21ae7d8ddc97.
