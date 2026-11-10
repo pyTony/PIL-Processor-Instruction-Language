@@ -1,6 +1,10 @@
 """Create a "PIL DOS" shortcut that opens the Dine DOS terminal.
 
-Windows: rebuilds PILdos.ico from PILdos.png (needs Pillow) and puts
+Targets always use this script's checkout, independent of the current directory.
+Setup is checked before writing shortcuts. After moving a checkout, rerun this
+script to refresh the absolute paths.
+
+Windows: uses the bundled PILdos.ico (Pillow is needed only if it is missing) and puts
 "PIL DOS.lnk" on the Desktop, starting PILdos.vbs.
 
 Linux and Android (Termux + Termux-x11): writes pildos.desktop, starting
@@ -18,24 +22,52 @@ root = Path(__file__).resolve().parent.parent
 png = root / "PILdos.png"
 
 
-def windows():
-    from PIL import Image
+def validate_setup():
+    """Catch an unbuilt/unconfigured checkout before installing a silent link."""
+    launcher = root / ("PILdos.vbs" if sys.platform == "win32" else "PILdos.sh")
+    for required in (launcher, root / "tools/dos_terminal.py", root / "tools/pil_debugger.py"):
+        if not required.is_file():
+            raise SystemExit(f"Missing runtime file: {required}")
+    executable = "pil.exe" if sys.platform == "win32" else "pil"
+    engines = [folder / executable for folder in (root, root / "tools", root / "target/release", root / "target/debug")]
+    if not any(path.is_file() for path in engines):
+        raise SystemExit(f"No PIL engine in {root}.\nRun cargo build --release --locked there, then rerun this creator.")
+    explicit = os.environ.get("PILDOS_CONFIG")
+    config = Path(explicit).expanduser() if explicit else root / "pildos.conf"
+    if not config.is_absolute():
+        config = root / config
+    if explicit and not config.is_file():
+        raise SystemExit(f"PILDOS_CONFIG does not exist: {config}")
+    if not config.is_file():
+        image = root / "images/FD14LITE.img"
+        drive = root / (os.environ.get("PILDRIVE", "driveD") if sys.platform != "win32" else "DriveD")
+        missing = [str(image)] if not image.is_file() else []
+        if not drive.is_dir():
+            missing.append(str(drive))
+        if missing:
+            raise SystemExit("Missing default DOS data:\n" + "\n".join(missing) +
+                             "\nLink the existing directories into this checkout, or create pildos.conf with your data paths.")
 
+
+def windows():
     launcher = root / "PILdos.vbs"
     icon = root / "PILdos.ico"
     if not launcher.exists():
         raise SystemExit(f"Missing launcher: {launcher}")
 
-    logo = Image.open(png).convert("RGBA")
-    logo.thumbnail((256, 256), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGBA", (256, 256))
-    canvas.alpha_composite(
-        logo, ((256 - logo.width) // 2, (256 - logo.height) // 2)
-    )
-    canvas.save(
-        icon, format="ICO",
-        sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)]
-    )
+    if not icon.is_file():
+        from PIL import Image
+
+        logo = Image.open(png).convert("RGBA")
+        logo.thumbnail((256, 256), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGBA", (256, 256))
+        canvas.alpha_composite(
+            logo, ((256 - logo.width) // 2, (256 - logo.height) // 2)
+        )
+        canvas.save(
+            icon, format="ICO",
+            sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)]
+        )
 
     def quote(value):
         return "'" + str(value).replace("'", "''") + "'"
@@ -54,7 +86,7 @@ $link.Save()
         ["powershell.exe", "-NoProfile", "-Command", script],
         check=True
     )
-    print("Created PILdos.ico and the PIL DOS Desktop shortcut.")
+    print(f"Created PIL DOS Desktop shortcut.\nTarget: {launcher}\nStart in: {root}")
 
 
 def desktop_folder(home):
@@ -129,6 +161,7 @@ def unix():
 
 
 if __name__ == "__main__":
+    validate_setup()
     if sys.platform == "win32":
         windows()
     else:
