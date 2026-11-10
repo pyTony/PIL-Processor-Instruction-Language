@@ -2689,7 +2689,7 @@ fn child_psp_rejects_allocated_block_smaller_than_psp_and_preserves_memory(){
 }
 
 #[test]
-fn child_psp_rejects_mcb_overlap_interior_and_other_program_memory(){
+fn child_psp_rejects_mcb_overlap_too_near_end_and_other_program_memory(){
  let mut p=load(&[0xcd,0x21],"test.com").unwrap();
  p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
  service(&mut p,0x21,&mut vec![]).unwrap();
@@ -2700,8 +2700,8 @@ fn child_psp_rejects_mcb_overlap_interior_and_other_program_memory(){
  // Overlapping MCB header (child - 1): rejected
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child-1);p.cpu.regs[6]=u32::from(child+0x20);
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
- // Inside allocated block, not exact MCB base (child + 1): rejected
- p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child+1);p.cpu.regs[6]=u32::from(child+0x20);
+ // Too near end of allocated block (child + 0x11 with size 0x20 leaves only 0x0f paras): rejected
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child+0x11);p.cpu.regs[6]=u32::from(child+0x20);
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
  // Block owned by another program: simulate caller as child, trying to create PSP in parent memory
  p.psp=child;
@@ -2712,6 +2712,31 @@ fn child_psp_rejects_mcb_overlap_interior_and_other_program_memory(){
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=0x0600;p.cpu.regs[6]=0x0700;
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
  assert_eq!(p.ram,ram_before);
+}
+
+#[test]
+fn child_psp_succeeds_in_parent_owned_interior_and_preserves_mcb_owner(){
+ let mut p=load(&[0xcd,0x21],"test.com").unwrap();
+ p.image.selectors[0]=PSP;p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ // Allocate 0x40 paragraphs for child region
+ p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x40;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ let block_base=p.cpu.regs[0]as u16;
+ // Interior segment DX = block_base + 0x10, with 0x30 paragraphs remaining (>= 0x10)
+ let interior=block_base+0x10;
+ p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(interior);p.cpu.regs[6]=u32::from(block_base+0x40);
+ assert!(service(&mut p,0x21,&mut vec![]).is_ok());
+ // Active PSP switched to interior
+ assert_eq!(p.psp,interior);
+ // Verify child PSP fields in RAM
+ let base=u32::from(interior)*16;
+ assert_eq!(&p.ram.bytes()[base as usize..base as usize+2],&[0xcd,0x20]);
+ assert_eq!(p.ram.load(base+2,MemWidth::Word).unwrap()as u16,block_base+0x40);
+ assert_eq!(p.ram.load(base+0x16,MemWidth::Word).unwrap()as u16,PSP); // Parent link
+ // MCB owner of parent block is UNCHANGED (still PSP; no new MCB at interior-1)
+ assert_eq!(p.arena.block_owner(block_base),Some(PSP));
+ assert_eq!(p.arena.block_owner(interior),None);
 }
 
 #[test]
