@@ -98,8 +98,8 @@ impl Session{
         }).unwrap_or_else(||"\"instruction_bytes\":\"\"".into());
         let graphics=self.loaded.as_ref().and_then(super::planar::mode13_snapshot).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()));
         let cga=self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
-            Some(mode @ (4|5|6))=>Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
-                p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color())),
+            Some(bios_mode @ (4|5|6))=>{let mode=if bios_mode==6{6}else if p.vga.cga_mode()&4!=0{5}else{4};Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
+                p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color()))},
             _=>None,
         }).unwrap_or_default();
         // 16-colour planar modes: each plane's used bytes, then the 16 RGB colours.
@@ -109,13 +109,25 @@ impl Session{
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
         let(blocks,native)=self.backend.as_ref().map_or((0,0),|b|b.block_stats());
-        let diagnostic=format!("{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}");
-        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
+        let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
+        let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}",mode_control&8!=0,mode_control&0x20!=0);
+        Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&String::from_utf8_lossy(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
     pub fn command(&mut self,seq:u64,line:&str)->Result<(String,bool),String>{
         let words:Vec<&str>=line.split_whitespace().collect();
+        // Execute without serializing a framebuffer. The frontend requests a
+        // full snapshot when it is ready to present the latest buffered state.
+        if let ["run",n,"buffered"]=words.as_slice(){
+            if let Ok(n)=n.parse::<usize>(){if (1..=MAX_STEPS).contains(&n){
+                let output=self.run(n)?;let(status,detail)=self.status();
+                let p=self.loaded.as_mut().ok_or("session state lost")?;
+                let com1= p.com1.as_mut().map_or(Vec::new(),|s|std::mem::take(&mut s.tx));
+                let hex:String=com1.iter().map(|b|format!("{b:02x}")).collect();
+                return Ok((format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":true,\"frame_pending\":true,\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"beeps\":{},\"tone\":{},\"com1\":\"{hex}\",\"output\":{}}}",quote(&detail),self.steps,self.idle_hint,p.speaker.beeps,p.speaker.tone(),quote(&String::from_utf8_lossy(&output))),false));
+            }}
+        }
         let mut output=Vec::new();
         let(ok,text,quit)=match words.as_slice(){
             []|["snapshot"]=>(true,String::new(),false),

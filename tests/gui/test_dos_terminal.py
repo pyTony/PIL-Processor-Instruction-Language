@@ -19,6 +19,93 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+    def test_cga_mode_control_blanks_and_selects_blink_or_bright_background(self):
+        reply = dict(screen='418f', columns=1, text_blink=True, video_enabled=True)
+        self.assertEqual(term.screen_rows(reply, blink_on=True), [('A', [15])])
+        self.assertEqual(term.screen_rows(reply, blink_on=False), [(' ', [15])])
+        reply['text_blink'] = False
+        self.assertEqual(term.screen_rows(reply, blink_on=False), [('A', [143])])
+        reply['video_enabled'] = False
+        self.assertEqual(term.screen_rows(reply), [(' ', [0])])
+        self.assertEqual(reply['screen'], '418f')
+
+    def test_buffered_reply_keeps_frame_until_snapshot_and_clears_old_mode(self):
+        frames = [dict(protocol=1, seq=0, ok=True, buffered_run=True, graphics13='00', palette='11'),
+                  dict(protocol=1, seq=1, ok=True, frame_pending=True, status='waiting_input', com1='58'),
+                  dict(protocol=1, seq=2, ok=True, buffered_run=True, status='exit', screen='2007')]
+        process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(''.join(json.dumps(f)+'\n' for f in frames)), stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process):
+            session = term.Session('engine', 'program')
+            reply = term.run_slice(session, 100)
+            self.assertEqual(reply['graphics13'], '00')
+            self.assertEqual(reply['status'], 'waiting_input')
+            reply = term.refresh_frame(session, reply)
+            self.assertNotIn('graphics13', reply)
+            self.assertNotIn('frame_pending', reply)
+            self.assertEqual(session.com1_out, b'X')
+        self.assertEqual(process.stdin.getvalue(), 'run 100 buffered\nsnapshot\n')
+
+    def test_headless_auto_key_only_at_graphics_wait(self):
+        class Session:
+            def __init__(self):
+                self.com1_out = b''
+                self.key = False
+                self.commands = []
+            def send(self, command):
+                self.commands.append(command)
+                if command == 'key 13 28': self.key = True
+                if command.startswith('run '):
+                    return {'status': 'exit' if self.key else 'waiting_input', 'ok': True, 'graphics_cga': '00'}
+                return {'status': 'running', 'ok': True}
+        session = Session(); port = MagicMock(); port.read.return_value = b''
+        with patch.object(term, 'HeadlessGraphics') as graphics:
+            graphics.return_value.stop_requested = False
+            result = term.run_headless(session, port, 0, auto_graphics_key=True)
+        self.assertEqual(result['status'], 'exit')
+        self.assertEqual(session.commands.count('key 13 28'), 1)
+        self.assertNotIn('key 99 46', session.commands)  # no CTTY injection
+
+    def test_headless_batches_busy_slices_before_redrawing(self):
+        class FakeSession:
+            def __init__(self):
+                self.last = {'status': 'running'}
+                self.com1_out = b''
+                self.commands = []
+            def send(self, command):
+                self.commands.append(command)
+                if command == f'run {term.BURST}':
+                    self.last = {'status': 'exit'}
+                return self.last
+        session = FakeSession()
+        port = MagicMock(); port.read.return_value = b''
+        with patch.object(term, 'HeadlessGraphics') as graphics, patch.object(term.time, 'monotonic', return_value=0):
+            graphics.return_value.stop_requested = False
+            self.assertEqual(term.run_headless(session, port, 0, is_shell=False)['status'], 'exit')
+            self.assertIn(f'run {term.SLICE}', session.commands)
+            self.assertIn(f'run {term.BURST}', session.commands)
+            graphics.return_value.update.assert_called_once()
+            graphics.return_value.close.assert_called_once()
+
+    def test_tk_closes_when_dos_session_exits(self):
+        import tkinter as tk
+        import time
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f'Tk display unavailable: {exc}')
+        root.withdraw()
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / 'exit.com'
+            program.write_bytes(bytes.fromhex('b8004ccd21'))
+            session = term.make_app(root, term.find_engine(), str(program), stop_log='')
+            deadline = time.monotonic() + 5
+            while session.process.poll() is None and time.monotonic() < deadline:
+                root.update()
+                time.sleep(0.01)
+            self.assertIsNotNone(session.process.poll(), 'DOS exit did not close the session')
+            with self.assertRaises(tk.TclError):
+                root.winfo_exists()
+
     def test_cargo_engine_reads_config_and_runs_configured_program(self):
         engine = term.find_engine()
         with tempfile.TemporaryDirectory() as d:
@@ -333,8 +420,8 @@ class DosTerminalTests(unittest.TestCase):
             self.skipTest(f'Tk display unavailable: {exc}')
         root.withdraw()
         text_reply = {'screen': '2007' * 80 * 25, 'columns': 80, 'cursor': [0, 0],
-                      'status': 'exit', 'detail': '', 'steps': 0, 'cs': 0, 'eip': 0}
-        base = {'status': 'exit', 'detail': '', 'steps': 0}
+                      'status': 'stopped', 'detail': '', 'steps': 0, 'cs': 0, 'eip': 0}
+        base = {'status': 'stopped', 'detail': '', 'steps': 0}
         cga = '00' * 0x4000
         replies = [dict(base, graphics_cga=cga, cga_mode=4, cga_color=0),
                    dict(base, graphics_cga=cga, cga_mode=6, cga_color=15),

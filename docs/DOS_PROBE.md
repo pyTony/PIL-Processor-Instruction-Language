@@ -515,7 +515,7 @@ gave 42 and a FOR loop printed 1 2 3.
 
 `--dos-session` takes `--args COMMAND_LINE` and puts it in the PSP command
 tail at 80h as COMMAND.COM passes one (count, leading space, text, CR;
-printable ASCII, at most 125 characters). `tools/dos_terminal.py --args`
+Unicode encoded as CP437, at most 125 DOS bytes). `tools/dos_terminal.py --args`
 passes it through, so `--args "/K D:\START.BAT"` has FreeCOM run a batch file
 from the mounted folder and then stay at the prompt. Without `--args` the
 tail stays empty, as before.
