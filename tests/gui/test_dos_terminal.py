@@ -87,7 +87,10 @@ class DosTerminalTests(unittest.TestCase):
             graphics.return_value.close.assert_called_once()
 
     def test_tk_closes_when_dos_session_exits(self):
-        import tkinter as tk
+        try:
+            import tkinter as tk
+        except ImportError as exc:
+            self.skipTest(f'tkinter unavailable: {exc}')
         import time
         try:
             root = tk.Tk()
