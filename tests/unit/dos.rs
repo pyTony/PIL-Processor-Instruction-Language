@@ -1,5 +1,50 @@
 use super::*;
 #[test]
+fn cga_mode_control_out_retains_latch_without_touching_bios_shadow(){
+ // MOV DX,3D8h; MOV AL,21h; OUT DX,AL; IN AL,DX; INT 20h.
+ let bytes=[0xba,0xd8,3,0xb0,0x21,0xee,0xec,0xcd,0x20];
+ let r=run(load(&bytes,"cga-control.com").unwrap(),20).unwrap();
+ assert!(matches!(r.stop,Stop::Exit(0)),"{:?}",r.stop);
+ assert_eq!(r.loaded.vga.cga_mode(),0x21);
+ assert_eq!(r.loaded.cpu.regs[0]&255,255,"CGA latch is output-only");
+ assert_eq!(r.loaded.ram.load(0x465,MemWidth::Byte).unwrap(),0x29);
+ let mut session=session::Session::new(r.loaded);
+ let (reply,_)=session.command(0,"snapshot").unwrap();
+ assert!(reply.contains("\"video_enabled\":false"));
+ assert!(reply.contains("\"text_blink\":true"));
+}
+#[test]
+fn cga_mode_control_rejects_layout_changes_atomically_and_bios_resets_it(){
+ let mut p=load(&[0xee],"cga-control.com").unwrap();
+ for mode in [3,4,5,6,0x12,0x13]{
+  int10(&mut p,mode,0,0,0);
+  let original=p.vga.cga_mode();let ram=p.ram.clone();
+  for bit in [1,2,0x10]{
+   let before=p.vga.clone();p.cpu.regs[0]=u32::from(original^bit);p.cpu.regs[2]=0x3d8;
+   assert!(ports::io(&mut p).is_err());assert_eq!(p.vga,before);assert_eq!(p.ram,ram);
+  }
+  p.cpu.regs[0]=u32::from(original^0x28);p.cpu.regs[2]=0x3d8;
+  assert_eq!(ports::io(&mut p).unwrap(),Some(1));
+  assert_eq!(p.vga.cga_mode(),original^0x28);
+  int10(&mut p,mode,0,0,0);assert_eq!(p.vga.cga_mode(),original);
+ }
+}
+#[test]
+fn cga_mode_control_color_burst_and_blink_follow_ports_and_bios(){
+ let mut p=graphics_mode(4);let ram=p.ram.clone();
+ p.vga.io(0x3d8,false,0xee).unwrap();
+ assert_eq!(p.vga.cga_mode(),0xee,"retain reserved bits too");
+ assert_eq!(p.ram,ram,"direct hardware writes do not change BIOS mode or pixels");
+ let mut session=session::Session::new(p);
+ let (reply,_)=session.command(0,"snapshot").unwrap();
+ assert!(reply.contains("\"cga_mode\":5"));
+ let mut p=load(&[0xee],"blink.com").unwrap();
+ int10(&mut p,0x1003,0,0,0);assert_eq!(p.vga.cga_mode()&0x20,0);
+ int10(&mut p,0x1003,1,0,0);assert_eq!(p.vga.cga_mode()&0x20,0x20);
+ p.vga.attribute_io(0x3c0,false,0x10).unwrap();
+ p.vga.attribute_io(0x3c0,false,0).unwrap();assert_eq!(p.vga.cga_mode()&0x20,0);
+}
+#[test]
 fn dos_vectors_round_trip_all_entries_and_preserve_flags_and_upper_bx(){
  for vector in 0..=255u32{
   let mut p=load(&[0xcd,0x21],"vectors.com").unwrap();
@@ -1110,6 +1155,21 @@ fn list_of_lists_leads_to_the_real_mcb_chain_and_indos_is_clear(){
  assert_eq!((r.loaded.ram.load(at,MemWidth::Byte).unwrap(),r.loaded.ram.load(at-1,MemWidth::Byte).unwrap()),(0,0));
 }
 #[test]
+fn buffered_session_defers_frames_but_keeps_output_and_key_wait(){
+ let code=[0xb4,2,0xb2,b'X',0xcd,0x21,0xb4,0,0xcd,0x16,0xcd,0x20];
+ let mut s=session::Session::new(load(&code,"BUFFER.COM").unwrap());
+ let(reply,_)=s.command(1,"snapshot").unwrap();assert!(reply.contains("\"buffered_run\":true"));
+ let(reply,_)=s.command(2,"run 100 buffered").unwrap();
+ assert!(reply.contains("\"frame_pending\":true")&&reply.contains("\"status\":\"waiting_input\""),"{reply}");
+ assert!(!reply.contains("\"screen\":"));assert!(reply.contains("\"output\":\"X\""));
+ let(reply,_)=s.command(3,"snapshot").unwrap();assert!(reply.contains("\"screen\":\"5807"),"{reply}");
+ s.key(13,28).unwrap();let(reply,_)=s.command(4,"run 100 buffered").unwrap();assert!(reply.contains("\"status\":\"exit\""),"{reply}");
+ let mut p=load(&code,"SERIAL.COM").unwrap();serial::attach(&mut p).unwrap();
+ let mut s=session::Session::new(p);s.command(1,"console com1").unwrap();
+ let(reply,_)=s.command(2,"run 100 buffered").unwrap();assert!(reply.contains("\"com1\":\"58\""),"{reply}");
+ let(reply,_)=s.command(3,"snapshot").unwrap();assert!(reply.contains("\"com1\":\"\""),"{reply}");
+}
+#[test]
 fn session_commands_run_queue_keys_and_report_the_screen(){
  // MOV AH,0; INT 16; MOV AH,4C; INT 21: waits for one key, exits with AL.
  let mut s=session::Session::new(load(&[0xb4,0x00,0xcd,0x16,0xb4,0x4c,0xcd,0x21],"key.com").unwrap());
@@ -1401,6 +1461,44 @@ fn demo_programs_print_exact_factorials_and_a_text_mandelbrot(){
  // The top row is far outside the set; the row just above the axis crosses it.
  assert_eq!(lines[0],"::::::::::::::::::---------------------------=====---------::::::::::::::::::::");
  assert_eq!(lines[11],":====+%++++++**@#############################################+===------------::");
+}
+#[test]
+fn absent_vga_extension_registers_ignore_writes_and_read_ff(){
+ for port in [0xcd,0xde,0xdf]{
+  let p=load(&[0xba,port,3,0xb0,0xaa,0xee,0xec],"bank.com").unwrap();let before=p.vga.clone();
+  let r=run(p,4).unwrap();assert_eq!(r.completed,4);assert_eq!(r.loaded.cpu.regs[0]&255,255);assert_eq!(r.loaded.vga,before);
+ }
+ for mode in [3,0x12]{for (port,index) in [(0x3c4,6),(0x3ce,9)]{
+  let mut p=graphics_mode(mode);planar::io(&mut p,port,false,index,false).unwrap();
+  let idle=p.vga.idle.clone();let planes=p.ram.planar().cloned();let ram=p.ram.bytes().to_vec();
+  for value in [0xff,0]{
+   planar::io(&mut p,port+1,false,value,false).unwrap();
+   assert_eq!(planar::io(&mut p,port+1,true,0,false).unwrap(),Some(0xff));
+  }
+  assert_eq!(p.vga.idle,idle);assert_eq!(p.ram.planar(),planes.as_ref());assert_eq!(p.ram.bytes(),ram);
+ }}
+}
+#[test]
+fn bios_user_font_load_stores_glyphs_and_rejects_bad_spans_atomically(){
+ let mut p=graphics_mode(3);let es=p.image.segments[0].base;
+ for row in 0..16{p.ram.store(es+0x300+row,MemWidth::Byte,row+1).unwrap();}
+ p.cpu.regs[5]=0x300;p.cpu.regs[0]=0x1100;p.cpu.regs[3]=0x1000;p.cpu.regs[1]=1;p.cpu.regs[2]=220;
+ let cpu=p.cpu.clone();service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu,cpu);
+ for row in 0..16{assert_eq!(p.vga.font.as_ref().unwrap().peek(2,220*32+row),row as u8+1);}
+ assert_eq!(p.cpu.regs[5],cpu.regs[5]);let before=p.vga.font.clone();
+ p.cpu.regs[0]=0x1100;p.cpu.regs[5]=0xfff8;
+ assert!(service(&mut p,0x10,&mut vec![]).is_err());assert_eq!(p.vga.font,before);
+}
+#[test]
+fn vendor_video_queries_report_absent_without_altering_cpu_or_ram(){
+ for query in [0x7000,0x6f00,0x5f00]{
+ let mut p=load(&[0xcd,0x10],"everex.com").unwrap();
+ p.cpu.regs=[0xabcd0000|query,0x12340008,0x5678f000,0x9abc0000,0xfc2,0xfc2,0x519e,0x51a6];
+ p.cpu.eflags=0xad7;let cpu=p.cpu.clone();let ram=p.ram.clone();
+ service(&mut p,0x10,&mut vec![]).unwrap();assert_eq!(p.cpu,cpu);assert_eq!(p.ram.bytes(),ram.bytes());
+ p.cpu.regs[3]=4;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ p.cpu.regs[0]=query|1;p.cpu.regs[3]=0;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ }
 }
 #[test]
 fn unsupported_vga_state_and_shadow_buffer_functions_return_unchanged(){
@@ -1723,10 +1821,19 @@ fn cmos_year_writes_are_virtual_readable_and_do_not_change_dos_date(){
  assert!(matches!(&r.stop,Stop::Service(m) if m.contains("valid BCD")),"{:?}",r.stop);assert_eq!(r.loaded.rtc.read(None,9),Some(0x80));
 }
 #[test]
+fn guest_mouse_handler_takes_precedence_over_absent_driver_stub(){
+ let code=[0xba,0x14,1,0xb8,0x33,0x25,0xcd,0x21,0xb8,0x0a,0,0x31,0xdb,0xcd,0x33,0xb8,0,0x4c,0xcd,0x21,0x43,0xcf];
+ let r=run(load(&code,"mousehook.com").unwrap(),30).unwrap();assert!(matches!(r.stop,Stop::Exit(0)));assert_eq!(r.loaded.cpu.regs[3]&65535,1);
+}
+#[test]
 fn no_mouse_driver_and_cmos_reads_as_an_at_with_640k(){
- // INT 33h AX=0: AX=0 (no driver) and BX=0; other mouse calls are not answered.
+ // INT 33h AX=0 reports no driver; other calls retain the input state.
  let mut p=load(&[0xcd,0x21],"mouse.com").unwrap();p.cpu.regs[0]=0;p.cpu.regs[3]=0x1234;service(&mut p,0x33,&mut vec![]).unwrap();
- assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff),(0,0));p.cpu.regs[0]=3;assert!(service(&mut p,0x33,&mut vec![]).is_err());
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff),(0,0));
+ for function in [1,2,3,0xa,0x15,0x16,0x17,0x21,0xffff]{
+  p.cpu.regs=[0xabcd0000|function,0x7000,0xf04,0x1234,0xfa4,0xfaa,0x100c,0x48];p.cpu.eflags=0xad7;
+  let cpu=p.cpu.clone();let ram=p.ram.clone();service(&mut p,0x33,&mut vec![]).unwrap();assert_eq!(p.cpu,cpu);assert_eq!(p.ram,ram);
+ }
  // OUT 70h,AL then IN AL,71h for registers 15h, 16h (640K), 17h (no extended
  // memory), 0Bh (24-hour BCD), 09h, 32h (1980) and 06h (Tuesday); CLI; HLT.
  let mut code=Vec::new();
@@ -2136,6 +2243,26 @@ fn rom_font_sits_read_only_at_f000_fa6e_and_has_every_low_glyph(){
  let shapes:std::collections::BTreeSet<[u8;8]>=(0x21..0x7f).map(glyph_rows).collect();assert_eq!(shapes.len(),0x7f-0x21);
  assert!(p.ram.check_write(0xffa6e,MemWidth::Byte).is_err());
  assert_eq!(p.ram.load(0xffff5,MemWidth::Byte).unwrap(),u32::from(b'0'));
+}
+#[test]
+fn single_page_graphics_ignores_other_display_pages_and_can_write_text(){
+ for mode in [4,5,6,0x13]{
+  let mut p=graphics_mode(mode);
+  int10(&mut p,0x0501,0,0,0);
+  assert_eq!(p.ram.load(0x462,MemWidth::Byte).unwrap(),0);
+  assert_eq!(p.ram.load(0x44e,MemWidth::Word).unwrap(),0);
+  int10(&mut p,0x0944,0x000e,1,0x0101);
+  int10(&mut p,0x0e41,1,0,0);
+  assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),1);
+  // Even if a guest changed the active-page byte itself, AH=09 uses page 0.
+  p.ram.store(0x462,MemWidth::Byte,1).unwrap();
+  int10(&mut p,0x0944,0x000e,1,0x0101);
+ }
+ // Switching from a text page must reset the mode 13h display and cursor.
+ let mut p=graphics_mode(3);int10(&mut p,0x0501,0,0,0);
+ int10(&mut p,0x0200,0,0,0x0102);int10(&mut p,0x0013,0,0,0);
+ assert_eq!(p.ram.load(0x44e,MemWidth::Word).unwrap(),0);
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0);
 }
 #[test]
 fn teletype_draws_glyphs_in_each_graphics_mode_and_moves_the_cursor(){
