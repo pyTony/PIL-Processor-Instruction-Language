@@ -503,6 +503,12 @@ Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/w
 an incoming segment cache without reading memory. OFFSET is bv64 to reject
 wraparound before narrowing to a32-bit address. SS violations use the existing
 StackSegment model error; it does not deliver a guest exception frame.
+`check_write_segment SEG OFFSET WIDTH` checks write permission through the
+incoming segment cache and RAM/page tables, without storing or staging bytes.
+OFFSET is bv32; WIDTH is 8, 16 or 32. It requires machine and memory context
+and reports SS/GP/page faults as an ordinary write would. ENTER uses a byte
+probe at the final SP after checking its frame pushes.
+
 `far_branch SELECTOR OFFSET` stages a CS cache/selector and EIP update.
 SELECTOR is bv16,OFFSET bv32. In real mode the new cache is the ordinary one
 (limit FFFFh). In protected mode the code descriptor is read and checked by

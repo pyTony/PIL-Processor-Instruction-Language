@@ -112,6 +112,8 @@ enum Token {
     // IN/OUT/INS/OUTS: the I/O permission check for a port and byte count.
     CheckIo(usize,u8),
     CheckSegment(usize,usize,u32),
+    // Segment and RAM write checks without staging or performing a store.
+    CheckWriteSegment(usize,usize,MemWidth),
     PreserveFlags(u32),
     UndefFlag(Flag),
     Select(usize, usize, usize, usize),
@@ -318,7 +320,7 @@ fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         |Token::Not(_,a)|Token::Bit(_,a,_)|Token::Zero(_,a)|Token::Parity(_,a)
         |Token::Write(a)|Token::WriteSource(a)|Token::Flag(_,a)|Token::WriteGpr(_,a,_)
         |Token::WriteSegment(_,a)|Token::InterruptShadowIf(a)|Token::RetireIf(a)
-        |Token::ResumeIf(a)|Token::Require(a)|Token::RaiseUnless(a,_)|Token::CheckSegment(_,a,_)
+        |Token::ResumeIf(a)|Token::Require(a)|Token::RaiseUnless(a,_)|Token::CheckSegment(_,a,_)|Token::CheckWriteSegment(_,a,_)
         |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
         Token::WriteControl(_,a)|Token::ReadDescriptor(_,_,a)|Token::LoadSystem(_,a)|Token::CheckIo(a,_)=>used(a),
         Token::FarReturn(a,b,c,_,_,v)=>used(a)||used(b)||used(c)||v.as_ref().is_some_and(used),
@@ -677,6 +679,7 @@ impl Program {
             Token::RequireIopl => "require_iopl".into(),
             Token::CheckIo(a, n) => format!("check_io v{a} {n}"),
             Token::CheckSegment(s, a, n) => format!("check_segment {s} v{a} {n}"),
+            Token::CheckWriteSegment(s, a, w) => format!("check_write_segment {s} v{a} {}",w.bits()),
             Token::PreserveFlags(m) => format!("preserve_flags 0x{m:03x}"),
             Token::UndefFlag(f) => format!("undef_flag {f:?}"),
             Token::Select(v, c, a, b) => format!("v{v} = select v{c} ? v{a} : v{b}"),
@@ -727,7 +730,7 @@ impl Program {
                     _ if machine.is_none() && matches!(t,
                         Token::CheckpointFlags | Token::RequireRealMode | Token::RequireRing0 | Token::InterruptShadowIf(..)
                         | Token::LoadSegment(..) | Token::StoreSegment(..) | Token::ReadSegment(..)
-                        | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::FarBranch(..) | Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..) | Token::RequireIopl | Token::CheckIo(..)
+                        | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::CheckWriteSegment(..) | Token::FarBranch(..) | Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..) | Token::RequireIopl | Token::CheckIo(..)
                         | Token::ReadTable(..) | Token::ReadSystem(..) | Token::ReadCpl(..) | Token::ReadDescriptor(..) | Token::LoadSystem(..) | Token::RequireProtectedMode) => {
                         early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
                     }
@@ -775,6 +778,15 @@ impl Program {
                         if !machine.unwrap().real_mode || cpu.eflags & 0x20000 != 0 {
                             early_stop = Some(idx); note = "; FAULT (real mode required)".into();
                         } else { note = "; real mode ok".into(); }
+                    }
+                    Token::CheckWriteSegment(reg,a,w) => {
+                        let m=machine.unwrap();
+                        let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg],cache:m.segments[reg]};
+                        let result=c.translate(values[a].bits as u32,w,true,cpu.eip).and_then(|at|{
+                            // Preview must not set paging A/D bits in live RAM.
+                            ram.clone().check_write(at,w).map_err(|f|f.error(cpu.eip))
+                        });
+                        match result{Ok(())=>note="; write permission ok (no store)".into(),Err(e)=>{early_stop=Some(idx);note=format!("; FAULT ({e:?})");}}
                     }
                     Token::CheckSegment(reg, a, n) => {
                         let m = machine.unwrap();
@@ -1279,6 +1291,12 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if w!=operand_width || ![16,32].contains(&w) {return Err("read_disp needs the 16/32-bit operand width".into());}
                     Token::ReadDisp(define(&mut names,&mut widths,out,w)?,w)
                 }
+                ["check_write_segment", register, offset, bits]=>{
+                    let reg=number(register)?;let a=slot(&names,offset)?;
+                    if reg>=6||widths[a]!=32{return Err("check_write_segment requires segment0..5 and bv32 offset".into());}
+                    let mem=MemWidth::from_bits(width(bits)?).ok_or("memory width must be8/16/32")?;
+                    Token::CheckWriteSegment(reg as usize,a,mem)
+                }
                 ["check_segment", register, offset, bytes]=>{
                     let reg=number(register)?;let a=slot(&names,offset)?;let n=number(bytes)?;
                     if reg>=6||widths[a]!=64||n==0||n>u32::MAX as u64{return Err("check_segment requires segment0..5,bv64 offset,positive u32 byte count".into());}
@@ -1400,9 +1418,9 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckWriteSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
-    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)|Token::LoadSegment(..)|Token::StoreSegment(..)));
+    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)|Token::LoadSegment(..)|Token::StoreSegment(..)|Token::CheckWriteSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
     let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
     let has_read_address=tokens.iter().any(|t|matches!(t,Token::ReadAddress(_)));
@@ -1937,6 +1955,13 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::ReadIp(o,next,w) => values[o]=value((if next {context.next_eip} else {cpu.eip}) as u64,w),
             Token::ReadDisp(o,w) => values[o]=value(context.displacement as u32 as u64,w),
+            Token::CheckWriteSegment(reg,a,w)=>{
+                let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
+                let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg],cache:m.segments[reg]};
+                let at=c.translate(values[a].bits as u32,w,true,cpu.eip)?;
+                ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,w).map_err(|f|access_error(cpu.eip,f))?;
+                merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:true,is_stack:reg==2});
+            }
             Token::CheckSegment(reg,a,n)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg],cache:m.segments[reg]};
@@ -2255,6 +2280,7 @@ fn emit_rust_functions(p:&Program)->String {
             Token::StoreIf(a,v,c,w)=>format!("if v{c}!=0{{let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;}}"),
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
             Token::ReadDisp(o,w) => format!("let v{o}: u64 = (context.displacement as u32 as u64) & {}u64;",mask(w)),
+            Token::CheckWriteSegment(reg,a,w)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
             Token::CheckSegment(reg,a,n)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
             Token::FarBranch(a,b)=>format!("{}if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;",emit_segment_load("1",a)),
             Token::BranchIf(a,c) => format!("if v{c} != 0 {{ if v{a} as u32 > context.code_limit {{ return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}}); }} pending_eip = v{a} as u32; }}"),

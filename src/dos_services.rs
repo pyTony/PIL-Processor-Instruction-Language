@@ -253,19 +253,19 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             if op==3{p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|3;}
             p.cpu.regs[0]&=!0xff00;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
+        (0x15,0xbf) if matches!(p.cpu.regs[0]&0xffff,0xbf00..=0xbf02|0xbfdc|0xbfde)=>{
+            // No resident DOS/16M, DOS/4GW or DESQview/X interface. An
+            // unsupported BIOS call leaves DX/BX unchanged (no installation
+            // signature), sets CF and returns AH=86h.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
         (0x15,0xc2)=>{
             // No PS/2 pointing device is modelled: answer as a BIOS without one
             // (SeaBIOS: CF=1, AH=86h function not supported).
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
-        },
-        (0x15,0xbf) if p.cpu.regs[0]&0xffff==0xbfde=>{
-            // No DESQview/X DVDOS4GX driver hooks INT 15h. The underlying
-            // BIOS reports the unsupported function, without claiming that
-            // a DOS extender or its protected-mode services are installed.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
             // No mouse driver is loaded: the reset reports AX=0 (not installed)
@@ -469,8 +469,9 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[0]&=!255;Ok(None)
         },
         (0x15,0x88)=>{
-            // No memory above 1 MB: 0 KB of extended memory.
-            p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+            let kb=p.ram.bytes().len().saturating_sub(0x100000)/1024;
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|kb.min(0xffff)as u32;
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
@@ -511,6 +512,11 @@ fn timer_pending(p:&mut Loaded,now:u32)->Result<(),String>{
     if !p.speaker.pic.timer_ready(){return Ok(());}
     // IRQ0's vector is INT 08h unless the PIC has been reinitialized.
     let vector=p.speaker.pic.timer_vector();
+    if !p.image.real_mode{
+        vectors::deliver_irq(p,vector)?;
+        p.speaker.pic.acknowledge_timer();
+        return Ok(());
+    }
     if !vectors::answered(p,vector)?{
         // The interrupt arrives between instructions: IRET resumes the
         // current IP. The handler's EOI (its own, or the BIOS wrapper's

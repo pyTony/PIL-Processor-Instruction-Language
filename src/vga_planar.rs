@@ -34,8 +34,9 @@ impl Planar {
     /// Select) or read mode 1 (bits whose colour matches Colour Compare in
     /// the planes Colour Don't Care selects).
     pub fn read(&self,offset:usize)->u8{
+        let chain=self.seq[4]&8!=0;let plane=if chain{offset&3}else{usize::from(self.gc[4]&3)};let offset=if chain{offset>>2}else{offset};
         let latch=[0,1,2,3].map(|n|self.planes[n*PLANE+offset]);self.latch.set(latch);
-        if self.gc[5]&8==0{return latch[usize::from(self.gc[4]&3)];}
+        if self.gc[5]&8==0{return latch[plane];}
         let mut differ=0u8;
         for n in 0..4{
             if self.gc[7]>>n&1==0{continue;}
@@ -46,10 +47,12 @@ impl Planar {
     /// Guest write through write modes 0-3, the logical function and bit
     /// mask, into the planes the map mask enables.
     pub fn write(&mut self,offset:usize,value:u8){
+        let chain=self.seq[4]&8!=0;let selected=offset&3;let offset=if chain{offset>>2}else{offset};
         let latch=self.latch.get();let mode=self.gc[5]&3;
         let rotated=value.rotate_right(u32::from(self.gc[3]&7));
         let mut mask=self.gc[8];
         for n in 0..4{
+            if chain&&n!=selected{continue;}
             let set_reset=if self.gc[0]>>n&1!=0{0xff}else{0};
             let data=match mode{
                 0=>if self.gc[1]>>n&1!=0{set_reset}else{rotated},

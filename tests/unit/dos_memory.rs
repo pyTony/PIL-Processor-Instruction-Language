@@ -5,7 +5,7 @@ fn fresh()->Loaded{load(&[0x90],"arena.com").unwrap()}
 fn cf(p:&Loaded)->bool{p.cpu.eflags&1!=0}
 #[test]
 fn loader_creates_mcb_chain_and_ram_is_distinct_from_allocation(){
- let p=fresh();assert_eq!(p.ram.bytes().len(),0x110000);assert!(!p.ram.a20_enabled());assert_eq!(p.allocated_end,LIMIT as u32);assert_eq!(p.ram.load(u32::from(PSP-1)*16,MemWidth::Byte).unwrap(),u32::from(b'Z'));assert_eq!(p.ram.load(u32::from(ENV-1)*16,MemWidth::Byte).unwrap(),u32::from(b'M'));assert_eq!(p.arena.blocks,vec![Block{header:ENV-1,size:ENV_PARAS,owner:PSP},Block{header:PSP-1,size:0x9000,owner:PSP}]);assert!(p.arena.valid(&p.ram));
+ let p=fresh();assert_eq!(p.ram.bytes().len(),super::super::PHYSICAL_RAM);assert!(!p.ram.a20_enabled());assert_eq!(p.allocated_end,LIMIT as u32);assert_eq!(p.ram.load(u32::from(PSP-1)*16,MemWidth::Byte).unwrap(),u32::from(b'Z'));assert_eq!(p.ram.load(u32::from(ENV-1)*16,MemWidth::Byte).unwrap(),u32::from(b'M'));assert_eq!(p.arena.blocks,vec![Block{header:ENV-1,size:ENV_PARAS,owner:PSP},Block{header:PSP-1,size:0x9000,owner:PSP}]);assert!(p.arena.valid(&p.ram));
  let mut b=hello("exe").unwrap();super::super::put_word(&mut b,12,1);super::super::put_word(&mut b,16,0x10);let p=load(&b,"small.exe").unwrap();assert!(p.allocated_end<LIMIT as u32);assert_eq!(p.arena.blocks.len(),3);assert_eq!(p.arena.blocks[2].owner,0);assert!(p.arena.valid(&p.ram));
 }
 #[test]

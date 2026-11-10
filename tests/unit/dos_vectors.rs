@@ -569,3 +569,39 @@ fn reinitialized_pic_delivers_irq0_through_its_new_vector(){
     assert!(!super::super::keyboard::hooked(&p).unwrap());
     p.ram.store(0x51*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();assert!(super::super::keyboard::hooked(&p).unwrap());
 }
+
+fn protected_irq_program()->Loaded{
+ let mut p=load(&[0x90,0x90,0xf4],"irqpm.com").unwrap();
+ let flat=SegmentCache{base:0,limit:u32::MAX,access:crate::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};
+ let code=SegmentCache{access:crate::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0},..flat};
+ p.image.real_mode=false;p.image.msw=0x11;p.image.tables=[(31,0x2000),(0x107,0x3000)];
+ for (n,d) in [0u64,0x00cf9a000000ffff,0x00cf92000000ffff,0x00cf9a000000ffff].iter().enumerate(){
+  p.ram.store(0x2000+8*n as u32,MemWidth::Dword,*d as u32).unwrap();p.ram.store(0x2004+8*n as u32,MemWidth::Dword,(*d>>32)as u32).unwrap();
+ }
+ p.image.selectors=[16,24,16,16,16,16];p.selectors=p.image.selectors;p.image.segments=[flat;6];p.image.segments[1]=code;
+ p.cpu.eip=0x10100;p.cpu.regs[4]=0x18000;p.cpu.eflags=0x346;
+ for vector in [8u32,9]{let at=0x3000+8*vector;p.ram.store(at,MemWidth::Dword,0x00080200).unwrap();p.ram.store(at+4,MemWidth::Dword,0x00018e00).unwrap();}
+ p.ram.write_bytes(0x10200,&[0xb0,0x20,0xe6,0x20,0xcf]).unwrap();p
+}
+#[test]
+fn protected_timer_irq_uses_idt_frame_and_iretd_returns_after_eoi(){
+ let mut p=protected_irq_program();super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+ assert_eq!((p.cpu.eip,p.cpu.regs[4],p.selectors[1],p.cpu.eflags),(0x10200,0x17ff4,8,0x46));
+ for (at,want) in [(0x17ff4,0x10100),(0x17ff8,24),(0x17ffc,0x346)]{assert_eq!(p.ram.load(at,MemWidth::Dword).unwrap(),want);}
+ assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),0);
+ let r=run(p,3).unwrap();let mut p=r.loaded;assert!(matches!(r.stop,Stop::Budget),"{:?}",r.stop);
+ assert_eq!((p.cpu.eip,p.cpu.regs[4],p.selectors[1],p.cpu.eflags),(0x10100,0x18000,24,0x346));
+ p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20),0);
+}
+#[test]
+fn protected_irqs_respect_if_pic_masks_and_instruction_shadows(){
+ for case in 0..4{let mut p=protected_irq_program();
+  match case{0=>p.cpu.eflags&=!0x200,1=>p.speaker.pic.write(0x21,1).unwrap(),2=>p.image.ss_shadow=1,_=>p.image.sti_shadow=1}
+  let before=p.cpu.clone();super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu,before);
+  p.cpu.eflags|=0x200;p.speaker.pic.write(0x21,0).unwrap();p.image.ss_shadow=0;p.image.sti_shadow=0;
+  super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x10200);
+ }
+ let mut p=protected_irq_program();assert!(super::super::keyboard::hooked(&p).unwrap());
+ super::super::keyboard::key(&mut p,0x1e61).unwrap();assert!(super::super::keyboard::interrupt(&mut p,false).unwrap());
+ assert_eq!((p.cpu.eip,p.selectors[1]),(0x10200,8));assert_eq!(p.speaker.kbd.read(),0x1e);
+}

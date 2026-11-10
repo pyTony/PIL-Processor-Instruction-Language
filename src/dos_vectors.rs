@@ -101,7 +101,12 @@ pub(super) fn deliver_timer(p:&mut Loaded)->Result<(),String>{
 /// A hardware interrupt (IRQ0 as INT 08h) between instructions: the frame
 /// returns to the current IP.
 pub(super) fn deliver_irq(p:&mut Loaded,n:u8)->Result<(),String>{
-    if !p.image.real_mode||p.cpu.eflags&0x20000!=0{return Err(format!("IRQ through INT {n:02x}h outside real mode is not modelled"));}
+    if !p.image.real_mode{
+        let event=crate::interrupt::Event{vector:n,error_code:None,return_eip:p.cpu.eip,software:false,cr2:None};
+        crate::interrupt::deliver(&mut p.cpu,&mut p.image,&mut p.ram,event)?;
+        p.selectors=p.image.selectors;
+        return Ok(());
+    }
     deliver_at(p,n,p.cpu.eip&0xffff)
 }
 /// Continue the BIOS INT 08h handler in its wrapper (INT 1Ch, EOI, IRET),
