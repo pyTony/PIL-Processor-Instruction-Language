@@ -131,3 +131,81 @@ fn fpu_backend_survives_session_slices_and_reports_absence_in_bios() {
     assert_eq!(result.loaded.cpu.regs[0]&2,0);
     assert!(!result.loaded.fpu.available());
 }
+
+
+#[test]
+fn present_80387_executes_register_stack_com_program() {
+    // FNINIT; FLD1; FLDZ; FXCH ST(1); FSTP ST(1); FNSTSW AX; INT 20h.
+    let bytes=[0xdb,0xe3, 0xd9,0xe8, 0xd9,0xee, 0xd9,0xc9,
+               0xdd,0xd9, 0xdf,0xe0, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-register.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[0]=0xabcd_ffff;
+    let result=dos::run(p,20).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)), "{:?}",result.stop);
+    assert_eq!(result.loaded.cpu.regs[0],0xabcd_3800); // TOP=7
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x037f);
+    assert_eq!(state.top(),7);
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.st(1),None);
+}
+
+#[test]
+fn present_80387_reports_equipment_and_persists_across_slices() {
+    let bytes=[0xdb,0xe3, 0xd9,0xe8, 0xdf,0xe0, 0xcd,0x11, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-slice.com").unwrap();
+    p.fpu=Fpu::present();
+    let first=dos::run(p,2).unwrap();
+    assert!(matches!(first.stop,dos::Stop::Budget));
+    assert_eq!(first.loaded.fpu.state().unwrap().top(),7);
+    assert_eq!(first.loaded.fpu.state().unwrap().st(0),
+               Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    let result=dos::run(first.loaded,10).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)), "{:?}",result.stop);
+    assert_eq!(result.loaded.cpu.regs[0]&0xffff,0x27); // BIOS INT11h
+    assert_eq!(result.loaded.fpu.state().unwrap().top(),7);
+}
+
+#[test]
+fn present_80387_rejects_unimplemented_arithmetic_without_retiring() {
+    let mut p=dos::load(&[0xdb,0xe3,0xd8,0xc0,0xcd,0x20],"x87-unsupported.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,20).unwrap();
+    match result.stop {
+        dos::Stop::Fault(message)=>{
+            assert!(message.contains("80387 unsupported instruction"),"{message}");
+            assert!(message.contains("d8 c0"),"{message}");
+        },
+        other=>panic!("{other:?}"),
+    }
+    assert_eq!(result.completed,1);
+    assert_eq!(result.loaded.cpu.eip,0x102);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_stack_overflow_is_reported_without_mutation() {
+    let mut code=vec![0xdb,0xe3];
+    for _ in 0..9 { code.extend([0xd9,0xe8]); }
+    code.extend([0xcd,0x20]);
+    let mut p=dos::load(&code,"x87-overflow.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,30).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s) if s.contains("stack fault (Overflow)")));
+    assert_eq!(result.completed,9); // FNINIT + eight successful pushes
+    assert_eq!(result.loaded.cpu.eip,0x112);
+    assert_eq!(result.loaded.fpu.state().unwrap().top(),0);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0);
+}
+
+#[test]
+fn present_80387_em_trap_precedes_execution() {
+    let mut p=dos::load(&[0xdb,0xe3],"x87-em.com").unwrap();
+    p.fpu=Fpu::present();
+    p.image.msw|=4; // EM (emulation): #NM even with device installed
+    let result=dos::run(p,2).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s) if s.contains("#NM")));
+    assert_eq!(result.loaded.cpu.eip,0x100);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
