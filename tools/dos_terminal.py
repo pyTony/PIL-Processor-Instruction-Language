@@ -60,7 +60,7 @@ MAX_REPLY = 8 * 1024 * 1024  # VGA frame plus escaped DOS and serial output
 SLICE = 20000
 # A tick keeps running slices for up to this many seconds before it redraws,
 # so that a busy program is not held up by drawing a frame every slice.
-FRAME = 0.05
+FRAME = 1 / 120
 # Steps in each further slice of a tick, once the first has shown the
 # program is still busy.
 BURST = 100000
@@ -218,8 +218,13 @@ def planar_rgb(planes, width, height, colors):
     planes4 = [data[n * size:(n + 1) * size] for n in range(4)]
     indices = b''.join((spread[0][a] | spread[1][b] | spread[2][c] | spread[3][d]).to_bytes(8, 'big')
                        for a, b, c, d in zip(*planes4))
-    rgb = [palette[i * 3:i * 3 + 3] for i in range(16)]
-    return b''.join(rgb[i] for i in indices)
+    # Translate each channel in C rather than creating one Python object per
+    # pixel. Slice assignment interleaves the channels into the PPM buffer.
+    result = bytearray(len(indices) * 3)
+    for channel in range(3):
+        table = palette[channel::3] + bytes(240)
+        result[channel::3] = indices.translate(table)
+    return bytes(result)
 
 
 def graphics_photo(tk, rgb, width, height=200):
@@ -390,14 +395,22 @@ def unmount_command(drive):
     return f'unmount {letter}'
 
 
-def screen_rows(reply):
+def screen_rows(reply, blink_on=True):
     """Rows of (text, attributes) from a session reply's character/attribute bytes."""
     cells = bytes.fromhex(reply['screen'])
     columns = reply['columns']
     rows = []
     for r in range(len(cells) // (2 * columns)):
         row = cells[r * 2 * columns:(r + 1) * 2 * columns]
-        rows.append((''.join(GLYPHS[b] for b in row[0::2]), list(row[1::2])))
+        chars, attrs = list(row[0::2]), list(row[1::2])
+        for c, attr in enumerate(attrs):
+            if not reply.get('video_enabled', True):
+                chars[c], attrs[c] = 32, 0
+            elif reply.get('text_blink', True):
+                attrs[c] &= 0x7f
+                if attr & 0x80 and not blink_on:
+                    chars[c] = 32
+        rows.append((''.join(GLYPHS[b] for b in chars), attrs))
     return rows
 
 
@@ -431,6 +444,8 @@ class Session:
         if reply.get('protocol') != 1 or reply.get('seq') != self.seq:
             raise RuntimeError('unexpected reply from PIL DOS session')
         self.com1_out += bytes.fromhex(reply.get('com1', ''))
+        if reply.get('frame_pending'):
+            reply = {**self.last, **reply}
         return reply
 
     def send(self, command):
@@ -661,6 +676,16 @@ def open_com1(spec):
     raise ValueError(f'--com1 takes console or tcp:PORT, not {spec!r}')
 
 
+def run_slice(session, budget):
+    """Leave pixels in the engine until the frontend is ready to draw."""
+    buffered = getattr(session, 'last', {}).get('buffered_run') is True
+    return session.send(f'run {budget}' + (' buffered' if buffered else ''))
+
+
+def refresh_frame(session, reply):
+    return session.send('snapshot') if reply.get('frame_pending') is True else reply
+
+
 class HeadlessGraphics:
     """Try to show a window only when graphics output is active."""
 
@@ -747,6 +772,8 @@ class HeadlessGraphics:
                 width = 320 if mode in (4, 5) else 640
                 rgb = cga_rgb(cga, mode, color)
 
+            if not reply.get('video_enabled', True):
+                rgb = bytes(len(rgb))
             self.photo = graphics_photo(tk, rgb, width, height)
             self.label.configure(image=self.photo)
             self.root.deiconify()
@@ -764,7 +791,7 @@ class HeadlessGraphics:
             self.root = None
 
 
-def run_headless(session, com1, offset, country=None, is_shell=True):
+def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False):
     """Route DOS input and output over COM1 before running the guest."""
     session.send(f'clock {offset}')
     if country:
@@ -773,6 +800,7 @@ def run_headless(session, com1, offset, country=None, is_shell=True):
     gfx = HeadlessGraphics()
     ctty_done = False
     com1_seen = False
+    auto_key_sent = False
     try:
         while reply['status'] in ('running', 'waiting_input'):
             if gfx.stop_requested:
@@ -784,14 +812,29 @@ def run_headless(session, com1, offset, country=None, is_shell=True):
             incoming = com1.read()
             for at in range(0, len(incoming), 100):
                 reply = session.send('com1 ' + incoming[at:at + 100].hex())
-            reply = session.send(f'run {SLICE}')
+            reply = run_slice(session, SLICE)
+            # Match the GUI's busy-run budget: avoid decoding and repainting a
+            # full VGA frame after every small execution slice. Return to Tk
+            # regularly so keyboard and close events stay responsive.
+            until = time.monotonic() + FRAME
+            while reply['status'] == 'running' and time.monotonic() < until:
+                reply = run_slice(session, BURST)
+            reply = refresh_frame(session, reply)
             if session.com1_out:
                 com1_seen = True
                 com1.write(session.com1_out)
                 session.com1_out = b''
             gfx.update(reply, session)
+            graphics_active = any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar'))
+            if not graphics_active:
+                auto_key_sent = False
+            if auto_graphics_key and graphics_active and reply['status'] == 'waiting_input' and not auto_key_sent:
+                result = session.send('key 13 28')
+                auto_key_sent = result.get('ok', False)
+                if auto_key_sent:
+                    continue
             if reply['status'] == 'waiting_input' and not incoming:
-                if not ctty_done and not com1_seen:
+                if is_shell and not ctty_done and not com1_seen:
                     ctty_done = True
                     for ch in 'ctty com1\r':
                         session.send(f'key {ord(ch)} {SCAN.get(ch.lower(), 0)}')
@@ -841,7 +884,7 @@ def prepare_image_drives(engine, images, drives):
     return drives
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None, auto_graphics_key=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -854,7 +897,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     status = tk.Label(root, anchor='w', font=('TkDefaultFont', 10))
     status.pack(fill='x', padx=8, pady=(0, 6))
     for attr in range(256):
-        text.tag_configure(f'a{attr}', foreground=PALETTE[attr & 15], background=PALETTE[(attr >> 4) & 7])
+        text.tag_configure(f'a{attr}', foreground=PALETTE[attr & 15], background=PALETTE[(attr >> 4) & 15])
     text.tag_configure('cursor', underline=True)
     # The colour tags paint every cell's background: keep the selection above
     # them, and visible when the window does not have the focus.
@@ -869,7 +912,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
     edges = KeyEvents(session.last.get('key_edges', False))
-    held, state = set(), {'shift': 0, 'settle': 0}
+    held, state = set(), {'shift': 0, 'settle': 0, 'auto_key_sent': False}
     speaker = QuietSpeaker(speaker_level, session.last.get('beeps', 0))
     geom = [80, 25]
     frame = [None]
@@ -892,6 +935,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             else:
                 descriptor = ('cga', cga, reply['cga_mode'], reply['cga_color'])
                 width = 640 if reply['cga_mode'] == 6 else 320
+            descriptor += (reply.get('video_enabled', True),)
             if frame[0] != descriptor:
                 if pixels is not None:
                     rgb = graphics_rgb(pixels, reply['palette'])
@@ -899,6 +943,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                     rgb = planar_rgb(planes, width, height, reply['planar_rgb'])
                 else:
                     rgb = cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
+                if not reply.get('video_enabled', True):
+                    rgb = bytes(len(rgb))
                 picture = graphics_photo(tk, rgb, width, height)
                 graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
@@ -908,7 +954,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             return
         if graphics.winfo_manager() == "pack":
             graphics.pack_forget(); text.pack(before=status, padx=8, pady=(8, 4)); text.focus_set(); drawn[0] = None
-        screen_hex = reply['screen']
+        screen_hex = (reply['screen'], reply.get('video_enabled', True), reply.get('text_blink', True), int(time.monotonic() * 2) & 1)
         cursor = tuple(reply['cursor'])
         cols = reply.get('columns', 80)
         if screen_hex != drawn[0] or cols != geom[0]:
@@ -938,7 +984,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 start = c
 
     def fill(reply, prev_rows):
-        rows = screen_rows(reply)
+        rows = screen_rows(reply, blink_on=bool(int(time.monotonic() * 2) & 1))
         cols = reply.get('columns', 80)
         nrows = len(rows) or 25
         if [cols, nrows] != geom or prev_rows is None or len(prev_rows) != len(rows):
@@ -957,7 +1003,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                     insert_row(r, row_data[0], row_data[1], at_end=False)
         drawn[2] = rows
         row, column = reply['cursor']
-        text.tag_add('cursor', f'{row + 1}.{column}')
+        if reply.get('video_enabled', True):
+            text.tag_add('cursor', f'{row + 1}.{column}')
 
     def copy(event=None):
         """The selection, or the whole screen without trailing blanks."""
@@ -1059,20 +1106,30 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                     if reply['status'] in ('running', 'waiting_input'):
                         reply = session.send('com1 ' + incoming[at:at + 100].hex())
             if reply['status'] in ('running', 'waiting_input'):
-                reply = session.send(f'run {SLICE}')
+                reply = run_slice(session, SLICE)
                 until = time.monotonic() + FRAME
                 idle = (not sent and not keys and not incoming and reply.get('idle_hint', False) and
                         all(reply.get(k) == previous.get(k) for k in
                             ('screen', 'graphics_planar', 'graphics_cga', 'graphics13')))
                 while reply['status'] == 'running' and not keys and not idle and time.monotonic() < until:
                     speaker.observe(reply)
-                    reply = session.send(f'run {BURST}')
+                    reply = run_slice(session, BURST)
             else:
                 idle = False
+            reply = refresh_frame(session, reply)
             if com1 and session.com1_out:
                 com1.write(session.com1_out)
                 session.com1_out = b''
+            if reply['status'] == 'exit':
+                close()
+                return
             draw(reply)
+            graphics_active = any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar'))
+            if not graphics_active:
+                state['auto_key_sent'] = False
+            if auto_graphics_key and graphics_active and reply['status'] == 'waiting_input' and not state['auto_key_sent']:
+                result = session.send('key 13 28')
+                state['auto_key_sent'] = result.get('ok', False)
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
             return
@@ -1166,6 +1223,8 @@ def main(argv=None):
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
     parser.add_argument('--headless', action='store_true',
                         help='run without a window, interacting through this terminal (shows a window only when graphics output is active)')
+    parser.add_argument('--auto-graphics-key', action='store_true',
+                        help='send Enter at a graphics program key wait (useful with DOS TIMEIT)')
     parser.add_argument('--engine', help='pil executable (default: newest build)')
     parser.add_argument('--ignore-unassigned-out', action='store_true', help='ignore and log OUT to unassigned ports; known devices still stop')
     parser.add_argument('--stop-log', default='PILdos-stops.jsonl', metavar='PATH', help='append stop diagnostics (default: PILdos-stops.jsonl)')
@@ -1199,7 +1258,7 @@ def main(argv=None):
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
                               stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config)
             is_shell = any(sh in args.program.upper() for sh in ('COMMAND.COM', 'CMD.EXE', '4DOS'))
-            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell)
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell, auto_graphics_key=args.auto_graphics_key)
             if reply['status'] != 'exit':
                 print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
                 raise SystemExit(1)
@@ -1210,7 +1269,7 @@ def main(argv=None):
         return
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config)
+    make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key)
     root.mainloop()
 
 
