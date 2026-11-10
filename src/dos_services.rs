@@ -334,6 +334,15 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             let signature=p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS PSP read: {e:?}"))?;
             if signature!=0x20cd{return Err(format!("DOS set PSP to {segment:04x}h, which holds no PSP, is not modelled"));}
             p.psp=segment;
+            let mut handles=0u32;
+            for h in 0..20u16{
+                if let Ok(addr)=jft(p,h){
+                    if let Ok(entry)=p.ram.load(addr,MemWidth::Byte){
+                        if entry as u8!=0xff{handles|=1<<h;}
+                    }
+                }
+            }
+            p.open_handles=handles;
             Ok(None)
         },
         (0x21,0x51|0x62)=>{
@@ -341,6 +350,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
             Ok(None)
         },
+        (0x21,0x55)=>{exec::create_child_psp(p)?;Ok(None)},
         (0x28|0x2a,_)=>{
             // DOS idle (28h) and the network hook (2Ah) end in the kernel's
             // IRET when nothing has hooked them (FreeDOS kernel.asm): no
