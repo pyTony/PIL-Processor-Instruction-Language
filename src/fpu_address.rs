@@ -107,12 +107,12 @@ mod tests {
             access:SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0}
         };
         let mut cpu=Cpu::default();cpu.regs[3]=0x10003;
-        let ins=super::super::super::decode_with_default(
+        let ins=super::super::decode_with_default(
             |at|[0xdd,0x03].get(at as usize).copied().ok_or(()),true
         ).unwrap().unwrap();
         let (offset,_)=resolve(&ins,&cpu,&image).unwrap();
         assert_eq!(offset,0x10003);
-        let ins=super::super::super::decode_with_default(
+        let ins=super::super::decode_with_default(
             |at|[0x67,0xdd,0x07].get(at as usize).copied().ok_or(()),true
         ).unwrap().unwrap();
         let (offset,_)=resolve(&ins,&cpu,&image).unwrap();
