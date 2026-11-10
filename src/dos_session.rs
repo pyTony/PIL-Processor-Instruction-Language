@@ -111,7 +111,7 @@ impl Session{
         let(blocks,native)=self.backend.as_ref().map_or((0,0),|b|b.block_stats());
         let diagnostic=format!("{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}");
         Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
-            quote(text),quote(&detail),self.steps,self.idle_hint,quote(&String::from_utf8_lossy(output))))
+            quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
     pub fn command(&mut self,seq:u64,line:&str)->Result<(String,bool),String>{

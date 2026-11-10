@@ -1696,7 +1696,8 @@ fn command_line_goes_to_the_psp_tail_as_command_com_passes_it(){
     set_command_tail(&mut p,"/K D:\\START.BAT").unwrap();
     assert_eq!(read(&p,18),b"\x10 /K D:\\START.BAT\r");
     assert!(set_command_tail(&mut p,&"x".repeat(126)).is_err());
-    assert!(set_command_tail(&mut p,"\u{e4}").is_err());
+    set_command_tail(&mut p,"\u{e4}").unwrap();assert_eq!(read(&p,4),[2,b' ',0x84,13]);
+    assert!(set_command_tail(&mut p,"🙂").is_err());
     set_command_tail(&mut p,&"x".repeat(125)).unwrap();assert_eq!(read(&p,1),[126]);assert_eq!(read(&p,128)[127],0x0d);
 }
 #[test]
