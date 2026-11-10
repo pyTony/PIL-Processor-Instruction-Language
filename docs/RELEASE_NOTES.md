@@ -1,3 +1,15 @@
+# PIL 0.37.0-alpha.2
+
+Runtime projection of dev source 86cc5dbc55d7a2b5959a37870b9bcb5833969a2d.
+
+- Fix Doom shutdown with BIOS RTC time/date reads (INT1A AH02/AH04), using
+  one coherent session-clock sample and preserving unrelated state.
+- Send separate physical key-down/key-up events to guest keyboard handlers;
+  3DBench can observe ESC held down and return to DOS. Console input and
+  older engines retain the existing key protocol. Focus loss releases keys.
+- Verified both programs return to a FreeCOM prompt; 685 Rust and 37
+  frontend tests pass. Third-party game assets are not distributed.
+
 # PIL 0.37.0-alpha.1
 
 Runtime projection of dev source commit 21d114676ff783eb53ef52aafc5f75ad0e08d894.
