@@ -58,6 +58,7 @@ impl Controllers{
     }
     /// Whether a write keeps the memory layout of the current mode.
     pub fn allowed(&self,sequencer:bool,index:usize,value:u8)->bool{
+        if self.gc[5]&0x40!=0 && sequencer && index==4{return value&!8==self.seq[4]&!8;}
         if let Some(map)=self.text_map{
             match(sequencer,index){
                 // Odd/even and extended memory may change; chain-4 may not.
@@ -176,7 +177,7 @@ impl Vga {
         // Cursor and start-address changes have visible text-mode effects.
         // Accept the protection bit without pretending timing/mode changes work.
         if i==17 {if value&0x7f!=self.regs[i]&0x7f{return Err("VGA retrace timing changes are not implemented".into());}}
-        else if !(10..=15).contains(&i)&&value!=self.regs[i]{return Err(format!("VGA CRTC timing/mode register {i:02X} change is not implemented"));}
+        else if !(10..=15).contains(&i)&&!(self.idle.gc[5]&0x40!=0&&(i==20||(i==23&&(value^self.regs[i])&!0x40==0)))&&value!=self.regs[i]{return Err(format!("VGA CRTC timing/mode register {i:02X} change is not implemented"));}
         self.regs[i]=value;
         if matches!(i,12|13){self.start_override=true;}
         if matches!(i,14|15){self.cursor_override=true;}

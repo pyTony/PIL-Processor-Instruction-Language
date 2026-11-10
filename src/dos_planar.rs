@@ -110,7 +110,15 @@ fn idle_io(p:&mut Loaded,sequencer:bool,even:bool,input:bool,value:u16,word:bool
     let lo=access(!even,value as u8)?;
     let hi=if word{access(true,(value>>8)as u8)?}else{0};
     if sequencer{next.seq_index=index;}else{next.gc_index=index;}
-    p.vga.idle=next;super::vga_font::sync(p);
+    p.vga.idle=next;
+    if p.ram.load(0x449,MemWidth::Byte).ok()==Some(0x13){
+        if p.ram.planar().is_none() && p.vga.idle.seq[4]&8==0{
+            let mut planes=Planar::new();
+            for i in 0..0x10000{planes.poke(i&3,i>>2,p.ram.bytes()[0xa0000+i]);}
+            p.ram.set_planar(Some(planes));
+        }
+        if let Some(planes)=p.ram.planar_mut(){planes.seq=p.vga.idle.seq;planes.gc=p.vga.idle.gc;}
+    }else{super::vga_font::sync(p);}
     Ok(u16::from(lo)|u16::from(hi)<<8)
 }
 /// INT 10h AH=0Ch/0Dh in a planar mode, page 0. Bit 7 of AL XORs.
@@ -212,4 +220,14 @@ pub(super) fn snapshot(p:&Loaded)->Option<(u32,Geometry,String,String)>{
     for n in 0..4{for i in 0..g.bytes(){let b=planar.peek(n,(start+i)&0xffff);hex.push_str(&format!("{b:02x}"));}}
     let rgb:String=p.vga.planar_rgb().iter().flatten().map(|c|format!("{c:02x}")).collect();
     Some((mode,g,hex,rgb))
+}
+
+/// The 320x200, 256-colour scanout. Unchained storage is one byte per
+/// pixel in successive planes, 80 bytes per scanline in each plane.
+pub(super) fn mode13_snapshot(p:&Loaded)->Option<String>{
+ if p.ram.load(0x449,MemWidth::Byte).ok()!=Some(0x13){return None;}
+ Some(if let Some(planes)=p.ram.planar(){
+  let start=usize::from(p.vga.start());
+  (0..64000).map(|i|format!("{:02x}",planes.peek(i&3,(start+(i>>2))&0xffff))).collect()
+ }else{p.ram.bytes()[0xa0000..0xafa00].iter().map(|b|format!("{b:02x}")).collect()})
 }

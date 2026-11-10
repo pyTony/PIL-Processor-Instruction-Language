@@ -105,3 +105,14 @@ Development tests, history, plans and packaging tools remain on dev. Main holds
 only portable build/run source, helper scripts, examples and applicable user docs.
 No project-wide licence has been selected; no third-party emulator or OS images
 are bundled. An alpha label does not imply Windows/PC or ESP32 compatibility.
+
+## 0.37 DOS games increment
+
+| Capability | Implemented scope |
+|---|---|
+| Extended physical memory | 16 MiB total; AH88 and CMOS coherent; DOS allocations remain below 640 KiB; no XMS driver |
+| Protected hardware IRQs | PIC-selected timer/keyboard IDT delivery, IF/shadows/masks/EOI |
+| 256-colour VGA | 320x200 chain-4 and unchained plane memory, map masks and CRTC page starts |
+| ENTER final allocation check | One-byte write-permission probe with precise faults, no actual store |
+
+See [DOS game reproduction](DOS_GAMES.md). Full task switching and sound remain outside this increment.

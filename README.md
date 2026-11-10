@@ -1,4 +1,4 @@
-# PIL 0.36.0-alpha.1 runtime
+# PIL 0.37.0-alpha.1 runtime
 
 
 This runtime comes from merged dev commit `29a78e8` and includes the guarded
