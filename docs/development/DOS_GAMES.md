@@ -55,3 +55,29 @@ ENTER probes write access at the final SP byte. Hand-computed paging/SS
 expectations and a compiled generated-Rust test check rollback, retry and the
 absence of a real store. The local test386 HEX ROM still stops at POST 1Ah;
 this increment does not claim a full ROM pass or task switching.
+
+
+## Exit fixes, 0.37.0-alpha.2
+
+Both local games now return to a FreeCOM `D:\>` prompt with no service stop.
+The parent session reaches `waiting_input` after the child finishes.
+3DBench exits on ESC; Doom exits via ESC, Q, Enter, Y.
+
+Doom needed BIOS INT1A/AH02 (BCD time); AH04 (BCD date) uses the same
+session RTC. Each call samples the clock once, preserves other registers
+and flag bits, defines/clears CF, and does not mutate the clock or BDA.
+The daylight-saving return byte is 0; the configured clock offset supplies
+local time. RTC set/alarm calls remain outside this increment.
+
+3DBench's INT09 handler samples a pressed-key table. An atomic make/break
+pair was cleared before the main loop could observe the key. GUI key-down
+and key-up are now separate IRQ1 events, including in the headless graphics
+window. Focus loss releases held keys. The BIOS console and older engines
+keep the legacy `key ASCII SCAN` path. New engines advertise `key_edges`
+and the currently active `raw_keyboard` path; scripts may use
+`keydown ASCII SCAN` and `keyup ASCII SCAN`. A synthetic guest reproduces
+the original missed-ESC bug and exits through the new session protocol.
+
+Validation: 685 Rust tests pass (2 ignored); 37 frontend tests pass.
+Private game runs reach Exit(0) directly and return to FreeCOM under EXEC.
+Game data and the diagnostic binaries remain local and are not fixtures.

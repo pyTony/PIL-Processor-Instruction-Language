@@ -1,3 +1,13 @@
+# PIL 0.37.0-alpha.2
+
+- Fix Doom shutdown with BIOS RTC time/date reads (INT1A AH02/AH04), using
+  one coherent session-clock sample and preserving unrelated state.
+- Send separate physical key-down/key-up events to guest keyboard handlers;
+  3DBench can observe ESC held down and return to DOS. Console input and
+  older engines retain the existing key protocol. Focus loss releases keys.
+- Verified both programs return to a FreeCOM prompt; 685 Rust and 37
+  frontend tests pass. Third-party game assets are not distributed.
+
 # PIL 0.37.0-alpha.1
 
 DOS Doom and Superscape 3DBench now render through the ordinary release

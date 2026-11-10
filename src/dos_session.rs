@@ -62,6 +62,11 @@ impl Session{
         if vector!=0x09{return Err(format!("IRQ1 through INT {vector:02X}h (PIC base moved), which has no program handler, is not modelled"));}
         console::enqueue(p,word)
     }
+    fn key_edge(&mut self,ascii:u8,scan:u8,down:bool)->Result<bool,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        if keyboard::hooked(p)?{return keyboard::edge(p,u16::from(scan)<<8|u16::from(ascii),down);}
+        if down{self.key(ascii,scan)}else{Ok(true)}
+    }
     /// The active text page as character/attribute pairs, its width and the cursor.
     pub fn screen(&self)->Result<(Vec<u8>,u32,(u32,u32)),String>{
         let p=self.loaded.as_ref().ok_or("session state lost")?;
@@ -105,12 +110,13 @@ impl Session{
         // 16-colour planar modes: each plane's used bytes, then the 16 RGB colours.
         let planar=self.loaded.as_ref().and_then(super::planar::snapshot).map(|(mode,g,planes,rgb)|
             format!(",\"graphics_planar\":\"{planes}\",\"planar_mode\":{mode},\"planar_width\":{},\"planar_height\":{},\"planar_rgb\":\"{rgb}\"",g.width,g.height)).unwrap_or_default();
+        let raw_keyboard=self.loaded.as_ref().is_some_and(|p|keyboard::hooked(p).unwrap_or(false));
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
         let(blocks,native)=self.backend.as_ref().map_or((0,0),|b|b.block_stats());
         let diagnostic=format!("{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}");
-        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
+        Ok(format!("{{\"protocol\":1,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&String::from_utf8_lossy(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
@@ -122,6 +128,10 @@ impl Session{
             ["run",n]=>match n.parse::<usize>(){
                 Ok(n) if (1..=MAX_STEPS).contains(&n)=>{output=self.run(n)?;(true,String::new(),false)},
                 _=>(false,"run budget must be 1..1000000".into(),false),
+            },
+            [direction @ ("keydown"|"keyup"),a,s]=>match(a.parse::<u8>(),s.parse::<u8>()){
+                (Ok(a),Ok(s))=>if self.key_edge(a,s,*direction=="keydown")?{(true,String::new(),false)}else{(false,"keyboard scan codes still waiting for the program".into(),false)},
+                _=>(false,"key edge needs ASCII and scan code bytes".into(),false),
             },
             ["key",a,s]=>match(a.parse::<u8>(),s.parse::<u8>()){
                 (Ok(a),Ok(s))=>if self.key(a,s)?{(true,String::new(),false)}else{(false,"BIOS keyboard buffer full".into(),false)},
