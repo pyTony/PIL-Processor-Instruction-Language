@@ -15,7 +15,7 @@ interpreter. No shadow programs or game assets are included.
 Local Windows release: changing Doom gameplay and an ESC-opened menu;
 3DBench renders its scene and displays a score. No completed Doom timedemo
 score, sound output, full test386 ROM pass or task switching is claimed.
-See [DOS games](../../docs/development/DOS_GAMES.md) for reproduction and current limits.
+See [DOS games](DOS_GAMES.md) for reproduction and current limits.
 
 # PIL 0.35.0-alpha.1
 
