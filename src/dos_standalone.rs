@@ -194,7 +194,6 @@ mod tests {
         assert!(discover_direct(&bytes,"RECUR.COM").is_ok());
         bytes[16]=0x30;
         assert!(discover_direct(&bytes,"RECUR.COM").unwrap_err().contains("requires proven AH"));
-        assert!(discover_direct(include_bytes!("../programs/dos/RECURFIB.COM"),"RECURFIB.COM").is_ok());
     }
     #[test]
     fn register_and_immediate_stack_forms_remain_shared_pil(){

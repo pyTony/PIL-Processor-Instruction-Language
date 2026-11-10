@@ -1,6 +1,5 @@
 //! Rust rendering of backend-neutral PIL dataflow idioms.
 use crate::Program;
-#[cfg(test)] use crate::Token;
 
 pub(crate) fn carry_window(p:&Program,at:usize)->Option<String>{
     let crate::pil_opt::CarryWindow{partial,wide,result,cf,a,b,carry,width:w,op}=crate::pil_opt::carry_window(p,at)?;
