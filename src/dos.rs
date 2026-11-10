@@ -532,10 +532,10 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         }
         // Numerics are a replaceable device, separate from integer PIL semantics.
         // Decode afresh so self-modifying code and changes to EM/TS are visible.
-        let numerics=super::fpu::decode(|offset|{
+        let numerics=super::fpu::decode_with_default(|offset|{
             let bytes=p.image.fetch_signature(&p.ram,p.cpu.eip,offset+1)?;
             Ok::<u8,GuestError>(bytes[offset as usize])
-        });
+        },p.image.segments[SegmentRegister::Cs.index()].default_32());
         match numerics {
             Ok(Some(instruction))=>{
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
@@ -578,6 +578,13 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                     super::fpu::Outcome::StackFault(error)=>{
                         break Stop::Fault(format!(
                             "80387 stack fault ({error:?}); masked exception semantics not yet implemented; CS:IP={:04x}:{:08x}; bytes={}",
+                            p.selectors[1],p.cpu.eip,
+                            instruction.bytes[..instruction.length as usize].iter()
+                                .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")));
+                    },
+                    super::fpu::Outcome::MemoryFault=>{
+                        break Stop::Fault(format!(
+                            "80387 memory operand address/access fault; CS:IP={:04x}:{:08x}; bytes={}",
                             p.selectors[1],p.cpu.eip,
                             instruction.bytes[..instruction.length as usize].iter()
                                 .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")));
