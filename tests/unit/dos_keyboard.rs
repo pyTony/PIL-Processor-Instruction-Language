@@ -127,3 +127,29 @@ fn vga_controllers_outside_planar_modes_keep_steering_registers_and_refuse_layou
     p.cpu.regs[0]=0x0003;console::display(&mut p,0).unwrap();
     assert_eq!(p.vga.idle,super::super::vga::Controllers::standard(3));
 }
+
+#[test]
+fn separate_edges_leave_a_game_key_pressed_until_the_release_arrives(){
+ let mut p=program(&[0xfb,0xeb,0xfe]);p=run(p,50).unwrap().loaded;
+ assert!(edge(&mut p,0x011b,true).unwrap());
+ p=run(p,200).unwrap().loaded;assert_eq!(recorded(&p),vec![1]);assert!(!p.speaker.kbd.pending());
+ p=run(p,200).unwrap().loaded;assert_eq!(recorded(&p),vec![1],"running more guest instructions must not invent a release");
+ assert!(edge(&mut p,0x011b,false).unwrap());p=run(p,200).unwrap().loaded;
+ assert_eq!(recorded(&p),vec![1,0x81]);assert_eq!(ring(&p),vec![0x011b],"release must not add another BIOS word");
+}
+#[test]
+fn a_guest_that_samples_key_state_can_exit_while_escape_is_held(){
+ // Hook INT09. The ISR stores its raw make/break code at 0210h, EOI, IRET.
+ // Main waits until the stored byte is Escape make, then exits through DOS.
+ let mut main=HOOK09.to_vec();main.extend([0xfb,0x80,0x3e,0x10,0x02,1,0x75,0xf9,0xb8,0,0x4c,0xcd,0x21]);
+ let handler=[0x50,0xe4,0x60,0x2e,0xa2,0x10,0x02,0xb0,0x20,0xe6,0x20,0x58,0xcf];
+ let p=load(&code_at(&[(0,&main),(0x40,&handler)]),"state.com").unwrap();let p=run(p,60).unwrap().loaded;
+ let mut session=super::super::session::Session::new(p);
+ let (reply,_)=session.command(1,"snapshot").unwrap();assert!(reply.contains("\"key_edges\":true")&&reply.contains("\"raw_keyboard\":true"));
+ let (reply,_)=session.command(2,"keydown 27 1").unwrap();assert!(reply.contains("\"ok\":true"));
+ let (reply,_)=session.command(3,"run 200").unwrap();assert!(reply.contains("\"status\":\"exit\""),"{reply}");
+ // The legacy atomic tap demonstrates the original bug: both IRQs finish
+ // before the main loop samples the pressed-state byte.
+ let p=load(&code_at(&[(0,&main),(0x40,&handler)]),"tap.com").unwrap();let mut p=run(p,60).unwrap().loaded;
+ key(&mut p,0x011b).unwrap();let r=run(p,200).unwrap();assert_eq!(r.stop,Stop::Budget);assert_eq!(r.loaded.ram.load(BASE+0x210,MemWidth::Byte).unwrap(),0x81);
+}

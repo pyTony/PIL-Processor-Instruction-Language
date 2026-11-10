@@ -356,6 +356,26 @@ def key_command(code):
     return 'key {} {}'.format(*code)
 
 
+class KeyEvents:
+    """Keep physical key releases separate while a guest owns the keyboard."""
+    def __init__(self, supported):
+        self.supported = supported
+        self.pressed = {}
+
+    def press(self, name, code, raw=True):
+        if self.supported and raw:
+            self.pressed[name] = code
+            return 'keydown {} {}'.format(*code)
+        return key_command(code)
+
+    def release(self, name):
+        code = self.pressed.pop(name, None)
+        return 'keyup {} {}'.format(*code) if code is not None else None
+
+    def release_all(self):
+        return [self.release(name) for name in list(self.pressed)]
+
+
 def mount_command(drive, path):
     letter = str(drive).strip().rstrip(':').upper()
     if letter not in ('A', 'B', 'C', 'D', 'E') or not str(path).strip() or any(c in str(path) for c in '\r\n'):
@@ -696,14 +716,24 @@ class HeadlessGraphics:
                 self.label = tk.Label(self.root, bg='black', takefocus=1)
                 self.label.pack()
                 if session is not None:
+                    edges = KeyEvents(session.last.get('key_edges', False))
                     def on_key(event):
                         if is_ctrl_break(event.keysym, bool(event.state & 0x4)):
                             session.send('break')
                             return
                         code = key_code(event.keysym, event.char)
                         if code:
-                            session.send(f'key {code[0]} {code[1]}')
+                            session.send(edges.press(event.keysym, code, session.last.get('raw_keyboard', False)))
+                    def on_release(event):
+                        command = edges.release(event.keysym)
+                        if command:
+                            session.send(command)
+                    def on_focus_out(event):
+                        for command in edges.release_all():
+                            session.send(command)
                     self.root.bind('<KeyPress>', on_key)
+                    self.root.bind('<KeyRelease>', on_release)
+                    self.root.bind('<FocusOut>', on_focus_out)
 
             height = 200
             if pixels is not None:
@@ -838,6 +868,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         session.send(f'country {country}')
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
+    edges = KeyEvents(session.last.get('key_edges', False))
     held, state = set(), {'shift': 0, 'settle': 0}
     speaker = QuietSpeaker(speaker_level, session.last.get('beeps', 0))
     geom = [80, 25]
@@ -964,12 +995,15 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             return 'break'
         code = event_key_code(event.keysym, event.char, event.state, held)
         if code:
-            keys.append(key_command(code))
+            keys.append(edges.press(event.keysym, code, session.last.get('raw_keyboard', False)))
         return 'break'
 
     def on_release(event):
         if keylog:
             print(f'release {event.keysym!r} state {event.state:#x}', file=sys.stderr, flush=True)
+        command = edges.release(event.keysym)
+        if command:
+            keys.append(command)
         held.discard(event.keysym)
         return shift_changed()
 
@@ -990,6 +1024,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         return 'break'
 
     def lost_focus(event):
+        keys.extend(edges.release_all())
         held.clear()
         shift_changed()
 
@@ -1003,7 +1038,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 # A change of the shift keys waits until the program has run a
                 # while after the keys before it, so that EDIT reads Alt+F
                 # before it sees Alt go up, as it would at a person's pace.
-                if keys[0].startswith('shift') and (sent or state['settle']):
+                if keys[0].startswith(('shift', 'keyup ')) and (sent or state['settle']):
                     break
                 reply = session.send(keys[0])
                 if not reply['ok']:

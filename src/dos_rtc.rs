@@ -44,6 +44,13 @@ impl Rtc{
         let d=self.date_at(base(offset));let value=match index{0=>d.seconds%60,2=>d.seconds/60%60,4=>d.seconds/3600,6=>d.weekday,7=>d.day,8=>d.month,9=>d.year%100,0x32=>d.year/100,_=>return None};
         Some(((value/10)<<4|value%10)as u8)
     }
+    /// One coherent RTC sample, in BCD: century, year, month, day, hour, minute, second.
+    pub fn bios(&self,offset:Option<i64>)->[u8;7]{self.bios_at(base(offset))}
+    fn bios_at(&self,now:i64)->[u8;7]{
+        let d=self.date_at(now);
+        [d.year/100,d.year%100,d.month,d.day,d.seconds/3600,d.seconds/60%60,d.seconds%60]
+            .map(|v|((v/10)<<4|v%10)as u8)
+    }
     fn write_year_at(&mut self,now:i64,index:u8,value:u8)->Result<(),String>{
         if value&15>9||value>>4>9{return Err(format!("CMOS year value {value:02X}h is not valid BCD"));}
         let d=self.date_at(now);let number=i64::from(value>>4)*10+i64::from(value&15);
@@ -67,6 +74,12 @@ impl Rtc{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn bios_snapshot_rolls_over_the_whole_date_at_midnight(){
+        let r=Rtc::default();let last=days(2024,2,29)*86400+86399;
+        assert_eq!(r.bios_at(last),[0x20,0x24,0x02,0x29,0x23,0x59,0x59]);
+        assert_eq!(r.bios_at(last+1),[0x20,0x24,0x03,0x01,0,0,0]);
+        assert_eq!(r.bios_at(days(1999,12,31)*86400+86400),[0x20,0,1,1,0,0,0]);
+    }
     #[test]fn calendar_year_writes_preserve_other_fields_and_advance_at_the_new_rate(){
         let now=days(2026,11,7)*86400+12345;let mut r=Rtc::default();let old=r.date_at(now);
         r.write_year_at(now,9,0x27).unwrap();let next=r.date_at(now);assert_eq!((next.year,next.month,next.day,next.weekday,next.seconds),(2027,old.month,old.day,old.weekday,old.seconds));
