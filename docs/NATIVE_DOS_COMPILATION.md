@@ -24,7 +24,7 @@ tests below before calling any local outstanding optimizer change published.
 | --- | --- | --- |
 | `programs/dos/FACTOR.COM` | DOS factorial output (0! through 99!), scalar LODS, DIV/IDIV, DOS command tail | `python tools/verify_factor_native.py --engine target/release/pil.exe` |
 | `programs/dos/RECURFIB.COM` | recursive near calls/returns, runtime stack integrity, arguments 0..20 | `python tools/verify_recursive_native.py --engine target/release/pil.exe` |
-| `programs/dos/MANDANSI.COM` | ANSI Mandelbrot output/blocks, compared against independent reference | `python tools/verify_dos_standalone.py --engine target/release/pil.exe` and `tools/audit_dos_codegen.py` |
+| `programs/dos/MANDANSI.COM` | ANSI Mandelbrot output/blocks, compared against independent reference | `python tools/verify_ansi_mandel.py` and `tools/audit_dos_codegen.py` |
 | generated DOS MZ hello and argument example | MZ/ZM loading, relocations, entry CS:IP, Unicode/CP437 command-tail boundary | `python tools/verify_mz_native.py --engine target/release/pil.exe` |
 | small COM control-flow and memory fixtures | Jcc/loop edges, RAM load/store/RMW, stack, division and precision faults | `python tools/verify_dos_standalone.py --engine target/release/pil.exe` |
 
@@ -141,6 +141,52 @@ reuse**, not another shadow-code profiler:
 Do not switch to compiled programs by default until the service bridge and
 parent/child execution semantics have differential tests. Turbo Pascal,
 FreeCOM, DOOM and GW-BASIC require substantially broader runtime support.
+
+## Priority next compiler program: MANDVGA.COM
+
+The next **standalone compiled** target after ANSI Mandelbrot is the original
+[`mandvga.asm`](../programs/dos/mandvga.asm). This is deliberately separate
+from reviving the old profile-guided shadow engine.
+
+The fixed-point Mandelbrot loop, near calls, branches and memory variables
+already exercise PIL operations used by the standalone compiler. The missing
+boundary is VGA I/O, not a second implementation of x86 arithmetic.
+`MANDVGA.COM` configures VGA mode 12h via `INT 10h`, writes its four
+640x480 planes through the graphics-controller ports `3CEh/3CFh` using
+write mode 2, bit masks and latch reads at `A000:xxxx`, prints a caption
+through `INT 21h/AH09h`, waits for a key with `INT 16h`, restores
+text mode and exits. The compiler must model these effects **without**
+routing ordinary integer instructions back through an x86 decoder.
+
+Incremental acceptance plan:
+
+1. Keep the static PIL graph immutable, with explicit *service and I/O
+   boundaries* for the fixed supported `INT 10h` mode/cursor forms,
+   `OUT DX,AX` to 3CEh, and final `INT 16h` wait. Reject unproven port,
+   interrupt and memory-map changes. Ensure output is not published if
+   validation fails.
+2. Extract/reuse Dine's already-tested VGA controller and planar-memory
+   semantics at the generated runtime boundary, including latches, write
+   mode 2 and pixel masks. Make the four planes inspectable without needing
+   Tk, and preserve the exact register/flag/IP state at every service.
+3. Provide a deterministic headless completion option for the key wait
+   (e.g. a documented supplied key), restore mode 3 and return the original
+   DOS exit code. Do not convert a waited key into a forged successful exit.
+4. Compare all pixels, four planes, palette, caption and text-mode
+   restoration with `tools/verify_mandel_vga.py` and the existing
+   interpreter. Verify arithmetic and CPU/flag state at agreed checkpoints.
+5. Benchmark fresh `dev` builds of the **same guest binary**, same host,
+   output mode and process-start policy. Measure native block execution,
+   video/controller time and framebuffer serialization separately. An
+   interpreter time cannot stand in for a standalone compiled timing.
+
+The historical linked-Dine VGA experiment in
+[`DOS_NATIVE.md`](DOS_NATIVE.md) recorded roughly 12.0 seconds for an
+uncompiled shell launch, about 1.24 seconds for its compiled direct run,
+and about 1.56 seconds for the corrected compiled shell launch, *without
+Tk*. These were linked Dine/shadow measurements, **not** native standalone
+build results. The user's observed 8-versus-16-second difference remains
+unattributed until measured with matched configurations.
 
 ## Tests and performance
 
