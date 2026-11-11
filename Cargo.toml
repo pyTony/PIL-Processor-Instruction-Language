@@ -6,9 +6,10 @@ edition = "2021"
 [dependencies]
 thiserror = "1.0"
 
-# The same CPU/DOS implementation is also built as a DLL/.so for small
-# Dine_<program> launchers. Keep the original pil binary unchanged.
+# Build the same CPU and DOS implementation as a reusable native Dine
+# runtime, independent of guest programs. The existing `pil` binary remains
+# the compiler/interpreter command. Build with `cargo build --release --lib`.
 [lib]
-name = "pil_dine"
+name = "dine"
 path = "src/main.rs"
 crate-type = ["cdylib"]
