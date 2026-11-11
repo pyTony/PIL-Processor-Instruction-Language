@@ -7,11 +7,17 @@ use crate::dos_translate::{self,near_call,near_return};
 use std::fmt::Write as _;
 use crate::dos_codegen::{self,Bindings,BlockAdapter};
 use crate::dos_blocks::{Site,BlockPlan};
+use std::collections::BTreeSet;
 #[cfg(test)] use std::collections::BTreeMap;
 
 // Standalone control metadata and retirement belong to this runtime adapter;
 // the instruction call and bounded block plan are shared with Dine.
-fn standalone_instruction(ip:u32,site:&Site,fast:bool)->String{
+fn standalone_instruction(ip:u32,site:&Site,fast:bool,vga_port:bool)->String{
+    // Statically verified OUT DX,AX is a native device boundary, not the
+    // generic open-bus PIL operation. It preserves all registers and flags.
+    if vga_port{
+        return format!("c.out_vga_word()?;c.eip={};c.machine.retired();\n",site.flow.next_eip);
+    }
     let program=&site.program;let flow=site.flow;
     let before=if near_return(program){format!("let expected=*c.calls.last().ok_or(\"standalone RET has no proven caller\")?; if expected.1!={}{{return Err(\"standalone CALL/RET operand widths differ\".into());}} let before=(c.regs,c.flags,c.undefined,c.eip,c.machine);",program.operand_width)}else{String::new()};
     let after=if near_return(program){String::from("if c.eip!=expected.0{let target=c.eip;(c.regs,c.flags,c.undefined,c.eip,c.machine)=before;return Err(format!(\"unproven standalone return target {target:04x}, expected {:04x}\",expected.0));} c.calls.pop();")}
@@ -19,10 +25,10 @@ fn standalone_instruction(ip:u32,site:&Site,fast:bool)->String{
     let call=dos_codegen::instruction_call(ip,site,&Bindings{regs:"&mut c.regs",flags:"&mut c.flags",undefined:"&mut c.undefined",eip:"&mut c.eip",ram:"&mut c.ram",machine:"&mut c.machine"},fast);
     format!("{before} {call}.map_err(|e|format!(\"guest instruction: {{e:?}}\"))?; {after} c.machine.retired();\n")
 }
-struct StandaloneBlocks;
-impl BlockAdapter for StandaloneBlocks {
+struct StandaloneBlocks<'a>{vga_ports:&'a BTreeSet<u32>}
+impl BlockAdapter for StandaloneBlocks<'_> {
     fn header(&self,start:u32)->String{format!("#[inline(never)] fn block_{start:x}(c:&mut dos_runtime::Context)->Result<(),String>{{\n")}
-    fn instruction(&self,ip:u32,site:&Site,_:usize)->String{standalone_instruction(ip,site,true)}
+    fn instruction(&self,ip:u32,site:&Site,_:usize)->String{standalone_instruction(ip,site,true,self.vga_ports.contains(&ip))}
     fn footer(&self,_:usize)->String{String::from("Ok(())\n}\n")}
 }
 
@@ -30,14 +36,17 @@ impl BlockAdapter for StandaloneBlocks {
 /// from the existing PIL Rust emitter. No decoder is included in the result.
 fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
     let p=&unit.loaded;let graph=&unit.instructions;let sites=&unit.sites;
+    // dos_translate has verified the exact DX port on every incoming path.
+    let vga_ports:BTreeSet<u32>=graph.iter().filter_map(|(&ip,decoded)|
+        (decoded.label=="OUT DX,AX").then_some(ip)).collect();
     let plan=BlockPlan::new(sites,std::iter::once(p.cpu.eip));
-    let blocks=dos_codegen::emit_blocks(sites,&plan,&StandaloneBlocks);
+    let blocks=dos_codegen::emit_blocks(sites,&plan,&StandaloneBlocks{vga_ports:&vga_ports});
     let mut modules=String::new();let mut cases=String::new();let mut block_cases=String::new();
     for (&ip,decoded) in graph {
         match &decoded.operation {
             guest::Operation::Pil{program,..}=>{
-                modules.push_str(&dos_codegen::instruction_module(ip,program));
-                let body=standalone_instruction(ip,&sites[&ip],false);
+                if !vga_ports.contains(&ip){modules.push_str(&dos_codegen::instruction_module(ip,program));}
+                let body=standalone_instruction(ip,&sites[&ip],false,vga_ports.contains(&ip));
                 writeln!(cases,"{ip} => {{ {body} Ok(None) }},").unwrap();
                 writeln!(block_cases,"{ip} => {{block_{ip:x}(c)?;Ok(None)}},").unwrap();
             },
@@ -261,6 +270,19 @@ mod tests {
             vec![0xba,0xce,3,0xb8,5,2,0xef,0xcd,0x20],
             vec![0xec,0xcd,0x20], // IN AL,DX
         ]{assert!(emit(&bytes,"V.COM").is_err(),"{bytes:?}");}
+    }
+    #[test]
+    fn proven_vga_out_word_calls_native_device_in_both_dispatch_paths(){
+        // MOV DX,3CEh; MOV AX,0205h; OUT DX,AX; INT20.
+        let guest=[0xba,0xce,3,0xb8,5,2,0xef,0xcd,0x20];
+        let source=emit(&guest,"PORT.COM").unwrap();
+        assert!(source.contains("c.out_vga_word()?;c.eip="));
+        assert!(!source.contains("mod ins_106 {"),"port does not embed open-bus semantics");
+        // Clobbering DX or varying its source cannot be considered proven.
+        let wrong=[0xba,0xcf,3,0xb8,5,2,0xef,0xcd,0x20];
+        assert!(emit(&wrong,"PORT.COM").is_err());
+        let clobber=[0xba,0xce,3,0x42,0xb8,5,2,0xef,0xcd,0x20]; // INC DX
+        assert!(emit(&clobber,"PORT.COM").is_err());
     }
     #[test]
     fn unsupported_programs_are_rejected(){
