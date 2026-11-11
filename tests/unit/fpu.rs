@@ -131,3 +131,197 @@ fn fpu_backend_survives_session_slices_and_reports_absence_in_bios() {
     assert_eq!(result.loaded.cpu.regs[0]&2,0);
     assert!(!result.loaded.fpu.available());
 }
+
+
+#[test]
+fn present_80387_executes_register_stack_com_program() {
+    // FNINIT; FLD1; FLDZ; FXCH ST(1); FSTP ST(1); FNSTSW AX; INT 20h.
+    let bytes=[0xdb,0xe3, 0xd9,0xe8, 0xd9,0xee, 0xd9,0xc9,
+               0xdd,0xd9, 0xdf,0xe0, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-register.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[0]=0xabcd_ffff;
+    let result=dos::run(p,20).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)), "{:?}",result.stop);
+    assert_eq!(result.loaded.cpu.regs[0],0xabcd_3800); // TOP=7
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x037f);
+    assert_eq!(state.top(),7);
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.st(1),None);
+}
+
+#[test]
+fn present_80387_reports_equipment_and_persists_across_slices() {
+    let bytes=[0xdb,0xe3, 0xd9,0xe8, 0xdf,0xe0, 0xcd,0x11, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-slice.com").unwrap();
+    p.fpu=Fpu::present();
+    let first=dos::run(p,2).unwrap();
+    assert!(matches!(first.stop,dos::Stop::Budget));
+    assert_eq!(first.loaded.fpu.state().unwrap().top(),7);
+    assert_eq!(first.loaded.fpu.state().unwrap().st(0),
+               Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    let result=dos::run(first.loaded,10).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)), "{:?}",result.stop);
+    assert_eq!(result.loaded.cpu.regs[0]&0xffff,0x27); // BIOS INT11h
+    assert_eq!(result.loaded.fpu.state().unwrap().top(),7);
+}
+
+#[test]
+fn present_80387_rejects_unimplemented_arithmetic_without_retiring() {
+    let mut p=dos::load(&[0xdb,0xe3,0xd8,0xc0,0xcd,0x20],"x87-unsupported.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,20).unwrap();
+    match result.stop {
+        dos::Stop::Fault(message)=>{
+            assert!(message.contains("80387 unsupported instruction"),"{message}");
+            assert!(message.contains("d8 c0"),"{message}");
+        },
+        other=>panic!("{other:?}"),
+    }
+    assert_eq!(result.completed,1);
+    assert_eq!(result.loaded.cpu.eip,0x102);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_stack_overflow_is_reported_without_mutation() {
+    let mut code=vec![0xdb,0xe3];
+    for _ in 0..9 { code.extend([0xd9,0xe8]); }
+    code.extend([0xcd,0x20]);
+    let mut p=dos::load(&code,"x87-overflow.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,30).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s) if s.contains("stack fault (Overflow)")));
+    assert_eq!(result.completed,9); // FNINIT + eight successful pushes
+    assert_eq!(result.loaded.cpu.eip,0x112);
+    assert_eq!(result.loaded.fpu.state().unwrap().top(),0);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0);
+}
+
+#[test]
+fn present_80387_em_trap_precedes_execution() {
+    let mut p=dos::load(&[0xdb,0xe3],"x87-em.com").unwrap();
+    p.fpu=Fpu::present();
+    p.image.msw|=4; // EM (emulation): #NM even with device installed
+    let result=dos::run(p,2).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s) if s.contains("#NM")));
+    assert_eq!(result.loaded.cpu.eip,0x100);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+
+#[test]
+fn present_80387_dos_loads_and_stores_ieee_f32_f64() {
+    // FNINIT; FLD m64 [0200h]; FSTP m64 [0208h];
+    // FLD m32 [0210h]; FSTP m32 [0214h]; INT 20h.
+    let bytes=[0xdb,0xe3, 0xdd,0x06,0x00,0x02, 0xdd,0x1e,0x08,0x02,
+               0xd9,0x06,0x10,0x02, 0xd9,0x1e,0x14,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-ieee.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let value64=0xbff8_0000_0000_0000u64; // -1.5
+    p.ram.store(base+0x200,MemWidth::Dword,value64 as u32).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,(value64>>32)as u32).unwrap();
+    p.ram.store(base+0x210,MemWidth::Dword,0x3f80_0001).unwrap();
+    let result=dos::run(p,20).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let low=result.loaded.ram.load(base+0x208,MemWidth::Dword).unwrap()as u64;
+    let high=result.loaded.ram.load(base+0x20c,MemWidth::Dword).unwrap()as u64;
+    assert_eq!(low|(high<<32),value64);
+    assert_eq!(result.loaded.ram.load(base+0x214,MemWidth::Dword).unwrap(),0x3f80_0001);
+    assert_eq!(result.loaded.fpu.state().unwrap().top(),0);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_fstp_m32_rounds_ties_to_even_and_sets_precision_flag() {
+    // FLD m64; FSTP m32; INT 20h. The double is 1+2^-24,
+    // exactly between 1.0f32 and the next float; round to even 1.0.
+    let bytes=[0xdd,0x06,0x00,0x02, 0xd9,0x1e,0x08,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-round.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Dword,0x1000_0000).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,0x3ff0_0000).unwrap();
+    let result=dos::run(p,15).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x208,MemWidth::Dword).unwrap(),0x3f80_0000);
+    assert_eq!(result.loaded.fpu.state().unwrap().status&0x20,0x20);
+}
+
+#[test]
+fn present_80387_32bit_sib_addressing_uses_reg_scale_and_disp32() {
+    // 67 DD 04 8D 00 02 00 00 = FLD m64 [ECX*4+0200h]
+    // followed by FSTP m64 [0200h], so output overwrites the first slot.
+    let bytes=[0x67,0xdd,0x04,0x8d,0,2,0,0, 0xdd,0x1e,0,2, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-sib.com").unwrap();
+    p.fpu=Fpu::present();p.cpu.regs[1]=2;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x208,MemWidth::Dword,0x0000_0000).unwrap();
+    p.ram.store(base+0x20c,MemWidth::Dword,0x4008_0000).unwrap(); // 3.0
+    let result=dos::run(p,15).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap(),0);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Dword).unwrap(),0x4008_0000);
+}
+
+#[test]
+fn present_80387_faulted_fstp_keeps_memory_and_stack_intact() {
+    let bytes=[0xd9,0xe8, 0xdd,0x1e,0x00,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-protected.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Dword,0xdeadbeef).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,0xcafebabe).unwrap();
+    p.ram.protect(base+0x205,1).unwrap();
+    let result=dos::run(p,15).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s) if s.contains("80387 memory operand")));
+    assert_eq!(result.completed,1);
+    assert_eq!(result.loaded.cpu.eip,0x102);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap(),0xdeadbeef);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Dword).unwrap(),0xcafebabe);
+    assert_eq!(result.loaded.fpu.state().unwrap().st(0),
+               Some(Extended80::from_bits(1u64<<63,0x3fff)));
+}
+
+
+#[test]
+fn runtime_fpu_selection_is_opt_in_updates_bios_and_rejects_late_changes(){
+    // FNINIT; FLD1; INT 11h; INT 20h. The opt-in is a protocol command,
+    // not a test-only Loaded field assignment.
+    let code=[0xdb,0xe3,0xd9,0xe8,0xcd,0x11,0xcd,0x20];
+    let mut default=dos::session::Session::new(dos::load(&code,"fpu-session.com").unwrap());
+    let (snapshot,_)=default.command(1,"snapshot").unwrap();
+    assert!(snapshot.contains("\"fpu_present\":false"),"{snapshot}");
+    let (reply,_)=default.command(2,"run 16").unwrap();
+    assert!(reply.contains("\"status\":\"exit\""),"{reply}");
+    assert_eq!(default.loaded().unwrap().cpu.regs[0]&2,0);
+
+    let mut enabled=dos::session::Session::new(dos::load(&code,"fpu-session.com").unwrap());
+    let before=enabled.loaded().unwrap().ram.load(0x410,MemWidth::Word).unwrap();
+    let (bad,_)=enabled.command(1,"fpu 8087").unwrap();
+    assert!(bad.contains("\"ok\":false"),"{bad}");
+    assert!(!enabled.loaded().unwrap().fpu.available());
+    let (good,_)=enabled.command(2,"fpu 80387").unwrap();
+    assert!(good.contains("\"ok\":true")&&good.contains("\"fpu_present\":true"),"{good}");
+    assert_eq!(enabled.loaded().unwrap().ram.load(0x410,MemWidth::Word).unwrap(),before|2);
+    let (done,_)=enabled.command(3,"run 16").unwrap();
+    assert!(done.contains("\"status\":\"exit\""),"{done}");
+    assert_eq!(enabled.loaded().unwrap().cpu.regs[0]&2,2);
+    assert_eq!(enabled.loaded().unwrap().fpu.state().unwrap().st(0),
+               Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    let (late,_)=enabled.command(4,"fpu none").unwrap();
+    assert!(late.contains("\"ok\":false"),"{late}");
+    assert!(enabled.loaded().unwrap().fpu.available());
+}
+
+#[test]
+fn runtime_fpu_selection_rejects_switch_after_a_waiting_run_without_retirement(){
+    let mut session=dos::session::Session::new(dos::load(&[0xcd,0x16,0xcd,0x20],"wait.com").unwrap());
+    let (reply,_)=session.command(1,"run 1").unwrap();
+    assert!(reply.contains("\"status\":\"waiting_input\""),"{reply}");
+    let (reply,_)=session.command(2,"fpu 80387").unwrap();
+    assert!(reply.contains("\"ok\":false"),"{reply}");
+    assert!(!session.loaded().unwrap().fpu.available());
+}

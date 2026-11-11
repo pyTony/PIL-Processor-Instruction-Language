@@ -86,6 +86,13 @@ impl X87State {
         self.tags[next] = Self::classify(value);
         Ok(())
     }
+    /// Write a logical register (including an empty destination) without
+    /// moving TOP. FST/FSTP ST(i) use this; only a valid source is required.
+    pub fn store(&mut self, logical: usize, value: Extended80) {
+        let physical = self.physical(logical);
+        self.registers[physical] = value;
+        self.tags[physical] = Self::classify(value);
+    }
     pub fn pop(&mut self) -> Result<Extended80, StackError> {
         let top = self.top();
         if self.tags[top] == Tag::Empty { return Err(StackError::Underflow); }
