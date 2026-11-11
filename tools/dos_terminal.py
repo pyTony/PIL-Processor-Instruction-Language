@@ -244,7 +244,7 @@ def graphics_photo(tk, rgb, width, height=200):
     return picture.zoom(2, 1) if width == 320 else picture
 
 
-def key_code(keysym, char, control=False, alt=False, altgr=False):
+def key_code(keysym, char, control=False, alt=False, altgr=False, shift=False):
     """Map a Tk key event to (ascii, scan), or None for keys DOS never sees.
     `altgr` is Ctrl and Alt down together, which is how Windows sends AltGr."""
     # Windows can hand over the Ctrl form of an AltGr character (FS for \\,
@@ -255,6 +255,14 @@ def key_code(keysym, char, control=False, alt=False, altgr=False):
     # national layouts: only Alt with a letter, digit or F-key is an Alt code.
     if alt and alt_code(keysym):
         return alt_code(keysym)
+    if keysym in SPECIAL and keysym.startswith('F'):
+        ascii_code, scan = SPECIAL[keysym]
+        # BIOS function-key words depend on the modifier, not only 0040:0017.
+        # Turbo Pascal uses F9 (4300h) to compile and Ctrl+F9 (6600h) to run.
+        if control and not altgr:
+            return ascii_code, scan + 0x23  # Ctrl+F1..F10: 5Eh..67h
+        if shift:
+            return ascii_code, scan + 0x19  # Shift+F1..F10: 54h..5Dh
     if keysym in SPECIAL:
         return SPECIAL[keysym]
     if not char or len(char) != 1:
@@ -306,10 +314,11 @@ def event_key_code(keysym, char, state, held):
     # while char already contains the AltGr text ({). Trust the held pair.
     if ALTGR_IS_CTRL_ALT and {'Control_L', 'Alt_R'} <= held:
         return key_code(keysym, char, altgr=True)
-    control = bool(state & 0x4)
+    control = bool(state & 0x4) or 'Control_L' in held or 'Control_R' in held
     alt = 'Alt_L' in held or ('Alt_R' in held and not control)
     altgr = control and ('Alt_L' in held or 'Alt_R' in held)
-    return key_code(keysym, char, control, alt, altgr)
+    shift = bool(state & 0x1) or 'Shift_L' in held or 'Shift_R' in held
+    return key_code(keysym, char, control, alt, altgr, shift)
 
 
 def is_ctrl_break(keysym, control):
@@ -746,7 +755,8 @@ class HeadlessGraphics:
                         if is_ctrl_break(event.keysym, bool(event.state & 0x4)):
                             session.send('break')
                             return
-                        code = key_code(event.keysym, event.char)
+                        code = key_code(event.keysym, event.char, control=bool(event.state & 0x4),\
+                                        alt=bool(event.state & 0x8), shift=bool(event.state & 0x1))
                         if code:
                             session.send(edges.press(event.keysym, code, session.last.get('raw_keyboard', False)))
                     def on_release(event):
