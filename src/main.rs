@@ -19,7 +19,6 @@ mod guest;
 mod dos;
 #[cfg(feature = "dine-library")]
 mod dine_ffi;
-#[cfg(feature = "dine-library")]
 mod dine_display;
 mod dos_compile;
 mod dos_codegen;
