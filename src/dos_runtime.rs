@@ -84,6 +84,16 @@ pub(crate) fn command_tail(ram:&mut Ram,psp_base:u32,text:&str)->Result<(),Strin
 
 #[allow(dead_code)]
 impl Context {
+    /// Four visible mode-12h planes in the same scanline order exported by
+    /// Dine. The unused tails of VGA's 64 KiB planes are intentionally omitted.
+    pub fn visible_vga_planes(&self)->Result<Vec<u8>,String>{
+        if self.video.mode!=0x12{return Err("VGA plane capture requires BIOS mode 12h".into());}
+        let planar=self.ram.planar().ok_or("VGA planes are not mapped")?;
+        let count=80*480;
+        let mut bytes=Vec::with_capacity(4*count);
+        for n in 0..4{bytes.extend_from_slice(&planar.plane(n)[..count]);}
+        Ok(bytes)
+    }
     /// Plan DOS console text in mode 12h using the same 8x8 ROM glyphs as
     /// Dine. Each source row is doubled to fit the VGA 8x16 cell, white
     /// foreground (planes 0..2) on black, with the cursor updated only
@@ -169,7 +179,15 @@ impl Context {
                 Ok(None)
             },
             (0x16,0)=>{
-                let key=self.key.take().ok_or("standalone INT 16h key wait needs explicit PIL_DOS_BIOS_KEY=1C0D")?;
+                let key=self.key.ok_or("standalone INT 16h key wait needs explicit PIL_DOS_BIOS_KEY=1C0D")?;
+                // Explicit verifier-only capture at the key wait, while VGA
+                // mode and its planar latches are still active. No file is
+                // written by default, and a failed write cannot consume key.
+                if let Some(path)=std::env::var_os("PIL_DOS_VGA_CAPTURE"){
+                    let bytes=self.visible_vga_planes()?;
+                    std::fs::write(path,bytes).map_err(|e|format!("native VGA capture: {e}"))?;
+                }
+                self.key=None;
                 self.regs[0]=(self.regs[0]&0xffff0000)|u32::from(key);
                 Ok(None)
             },
@@ -282,6 +300,11 @@ mod tests {
         c.ram.store(at,MemWidth::Byte,6).unwrap();
         let p=c.ram.planar().unwrap();
         assert_eq!([p.peek(0,7),p.peek(1,7),p.peek(2,7),p.peek(3,7)],[0x3f,0xff,0xff,0x3f]);
+        let image=c.visible_vga_planes().unwrap();
+        assert_eq!(image.len(),4*80*480);
+        for (n,want) in [0x3f,0xff,0xff,0x3f].into_iter().enumerate(){
+            assert_eq!(image[n*80*480+7],want);
+        }
         let before=c.ram.planar().unwrap().clone();
         c.regs[2]=0x3cf;assert!(c.out_vga_word().is_err());
         c.regs[2]=0x3ce;c.regs[0]=0x1106;assert!(c.out_vga_word().is_err());
