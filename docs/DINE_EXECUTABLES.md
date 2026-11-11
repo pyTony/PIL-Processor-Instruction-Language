@@ -102,6 +102,12 @@ The runtime C ABI is version 1 and currently exports
 The loader verifies the ABI before invoking guest code and reports a missing
 or incompatible library rather than running without DOS services.
 
+For migration of the ordinary PILdos Python frontend to a terminal-only
+COM1 bridge and Rust CGA/VGA window, see
+[Native Rust graphics with PILdos terminal](PILDOS_RUST_GRAPHICS.md).
+This is a separate opt-in path through the regular `pil.exe --dos-session`
+protocol, and preserves the existing Tk graphics fallback.
+
 ## Refactoring direction
 
 The next increment will move guest-specific compiled blocks into
