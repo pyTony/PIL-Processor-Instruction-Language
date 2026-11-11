@@ -430,12 +430,66 @@ pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
     }
     Some(rendered)
 }
+// Match the EGA/CGA 16-colour host palette already used by the PILdos
+// Python frontend. The CGA colour-select register 3D9h selects entries in
+// this palette; it is not the VGA 256-entry DAC.
+const CGA_RGB:[u32;16]=[
+    0x000000,0x0000aa,0x00aa00,0x00aaaa,
+    0xaa0000,0xaa00aa,0xaa5500,0xaaaaaa,
+    0x555555,0x5555ff,0x55ff55,0x55ffff,
+    0xff5555,0xff55ff,0xffff55,0xffffff,
+];
+/// CGA even/odd banks, the 3D9h background/palette/intensity latch, and
+/// 320x200 four-colour / 640x200 two-colour scanout.
+fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
+    let width=if mode==6{640}else{320};
+    let height=200usize;
+    let ram=p.ram.bytes();
+    if ram.len()<0xbc000{return None;}
+    let register=p.vga.cga_color();
+    let current=if mode==6{6}else if p.vga.cga_mode()&4!=0{5}else{4};
+    let palette:[u32;4]=if current==6{
+        [CGA_RGB[0],CGA_RGB[usize::from(register&15)],0,0]
+    }else{
+        let base=if current==5{[3,4,7]}else if register&0x20==0{
+            [2,4,6]
+        }else{[3,5,7]};
+        let high=if register&0x10!=0{8}else{0};
+        [
+            CGA_RGB[usize::from(register&15)],
+            CGA_RGB[base[0]+high],
+            CGA_RGB[base[1]+high],
+            CGA_RGB[base[2]+high],
+        ]
+    };
+    let blank=p.vga.cga_mode()&0x08==0;
+    let mut pixels=vec![0u32;width*height];
+    for y in 0..height{
+        let row=0xb8000+(y&1)*0x2000+(y/2)*80;
+        for bx in 0..80{
+            let byte=ram[row+bx];
+            if blank{continue;}
+            if current==6{
+                for bit in 0..8{
+                    pixels[y*width+bx*8+bit]=palette[usize::from((byte>>(7-bit))&1)];
+                }
+            }else{
+                for pair in 0..4{
+                    pixels[y*width+bx*4+pair]=palette[usize::from((byte>>(6-2*pair))&3)];
+                }
+            }
+        }
+    }
+    Some((width,height,pixels))
+}
+
 /// Native desktop scanout of the *existing* emulated VGA framebuffer.
 /// All text drawn by BIOS in a graphics mode has already reached these pixels
 /// via dos_graphics_text, so the host renderer needs no duplicate font logic.
 /// The output never aliases guest RAM and cannot mutate VGA/CPU state.
 pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
     let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
+    if matches!(mode,4|5|6){return desktop_cga_frame(p,mode);}
     let color=|rgb:[u8;3]|u32::from(rgb[0])<<16|u32::from(rgb[1])<<8|u32::from(rgb[2]);
     if mode==0x13 {
         let (width,height)=(320usize,200usize);
@@ -499,6 +553,29 @@ mod desktop_scanout_tests{
         let expected=(u32::from(rgb[0])<<16)|(u32::from(rgb[1])<<8)|u32::from(rgb[2]);
         assert_eq!(pixels[0],expected);
         assert_ne!(pixels[0],pixels[1]);
+    }
+    #[test]
+    fn cga_banks_palette_intensity_monochrome_and_display_blank(){
+        let mut p=load(&[0xcd,0x20],"CGA.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,4).unwrap();
+        p.ram.store(0xb8000,MemWidth::Byte,0x1b).unwrap();
+        p.ram.store(0xba000,MemWidth::Byte,0xe4).unwrap();
+        let (width,height,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!((width,height,pixels.len()),(320,200,64000));
+        assert_eq!(&pixels[..4],&[CGA_RGB[0],CGA_RGB[2],CGA_RGB[4],CGA_RGB[6]]);
+        assert_eq!(&pixels[320..324],&[CGA_RGB[6],CGA_RGB[4],CGA_RGB[2],CGA_RGB[0]]);
+        p.vga.set_cga_color(0x30);
+        assert_eq!(&desktop_vga_frame(&p).unwrap().2[..4],
+            &[CGA_RGB[0],CGA_RGB[11],CGA_RGB[13],CGA_RGB[15]]);
+        p.ram.store(0x449,MemWidth::Byte,6).unwrap();
+        p.vga.set_cga_color(0x0e);
+        p.ram.store(0xb8000,MemWidth::Byte,0x80).unwrap();
+        let (width,_,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!(width,640);
+        assert_eq!(&pixels[..2],&[CGA_RGB[14],CGA_RGB[0]]);
+        p.vga.bios_cga_mode(4);
+        p.vga.io(0x3d8,false,0x21).unwrap(); // video disable
+        assert!(desktop_vga_frame(&p).unwrap().2.iter().all(|c|*c==0));
     }
     #[test]
     fn mode13_frame_uses_dac_and_linear_vram(){
