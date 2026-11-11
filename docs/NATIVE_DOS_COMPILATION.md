@@ -169,9 +169,13 @@ Incremental acceptance plan:
    semantics at the generated runtime boundary, including latches, write
    mode 2 and pixel masks. Make the four planes inspectable without needing
    Tk, and preserve the exact register/flag/IP state at every service.
-3. Provide a deterministic headless completion option for the key wait
-   (e.g. a documented supplied key), restore mode 3 and return the original
-   DOS exit code. Do not convert a waited key into a forged successful exit.
+3. Provide a deterministic headless completion option for the key wait,
+   restore mode 3 and return the original DOS exit code. Do not convert a
+   waited key into a forged successful exit. The first implementation
+   accepts one key from `PIL_DOS_BIOS_KEY=1C0D` (BIOS scan byte 1Ch plus
+   ASCII 0Dh for Enter); without that variable an INT 16h AH=00h wait
+   reports a missing-input error instead of silently exiting.
+   This does **not** mean MANDVGA is fully supported yet.
 4. Compare all pixels, four planes, palette, caption and text-mode
    restoration with `tools/verify_mandel_vga.py` and the existing
    interpreter. Verify arithmetic and CPU/flag state at agreed checkpoints.
