@@ -444,11 +444,12 @@ def screen_rows(reply, blink_on=True):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none"):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", rust_graphics=False):
         options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else []) + (['--fpu', fpu] if fpu != "none" else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-                                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                                        **({'env': {**os.environ, 'DINE_VIDEO': 'window'}} if rust_graphics else {}))
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
@@ -821,13 +822,24 @@ class HeadlessGraphics:
             self.root = None
 
 
-def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False):
+class NativeRustGraphics:
+    """No Tk pixel renderer: pil.exe owns the Win32 CGA/VGA window."""
+    stop_requested = False
+
+    def update(self, reply, session=None):
+        pass
+
+    def close(self):
+        pass
+
+
+def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False, rust_graphics=False):
     """Route DOS input and output over COM1 before running the guest."""
     session.send(f'clock {offset}')
     if country:
         session.send(f'country {country}')
     reply = session.send('console com1')
-    gfx = HeadlessGraphics()
+    gfx = NativeRustGraphics() if rust_graphics else HeadlessGraphics()
     ctty_done = False
     com1_seen = False
     auto_key_sent = False
@@ -1255,6 +1267,8 @@ def main(argv=None):
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
     parser.add_argument('--headless', action='store_true',
                         help='run without a window, interacting through this terminal (shows a window only when graphics output is active)')
+    parser.add_argument('--rust-graphics', action='store_true',
+                        help='with --headless on Windows, display CGA/VGA directly in pil.exe; Python remains the terminal/COM1 bridge')
     parser.add_argument('--auto-graphics-key', action='store_true',
                         help='send Enter at a graphics program key wait (useful with DOS TIMEIT)')
     parser.add_argument('--engine', help='pil executable (default: newest build)')
@@ -1266,6 +1280,10 @@ def main(argv=None):
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
+    if args.rust_graphics and not args.headless:
+        parser.error('--rust-graphics requires --headless (terminal keyboard via COM1)')
+    if args.rust_graphics and sys.platform != 'win32':
+        parser.error('--rust-graphics currently needs Windows; existing headless Tk display is unchanged elsewhere')
     if args.program is None:
         try:
             args.program, default_args = configured_startup(find_dos_engine(args.engine), args.config)
@@ -1288,9 +1306,9 @@ def main(argv=None):
         session = None
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
-                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu)
+                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, rust_graphics=args.rust_graphics)
             is_shell = any(sh in args.program.upper() for sh in ('COMMAND.COM', 'CMD.EXE', '4DOS'))
-            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell, auto_graphics_key=args.auto_graphics_key)
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics)
             if reply['status'] != 'exit':
                 print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
                 raise SystemExit(1)
