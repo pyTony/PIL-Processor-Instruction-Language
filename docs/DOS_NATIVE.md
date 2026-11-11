@@ -279,6 +279,22 @@ and reported state with zero compiled blocks.
 
 ## Build and verify Mandelbrot
 
+On Windows PowerShell, run the wrapper to build, verify and **set
+`$env:SHADOW_SERVICE` in the current terminal** on success:
+
+```powershell
+.\tools\build_dos_shadow.ps1 programs/dos/MANDVGA.COM --verify
+python tools/dos_terminal.py --engine $env:SHADOW_SERVICE --auto-graphics-key --headless programs/dos/MANDVGA.COM
+```
+
+The wrapper forwards the same Python builder options, including `--output-dir`,
+`--steps` and `--sites`. The environment variable is updated only after the
+reported engine exists; failures retain the previous value. The variable
+lasts for the current PowerShell process, not permanently across new terminals.
+Running `python tools/build_dos_shadow.py` directly still builds the same
+artifact, but cannot set a variable in its parent PowerShell process.
+
+
 From the repository root, with Rust and Python installed:
 
 ```text
