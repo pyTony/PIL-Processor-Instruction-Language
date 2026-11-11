@@ -316,7 +316,7 @@ impl Drives {
         let Some(drive)=self.list.get(self.current)else{return Ok(None);};
         let Source::Host(root)=&drive.source else{return Ok(None)};
         if host_name.is_empty()||host_name=="."||host_name==".."||
-           host_name.contains(['/', '\\']){return Ok(None);}
+           host_name.contains('/')||host_name.contains('\\'){return Ok(None);}
         let entries=host_listing(root).map_err(|code|format!("Dine host directory listing failed: DOS error {code}"))?;
         for entry in entries {
             if let Node::Host(path)=&entry.node{
