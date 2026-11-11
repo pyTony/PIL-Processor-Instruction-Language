@@ -574,7 +574,7 @@ mod desktop_scanout_tests{
         assert_eq!(width,640);
         assert_eq!(&pixels[..2],&[CGA_RGB[14],CGA_RGB[0]]);
         p.vga.bios_cga_mode(4);
-        p.vga.io(0x3d8,false,0x21).unwrap(); // video disable
+        p.vga.io(0x3d8,false,0x22).unwrap(); // clear video-enable only
         assert!(desktop_vga_frame(&p).unwrap().2.iter().all(|c|*c==0));
     }
     #[test]
