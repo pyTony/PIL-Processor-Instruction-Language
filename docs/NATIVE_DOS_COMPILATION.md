@@ -182,7 +182,13 @@ Incremental acceptance plan:
    This does **not** mean MANDVGA is fully supported yet.
 4. Compare all pixels, four planes, palette, caption and text-mode
    restoration with `tools/verify_mandel_vga.py` and the existing
-   interpreter. Verify arithmetic and CPU/flag state at agreed checkpoints.
+   interpreter. The new `tools/verify_mandel_vga_native.py` builds the
+   original COM as a native executable, supplies `PIL_DOS_BIOS_KEY=1C0D`,
+   captures 153600 visible plane bytes through an explicit
+   `PIL_DOS_VGA_CAPTURE` file path at the key wait, and checks 296960
+   fractal pixels and the caption glyphs against the independent reference.
+   These are **proposed verification gates**, not claimed passing results.
+   Verify palette and CPU/flag state at agreed checkpoints separately.
 5. Benchmark fresh `dev` builds of the **same guest binary**, same host,
    output mode and process-start policy. Measure native block execution,
    video/controller time and framebuffer serialization separately. An
