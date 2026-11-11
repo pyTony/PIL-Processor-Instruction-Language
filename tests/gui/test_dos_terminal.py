@@ -108,7 +108,11 @@ class DosTerminalTests(unittest.TestCase):
             self.assertEqual(popen.call_args.kwargs['env']['DINE_VIDEO'], 'window')
             self.assertEqual(popen.call_args.kwargs['stdin'], term.subprocess.PIPE)
             self.assertEqual(popen.call_args.kwargs['stdout'], term.subprocess.PIPE)
-        with patch.object(term.subprocess, 'Popen', return_value=process) as popen:
+        other = SimpleNamespace(
+            stdin=io.StringIO(),
+            stdout=io.StringIO(''.join(json.dumps(f) + '\n' for f in frames)),
+            stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=other) as popen:
             term.Session('engine', 'program')
             self.assertNotIn('env', popen.call_args.kwargs)
 
