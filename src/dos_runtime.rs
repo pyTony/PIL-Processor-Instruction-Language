@@ -51,6 +51,30 @@ pub fn parse_key(text:&str)->Result<u16,String>{
     u16::from_str_radix(hex,16).map_err(|e|format!("invalid PIL_DOS_BIOS_KEY: {e}"))
 }
 
+// Same readable 8x8 ROM font asset used by Dine graphics_text. The native
+// generator embeds this constant verbatim to avoid a runtime source-file
+// dependency, while preserving the original glyph bytes.
+const ROM_FONT_TEXT:&str=include_str!("dos_font8x8.txt");
+fn rom_font()->Result<[u8;2048],String>{
+    let mut lines=ROM_FONT_TEXT.lines().filter(|l|!l.starts_with(';'));
+    let mut bytes=[0u8;2048];
+    for code in 0..256usize{
+        let header=lines.next().ok_or("VGA font ends before glyph FFh")?;
+        if usize::from_str_radix(header.get(..2).unwrap_or(""),16)!=Ok(code){
+            return Err(format!("VGA ROM glyph header mismatch for {code:02X}h"));
+        }
+        for r in 0..8{
+            let row=lines.next().ok_or("VGA ROM font ends inside a glyph")?;
+            if row.len()!=8||!row.bytes().all(|b|b==b'#'||b==b'.'){
+                return Err(format!("invalid VGA ROM glyph {code:02X}h row"));
+            }
+            bytes[code*8+r]=row.bytes().fold(0u8,|n,b|(n<<1)|u8::from(b==b'#'));
+        }
+    }
+    if lines.next().is_some(){return Err("extra VGA ROM glyph rows".into());}
+    Ok(bytes)
+}
+
 /// Existing DOS PSP tail format: count, leading space, CP437 text, CR.
 pub(crate) fn command_tail(ram:&mut Ram,psp_base:u32,text:&str)->Result<(),String>{
     let encoded=crate::dos_encoding::command_line(text)?;
@@ -60,6 +84,43 @@ pub(crate) fn command_tail(ram:&mut Ram,psp_base:u32,text:&str)->Result<(),Strin
 
 #[allow(dead_code)]
 impl Context {
+    /// Plan DOS console text in mode 12h using the same 8x8 ROM glyphs as
+    /// Dine. Each source row is doubled to fit the VGA 8x16 cell, white
+    /// foreground (planes 0..2) on black, with the cursor updated only
+    /// after an accepted console write.
+    fn plan_graphics_text(&self,text:&[u8])->Result<Option<(crate::vga_planar::Planar,VideoState)>,String>{
+        if self.video.mode!=0x12{return Ok(None);}
+        let font=rom_font()?;
+        let mut planar=self.ram.planar().ok_or("standalone VGA text requires mapped planes")?.clone();
+        let mut video=self.video;
+        for &ch in text{
+            let count=if ch==9{8-usize::from(video.cursor_col)%8}else{1};
+            for _ in 0..count{
+                match if ch==9{b' '}else{ch}{
+                    7=>{},
+                    8=>video.cursor_col=video.cursor_col.saturating_sub(1),
+                    13=>video.cursor_col=0,
+                    10=>video.cursor_row=video.cursor_row.saturating_add(1),
+                    glyph=>{
+                        let row=usize::from(video.cursor_row);
+                        let col=usize::from(video.cursor_col);
+                        if row>=30||col>=80{return Err("standalone VGA text cursor outside mode 12h".into());}
+                        for y in 0..16usize{
+                            let at=(row*16+y)*80+col;
+                            let bits=font[usize::from(glyph)*8+y/2];
+                            for plane in 0..4{
+                                planar.poke(plane,at,if plane<3{bits}else{0});
+                            }
+                        }
+                        video.cursor_col+=1;
+                        if video.cursor_col==80{video.cursor_col=0;video.cursor_row+=1;}
+                    },
+                }
+                if video.cursor_row>=30{return Err("standalone VGA text scrolling is not implemented".into());}
+            }
+        }
+        Ok(Some((planar,video)))
+    }
     /// Native boundary for the precisely proven VGA OUT DX,AX at port 3CEh.
     /// Write the graphics-controller index followed by its data atomically,
     /// without using the decoder's generic open-bus PIL instruction.
@@ -93,7 +154,17 @@ impl Context {
             (0x21,9)=>{
                 let context=MemoryContext{segment:SegmentRegister::Ds,cache:self.machine.segments[SegmentRegister::Ds.index()]};
                 let text=dollar_string(&self.ram,context,self.regs[2]&0xffff,self.eip,out.remaining())?;
+                let graphic=self.plan_graphics_text(&text)?;
+                if graphic.is_some(){
+                    self.ram.check_write(0x450,MemWidth::Word).map_err(|e|format!("BIOS VGA cursor write: {e:?}"))?;
+                }
                 out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
+                if let Some((planar,video))=graphic{
+                    let cursor=u32::from(video.cursor_row)<<8|u32::from(video.cursor_col);
+                    self.ram.store(0x450,MemWidth::Word,cursor).map_err(|e|format!("BIOS VGA cursor write: {e:?}"))?;
+                    *self.ram.planar_mut().ok_or("VGA planar mode disappeared during text output")?=planar;
+                    self.video=video;
+                }
                 self.regs[0]=(self.regs[0]&!255)|0x24;
                 Ok(None)
             },
@@ -238,6 +309,25 @@ mod tests {
         assert_eq!(c.key,None);
         assert!(c.interrupt(0x16,&mut out).is_err());
         assert!(out.bytes().is_empty());
+    }
+    #[test]
+    fn mode12_graphics_caption_uses_rom_glyph_doubled_into_four_planes(){
+        let p=crate::dos::load(&[0xcd,0x20],"CAP.COM").unwrap();
+        let mut c=Context{regs:p.cpu.regs,flags:0,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),key:None,calls:Vec::new()};
+        let mut out=crate::host_io::CaptureOutput::new(64);
+        c.regs[0]=0x12;c.interrupt(0x10,&mut out).unwrap();
+        c.regs[0]=0x0200;c.regs[2]=0x1d00;c.interrupt(0x10,&mut out).unwrap();
+        let (planar,video)=c.plan_graphics_text(b"A").unwrap().unwrap();
+        let font=rom_font().unwrap();
+        assert_eq!((video.cursor_row,video.cursor_col),(29,1));
+        for y in 0..16usize{
+            let at=(29*16+y)*80;
+            for n in 0..4{
+                assert_eq!(planar.peek(n,at),if n<3{font[65*8+y/2]}else{0});
+            }
+        }
+        assert_eq!((c.video.cursor_row,c.video.cursor_col),(29,0),"planning must not mutate cursor");
+        assert!(c.plan_graphics_text(&vec![b'A';81]).is_err(),"text beyond bottom row requires scrolling");
     }
     #[test]
     fn rejected_string_output_preserves_registers_and_output(){
