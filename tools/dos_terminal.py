@@ -755,8 +755,10 @@ class HeadlessGraphics:
                         if is_ctrl_break(event.keysym, bool(event.state & 0x4)):
                             session.send('break')
                             return
-                        code = key_code(event.keysym, event.char, control=bool(event.state & 0x4),\
-                                        alt=bool(event.state & 0x8), shift=bool(event.state & 0x1))
+                        code = key_code(event.keysym, event.char,
+                                        control=bool(event.state & 0x4),
+                                        alt=bool(event.state & 0x8),
+                                        shift=bool(event.state & 0x1))
                         if code:
                             session.send(edges.press(event.keysym, code, session.last.get('raw_keyboard', False)))
                     def on_release(event):
