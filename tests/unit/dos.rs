@@ -2966,7 +2966,14 @@ fn stage_ah55_child(mut p:Loaded,borrowed:bool)->(Loaded,u16,u16,[(u32,u32);SYST
     assert_eq!(p.dta,(child,0x80));
     assert_eq!(p.open_handles,handles);
     assert_eq!(p.in_memory.len(),1);
-    assert_ne!(p.image.system,system,"temporary child fetch region missing");
+    // The AH4B parent may already grant a system fetch window covering the
+    // entire DOS conventional-memory arena. AH55 then needs no extra slot.
+    // Assert the child can execute, rather than demanding an unnecessary
+    // mutation to the system-window table.
+    let child_end=u32::from(block+0x40)*16;
+    let covered=(p.image.fetch_base+p.image.start<=base && p.image.fetch_base+p.image.end>=child_end)
+        ||p.image.system.iter().any(|&(a,b)|a<=base&&b>=child_end&&a<b);
+    assert!(covered,"AH55 child code region is not executable");
     // Turbo sets the actual return vector once the PSP is created. Read it
     // at termination rather than using an AH55-time CPU/vector snapshot.
     p.ram.store(base+0x0a,MemWidth::Dword,(u32::from(parent)<<16)|0x180).unwrap();
