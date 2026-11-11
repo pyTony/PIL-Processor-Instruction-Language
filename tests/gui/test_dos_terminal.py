@@ -96,6 +96,46 @@ class DosTerminalTests(unittest.TestCase):
             self.assertEqual(session.com1_out, b'X')
         self.assertEqual(process.stdin.getvalue(), 'run 100 buffered\nsnapshot\n')
 
+    def test_rust_graphics_uses_child_env_and_preserves_terminal_protocol(self):
+        frames = [{'protocol': 1, 'seq': 0, 'ok': True, 'native_graphics': True}]
+        process = SimpleNamespace(
+            stdin=io.StringIO(),
+            stdout=io.StringIO(''.join(json.dumps(f) + '\n' for f in frames)),
+            stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process) as popen:
+            session = term.Session('engine', 'program', rust_graphics=True)
+            self.assertTrue(session.last['native_graphics'])
+            self.assertEqual(popen.call_args.kwargs['env']['DINE_VIDEO'], 'window')
+            self.assertEqual(popen.call_args.kwargs['stdin'], term.subprocess.PIPE)
+            self.assertEqual(popen.call_args.kwargs['stdout'], term.subprocess.PIPE)
+        with patch.object(term.subprocess, 'Popen', return_value=process) as popen:
+            term.Session('engine', 'program')
+            self.assertNotIn('env', popen.call_args.kwargs)
+
+    def test_native_rust_headless_never_creates_python_tk_window(self):
+        class FakeSession:
+            def __init__(self):
+                self.com1_out = b''
+                self.commands = []
+            def send(self, command):
+                self.commands.append(command)
+                if command.startswith('run '):
+                    return {'status': 'exit', 'native_graphics': True}
+                return {'status': 'running'}
+        session = FakeSession()
+        port = MagicMock()
+        port.read.return_value = b''
+        with patch.object(term, 'HeadlessGraphics') as graphics:
+            self.assertEqual(
+                term.run_headless(session, port, 0, is_shell=False,
+                                  rust_graphics=True)['status'], 'exit')
+            graphics.assert_not_called()
+            self.assertIn('console com1', session.commands)
+
+    def test_rust_graphics_requires_headless(self):
+        with self.assertRaises(SystemExit):
+            term.main(['--rust-graphics', 'program.com'])
+
     def test_headless_auto_key_only_at_graphics_wait(self):
         class Session:
             def __init__(self):
