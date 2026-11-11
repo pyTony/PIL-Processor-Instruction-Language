@@ -1,0 +1,247 @@
+//! Host-only presentation for Dine's existing VGA framebuffer.
+//!
+//! The DOS/VGA machine does not depend on this module. The native terminal
+//! remains the DOS keyboard and text console. In Windows desktop mode a GDI
+//! window displays the current guest scanout; the window has no input focus.
+//! We deliberately avoid adding any graphics crates to Cargo.lock just to
+//! display a software framebuffer. Non-Windows builds retain ANSI preview.
+use crate::dos;
+
+/// A top-down 32-bit RGB scanout (0x00RRGGBB), not guest VRAM.
+#[cfg(windows)]
+pub(crate) struct Frame {
+    width: i32,
+    height: i32,
+    pixels: Vec<u32>,
+}
+
+pub(crate) enum Display {
+    Off,
+    Ansi { shown: bool },
+    #[cfg(windows)]
+    Window(windows::Window),
+}
+
+impl Display {
+    pub(crate) fn new() -> Self {
+        let mode=std::env::var("DINE_VIDEO")
+            .unwrap_or_default().to_ascii_lowercase();
+        match mode.as_str() {
+            "off" | "none" | "headless" => Self::Off,
+            "ansi" | "terminal" => Self::Ansi { shown: false },
+            #[cfg(windows)]
+            "" | "window" | "desktop" => Self::Window(windows::Window::new()),
+            #[cfg(not(windows))]
+            "" | "window" | "desktop" => Self::Ansi { shown: false },
+            _ => Self::Ansi { shown: false },
+        }
+    }
+
+    /// Called at bounded DOS execution slices and immediately before an
+    /// input wait; window updates never block on keyboard input or painting.
+    pub(crate) fn update(&mut self, p:&dos::Loaded, waiting:bool) {
+        match self {
+            Self::Off => {},
+            Self::Ansi { shown } => {
+                if waiting && !*shown {
+                    if let Some(frame)=dos::ansi_graphics_preview(p) {
+                        println!("\n{frame}");
+                        *shown=true;
+                    }
+                }
+            },
+            #[cfg(windows)]
+            Self::Window(window) => {
+                if let Some((width,height,pixels))=dos::desktop_vga_frame(p) {
+                    window.present(Frame{width:width as i32,height:height as i32,pixels});
+                }
+            },
+        }
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::Frame;
+    use std::ffi::c_void;
+    use std::ptr;
+    use std::sync::{atomic::{AtomicIsize,Ordering},Mutex,OnceLock};
+    use std::thread;
+
+    type Handle=*mut c_void;
+    const WM_CLOSE:u32=0x10;
+    const WM_DESTROY:u32=0x02;
+    const WM_PAINT:u32=0x0f;
+    const WS_OVERLAPPEDWINDOW:u32=0x00cf0000;
+    const WS_EX_NOACTIVATE:u32=0x08000000;
+    const SW_SHOWNOACTIVATE:i32=4;
+    const CW_USEDEFAULT:i32=i32::MIN;
+    const DIB_RGB_COLORS:u32=0;
+    const SRCCOPY:u32=0x00cc0020;
+    const COLOR_WINDOW:isize=6;
+
+    static FRAME:OnceLock<Mutex<Option<Frame>>>=OnceLock::new();
+    static WINDOW:AtomicIsize=AtomicIsize::new(0);
+
+    #[repr(C)]
+    #[derive(Default,Clone,Copy)]
+    struct Point{x:i32,y:i32}
+    #[repr(C)]
+    #[derive(Default,Clone,Copy)]
+    struct Rect{left:i32,top:i32,right:i32,bottom:i32}
+    #[repr(C)]
+    struct Msg{
+        hwnd:Handle,message:u32,wparam:usize,lparam:isize,
+        time:u32,point:Point,private:u32,
+    }
+    #[repr(C)]
+    struct WndClass{
+        style:u32,
+        proc:Option<unsafe extern "system" fn(Handle,u32,usize,isize)->isize>,
+        class_extra:i32,window_extra:i32,
+        instance:Handle,icon:Handle,cursor:Handle,
+        background:Handle,menu_name:*const u16,class_name:*const u16,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct Paint{
+        dc:Handle,erase:i32,rect:Rect,restore:i32,increment:i32,
+        reserved:[u8;32],
+    }
+    #[repr(C)]
+    struct BitmapInfoHeader{
+        size:u32,width:i32,height:i32,planes:u16,bits:u16,
+        compression:u32,image_size:u32,xppm:i32,yppm:i32,
+        used:u32,important:u32,
+    }
+    #[repr(C)]
+    struct BitmapInfo{header:BitmapInfoHeader,colors:[u32;1]}
+
+    #[link(name="kernel32")]
+    extern "system" {
+        fn GetModuleHandleW(name:*const u16)->Handle;
+    }
+    #[link(name="user32")]
+    extern "system" {
+        fn RegisterClassW(class:*const WndClass)->u16;
+        fn CreateWindowExW(ex:u32,class:*const u16,title:*const u16,style:u32,
+            x:i32,y:i32,width:i32,height:i32,parent:Handle,menu:Handle,
+            instance:Handle,param:*mut c_void)->Handle;
+        fn DefWindowProcW(window:Handle,message:u32,wparam:usize,lparam:isize)->isize;
+        fn DestroyWindow(window:Handle)->i32;
+        fn PostQuitMessage(code:i32);
+        fn GetMessageW(message:*mut Msg,window:Handle,min:u32,max:u32)->i32;
+        fn TranslateMessage(message:*const Msg)->i32;
+        fn DispatchMessageW(message:*const Msg)->isize;
+        fn ShowWindow(window:Handle,how:i32)->i32;
+        fn InvalidateRect(window:Handle,area:*const Rect,erase:i32)->i32;
+        fn BeginPaint(window:Handle,paint:*mut Paint)->Handle;
+        fn EndPaint(window:Handle,paint:*const Paint)->i32;
+        fn GetClientRect(window:Handle,area:*mut Rect)->i32;
+    }
+    #[link(name="gdi32")]
+    extern "system" {
+        fn StretchDIBits(dc:Handle,dx:i32,dy:i32,dw:i32,dh:i32,
+            sx:i32,sy:i32,sw:i32,sh:i32,bits:*const c_void,
+            info:*const BitmapInfo,usage:u32,rop:u32)->i32;
+    }
+
+    unsafe extern "system" fn wndproc(hwnd:Handle,msg:u32,w:usize,l:isize)->isize{
+        match msg{
+            WM_PAINT=>{
+                let mut paint=Paint::default();
+                let dc=BeginPaint(hwnd,&mut paint);
+                if !dc.is_null(){
+                    let mut rect=Rect::default();
+                    GetClientRect(hwnd,&mut rect);
+                    if let Some(state)=FRAME.get(){
+                        if let Ok(guard)=state.lock(){
+                            if let Some(frame)=guard.as_ref(){
+                                let info=BitmapInfo{
+                                    header:BitmapInfoHeader{
+                                        size:std::mem::size_of::<BitmapInfoHeader>() as u32,
+                                        width:frame.width,height:-frame.height,
+                                        planes:1,bits:32,compression:0,image_size:0,
+                                        xppm:0,yppm:0,used:0,important:0,
+                                    },
+                                    colors:[0],
+                                };
+                                StretchDIBits(dc,0,0,rect.right-rect.left,
+                                    rect.bottom-rect.top,0,0,frame.width,frame.height,
+                                    frame.pixels.as_ptr().cast(),&info,DIB_RGB_COLORS,SRCCOPY);
+                            }
+                        }
+                    }
+                    EndPaint(hwnd,&paint);
+                }
+                0
+            },
+            WM_CLOSE=>{DestroyWindow(hwnd);0},
+            WM_DESTROY=>{
+                WINDOW.store(0,Ordering::Release);
+                PostQuitMessage(0);
+                0
+            },
+            _=>DefWindowProcW(hwnd,msg,w,l),
+        }
+    }
+
+    fn run(){
+        unsafe{
+            let class:Vec<u16>="DineVgaFrame\0".encode_utf16().collect();
+            let title:Vec<u16>="Dine VGA (keyboard in terminal)\0".encode_utf16().collect();
+            let instance=GetModuleHandleW(ptr::null());
+            let descriptor=WndClass{
+                style:0,proc:Some(wndproc),class_extra:0,window_extra:0,
+                instance,icon:ptr::null_mut(),cursor:ptr::null_mut(),
+                background:(COLOR_WINDOW+1) as Handle,
+                menu_name:ptr::null(),class_name:class.as_ptr(),
+            };
+            if RegisterClassW(&descriptor)==0{
+                eprintln!("Dine video: cannot register VGA window class");
+                return;
+            }
+            let hwnd=CreateWindowExW(WS_EX_NOACTIVATE,class.as_ptr(),title.as_ptr(),
+                WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,664,520,
+                ptr::null_mut(),ptr::null_mut(),instance,ptr::null_mut());
+            if hwnd.is_null(){
+                eprintln!("Dine video: cannot create VGA window");
+                return;
+            }
+            WINDOW.store(hwnd as isize,Ordering::Release);
+            ShowWindow(hwnd,SW_SHOWNOACTIVATE);
+            InvalidateRect(hwnd,ptr::null(),0);
+            let mut msg=std::mem::MaybeUninit::<Msg>::uninit();
+            loop{
+                let received=GetMessageW(msg.as_mut_ptr(),ptr::null_mut(),0,0);
+                if received<=0{break;}
+                let message=msg.assume_init_ref();
+                TranslateMessage(message);
+                DispatchMessageW(message);
+            }
+            WINDOW.store(0,Ordering::Release);
+        }
+    }
+
+    /// Presentation thread is independent of the DOS interpreter. Guest
+    /// input remains in the native terminal; closing the window does not
+    /// synthesize a DOS key or terminate the DOS process.
+    pub(crate) struct Window{started:bool}
+    impl Window{
+        pub(crate) fn new()->Self{Self{started:false}}
+        pub(crate) fn present(&mut self,frame:Frame){
+            let state=FRAME.get_or_init(||Mutex::new(None));
+            if let Ok(mut guard)=state.lock(){*guard=Some(frame);}
+            if !self.started{
+                self.started=true;
+                if let Err(e)=thread::Builder::new().name("dine-vga".into()).spawn(run){
+                    eprintln!("Dine video: cannot start display thread: {e}");
+                }
+            }
+            let hwnd=WINDOW.load(Ordering::Acquire);
+            if hwnd!=0{
+                unsafe{InvalidateRect(hwnd as Handle,ptr::null(),0);}
+            }
+        }
+    }
+}
