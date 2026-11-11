@@ -2966,7 +2966,19 @@ fn stage_ah55_child(mut p:Loaded,borrowed:bool)->(Loaded,u16,u16,[(u32,u32);SYST
     assert_eq!(p.dta,(child,0x80));
     assert_eq!(p.open_handles,handles);
     assert_eq!(p.in_memory.len(),1);
-    assert_ne!(p.image.system,system,"temporary child fetch region missing");
+    // A child may already be fetchable through the parent's code window or
+    // an inherited EXEC overlay. In that case, AH55 correctly avoids adding
+    // a redundant system range. Test actual coverage, not array inequality.
+    let window=(base,u32::from(block+0x40)*16);
+    let covered_by=|ranges:&[(u32,u32);SYSTEM_RANGES]|
+        ranges.iter().any(|&(start,end)|start<=window.0&&end>=window.1&&start<end);
+    let parent_covers=p.image.fetch_base+p.image.start<=window.0
+        &&p.image.fetch_base+p.image.end>=window.1;
+    assert!(parent_covers||covered_by(&p.image.system),
+        "AH55 child fetch window is not covered");
+    if !parent_covers&&!covered_by(&system){
+        assert_ne!(p.image.system,system,"AH55 must install a temporary fetch region when needed");
+    }
     // Turbo sets the actual return vector once the PSP is created. Read it
     // at termination rather than using an AH55-time CPU/vector snapshot.
     p.ram.store(base+0x0a,MemWidth::Dword,(u32::from(parent)<<16)|0x180).unwrap();
