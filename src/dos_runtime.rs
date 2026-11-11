@@ -1,12 +1,20 @@
 //! Minimal standalone DOS boundary, independent of the decoder and interpreter.
-//! This headless subset has no files, screen, keyboard, installed handlers or EXEC.
+//! This headless subset has no files, framebuffer, keyboard, installed handlers or EXEC.
 use crate::{address::{MemoryContext,SegmentRegister,SegmentState},host_io::Output,MemWidth,Ram};
+
+/// BIOS video mode and cursor state. Planar VRAM, graphics-controller ports
+/// and latches are not yet implemented; mode switching does not draw pixels.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub struct VideoState {pub mode:u8,pub cursor_row:u8,pub cursor_col:u8}
+impl Default for VideoState {
+    fn default()->Self{Self{mode:3,cursor_row:0,cursor_col:0}}
+}
 
 // The compiler embeds this context and its methods into generated applications.
 #[allow(dead_code)]
 pub struct Context {
     pub regs:[u32;8], pub flags:u32, pub undefined:u32, pub eip:u32,
-    pub ram:Ram, pub machine:SegmentState,
+    pub ram:Ram, pub machine:SegmentState, pub video:VideoState,
     /// Proven near-call return sites and operand widths; never guest memory.
     pub calls:Vec<(u32,u8)>,
 }
@@ -56,6 +64,24 @@ impl Context {
                 self.regs[0]=(self.regs[0]&!255)|0x24;
                 Ok(None)
             },
+            (0x10,0)=>{
+                let mode=self.regs[0] as u8;
+                if !matches!(mode,3|0x12){return Err(format!("standalone BIOS mode {mode:02x} is not supported"));}
+                self.video=VideoState{mode,..VideoState::default()};
+                Ok(None)
+            },
+            (0x10,2)=>{
+                let page=(self.regs[3]>>8)as u8;
+                let row=(self.regs[2]>>8)as u8;
+                let col=self.regs[2] as u8;
+                let rows=if self.video.mode==0x12{30}else{25};
+                if page!=0||row>=rows||col>=80{
+                    return Err(format!("standalone BIOS cursor page/position unsupported: page {page}, row {row}, col {col}"));
+                }
+                self.video.cursor_row=row;
+                self.video.cursor_col=col;
+                Ok(None)
+            },
             _=>Err(format!("standalone runtime does not support INT {vector:02x}/AH{:02x}",(self.regs[0]>>8)as u8)),
         }
     }
@@ -67,7 +93,7 @@ mod tests {
     #[test]
     fn character_output_returns_al_and_rejects_partial_tabs(){
         let p=crate::dos::load(&[0xcd,0x20],"T.COM").unwrap();
-        let mut c=Context{regs:p.cpu.regs,flags:0xad7,undefined:0x800,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),calls:Vec::new()};
+        let mut c=Context{regs:p.cpu.regs,flags:0xad7,undefined:0x800,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),calls:Vec::new()};
         c.regs[0]=0x123402ab;c.regs[2]=9;
         let before=(c.regs,c.flags,c.undefined,c.eip,c.machine,c.ram.clone());
         let mut out=crate::host_io::CaptureOutput::new(7);
@@ -91,9 +117,32 @@ mod tests {
         assert!(command_tail(&mut ram,0,"abc").is_err());assert_eq!(ram,before);
     }
     #[test]
+    fn video_bios_mode_cursor_and_rejections_preserve_cpu_state(){
+        let p=crate::dos::load(&[0xcd,0x20],"T.COM").unwrap();
+        let mut c=Context{regs:p.cpu.regs,flags:0x246,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),calls:Vec::new()};
+        let mut out=crate::host_io::CaptureOutput::new(32);
+        c.regs[0]=0x12;
+        let before=(c.regs,c.flags,c.eip);
+        assert_eq!(c.interrupt(0x10,&mut out).unwrap(),None);
+        assert_eq!((c.regs,c.flags,c.eip),before);
+        assert_eq!(c.video.mode,0x12);
+        c.regs[0]=0x0200;c.regs[3]=0;c.regs[2]=0x1d00;
+        c.interrupt(0x10,&mut out).unwrap();
+        assert_eq!((c.video.cursor_row,c.video.cursor_col),(29,0));
+        let video=c.video;
+        c.regs[3]=0x100;
+        assert!(c.interrupt(0x10,&mut out).is_err());assert_eq!(c.video,video);
+        c.regs[0]=0x0013;
+        assert!(c.interrupt(0x10,&mut out).is_err());assert_eq!(c.video,video);
+        c.regs[0]=3;
+        c.interrupt(0x10,&mut out).unwrap();
+        assert_eq!(c.video,VideoState::default());
+        assert!(out.bytes().is_empty());
+    }
+    #[test]
     fn rejected_string_output_preserves_registers_and_output(){
         let p=crate::dos::load(&crate::dos::hello("com").unwrap(),"HELLO.COM").unwrap();
-        let mut c=Context{regs:p.cpu.regs,flags:p.cpu.eflags,undefined:p.cpu.undefined_flags,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),calls:Vec::new()};
+        let mut c=Context{regs:p.cpu.regs,flags:p.cpu.eflags,undefined:p.cpu.undefined_flags,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),calls:Vec::new()};
         c.regs[0]=0x123409ab;c.regs[2]=0x10c;
         let before=c.regs;
         let mut out=crate::host_io::CaptureOutput::new(2);
