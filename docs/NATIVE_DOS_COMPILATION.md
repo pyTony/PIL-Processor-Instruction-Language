@@ -110,9 +110,13 @@ CP437-aware terminal/transport needs raw bytes.
   output, and `AH=4Ch` process exit.
 - Command-tail translation through CP437 and output transcoding to UTF-8.
 
-There is **no file API, keyboard input, graphics screen, EXEC child process,
+There is **no file API, interactive host keyboard, general graphics screen, EXEC child process,
 installed interrupt handler, REP string support or arbitrary indirect
-control-flow discovery** in standalone mode today. Unsupported reachable
+control-flow discovery** in standalone mode today. An experimental mode-12h
+VGA planar device boundary supports selected GC word ports and ROM-font
+caption rendering, with a single explicit BIOS key supplied through
+`PIL_DOS_BIOS_KEY`. It remains unverified end-to-end and does not imply full
+VGA/DOS video compatibility. Unsupported reachable
 code is rejected during translation; generated executables cannot fall back
 to Dine. Standalone services and Dine services must not be conflated.
 

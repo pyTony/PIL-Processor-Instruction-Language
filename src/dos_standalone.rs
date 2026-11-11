@@ -61,6 +61,12 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
     }
     let mut source=crate::emit_rust_support();
     for (name,text) in [("dos_encoding",include_str!("dos_encoding.rs")),("host_io",include_str!("host_io.rs")),("dos_runtime",include_str!("dos_runtime.rs"))]{
+        // A native executable must be independent of the compiler's source
+        // tree. Embed the same font asset as Dine, not an include_str! path
+        // relative to the generated .rs file.
+        let text=if name=="dos_runtime"{
+            text.replace("include_str!(\"dos_font8x8.txt\")",&format!("{:?}",include_str!("dos_font8x8.txt")))
+        }else{text.to_owned()};
         writeln!(source,"\nmod {name} {{\n{}\n}}",text.split("#[cfg(test)]").next().unwrap()).unwrap();
     }
     source.push_str(&modules);source.push_str(&blocks);
@@ -262,6 +268,7 @@ mod tests {
         assert!(source.contains("video:dos_runtime::VideoState::default()"));
         assert!(source.contains("key:None"));
         assert!(source.contains("c.interrupt(16,output)"));
+        assert!(!source.contains("include_str!(\"dos_font8x8.txt\")"),"native Rust must embed font data");
         for bytes in [
             vec![0xb4,0,0xcd,0x10,0xcd,0x20],
             vec![0xb8,0x13,0,0xcd,0x10,0xcd,0x20],
