@@ -64,6 +64,7 @@ jobs:
         run: ./tools/debug.ps1 -Check
       - run: python tools/export_runtime.py target/runtime-source --verify
       - run: cargo build --release --locked
+      - run: python tools/verify_dine_executable.py
       - run: python tools/verify_mandel_cycle.py
       - run: python tools/verify_mandel_cga.py
       - run: python tools/verify_mandel_vga.py
