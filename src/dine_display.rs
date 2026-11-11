@@ -65,7 +65,7 @@ mod windows {
     use super::Frame;
     use std::ffi::c_void;
     use std::ptr;
-    use std::sync::{atomic::{AtomicIsize,Ordering},Mutex,OnceLock};
+    use std::sync::{atomic::{AtomicIsize,Ordering},mpsc,Mutex,OnceLock};
     use std::thread;
 
     type Handle=*mut c_void;
@@ -135,6 +135,7 @@ mod windows {
         fn DispatchMessageW(message:*const Msg)->isize;
         fn ShowWindow(window:Handle,how:i32)->i32;
         fn InvalidateRect(window:Handle,area:*const Rect,erase:i32)->i32;
+        fn PostMessageW(window:Handle,message:u32,wparam:usize,lparam:isize)->i32;
         fn BeginPaint(window:Handle,paint:*mut Paint)->Handle;
         fn EndPaint(window:Handle,paint:*const Paint)->i32;
         fn GetClientRect(window:Handle,area:*mut Rect)->i32;
@@ -186,7 +187,7 @@ mod windows {
         }
     }
 
-    fn run(){
+    fn run(ready:mpsc::Sender<isize>){
         unsafe{
             let class:Vec<u16>="DineVgaFrame\0".encode_utf16().collect();
             let title:Vec<u16>="Dine VGA (keyboard in terminal)\0".encode_utf16().collect();
@@ -199,6 +200,7 @@ mod windows {
             };
             if RegisterClassW(&descriptor)==0{
                 eprintln!("Dine video: cannot register VGA window class");
+                let _=ready.send(0);
                 return;
             }
             let hwnd=CreateWindowExW(WS_EX_NOACTIVATE,class.as_ptr(),title.as_ptr(),
@@ -206,9 +208,11 @@ mod windows {
                 ptr::null_mut(),ptr::null_mut(),instance,ptr::null_mut());
             if hwnd.is_null(){
                 eprintln!("Dine video: cannot create VGA window");
+                let _=ready.send(0);
                 return;
             }
             WINDOW.store(hwnd as isize,Ordering::Release);
+            let _=ready.send(hwnd as isize);
             ShowWindow(hwnd,SW_SHOWNOACTIVATE);
             InvalidateRect(hwnd,ptr::null(),0);
             let mut msg=std::mem::MaybeUninit::<Msg>::uninit();
@@ -226,21 +230,42 @@ mod windows {
     /// Presentation thread is independent of the DOS interpreter. Guest
     /// input remains in the native terminal; closing the window does not
     /// synthesize a DOS key or terminate the DOS process.
-    pub(crate) struct Window{started:bool}
+    pub(crate) struct Window{
+        worker:Option<thread::JoinHandle<()>>,
+        ready:Option<mpsc::Receiver<isize>>,
+    }
     impl Window{
-        pub(crate) fn new()->Self{Self{started:false}}
+        pub(crate) fn new()->Self{Self{worker:None,ready:None}}
         pub(crate) fn present(&mut self,frame:Frame){
             let state=FRAME.get_or_init(||Mutex::new(None));
             if let Ok(mut guard)=state.lock(){*guard=Some(frame);}
-            if !self.started{
-                self.started=true;
-                if let Err(e)=thread::Builder::new().name("dine-vga".into()).spawn(run){
-                    eprintln!("Dine video: cannot start display thread: {e}");
+            if self.worker.is_none(){
+                let(tx,rx)=mpsc::channel();
+                match thread::Builder::new().name("dine-vga".into()).spawn(move||run(tx)){
+                    Ok(worker)=>{self.worker=Some(worker);self.ready=Some(rx);},
+                    Err(e)=>eprintln!("Dine video: cannot start display thread: {e}"),
                 }
             }
             let hwnd=WINDOW.load(Ordering::Acquire);
             if hwnd!=0{
                 unsafe{InvalidateRect(hwnd as Handle,ptr::null(),0);}
+            }
+        }
+    }
+
+    // The executable unloads dine.dll immediately after dine_run returns.
+    // The window thread MUST be stopped and joined before that happens,
+    // otherwise its Win32 callback could execute unmapped DLL code.
+    impl Drop for Window {
+        fn drop(&mut self){
+            if let Some(worker)=self.worker.take(){
+                let hwnd=self.ready.take().and_then(|rx|rx.recv().ok()).unwrap_or(0);
+                if hwnd!=0 && WINDOW.load(Ordering::Acquire)==hwnd {
+                    unsafe{PostMessageW(hwnd as Handle,WM_CLOSE,0,0);}
+                }
+                if worker.join().is_err(){
+                    eprintln!("Dine video: the VGA window worker panicked");
+                }
             }
         }
     }
