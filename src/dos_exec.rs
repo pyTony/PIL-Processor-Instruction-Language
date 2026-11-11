@@ -205,13 +205,13 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
         let frame=p.in_memory.pop().unwrap();
         // Preserve the child's live register/stack state; its PSP INT22 target
         // is the explicit continuation established by the parent at run time.
-        // The DOS service loop advances IP by two after the service retires.
+        // The DOS service loop has already retired the terminating INT.
         let cs=(target>>16)as u16;
         let ip=target as u16;
         let index=SegmentRegister::Cs.index();
         p.selectors[index]=cs;p.image.selectors[index]=cs;
         p.image.segments[index]=SegmentCache::real_mode(cs);
-        p.cpu.eip=u32::from(ip.wrapping_sub(2));
+        p.cpu.eip=u32::from(ip);
         p.image.system=frame.system;
         p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.parent;
         return files::drop_unreferenced(p);
