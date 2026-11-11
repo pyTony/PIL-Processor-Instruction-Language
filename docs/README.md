@@ -9,6 +9,11 @@ runtime delivery and contains a smaller set of user documentation.
 For DOS startup, drive mounts and command-line overrides, see
 [DOS environment configuration](DOS_CONFIG.md).
 
+For standalone **native DOS block compilation**, including build commands,
+verified program targets and runtime limitations, see
+[Native DOS compilation](NATIVE_DOS_COMPILATION.md). This is the active compiler
+track; profile-guided Dine shadow engines are deferred.
+
 ## Current increment: 0.34.0-alpha.1
 
 AH02 character capture, AX3700 switch query and real-mode LES are implemented;

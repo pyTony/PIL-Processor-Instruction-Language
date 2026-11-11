@@ -1,5 +1,12 @@
 # Observed DOS code compiled through PIL and Rust
 
+> **Track status (11 November 2026):** The active development target is
+> **standalone native block compilation**. The profile-guided Dine shadow
+> sections below remain as historical experiments and reproducibility notes,
+> not the recommended next implementation. See the
+> [native DOS compilation guide](NATIVE_DOS_COMPILATION.md) for current
+> build commands and the prioritized `MANDVGA.COM` milestone.
+
 ## Standalone ANSI Mandelbrot
 
 The original `programs/dos/MANDANSI.COM` is an end-to-end standalone compiler
