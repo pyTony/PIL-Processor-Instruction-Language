@@ -5,3 +5,10 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1.0"
+
+# The same CPU/DOS implementation is also built as a DLL/.so for small
+# Dine_<program> launchers. Keep the original pil binary unchanged.
+[lib]
+name = "pil_dine"
+path = "src/main.rs"
+crate-type = ["cdylib"]
