@@ -2911,3 +2911,33 @@ fn child_psp_rejects_protected_mcb_owner_and_preserves_memory_and_arena(){
  assert_eq!(p.arena.block_owner(child),Some(PSP));
  assert_eq!(p.psp,PSP);
 }
+
+#[test]
+fn cga_mode_control_port_3d8_routes_video_enable_and_blink_changes(){
+ let mut p=load(&[0xee],"out.com").unwrap(); // OUT DX, AL
+ p.cpu.regs[2]=0x3d8; // DX = 03D8h
+ assert_eq!(p.vga.cga_mode(),0x29);
+ assert_eq!(p.vga.attr[16]&8,8);
+
+ // Disable video (bit 3 = 0, value = 0x21)
+ p.cpu.regs[0]=0x21;
+ assert_eq!(ports::io(&mut p).unwrap(),Some(1));
+ assert_eq!(p.vga.cga_mode(),0x21);
+ assert_eq!(p.vga.attr[16]&8,8);
+
+ // Disable blink (bit 5 = 0, value = 0x09)
+ p.cpu.regs[0]=0x09;
+ assert_eq!(ports::io(&mut p).unwrap(),Some(1));
+ assert_eq!(p.vga.cga_mode(),0x09);
+ assert_eq!(p.vga.attr[16]&8,0);
+
+ // Read from port 3D8h returns 0xFF (write-only port on bus)
+ p.ram.write_bytes(0x10100,&[0xec]).unwrap(); // IN AL, DX
+ assert_eq!(ports::io(&mut p).unwrap(),Some(1));
+ assert_eq!(p.cpu.regs[0]&0xff,0xff);
+
+ // Layout/width change is rejected
+ p.ram.write_bytes(0x10100,&[0xee]).unwrap();
+ p.cpu.regs[0]=0x28;
+ assert!(ports::io(&mut p).is_err());
+}

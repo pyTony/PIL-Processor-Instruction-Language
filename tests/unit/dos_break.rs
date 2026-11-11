@@ -117,3 +117,22 @@ fn ctrl_c_in_a_child_ends_it_with_type_1_and_vectors_come_back(){
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn ctrl_break_in_graphics_mode_terminates_child_without_changing_video_mode(){
+    // Child sets mode 13h (320x200 256 colors), then waits for key with AH=01h
+    // MOV AX,0013; INT 10; MOV AH,01; INT 21; MOV AX,4C00; INT 21
+    let p=load(&[0xb8,0x13,0x00,0xcd,0x10,0xb4,0x01,0xcd,0x21,0xb8,0x00,0x4c,0xcd,0x21],"gfx.com").unwrap();
+    let r=run(p,20).unwrap();
+    assert_eq!(r.stop,Stop::WaitingForInput);
+    assert_eq!(r.loaded.ram.load(0x449,MemWidth::Byte).unwrap(),0x13);
+    assert!(r.loaded.vga.color_io());
+
+    // Inject Ctrl+C (Break)
+    let mut p=r.loaded;
+    p.enqueue_key(CTRL_C).unwrap();
+    let r=run(p,20).unwrap();
+    assert_eq!(r.stop,Stop::Exit(0));
+    // Video mode in BDA remains 13h (faithful DOS behavior: break does not reset guest display mode)
+    assert_eq!(r.loaded.ram.load(0x449,MemWidth::Byte).unwrap(),0x13);
+}

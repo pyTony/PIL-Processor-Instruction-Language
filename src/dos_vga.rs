@@ -242,5 +242,27 @@ mod tests{
         let before=v.misc_output;assert!(v.io(0x3c2,false,0).is_err());assert_eq!(v.misc_output,before);
     }
     #[test]fn locked_timing_and_unimplemented_mode_changes(){let mut v=Vga::default();write(&mut v,0,0);assert_eq!(v.regs[0],0x5f);write(&mut v,17,0x0e);v.io(0x3d4,false,0).unwrap();assert!(v.io(0x3d5,false,0).is_err());assert_eq!(v.regs[0],0x5f);}
+    #[test]
+    fn cga_mode_control_io_toggles_video_and_blink_and_rejects_layout_change(){
+        let mut v=Vga::default();
+        assert_eq!(v.cga_mode(),0x29);
+        assert_eq!(v.attr[16]&8,8);
+        v.io(0x3d8,false,0x21).unwrap();
+        assert_eq!(v.cga_mode(),0x21);
+        assert_eq!(v.attr[16]&8,8);
+        v.io(0x3d8,false,0x09).unwrap();
+        assert_eq!(v.cga_mode(),0x09);
+        assert_eq!(v.attr[16]&8,0);
+        v.io(0x3d8,false,0x01).unwrap();
+        assert_eq!(v.cga_mode(),0x01);
+        assert_eq!(v.attr[16]&8,0);
+        v.io(0x3d8,false,0x29).unwrap();
+        assert_eq!(v.cga_mode(),0x29);
+        assert_eq!(v.attr[16]&8,8);
+        assert_eq!(v.io(0x3d8,true,0).unwrap(),Some(0xff));
+        assert!(v.io(0x3d8,false,0x28).is_err());
+        assert!(v.io(0x3d8,false,0x2b).is_err());
+        assert!(v.io(0x3d8,false,0x39).is_err());
+    }
 }
 
