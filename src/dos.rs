@@ -420,12 +420,12 @@ pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
             let current=rgb[color];
             if previous!=Some(current){
                 use std::fmt::Write as _;
-                write!(rendered,"\\x1b[48;2;{};{};{}m",current[0],current[1],current[2]).ok()?;
+                write!(rendered,"\x1b[48;2;{};{};{}m",current[0],current[1],current[2]).ok()?;
                 previous=Some(current);
             }
             rendered.push(' ');
         }
-        rendered.push_str("\\x1b[0m\\n");
+        rendered.push_str("\x1b[0m\n");
     }
     Some(rendered)
 }
