@@ -417,8 +417,8 @@ def screen_rows(reply, blink_on=True):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None):
-        options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else [])
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none"):
+        options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else []) + (['--fpu', fpu] if fpu != "none" else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -884,7 +884,7 @@ def prepare_image_drives(engine, images, drives):
     return drives
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None, auto_graphics_key=False):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None, auto_graphics_key=False, fpu="none"):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -903,7 +903,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives, config=config)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives, config=config, fpu=fpu)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -1215,6 +1215,8 @@ def main(argv=None):
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
     parser.add_argument('--speaker-volume', type=speaker_volume, default=5, metavar='0..100',
                         help='PC speaker click volume (default 5, 0 mutes; Windows or Linux with aplay)')
+    parser.add_argument('--fpu', choices=('none', '80387'), default='none',
+                        help='optional partial 80387 backend (default none; arithmetic is not yet implemented)')
     parser.add_argument('--ansi', action='store_true',
                         help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
     parser.add_argument('--country', type=int, choices=[1, 358],
@@ -1256,7 +1258,7 @@ def main(argv=None):
         session = None
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
-                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config)
+                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu)
             is_shell = any(sh in args.program.upper() for sh in ('COMMAND.COM', 'CMD.EXE', '4DOS'))
             reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell, auto_graphics_key=args.auto_graphics_key)
             if reply['status'] != 'exit':
@@ -1269,7 +1271,7 @@ def main(argv=None):
         return
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key)
+    make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key, fpu=args.fpu)
     root.mainloop()
 
 

@@ -145,6 +145,16 @@ impl Loaded{
     pub fn enqueue_key(&mut self,key:u16)->Result<bool,String>{console::enqueue(self,key)}
     /// Ctrl+Break: see `brk::ctrl_break`.
     pub fn ctrl_break(&mut self)->Result<(),String>{brk::ctrl_break(self)}
+    /// Select the optional 80387 backend before executing the first guest instruction.
+    /// Keep the BIOS equipment word consistent with INT 11h without replacing
+    /// unrelated BDA bits. Commit the device only after the RAM write succeeds.
+    pub fn select_fpu(&mut self,present:bool)->Result<(),String>{
+        let selected=if present{super::fpu::Fpu::present()}else{super::fpu::Fpu::default()};
+        let equipment=self.ram.load(0x410,MemWidth::Word).map_err(|e|format!("FPU BIOS equipment read: {e:?}"))? as u16;
+        self.ram.store(0x410,MemWidth::Word,u32::from(selected.equipment(equipment))).map_err(|e|format!("FPU BIOS equipment write: {e:?}"))?;
+        self.fpu=selected;
+        Ok(())
+    }
 }
 fn word(bytes:&[u8],at:usize)->Result<u16,String>{
     let b=bytes.get(at..at+2).ok_or("truncated DOS header/relocation word")?;Ok(u16::from_le_bytes([b[0],b[1]]))

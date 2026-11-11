@@ -78,6 +78,28 @@ Its contents disappear when the session ends. If a standalone loaded program
 starts on the empty A drive and configuration supplies C, startup selects C and
 updates its initial COMSPEC and program path.
 
+## Experimental 80387 selection
+
+The default DOS session has **no numerical coprocessor**. To opt into the
+partial 80387 implementation, use one of these startup switches:
+
+```powershell
+python tools/dos_terminal.py --fpu 80387 programs/dos/HELLO.COM
+target/release/pil.exe --dos-session --fpu 80387 programs/dos/HELLO.COM
+```
+
+The session protocol also accepts `fpu 80387` or `fpu none` **before its first
+`run` command**. A later change is refused so the guest never sees a reset
+coprocessor halfway through execution. Snapshots report `fpu_present`, and
+BIOS INT 11h plus the BDA equipment word reflect the selected device.
+Without the switch, existing no-coprocessor behavior is unchanged.
+
+**This backend is incomplete.** It currently handles selected x87 register
+operations and IEEE memory load/store, but not arithmetic, comparisons, full
+exceptions or Turbo Pascal hardware floating-point (`{$N+}`) programs.
+Unsupported instructions stop explicitly. This option is for targeted tests,
+not a promise of full 80387 compatibility.
+
 ## Select a configuration
 
 Selection order is:

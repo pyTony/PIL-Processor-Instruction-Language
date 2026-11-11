@@ -20,9 +20,9 @@ pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
     if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
     Err(format!("mount {path} is not a folder or .img/.ima image"))
 }
-pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,backend:Option<Box<dyn InstructionBackend>>}
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,backend:Option<Box<dyn InstructionBackend>>}
 impl Session{
-    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,exceptions:Vec::new(),exception_count:0,idle_hint:false,backend:None}}
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,backend:None}}
     /// Keep the executor for the whole session, including across frontend slices.
     #[allow(dead_code)]
     pub(crate) fn with_backend(loaded:Loaded,backend:Box<dyn InstructionBackend>)->Self{
@@ -32,6 +32,7 @@ impl Session{
     /// Runs up to `budget` steps; output already reaches the screen through Dine.
     pub fn run(&mut self,budget:usize)->Result<Vec<u8>,String>{
         if !self.live(){return Ok(Vec::new());}
+        self.started=true;
         let loaded=self.loaded.take().ok_or("session state lost")?;
         let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
         let mut probe=match self.backend.as_mut(){
@@ -117,6 +118,8 @@ impl Session{
         let(blocks,native)=self.backend.as_ref().map_or((0,0),|b|b.block_stats());
         let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
         let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}",mode_control&8!=0,mode_control&0x20!=0);
+        let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
+        let diagnostic=format!("{diagnostic},\"fpu_present\":{fpu_present}");
         Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
@@ -137,6 +140,15 @@ impl Session{
         let mut output=Vec::new();
         let(ok,text,quit)=match words.as_slice(){
             []|["snapshot"]=>(true,String::new(),false),
+            ["fpu",mode @ ("none"|"80387")]=>{
+                if self.started{(false,"FPU selection requires a fresh session before the first run".into(),false)}
+                else{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    p.select_fpu(*mode=="80387")?;
+                    (true,format!("FPU: {}",p.fpu.name()),false)
+                }
+            },
+            ["fpu",..]=>(false,"fpu requires none or 80387".into(),false),
             ["run",n]=>match n.parse::<usize>(){
                 Ok(n) if (1..=MAX_STEPS).contains(&n)=>{output=self.run(n)?;(true,String::new(),false)},
                 _=>(false,"run budget must be 1..1000000".into(),false),
@@ -247,7 +259,7 @@ pub(crate) fn quote(text:&str)->String{
 /// `--dos-session [--mount DIR] [--args TEXT] PATH`: PATH is a file or
 /// IMAGE::INNER inside a container. A FAT16 image becomes read-only drive C:
 /// and DIR the next drive; TEXT is the program's command line.
-pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config:Option<&str>)->Result<(),String>{
+pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config:Option<&str>,fpu_mode:Option<&str>)->Result<(),String>{
     let mut logger=stoplog::Logger::new(log_path,path);
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;
@@ -268,6 +280,9 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     let mut loaded=load_with_drives(&bytes,path,drives,inner)?;
     let skip=mount.map(|_|if inner.is_some(){b'D'}else{b'C'});
     crate::dos_config::apply(&mut loaded,config,skip)?;
+    if let Some(mode)=fpu_mode{
+        match mode{"none"=>loaded.select_fpu(false)?,"80387"=>loaded.select_fpu(true)?,_=>return Err("FPU must be none or 80387".into())}
+    }
     if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
     serial::attach(&mut loaded)?;
     #[cfg(pil_shadow_backend)]

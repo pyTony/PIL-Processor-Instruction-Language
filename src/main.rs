@@ -2366,7 +2366,7 @@ Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
 
 DOS and ROM:
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
-  --dos-session [--config FILE] [--mount DIR] [--args TEXT] PROGRAM
+  --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
   --run-rom PATH [--steps N]          Run a 64 or 128 KiB ROM
@@ -2501,14 +2501,14 @@ fn main() -> R<()> {
         f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
-        let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
-        let(mut mount,mut tail,mut config,mut rest)=(None,None,None,&dos_args[2..]);
+        let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        let(mut mount,mut tail,mut config,mut fpu,mut rest)=(None,None,None,None,&dos_args[2..]);
         while let[flag,value,more@..]=rest{
-            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),"--config" if config.is_none()=>config=Some(value.as_str()),_=>break}
+            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),"--config" if config.is_none()=>config=Some(value.as_str()),"--fpu" if fpu.is_none()&&matches!(value.as_str(),"none"|"80387")=>fpu=Some(value.as_str()),_=>break}
             rest=more;
         }
         let[program]=rest else{return Err(usage.into())};
-        return dos::session::serve(program,mount,tail,&stop_log,config).map_err(Into::into);
+        return dos::session::serve(program,mount,tail,&stop_log,config,fpu).map_err(Into::into);
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;

@@ -284,3 +284,44 @@ fn present_80387_faulted_fstp_keeps_memory_and_stack_intact() {
     assert_eq!(result.loaded.fpu.state().unwrap().st(0),
                Some(Extended80::from_bits(1u64<<63,0x3fff)));
 }
+
+
+#[test]
+fn runtime_fpu_selection_is_opt_in_updates_bios_and_rejects_late_changes(){
+    // FNINIT; FLD1; INT 11h; INT 20h. The opt-in is a protocol command,
+    // not a test-only Loaded field assignment.
+    let code=[0xdb,0xe3,0xd9,0xe8,0xcd,0x11,0xcd,0x20];
+    let mut default=dos::session::Session::new(dos::load(&code,"fpu-session.com").unwrap());
+    let (snapshot,_)=default.command(1,"snapshot").unwrap();
+    assert!(snapshot.contains("\"fpu_present\":false"),"{snapshot}");
+    let (reply,_)=default.command(2,"run 16").unwrap();
+    assert!(reply.contains("\"status\":\"exit\""),"{reply}");
+    assert_eq!(default.loaded().unwrap().cpu.regs[0]&2,0);
+
+    let mut enabled=dos::session::Session::new(dos::load(&code,"fpu-session.com").unwrap());
+    let before=enabled.loaded().unwrap().ram.load(0x410,MemWidth::Word).unwrap();
+    let (bad,_)=enabled.command(1,"fpu 8087").unwrap();
+    assert!(bad.contains("\"ok\":false"),"{bad}");
+    assert!(!enabled.loaded().unwrap().fpu.available());
+    let (good,_)=enabled.command(2,"fpu 80387").unwrap();
+    assert!(good.contains("\"ok\":true")&&good.contains("\"fpu_present\":true"),"{good}");
+    assert_eq!(enabled.loaded().unwrap().ram.load(0x410,MemWidth::Word).unwrap(),before|2);
+    let (done,_)=enabled.command(3,"run 16").unwrap();
+    assert!(done.contains("\"status\":\"exit\""),"{done}");
+    assert_eq!(enabled.loaded().unwrap().cpu.regs[0]&2,2);
+    assert_eq!(enabled.loaded().unwrap().fpu.state().unwrap().st(0),
+               Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    let (late,_)=enabled.command(4,"fpu none").unwrap();
+    assert!(late.contains("\"ok\":false"),"{late}");
+    assert!(enabled.loaded().unwrap().fpu.available());
+}
+
+#[test]
+fn runtime_fpu_selection_rejects_switch_after_a_waiting_run_without_retirement(){
+    let mut session=dos::session::Session::new(dos::load(&[0xcd,0x16,0xcd,0x20],"wait.com").unwrap());
+    let (reply,_)=session.command(1,"run 1").unwrap();
+    assert!(reply.contains("\"status\":\"waiting_input\""),"{reply}");
+    let (reply,_)=session.command(2,"fpu 80387").unwrap();
+    assert!(reply.contains("\"ok\":false"),"{reply}");
+    assert!(!session.loaded().unwrap().fpu.available());
+}

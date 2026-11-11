@@ -19,6 +19,22 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 
 class DosTerminalTests(unittest.TestCase):
+
+    def test_partial_80387_mode_is_explicit_and_reports_bios_equipment(self):
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / 'fpu.com'
+            program.write_bytes(bytes.fromhex('dbe3 d9e8 cd11 cd20'))
+            for mode, present in [('none', False), ('80387', True)]:
+                session = term.Session(engine, program, fpu=mode)
+                try:
+                    self.assertIs(session.last['fpu_present'], present)
+                    reply = session.send('run 16')
+                    self.assertEqual(reply['status'], 'exit')
+                    self.assertEqual(reply['registers'][0] & 2, int(present) * 2)
+                finally:
+                    session.close()
+
     def test_buffered_and_full_frames_decode_cp437_consistently(self):
         engine = term.find_engine()
         with tempfile.TemporaryDirectory() as directory:
