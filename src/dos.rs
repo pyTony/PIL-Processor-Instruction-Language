@@ -510,6 +510,7 @@ pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
             }else{bytes[0xa0000+i]};
             pixels.push(colors[usize::from(index)]);
         }
+        if p.vga.cga_mode()&0x08==0{pixels.fill(0);}
         return Some((width,height,pixels));
     }
     let geometry=planar::geometry(mode)?;
@@ -535,6 +536,7 @@ pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
             }
         }
     }
+    if p.vga.cga_mode()&0x08==0{pixels.fill(0);}
     Some((width,height,pixels))
 }
 
@@ -576,6 +578,16 @@ mod desktop_scanout_tests{
         p.vga.bios_cga_mode(4);
         p.vga.io(0x3d8,false,0x22).unwrap(); // clear video-enable only
         assert!(desktop_vga_frame(&p).unwrap().2.iter().all(|c|*c==0));
+    }
+    #[test]
+    fn cga_mode5_ignores_palette_selection_for_cyan_red_and_white(){
+        let mut p=load(&[0xcd,0x20],"CGA.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,5).unwrap();
+        p.vga.bios_cga_mode(5);
+        p.vga.set_cga_color(0x20);
+        p.ram.store(0xb8000,MemWidth::Byte,0x1b).unwrap();
+        let pixels=desktop_vga_frame(&p).unwrap().2;
+        assert_eq!(&pixels[..4],&[CGA_RGB[0],CGA_RGB[3],CGA_RGB[4],CGA_RGB[7]]);
     }
     #[test]
     fn mode13_frame_uses_dac_and_linear_vram(){
