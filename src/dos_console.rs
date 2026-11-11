@@ -266,7 +266,12 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
     if super::planar::geometry(al&0x7f).is_some(){return super::planar::set_mode(p,al&0x7f,al&0x80!=0);}
     let result=set_other_mode(p,al);
     // Leaving a planar mode unmaps the planes; A000h is ordinary RAM again.
-    if result.is_ok(){p.ram.set_planar(None);p.vga.font=None;p.vga.idle=super::vga::Controllers::standard(al&0x7f);}
+    if result.is_ok(){
+        p.vga.bios_cga_mode(al&0x7f);
+        if al&0xff!=0x93{p.ram.set_planar(None);}
+        p.vga.font=None;p.vga.idle=super::vga::Controllers::standard(al&0x7f);
+        if al&0xff==0x93{if let Some(planes)=p.ram.planar_mut(){planes.seq=p.vga.idle.seq;planes.gc=p.vga.idle.gc;}}
+    }
     result
 }
 fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
@@ -281,9 +286,14 @@ fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
         commit(p,&writes)?;p.vga.set_cga_color(if mode==6{0x3f}else{0x30});return Ok(());
     }
     if al&0x7f==0x13{
-        let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x462,MemWidth::Byte,0)];
+        let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x44c,MemWidth::Word,0xfa00),(0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0)];
+        writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
         if al&0x80==0{writes.extend((0..64000).map(|n|(0xa0000+n,MemWidth::Byte,0)));}
-        commit(p,&writes)?;p.vga.reset_palette();return Ok(());
+        // Check before changing the MMIO mapping; clearing mode 13h must
+        // clear the new linear backing, not the previous planar window.
+        for &(at,w,_) in &writes{p.ram.check_write(at,w).map_err(|e|format!("BIOS console write: {e:?}"))?;}
+        if al&0x80==0{p.ram.set_planar(None);}
+        commit(p,&writes)?;p.vga.reset_palette();p.vga.bios_sync(Some(0),None,None);return Ok(());
     }
     if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the VGA BIOS profile (03h, 04h-06h, 0Dh, 0Eh, 10h, 12h, 13h)",al&0x7f));}
     let mut writes=vec![(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
@@ -298,6 +308,9 @@ fn select_page(p:&mut Loaded)->Result<(),String>{
     let page=p.cpu.regs[0]&255;
     if page>=8{return Err("BIOS video page must be 0..7".into());}
     let mode=byte(p,0x449)?;
+    // These graphics modes expose only one framebuffer in this profile.
+    // Ignore requests for another display page, keeping the BIOS state usable.
+    if matches!(mode,4|5|6|0x13)&&page!=0{return Ok(());}
     let offset=if super::planar::geometry(mode).is_some(){super::planar::page_offset(mode,page)? as u32}else{page*PAGE};
     commit(p,&[(0x462,MemWidth::Byte,page),(0x44e,MemWidth::Word,offset)])?;
     if super::planar::geometry(mode).is_some(){p.vga.bios_sync(Some(offset as u16),None,None);}

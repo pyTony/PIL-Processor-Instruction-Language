@@ -179,23 +179,24 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         },
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
-            let offset=p.cpu.regs[2]&0xffff;let mut text=Vec::new();
             let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            for n in offset..=0xffff{
-                let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS string access: {e:?}"))?;
-                let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))?as u8;
-                if b==b'$'{
-                    console::dos_break_check(p)?;
-                    if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
-                    let screen=console::dos_screen(p,&text)?;
-                    out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
-                    console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);
-                }
-                if text.len()>=out.remaining(){return Err("DOS output limit reached before string terminator".into());}
-                text.push(b);
-            }Err("DOS string has no $ terminator before segment end".into())
+            let text=crate::dos_runtime::dollar_string(&p.ram,context,p.cpu.regs[2]&0xffff,p.cpu.eip,out.remaining())?;
+            console::dos_break_check(p)?;
+            if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
+            let screen=console::dos_screen(p,&text)?;
+            out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
+            console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;Ok(None)
         },
         (0x10,ah @ (0x08|0x09|0x0a))=>{console::video(p,ah)?;Ok(None)},
+        // Everex/Trident installation query. This VGA BIOS has no Everex
+        // extension: retain AL=00, rather than returning the AL=70 signature.
+        // RBIL INT 10/AX=7000h/BX=0000h. Other AH70 functions stay unsupported.
+        (0x10,0x70) if p.cpu.regs[0]&0xffff==0x7000&&p.cpu.regs[3]&0xffff==0=>Ok(None),
+        // Video7 installation query: BX stays zero, not the 'V7' signature.
+        (0x10,0x6f) if p.cpu.regs[0]&0xffff==0x6f00&&p.cpu.regs[3]&0xffff==0=>Ok(None),
+        // Chips & Technologies / Realtek controller-information probe:
+        // retain AL=00 rather than claiming an AL=5Fh extension signature.
+        (0x10,0x5f) if p.cpu.regs[0]&0xffff==0x5f00&&p.cpu.regs[3]&0xffff==0=>Ok(None),
         (0x10,ah @ (0x00|0x05|0x06|0x07|0x0b|0x0c|0x0d|0x0e|0x0f))=>{console::display(p,ah)?;Ok(None)},
         (0x16,ah)=>{console::keyboard(p,ah)?;Ok(None)},
         (0x1c,_)=>Ok(None), // BIOS default timer user hook is an IRET.
@@ -253,6 +254,13 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             if op==3{p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|3;}
             p.cpu.regs[0]&=!0xff00;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
+        (0x15,0xbf) if matches!(p.cpu.regs[0]&0xffff,0xbf00..=0xbf02|0xbfdc|0xbfde)=>{
+            // No resident DOS/16M, DOS/4GW or DESQview/X interface. An
+            // unsupported BIOS call leaves DX/BX unchanged (no installation
+            // signature), sets CF and returns AH=86h.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
         (0x15,0xc2)=>{
             // No PS/2 pointing device is modelled: answer as a BIOS without one
             // (SeaBIOS: CF=1, AH=86h function not supported).
@@ -260,18 +268,18 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
-        (0x15,0xbf) if p.cpu.regs[0]&0xffff==0xbfde=>{
-            // No DESQview/X DVDOS4GX driver hooks INT 15h. The underlying
-            // BIOS reports the unsupported function, without claiming that
-            // a DOS extender or its protected-mode services are installed.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
             // No mouse driver is loaded: the reset reports AX=0 (not installed)
             // and BX=0 buttons, as MOUSE.COM-less DOS does where INT 33h points
             // at an IRET and callers have zeroed AX.
             p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;
+            Ok(None)
+        },
+        (0x33,_)=>{
+            // No driver owns the host stub. Configuration/state calls act
+            // like the conventional absent-driver IRET: no register, flag or
+            // buffer effects. A guest-installed INT 33 handler runs through
+            // the IVT before reaching this default service.
             Ok(None)
         },
         (0x1a,0x00)=>{
@@ -281,6 +289,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|(ticks&0xffff);
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
+        },
+        (0x1a,ah @ (0x02|0x04))=>{
+            let [century,year,month,day,hour,minute,second]=p.rtc.bios(p.clock_offset);
+            let (cx,dx)=if ah==2{(u32::from(hour)<<8|u32::from(minute),u32::from(second)<<8)}
+                else{(u32::from(century)<<8|u32::from(year),u32::from(month)<<8|u32::from(day))};
+            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|cx;
+            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|dx;
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
         (0x21,ah @ (0x38|0x65|0x66))=>{nls::service(p,ah)?;Ok(None)},
@@ -310,6 +326,15 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             let signature=p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS PSP read: {e:?}"))?;
             if signature!=0x20cd{return Err(format!("DOS set PSP to {segment:04x}h, which holds no PSP, is not modelled"));}
             p.psp=segment;
+            let mut handles=0u32;
+            for h in 0..20u16{
+                if let Ok(addr)=jft(p,h){
+                    if let Ok(entry)=p.ram.load(addr,MemWidth::Byte){
+                        if entry as u8!=0xff{handles|=1<<h;}
+                    }
+                }
+            }
+            p.open_handles=handles;
             Ok(None)
         },
         (0x21,0x51|0x62)=>{
@@ -317,6 +342,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
             Ok(None)
         },
+        (0x21,0x55)=>{exec::create_child_psp(p)?;Ok(None)},
         (0x28|0x2a,_)=>{
             // DOS idle (28h) and the network hook (2Ah) end in the kernel's
             // IRET when nothing has hooked them (FreeDOS kernel.asm): no
@@ -469,8 +495,9 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[0]&=!255;Ok(None)
         },
         (0x15,0x88)=>{
-            // No memory above 1 MB: 0 KB of extended memory.
-            p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+            let kb=p.ram.bytes().len().saturating_sub(0x100000)/1024;
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|kb.min(0xffff)as u32;
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
@@ -511,6 +538,11 @@ fn timer_pending(p:&mut Loaded,now:u32)->Result<(),String>{
     if !p.speaker.pic.timer_ready(){return Ok(());}
     // IRQ0's vector is INT 08h unless the PIC has been reinitialized.
     let vector=p.speaker.pic.timer_vector();
+    if !p.image.real_mode{
+        vectors::deliver_irq(p,vector)?;
+        p.speaker.pic.acknowledge_timer();
+        return Ok(());
+    }
     if !vectors::answered(p,vector)?{
         // The interrupt arrives between instructions: IRET resumes the
         // current IP. The handler's EOI (its own, or the BIOS wrapper's
@@ -643,12 +675,9 @@ fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
 /// AH02 (and AH06 output): capture and active-page screen change together.
 fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
     if to_file(p,&[byte])?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(byte);return Ok(());}
-    let count=if byte==9{8-out.column()%8}else{1};
-    if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
-    let value=if byte==9{b' '}else{byte};
-    let spaces=[b' ';8];let single=[byte];let bytes=if byte==9{&spaces[..count]}else{&single[..]};
-    let screen=console::dos_screen(p,bytes)?;
-    out.write_atomic(bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
+    let (bytes,value)=crate::dos_runtime::character_output(byte,out)?;
+    let screen=console::dos_screen(p,&bytes)?;
+    out.write_atomic(&bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
     console::store(p,&screen)?;
     p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
     Ok(())

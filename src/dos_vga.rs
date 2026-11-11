@@ -26,11 +26,11 @@ fn default_palette()->[[u8;3];256]{
     }
     p
 }
-#[derive(Clone,Debug)]
-pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(super) idle:Controllers,
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, cga_mode:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(super) idle:Controllers,
     /// Text-mode font memory (plane 2, see dos_vga_font) while A0000h does not show it.
     pub(super) font:Option<crate::vga_planar::Planar> }
-impl Default for Vga {fn default()->Self{Self{attr:EGA_ATTR,attr_index:0x20,attr_data:false,cga_color:0x30,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None}}}
+impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;a},attr_index:0x20,attr_data:false,cga_color:0x30,cga_mode:0x29,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None}}}
 /// Sequencer and graphics controller registers outside the planar modes,
 /// where the planes are not mapped. The BIOS mode set loads the mode's
 /// standard values. Programs may write the registers that only steer planar
@@ -58,6 +58,7 @@ impl Controllers{
     }
     /// Whether a write keeps the memory layout of the current mode.
     pub fn allowed(&self,sequencer:bool,index:usize,value:u8)->bool{
+        if self.gc[5]&0x40!=0 && sequencer && index==4{return value&!8==self.seq[4]&!8;}
         if let Some(map)=self.text_map{
             match(sequencer,index){
                 // Odd/even and extended memory may change; chain-4 may not.
@@ -91,6 +92,10 @@ fn cga_dac(i:usize)->[u8;3]{
     [c(4),if i&0x17==6{21}else{c(2)},c(1)]
 }
 impl Vga {
+    /// Legacy CGA latch. Port 3D8h is output-only; BIOS 0040:0065 is
+    /// software's shadow and direct OUT must not update that RAM byte.
+    pub fn cga_mode(&self)->u8{self.cga_mode}
+    pub fn bios_cga_mode(&mut self,mode:u32){self.cga_mode=match mode{4=>0x2a,5=>0x2e,6=>0x1e,_=>0x29};self.attr[16]=(self.attr[16]&!8)|((self.cga_mode&0x20)>>2);}
     pub fn reset_palette(&mut self){self.dac=default_palette();self.dac_mask=255;}
     /// BIOS palette load for a 16-colour planar mode (EGA layout for 350 and
     /// 480 lines, CGA-compatible for 200 lines).
@@ -110,7 +115,7 @@ impl Vga {
             (0x3c0,false)=>{
                 let i=usize::from(self.attr_index&0x1f);self.attr_data=false;
                 if i>=self.attr.len(){return Err(format!("VGA attribute register {i:02X}h does not exist"));}
-                self.attr[i]=if i<16{value&0x3f}else{value};Ok(0)
+                self.attr[i]=if i<16{value&0x3f}else{value};if i==16{self.cga_mode=(self.cga_mode&!0x20)|((value&8)<<2);}Ok(0)
             },
             _=>Err(format!("VGA attribute controller port {port:03X}h {} is not modelled",if input{"read"}else{"write"})),
         }
@@ -144,6 +149,15 @@ impl Vga {
     pub fn cursor(&self)->u16{u16::from_be_bytes([self.regs[14],self.regs[15]])}
     pub fn io(&mut self,port:u16,input:bool,value:u8)->Result<Option<u8>,String>{
         match (port,input) {
+            (0x3d8,true)=>return Ok(Some(0xff)),
+            (0x3d8,false)=>{
+                // Width, text/graphics and pixel packing need CRTC programming
+                // beyond this profile. Refuse before changing the latch.
+                if (value^self.cga_mode)&0x13!=0{return Err("CGA mode-control width/graphics/pixel-layout change is not modelled".into());}
+                self.cga_mode=value;self.attr[16]=(self.attr[16]&!8)|((value&0x20)>>2);return Ok(Some(0));
+            },
+            // No Tseng bank switch or Oak indexed extension on plain VGA.
+            (0x3cd|0x3de|0x3df,_)=>return Ok(Some(if input{0xff}else{0})),
             (0x3d9,false)=>{self.set_cga_color(value);return Ok(Some(0));},
             (0x3d9,true)=>return Ok(Some(0xff)),
             (0x3c6,true)=>return Ok(Some(self.dac_mask)),
@@ -165,9 +179,10 @@ impl Vga {
         // One VGA CRTC is decoded at the selected bank. Inactive writes have no
         // effect; inactive reads return the profile's unconnected-bus value.
         if (port>=0x3d0)!=self.color_io(){return Ok(Some(if input{0xff}else{0}));}
-        if port&1==0 {if input{return Ok(Some(self.index));}self.index=value&0x1f;return Ok(Some(0));}
+        if port&1==0 {if input{return Ok(Some(self.index));}self.index=value;return Ok(Some(0));}
         let i=self.index as usize;
-        if i>=self.regs.len(){return if input{Ok(Some(0xff))}else{Err(format!("VGA CRTC register {:02X} is outside the text profile",self.index))};}
+        // Do not alias an absent SVGA index such as 33h onto standard 13h.
+        if i>=self.regs.len(){return Ok(Some(if input{0xff}else{0}));}
         if input{return Ok(Some(self.regs[i]));}
         if self.regs[17]&0x80!=0&&i<=7{
             if i==7{self.regs[7]=(self.regs[7]&!0x10)|(value&0x10);}
@@ -176,7 +191,7 @@ impl Vga {
         // Cursor and start-address changes have visible text-mode effects.
         // Accept the protection bit without pretending timing/mode changes work.
         if i==17 {if value&0x7f!=self.regs[i]&0x7f{return Err("VGA retrace timing changes are not implemented".into());}}
-        else if !(10..=15).contains(&i)&&value!=self.regs[i]{return Err(format!("VGA CRTC timing/mode register {i:02X} change is not implemented"));}
+        else if !(10..=15).contains(&i)&&!(self.idle.gc[5]&0x40!=0&&(i==20||(i==23&&(value^self.regs[i])&!0x40==0)))&&value!=self.regs[i]{return Err(format!("VGA CRTC timing/mode register {i:02X} change is not implemented"));}
         self.regs[i]=value;
         if matches!(i,12|13){self.start_override=true;}
         if matches!(i,14|15){self.cursor_override=true;}
@@ -192,6 +207,11 @@ impl Vga {
 mod tests{
     use super::*;
     fn write(v:&mut Vga,i:u8,x:u8){v.io(0x3d4,false,i).unwrap();v.io(0x3d5,false,x).unwrap();}
+    #[test]fn extension_probe_does_not_alias_standard_crtc(){
+        let mut v=Vga::default();let before=v.regs;
+        for index in [0x33,0x3f,0xff]{write(&mut v,index,0x0a);assert_eq!(v.io(0x3d4,true,0).unwrap(),Some(index));assert_eq!(v.io(0x3d5,true,0).unwrap(),Some(0xff));}
+        assert_eq!(v.regs,before);assert!(!v.start_override&&!v.cursor_override);
+    }
     #[test]fn dac_components_mask_and_wrap(){
         let mut v=Vga::default();
         v.io(0x3c8,false,255).unwrap();

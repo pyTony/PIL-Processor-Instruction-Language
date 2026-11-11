@@ -19,6 +19,9 @@ const size $S $SIZE
 const pushed $S $PUSHED
 sub below frame pushed
 sub new_sp below size
+zext allocated_at new_sp 32
+# ENTER checks write access at the final SP even when no byte is stored there.
+check_write_segment 2 allocated_at 8
 $FRAME_POINTER
 write_gpr 5 frame_pointer
 write_gpr 4 new_sp

@@ -62,6 +62,11 @@ impl Session{
         if vector!=0x09{return Err(format!("IRQ1 through INT {vector:02X}h (PIC base moved), which has no program handler, is not modelled"));}
         console::enqueue(p,word)
     }
+    fn key_edge(&mut self,ascii:u8,scan:u8,down:bool)->Result<bool,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        if keyboard::hooked(p)?{return keyboard::edge(p,u16::from(scan)<<8|u16::from(ascii),down);}
+        if down{self.key(ascii,scan)}else{Ok(true)}
+    }
     /// The active text page as character/attribute pairs, its width and the cursor.
     pub fn screen(&self)->Result<(Vec<u8>,u32,(u32,u32)),String>{
         let p=self.loaded.as_ref().ok_or("session state lost")?;
@@ -96,34 +101,49 @@ impl Session{
             for n in 0..15{match p.image.fetch_signature(&p.ram,p.cpu.eip,n+1){Ok(b)=>bytes.push(b[n as usize]),Err(_)=>break}}
             format!("\"instruction_bytes\":\"{}\",\"registers\":{:?},\"selectors\":{:?},\"eflags\":{},\"msw\":{}",bytes.iter().map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" "),p.cpu.regs,p.selectors,p.cpu.eflags,p.image.msw)
         }).unwrap_or_else(||"\"instruction_bytes\":\"\"".into());
-        let graphics=self.loaded.as_ref().and_then(|p|if p.ram.load(0x449,MemWidth::Byte).ok()==Some(0x13){
-            Some(p.ram.bytes()[0xa0000..0xafa00].iter().map(|b|format!("{b:02x}")).collect::<String>())
-        }else{None}).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()));
+        let graphics=self.loaded.as_ref().and_then(super::planar::mode13_snapshot).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()));
         let cga=self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
-            Some(mode @ (4|5|6))=>Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
-                p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color())),
+            Some(bios_mode @ (4|5|6))=>{let mode=if bios_mode==6{6}else if p.vga.cga_mode()&4!=0{5}else{4};Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
+                p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color()))},
             _=>None,
         }).unwrap_or_default();
         // 16-colour planar modes: each plane's used bytes, then the 16 RGB colours.
         let planar=self.loaded.as_ref().and_then(super::planar::snapshot).map(|(mode,g,planes,rgb)|
             format!(",\"graphics_planar\":\"{planes}\",\"planar_mode\":{mode},\"planar_width\":{},\"planar_height\":{},\"planar_rgb\":\"{rgb}\"",g.width,g.height)).unwrap_or_default();
+        let raw_keyboard=self.loaded.as_ref().is_some_and(|p|keyboard::hooked(p).unwrap_or(false));
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
         let(blocks,native)=self.backend.as_ref().map_or((0,0),|b|b.block_stats());
-        let diagnostic=format!("{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}");
-        Ok(format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
-            quote(text),quote(&detail),self.steps,self.idle_hint,quote(&String::from_utf8_lossy(output))))
+        let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
+        let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}",mode_control&8!=0,mode_control&0x20!=0);
+        Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
+            quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
     pub fn command(&mut self,seq:u64,line:&str)->Result<(String,bool),String>{
         let words:Vec<&str>=line.split_whitespace().collect();
+        // Execute without serializing a framebuffer. The frontend requests a
+        // full snapshot when it is ready to present the latest buffered state.
+        if let ["run",n,"buffered"]=words.as_slice(){
+            if let Ok(n)=n.parse::<usize>(){if (1..=MAX_STEPS).contains(&n){
+                let output=self.run(n)?;let(status,detail)=self.status();
+                let p=self.loaded.as_mut().ok_or("session state lost")?;
+                let com1= p.com1.as_mut().map_or(Vec::new(),|s|std::mem::take(&mut s.tx));
+                let hex:String=com1.iter().map(|b|format!("{b:02x}")).collect();
+                return Ok((format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":true,\"frame_pending\":true,\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"beeps\":{},\"tone\":{},\"com1\":\"{hex}\",\"output\":{}}}",quote(&detail),self.steps,self.idle_hint,p.speaker.beeps,p.speaker.tone(),quote(&crate::dos_encoding::decode(&output))),false));
+            }}
+        }
         let mut output=Vec::new();
         let(ok,text,quit)=match words.as_slice(){
             []|["snapshot"]=>(true,String::new(),false),
             ["run",n]=>match n.parse::<usize>(){
                 Ok(n) if (1..=MAX_STEPS).contains(&n)=>{output=self.run(n)?;(true,String::new(),false)},
                 _=>(false,"run budget must be 1..1000000".into(),false),
+            },
+            [direction @ ("keydown"|"keyup"),a,s]=>match(a.parse::<u8>(),s.parse::<u8>()){
+                (Ok(a),Ok(s))=>if self.key_edge(a,s,*direction=="keydown")?{(true,String::new(),false)}else{(false,"keyboard scan codes still waiting for the program".into(),false)},
+                _=>(false,"key edge needs ASCII and scan code bytes".into(),false),
             },
             ["key",a,s]=>match(a.parse::<u8>(),s.parse::<u8>()){
                 (Ok(a),Ok(s))=>if self.key(a,s)?{(true,String::new(),false)}else{(false,"BIOS keyboard buffer full".into(),false)},

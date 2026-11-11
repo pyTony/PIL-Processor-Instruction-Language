@@ -837,9 +837,11 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             let Some(i)=open_file(p,"read from")? else{return Ok(())};
             if p.drive.files[i].mode==1{fail(p,5);return Ok(());}
             let offset=p.cpu.regs[2]&0xffff;let wanted=p.cpu.regs[1]&0xffff;
-            if offset+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
             let file=&p.drive.files[i];let start=(file.pos as usize).min(file.data.len());
             let count=(wanted as usize).min(file.data.len()-start);let bytes=file.data[start..start+count].to_vec();
+            // A short read only touches the bytes returned, not the entire
+            // requested buffer. Large CX probes are common in DOS loaders.
+            if offset+count as u32>0x10000{fail(p,5);return Ok(());}
             store_ds(p,offset,&bytes)?;
             p.drive.files[i].pos+=count as u32;set_ax(p,count as u32);ok(p);
         },

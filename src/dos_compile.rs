@@ -1,32 +1,23 @@
 //! Collect instruction sites without exposing host drives to the guest.
 //! Generated instructions are a partial backend; all other work stays in Dine.
-use crate::{address,dos,guest,Cpu,ExecError,Program,Ram,View};
-use std::collections::BTreeMap;
+use crate::{address,dos,guest,Cpu,ExecError,Ram};
+use crate::dos_codegen::{self,Bindings,BlockAdapter};
+use crate::dos_blocks::{Site,InstructionProfile,BlockPlan};
+use std::collections::{BTreeMap,BTreeSet};
 use std::fmt::Write as _;
 
-#[derive(Clone)]
-struct Site { signature:Vec<u8>, program:Program, dst:View, src:View, next:u32, flow:crate::FlowContext, address:Option<address::AddressContext>, machine:address::SegmentState, profile:InstructionProfile }
-// Conservative capability tags derived from PIL semantics, not just observed
-// branch outcomes. They are compile-time choices, not checks in the hot loop.
-#[derive(Clone,Copy,Debug)]
-struct InstructionProfile {register_only:bool,stores:bool,changes_context:bool,memory:bool}
-impl InstructionProfile {
-    fn of(p:&Program,address:Option<address::AddressContext>)->Self{
-        Self{register_only:address.is_none()&&unpaged_register_only(p),memory:p.uses_memory,
-            stores:p.tokens.iter().any(|t|matches!(t,crate::Token::Store(..)|crate::Token::StoreIf(..)|crate::Token::StoreSegment(..))),
-            changes_context:p.tokens.iter().any(|t|matches!(t,crate::Token::WriteControl(..)|crate::Token::WriteTable(..)|crate::Token::LoadSystem(..)|crate::Token::FarBranch(..)|crate::Token::FarJump(..)|crate::Token::FarCall(..)|crate::Token::FarReturn(..)|crate::Token::WriteSegment(..)))}
-    }
-    fn tag(self)->&'static str{if self.changes_context{"machine-context"}else if self.memory||self.stores{"memory"}else if self.register_only{"register-only"}else{"guarded"}}
-}
-struct Recorder<'a> { original:&'a [u8], sites:BTreeMap<u32,Site> }
+struct Recorder<'a> { original:&'a [u8], sites:BTreeMap<u32,Site>, visits:BTreeMap<u32,u64>, entries:BTreeSet<u32>, previous:Option<(u32,bool)> }
 impl dos::InstructionBackend for Recorder<'_> {
     fn may_block(&mut self,_:&dos::ProgramIdentity,_:&guest::Image,_:&Ram,_:u32)->bool{false}
     fn execute(&mut self,active:&dos::ProgramIdentity,image:&guest::Image,decoded:&std::rc::Rc<guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,_:&mut address::SegmentState)->Option<Result<(),ExecError>> {
         // EXEC children share logical instruction offsets with their parent.
         // Only collect code belonging to the executable this backend targets.
         if active.bytes.as_slice()!=self.original{return None;}
-        if self.sites.len()>=65_536||self.sites.contains_key(&cpu.eip){return None;}
+        *self.visits.entry(cpu.eip).or_default()+=1;
         if let guest::Operation::Pil{program,dst,src,flow,address}=&decoded.operation {
+            if self.previous.is_none_or(|(next,transfer)|transfer||next!=cpu.eip){self.entries.insert(cpu.eip);}
+            self.previous=Some((flow.next_eip,program.uses_flow));
+            if self.sites.len()>=65_536||self.sites.contains_key(&cpu.eip){return None;}
             if let Ok(signature)=image.fetch_signature(ram,cpu.eip,decoded.length){
                 self.sites.insert(cpu.eip,Site{signature:signature[..decoded.length as usize].to_vec(),program:program.clone(),dst:*dst,src:*src,next:flow.next_eip,flow:*flow,address:*address,machine:image.segment_state(),profile:InstructionProfile::of(program,*address)});
             }
@@ -35,56 +26,19 @@ impl dos::InstructionBackend for Recorder<'_> {
     }
 }
 
-// Bounded compiled blocks; code and machine identity are checked once at
-// entry. A store or control transfer ends the block, so changed code and
-// machine contexts are revalidated before the next block executes.
-fn block_sequence<'a>(sites:&'a BTreeMap<u32,Site>,start:u32)->Vec<(u32,&'a Site)>{
-    let mut seq=Vec::new();let mut ip=start;
-    while seq.len()<16 {
-        let Some(site)=sites.get(&ip) else{break};
-        if site.program.partial{break;}
-        if seq.first().is_some_and(|(_,first):&(u32,&Site)|first.machine!=site.machine){break;}
-        seq.push((ip,site));
-        if site.program.uses_flow||site.profile.stores||site.profile.changes_context||site.next<=ip{break;}
-        ip=site.next;
+struct DineBlocks;
+impl BlockAdapter for DineBlocks {
+    fn header(&self,start:u32)->String{format!("#[inline(never)] fn block_{start:x}(cpu:&mut Cpu,ram:&mut Ram,machine:&mut address::SegmentState)->(usize,Result<(),crate::ExecError>){{\n")}
+    fn instruction(&self,ip:u32,site:&Site,n:usize)->String{
+        let call=dos_codegen::instruction_call(ip,site,&Bindings{regs:"&mut cpu.regs",flags:"&mut cpu.eflags",undefined:"&mut cpu.undefined_flags",eip:"&mut cpu.eip",ram:"ram",machine:"machine"},true);
+        format!("if let Err(e)={call}{{return ({n},Err(e));}}\n")
     }
-    seq
+    fn footer(&self,length:usize)->String{format!("({length},Ok(()))\n}}\n")}
 }
-// These register-only PIL operations cannot touch memory, change the address
-// space or produce a partial instruction. In an unpaged block they need no
-// per-instruction RAM paging synchronization. Everything else uses the
-// ordinary generated wrapper, including instructions that may change mode.
-pub(crate) fn unpaged_register_only(p:&Program)->bool{
-    !p.uses_memory && !p.partial && !p.checkpoint_flags && p.tokens.iter().all(|t|matches!(t,
-        crate::Token::Read(..)|crate::Token::ReadFlag(..)|crate::Token::ReadFlags(..)|
-        crate::Token::ReadGpr(..)|crate::Token::WriteGpr(..)|crate::Token::ReadIp(..)|
-        crate::Token::ReadDisp(..)|crate::Token::BranchIf(..)|crate::Token::PreserveFlags(..)|
-        crate::Token::UndefFlag(..)|crate::Token::Select(..)|crate::Token::WriteIf(..)|
-        crate::Token::WriteSource(..)|crate::Token::WriteSourceIf(..)|crate::Token::Const(..)|
-        crate::Token::Extend(..)|crate::Token::SignExtend(..)|crate::Token::Truncate(..)|
-        crate::Token::Binary(..)|crate::Token::Shift(..)|crate::Token::Less(..)|
-        crate::Token::FlagIf(..)|crate::Token::Not(..)|crate::Token::Bit(..)|
-        crate::Token::Zero(..)|crate::Token::Parity(..)|crate::Token::Write(..)|
-        crate::Token::Flag(..)|crate::Token::Retire))
-}
-fn emit_blocks(sites:&BTreeMap<u32,Site>)->String {
+fn emit_block_cases(sites:&BTreeMap<u32,Site>,plan:&BlockPlan)->String {
     let mut out=String::new();
     for &start in sites.keys(){
-        let sequence=block_sequence(sites,start);
-        if sequence.is_empty(){continue;}
-        writeln!(out,"#[inline(never)] fn block_{start:x}(cpu:&mut Cpu,ram:&mut Ram,machine:&mut address::SegmentState)->(usize,Result<(),crate::ExecError>){{").unwrap();
-        for (n,(ip,site)) in sequence.iter().enumerate(){
-            let method=if site.profile.register_only{"execute_unpaged_register"}else{"execute_with_machine"};
-            writeln!(out,"if let Err(e)=ins_{ip:x}::{method}(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,({},{}) ,({},{}) ,{:?},ram,{:?},machine){{return ({n},Err(e));}}",site.dst.register,site.dst.low,site.src.register,site.src.low,site.flow,site.address).unwrap();
-        }
-        writeln!(out,"({},Ok(()))\n}}",sequence.len()).unwrap();
-    }
-    out
-}
-fn emit_block_cases(sites:&BTreeMap<u32,Site>)->String {
-    let mut out=String::new();
-    for &start in sites.keys(){
-        let seq=block_sequence(sites,start);if seq.is_empty(){continue;}
+        let seq=plan.sequence(sites,start);if seq.is_empty(){continue;}
         let mut bytes=Vec::new();for (_,site) in &seq{bytes.extend_from_slice(&site.signature);}
         let state=seq[0].1.machine;
         writeln!(out,"{start} if remaining>={} && compatible(machine,&{:?}) && code_matches(image,ram,{start},&{:?}) => Some(block_{start:x}(cpu,ram,machine)),",seq.len(),state,bytes).unwrap();
@@ -93,30 +47,62 @@ fn emit_block_cases(sites:&BTreeMap<u32,Site>)->String {
 }
 
 /// Emit a Rust backend module; the caller chooses where it will be built.
+#[cfg(test)]
 pub(crate) fn emit(bytes:&[u8],name:&str)->Result<(String,String),String>{
+    emit_trained(bytes,name,&[],120_000_000,65_536)
+}
+/// Training keystrokes stay inside the isolated DOS machine: no host-folder
+/// mounts are exposed to the profiled program.
+pub(crate) fn emit_trained(bytes:&[u8],name:&str,keys:&[u8],steps:usize,max_sites:usize)->Result<(String,String),String>{
+    if !(1..=120_000_000).contains(&steps)||!(1..=65_536).contains(&max_sites){return Err("invalid profiling budget or site limit".into());}
     if !crate::containers::executable(name){return Err("expected a DOS .COM or .EXE file".into());}
     let mut p=dos::load_with_drives(bytes,name,vec![dos::Source::Empty,dos::Source::Memory(dos::MemDir::default())],None)?;
-    let mut recorder=Recorder{original:bytes,sites:BTreeMap::new()};
+    let entry=p.cpu.eip;
+    let mut recorder=Recorder{original:bytes,sites:BTreeMap::new(),visits:BTreeMap::new(),entries:BTreeSet::new(),previous:None};
     let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
     // A single DOS slice is limited to one million steps. Keep the recorder
     // across slices until the program exits, waits for input, or reaches the
     // explicit profiling limit, so longer programs aren't truncated early.
-    let mut slices=0;
+    let mut slices=0;let mut used=0;let mut key_at=0;let mut next_progress=1_000_000;
     let stop=loop {
-        let result=dos::run_with_backend(p,dos::MAX_STEPS,&mut output,Some(&mut recorder))?;
-        slices+=1;
-        if !matches!(result.stop,dos::Stop::Budget)||slices==120 {break result.stop;}
+        // Give interactive startup time to initialize/flush its BIOS input
+        // queue before replaying a script (not a workload-completion signal).
+        let ready=keys.is_empty()||used>=steps.min(500_000);
+        if ready&&key_at<keys.len(){
+            let b=keys[key_at];let scan=if b==13{28}else{0};
+            if p.enqueue_key(u16::from(b)|(scan<<8))?{key_at+=1;}
+        }
+        let quantum=if !ready{50_000}else if key_at<keys.len(){10_000}else{dos::MAX_STEPS};
+        let budget=quantum.min(steps-used);
+        let result=dos::run_with_backend(p,budget,&mut output,Some(&mut recorder))?;
+        slices+=1;used+=budget;
+        if used>=next_progress||!matches!(result.stop,dos::Stop::Budget|dos::Stop::WaitingForInput){
+            eprintln!("DOS profile: budget {used}/{steps}; {} sites; stop {:?}",recorder.sites.len(),result.stop);
+            next_progress=used.saturating_add(1_000_000);
+        }
+        if !matches!(result.stop,dos::Stop::Budget|dos::Stop::WaitingForInput)||used==steps||matches!(result.stop,dos::Stop::WaitingForInput)&&key_at==keys.len(){break result.stop;}
         p=result.loaded;
     };
     if recorder.sites.is_empty(){return Err(format!("no PIL instructions recorded; profiling stop: {stop:?}"));}
-    let status=format!("profile stop: {stop:?}; {} instruction sites; {slices} slices",recorder.sites.len());
+    let recorded=recorder.sites.len();
+    if recorder.sites.len()>max_sites{
+        let plan=BlockPlan::new(&recorder.sites,recorder.entries.iter().copied());
+        let mut keep:std::collections::BTreeSet<_>=plan.sequence(&recorder.sites,entry).into_iter().take(max_sites).map(|(ip,_)|ip).collect();
+        let mut ranked:Vec<_>=recorder.sites.keys().copied().collect();
+        ranked.sort_by_key(|ip|(std::cmp::Reverse(recorder.visits.get(ip).copied().unwrap_or(0)),*ip));
+        for ip in ranked{if keep.len()==max_sites{break;}keep.insert(ip);}
+        recorder.sites.retain(|ip,_|keep.contains(ip));
+    }
+    let captured=output.into_bytes();let tail=&captured[captured.len().saturating_sub(512)..];
+    let status=format!("profile stop: {stop:?}; {} instruction sites ({recorded} observed); {slices} slices; {key_at}/{} training keys queued; output tail: {:?}",recorder.sites.len(),keys.len(),String::from_utf8_lossy(tail));
     let mut counts:BTreeMap<&str,usize>=BTreeMap::new();
     for site in recorder.sites.values(){*counts.entry(site.profile.tag()).or_default()+=1;}
     let status=format!("{status}; instruction profiles: {counts:?}");
-    let blocks=emit_blocks(&recorder.sites);
-    let block_cases=emit_block_cases(&recorder.sites);
+    let plan=BlockPlan::new(&recorder.sites,recorder.entries.iter().copied());
+    let blocks=dos_codegen::emit_blocks(&recorder.sites,&plan,&DineBlocks);
+    let block_cases=emit_block_cases(&recorder.sites,&plan);
     let entries=|block:bool|{
-        let cases=recorder.sites.iter().filter(|&(&ip,_)|!block||!block_sequence(&recorder.sites,ip).is_empty()).map(|(ip,site)|format!("{ip}=>code_matches(image,ram,ip,&{:?}),",site.signature)).collect::<String>();
+        let cases=recorder.sites.iter().filter(|&(&ip,_)|!block||plan.contains(ip)).map(|(ip,site)|format!("{ip}=>code_matches(image,ram,ip,&{:?}),",site.signature)).collect::<String>();
         format!("match ip {{{cases}_=>false}}")
     };
     let block_entries=entries(true);let instruction_entries=entries(false);
@@ -124,13 +110,7 @@ pub(crate) fn emit(bytes:&[u8],name:&str)->Result<(String,String),String>{
     for (ip,site) in &recorder.sites {
         let Site{signature,program,..}=site;
         writeln!(modules,"// instruction {ip:x}: {}",site.profile.tag()).unwrap();
-        writeln!(modules,"mod ins_{ip:x} {{use crate::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {} }}",crate::emit_rust_functions(&program).replace("fn execute_state(","#[inline(always)] fn execute_state(").replace("pub fn execute_with_machine(","#[inline(always)] pub fn execute_with_machine(")).unwrap();
-        if site.profile.register_only{
-            // Insert inside the module so the same emitted execute_state is
-            // used; the block's entry guard already requires unpaged RAM.
-            modules.truncate(modules.len()-3);
-            modules.push_str("#[inline(always)] pub fn execute_unpaged_register(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,_ram:&mut Ram,_address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,Some(machine),None)}\n }\n");
-        }
+        modules.push_str(&dos_codegen::instruction_module(*ip,program));
         let fingerprint=format!("{program:?}");
         writeln!(cases,"{ip} if image.fetch_signature(ram,cpu.eip,{len}).ok().is_some_and(|s|s[..{len}]=={signature:?}) && self.matches(cpu.eip,decoded,||format!(\"{{program:?}}\")=={fingerprint:?}) => ins_{ip:x}::execute_with_machine(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,ram,*address,machine),",len=signature.len()).unwrap();
     }
@@ -284,6 +264,19 @@ mod guard_tests {{
 mod tests {
     use super::*;
     #[test]
+    fn observed_indirect_target_splits_a_previously_linear_block(){
+        // First pass falls through INC AX to INC DX; later JMP BX enters INC DX.
+        // There is no direct relative edge naming that interior target.
+        let bytes=[0xb9,2,0,0x40,0x42,0x49,0x74,5,0xbb,4,1,0xff,0xe3,0xb4,0x4c,0xcd,0x21];
+        let (source,status)=emit(&bytes,"INDIRECT.COM").unwrap();
+        assert!(status.contains("Exit(1)"),"{status}");
+        let block=source.split("fn block_100(").nth(1).unwrap().split("\n}\n").next().unwrap();
+        assert!(block.contains("ins_100::")&&block.contains("ins_103::"));
+        assert!(!block.contains("ins_104::"));
+        let target=source.split("fn block_104(").nth(1).unwrap().split("\n}\n").next().unwrap();
+        for ip in ["104","105","106"]{assert!(target.contains(&format!("ins_{ip}::")));}
+    }
+    #[test]
     fn instruction_profiles_select_ram_free_execution_only_when_proven(){
         // Register MOV, memory MOV, segment MOV, then DOS exit.
         let bytes=[0xb8,0,0,0xa1,0,1,0x8e,0xd8,0xb8,0,0x4c,0xcd,0x21];
@@ -309,6 +302,14 @@ mod tests {
         assert!(source.contains("mod ins_f {"));
         assert!(source.contains("ins_f::execute_with_machine"));
         assert!(!source.contains("mod if {")&&!source.contains("if::execute"));
+    }
+    #[test]
+    fn training_replays_input_and_limits_generated_sites(){
+        let bytes=[0xb4,0,0xcd,0x16,0xb8,0,0x4c,0xcd,0x21];
+        let(source,status)=emit_trained(&bytes,"KEY.COM",b"\r",1_000_000,1).unwrap();
+        assert!(status.contains("Exit(0)"),"{status}");
+        assert!(status.contains("1 instruction sites (2 observed)"),"{status}");
+        assert!(status.contains("1/1 training keys queued"));assert!(source.contains("const ORIGINAL"));
     }
     #[test]
     fn emitted_block_ends_at_a_branch() {

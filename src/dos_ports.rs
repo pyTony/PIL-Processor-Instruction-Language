@@ -78,25 +78,25 @@ impl Speaker{
 /// `Ok(None)` for any other instruction.
 /// The port and byte count of the unprefixed IN or OUT at CS:EIP, for the
 /// protected-mode I/O permission check before `io` answers it.
-pub(super) fn access(p:&Loaded)->Option<(u16,u8)>{
-    let first=p.image.fetch_signature(&p.ram,p.cpu.eip,1).ok()?[0];
+fn instruction(p:&Loaded)->Option<(u8,u16,u32,u8)>{
+    let mut at=0u32;let mut operand=false;
+    let first=loop{
+        if at>=15{return None;}
+        let byte=p.image.fetch_signature(&p.ram,p.cpu.eip,at+1).ok()?[at as usize];at+=1;
+        match byte{0x66=>operand=true,0x67|0x26|0x2e|0x36|0x3e|0x64|0x65|0xf2|0xf3=>{},_=>break byte}
+    };
     let port=match first{
-        0xe4..=0xe7=>u16::from(p.image.fetch_signature(&p.ram,p.cpu.eip,2).ok()?[1]),
+        0xe4..=0xe7=>{if at>=15{return None;}let byte=p.image.fetch_signature(&p.ram,p.cpu.eip,at+1).ok()?[at as usize];at+=1;u16::from(byte)},
         0xec..=0xef=>(p.cpu.regs[2]&0xffff)as u16,
         _=>return None,
     };
-    Some((port,if first&1==0{1}else if p.image.segments[1].default_32(){4}else{2}))
+    let width=if first&1==0{1}else if p.image.segments[1].default_32()^operand{4}else{2};
+    Some((first,port,at,width))
 }
+pub(super) fn access(p:&Loaded)->Option<(u16,u8)>{instruction(p).map(|(_,port,_,width)|(port,width))}
 pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
-    let Ok(first)=p.image.fetch_signature(&p.ram,p.cpu.eip,1).map(|b|b[0])else{return Ok(None)};
-    let(port,length)=match first{
-        0xe4..=0xe7=>{
-            let Ok(bytes)=p.image.fetch_signature(&p.ram,p.cpu.eip,2)else{return Ok(None)};
-            (u16::from(bytes[1]),2)
-        },
-        0xec..=0xef=>((p.cpu.regs[2]&0xffff)as u16,1),
-        _=>return Ok(None),
-    };
+    let Some((first,port,length,width))=instruction(p)else{return Ok(None)};
+    if width==4{return Err(format!("dword I/O at port {port:04x}h is not modelled in Dine"));}
     let input=first&2==0;
     if matches!(port,0x3c0|0x3c1|0x3c4|0x3c5|0x3ce|0x3cf){
         let word=first&1!=0;
@@ -104,7 +104,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
         return Ok(Some(length));
     }
-    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3c6..=0x3c9|0x3d9){
+    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3cd|0x3de|0x3df|0x3c6..=0x3c9|0x3d8|0x3d9){
         let word=first&1!=0;
         if word&&!matches!(port,0x3b4|0x3d4){return Err("VGA word access must start at CRTC index port 3B4h or 3D4h".into());}
         let mut device=p.vga.clone();
@@ -189,6 +189,9 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         }
         return Ok(Some(length));
     }
+    // DOS benchmarks turn off diskette motors while measuring. This does
+    // not issue a disk command; controller/data accesses remain unsupported.
+    if port==0x3f2&&!input&&p.cpu.regs[0]&0xf0==0{return Ok(Some(length));}
     let s=&mut p.speaker;
     if input{
         let value=match port{
@@ -259,7 +262,9 @@ fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         0x14=>p.fpu.equipment(0x20) as u8,
         0x15=>0x80,0x16=>0x02,
         // No expansion card or pending setup notice in the POST information byte.
-        0x17|0x18|0x30|0x31|0x33=>0,
+        0x17|0x30=>(p.ram.bytes().len().saturating_sub(0x100000)/1024).min(0xffff)as u8,
+        0x18|0x31=>((p.ram.bytes().len().saturating_sub(0x100000)/1024).min(0xffff)>>8)as u8,
+        0x33=>0,
         _=>return Err(format!("CMOS register {index:02x}h is not modelled")),
     })
 }

@@ -12,6 +12,8 @@ const DOS_COMPAT_VERSION:u16=0x1606; // major6, minor22 decimal
 const PSP:u16=0x1000;
 const LOAD:u16=PSP+0x10;
 const LIMIT:usize=0xa0000;
+/// Physical RAM; DOS MCB allocations still end at the 640 KiB LIMIT.
+const PHYSICAL_RAM:usize=16*1024*1024;
 /// Paragraphs of the environment block the probe gives each program.
 const ENV_PARAS:u16=0x10;
 const ENV:u16=PSP-1-ENV_PARAS;
@@ -225,13 +227,10 @@ pub(crate) fn select_startup_drive(p:&mut Loaded,letter:u8)->Result<(),String>{
 }
 use nls::COUNTRIES;
 /// Puts `text` in the PSP command tail at 80h as COMMAND.COM passes it: a
-/// count, a leading space, the text and CR. Printable ASCII only, up to 125
-/// characters, so that the tail fits its 127 bytes.
+/// count, a leading space, the text and CR. Unicode is encoded as CP437, up to
+/// 125 DOS bytes, so that the tail fits its 127 bytes.
 pub fn set_command_tail(p:&mut Loaded,text:&str)->Result<(),String>{
-    if text.len()>125{return Err("command line is longer than 125 characters".into());}
-    if !text.bytes().all(|b|(0x20..0x7f).contains(&b)){return Err("command line must be printable ASCII".into());}
-    let mut tail=vec![text.len() as u8+1,b' '];tail.extend(text.bytes());tail.push(0x0d);
-    p.ram.write_bytes(u32::from(PSP)*16+0x80,&tail).map_err(|e|format!("{e:?}"))
+    crate::dos_runtime::command_tail(&mut p.ram,u32::from(PSP)*16,text)
 }
 /// Loads a program with no drives: A: is an empty read-only drive.
 pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{load_with_drives(bytes,name,Vec::new(),None)}
@@ -300,7 +299,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     }else if bytes.len()>0xff00{return Err("COM input exceeds 65280-byte single-segment limit".into());}
     // Conventional memory plus the 64 KiB high-memory area; DOS starts with
     // A20 masked. This does not advertise extended-memory or protected-mode support.
-    let mut ram=Ram::new(0x110000);ram.set_a20_enabled(false);
+    let mut ram=Ram::new(PHYSICAL_RAM);ram.set_a20_enabled(false);
     console::initialize(&mut ram)?;
     rom(&mut ram)?;
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
@@ -325,6 +324,8 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     let mut system=[(0,0);SYSTEM_RANGES];
     system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
     system[1]=(vectors::ENTRIES,vectors::END);
+    // Raw DOS extenders load executable code above 1 MiB themselves.
+    system[2]=(0x100000,PHYSICAL_RAM as u32);
     Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
@@ -695,7 +696,7 @@ fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; 80387 unavailable (no coprocessor installed); PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; no LFN API, extended memory or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; colour VGA INT10 (AH10 palette/DAC, AX1130 8x8 font, AH12 BL10, AH1A; 16-colour planar modes 0D/0E/10/12; no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K, no extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; 80387 unavailable (no coprocessor installed); PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; 16 MiB physical RAM (15 MiB extended, AH88/CMOS); no LFN API, XMS or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; colour VGA INT10 (AH10 palette/DAC, AX1130 8x8 font, AH12 BL10, AH1A; 16-colour planar modes 0D/0E/10/12; no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K conventional and 15 MiB extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{

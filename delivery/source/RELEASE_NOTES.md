@@ -1,3 +1,32 @@
+# PIL 0.37.0-alpha.2
+
+- Fix Doom shutdown with BIOS RTC time/date reads (INT1A AH02/AH04), using
+  one coherent session-clock sample and preserving unrelated state.
+- Send separate physical key-down/key-up events to guest keyboard handlers;
+  3DBench can observe ESC held down and return to DOS. Console input and
+  older engines retain the existing key protocol. Focus loss releases keys.
+- Verified both programs return to a FreeCOM prompt; 685 Rust and 37
+  frontend tests pass. Third-party game assets are not distributed.
+
+# PIL 0.37.0-alpha.1
+
+DOS Doom and Superscape 3DBench now render through the ordinary release
+interpreter. No shadow programs or game assets are included.
+
+- Check AH3F short-read bounds against the bytes returned.
+- Supply 16 MiB physical RAM (15 MiB extended) with coherent AH88/CMOS
+  reporting; retain the 640 KiB DOS arena and initial disabled A20.
+- Deliver protected-mode timer/keyboard IRQs through the IDT, keeping
+  PIC masks, instruction shadows and EOI; handle prefixed word port I/O.
+- Support 320x200 unchained VGA planes, plane masks and page starts.
+- Reject absent DOS-extender probes without claiming a resident driver.
+- Probe ENTER's final stack-pointer byte for write access before commit.
+
+Local Windows release: changing Doom gameplay and an ESC-opened menu;
+3DBench renders its scene and displays a score. No completed Doom timedemo
+score, sound output, full test386 ROM pass or task switching is claimed.
+See [DOS games](DOS_GAMES.md) for reproduction and current limits.
+
 # PIL 0.35.0-alpha.1
 
 ## 0.35: Unsigned division (DIV) and foundational BIOS / DOS service shims

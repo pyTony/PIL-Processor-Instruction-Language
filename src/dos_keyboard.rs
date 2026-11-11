@@ -41,7 +41,7 @@ impl Keyboard{
 /// Whether keys go through IRQ1 to a program's INT 09h handler. A handler
 /// left behind in memory Dine cannot run (a resident program's) is passed
 /// by, as before: keys then go straight into the ring.
-pub(super) fn hooked(p:&Loaded)->Result<bool,String>{Ok(!p.rom_mode&&vectors::reachable(p,p.speaker.pic.keyboard_vector())?)}
+pub(super) fn hooked(p:&Loaded)->Result<bool,String>{Ok(!p.rom_mode&&(!p.image.real_mode||vectors::reachable(p,p.speaker.pic.keyboard_vector())?))}
 /// The make code of the key that produced a BIOS scan code: Ctrl, Alt and
 /// Shift variants (F11/F12, Ctrl+arrows, Alt+digits, ...) come from the same
 /// physical key. 0 is an Alt+keypad character, stored when Alt goes up.
@@ -67,6 +67,13 @@ fn push(p:&mut Loaded,codes:&[Code])->Result<bool,String>{
 }
 /// A key from the host as its BIOS word: the make code with the word, then
 /// the release. Alt+keypad characters come with Alt's release instead.
+/// One physical press or release. A press remains held until its matching
+/// release arrives, so a guest that samples a key-state table can observe it.
+pub(super) fn edge(p:&mut Loaded,word:u16,down:bool)->Result<bool,String>{
+    let raw=make((word>>8)as u8);
+    if raw==0xb8&&!down{return Ok(true);}
+    push(p,&[Code{raw:raw|if down{0}else{0x80},word:down.then_some(word)}])
+}
 pub(super) fn key(p:&mut Loaded,word:u16)->Result<bool,String>{
     let raw=make((word>>8)as u8);
     if raw==0xb8{return push(p,&[Code{raw,word:Some(word)}]);}

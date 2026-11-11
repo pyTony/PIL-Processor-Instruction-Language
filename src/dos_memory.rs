@@ -26,11 +26,27 @@ impl Arena{
     }
     fn largest(&self)->u16{self.blocks.iter().filter(|b|b.owner==0).map(|b|b.size).max().unwrap_or(0)}
     /// An allocated block by its segment, whichever PSP owns it (FreeDOS checks only the MCB).
-    fn owned(&self,segment:u16)->Option<usize>{self.blocks.iter().position(|b|b.header+1==segment&&b.owner!=0)}
+    pub(super) fn owned(&self,segment:u16)->Option<usize>{self.blocks.iter().position(|b|b.header+1==segment&&b.owner!=0)}
+    /// Checks if `segment` falls inside any block (including its MCB header or interior).
+    pub(super) fn find_segment(&self,segment:u16)->Option<(u16,u16,u16)>{
+        self.blocks.iter().find(|b|segment>=b.header&&segment<=b.header+b.size).map(|b|(b.header,b.owner,b.size))
+    }
+    /// Returns the owner of the block starting at `segment`.
+    #[cfg(test)]
+    pub(super) fn block_owner(&self,segment:u16)->Option<u16>{
+        self.blocks.iter().find(|b|b.header+1==segment).map(|b|b.owner)
+    }
+    /// Returns the first segment of the first free block in the arena.
+    #[cfg(test)]
+    pub(super) fn first_free_segment(&self)->Option<u16>{
+        self.blocks.iter().find(|b|b.owner==0).map(|b|b.header+1)
+    }
     /// Hands the block at `segment` to `owner` (EXEC gives the child its blocks).
     pub(super) fn set_owner(&mut self,ram:&mut Ram,segment:u16,owner:u16)->Result<(),String>{
-        let i=self.owned(segment).ok_or("EXEC block is not allocated")?;self.blocks[i].owner=owner;
-        ram.write_bytes(u32::from(self.blocks[i].header)*16+1,&owner.to_le_bytes()).map_err(|e|format!("DOS MCB owner write: {e:?}"))
+        let i=self.owned(segment).ok_or("EXEC block is not allocated")?;
+        ram.write_bytes(u32::from(self.blocks[i].header)*16+1,&owner.to_le_bytes()).map_err(|e|format!("DOS MCB owner write: {e:?}"))?;
+        self.blocks[i].owner=owner;
+        Ok(())
     }
     /// Frees every block `owner` holds except `keep` (a TSR's resident block).
     pub(super) fn release(&mut self,ram:&mut Ram,owner:u16,keep:Option<u16>)->Result<(),String>{
