@@ -1,3 +1,7 @@
+// Reusing the CLI crate root as a cdylib intentionally leaves CLI-only
+// functions unreachable. Suppress that library-only dead-code noise, while
+// retaining normal lint warnings in the pil executable build.
+#![cfg_attr(feature = "dine-library", allow(dead_code))]
 //! PIL proof: text -> validated typed tokens -> register/flag interpreter.
 //! Token interpreter, small 386 decoder and Rust-source emitter; no external crates.
 use std::collections::HashMap;
