@@ -501,6 +501,14 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(term.key_code('Return', '\r'), (13, 0x1c))
         self.assertEqual(term.key_code('Up', ''), (0, 0x48))
         self.assertEqual(term.key_code('F10', ''), (0, 0x44))
+        self.assertEqual(term.key_code('F9', ''), (0, 0x43))  # Turbo: Compile
+        self.assertEqual(term.key_code('F9', '', control=True), (0, 0x66))  # Turbo: Run
+        self.assertEqual(term.key_code('F9', '', shift=True), (0, 0x5c))
+        self.assertEqual(term.key_code('F9', '', alt=True), (0, 0x70))
+        for n in range(1, 11):
+            with self.subTest(function_key=n):
+                self.assertEqual(term.key_code(f'F{n}', '', control=True), (0, 0x5d + n))
+                self.assertEqual(term.key_code(f'F{n}', '', shift=True), (0, 0x53 + n))
         self.assertEqual(term.key_code('c', '\x03', True), (3, 0x2e))
         self.assertIsNone(term.key_code('Shift_L', ''))
         self.assertEqual(term.key_code('adiaeresis', 'ä'), (0x84, 0x28))
@@ -547,6 +555,11 @@ class DosTerminalTests(unittest.TestCase):
             self.assertEqual(term.event_key_code('e', 'e', 0x8, {'Alt_L'}), (0, 18))
             self.assertEqual(term.event_key_code('7', '', 0x8, {'Alt_L'}), (0, 126))
             self.assertEqual(term.event_key_code('c', '\x03', 0x4, {'Control_L'}), (3, 46))
+            self.assertEqual(term.event_key_code('F9', '', 0x4, {'Control_L'}), (0, 0x66))
+            self.assertEqual(term.event_key_code('F9', '', 0, {'Control_L'}), (0, 0x66))
+            self.assertEqual(term.event_key_code('F9', '', 0x1, {'Shift_L'}), (0, 0x5c))
+            self.assertEqual(term.event_key_code('F9', '', 0x8, {'Alt_L'}), (0, 0x70))
+            self.assertEqual(term.event_key_code('F9', '', 0x0, set()), (0, 0x43))
             self.assertEqual(term.event_key_code('7', '7', 0, set()), (55, 8))
 
     def test_utc_offsets_parse_as_hours_or_hours_and_minutes(self):
