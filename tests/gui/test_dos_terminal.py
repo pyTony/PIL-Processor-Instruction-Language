@@ -20,6 +20,27 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def test_raw_key_release_does_not_block_later_keys_for_modifier_settle(self):
+        # The keydown must reach the guest before its keyup, but no further
+        # ten idle ticks should hold that release and every following key.
+        self.assertTrue(term.defer_key_command('keyup 97 30', sent=True, settle=10))
+        self.assertFalse(term.defer_key_command('keyup 97 30', sent=False, settle=10))
+        # Alt/Ctrl/Shift state changes retain the guest run-slice delay used
+        # by Turbo and EDIT's function-key/modifier combinations.
+        self.assertTrue(term.defer_key_command('shift 0', sent=True, settle=0))
+        self.assertTrue(term.defer_key_command('shift 0', sent=False, settle=10))
+        self.assertFalse(term.defer_key_command('shift 0', sent=False, settle=0))
+        self.assertFalse(term.defer_key_command('keydown 97 30', sent=True, settle=10))
+        self.assertFalse(term.defer_key_command('key 97 30', sent=True, settle=10))
+
+    def test_queued_keyboard_input_keeps_tk_tick_fast_while_guest_is_idle(self):
+        self.assertEqual(term.next_tick_delay(True, 'waiting_input', True), 1)
+        self.assertEqual(term.next_tick_delay(True, 'running', True), 1)
+        self.assertEqual(term.next_tick_delay(False, 'waiting_input', True), 40)
+        self.assertEqual(term.next_tick_delay(False, 'running', True), 40)
+        self.assertEqual(term.next_tick_delay(False, 'running', False), 1)
+
+
     def test_partial_80387_mode_is_explicit_and_reports_bios_equipment(self):
         engine = term.find_engine()
         with tempfile.TemporaryDirectory() as directory:
