@@ -44,8 +44,8 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
             guest::Operation::Interrupt{vector:0x20,..}=>{
                 let case=format!("{ip} => Ok(Some(0)),\n");cases.push_str(&case);block_cases.push_str(&case);
             },
-            guest::Operation::Interrupt{vector:0x21,next,..}=>{
-                let case=format!("{ip} => {{ let exit=c.interrupt(0x21,output)?; c.eip={next}; c.machine.retired(); Ok(exit) }},\n");cases.push_str(&case);block_cases.push_str(&case);
+            guest::Operation::Interrupt{vector,next,..} if matches!(*vector,0x10|0x21)=>{
+                let case=format!("{ip} => {{ let exit=c.interrupt({vector},output)?; c.eip={next}; c.machine.retired(); Ok(exit) }},\n");cases.push_str(&case);block_cases.push_str(&case);
             },
             _=>return Err("unsupported operation in verified graph".into()),
         }
@@ -78,7 +78,7 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
     for span in spans {
         writeln!(source,"ram.protect({},{}).map_err(|e|format!(\"initial protection: {{e:?}}\"))?;",span.start,span.len()).unwrap();
     }
-    writeln!(source,"ram.set_a20_enabled({});\nOk(dos_runtime::Context{{regs:{:?},flags:{},undefined:{},eip:{},ram,machine:{:?},calls:Vec::new()}})\n}}",p.ram.a20_enabled(),p.cpu.regs,p.cpu.eflags,p.cpu.undefined_flags,p.cpu.eip,p.image.segment_state()).unwrap();
+    writeln!(source,"ram.set_a20_enabled({});\nOk(dos_runtime::Context{{regs:{:?},flags:{},undefined:{},eip:{},ram,machine:{:?},video:dos_runtime::VideoState::default(),calls:Vec::new()}})\n}}",p.ram.a20_enabled(),p.cpu.regs,p.cpu.eflags,p.cpu.undefined_flags,p.cpu.eip,p.image.segment_state()).unwrap();
     source.push_str("#[cfg(test)] fn step(c:&mut dos_runtime::Context,output:&mut host_io::CaptureOutput)->Result<Option<u8>,String>{match c.eip {\n");
     source.push_str(&cases);
     source.push_str("_=>Err(format!(\"unexpected compiled target {:04x}\",c.eip)),\n}}\n");
@@ -244,6 +244,20 @@ mod tests {
         let source=emit(&dos::hello("com").unwrap(),"HELLO.COM").unwrap();
         assert!(source.contains("mod dos_runtime"));assert!(source.contains("mod ins_100"));
         assert!(!source.contains("mod guest")&&!source.contains("enum Token")&&!source.contains("InstructionBackend"));
+    }
+    #[test]
+    fn video_bios_boundary_requires_proven_mode_and_service_function(){
+        // Mode 12h, cursor row 29, mode 3 restore, INT20 termination.
+        let video=[0xb8,0x12,0,0xcd,0x10,0xb4,2,0xbb,0,0,0xba,0,0x1d,0xcd,0x10,0xb8,3,0,0xcd,0x10,0xcd,0x20];
+        let source=emit(&video,"VIDEO.COM").unwrap();
+        assert!(source.contains("video:dos_runtime::VideoState::default()"));
+        assert!(source.contains("c.interrupt(16,output)"));
+        for bytes in [
+            vec![0xb4,0,0xcd,0x10,0xcd,0x20],
+            vec![0xb8,0x13,0,0xcd,0x10,0xcd,0x20],
+            vec![0xb4,3,0xcd,0x10,0xcd,0x20],
+            vec![0xcd,0x16,0xcd,0x20],
+        ]{assert!(emit(&bytes,"V.COM").is_err(),"{bytes:?}");}
     }
     #[test]
     fn unsupported_programs_are_rejected(){
