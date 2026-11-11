@@ -15,6 +15,8 @@ impl Default for VideoState {
 pub struct Context {
     pub regs:[u32;8], pub flags:u32, pub undefined:u32, pub eip:u32,
     pub ram:Ram, pub machine:SegmentState, pub video:VideoState,
+    /// An explicitly supplied BIOS scan-code/ASCII word (one-shot).
+    pub key:Option<u16>,
     /// Proven near-call return sites and operand widths; never guest memory.
     pub calls:Vec<(u32,u8)>,
 }
@@ -37,6 +39,16 @@ pub(crate) fn character_output(byte:u8,out:&impl Output)->Result<(Vec<u8>,u8),St
     let count=if byte==9{8-out.column()%8}else{1};
     if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
     Ok((vec![if byte==9{b' '}else{byte};count],if byte==9{b' '}else{byte}))
+}
+
+/// Explicit, deterministic headless BIOS key: four hex digits, scan then
+/// ASCII. The runtime never invents a key for a waiting DOS program.
+pub fn parse_key(text:&str)->Result<u16,String>{
+    let hex=text.strip_prefix("0x").or_else(||text.strip_prefix("0X")).unwrap_or(text);
+    if hex.len()!=4||!hex.bytes().all(|b|b.is_ascii_hexdigit()){
+        return Err("PIL_DOS_BIOS_KEY must be four hex digits (e.g. 1C0D for Enter)".into());
+    }
+    u16::from_str_radix(hex,16).map_err(|e|format!("invalid PIL_DOS_BIOS_KEY: {e}"))
 }
 
 /// Existing DOS PSP tail format: count, leading space, CP437 text, CR.
@@ -85,6 +97,11 @@ impl Context {
                 self.regs[0]=(self.regs[0]&!255)|0x24;
                 Ok(None)
             },
+            (0x16,0)=>{
+                let key=self.key.take().ok_or("standalone INT 16h key wait needs explicit PIL_DOS_BIOS_KEY=1C0D")?;
+                self.regs[0]=(self.regs[0]&0xffff0000)|u32::from(key);
+                Ok(None)
+            },
             (0x10,0)=>{
                 let mode=self.regs[0] as u8;
                 if !matches!(mode,3|0x12){return Err(format!("standalone BIOS mode {mode:02x} is not supported"));}
@@ -131,7 +148,7 @@ mod tests {
     #[test]
     fn character_output_returns_al_and_rejects_partial_tabs(){
         let p=crate::dos::load(&[0xcd,0x20],"T.COM").unwrap();
-        let mut c=Context{regs:p.cpu.regs,flags:0xad7,undefined:0x800,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),calls:Vec::new()};
+        let mut c=Context{regs:p.cpu.regs,flags:0xad7,undefined:0x800,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),key:None,calls:Vec::new()};
         c.regs[0]=0x123402ab;c.regs[2]=9;
         let before=(c.regs,c.flags,c.undefined,c.eip,c.machine,c.ram.clone());
         let mut out=crate::host_io::CaptureOutput::new(7);
@@ -157,7 +174,7 @@ mod tests {
     #[test]
     fn video_bios_mode_cursor_and_rejections_preserve_cpu_state(){
         let p=crate::dos::load(&[0xcd,0x20],"T.COM").unwrap();
-        let mut c=Context{regs:p.cpu.regs,flags:0x246,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),calls:Vec::new()};
+        let mut c=Context{regs:p.cpu.regs,flags:0x246,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),key:None,calls:Vec::new()};
         let mut out=crate::host_io::CaptureOutput::new(32);
         c.regs[0]=0x12;
         let before=(c.regs,c.flags,c.eip);
@@ -180,7 +197,7 @@ mod tests {
     #[test]
     fn vga_out_word_uses_shared_plane_latches_mask_and_rejects_unsupported_ports(){
         let p=crate::dos::load(&[0xcd,0x20],"V.COM").unwrap();
-        let mut c=Context{regs:p.cpu.regs,flags:0x246,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),calls:Vec::new()};
+        let mut c=Context{regs:p.cpu.regs,flags:0x246,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),key:None,calls:Vec::new()};
         let mut output=crate::host_io::CaptureOutput::new(64);
         c.regs[0]=0x12;c.interrupt(0x10,&mut output).unwrap();
         assert_eq!(c.ram.load(0x449,MemWidth::Byte).unwrap(),0x12);
@@ -203,9 +220,29 @@ mod tests {
         assert_eq!(c.ram.load(0x449,MemWidth::Byte).unwrap(),3);
     }
     #[test]
+    fn bios_key_wait_needs_one_explicit_key_and_consumes_it_once(){
+        let p=crate::dos::load(&[0xcd,0x20],"KEY.COM").unwrap();
+        let mut c=Context{regs:p.cpu.regs,flags:0x246,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),key:None,calls:Vec::new()};
+        let mut out=crate::host_io::CaptureOutput::new(32);
+        c.regs[0]=0;
+        let before=(c.regs,c.flags,c.eip);
+        assert!(c.interrupt(0x16,&mut out).is_err());
+        assert_eq!((c.regs,c.flags,c.eip),before);
+        assert_eq!(parse_key("1C0D").unwrap(),0x1c0d);
+        assert_eq!(parse_key("0x1C0D").unwrap(),0x1c0d);
+        assert!(parse_key("garbage").is_err());
+        c.key=Some(0x1c0d);
+        c.interrupt(0x16,&mut out).unwrap();
+        assert_eq!(c.regs[0]&0xffff,0x1c0d);
+        assert_eq!(c.flags,0x246);
+        assert_eq!(c.key,None);
+        assert!(c.interrupt(0x16,&mut out).is_err());
+        assert!(out.bytes().is_empty());
+    }
+    #[test]
     fn rejected_string_output_preserves_registers_and_output(){
         let p=crate::dos::load(&crate::dos::hello("com").unwrap(),"HELLO.COM").unwrap();
-        let mut c=Context{regs:p.cpu.regs,flags:p.cpu.eflags,undefined:p.cpu.undefined_flags,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),calls:Vec::new()};
+        let mut c=Context{regs:p.cpu.regs,flags:p.cpu.eflags,undefined:p.cpu.undefined_flags,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),key:None,calls:Vec::new()};
         c.regs[0]=0x123409ab;c.regs[2]=0x10c;
         let before=c.regs;
         let mut out=crate::host_io::CaptureOutput::new(2);
