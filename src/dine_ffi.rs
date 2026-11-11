@@ -55,6 +55,11 @@ fn interpreted(guest: &[u8], name: &str, tail: &str) -> Result<i32, String> {
     }
 }
 
+/// Stable ABI version for launchers. A future compiled guest-block interface
+/// can increase this version when it changes the C contract.
+#[no_mangle]
+pub extern "C" fn dine_abi_version() -> u32 { 1 }
+
 /// Run embedded DOS data through the Dine interpreter.
 ///
 /// `name` and `tail` must point to valid NUL-terminated UTF-8 strings.
