@@ -395,6 +395,40 @@ pub fn run(p:Loaded,budget:usize)->Result<Probe,String>{
 pub fn run_with_output(p:Loaded,budget:usize,output:&mut impl crate::host_io::Output)->Result<Probe,String>{
     run_with_backend(p,budget,output,None)
 }
+
+/// Reduced 80x24 ANSI true-colour view for self-running Dine programs when
+/// they wait for keyboard input in a 16-colour planar VGA mode. This is a
+/// console preview, not a full VGA graphics frontend. It samples the actual
+/// shared VGA planar framebuffer, without reinterpreting guest code.
+pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
+    let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
+    let geometry=planar::geometry(mode)?;
+    let planes=p.ram.planar()?;
+    let rgb=p.vga.planar_rgb();
+    let (columns,rows)=(80usize,24usize);
+    let width=geometry.width as usize;
+    let height=geometry.height as usize;
+    let start=usize::from(p.vga.start());
+    let mut rendered=String::new();
+    for row in 0..rows{
+        let mut previous=None;
+        for col in 0..columns{
+            let x=col*width/columns;
+            let y=row*height/rows;
+            let offset=(start+y*(width/8)+x/8)&0xffff;
+            let color=planes.pixel(offset,(x%8)as u32)as usize;
+            let current=rgb[color];
+            if previous!=Some(current){
+                use std::fmt::Write as _;
+                write!(rendered,"\\x1b[48;2;{};{};{}m",current[0],current[1],current[2]).ok()?;
+                previous=Some(current);
+            }
+            rendered.push(' ');
+        }
+        rendered.push_str("\\x1b[0m\\n");
+    }
+    Some(rendered)
+}
 /// An optional executor for decoded PIL instructions. A miss falls back to the
 /// interpreter; DOS services and instruction retirement stay in the shared loop.
 pub(crate) trait InstructionBackend {
