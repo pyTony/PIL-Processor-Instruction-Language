@@ -32,7 +32,7 @@ fn dos_tail(loaded:&crate::dos::Loaded,command_line:&str)->Result<String,String>
         }else if had_quote {
             // Retain quotes for ordinary guest arguments that aren't host
             // files. A DOS filename alias itself has no spaces or quotes.
-            arguments.push(format!("\\\"{value}\\\""));
+            arguments.push(format!("\"{value}\""));
         }else{
             arguments.push(value);
         }
