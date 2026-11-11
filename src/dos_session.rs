@@ -110,7 +110,7 @@ impl Session{
         let native_graphics=native_video&&self.loaded.as_ref()
             .and_then(|p|p.ram.load(0x449,MemWidth::Byte).ok())
             .is_some_and(|mode|matches!(mode,4|5|6|0x0d|0x0e|0x10|0x12|0x13));
-        let graphics=if native_video{String::new()}else{self.loaded.as_ref().and_then(super::planar::mode13_snapshot).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()));
+        let graphics=if native_video{String::new()}else{self.loaded.as_ref().and_then(super::planar::mode13_snapshot).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()))};
         let cga=if native_video{String::new()}else{self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
             Some(bios_mode @ (4|5|6))=>{let mode=if bios_mode==6{6}else if p.vga.cga_mode()&4!=0{5}else{4};Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
                 p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color()))},
@@ -127,7 +127,7 @@ impl Session{
         let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
         let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native}",mode_control&8!=0,mode_control&0x20!=0);
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
-        let diagnostic=format!("{diagnostic},\"fpu_present\":{fpu_present},\\\"native_graphics\\\":{native_graphics}");
+        let diagnostic=format!("{diagnostic},\"fpu_present\":{fpu_present},\"native_graphics\":{native_graphics}");
         Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
