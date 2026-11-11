@@ -49,7 +49,6 @@ class DineBuildTests(unittest.TestCase):
                 if self.fail_rustc:
                     raise subprocess.CalledProcessError(1, argv)
                 Path(argv[-1]).write_bytes(b"small host executable containing guest bytes")
-                source = Path(argv[argv.index("--edition=2021") + 7]) if False else None
             else:
                 self.fail(f"unexpected invocation: {argv!r}")
             return subprocess.CompletedProcess(argv, 0)
