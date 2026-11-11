@@ -289,11 +289,24 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     let mut session=Session::with_backend(loaded,Box::new(crate::shadow_backend::Backend::default()));
     #[cfg(not(pil_shadow_backend))]
     let mut session=Session::new(loaded);
+    // Opt-in native graphical scanout. Do not redirect stdout, which is
+    // the JSON session protocol used by the Python terminal frontend.
+    // Keep the normal Python/Tk path unchanged unless explicitly requested.
+    #[cfg(windows)]
+    let mut desktop=std::env::var("DINE_VIDEO").ok()
+        .filter(|mode|matches!(mode.to_ascii_lowercase().as_str(),"window"|"desktop"))
+        .map(|_|crate::dine_display::Display::new());
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
     for(seq,line)in stdin.lock().lines().enumerate(){
         let line=line.map_err(|e|e.to_string())?;
         let(reply,quit)=if line.len()>MAX_LINE{(session.reply(seq as u64+1,false,"command line too long",&[])?,false)}else{session.command(seq as u64+1,&line)?};
+        #[cfg(windows)]
+        if let Some(display)=desktop.as_mut(){
+            if let Some(p)=session.loaded.as_ref(){
+                display.update(p,session.status().0=="waiting_input");
+            }
+        }
         if session.status().0=="stopped"{if let Some(p)=session.loaded.as_ref(){logger.record(p,"stopped",&session.status().1,session.steps,&session.exceptions,session.exception_count);}}
         writeln!(stdout,"{reply}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
         if quit{break;}
