@@ -14,6 +14,14 @@ mod debugger;
 mod guest;
 mod dos;
 mod dos_compile;
+mod dos_codegen;
+mod dos_blocks;
+mod dos_translate;
+mod dos_runtime;
+mod dos_encoding;
+mod dos_standalone;
+mod rust_codegen;
+mod pil_opt;
 #[cfg(pil_shadow_backend)]
 #[allow(dead_code, unused_mut, unused_variables, unused_imports, unused_assignments)]
 mod shadow_backend { include!(concat!(env!("OUT_DIR"), "/pil_shadow.rs")); }
@@ -1481,6 +1489,7 @@ fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowConte
     let res=execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective),&mut lazy).map(|_|());
     lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);res
 }
+#[cfg(test)]
 fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
     let mut lazy=LazyFlags::None;
     let res=execute_machine_lazy(p,cpu,dst,src,context,ram,address,machine,&mut lazy).map(|_|());
@@ -2195,6 +2204,10 @@ fn instantiate(text: impl AsRef<str>, w: u8) -> String {
     text.as_ref().replace("$WRAP_GUARD","").replace("$HIGH_MASK","4294901760").replace("$FAR_TARGET","const target_value $W 0\nconst selector 16 0").replace("$TARGET","read_disp delta $W\nadd target_value return_offset delta").replace("$CLEANUP","0").replace("$FRAME",&(w/4).to_string()).replace("$SEG","3").replace("$A","16").replace("$S\n","16\n").replace("$S ","16 ").replace("$BYTES",&(w/8).to_string()).replace("$REG","0").replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
 }
 fn emit_rust(p: &Program) -> String {
+    let mut out=emit_rust_support();
+    out.push_str(&emit_rust_functions(p));out
+}
+fn emit_rust_support() -> String {
     let mut out=String::from("// Generated from validated PIL tokens.\n");
     out.push_str(include_str!("flow.rs"));
     // The included module has an inner documentation comment; in the emitted
@@ -2208,7 +2221,7 @@ fn emit_rust(p: &Program) -> String {
     out.push_str(include_str!("privilege.rs").split("#[cfg(test)]").next().unwrap());
     out.push_str("\n}\n");
     out=out.lines().map(|line|line.strip_prefix("//!").map(|s|format!("//{s}")).unwrap_or_else(||line.to_owned())).collect::<Vec<_>>().join("\n");
-    out.push_str(&emit_rust_functions(p));out
+    out
 }
 // Shared support types can be supplied by a compiled guest runner instead of
 // duplicated in each generated instruction module.
@@ -2236,7 +2249,10 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_src: Option<u64> = None;\n\
          let mut pending_registers: Vec<(usize,u8,u64)> = Vec::new();\n",
         p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
-    for t in &p.tokens {
+    let mut carry_skip=0;
+    for (index,t) in p.tokens.iter().enumerate() {
+        if carry_skip>0{carry_skip-=1;continue;}
+        if let Some(code)=rust_codegen::carry_window(p,index){out.push_str(&code);carry_skip=3;continue;}
         let line = match *t {
             Token::CheckpointFlags=>"machine.as_deref().ok_or(ExecError::InvalidContext)?;".into(),
             Token::ReadFlags(o)=>format!("let v{o}:u64 = *flags as u64;"),
@@ -2383,6 +2399,7 @@ Code generation and examples:
   --write-loop PATH                 Write a loop example
   --write-dos-hello com|exe PATH     Write a DOS hello (new file only)
   --emit-dos-backend INPUT OUTPUT    Profile a DOS COM/EXE and emit a partial Rust backend
+  --emit-dos-standalone INPUT OUTPUT Emit standalone Rust (COM/MZ RAM and direct branches)
   --demo-branch                     Show a conditional branch example
 
 Options (before COMMAND):
@@ -2395,12 +2412,29 @@ For a DOS window use: python tools/dos_terminal.py --help
 ";
 fn main() -> R<()> {
     let mut dos_args:Vec<_>=std::env::args().collect();
+    if dos_args.get(1).map(String::as_str)==Some("--emit-dos-standalone"){
+        if dos_args.len()!=4{return Err("usage: pil --emit-dos-standalone INPUT.COM|INPUT.EXE OUTPUT.rs".into());}
+        let path=std::path::Path::new(&dos_args[2]);
+        let name=path.file_name().and_then(|n|n.to_str()).ok_or("DOS program name must be Unicode")?;
+        let source=dos_standalone::emit(&dos::read_file(path)?,name)?;
+        use std::io::Write;
+        let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
+        file.write_all(source.as_bytes()).map_err(|e|e.to_string())?;
+        println!("wrote standalone Rust source {} (no interpreter fallback)",dos_args[3]);return Ok(());
+    }
     if dos_args.get(1).map(String::as_str)==Some("--emit-dos-backend"){
-        if dos_args.len()!=4{return Err("usage: pil --emit-dos-backend INPUT.COM|INPUT.EXE OUTPUT.rs".into());}
+        if dos_args.len()<4||(dos_args.len()-4)%2!=0{return Err("usage: pil --emit-dos-backend INPUT OUTPUT [--keys FILE] [--steps N] [--sites N]".into());}
+        let(mut keys,mut steps,mut sites)=(Vec::new(),120_000_000usize,65_536usize);
+        for pair in dos_args[4..].chunks(2){match pair[0].as_str(){
+            "--keys"=>{keys=std::fs::read(&pair[1]).map_err(|e|e.to_string())?;if keys.len()>65_536||!keys.iter().all(|b|b.is_ascii_graphic()||matches!(*b,b' '|b'\r'|b'\n'|b'\t')){return Err("training keys must be at most 64 KiB of ASCII text".into());}keys=String::from_utf8(keys).map_err(|e|e.to_string())?.replace("\r\n","\n").replace('\r',"\n").replace('\n',"\r").into_bytes();},
+            "--steps"=>{steps=pair[1].parse().map_err(|e:std::num::ParseIntError|e.to_string())?;if !(1..=120_000_000).contains(&steps){return Err("profile steps must be 1..120000000".into());}},
+            "--sites"=>{sites=pair[1].parse().map_err(|e:std::num::ParseIntError|e.to_string())?;if !(1..=65_536).contains(&sites){return Err("profile sites must be 1..65536".into());}},
+            _=>return Err("unknown DOS profiling option".into()),
+        }}
         let path=std::path::Path::new(&dos_args[2]);
         let name=path.file_name().and_then(|n|n.to_str()).ok_or("DOS program name must be Unicode")?;
         let bytes=dos::read_file(path)?;
-        let (source,status)=dos_compile::emit(&bytes,name)?;
+        let (source,status)=dos_compile::emit_trained(&bytes,name,&keys,steps,sites)?;
         use std::io::Write;
         let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
         file.write_all(source.as_bytes()).map_err(|e|e.to_string())?;

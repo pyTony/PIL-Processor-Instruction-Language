@@ -189,3 +189,88 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
 pub(super) fn chain(p:&Loaded)->Vec<(u16,u32)>{
     std::iter::once((p.psp,p.open_handles)).chain(p.exec.iter().rev().map(|f|(f.psp,f.open_handles))).collect()
 }
+/// INT 21h AH=55h: Create Child PSP at DX with memory size SI (DOS 3.0+).
+/// The child PSP inherits parent's handles, environment, FCBs, and command tail,
+/// and records the parent PSP segment. If the child block is allocated in the
+/// MCB arena, ownership is transferred to the child. The active PSP switches to DX.
+pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
+    let child=(p.cpu.regs[2]&0xffff)as u16;
+    let memory_end=(p.cpu.regs[6]&0xffff)as u16;
+    let base=u32::from(child)*16;
+    if base<0x500||base+256>crate::dos::LIMIT as u32{
+        return Err(format!("DOS create child PSP at {child:04x}h outside conventional RAM is not modelled"));
+    }
+    if child==p.psp{
+        return Err("DOS create child PSP at current PSP is not modelled".into());
+    }
+    let Some((header,owner,size))=p.arena.find_segment(child) else{
+        return Err(format!("DOS create child PSP at DX={child:04x}h SI={memory_end:04x}h parent={:04x}h outside tracked MCB arena is not modelled",p.psp));
+    };
+    if child==header{
+        return Err(format!("DOS create child PSP at DX={child:04x}h overlaps MCB header at {header:04x}h"));
+    }
+    if owner==0{
+        return Err(format!("DOS create child PSP at DX={child:04x}h in unallocated memory (MCB header={header:04x}h size={size:04x}h) is not modelled"));
+    }
+    if owner!=p.psp{
+        return Err(format!("DOS create child PSP at DX={child:04x}h in memory owned by {owner:04x}h, not caller {:04x}h (MCB header={header:04x}h size={size:04x}h)",p.psp));
+    }
+    let alloc_end=header+size+1;
+    if child+0x10>alloc_end{
+        return Err(format!("DOS create child PSP at DX={child:04x}h needs 10h paragraphs but allocated block ends at {alloc_end:04x}h (MCB header={header:04x}h size={size:04x}h owner={owner:04x}h)"));
+    }
+    if memory_end>alloc_end{
+        return Err(format!("DOS create child PSP SI={memory_end:04x}h exceeds allocated block boundary {alloc_end:04x}h (MCB header={header:04x}h size={size:04x}h)"));
+    }
+    if memory_end<child+0x10{
+        return Err(format!("DOS create child PSP SI={memory_end:04x}h is smaller than child PSP boundary {:04x}h",child+0x10));
+    }
+    let is_exact_base=child==header+1;
+    if is_exact_base{
+        let mcb_owner_addr=u32::from(header)*16+1;
+        p.ram.check_write(mcb_owner_addr,MemWidth::Word).map_err(|e|format!("child MCB owner write check: {e:?}"))?;
+    }
+    eprintln!("[DOS AH=55h] Create child PSP: DX={child:04x}h SI={memory_end:04x}h parent={:04x}h MCB(header={header:04x}h size={size:04x}h owner={owner:04x}h exact_base={is_exact_base})",p.psp);
+    let parent=u32::from(p.psp)*16;
+    let mut psp=[0u8;256];
+    psp[..2].copy_from_slice(&[0xcd,0x20]);
+    psp[2..4].copy_from_slice(&memory_end.to_le_bytes());
+    for(at,vector)in [(0x0au32,0x22u32),(0x0e,0x23),(0x12,0x24)]{
+        let saved=p.ram.load(vector*4,MemWidth::Dword).map_err(|e|format!("child PSP vector read: {e:?}"))?;
+        psp[at as usize..at as usize+4].copy_from_slice(&saved.to_le_bytes());
+    }
+    psp[0x16..0x18].copy_from_slice(&p.psp.to_le_bytes());
+    let mut handles=0u32;
+    for h in 0..20u16{
+        let entry=if p.open_handles&(1<<h)!=0{
+            p.ram.load(services::jft(p,h)?,MemWidth::Byte).map_err(|e|format!("child PSP JFT read: {e:?}"))?as u8
+        }else{
+            0xff
+        };
+        psp[0x18+usize::from(h)]=entry;
+        if entry!=0xff{handles|=1<<h;}
+    }
+    let env_seg=p.ram.load(parent+0x2c,MemWidth::Word).map_err(|e|format!("child PSP env read: {e:?}"))?;
+    psp[0x2c..0x2e].copy_from_slice(&(env_seg as u16).to_le_bytes());
+    psp[0x32..0x34].copy_from_slice(&20u16.to_le_bytes());
+    psp[0x34..0x36].copy_from_slice(&0x18u16.to_le_bytes());
+    psp[0x36..0x38].copy_from_slice(&child.to_le_bytes());
+    let version=p.ram.load(parent+0x40,MemWidth::Word).map_err(|e|format!("child PSP version read: {e:?}"))?;
+    psp[0x40..0x42].copy_from_slice(&(version as u16).to_le_bytes());
+    psp[0x50..0x53].copy_from_slice(&[0xcd,0x21,0xcb]);
+    let fcb1=bytes(&p.ram,parent+0x5c,16)?;
+    let fcb2=bytes(&p.ram,parent+0x6c,16)?;
+    let tail=bytes(&p.ram,parent+0x80,128)?;
+    psp[0x5c..0x6c].copy_from_slice(&fcb1);
+    psp[0x6c..0x7c].copy_from_slice(&fcb2);
+    psp[0x80..0x100].copy_from_slice(&tail);
+    p.ram.write_bytes(base,&psp).map_err(|e|format!("child PSP write: {e:?}"))?;
+    if is_exact_base{
+        p.arena.set_owner(&mut p.ram,child,child)?;
+    }
+    p.psp=child;
+    p.open_handles=handles;
+    p.dta=(child,0x80);
+    p.cpu.regs[0]=(p.cpu.regs[0]&!0xff)|0xf0;
+    Ok(())
+}

@@ -1,0 +1,1625 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DOS NATIVE</title>
+<style>
+  :root {
+    --bg: #fdfaf6; --text: #2c2623; --bar-bg: #f3ede2;
+    --hl-bg: #ffe97d; --hl-border: #d4a017; --accent: #2b579a;
+    --font-size: 19px;
+  }
+  [data-theme="dark"] {
+    --bg: #161819; --text: #e2dfd9; --bar-bg: #222527;
+    --hl-bg: #3d3511; --hl-border: #e5b822; --accent: #5b9bd5;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; display: flex; height: 100dvh; font-family: 'Georgia', serif;
+    background: var(--bg); color: var(--text); overflow: hidden;
+  }
+  #sidebar {
+    width: 280px; background: var(--bar-bg); border-right: 1px solid rgba(128,128,128,0.25);
+    display: flex; flex-direction: column; z-index: 20; transition: transform 0.25s ease;
+  }
+  @media (max-width: 768px) {
+    #sidebar {
+      position: fixed; top: 0; bottom: 0; left: 0;
+      transform: translateX(-100%); box-shadow: 4px 0 15px rgba(0,0,0,0.3);
+    }
+    #sidebar.open { transform: translateX(0); }
+  }
+  #sidebar-header {
+    padding: 14px 16px; font-family: sans-serif; font-weight: bold;
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid rgba(128,128,128,0.2);
+  }
+  #toc { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1; }
+  #toc li {
+    padding: 13px 16px; cursor: pointer; font-family: sans-serif; font-size: 0.95rem;
+    border-bottom: 1px solid rgba(128,128,128,0.1);
+  }
+  #toc li.active { background: var(--accent); color: #fff; font-weight: bold; }
+
+  #main { flex: 1; display: flex; flex-direction: column; height: 100dvh; width: 100%; }
+  #toolbar {
+    padding: 8px 12px; background: var(--bar-bg); display: flex; align-items: center;
+    gap: 8px; font-family: sans-serif; border-bottom: 1px solid rgba(128,128,128,0.2);
+    flex-wrap: wrap;
+  }
+  button, select {
+    padding: 7px 11px; border-radius: 6px; border: 1px solid rgba(128,128,128,0.35);
+    background: var(--bg); color: var(--text); cursor: pointer; font-size: 0.9rem;
+  }
+  button.primary { background: var(--accent); color: #fff; border: none; font-weight: bold; }
+  #voice-select { max-width: 180px; }
+  #reader-content {
+    flex: 1; overflow-y: auto; padding: 28px 8%; font-size: var(--font-size);
+    line-height: 1.75; scroll-behavior: smooth;
+  }
+  @media (min-width: 1024px) { #reader-content { padding: 40px 16%; } }
+  .seg {
+    padding: 8px 12px; margin-bottom: 10px; border-radius: 6px;
+    border-left: 4px solid transparent; cursor: pointer;
+  }
+  .seg.active { background: var(--hl-bg); border-left-color: var(--hl-border); }
+  .seg.seg-code {
+    font-family: 'Consolas', 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 0.86em; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+    background: rgba(128,128,128,0.1); border: 1px solid rgba(128,128,128,0.25);
+    border-left: 4px solid var(--accent); padding: 12px 16px; margin: 12px 0; overflow-x: auto;
+  }
+  .seg.seg-code.active { background: var(--hl-bg); border-left-color: var(--hl-border); }
+  .seg.seg-code pre { margin: 0; font: inherit; white-space: pre-wrap; }
+  .seg code.inline-code {
+    font-family: 'Consolas', 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 0.88em; background: rgba(128,128,128,0.13); padding: 1px 5px; border-radius: 4px;
+  }
+  .seg.seg-table {
+    margin: 14px 0; padding: 6px 12px; overflow-x: auto; border-radius: 6px;
+    border-left: 4px solid transparent;
+  }
+  .seg.seg-table.active { background: rgba(128,128,128,0.04); border-left-color: var(--hl-border); }
+  .seg.seg-table table {
+    width: 100%; border-collapse: collapse; font-size: 0.9em; line-height: 1.5; margin: 4px 0;
+  }
+  .seg.seg-table thead {
+    background: rgba(128,128,128,0.07); border-bottom: 2px solid rgba(128,128,128,0.35);
+  }
+  .seg.seg-table th, .seg.seg-table td {
+    padding: 8px 14px; text-align: left; border-bottom: 1px solid rgba(128,128,128,0.22);
+    vertical-align: top;
+  }
+  .seg.seg-table th { font-weight: 600; }
+  .seg.seg-table tr:last-child td { border-bottom: none; }
+  .seg.seg-table tbody tr {
+    cursor: pointer; transition: background 0.15s ease;
+  }
+  .seg.seg-table tbody tr:hover { background: rgba(128,128,128,0.09); }
+  .seg.seg-table tbody tr.active-row {
+    background: var(--hl-bg) !important;
+  }
+  .seg.seg-table tbody tr.active-row td {
+    border-top: 1px solid var(--hl-border);
+    border-bottom: 2px solid var(--hl-border);
+  }
+  .seg.seg-table tbody tr.active-row td:first-child {
+    border-left: 4px solid var(--hl-border);
+    border-top-left-radius: 4px; border-bottom-left-radius: 4px;
+    padding-left: 10px;
+  }
+  .seg.seg-table tbody tr.active-row td:last-child {
+    border-top-right-radius: 4px; border-bottom-right-radius: 4px;
+  }
+  .seg.seg-subitem { padding-left: 28px; }
+  .page-marker {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #2563eb;
+    background: rgba(37, 99, 235, 0.09);
+    border: 1px solid rgba(37, 99, 235, 0.22);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-right: 5px;
+    vertical-align: 1px;
+    user-select: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .page-marker:hover {
+    background: rgba(37, 99, 235, 0.2);
+    border-color: #2563eb;
+  }
+  .page-marker-chap {
+    font-size: 0.85rem;
+    margin-left: 10px;
+    vertical-align: middle;
+  }
+  .toc-page-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    opacity: 0.75;
+    margin-left: 8px;
+    color: var(--accent, #2563eb);
+  }
+  .toc-entry-link {
+    display: inline-block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 3px 6px;
+    margin: 2px 0;
+    border-radius: 4px;
+    color: inherit;
+    text-decoration: none;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .toc-entry-link:hover {
+    background: rgba(37, 99, 235, 0.08);
+    border-left-color: #2563eb;
+    text-decoration: underline;
+    color: #2563eb;
+  }
+  #quick-search-box {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(128, 128, 128, 0.08);
+    border: 1px solid rgba(128, 128, 128, 0.3);
+    border-radius: 6px;
+    padding: 2px 4px;
+    margin: 0 4px;
+  }
+  #quick-search-input {
+    border: none;
+    background: transparent;
+    outline: none;
+    color: inherit;
+    font-size: 0.84rem;
+    width: 155px;
+    transition: width 0.2s ease;
+  }
+  #quick-search-input:focus {
+    width: 195px;
+  }
+  #quick-search-count {
+    font-size: 0.78rem;
+    opacity: 0.85;
+    min-width: 36px;
+    text-align: center;
+    user-select: none;
+  }
+  .search-match-mark {
+    background: #fef08a;
+    color: #1e293b;
+    border-radius: 2px;
+    padding: 0 2px;
+  }
+  .toc-cover-item {
+    padding: 12px 16px !important; text-align: center; cursor: pointer;
+    border-bottom: 1px solid rgba(128,128,128,0.2) !important;
+  }
+  .toc-cover-item img {
+    max-width: 140px; max-height: 190px; border-radius: 6px;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.25); display: inline-block;
+  }
+  .book-figure {
+    margin: 0 auto 22px; text-align: center; max-width: 100%;
+  }
+  .book-figure img {
+    max-width: min(100%, 460px); max-height: 62dvh; height: auto;
+    border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+  }
+  .inline-figure { margin: 14px auto 20px; }
+  .inline-figure img { max-width: min(100%, 640px); max-height: 80dvh; background: #fff; }
+  .book-figure figcaption {
+    font-family: sans-serif; font-size: 0.82rem; opacity: 0.78; margin-top: 6px;
+  }
+  .book-back-cover-figure { margin-top: 32px; padding-top: 18px; border-top: 1px solid rgba(128,128,128,0.25); }
+  #toc li.toc-group { padding: 0; cursor: default; }
+  #toc ul { list-style: none; padding: 0; margin: 0; }
+  #toc summary { padding: 14px 12px; font-weight: bold; cursor: pointer; line-height: 1.4; }
+  #toc [data-section] { padding: 10px 16px 10px 28px; font-size: .86rem; line-height: 1.4; }
+  #toc > li[data-section] { padding: 13px 16px; font-size: 0.95rem; font-weight: bold; }
+  h2.section-title { font-size: 1.15em; margin: 0 0 1.2em; }
+  dialog { width: min(760px, 94vw); max-height: 88dvh; overflow-y: auto; border: 1px solid #aaa; border-radius: 12px; padding: 24px; background: var(--bg); color: var(--text); }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  .library-header, .library-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+  .library-header h2 { margin: 0; }
+  #gutenberg-search { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+  #gutenberg-search label { display: flex; flex-direction: column; gap: 6px; }
+  #gutenberg-search input { padding: 9px; width: min(280px, 75vw); font: inherit; }
+  .library-book { border-top: 1px solid #aaa5; padding: 16px 0; }
+  .library-book h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  .library-book p { margin: 6px 0 12px; }
+  .library-book button, .library-book a { margin-right: 10px; }
+  .library-note { font-size: .85rem; line-height: 1.5; }
+  button:disabled { opacity: .5; cursor: default; }
+  h1.chapter-title { font-size: 1.45em; margin-top: 0; margin-bottom: 0.8em; }
+  .chapter-title .chapter-label, .chapter-title .chapter-name {
+    display: block; font: inherit; color: inherit;
+  }
+  #toc .numbered-toc-item { padding: 0; border: 0; }
+  #toc .numbered-toc-item > [data-section] { display: block; padding: 9px 12px; }
+  #toc .numbered-toc-item ul { list-style: none; margin: 0; padding-left: 16px; }
+  #toc .numbered-toc-item .active { background: var(--accent); color: #fff; }
+  .numbered-heading { margin: 1.1em 0 .7em; }
+  h1.numbered-heading { font-size: 1.45em; }
+  h2.numbered-heading { font-size: 1.25em; }
+  h3.numbered-heading, h4.numbered-heading, h5.numbered-heading, h6.numbered-heading { font-size: 1.1em; }
+  #status-bar {
+    padding: 5px 14px; font-family: sans-serif; font-size: 0.8rem;
+    background: var(--bar-bg); opacity: 0.85; display: flex; justify-content: space-between; gap: 12px;
+  }
+  #progress-text { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <span>📖 Contents</span>
+      <button onclick="toggleSidebar()">✕</button>
+    </div>
+    <ul id="toc"></ul>
+  </aside>
+
+  <section id="main">
+    <div id="toolbar">
+      <button onclick="toggleSidebar()" title="Table of Contents">☰</button>
+      <div id="quick-search-box" title="Search passages or jump to original page #">
+        <input id="quick-search-input" type="search" placeholder="🔍 Search / Page # (Ctrl+F)" oninput="runQuickSearch(this.value)" onkeydown="handleQuickSearchKey(event)">
+        <span id="quick-search-count"></span>
+        <button type="button" onclick="stepQuickSearch(-1)" title="Previous match (Shift+Enter / Shift+F3)">▲</button>
+        <button type="button" onclick="stepQuickSearch(1)" title="Next match (Enter / F3)">▼</button>
+        <button type="button" onclick="openBookFind()" title="Full search list (Ctrl+F)">📋</button>
+      </div>
+      <span id="current-book-title" style="font-weight:bold;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+
+      <button id="cover-btn" onclick="openCoverDialog()" title="View or select cover page / image">🖼 Cover</button>
+
+      <label style="font-size:.9rem;white-space:nowrap"><input id="speech-enabled" type="checkbox" checked onchange="setSpeechEnabled(this.checked)"> Read aloud</label>
+      <button id="prompter-btn" onclick="togglePrompter()">▶ Prompter</button>
+      <label style="font-size:.85rem">Scroll speed <input id="prompter-speed" type="range" min="5" max="100" value="30" aria-label="Prompter scroll speed" oninput="prompterSpeed = Number(this.value)" style="width:85px"></label>
+      <button id="play-btn" class="primary" onclick="togglePlay()">▶ Read</button>
+      <button onclick="stepSegment(-1)" title="Previous">⏮</button>
+      <button onclick="stepSegment(1)" title="Next">⏭</button>
+      <select id="voice-select" title="Select Voice"></select>
+      <select id="speed-select" onchange="updateSpeed(this.value)" title="Speed">
+        <option value="0.85">0.85x</option>
+        <option value="1.0" selected>1.0x</option>
+        <option value="1.15">1.15x</option>
+        <option value="1.3">1.3x</option>
+        <option value="1.5">1.5x</option>
+      </select>
+      <button onclick="adjustFont(-2)">A-</button>
+      <button onclick="adjustFont(2)">A+</button>
+      <button onclick="toggleTheme()">🌗</button>
+
+    </div>
+
+    <div id="reader-content"></div>
+
+    <div id="status-bar">
+      <span id="status-text">Tap any paragraph to start reading from there</span>
+      <span id="progress-text"></span>
+    </div>
+  </section>
+
+
+<dialog id="cover-dialog" aria-labelledby="cover-dialog-title" style="max-width:740px;width:94vw">
+  <div class="library-header"><h2 id="cover-dialog-title">Cover Art</h2><button onclick="document.getElementById('cover-dialog').close()" aria-label="Close cover dialog">✕</button></div>
+  <div id="cover-preview-box" style="text-align:center;margin:6px 0"></div>
+
+</dialog>
+<dialog id="book-find-dialog" aria-label="Find in book">
+  <form onsubmit="event.preventDefault(); moveBookFind(1)">
+    <label>Find in book <input id="book-find-query" type="search" oninput="searchBook()" autocomplete="off"></label>
+    <button type="button" onclick="moveBookFind(-1)">Previous</button>
+    <button type="submit">Next</button>
+    <button type="button" onclick="document.getElementById('book-find-dialog').close()">Close</button>
+    <p id="book-find-status" role="status" aria-live="polite">Search all chapters and text.</p>
+    <div id="book-find-results" style="max-height:45vh;overflow:auto"></div>
+  </form>
+</dialog>
+<script id="book-data" type="application/json">
+[
+  {
+    "title": "Observed DOS code compiled through PIL and Rust",
+    "segments": [
+      "The experimental DOS compiler records instructions during an interpreted run, then emits one Rust source file and builds it together with Dine. The native service uses compiled blocks before looking up individual decoded instructions. DOS/BIOS services, VGA controller accesses, keyboard input and the existing graphics frontend remain shared with the interpreter.",
+      "This is a linked native service with interpreter fallback. It is not yet a standalone translated application linked only to a separate DOS library, and does not dynamically load a new binary into an already running process."
+    ],
+    "toc_group": "Observed DOS code compiled through PIL and Rust",
+    "chapter_title": "Observed DOS code compiled through PIL and Rust"
+  },
+  {
+    "title": "Build and verify Mandelbrot",
+    "segments": [
+      "From the repository root, with Rust and Python installed:",
+      "```\npython tools/build_dos_shadow.py programs/dos/MANDVGA.COM --verify\n```",
+      "The helper builds a profiling engine, runs the original COM file, writes the observed Rust source, and builds it in one Cargo invocation. `--verify` runs generated-code state and invalidation tests and then three complete Mandelbrot comparisons. The source/output cache is:",
+      "```\nshadow/\u003ctarget_os>-\u003ctarget_cpu>/\u003cguest_sha256>/\n    backend.rs\n    manifest.json\n    pil-mandvga.exe     # Windows; pil-mandvga on Linux/Android\n```",
+      "The manifest identifies the target OS, CPU, Rust target triple, compiler, original guest hash and source/binary hashes. Rust source and binaries in `shadow/` are local generated files excluded from Git. No DOS executable is replaced. Compilation is native to the current host; cross-target builds are not selected by this helper.",
+      "The profiling run has no host-folder mounts. It stops on exit, keyboard wait, fault, unsupported service, or 120 one-million-step slices. It records only actually executed PIL sites belonging to the requested executable, at most 65,536 distinct offsets. Data is not scanned as instructions. Code after an unanswered key wait and branches not taken remain interpreter fallbacks. A second encoding at an already recorded offset is not compiled in this version.",
+      "For an existing profiling engine, add `--engine target/release/pil.exe` (or `target/release/pil` on Linux/Termux). This engine must have been rebuilt from the same compiler sources. The generated source is a module for Dine; it is compiled with the project, rather than by invoking rustc on it alone."
+    ],
+    "toc_group": "Build and verify Mandelbrot",
+    "chapter_title": "Build and verify Mandelbrot"
+  },
+  {
+    "title": "Run with graphics",
+    "segments": [
+      "Use the exact native service path printed by the helper:",
+      "```\npython tools/dos_terminal.py --engine SHADOW_SERVICE --headless programs/dos/MANDVGA.COM\n```",
+      "The existing frontend opens its graphics window when a graphics frame appears and closes it on return to text mode. This change does not introduce a second GUI implementation. Running through the JSON protocol verifies frame production but does not itself visually inspect a desktop window.",
+      "To start COMMAND.COM instead, pass its image path and the usual mounts, then run the matching program from DOS. The backend compares program identity when EXEC changes the active executable; unrelated programs use the interpreter. The direct Mandelbrot workflow is the verified path for this increment."
+    ],
+    "toc_group": "Run with graphics",
+    "chapter_title": "Run with graphics"
+  },
+  {
+    "title": "Generated blocks and correctness boundaries",
+    "segments": [
+      "The writer joins consecutive observed instructions, currently at most 16 per block, ending after a store or control-flow instruction. Instruction helper functions are inlined so Rust can optimize across the operations in the block. There is no interpreter token dispatch or decode-cache lookup inside a block. Control returns to Dine at block boundaries. Native Rust loops spanning blocks and subroutines are further work.",
+      "Entry validates the executable identity, segment/machine state, loaded fetch windows and the entire block's code bytes. Entry at a later recorded offset selects its corresponding sequence or falls back; it never jumps into the middle of native machine code. A code write ends its block before another entry can run. Changed bytes or machine context cause fallback. Paging, REP partial execution, interrupt shadows and installed host-clock timer handlers retain instruction-level execution in this version. Blocks fit wholly within the remaining frontend step budget; faults retain the successfully retired prefix and are delivered from the failing instruction.",
+      "The JSON service reports cumulative `native_blocks` and `native_block_instructions`. These count multi-instruction blocks; generated single-instruction fallbacks are not included in those counters."
+    ],
+    "toc_group": "Generated blocks and correctness boundaries",
+    "chapter_title": "Generated blocks and correctness boundaries"
+  },
+  {
+    "title": "Reproduce the comparison",
+    "segments": [
+      "```\npython tools/verify_dos_shadow.py --native-engine SHADOW_SERVICE --samples 3\n```",
+      "The checker compares all four VGA planes, palette, caption/screen, cursor, reported CPU state, status and instruction count, then checks key exit and text-mode restoration. The independent mathematical VGA oracle can also be run: set `PIL_TEST_ENGINE` to the native service path and run `python tools/verify_mandel_vga.py`.",
+      "Timing covers drawing to the keyboard wait and protocol frame transfer; process startup, profiling, Rust compilation, and reference checking are excluded. It includes the full DOS workload, rather than only the Mandelbrot arithmetic. Do not compare it directly with the hand-written calculation-only reference or run Cargo tests/builds concurrently with a performance measurement.",
+      "Results are written to `target/dos-shadow-comparison.json`. Performance depends on the host and workload; correctness and actual block counts must be checked before interpreting a speed ratio."
+    ],
+    "toc_group": "Reproduce the comparison",
+    "chapter_title": "Reproduce the comparison"
+  }
+]
+</script>
+<script id="reader-script">
+let BOOK_ID = "d2809b63c0d7ae30";
+let DEFAULT_LANG = "en-US";
+let BOOK = JSON.parse(document.getElementById('book-data').textContent);
+
+const ORIGINAL_BOOK = { chapters: BOOK, id: BOOK_ID, lang: DEFAULT_LANG, title: document.title };
+const INITIAL_OPEN_TOKEN = (typeof location !== 'undefined' && location.protocol === 'http:')
+  ? new URLSearchParams(location.search).get('open')
+  : null;
+let curChap = 0;
+let curSeg = -1;
+let curTableRow = -1;
+let isPlaying = false;
+let bookFindMatches = [];
+let bookFindIndex = -1;
+let quickSearchMatches = [];
+let quickSearchIndex = -1;
+
+function highlightInElement(root, query) {
+  if (!root || !query) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    if (node.parentElement && node.parentElement.tagName === 'MARK') return;
+    const text = node.textContent;
+    const lower = text.toLowerCase();
+    const pos = lower.indexOf(query);
+    if (pos === -1) return;
+    const fragment = document.createDocumentFragment();
+    let start = 0, p;
+    while ((p = lower.indexOf(query, start)) !== -1) {
+      fragment.append(document.createTextNode(text.slice(start, p)));
+      const mark = document.createElement('mark');
+      mark.className = 'search-match-mark';
+      mark.textContent = text.slice(p, p + query.length);
+      fragment.append(mark);
+      start = p + query.length;
+    }
+    fragment.append(document.createTextNode(text.slice(start)));
+    node.replaceWith(fragment);
+  });
+}
+
+function runQuickSearch(query) {
+  const q = String(query || '').trim().toLowerCase();
+  quickSearchMatches = [];
+  quickSearchIndex = -1;
+  const countEl = document.getElementById('quick-search-count');
+  
+  if (!q) {
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  // Check if query is a page jump request (e.g. "p. 14", "p14", "page 14", or digits "14")
+  const pageMatch = q.match(/^(?:p(?:age|\.)?\s*)?([0-9]+|[ivxlcdm]+)$/i);
+  if (pageMatch) {
+    const targetPage = pageMatch[1].toLowerCase();
+    BOOK.forEach((ch, c) => {
+      if (ch.page && String(ch.page).toLowerCase() === targetPage) {
+        quickSearchMatches.push({c, s: -1, text: 'Page ' + ch.page + ': ' + ch.title, isPage: true});
+      }
+      (ch.segments || []).forEach((seg, s) => {
+        if (seg.toLowerCase().includes('[p. ' + targetPage + ']') || seg.toLowerCase().includes('[page ' + targetPage + ']')) {
+          quickSearchMatches.push({c, s, text: 'Page ' + targetPage, isPage: true});
+        }
+      });
+    });
+  }
+
+  BOOK.forEach((chapter, c) => {
+    const passages = [(chapter.chapter_title || '') + ' ' + chapter.title, ...chapter.segments];
+    passages.forEach((text, s) => {
+      if (text && text.toLowerCase().includes(q)) {
+        if (!quickSearchMatches.some(m => m.c === c && m.s === s - 1)) {
+          quickSearchMatches.push({c, s: s - 1, text});
+        }
+      }
+    });
+  });
+
+  if (countEl) {
+    countEl.textContent = quickSearchMatches.length > 0 ? `1/${quickSearchMatches.length}` : '0/0';
+  }
+  if (quickSearchMatches.length > 0) {
+    stepQuickSearch(1, false);
+  }
+}
+
+function stepQuickSearch(direction, advance = true) {
+  if (!quickSearchMatches.length) return;
+  if (advance) {
+    quickSearchIndex = (quickSearchIndex + direction + quickSearchMatches.length) % quickSearchMatches.length;
+  } else if (quickSearchIndex === -1) {
+    quickSearchIndex = 0;
+  }
+  const match = quickSearchMatches[quickSearchIndex];
+  const countEl = document.getElementById('quick-search-count');
+  if (countEl) {
+    countEl.textContent = `${quickSearchIndex + 1}/${quickSearchMatches.length}`;
+  }
+  loadChapter(match.c, match.s);
+  
+  const query = (document.getElementById('quick-search-input')?.value || '').trim().toLowerCase();
+  const root = match.s === -1 ? document.getElementById(`seg_${match.c}_-1`) : document.getElementById(`seg_${match.c}_${match.s}`);
+  if (root && query) {
+    highlightInElement(root, query);
+  }
+}
+
+function handleQuickSearchKey(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    stepQuickSearch(event.shiftKey ? -1 : 1);
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    const input = document.getElementById('quick-search-input');
+    if (input) { input.value = ''; runQuickSearch(''); input.blur(); }
+  }
+}
+
+function openBookFind() {
+  const dialog = document.getElementById('book-find-dialog');
+  const qInput = document.getElementById('quick-search-input');
+  const fQuery = document.getElementById('book-find-query');
+  if (qInput && fQuery && qInput.value && !fQuery.value) {
+    fQuery.value = qInput.value;
+  }
+  if (!dialog.open) dialog.showModal();
+  searchBook();
+  if (fQuery) fQuery.focus();
+}
+function searchBook() {
+  const query = document.getElementById('book-find-query').value.trim().toLocaleLowerCase();
+  bookFindMatches = [];
+  bookFindIndex = -1;
+  const results = document.getElementById('book-find-results');
+  results.replaceChildren();
+  if (query) BOOK.forEach((chapter, c) => {
+    const passages = [(chapter.chapter_title || '') + ' ' + chapter.title, ...chapter.segments];
+    passages.forEach((text, s) => {
+      if (text.toLocaleLowerCase().includes(query)) bookFindMatches.push({c, s: s - 1, text});
+    });
+  });
+  document.getElementById('book-find-status').textContent = query
+    ? `${bookFindMatches.length} matching passages` : 'Search all chapters and text.';
+  bookFindMatches.slice(0, 100).forEach((match, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.style.cssText = 'display:block;text-align:left;margin:6px 0;width:100%';
+    const pos = match.text.toLocaleLowerCase().indexOf(query);
+    button.textContent = BOOK[match.c].title + ' — ' + match.text.slice(Math.max(0, pos - 40), pos + query.length + 100);
+    button.onclick = () => showBookFind(index);
+    results.appendChild(button);
+  });
+}
+function showBookFind(index) {
+  if (!bookFindMatches.length) return;
+  bookFindIndex = (index + bookFindMatches.length) % bookFindMatches.length;
+  const match = bookFindMatches[bookFindIndex];
+  document.getElementById('book-find-dialog').close();
+  loadChapter(match.c, match.s);
+  const root = document.getElementById(`seg_${match.c}_${match.s}`);
+  const query = document.getElementById('book-find-query').value.trim().toLocaleLowerCase();
+  if (root && query) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(node => {
+      const text = node.textContent;
+      const lower = text.toLocaleLowerCase();
+      const fragment = document.createDocumentFragment();
+      let start = 0, pos;
+      while ((pos = lower.indexOf(query, start)) !== -1) {
+        fragment.append(document.createTextNode(text.slice(start, pos)));
+        const mark = document.createElement('mark');
+        mark.textContent = text.slice(pos, pos + query.length);
+        fragment.append(mark);
+        start = pos + query.length;
+      }
+      fragment.append(document.createTextNode(text.slice(start)));
+      node.replaceWith(fragment);
+    });
+  }
+  progressText.textContent += ` • Find ${bookFindIndex + 1}/${bookFindMatches.length} (F3: next)`;
+}
+function moveBookFind(direction) {
+  showBookFind(bookFindIndex < 0 ? (direction < 0 ? bookFindMatches.length - 1 : 0) : bookFindIndex + direction);
+}
+document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+    event.preventDefault();
+    const qIn = document.getElementById('quick-search-input');
+    if (qIn) { qIn.focus(); qIn.select(); }
+    else openBookFind();
+  } else if (event.key === 'F3') {
+    event.preventDefault(); moveBookFind(event.shiftKey ? -1 : 1);
+  }
+});
+let speechEnabled = true;
+let prompterRunning = false;
+let prompterSpeed = 30;
+let prompterFrame = null;
+let prompterLastTime = null;
+let prompterBottomTime = null;
+let speechRate = 1.0;
+let fontSize = 19;
+const synth = window.speechSynthesis;
+
+const tocEl = document.getElementById('toc');
+const contentEl = document.getElementById('reader-content');
+const playBtn = document.getElementById('play-btn');
+const voiceSelect = document.getElementById('voice-select');
+const statusText = document.getElementById('status-text');
+const progressText = document.getElementById('progress-text');
+
+function openBookDB() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { reject(new Error('IndexedDB unavailable')); return; }
+    const req = indexedDB.open('ebook_reader_db', 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains('books')) req.result.createObjectStore('books');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveActiveBook(record) {
+  try { localStorage.removeItem('ebook_active_book'); } catch {}
+  try {
+    localStorage.setItem('ebook_active_book', JSON.stringify(record));
+    try {
+      const db = await openBookDB();
+      const tx = db.transaction('books', 'readwrite');
+      tx.objectStore('books').delete('active');
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => db.close();
+    } catch {}
+    return;
+  } catch {}
+  try {
+    const db = await openBookDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('books', 'readwrite');
+      tx.objectStore('books').put(record, 'active');
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+    localStorage.setItem('ebook_active_book', JSON.stringify({storedInIDB: true}));
+  } catch { /* Browser storage fallback */ }
+}
+
+async function loadActiveBookFromIDB() {
+  const db = await openBookDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('books', 'readonly');
+    const req = tx.objectStore('books').get('active');
+    req.onsuccess = () => { db.close(); resolve(req.result || null); };
+    req.onerror = () => { db.close(); reject(req.error); };
+  });
+}
+
+async function clearActiveBook() {
+  try { localStorage.removeItem('ebook_active_book'); } catch {}
+  try {
+    const db = await openBookDB();
+    const tx = db.transaction('books', 'readwrite');
+    tx.objectStore('books').delete('active');
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => db.close();
+  } catch {}
+}
+
+function populateVoices() {
+  if (!synth) return;
+  const voices = synth.getVoices();
+  if (!voices.length) return;
+  voiceSelect.innerHTML = '';
+  let bestIdx = 0;
+  voices.forEach((v, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `${v.name} (${v.lang})`;
+    if (v.lang.toLowerCase().startsWith(DEFAULT_LANG.toLowerCase())) {
+      bestIdx = i;
+    }
+    voiceSelect.appendChild(opt);
+  });
+  voiceSelect.selectedIndex = bestIdx;
+}
+
+function init() {
+  try { speechEnabled = localStorage.getItem('ebook_speech_enabled') !== 'false'; } catch {}
+  document.getElementById('speech-enabled').checked = speechEnabled;
+  try {
+    const savedLang = localStorage.getItem('ebook_conversion_lang');
+    const langSelect = document.getElementById('conversion-language');
+    if (savedLang && Array.from(langSelect.options).some(o => o.value === savedLang)) {
+      langSelect.value = savedLang;
+    }
+  } catch {}
+  const quitBtn = document.getElementById('quit-server-btn');
+  if (quitBtn) quitBtn.hidden = (typeof location === 'undefined' || location.protocol !== 'http:');
+
+  populateVoices();
+  if (synth && synth.onvoiceschanged !== undefined) {
+    synth.onvoiceschanged = populateVoices;
+  }
+
+  document.getElementById('current-book-title').textContent = document.title;
+  if (INITIAL_OPEN_TOKEN) {
+    contentEl.textContent = 'Opening selected book…';
+    statusText.textContent = 'Opening selected book…';
+    playBtn.disabled = true;
+    return;
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem('ebook_active_book') || 'null');
+    if (typeof location !== 'undefined' && location.protocol === 'http:' && stored) {
+      if (stored.chapters && stored.chapters.length) {
+        useLibraryBook(stored.chapters, stored.title, stored.id, stored.lang, false);
+        return;
+      }
+      if (stored.storedInIDB) {
+        contentEl.textContent = 'Loading book…';
+        playBtn.disabled = true;
+        loadActiveBookFromIDB().then(record => {
+          if (libraryImported) return;
+          if (record && record.chapters && record.chapters.length) {
+            useLibraryBook(record.chapters, record.title, record.id, record.lang, false);
+            refreshRedoAvailability();
+          } else {
+            renderContents();
+            loadChapter(0, -1, false);
+          }
+        }).catch(() => {
+          if (!libraryImported) { renderContents(); loadChapter(0, -1, false); }
+        });
+        return;
+      }
+    }
+  } catch { /* A corrupt or unavailable saved session must not block reading. */ }
+  renderContents();
+
+  let saved = {c: 0, s: -1};
+  try { saved = JSON.parse(localStorage.getItem('ebook_pos_' + BOOK_ID) || '{"c":0,"s":-1}'); } catch {}
+  loadChapter(saved.c || 0, saved.s ?? -1, false);
+}
+
+function numberedHeading(title) {
+  const match = title.match(/^(?:(?:chapter|luku)\s+)?(\d+(?:\.\d+)*|[A-Z](?:\.\d+)+)\.?\s+(.+)$/i);
+  return match ? {number: match[1], depth: match[1].split('.').length} : null;
+}
+
+function renderContents() {
+  tocEl.replaceChildren();
+  const coverChapIdx = BOOK.findIndex(c => c.cover_image);
+  if (coverChapIdx !== -1 && BOOK[coverChapIdx].cover_image) {
+    const coverLi = document.createElement('li');
+    coverLi.className = 'toc-cover-item';
+    const coverImg = document.createElement('img');
+    coverImg.src = BOOK[coverChapIdx].cover_image;
+    coverImg.alt = BOOK[coverChapIdx].cover_caption || document.title || 'Book cover';
+    coverLi.appendChild(coverImg);
+    coverLi.onclick = () => {
+      loadChapter(coverChapIdx, -1, isPlaying);
+      if (window.innerWidth <= 768) toggleSidebar(false);
+    };
+    tocEl.appendChild(coverLi);
+  }
+  const groups = new Map();
+  const numberedNodes = new Map();
+  BOOK.forEach((c, idx) => {
+    const info = numberedHeading(c.title);
+    if (!info || c.toc_group === 'Original printed contents') return;
+    const item = document.createElement('li');
+    item.className = 'numbered-toc-item';
+    const label = document.createElement('span');
+    label.textContent = c.title;
+    if (c.page) {
+      const pb = document.createElement('span');
+      pb.className = 'toc-page-badge';
+      pb.textContent = 'p. ' + c.page;
+      label.appendChild(pb);
+    }
+    label.dataset.section = idx;
+    label.tabIndex = 0;
+    label.setAttribute('role', 'button');
+    label.onclick = event => {
+      event.stopPropagation();
+      loadChapter(idx, -1, isPlaying);
+      if (window.innerWidth <= 768) toggleSidebar(false);
+    };
+    label.onkeydown = event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); label.click(); }
+    };
+    const children = document.createElement('ul');
+    item.append(label, children);
+    numberedNodes.set(info.number, {item, children, idx});
+  });
+  // Count only the sections that will actually be listed under each group,
+  // so a group holding a single item is shown flat instead of as a collapsible pane.
+  const groupCounts = new Map();
+  BOOK.forEach((c, idx) => {
+    const info = numberedHeading(c.title);
+    const numbered = info && numberedNodes.get(info.number);
+    if (numbered && numbered.idx === idx) return;
+    const name = c.toc_group || 'Contents';
+    groupCounts.set(name, (groupCounts.get(name) || 0) + 1);
+  });
+  BOOK.forEach((c, idx) => {
+    const info = numberedHeading(c.title);
+    const numbered = info && numberedNodes.get(info.number);
+    if (numbered && numbered.idx === idx) {
+      const parentNumber = info.number.split('.').slice(0, -1).join('.');
+      const parent = numberedNodes.get(parentNumber);
+      (parent ? parent.children : tocEl).appendChild(numbered.item);
+      return;
+    }
+    const name = c.toc_group || 'Contents';
+    const count = groupCounts.get(name) || 1;
+    const isCollapsible = count > 1;
+
+    const li = document.createElement('li');
+    li.textContent = (count > 1 && c.title === name) ? 'Overview — ' + c.title : c.title;
+    li.dataset.section = idx;
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+    li.onclick = () => {
+      loadChapter(idx, -1, isPlaying);
+      if (window.innerWidth <= 768) toggleSidebar(false);
+    };
+    li.onkeydown = e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); li.click(); }
+    };
+
+    if (!isCollapsible) {
+      tocEl.appendChild(li);
+      return;
+    }
+
+    if (!groups.has(name)) {
+      const item = document.createElement('li');
+      item.className = 'toc-group';
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = name;
+      const list = document.createElement('ul');
+      details.append(summary, list);
+      item.appendChild(details);
+      tocEl.appendChild(item);
+      groups.set(name, list);
+    }
+    groups.get(name).appendChild(li);
+  });
+}
+
+function toggleSidebar(force) {
+  const sb = document.getElementById('sidebar');
+  if (typeof force === 'boolean') sb.classList.toggle('open', force);
+  else sb.classList.toggle('open');
+}
+
+function appendInlineFormatted(parent, lineText) {
+  // Supports [p. 16] page badges, **bold**, __bold__, `code`, *italic*, and Gutenberg conventions
+  const tokenRe = /(\[p\.\s*([0-9ivxlcdmIVXLCDM]+)\]|\*\*([^*\n]+)\*\*|__([^_\n]+)__|`([^`\n]+)`|(?<![=\w])=([A-Za-zÄÖÅäöå0-9][^=\n]{0,60}?[A-Za-zÄÖÅäöå0-9.!?])=(?![=\w])|(?<![*\w])\*([^*\n]+?)\*(?![*\w])|(?<![\p{L}\p{N}])_([^_\n]+?)_(?![\p{L}\p{N}]))/gu;
+  let lastIdx = 0;
+  let match;
+  while ((match = tokenRe.exec(lineText)) !== null) {
+    if (match.index > lastIdx) {
+      parent.appendChild(document.createTextNode(lineText.slice(lastIdx, match.index)));
+    }
+    if (match[2] !== undefined) {
+      const pageNum = match[2];
+      const pageBadge = document.createElement('span');
+      pageBadge.className = 'page-marker';
+      pageBadge.id = 'page-' + pageNum.toLowerCase();
+      pageBadge.dataset.page = pageNum;
+      pageBadge.title = 'Original page ' + pageNum;
+      pageBadge.textContent = 'p. ' + pageNum;
+      pageBadge.onclick = (e) => {
+        e.stopPropagation();
+        if (navigator.clipboard) navigator.clipboard.writeText('Page ' + pageNum);
+      };
+      parent.appendChild(pageBadge);
+    } else if (match[3] !== undefined || match[4] !== undefined || match[6] !== undefined) {
+      const strong = document.createElement('strong');
+      strong.textContent = match[3] ?? match[4] ?? match[6];
+      parent.appendChild(strong);
+    } else if (match[5] !== undefined) {
+      const code = document.createElement('code');
+      code.className = 'inline-code';
+      code.textContent = match[5];
+      parent.appendChild(code);
+    } else if (match[7] !== undefined || match[8] !== undefined) {
+      const em = document.createElement('em');
+      em.textContent = match[7] ?? match[8];
+      parent.appendChild(em);
+    }
+    lastIdx = tokenRe.lastIndex;
+  }
+  if (lastIdx < lineText.length) {
+    parent.appendChild(document.createTextNode(lineText.slice(lastIdx)));
+  }
+}
+function isTableSeparatorLine(line) {
+  const s = String(line || '').trim();
+  if (!s || !s.includes('|')) return false;
+  const inner = s.replace(/^\|/, '').replace(/\|$/, '');
+  const cells = inner.split('|').map(c => c.trim());
+  if (!cells.length) return false;
+  return cells.every(c => /^:?-+:?$/.test(c));
+}
+
+function isMarkdownTableText(text) {
+  if (typeof text !== 'string' || !text.includes('\n') || !text.includes('|')) return false;
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return false;
+  return lines[0].includes('|') && isTableSeparatorLine(lines[1]);
+}
+
+function highlightTableRow(cIdx, sIdx, rIdx) {
+  document.querySelectorAll('.active-row').forEach(el => el.classList.remove('active-row'));
+  const segEl = document.getElementById(`seg_${cIdx}_${sIdx}`);
+  if (!segEl) return;
+  const rows = segEl.querySelectorAll('tbody tr');
+  if (rIdx >= 0 && rIdx < rows.length) {
+    rows[rIdx].classList.add('active-row');
+    if (!manualReadingScroll) {
+      try { rows[rIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
+    }
+  }
+}
+
+function renderMarkdownTable(div, text, cIdx, sIdx) {
+  div.classList.add('seg-table');
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return;
+
+  const parseCells = (line) => {
+    const raw = line.replace(/^\|/, '').replace(/\|$/, '');
+    return raw.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'));
+  };
+
+  const sepCells = parseCells(lines[1]);
+  const alignments = sepCells.map(c => {
+    const left = c.startsWith(':');
+    const right = c.endsWith(':');
+    if (left && right) return 'center';
+    if (right) return 'right';
+    if (left) return 'left';
+    return '';
+  });
+
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const headerTr = document.createElement('tr');
+  const headerCells = parseCells(lines[0]);
+  headerCells.forEach((cellText, idx) => {
+    const th = document.createElement('th');
+    if (alignments[idx]) th.style.textAlign = alignments[idx];
+    appendInlineFormatted(th, cellText);
+    headerTr.appendChild(th);
+  });
+  thead.appendChild(headerTr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (let i = 2; i < lines.length; i++) {
+    const rowIdx = i - 2;
+    const rowCells = parseCells(lines[i]);
+    if (!rowCells.some(Boolean)) continue;
+    const tr = document.createElement('tr');
+    tr.dataset.row = String(rowIdx);
+    tr.onclick = (e) => {
+      e.stopPropagation();
+      stopSpeech();
+      curChap = typeof cIdx === 'number' ? cIdx : curChap;
+      curSeg = typeof sIdx === 'number' ? sIdx : curSeg;
+      curTableRow = rowIdx;
+      highlightSegment(curSeg, false);
+      highlightTableRow(curChap, curSeg, curTableRow);
+      if (speechEnabled) speakCurrentSegment();
+    };
+    rowCells.forEach((cellText, idx) => {
+      const td = document.createElement('td');
+      if (alignments[idx]) td.style.textAlign = alignments[idx];
+      appendInlineFormatted(td, cellText);
+      tr.appendChild(td);
+    });
+    while (tr.children.length < headerCells.length) {
+      tr.appendChild(document.createElement('td'));
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  div.appendChild(table);
+}
+
+function findChapterForTocEntry(line) {
+  const m = line.match(/^(.*?)(?:\s*[—–-]\s*|\s*(?:\.\s*){2,}|\s{3,})([0-9]+|[ivxlcdm]+)$/i);
+  let titlePart = line;
+  let pagePart = null;
+  if (m) {
+    titlePart = m[1].trim();
+    pagePart = m[2].trim().toLowerCase();
+  }
+  const norm = titlePart.toLowerCase().replace(/[^a-z0-9äöå]/g, '');
+  if (!norm && !pagePart) return -1;
+  for (let i = 0; i < BOOK.length; i++) {
+    if (i === curChap) continue;
+    const t = (BOOK[i].title || '').toLowerCase().replace(/[^a-z0-9äöå]/g, '');
+    const gt = (BOOK[i].chapter_title || '').toLowerCase().replace(/[^a-z0-9äöå]/g, '');
+    if (t === norm || gt === norm || (norm.length >= 5 && (t.includes(norm) || norm.includes(t)))) {
+      return i;
+    }
+  }
+  if (pagePart) {
+    for (let i = 0; i < BOOK.length; i++) {
+      if (i === curChap) continue;
+      if (BOOK[i].page && String(BOOK[i].page).toLowerCase() === pagePart) return i;
+      if (BOOK[i].segments && BOOK[i].segments.some(s => s.toLowerCase().includes('[p. ' + pagePart + ']'))) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+function renderFormattedSegment(div, text, cIdx, sIdx) {
+  if (isMarkdownTableText(text)) {
+    renderMarkdownTable(div, text, cIdx, sIdx);
+    return;
+  }
+  if (typeof text === 'string' && text.startsWith('```') && text.endsWith('```')) {
+    div.classList.add('seg-code');
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.textContent = text.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
+    pre.appendChild(code);
+    div.appendChild(pre);
+    return;
+  }
+  if (typeof text === 'string' && (text.startsWith('◦ ') || text.startsWith('  '))) {
+    div.classList.add('seg-subitem');
+  }
+  const isTOC = isPrintedContentsChapter(cIdx);
+  const lines = String(text ?? '').split('\n');
+  lines.forEach((line, idx) => {
+    if (idx > 0) div.appendChild(document.createElement('br'));
+    if (isTOC) {
+      const targetChap = findChapterForTocEntry(line);
+      if (targetChap !== -1) {
+        const link = document.createElement('a');
+        link.className = 'toc-entry-link';
+        link.href = '#';
+        link.onclick = (e) => {
+          e.preventDefault();
+          loadChapter(targetChap, -1, false);
+        };
+        appendInlineFormatted(link, line);
+        div.appendChild(link);
+        return;
+      }
+    }
+    appendInlineFormatted(div, line);
+  });
+}
+function createBookFigure(src, captionText, extraClass = '', altText = '') {
+  const fig = document.createElement('figure');
+  fig.className = ('book-figure ' + extraClass).trim();
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = captionText || altText || document.title || 'Illustration';
+  img.loading = 'lazy';
+  fig.appendChild(img);
+  if (captionText) {
+    const cap = document.createElement('figcaption');
+    cap.textContent = captionText;
+    fig.appendChild(cap);
+  }
+  return fig;
+}
+
+let renderedBook = null;
+let manualReadingScroll = false;
+function renderBookChapter(cIdx) {
+  const section = document.createElement('section');
+  section.id = `chapter_${cIdx}`;
+  section.className = 'reading-section';
+  const chapObj = BOOK[cIdx];
+  if (chapObj.cover_image) {
+    section.appendChild(createBookFigure(chapObj.cover_image, chapObj.cover_caption || '', 'book-cover-figure'));
+  }
+  const titleSegment = document.createElement('div');
+  titleSegment.className = 'seg title-segment';
+  titleSegment.id = `seg_${cIdx}_-1`;
+  titleSegment.tabIndex = 0;
+  titleSegment.setAttribute('role', 'button');
+  titleSegment.setAttribute('aria-label', 'Read chapter title');
+  titleSegment.onclick = () => { stopSpeech(); curChap = cIdx; curSeg = -1; highlightSegment(curSeg); speakCurrentSegment(); };
+  titleSegment.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); titleSegment.click(); } };
+  const heading = document.createElement('h1');
+  heading.className = 'chapter-title';
+  const fullTitle = chapObj.chapter_title || chapObj.title;
+  const chapterParts = fullTitle.match(/^((?:chapter|part|luku|osa)\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten))\b\s*(?:[:.\-–—]\s*)?(.+)$/i);
+  if (chapterParts) {
+    const label = document.createElement('span');
+    label.className = 'chapter-label';
+    label.textContent = chapterParts[1];
+    const name = document.createElement('span');
+    name.className = 'chapter-name';
+    name.textContent = chapterParts[2];
+    // Both lines belong to the same semantic heading and inherit its title style.
+    heading.append(label, document.createTextNode(' '), name);
+  } else {
+    heading.textContent = fullTitle;
+  }
+  const firstInChapter = !cIdx || !chapObj.chapter_title || BOOK[cIdx - 1].chapter_title !== chapObj.chapter_title;
+  const numberInfo = numberedHeading(chapObj.title);
+  if (numberInfo && chapObj.toc_group !== 'Original printed contents') {
+    const numberedTitle = document.createElement('h' + Math.min(6, numberInfo.depth));
+    numberedTitle.className = 'numbered-heading';
+    numberedTitle.textContent = chapObj.title;
+    titleSegment.appendChild(numberedTitle);
+  } else if (firstInChapter || chapObj.title === chapObj.chapter_title) titleSegment.appendChild(heading);
+  if (!numberInfo && chapObj.chapter_title && chapObj.title !== chapObj.chapter_title) {
+    const subtitle = document.createElement('h2');
+    subtitle.className = 'section-title';
+    subtitle.textContent = chapObj.title;
+    titleSegment.appendChild(subtitle);
+  }
+  if (chapObj.page) {
+    const chapPage = document.createElement('span');
+    chapPage.className = 'page-marker page-marker-chap';
+    chapPage.id = 'page-' + String(chapObj.page).toLowerCase();
+    chapPage.dataset.page = chapObj.page;
+    chapPage.title = 'Original page ' + chapObj.page;
+    chapPage.textContent = 'p. ' + chapObj.page;
+    titleSegment.appendChild(chapPage);
+  }
+  section.appendChild(titleSegment);
+  if (chapObj.image) {
+    section.appendChild(createBookFigure(chapObj.image, chapObj.image_caption || '', 'chapter-illustration'));
+  }
+  // Pictures extracted from the source PDF sit between segments, in reading order. They are not
+  // segments themselves, so speech, search and progress are unaffected by them.
+  const pdfFigures = Array.isArray(chapObj.figures) ? chapObj.figures : [];
+  const appendFigure = fig => section.appendChild(createBookFigure(
+    fig.image, '', 'inline-figure', fig.page ? 'Illustration from page ' + fig.page : 'Illustration'));
+  pdfFigures.forEach(fig => { if (fig && fig.image && Number(fig.after) < 0) appendFigure(fig); });
+  chapObj.segments.forEach((text, i) => {
+    const div = document.createElement('div');
+    div.className = 'seg';
+    div.id = `seg_${cIdx}_${i}`;
+    renderFormattedSegment(div, text, cIdx, i);
+    div.onclick = () => {
+      stopSpeech();
+      curChap = cIdx;
+      curSeg = i;
+      curTableRow = 0;
+      highlightSegment(curSeg);
+      speakCurrentSegment();
+    };
+    section.appendChild(div);
+    pdfFigures.forEach(fig => { if (fig && fig.image && Number(fig.after) === i) appendFigure(fig); });
+  });
+  pdfFigures.forEach(fig => {
+    if (fig && fig.image && Number(fig.after) >= chapObj.segments.length) appendFigure(fig);
+  });
+  if (chapObj.back_image) {
+    section.appendChild(createBookFigure(chapObj.back_image, chapObj.back_caption || 'Back Cover', 'book-back-cover-figure'));
+  }
+
+  return section;
+}
+
+function loadChapter(cIdx, sIdx = -1, autoSpeak = false) {
+  stopSpeech();
+  if (!BOOK.length) {
+    contentEl.textContent = 'No readable text found in this document.';
+    playBtn.disabled = true;
+    return;
+  }
+  prompterBottomTime = null;
+  curChap = Math.max(0, Math.min(BOOK.length - 1, cIdx));
+  curSeg = Math.max(-1, Math.min(BOOK[curChap].segments.length - 1, sIdx));
+
+  tocEl.querySelectorAll('[data-section]').forEach(li => {
+    const active = Number(li.dataset.section) === curChap;
+    li.classList.toggle('active', active);
+    const details = li.closest('details');
+    if (active && details && !['Front matter', 'Original printed contents'].includes(BOOK[curChap].toc_group)) {
+      details.open = true;
+    }
+  });
+
+  if (renderedBook !== BOOK || !document.getElementById('chapter_0')) {
+    contentEl.replaceChildren();
+    BOOK.forEach((_, index) => contentEl.appendChild(renderBookChapter(index)));
+    renderedBook = BOOK;
+  } else {
+    document.getElementById(`chapter_${curChap}`).replaceWith(renderBookChapter(curChap));
+  }
+
+  highlightSegment(curSeg);
+
+  playBtn.disabled = !speechEnabled;
+  if (autoSpeak) speakCurrentSegment();
+}
+
+function highlightSegment(sIdx, scroll = true) {
+  if (scroll) manualReadingScroll = false;
+  document.querySelectorAll('.seg.active').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.active-row').forEach(el => el.classList.remove('active-row'));
+  const target = document.getElementById(`seg_${curChap}_${sIdx}`);
+  if (target) {
+    target.classList.add('active');
+    if (/\bseg-table\b/.test(target.className || '')) {
+      if (curTableRow < 0) curTableRow = 0;
+      highlightTableRow(curChap, sIdx, curTableRow);
+    }
+    if (scroll) target.scrollIntoView({ behavior: 'instant', block: 'center' });
+  }
+  tocEl.querySelectorAll('[data-section]').forEach(li => li.classList.toggle('active', Number(li.dataset.section) === curChap));
+  const total = BOOK[curChap].segments.length;
+  progressText.textContent = sIdx === -1 ? `${BOOK[curChap].title} • Title` : `${BOOK[curChap].title} (${sIdx + 1}/${total})`;
+  try { localStorage.setItem('ebook_pos_' + BOOK_ID, JSON.stringify({ c: curChap, s: sIdx })); } catch { /* Reading works without browser storage. */ }
+}
+
+// Manual reading keeps the active passage and saved position in sync without
+// moving the viewport or starting speech. All sections remain in the document.
+let readingScrollFrame = null;
+contentEl.addEventListener('wheel', () => { manualReadingScroll = true; }, {passive: true});
+contentEl.addEventListener('touchstart', () => { manualReadingScroll = true; }, {passive: true});
+contentEl.addEventListener('pointerdown', () => { manualReadingScroll = true; });
+document.addEventListener('keydown', event => {
+  if (['PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End', ' '].includes(event.key)
+      && !event.target.closest('input, textarea, select, dialog')) manualReadingScroll = true;
+});
+contentEl.addEventListener('scroll', () => {
+  if (readingScrollFrame !== null || isPlaying || (!manualReadingScroll && !prompterRunning)) return;
+  readingScrollFrame = requestAnimationFrame(() => {
+    readingScrollFrame = null;
+    if (isPlaying || !BOOK.length) return;
+    const box = contentEl.getBoundingClientRect();
+    const focusY = box.top + box.height * .5;
+    const sections = contentEl.querySelectorAll('.reading-section');
+    let index = 0;
+    sections.forEach((section, i) => { if (section.getBoundingClientRect().top <= focusY) index = i; });
+    const section = sections[index];
+    if (!section) return;
+    let segment = -1;
+    section.querySelectorAll('.seg').forEach(el => {
+      if (el.getBoundingClientRect().top <= focusY) segment = Number(el.id.split('_').pop());
+    });
+    curChap = index; curSeg = segment;
+    highlightSegment(curSeg, false);
+  });
+}, {passive: true});
+
+function stopPrompter() {
+  prompterRunning = false;
+  if (prompterFrame !== null) cancelAnimationFrame(prompterFrame);
+  prompterFrame = null; prompterLastTime = null; prompterBottomTime = null;
+  contentEl.style.scrollBehavior = '';
+  document.getElementById('prompter-btn').textContent = '▶ Prompter';
+}
+
+function togglePrompter() {
+  if (prompterRunning) { stopPrompter(); return; }
+  if (!BOOK.length) return;
+  prompterRunning = true;
+  contentEl.style.scrollBehavior = 'auto';
+  prompterLastTime = null; prompterBottomTime = null;
+  document.getElementById('prompter-btn').textContent = '⏸ Prompter';
+  prompterFrame = requestAnimationFrame(prompterTick);
+}
+
+function prompterTick(time) {
+  if (!prompterRunning) return;
+  const elapsed = prompterLastTime === null ? 0 : Math.min((time - prompterLastTime) / 1000, .1);
+  prompterLastTime = time;
+  const bottom = Math.max(0, contentEl.scrollHeight - contentEl.clientHeight);
+  contentEl.scrollTop = Math.min(bottom, contentEl.scrollTop + elapsed * prompterSpeed);
+  if (contentEl.scrollTop >= bottom - 1) {
+    if (prompterBottomTime === null) prompterBottomTime = time;
+    const words = BOOK[curChap].segments.join(' ').split(/\s+/).length;
+    const pause = bottom > 0 ? 2500 : Math.max(8000, words / 3 * 1000);
+    if (time - prompterBottomTime >= pause && !isPlaying) {
+      stopPrompter(); return;
+    }
+  } else prompterBottomTime = null;
+  prompterFrame = requestAnimationFrame(prompterTick);
+}
+
+function setSpeechEnabled(enabled) {
+  speechEnabled = Boolean(enabled);
+  document.getElementById('speech-enabled').checked = speechEnabled;
+  if (!speechEnabled) stopSpeech();
+  playBtn.disabled = !speechEnabled || !BOOK.length;
+  statusText.textContent = speechEnabled ? 'Read aloud enabled' : 'Silent reading';
+  try { localStorage.setItem('ebook_speech_enabled', String(speechEnabled)); } catch {}
+}
+
+function isPrintedContentsChapter(idx) {
+  const ch = BOOK[idx];
+  if (!ch) return false;
+  if (ch.toc_group === 'Original printed contents') return true;
+  if (/^(?:table\s+of\s+)?contents$|^sisällys$/i.test((ch.title || '').trim())) return true;
+  const segs = ch.segments || [];
+  if (segs.length > 0 && segs.length <= 40) {
+    const dotLeaderSegs = segs.filter(s => /(?:\.\s*){4,}\s*[0-9ivxlcdm]+\b/i.test(String(s || ''))).length;
+    if (dotLeaderSegs >= Math.ceil(segs.length * 0.5)) return true;
+  }
+  return false;
+}
+
+function nextReadableChapterIndex(fromChap) {
+  let next = fromChap + 1;
+  if (!isPrintedContentsChapter(fromChap)) {
+    while (next < BOOK.length && isPrintedContentsChapter(next)) {
+      next++;
+    }
+    if (next >= BOOK.length) {
+      next = fromChap + 1;
+    }
+  }
+  return next < BOOK.length ? next : -1;
+}
+
+function prevReadableChapterIndex(fromChap) {
+  let prev = fromChap - 1;
+  if (!isPrintedContentsChapter(fromChap)) {
+    while (prev >= 0 && isPrintedContentsChapter(prev)) {
+      prev--;
+    }
+    if (prev < 0) {
+      prev = fromChap - 1;
+    }
+  }
+  return prev >= 0 ? prev : -1;
+}
+
+function spokenChapterTitle(index) {
+  const section = BOOK[index];
+  if (index === 0 && /^title\s*&\s*front\s*matter$/i.test((section.title || '').trim())) {
+    return document.title || section.title;
+  }
+  const parent = section.chapter_title;
+  const firstInChapter = parent && (!index || BOOK[index - 1].chapter_title !== parent);
+  return firstInChapter && parent !== section.title ? parent + '. ' + section.title : section.title;
+}
+
+function speakCurrentSegment() {
+  if (!speechEnabled || !BOOK.length) return;
+  if (!synth) {
+    statusText.textContent = "Speech synthesis is not supported in this browser.";
+    return;
+  }
+  synth.cancel();
+
+  // On the cover/front-matter chapter, if the heading is a generic placeholder ("Title & Front Matter")
+  // or already repeated in the first segment, start directly at segment 0 so the cover title is read naturally once.
+  if (curChap === 0 && curSeg === -1 && BOOK[0].segments.length > 0) {
+    const rawH = (BOOK[0].title || '').trim();
+    const firstSeg = (BOOK[0].segments[0] || '').trim();
+    const normH = rawH.toLowerCase().replace(/[^a-z0-9äöå]+/g, '');
+    const normFirst = firstSeg.toLowerCase().replace(/[^a-z0-9äöå]+/g, '');
+    if (/^title\s*&\s*front\s*matter$/i.test(rawH) || (normH && normFirst && (normFirst.includes(normH) || normH.includes(normFirst)))) {
+      curSeg = 0;
+    }
+  }
+  
+  let isTable = false;
+  let tableHeaders = [];
+  let tableDataRows = [];
+  if (curSeg !== -1 && curSeg < BOOK[curChap].segments.length && isMarkdownTableText(BOOK[curChap].segments[curSeg])) {
+    isTable = true;
+    const rawTable = BOOK[curChap].segments[curSeg];
+    const lines = rawTable.split('\n').map(l => l.trim()).filter(Boolean);
+    const parseCells = (line) => {
+      const raw = line.replace(/^\|/, '').replace(/\|$/, '');
+      return raw.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'));
+    };
+    tableHeaders = parseCells(lines[0]);
+    tableDataRows = lines.slice(2).map(parseCells).filter(r => r.some(Boolean));
+    if (curTableRow < 0 || curTableRow >= tableDataRows.length) {
+      curTableRow = 0;
+    }
+    highlightTableRow(curChap, curSeg, curTableRow);
+  }
+
+  let text = '';
+  if (curSeg === -1) {
+    text = spokenChapterTitle(curChap);
+  } else if (isTable) {
+    const cells = tableDataRows[curTableRow] || [];
+    if (cells.length === 2) {
+      text = cells[0] + ': ' + cells[1];
+    } else {
+      text = cells.map((c, idx) => (tableHeaders[idx] ? tableHeaders[idx] + ': ' + c : c)).join(', ');
+    }
+  } else {
+    text = BOOK[curChap].segments[curSeg];
+  }
+  
+  let speakText = String(text || '')
+    .replace(/\[p\.\s*[0-9ivxlcdmIVXLCDM]+\]/gi, '')
+    .replace(/^```[^\n]*\n?/, '')
+    .replace(/\n?```$/, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(?<![*\w])\*([^*\n]+?)\*(?![*\w])/g, '$1')
+    .replace(/(?<![\p{L}\p{N}])_([^_\n]+?)_(?![\p{L}\p{N}])/gu, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^[•◦]\s+/gm, '')
+    .replace(/[├└│─]+/g, ' ')
+    .replace(/(?:\.\s*){3,}\s*\d*\b/g, '. ')
+    .replace(/\.{2,}|…+/g, '. ')
+    .replace(/[-=_*~#]{3,}/g, ' ')
+    .replace(/Hak Ja Han Moon/g, 'Hak Tsa Han Muun')
+    .replace(/Hak Ja Han/g, 'Hak Tsa Han')
+    .trim();
+
+  // Skip segments that contain only dots/separators/punctuation with no pronounceable words
+  if (!/[\p{L}\p{N}]/u.test(speakText)) {
+    if (isTable && curTableRow + 1 < tableDataRows.length) {
+      curTableRow++;
+      highlightTableRow(curChap, curSeg, curTableRow);
+      speakCurrentSegment();
+      return;
+    }
+    curTableRow = -1;
+    if (curSeg + 1 < BOOK[curChap].segments.length) {
+      curSeg++;
+      speakCurrentSegment();
+    } else {
+      const nextChap = nextReadableChapterIndex(curChap);
+      if (nextChap !== -1) loadChapter(nextChap, -1, true);
+      else stopSpeech();
+    }
+    return;
+  }
+
+  const utter = new SpeechSynthesisUtterance(speakText);
+  utter.lang = DEFAULT_LANG;
+  utter.rate = speechRate;
+
+  const voices = synth.getVoices();
+  const selectedVoice = voices[voiceSelect.value];
+  if (selectedVoice) utter.voice = selectedVoice;
+
+  utter.onstart = () => {
+    isPlaying = true;
+    playBtn.textContent = "⏸ Pause";
+    statusText.textContent = "Reading…";
+    highlightSegment(curSeg);
+  };
+
+  utter.onend = () => {
+    if (!isPlaying) return;
+    if (isTable && curTableRow + 1 < tableDataRows.length) {
+      curTableRow++;
+      highlightTableRow(curChap, curSeg, curTableRow);
+      speakCurrentSegment();
+      return;
+    }
+    curTableRow = -1;
+    if (!isPlaying) return;
+    if (curSeg + 1 < BOOK[curChap].segments.length) {
+      curSeg++;
+      speakCurrentSegment();
+    } else {
+      const nextChap = nextReadableChapterIndex(curChap);
+      if (nextChap !== -1) {
+        loadChapter(nextChap, -1, true);
+      } else {
+        stopSpeech();
+        statusText.textContent = "Finished reading.";
+      }
+    }
+  };
+
+  synth.speak(utter);
+}
+
+function stopSpeech() {
+  isPlaying = false;
+  if (synth) synth.cancel();
+  playBtn.textContent = "▶ Read";
+  statusText.textContent = "Paused";
+}
+
+function togglePlay() {
+  if (!BOOK.length) return;
+  if (isPlaying) stopSpeech();
+  else speakCurrentSegment();
+}
+
+function stepSegment(delta) {
+  if (!BOOK.length) return;
+  if (curSeg >= 0 && curSeg < BOOK[curChap].segments.length && isMarkdownTableText(BOOK[curChap].segments[curSeg])) {
+    const rawTable = BOOK[curChap].segments[curSeg];
+    const lines = rawTable.split('\n').map(l => l.trim()).filter(Boolean);
+    const rowCount = Math.max(0, lines.length - 2);
+    const nextRow = curTableRow + delta;
+    if (nextRow >= 0 && nextRow < rowCount) {
+      curTableRow = nextRow;
+      highlightTableRow(curChap, curSeg, curTableRow);
+      if (isPlaying) speakCurrentSegment();
+      return;
+    }
+  }
+  curTableRow = -1;
+  if (!BOOK.length) return;
+  const next = curSeg + delta;
+  if (next >= -1 && next < BOOK[curChap].segments.length) {
+    curSeg = next;
+    highlightSegment(curSeg);
+    if (isPlaying) speakCurrentSegment();
+  } else if (delta > 0) {
+    const nextChap = nextReadableChapterIndex(curChap);
+    if (nextChap !== -1) loadChapter(nextChap, -1, isPlaying);
+  } else if (delta < 0) {
+    const prevChap = prevReadableChapterIndex(curChap);
+    if (prevChap !== -1) loadChapter(prevChap, BOOK[prevChap].segments.length - 1, isPlaying);
+  }
+}
+
+function updateSpeed(val) {
+  speechRate = parseFloat(val);
+  if (isPlaying) speakCurrentSegment();
+}
+
+function adjustFont(delta) {
+  fontSize = Math.max(14, Math.min(32, fontSize + delta));
+  document.documentElement.style.setProperty('--font-size', fontSize + 'px');
+}
+
+function toggleTheme() {
+  const dark = document.body.getAttribute('data-theme') === 'dark';
+  document.body.setAttribute('data-theme', dark ? 'light' : 'dark');
+}
+
+
+
+function getCoverTargetRole() {
+  const sel = document.getElementById('cover-target-role');
+  return sel && sel.value === 'back' ? 'back' : 'front';
+}
+
+function renderCoverDialogPreview() {
+  const box = document.getElementById('cover-preview-box');
+  const removeBtn = document.getElementById('cover-remove-btn');
+  if (!box) return;
+  box.replaceChildren();
+  const roleSelect = document.getElementById('cover-target-role');
+  const hasFront = BOOK.length && BOOK[0] && BOOK[0].cover_image;
+  const hasBack = BOOK.length && BOOK[BOOK.length - 1] && BOOK[BOOK.length - 1].back_image;
+
+  if (!roleSelect && (hasFront || hasBack)) {
+    if (hasFront) {
+      const frontWrap = document.createElement('div');
+      frontWrap.style.cssText = 'display:inline-block;margin:6px 12px;vertical-align:top';
+      const fImg = document.createElement('img');
+      fImg.src = BOOK[0].cover_image;
+      fImg.alt = BOOK[0].cover_caption || 'Front cover';
+      fImg.style.cssText = 'max-height:220px;max-width:100%;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.25)';
+      const fCap = document.createElement('div');
+      fCap.style.cssText = 'font-size:0.8rem;opacity:0.8;margin-top:3px';
+      fCap.textContent = 'Front Cover: ' + (BOOK[0].cover_caption || document.title);
+      frontWrap.append(fImg, fCap);
+      box.appendChild(frontWrap);
+    }
+    if (hasBack) {
+      const backWrap = document.createElement('div');
+      backWrap.style.cssText = 'display:inline-block;margin:6px 12px;vertical-align:top';
+      const bImg = document.createElement('img');
+      bImg.src = BOOK[BOOK.length - 1].back_image;
+      bImg.alt = BOOK[BOOK.length - 1].back_caption || 'Back cover';
+      bImg.style.cssText = 'max-height:220px;max-width:100%;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.25)';
+      const bCap = document.createElement('div');
+      bCap.style.cssText = 'font-size:0.8rem;opacity:0.8;margin-top:3px';
+      bCap.textContent = 'Back Cover: ' + (BOOK[BOOK.length - 1].back_caption || document.title);
+      backWrap.append(bImg, bCap);
+      box.appendChild(backWrap);
+    }
+    return;
+  }
+
+  const role = getCoverTargetRole();
+  const activeImg = role === 'back' ? (hasBack ? BOOK[BOOK.length - 1].back_image : null) : (hasFront ? BOOK[0].cover_image : null);
+  const activeCap = role === 'back' ? (hasBack ? BOOK[BOOK.length - 1].back_caption : '') : (hasFront ? BOOK[0].cover_caption : '');
+  if (removeBtn) removeBtn.disabled = !activeImg;
+  if (activeImg) {
+    const img = document.createElement('img');
+    img.src = activeImg;
+    img.alt = activeCap || (role === 'back' ? 'Back cover' : 'Front cover');
+    img.style.cssText = 'max-height:220px;max-width:100%;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.25)';
+    const cap = document.createElement('div');
+    cap.style.cssText = 'font-size:0.8rem;opacity:0.8;margin-top:3px';
+    cap.textContent = (role === 'back' ? 'Current Back Cover: ' : 'Current Front Cover: ') + (activeCap || document.title);
+    box.append(img, cap);
+  } else {
+    const empty = document.createElement('p');
+    empty.style.cssText = 'font-size:0.88rem;opacity:0.75;margin:6px 0';
+    empty.textContent = 'No ' + (role === 'back' ? 'back' : 'front') + ' cover image is currently set for this book.';
+    box.appendChild(empty);
+  }
+}
+
+function openCoverDialog() {
+  const dlg = document.getElementById('cover-dialog');
+  if (!dlg) return;
+  const qInput = document.getElementById('cover-search-query');
+  if (qInput && !qInput.value && document.title && document.title !== 'Ebook Reader') {
+    qInput.value = document.title;
+  }
+  const statusEl = document.getElementById('cover-dialog-status');
+  if (statusEl) statusEl.textContent = '';
+  renderCoverDialogPreview();
+  dlg.showModal();
+  if (typeof browseCoverArt === 'function') browseCoverArt(false);
+}
+
+
+
+
+
+init();
+
+
+</script>
+</body>
+</html>
