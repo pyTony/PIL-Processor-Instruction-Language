@@ -51,6 +51,8 @@ Main is a runtime-only export and intentionally runs zero development tests.
 **[Start here: PIL documentation overview](docs/README.md)** — a single guide
 with links to all references, examples, user guides, verification plans and history.
 
+**[Compile DOS programs to native executables](docs/NATIVE_DOS_COMPILATION.md)**: supported COM/MZ EXE subset, one-command standalone block builds, verification and next native-runtime milestones. Profile-guided shadow engines are deferred.
+
 - [Implemented language reference](docs/LANGUAGE.md): executable syntax and semantics.
 - [Original design proposal](docs/design/processor_instruction_language_v01.md): broader architecture and planned features.
 - [Executable instruction descriptions](isa/i386/): the actual PIL definitions.
