@@ -93,7 +93,9 @@ DOS services; the new native filesystem ABI is not implemented.
 
 ```powershell
 cargo build --release --locked --lib --features dine-library
-cargo test --locked --lib --features dine-library
+cargo test --locked
+python -m unittest discover -s tests/gui -p test_build_dine.py
+python tools/verify_dine_executable.py
 python tools/build_dine.py programs/dos/MANDVGA.COM --force
 .\programs\compiled\Dine_MANDVGA.exe
 python tools/build_dine.py programs/dos/MANDANSI.COM --force
