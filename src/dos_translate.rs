@@ -128,7 +128,8 @@ fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest:
             }
         }
         match &decoded.operation {
-            guest::Operation::Pil{program,flow,dst,src,address} if standalone_ram(program,*address)=>{
+            guest::Operation::Pil{program,flow,dst,src,address}
+                if decoded.label=="OUT DX,AX" || standalone_ram(program,*address)=>{
                 let next=next_known(program,*dst,*src,known);
                 if near_return(program){
                     if context.2==0{return Err("standalone RET has no proven caller".into());}
