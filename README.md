@@ -51,6 +51,8 @@ Main is a runtime-only export and intentionally runs zero development tests.
 **[Start here: PIL documentation overview](docs/README.md)** — a single guide
 with links to all references, examples, user guides, verification plans and history.
 
+**[Build small Dine applications](docs/DINE_EXECUTABLES.md)**: interpreted-first `Dine_<program>.exe` launchers use the program-independent `dine.dll`, embedding the original DOS program. This is different from pure native block compilation.
+
 **[Compile DOS programs to native executables](docs/NATIVE_DOS_COMPILATION.md)**: supported COM/MZ EXE subset, one-command standalone block builds, verification and next native-runtime milestones. Profile-guided shadow engines are deferred.
 
 - [Implemented language reference](docs/LANGUAGE.md): executable syntax and semantics.
