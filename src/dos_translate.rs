@@ -115,6 +115,13 @@ fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest:
         let end=ip.checked_add(decoded.length).ok_or("standalone instruction address overflow")?;
         if physical+u64::from(decoded.length)>module_end{return Err(format!("standalone instruction at {ip:04x} crosses loaded module end"));}
         for byte in ip..end {if let Some(old)=occupied.insert(byte,ip){if old!=ip{return Err(format!("overlapping standalone instructions at {old:04x} and {ip:04x}"));}}}
+        // The generic decoder models unassigned ports as an open bus. That
+        // cannot safely stand in for a DOS guest's VGA/other device I/O.
+        // Reject *all* ports until standalone device-capability validation is
+        // implemented, otherwise a generated binary could silently drop OUT.
+        if decoded.label.starts_with("IN ")||decoded.label.starts_with("OUT "){
+            return Err(format!("standalone port I/O requires an explicit device boundary at {ip:04x}: {}",decoded.label));
+        }
         match &decoded.operation {
             guest::Operation::Pil{program,flow,dst,src,address} if standalone_ram(program,*address)=>{
                 let ax=next_ax(program,*dst,*src,known_ax);
