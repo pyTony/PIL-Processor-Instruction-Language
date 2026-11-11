@@ -179,21 +179,13 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         },
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
-            let offset=p.cpu.regs[2]&0xffff;let mut text=Vec::new();
             let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            for n in offset..=0xffff{
-                let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS string access: {e:?}"))?;
-                let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))?as u8;
-                if b==b'$'{
-                    console::dos_break_check(p)?;
-                    if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
-                    let screen=console::dos_screen(p,&text)?;
-                    out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
-                    console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);
-                }
-                if text.len()>=out.remaining(){return Err("DOS output limit reached before string terminator".into());}
-                text.push(b);
-            }Err("DOS string has no $ terminator before segment end".into())
+            let text=crate::dos_runtime::dollar_string(&p.ram,context,p.cpu.regs[2]&0xffff,p.cpu.eip,out.remaining())?;
+            console::dos_break_check(p)?;
+            if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
+            let screen=console::dos_screen(p,&text)?;
+            out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
+            console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;Ok(None)
         },
         (0x10,ah @ (0x08|0x09|0x0a))=>{console::video(p,ah)?;Ok(None)},
         // Everex/Trident installation query. This VGA BIOS has no Everex
@@ -683,12 +675,9 @@ fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
 /// AH02 (and AH06 output): capture and active-page screen change together.
 fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
     if to_file(p,&[byte])?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(byte);return Ok(());}
-    let count=if byte==9{8-out.column()%8}else{1};
-    if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
-    let value=if byte==9{b' '}else{byte};
-    let spaces=[b' ';8];let single=[byte];let bytes=if byte==9{&spaces[..count]}else{&single[..]};
-    let screen=console::dos_screen(p,bytes)?;
-    out.write_atomic(bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
+    let (bytes,value)=crate::dos_runtime::character_output(byte,out)?;
+    let screen=console::dos_screen(p,&bytes)?;
+    out.write_atomic(&bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
     console::store(p,&screen)?;
     p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
     Ok(())
