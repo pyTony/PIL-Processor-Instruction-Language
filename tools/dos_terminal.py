@@ -867,7 +867,8 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
                 com1.write(session.com1_out)
                 session.com1_out = b''
             gfx.update(reply, session)
-            graphics_active = any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar'))
+            graphics_active = (bool(reply.get('native_graphics')) or
+                               any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar')))
             if not graphics_active:
                 auto_key_sent = False
             if auto_graphics_key and graphics_active and reply['status'] == 'waiting_input' and not auto_key_sent:
