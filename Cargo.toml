@@ -13,3 +13,7 @@ thiserror = "1.0"
 name = "dine"
 path = "src/main.rs"
 crate-type = ["cdylib"]
+
+[features]
+# Build the shared DOS runtime C ABI, not part of normal pil CLI builds.
+dine-library = []
