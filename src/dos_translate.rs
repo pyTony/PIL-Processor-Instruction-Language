@@ -142,6 +142,13 @@ fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest:
         match &decoded.operation {
             guest::Operation::Pil{program,flow,dst,src,address}
                 if decoded.label=="OUT DX,AX" || standalone_ram(program,*address)=>{
+                // The validated VGA OUT port has its own native service
+                // boundary. Its generic PIL contains CheckIo (a control
+                // effect), but no guest branch or actual open-bus operation.
+                // Preserve AL/AH/DX and advance exactly one x86 instruction.
+                if decoded.label=="OUT DX,AX"{
+                    pending.push((flow.next_eip,known,context));
+                }else{
                 let next=next_known(program,*dst,*src,known);
                 if near_return(program){
                     if context.2==0{return Err("standalone RET has no proven caller".into());}
@@ -166,6 +173,7 @@ fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest:
                     if !unconditional{pending.push((flow.next_eip,next,context));}
                     }
                 }else{pending.push((flow.next_eip,next,context));}
+                }
             },
             guest::Operation::Interrupt{vector:0x20,overflow:false,..}=>exit=true,
             guest::Operation::Interrupt{vector:0x21,overflow:false,next}=>match known.1{
