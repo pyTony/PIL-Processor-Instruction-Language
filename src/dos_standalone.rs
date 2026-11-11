@@ -53,7 +53,7 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
             guest::Operation::Interrupt{vector:0x20,..}=>{
                 let case=format!("{ip} => Ok(Some(0)),\n");cases.push_str(&case);block_cases.push_str(&case);
             },
-            guest::Operation::Interrupt{vector,next,..} if matches!(*vector,0x10|0x21)=>{
+            guest::Operation::Interrupt{vector,next,..} if matches!(*vector,0x10|0x16|0x21)=>{
                 let case=format!("{ip} => {{ let exit=c.interrupt({vector},output)?; c.eip={next}; c.machine.retired(); Ok(exit) }},\n");cases.push_str(&case);block_cases.push_str(&case);
             },
             _=>return Err("unsupported operation in verified graph".into()),
@@ -283,6 +283,14 @@ mod tests {
         assert!(emit(&wrong,"PORT.COM").is_err());
         let clobber=[0xba,0xce,3,0x42,0xb8,5,2,0xef,0xcd,0x20]; // INC DX
         assert!(emit(&clobber,"PORT.COM").is_err());
+    }
+    #[test]
+    fn bios_key_wait_accepts_proven_xor_ah_ah_and_rejects_unproven_ah(){
+        // XOR AH,AH; INT16; MOV AX,4C00h; INT21.
+        let yes=[0x30,0xe4,0xcd,0x16,0xb8,0,0x4c,0xcd,0x21];
+        let source=emit(&yes,"KEY.COM").unwrap();
+        assert!(source.contains("c.interrupt(22,output)"));
+        assert!(emit(&[0xcd,0x16,0xb8,0,0x4c,0xcd,0x21],"KEY.COM").is_err());
     }
     #[test]
     fn unsupported_programs_are_rejected(){

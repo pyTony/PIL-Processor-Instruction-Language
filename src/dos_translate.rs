@@ -66,8 +66,20 @@ fn standalone_ram(program:&Program,address:Option<address::AddressContext>)->boo
 type Known=(Option<u8>,Option<u8>,Option<u16>); // AL, AH, DX
 fn next_known(program:&Program,dst:View,src:View,mut known:Known)->Known{
     let mut constants=std::collections::BTreeMap::new();
+    let mut sources=std::collections::BTreeMap::new();
     for token in &program.tokens {
         if let Token::Const(id,value)=token{constants.insert(*id,value.bits);}
+        if let Token::Read(id,binding,width)=token {
+            let view=match binding{crate::Binding::Dst=>dst,crate::Binding::Src=>src};
+            sources.insert(*id,(view.register,view.low,*width));
+        }
+        // XOR of a source with itself yields a literal zero regardless of
+        // incoming values. Prove it from PIL operand reads, not the x86 label.
+        if let Token::Binary(id,crate::Binary::Xor,a,b)=token {
+            if a==b || sources.get(a).is_some()&&sources.get(a)==sources.get(b){
+                constants.insert(*id,0);
+            }
+        }
         let write=match *token {
             Token::Write(id)=>Some((dst,Some(id))),
             Token::WriteSource(id)=>Some((src,Some(id))),
@@ -167,6 +179,12 @@ fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest:
             guest::Operation::Interrupt{vector:0x10,overflow:false,next}=>match known{
                 (Some(0x03|0x12),Some(0),_)|(_,Some(2),_)=>pending.push((*next,known,context)),
                 _=>return Err(format!("standalone INT 10h at {ip:04x} requires proven AX=0003h/0012h or AH=02h")),
+            },
+            // Key wait returns a supplied scan/ASCII AX; its value is unknown
+            // to compile-time service analysis. No implicit default key.
+            guest::Operation::Interrupt{vector:0x16,overflow:false,next}=>match known.1 {
+                Some(0)=>pending.push((*next,(None,None,known.2),context)),
+                _=>return Err(format!("standalone INT 16h at {ip:04x} requires proven AH=00h")),
             },
             _=>return Err(format!("unsupported standalone operation at {ip:04x}")),
         }
