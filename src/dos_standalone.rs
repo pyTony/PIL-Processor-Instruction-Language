@@ -301,6 +301,16 @@ mod tests {
         assert!(emit(&[0xcd,0x16,0xb8,0,0x4c,0xcd,0x21],"KEY.COM").is_err());
     }
     #[test]
+    fn original_mandvga_guest_reaches_compiled_vga_and_keyboard_boundaries(){
+        let bytes=include_bytes!("../programs/dos/MANDVGA.COM");
+        let source=emit(bytes,"MANDVGA.COM").expect("original MANDVGA.COM must have a fully proven static graph");
+        assert!(source.contains("c.out_vga_word()?"),"GC word port must use native device, not an open bus");
+        assert!(source.contains("c.interrupt(16,output)"),"BIOS video boundary missing");
+        assert!(source.contains("c.interrupt(22,output)"),"BIOS key wait boundary missing");
+        assert!(source.contains("mod vga_planar"),"generated code must include the original VGA engine");
+        assert!(!source.contains("include_str!(\"dos_font8x8.txt\")"),"generated source must embed its font");
+    }
+    #[test]
     fn unsupported_programs_are_rejected(){
         for bytes in [vec![0xeb,0xfe],vec![0x90],vec![0xb4,0x30,0xcd,0x21],vec![0xa2,0,1],vec![0xb8]]{
             assert!(emit(&bytes,"TEST.COM").is_err(),"{bytes:?}");
