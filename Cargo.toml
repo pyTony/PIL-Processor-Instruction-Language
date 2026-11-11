@@ -8,7 +8,7 @@ thiserror = "1.0"
 
 # Build the same CPU and DOS implementation as a reusable native Dine
 # runtime, independent of guest programs. The existing `pil` binary remains
-# the compiler/interpreter command. Build with `cargo build --release --lib`.
+# the compiler/interpreter command. Build with `cargo build --release --lib --features dine-library`.
 [lib]
 name = "dine"
 path = "src/main.rs"
