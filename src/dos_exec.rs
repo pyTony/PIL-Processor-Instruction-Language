@@ -6,6 +6,15 @@ use super::*;
 /// What the parent needs back when its child ends.
 #[derive(Clone,Debug)]
 pub struct Frame{cpu:Cpu,selectors:[u16;6],pub(super) image:Image,open_handles:u32,dta:(u16,u16),psp:u16,active_program:ProgramIdentity}
+/// AH=55h installs a PSP without suspending its caller. In particular the
+/// CPU at the AH55 call is NOT the continuation after the child exits.
+/// DOS uses the child PSP's INT22 vector for that return.
+#[derive(Clone,Debug)]
+pub struct InMemoryChild {
+    child:u16,parent:u16,exec_depth:usize,
+    open_handles:u32,dta:(u16,u16),
+    system:[(u32,u32);SYSTEM_RANGES],
+}
 /// Nesting limit for programs started by programs.
 const MAX_DEPTH:usize=8;
 fn fail(p:&mut Loaded,code:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|code;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;}
@@ -165,35 +174,69 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
 }
 /// The child ended with `code` (`kind` 0 normal, 3 resident): free what it
 /// owned, close its files and resume the parent after its INT 21.
+/// Whether termination has a real waiting parent (AH4B or AH55).
+pub(super) fn has_parent(p:&Loaded)->bool{
+    !p.exec.is_empty() || p.in_memory.last().is_some_and(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
+}
+/// Dispatch termination by the active PSP and EXEC nesting depth. An AH55
+/// child must never pop the older AH4B frame that launched its parent.
 pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
-    // The ending program's PSP gives back the INT 22h/23h/24h vectors its
-    // parent had, as FreeDOS return_user does.
-    let child=u32::from(p.psp)*16;
+    let in_memory=p.in_memory.last().is_some_and(|f|f.child==p.psp&&f.exec_depth==p.exec.len());
+    let base=u32::from(p.psp)*16;
+    // Read the exit target before changing the MCB, IVT, or execution context.
+    let exit=if in_memory{
+        let frame=p.in_memory.last().unwrap();
+        let parent=word(&p.ram,base+0x16)?;
+        if parent!=frame.parent{return Err(format!("AH55 child PSP {:04x} has unexpected parent {:04x}, expected {:04x}",p.psp,parent,frame.parent));}
+        let target=p.ram.load(base+0x0a,MemWidth::Dword).map_err(|e|format!("AH55 child INT22 read: {e:?}"))?;
+        if target==0{return Err("AH55 child has no INT22 termination continuation".into());}
+        Some(target)
+    }else{None};
+    // Return the INT22/23/24 vectors saved in the terminating PSP.
     for(at,vector)in [(0x0a,0x22u32),(0x0e,0x23),(0x12,0x24)]{
-        let saved=p.ram.load(child+at,MemWidth::Dword).map_err(|e|format!("terminate PSP read: {e:?}"))?;
+        let saved=p.ram.load(base+at,MemWidth::Dword).map_err(|e|format!("terminate PSP read: {e:?}"))?;
         p.ram.store(vector*4,MemWidth::Dword,saved).map_err(|e|format!("terminate vector write: {e:?}"))?;
     }
     brk::drop_program(p);
-    let frame=p.exec.pop().ok_or("terminate without a parent")?;
     let keep=p.resident.take().map(|_|p.psp);
     p.arena.release(&mut p.ram,p.psp,keep)?;
     p.return_code=u16::from(kind)<<8|u16::from(code);
+    if let Some(target)=exit{
+        let frame=p.in_memory.pop().unwrap();
+        // Preserve the child's live register/stack state; its PSP INT22 target
+        // is the explicit continuation established by the parent at run time.
+        // The DOS service loop advances IP by two after the service retires.
+        let cs=(target>>16)as u16;
+        let ip=target as u16;
+        let index=SegmentRegister::Cs.index();
+        p.selectors[index]=cs;p.image.selectors[index]=cs;
+        p.image.segments[index]=SegmentCache::real_mode(cs);
+        p.cpu.eip=u32::from(ip.wrapping_sub(2));
+        p.image.system=frame.system;
+        p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.parent;
+        return files::drop_unreferenced(p);
+    }
+    let frame=p.exec.pop().ok_or("terminate without a parent")?;
     p.cpu=frame.cpu;p.cpu.eip=(p.cpu.eip+2)&0xffff;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     let (msw,controls)=(p.image.msw,p.image.controls);
     p.selectors=frame.selectors;p.image=frame.image;p.image.msw=msw;p.image.controls=controls;p.image.retired();
     p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.psp;p.active_program=frame.active_program;
-    // Files only the child's handles referred to are closed with it.
+    // Forget AH55 PSPs abandoned when the parent itself terminates.
+    p.in_memory.retain(|f|f.exec_depth<p.exec.len()+1);
     files::drop_unreferenced(p)
 }
-/// The running program's PSP and open handles, then each waiting parent's.
+/// The running PSP, AH55 parents, and waiting AH4B EXEC parents retain SFT references.
 pub(super) fn chain(p:&Loaded)->Vec<(u16,u32)>{
-    std::iter::once((p.psp,p.open_handles)).chain(p.exec.iter().rev().map(|f|(f.psp,f.open_handles))).collect()
+    std::iter::once((p.psp,p.open_handles))
+        .chain(p.in_memory.iter().rev().map(|f|(f.parent,f.open_handles)))
+        .chain(p.exec.iter().rev().map(|f|(f.psp,f.open_handles))).collect()
 }
 /// INT 21h AH=55h: Create Child PSP at DX with memory size SI (DOS 3.0+).
 /// The child PSP inherits parent's handles, environment, FCBs, and command tail,
 /// and records the parent PSP segment. If the child block is allocated in the
 /// MCB arena, ownership is transferred to the child. The active PSP switches to DX.
 pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
+    if p.exec.len()+p.in_memory.len()>=MAX_DEPTH{return Err("DOS AH55 child nesting limit reached".into());}
     let child=(p.cpu.regs[2]&0xffff)as u16;
     let memory_end=(p.cpu.regs[6]&0xffff)as u16;
     let base=u32::from(child)*16;
@@ -229,6 +272,19 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
     if is_exact_base{
         let mcb_owner_addr=u32::from(header)*16+1;
         p.ram.check_write(mcb_owner_addr,MemWidth::Word).map_err(|e|format!("child MCB owner write check: {e:?}"))?;
+    }
+    // Temporarily allow instruction fetch from the child region while Turbo
+    // continues to execute in its own window. Do not replace the current
+    // image or capture the CPU here: the child has not started yet.
+    let saved_system=p.image.system;
+    let mut next_system=saved_system;
+    let window=(base,u32::from(memory_end)*16);
+    let covered=(p.image.fetch_base+p.image.start<=window.0 && p.image.fetch_base+p.image.end>=window.1)
+        ||next_system.iter().any(|&(a,b)|a<=window.0&&b>=window.1&&a<b);
+    if !covered{
+        let slot=next_system.iter().position(|&(a,b)|a==0&&b==0)
+            .ok_or("DOS AH55 child code fetch range capacity exhausted")?;
+        next_system[slot]=window;
     }
     eprintln!("[DOS AH=55h] Create child PSP: DX={child:04x}h SI={memory_end:04x}h parent={:04x}h MCB(header={header:04x}h size={size:04x}h owner={owner:04x}h exact_base={is_exact_base})",p.psp);
     let parent=u32::from(p.psp)*16;
@@ -268,6 +324,8 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
     if is_exact_base{
         p.arena.set_owner(&mut p.ram,child,child)?;
     }
+    p.in_memory.push(InMemoryChild{child,parent:p.psp,exec_depth:p.exec.len(),open_handles:p.open_handles,dta:p.dta,system:saved_system});
+    p.image.system=next_system;
     p.psp=child;
     p.open_handles=handles;
     p.dta=(child,0x80);
