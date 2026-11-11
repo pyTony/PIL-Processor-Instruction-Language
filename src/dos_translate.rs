@@ -61,10 +61,10 @@ fn standalone_ram(program:&Program,address:Option<address::AddressContext>)->boo
     crate::dos_blocks::unpaged_register_only(&register_part)
 }
 
-// Track independently proven AL/AH constants from PIL register writes.
-// Unknown overlapping effects invalidate the corresponding byte.
-type KnownAx=(Option<u8>,Option<u8>); // (AL, AH)
-fn next_ax(program:&Program,dst:View,src:View,mut ax:KnownAx)->KnownAx{
+// Track independently proven AL/AH and DX constants from PIL writes.
+// An unknown overlapping effect invalidates the affected byte or port.
+type Known=(Option<u8>,Option<u8>,Option<u16>); // AL, AH, DX
+fn next_known(program:&Program,dst:View,src:View,mut known:Known)->Known{
     let mut constants=std::collections::BTreeMap::new();
     for token in &program.tokens {
         if let Token::Const(id,value)=token{constants.insert(*id,value.bits);}
@@ -79,15 +79,19 @@ fn next_ax(program:&Program,dst:View,src:View,mut ax:KnownAx)->KnownAx{
         if let Some((view,id))=write {
             if view.register==0 {
                 if view.low==0&&view.width>=8 {
-                    ax.0=id.and_then(|id|constants.get(&id)).map(|bits|*bits as u8);
+                    known.0=id.and_then(|id|constants.get(&id)).map(|bits|*bits as u8);
                 }
                 if view.low<=8&&u16::from(view.low)+u16::from(view.width)>=16 {
-                    ax.1=id.and_then(|id|constants.get(&id)).map(|bits|(bits>>(8-view.low))as u8);
+                    known.1=id.and_then(|id|constants.get(&id)).map(|bits|(bits>>(8-view.low))as u8);
                 }
+            }else if view.register==2 && view.low<16{
+                known.2=if view.low==0&&view.width>=16 {
+                    id.and_then(|id|constants.get(&id)).map(|bits|*bits as u16)
+                }else{None};
             }
         }
     }
-    ax
+    known
 }
 
 /// Discover the complete reachable instruction graph for a deliberately small
@@ -96,16 +100,16 @@ fn next_ax(program:&Program,dst:View,src:View,mut ax:KnownAx)->KnownAx{
 /// closed instead of claiming complete standalone coverage.
 fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest::Decoded>,String>{
     use std::collections::{BTreeMap,BTreeSet};
-    // Summaries are keyed by entry, known AX bytes and return width.
+    // Summaries are keyed by entry, proven AL/AH/DX and return width.
     // Recursive callers wait for a base return instead of growing call strings.
     // A newly discovered return value wakes every caller until a fixed point.
-    type Context=(u32,KnownAx,u8);
-    let root:Context=(p.cpu.eip,(None,None),0);
+    type Context=(u32,Known,u8);
+    let root:Context=(p.cpu.eip,(None,None,None),0);
     let mut waiting:BTreeMap<Context,BTreeSet<(u32,Context)>>=BTreeMap::new();
-    let mut returns:BTreeMap<Context,BTreeSet<KnownAx>>=BTreeMap::new();
-    let mut pending=vec![(p.cpu.eip,(None,None),root)];let mut visited=BTreeSet::new();let mut found=BTreeMap::new();let mut occupied=BTreeMap::new();let mut exit=false;
-    while let Some((ip,known_ax,context))=pending.pop(){
-        if !visited.insert((ip,known_ax,context)){continue;}
+    let mut returns:BTreeMap<Context,BTreeSet<Known>>=BTreeMap::new();
+    let mut pending=vec![(p.cpu.eip,(None,None,None),root)];let mut visited=BTreeSet::new();let mut found=BTreeMap::new();let mut occupied=BTreeMap::new();let mut exit=false;
+    while let Some((ip,known,context))=pending.pop(){
+        if !visited.insert((ip,known,context)){continue;}
         if visited.len()>65_536{return Err("standalone service analysis exceeds 65536 states".into());}
         if found.len()>=4096&&!found.contains_key(&ip){return Err("standalone control-flow graph exceeds 4096 instructions".into());}
         let physical=u64::from(p.image.segments[1].base)+u64::from(ip);
@@ -115,51 +119,52 @@ fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest:
         let end=ip.checked_add(decoded.length).ok_or("standalone instruction address overflow")?;
         if physical+u64::from(decoded.length)>module_end{return Err(format!("standalone instruction at {ip:04x} crosses loaded module end"));}
         for byte in ip..end {if let Some(old)=occupied.insert(byte,ip){if old!=ip{return Err(format!("overlapping standalone instructions at {old:04x} and {ip:04x}"));}}}
-        // The generic decoder models unassigned ports as an open bus. That
-        // cannot safely stand in for a DOS guest's VGA/other device I/O.
-        // Reject *all* ports until standalone device-capability validation is
-        // implemented, otherwise a generated binary could silently drop OUT.
+        // The decoder's generic I/O PIL is an open bus. Replace it only for
+        // the proven word graphics-controller port. All other port operations
+        // fail closed, including a dynamic or clobbered DX.
         if decoded.label.starts_with("IN ")||decoded.label.starts_with("OUT "){
-            return Err(format!("standalone port I/O requires an explicit device boundary at {ip:04x}: {}",decoded.label));
+            if decoded.label!="OUT DX,AX"||known.2!=Some(0x3ce)||!p.image.real_mode{
+                return Err(format!("standalone port I/O requires proven DX=03CEh and OUT DX,AX at {ip:04x}: {}",decoded.label));
+            }
         }
         match &decoded.operation {
             guest::Operation::Pil{program,flow,dst,src,address} if standalone_ram(program,*address)=>{
-                let ax=next_ax(program,*dst,*src,known_ax);
+                let next=next_known(program,*dst,*src,known);
                 if near_return(program){
                     if context.2==0{return Err("standalone RET has no proven caller".into());}
                     if context.2!=program.operand_width{return Err("standalone CALL/RET operand widths must match".into());}
-                    if returns.entry(context).or_default().insert(ax){
-                        if let Some(callers)=waiting.get(&context){for &(target,parent) in callers{pending.push((target,ax,parent));}}
+                    if returns.entry(context).or_default().insert(next){
+                        if let Some(callers)=waiting.get(&context){for &(target,parent) in callers{pending.push((target,next,parent));}}
                     }
                 }else if program.uses_flow {
                     if !program.uses_displacement||!program.tokens.iter().any(|t|matches!(t,Token::BranchIf(..))){return Err(format!("unsupported standalone control flow at {ip:04x}"));}
                     let target=flow.next_eip.wrapping_add_signed(flow.displacement)&crate::mask(program.operand_width)as u32;
                     if near_call(program){
-                        let callee=(target,ax,program.operand_width);
+                        let callee=(target,next,program.operand_width);
                         let continuation=flow.next_eip&crate::mask(program.operand_width)as u32;
                         waiting.entry(callee).or_default().insert((continuation,context));
                         if let Some(values)=returns.get(&callee){for &value in values{pending.push((continuation,value,context));}}
-                        pending.push((target,ax,callee));
+                        pending.push((target,next,callee));
                     }else{
-                    pending.push((target,ax,context));
+                    pending.push((target,next,context));
                     let unconditional=program.tokens.iter().any(|t|if let Token::BranchIf(_,condition)=t {
                         program.tokens.iter().any(|t|matches!(t,Token::Const(id,value) if id==condition&&value.bits==1))
                     }else{false});
-                    if !unconditional{pending.push((flow.next_eip,ax,context));}
+                    if !unconditional{pending.push((flow.next_eip,next,context));}
                     }
-                }else{pending.push((flow.next_eip,ax,context));}
+                }else{pending.push((flow.next_eip,next,context));}
             },
             guest::Operation::Interrupt{vector:0x20,overflow:false,..}=>exit=true,
-            guest::Operation::Interrupt{vector:0x21,overflow:false,next}=>match known_ax.1{
-                Some(0x02)=>pending.push((*next,(None,known_ax.1),context)),
-                Some(0x09)=>pending.push((*next,(Some(0x24),known_ax.1),context)),
+            guest::Operation::Interrupt{vector:0x21,overflow:false,next}=>match known.1{
+                Some(0x02)=>pending.push((*next,(None,known.1,known.2),context)),
+                Some(0x09)=>pending.push((*next,(Some(0x24),known.1,known.2),context)),
                 Some(0x4c)=>exit=true,
                 _=>return Err(format!("standalone INT 21h at {ip:04x} requires proven AH=02h,09h or 4Ch on every incoming path")),
             },
             // No arbitrary BIOS dispatch: only the statically known mode-set
             // and cursor services, with runtime argument validation below.
-            guest::Operation::Interrupt{vector:0x10,overflow:false,next}=>match known_ax{
-                (Some(0x03|0x12),Some(0))|(_,Some(2))=>pending.push((*next,known_ax,context)),
+            guest::Operation::Interrupt{vector:0x10,overflow:false,next}=>match known{
+                (Some(0x03|0x12),Some(0),_)|(_,Some(2),_)=>pending.push((*next,known,context)),
                 _=>return Err(format!("standalone INT 10h at {ip:04x} requires proven AX=0003h/0012h or AH=02h")),
             },
             _=>return Err(format!("unsupported standalone operation at {ip:04x}")),
