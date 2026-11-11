@@ -143,7 +143,8 @@ impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
     #[allow(dead_code)]
     pub fn enqueue_key(&mut self,key:u16)->Result<bool,String>{console::enqueue(self,key)}
-    /// Ctrl+Break: see `brk::ctrl_break`.
+    /// Ctrl+Break: see `brk::ctrl_break`. Retained for a future frontend hook.
+    #[allow(dead_code)]
     pub fn ctrl_break(&mut self)->Result<(),String>{brk::ctrl_break(self)}
     /// Select the optional 80387 backend before executing the first guest instruction.
     /// Keep the BIOS equipment word consistent with INT 11h without replacing
