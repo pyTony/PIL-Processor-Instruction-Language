@@ -430,6 +430,90 @@ pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
     }
     Some(rendered)
 }
+/// Native desktop scanout of the *existing* emulated VGA framebuffer.
+/// All text drawn by BIOS in a graphics mode has already reached these pixels
+/// via dos_graphics_text, so the host renderer needs no duplicate font logic.
+/// The output never aliases guest RAM and cannot mutate VGA/CPU state.
+pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
+    let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
+    let color=|rgb:[u8;3]|u32::from(rgb[0])<<16|u32::from(rgb[1])<<8|u32::from(rgb[2]);
+    if mode==0x13 {
+        let (width,height)=(320usize,200usize);
+        let mut colors=[0u32;256];
+        for (i,slot) in colors.iter_mut().enumerate(){
+            let rgb=p.vga.dac(i&usize::from(p.vga.dac_mask()))
+                .map(|channel|(u16::from(channel)*255/63)as u8);
+            *slot=color(rgb);
+        }
+        let start=usize::from(p.vga.start());
+        let bytes=p.ram.bytes();
+        let planes=p.ram.planar();
+        if planes.is_none()&&bytes.len()<0xa0000+width*height{return None;}
+        let mut pixels=Vec::with_capacity(width*height);
+        for i in 0..width*height {
+            let index=if let Some(planes)=planes{
+                planes.peek(i&3,(start+(i>>2))&0xffff)
+            }else{bytes[0xa0000+i]};
+            pixels.push(colors[usize::from(index)]);
+        }
+        return Some((width,height,pixels));
+    }
+    let geometry=planar::geometry(mode)?;
+    let planes=p.ram.planar()?;
+    let width=geometry.width as usize;
+    let height=geometry.height as usize;
+    let colors=p.vga.planar_rgb().map(color);
+    let mut pixels=vec![0u32;width*height];
+    let start=usize::from(p.vga.start());
+    for y in 0..height {
+        for bx in 0..width/8 {
+            let offset=(start+y*(width/8)+bx)&0xffff;
+            let bytes=[
+                planes.peek(0,offset),planes.peek(1,offset),
+                planes.peek(2,offset),planes.peek(3,offset),
+            ];
+            let base=y*width+bx*8;
+            for bit in 0..8 {
+                let shift=7-bit;
+                let index=(bytes[0]>>shift&1)|((bytes[1]>>shift&1)<<1)|
+                    ((bytes[2]>>shift&1)<<2)|((bytes[3]>>shift&1)<<3);
+                pixels[base+bit]=colors[usize::from(index)];
+            }
+        }
+    }
+    Some((width,height,pixels))
+}
+
+#[cfg(test)]
+mod desktop_scanout_tests{
+    use super::*;
+    #[test]
+    fn mode12_frame_preserves_graphics_pixels_and_existing_vga_palette(){
+        let mut p=load(&[0xcd,0x20],"PIX.COM").unwrap();
+        assert!(desktop_vga_frame(&p).is_none());
+        planar::set_mode(&mut p,0x12,false).unwrap();
+        p.ram.planar_mut().unwrap().set_pixel(0,0,1);
+        let (width,height,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!((width,height,pixels.len()),(640,480,640*480));
+        let rgb=p.vga.planar_rgb()[1];
+        let expected=(u32::from(rgb[0])<<16)|(u32::from(rgb[1])<<8)|u32::from(rgb[2]);
+        assert_eq!(pixels[0],expected);
+        assert_ne!(pixels[0],pixels[1]);
+    }
+    #[test]
+    fn mode13_frame_uses_dac_and_linear_vram(){
+        let mut p=load(&[0xcd,0x20],"PIX.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,0x13).unwrap();
+        p.ram.store(0xa0000,MemWidth::Byte,1).unwrap();
+        let (width,height,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!((width,height,pixels.len()),(320,200,320*200));
+        let rgb=p.vga.dac(1);
+        let expected=(u32::from(rgb[0])*255/63)<<16|
+            (u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63);
+        assert_eq!(pixels[0],expected);
+    }
+}
+
 /// An optional executor for decoded PIL instructions. A miss falls back to the
 /// interpreter; DOS services and instruction retirement stay in the shared loop.
 pub(crate) trait InstructionBackend {
