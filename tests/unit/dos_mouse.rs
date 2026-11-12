@@ -162,7 +162,7 @@ fn callback_is_deferred_when_interrupts_are_disabled(){
 #[test]
 fn invalid_mouse_callback_target_stops_without_changing_guest_stack(){
     let mut p=callback_setup();
-    p.mouse.handler=Some(Handler{mask:2,segment:0x9000,offset:0x0100});
+    p.mouse.handler=Some(Handler{mask:2,segment:0xb800,offset:0x0100});
     p.mouse.host(320,240,1,0x12);
     let sp=p.cpu.regs[4];let original=p.ram.load(PSP as u32*16+sp-4,MemWidth::Dword).unwrap();
     let result=crate::dos::run(p,20).unwrap();
