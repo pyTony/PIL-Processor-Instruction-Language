@@ -370,6 +370,54 @@ def key_command(code):
     return 'key {} {}'.format(*code)
 
 
+def mouse_virtual_coords(x, y, width, height, max_x, max_y):
+    """Map the drawn 4:3 image to DOS's virtual mouse coordinates."""
+    if width < 1 or height < 1:
+        raise ValueError('mouse display dimensions must be positive')
+    return (min(max(int(x), 0) * (max_x + 1) // width, max_x),
+            min(max(int(y), 0) * (max_y + 1) // height, max_y))
+
+
+def mouse_command(x, y, buttons):
+    return f'mouse {x} {y} {buttons}'
+
+
+class MouseEvents:
+    """Coalesce movement, but never lose button up/down edges."""
+    def __init__(self):
+        self.pending = []
+
+    def push(self, x, y, buttons):
+        event = (x, y, buttons)
+        if self.pending and self.pending[-1][2] == buttons:
+            self.pending[-1] = event
+        else:
+            self.pending.append(event)
+
+
+def mouse_overlay(rgb, width, height, x, y, max_x, max_y):
+    """Draw a host-only arrow on an RGB snapshot; never mutate guest VRAM."""
+    x = max(0, min(width - 1, x * width // (max_x + 1)))
+    y = max(0, min(height - 1, y * height // (max_y + 1)))
+    shape = ('X           ', 'Xo          ', 'Xoo         ',
+             'Xooo        ', 'Xoooo       ', 'Xooooo      ',
+             'Xoooooo     ', 'Xooooooo    ', 'Xoooooooo   ',
+             'XXXXXXXXXX  ', 'XoooX       ', 'XooX X      ',
+             'XoX   X     ', 'XX     X    ')
+    pixels = bytearray(rgb)
+    for dy, line in enumerate(shape):
+        if y + dy >= height:
+            break
+        for dx, colour in enumerate(line):
+            if x + dx >= width:
+                break
+            if colour not in 'Xo':
+                continue
+            at = ((y + dy) * width + x + dx) * 3
+            pixels[at:at + 3] = b'\x00\x00\x00' if colour == 'X' else b'\xff\xff\xff'
+    return bytes(pixels)
+
+
 class KeyEvents:
     """Keep physical key releases separate while a guest owns the keyboard."""
     def __init__(self, supported):
