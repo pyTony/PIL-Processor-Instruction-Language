@@ -1322,6 +1322,14 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     root.bind('<Key>', on_key)
     root.bind('<KeyRelease>', on_release)
     root.bind('<FocusOut>', lost_focus)
+    for widget in (text, graphics):
+        widget.bind('<Motion>', on_mouse)
+        for number, bit in ((1, 1), (2, 4), (3, 2)):
+            widget.bind(f'<ButtonPress-{number}>',
+                        lambda event, b=bit: on_mouse(event, b, True))
+            widget.bind(f'<ButtonRelease-{number}>',
+                        lambda event, b=bit: on_mouse(event, b, False))
+            widget.bind(f'<B{number}-Motion>', on_mouse)
     menu = tk.Menu(root, tearoff=0)
     menu.add_command(label='Copy (Ctrl+Shift+C)', command=copy)
     menu.add_command(label='Paste (Ctrl+Shift+V)', command=paste)
@@ -1334,8 +1342,16 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         sub.add_command(label=f'Unmount {drv}:', command=lambda d=drv: unmount_drive(d))
         drives_menu.add_cascade(label=f'Drive {drv}:', menu=sub)
     menu.add_cascade(label='Drives', menu=drives_menu)
+    def right_click(event):
+        # Mouse-enabled DOS applications receive the right button. The host
+        # popup remains available with Shift+right-click or on the status bar.
+        if event.widget is status or not session.last.get('mouse_active') or event.state & 1:
+            menu.tk_popup(event.x_root, event.y_root)
+            return 'break'
+        return on_mouse(event, 2, True)
+
     for widget in (text, graphics, status):
-        widget.bind('<Button-3>', lambda event: menu.tk_popup(event.x_root, event.y_root))
+        widget.bind('<Button-3>', right_click)
     root.protocol('WM_DELETE_WINDOW', close)
     draw(session.last)
     root.after(10, tick)
