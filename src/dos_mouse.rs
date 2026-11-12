@@ -164,9 +164,9 @@ pub(super) fn deliver(p:&mut Loaded)->Result<bool,String>{
     low(&mut p.cpu.regs[3],event.buttons);
     low(&mut p.cpu.regs[1],event.x);
     low(&mut p.cpu.regs[2],event.y);
-    // Microsoft callback convention: SI = vertical and DI = horizontal mickeys.
-    low(&mut p.cpu.regs[6],event.vertical as u16);
-    low(&mut p.cpu.regs[7],event.horizontal as u16);
+    // RBIL callback convention: SI = horizontal, DI = vertical mickeys.
+    low(&mut p.cpu.regs[6],event.horizontal as u16);
+    low(&mut p.cpu.regs[7],event.vertical as u16);
     let ds=SegmentRegister::Ds.index();
     p.selectors[ds]=DOSDATA;p.image.selectors[ds]=DOSDATA;
     p.image.segments[ds]=SegmentCache::real_mode(DOSDATA);
