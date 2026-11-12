@@ -457,7 +457,7 @@ fn present_80387_fd_iv_computes_exact_ext80_rounded_third() {
     assert_eq!(bits,0xaaaa_aaaa_aaaa_aaab);
     assert_eq!(result.loaded.ram.load(base+0x228,MemWidth::Word).unwrap(),0x3ffd);
     assert_eq!(result.loaded.fpu.state().unwrap().status&0x20,0x20);
-    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xfffc); // 3 remains on stack
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0x3fff); // ST(0)=3 lives in physical register 7
 }
 
 #[test]
