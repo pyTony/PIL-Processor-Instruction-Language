@@ -1141,6 +1141,31 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             pass  # nothing text-like on the clipboard
         return 'break'
 
+    def on_mouse(event, bit=None, down=None):
+        if not session.last.get('mouse_active', False):
+            return None
+        # Hold Shift while dragging to select host text rather than sending
+        # DOS mouse buttons. Shift+right-click opens the host Drives menu.
+        if event.widget is text and event.state & 1:
+            return None
+        if bit is not None:
+            mouse_buttons[0] = (mouse_buttons[0] | bit) if down else (mouse_buttons[0] & ~bit)
+        if event.widget is text:
+            row, col = map(int, text.index(f'@{event.x},{event.y}').split('.'))
+            x = max(0, min(geom[0] - 1, col)) * 8
+            y = max(0, min(geom[1] - 1, row - 1)) * 8
+        elif event.widget is graphics:
+            x, y = mouse_virtual_coords(event.x, event.y,
+                graphics.winfo_width(), graphics.winfo_height(),
+                session.last.get('mouse_max_x', 639), session.last.get('mouse_max_y', 199))
+        else:
+            return None
+        last_mouse[0] = (x, y)
+        mouse_events.push(x, y, mouse_buttons[0])
+        if down:
+            event.widget.focus_set()
+        return 'break'
+
     def on_key(event):
         if keylog:
             print(f'key {event.keysym!r} char {event.char!r} state {event.state:#x} keycode {event.keycode}'
@@ -1192,6 +1217,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         keys.extend(edges.release_all())
         held.clear()
         shift_changed()
+        if mouse_buttons[0]:
+            mouse_buttons[0] = 0
+            mouse_events.push(*last_mouse[0], 0)
 
     def tick():
         try:
@@ -1217,6 +1245,15 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 if sent.startswith('shift'):
                     break
                 state['settle'] = SETTLE
+            # Mouse state is sent before the next execution slice. Movement
+            # coalesces; button edges stay ordered and never enter BIOS keys.
+            while mouse_events.pending and reply['status'] in ('running', 'waiting_input'):
+                x, y, buttons = mouse_events.pending[0]
+                reply = session.send(mouse_command(x, y, buttons))
+                mouse_events.pending.pop(0)
+                if not reply.get('ok', False):
+                    notice[0] = reply.get('text', 'mouse command refused')
+                    break
             incoming = b''
             if com1:
                 incoming = com1.read()
@@ -1251,7 +1288,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
             return
-        root.after(next_tick_delay(bool(keys), session.last['status'], idle), tick)
+        root.after(next_tick_delay(bool(keys or mouse_events.pending), session.last['status'], idle), tick)
 
     def close():
         if com1 and hasattr(com1, 'close'):
