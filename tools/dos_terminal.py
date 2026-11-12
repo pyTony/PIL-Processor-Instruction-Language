@@ -502,25 +502,25 @@ class Session:
 
 
 def format_native_stats(reply):
-    """Report measured compiled work; other steps also include DOS/BIOS services."""
+    """Report measured native work; other steps include DOS/BIOS services."""
     steps = int(reply.get('steps', 0))
     block = int(reply.get('native_block_instructions', 0))
     blocks = int(reply.get('native_blocks', 0))
     if 'native_single_instructions' not in reply:
-        return ('Native single-instruction stats unavailable; rebuild the PIL engine.\\n'
+        return ('Native single-instruction stats unavailable; rebuild the PIL engine.\n'
                 f'Guest steps: {steps:,}; compiled block instructions: {block:,}')
     single = int(reply['native_single_instructions'])
     native = block + single
     other = max(0, steps - native)
+    coverage = f'{native / steps:.1%}' if steps else 'n/a'
+    average = f'{block / blocks:.2f}' if blocks else 'n/a'
     return (
-        f'Guest steps: {steps:,}\\n'
-        f'Native block instructions: {block:,} in {blocks:,} blocks\\n'
-        f'Native single instructions: {single:,}\\n'
-        f'Native total: {native:,} ({native / steps:.1%} of steps)\\n'
-        f'Other steps: {other:,} (includes DOS/BIOS services)\\n'
-        f'Average native block length: {block / blocks:.2f} instructions'
-        if steps and blocks else
-        f'Guest steps: {steps:,}; native total: {native:,}; native blocks: {blocks:,}'
+        f'Guest steps: {steps:,}\n'
+        f'Native block instructions: {block:,} in {blocks:,} blocks\n'
+        f'Native single instructions: {single:,}\n'
+        f'Native total: {native:,} ({coverage} of steps)\n'
+        f'Other steps: {other:,} (includes DOS/BIOS services)\n'
+        f'Average native block length: {average} instructions'
     )
 
 
