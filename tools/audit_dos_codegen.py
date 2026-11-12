@@ -31,7 +31,7 @@ def inspect(source, out, name):
     subprocess.run(['rustc', '--edition=2021', '-Awarnings', '-O', '-Ccodegen-units=1',
                     '--emit=llvm-ir,asm,link', '--crate-name', name, str(source), '--out-dir', str(out)], check=True)
     ir_path = out / f'{name}.ll'
-    funcs = functions(ir_path.read_text())
+    funcs = functions(ir_path.read_text(encoding='utf-8'))
     selected = {k: v for k, v in funcs.items() if 'ins_' in k or 'block_' in k or k.startswith('audit_')}
     executable=out/(name+('.exe' if os.name=='nt' else ''))
     return dict(source_bytes=source.stat().st_size,source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -80,7 +80,7 @@ def benchmark(sources,out,frames,samples,arguments=()):
         checked=subprocess.run([str(original),*arguments],capture_output=True,check=True)
         assert not checked.stderr,checked.stderr
         outputs[label]=checked.stdout
-        lines=path.read_text().splitlines();changed=0
+        lines=path.read_text(encoding='utf-8').splitlines();changed=0
         for n,line in enumerate(lines):
             if line.startswith('fn main(){use std::io::Write;match run()'):
                 lines[n]=f'fn main(){{let run_fn=std::hint::black_box(run as fn()->Result<(u8,Vec<u8>),String>);let start=std::time::Instant::now();let mut checksum=0usize;for _ in 0..{frames}{{let(code,bytes)=run_fn().unwrap();assert_eq!(code,0);checksum=checksum.wrapping_add(bytes.len());std::hint::black_box(bytes);}}eprintln!("BENCH {{}} {{}}",start.elapsed().as_nanos(),checksum);}}'
