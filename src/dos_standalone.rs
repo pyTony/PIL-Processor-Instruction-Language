@@ -54,7 +54,15 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
                 let case=format!("{ip} => Ok(Some(0)),\n");cases.push_str(&case);block_cases.push_str(&case);
             },
             guest::Operation::Interrupt{vector,next,..} if matches!(*vector,0x10|0x16|0x21)=>{
-                let case=format!("{ip} => {{ let exit=c.interrupt({vector},output)?; c.eip={next}; c.machine.retired(); Ok(exit) }},\n");cases.push_str(&case);block_cases.push_str(&case);
+                let case=format!("{ip} => {{ let exit=c.interrupt({vector},output)?; c.eip={next}; c.machine.retired(); Ok(exit) }},\n");
+                cases.push_str(&case);
+                if *vector==0x16 {
+                    // Native presenter receives the complete final frame before
+                    // a blocking BIOS keyboard call. In window mode, stdin
+                    // supplies Enter; headless runs retain explicit key injection.
+                    block_cases.push_str(&case.replace("let exit=c.interrupt",
+                        "video.tick(c,true);if c.key.is_none(){c.key=video.read_key()?;} let exit=c.interrupt"));
+                }else{block_cases.push_str(&case);}
             },
             _=>return Err("unsupported operation in verified graph".into()),
         }
@@ -69,6 +77,13 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
         }else{text.to_owned()};
         writeln!(source,"\nmod {name} {{\n{}\n}}",text.split("#[cfg(test)]").next().unwrap()).unwrap();
     }
+    // Include the same host-only Win32 window presenter as dine.dll.
+    // The native video adapter reads guest Planar pixels directly; neither
+    // module imports the DOS interpreter or decoder.
+    writeln!(source,"\nmod dine_native_video {{\n{}\n}}",
+        include_str!("dine_native_video.rs").split("#[cfg(test)]").next().unwrap()).unwrap();
+    writeln!(source,"\n#[cfg(windows)] mod dine_window {{\n{}\n}}",
+        include_str!("dine_window.rs")).unwrap();
     source.push_str(&modules);source.push_str(&blocks);
     writeln!(source,"\nfn initial_context()->Result<dos_runtime::Context,String>{{\nlet mut ram=Ram::new({});",p.ram.bytes().len()).unwrap();
     let memory=p.ram.bytes();let mut at=0;
@@ -97,9 +112,9 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
     source.push_str("#[cfg(test)] fn step(c:&mut dos_runtime::Context,output:&mut host_io::CaptureOutput)->Result<Option<u8>,String>{match c.eip {\n");
     source.push_str(&cases);
     source.push_str("_=>Err(format!(\"unexpected compiled target {:04x}\",c.eip)),\n}}\n");
-    source.push_str("fn block_step(c:&mut dos_runtime::Context,output:&mut host_io::CaptureOutput)->Result<Option<u8>,String>{match c.eip {\n");
+    source.push_str("fn block_step(c:&mut dos_runtime::Context,output:&mut host_io::CaptureOutput,video:&mut dine_native_video::Display)->Result<Option<u8>,String>{match c.eip {\n");
     source.push_str(&block_cases);
-    writeln!(source,"_=>Err(format!(\"unexpected compiled target {{:04x}}\",c.eip)),\n}}}}\nfn run_with_tail(tail:Option<&str>)->Result<(u8,Vec<u8>),String>{{let mut c=initial_context()?;if let Some(raw)=std::env::var_os(\"PIL_DOS_BIOS_KEY\"){{let raw=raw.into_string().map_err(|_|\"PIL_DOS_BIOS_KEY must be Unicode\".to_string())?;c.key=Some(dos_runtime::parse_key(&raw)?);}}if let Some(text)=tail{{dos_runtime::command_tail(&mut c.ram,{},text)?;}}let mut output=host_io::CaptureOutput::new(host_io::DOS_OUTPUT_LIMIT);loop{{if let Some(code)=block_step(&mut c,&mut output)?{{return Ok((code,output.into_bytes()));}}}}}}",p.image.segments[3].base).unwrap();
+    writeln!(source,"_=>Err(format!(\"unexpected compiled target {{:04x}}\",c.eip)),\n}}}}\nfn run_with_tail(tail:Option<&str>)->Result<(u8,Vec<u8>),String>{{let mut c=initial_context()?;if let Some(raw)=std::env::var_os(\"PIL_DOS_BIOS_KEY\"){{let raw=raw.into_string().map_err(|_|\"PIL_DOS_BIOS_KEY must be Unicode\".to_string())?;c.key=Some(dos_runtime::parse_key(&raw)?);}}if let Some(text)=tail{{dos_runtime::command_tail(&mut c.ram,{},text)?;}}let mut output=host_io::CaptureOutput::new(host_io::DOS_OUTPUT_LIMIT);let mut video=dine_native_video::Display::new()?;loop{{if let Some(code)=block_step(&mut c,&mut output,&mut video)?{{return Ok((code,output.into_bytes()));}}video.tick(&c,false);}}}}",p.image.segments[3].base).unwrap();
     source.push_str("fn run()->Result<(u8,Vec<u8>),String>{let args=std::env::args_os().skip(1).map(|a|a.into_string().map_err(|_|\"host argument is not valid Unicode\".to_string())).collect::<Result<Vec<_>,_>>()?;let text=args.join(\" \");run_with_tail(if args.is_empty(){None}else{Some(&text)})}\n");
     source.push_str("fn main(){use std::io::Write;match run(){Ok((code,bytes))=>{let raw=std::env::var_os(\"PIL_DOS_RAW_OUTPUT\").is_some_and(|v|v==\"1\");if let Err(e)=std::io::stdout().lock().write_all(&dos_encoding::output_bytes(&bytes,raw)){eprintln!(\"output: {e}\");std::process::exit(1);}std::process::exit(i32::from(code));},Err(e)=>{eprintln!(\"{e}\");std::process::exit(1);}}}\n");
     source.push_str("\nuse address::*; use address::SegmentAccess::*; use address::{EffectiveAddress::*,Address16::*,SegmentRegister::*,Gpr::*};\n");
@@ -267,6 +282,10 @@ mod tests {
         let source=emit(&video,"VIDEO.COM").unwrap();
         assert!(source.contains("video:dos_runtime::VideoState::default()"));
         assert!(source.contains("key:None"));
+        assert!(source.contains("mod dine_native_video"),
+            "compiled guest must contain native video adapter, not a CPU interpreter");
+        assert!(source.contains("mod dine_window"),
+            "compiled guest must reuse Dine's Win32/GDI VGA presenter");
         assert!(source.contains("c.interrupt(16,output)"));
         assert!(!source.contains("include_str!(\"dos_font8x8.txt\")"),"native Rust must embed font data");
         for bytes in [
@@ -298,6 +317,12 @@ mod tests {
         let yes=[0x30,0xe4,0xcd,0x16,0xb8,0,0x4c,0xcd,0x21];
         let source=emit(&yes,"KEY.COM").unwrap();
         assert!(source.contains("c.interrupt(22,output)"));
+        assert!(source.contains("video.tick(c,true)"),
+            "draw the frame before entering the blocking BIOS keyboard service");
+        assert!(source.contains("c.key=video.read_key()?"),
+            "native window mode must be able to send terminal Enter");
+        assert!(source.contains("block_step(&mut c,&mut output,&mut video)"),
+            "main compiled block loop must tick native presentation");
         assert!(emit(&[0xcd,0x16,0xb8,0,0x4c,0xcd,0x21],"KEY.COM").is_err());
     }
     // Pending: original MANDVGA still exercises memory writes, calls and
