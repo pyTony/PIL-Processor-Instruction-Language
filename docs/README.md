@@ -9,6 +9,11 @@ runtime delivery and contains a smaller set of user documentation.
 For DOS startup, drive mounts and command-line overrides, see
 [DOS environment configuration](DOS_CONFIG.md).
 
+For small **self-running interpreted Dine programs** that share a single
+application-independent DOS/BIOS library, see
+[Dine executables](DINE_EXECUTABLES.md). Unlike standalone compiled blocks,
+these launchers retain PIL interpreter fallback via a shared DLL/so.
+
 For standalone **native DOS block compilation**, including build commands,
 verified program targets and runtime limitations, see
 [Native DOS compilation](NATIVE_DOS_COMPILATION.md). This is the active compiler

@@ -390,6 +390,24 @@ class KeyEvents:
         return [self.release(name) for name in list(self.pressed)]
 
 
+def defer_key_command(command, sent, settle):
+    """A raw keyup needs one guest run slice, not the modifier settle delay.
+
+    The ten-slice settle is reserved for Shift/Ctrl/Alt state transitions so
+    that programs polling modifiers see a preceding key first. Applying it
+    to ordinary key releases can stall a busy raw-keyboard prompt's input
+    queue, especially after leaving an IDE that hooked INT 09h.
+    """
+    if command.startswith('shift '):
+        return bool(sent or settle)
+    return command.startswith('keyup ') and bool(sent)
+
+
+def next_tick_delay(keys_pending, status, idle):
+    """Queued host input needs a fast tick even when the DOS guest is idle."""
+    return 1 if keys_pending or (status == 'running' and not idle) else 40
+
+
 def mount_command(drive, path):
     letter = str(drive).strip().rstrip(':').upper()
     if letter not in ('A', 'B', 'C', 'D', 'E') or not str(path).strip() or any(c in str(path) for c in '\r\n'):
@@ -1097,7 +1115,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 # A change of the shift keys waits until the program has run a
                 # while after the keys before it, so that EDIT reads Alt+F
                 # before it sees Alt go up, as it would at a person's pace.
-                if keys[0].startswith(('shift', 'keyup ')) and (sent or state['settle']):
+                if defer_key_command(keys[0], sent, state['settle']):
                     break
                 reply = session.send(keys[0])
                 if not reply['ok']:
@@ -1145,7 +1163,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
             return
-        root.after(1 if session.last['status'] == 'running' and not idle else 40, tick)
+        root.after(next_tick_delay(bool(keys), session.last['status'], idle), tick)
 
     def close():
         if com1 and hasattr(com1, 'close'):
