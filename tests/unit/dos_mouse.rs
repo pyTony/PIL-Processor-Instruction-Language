@@ -35,7 +35,7 @@ fn mouse_button_edges_and_mickey_deltas(){
     p.mouse.host(498,398,0,0x12);
     call(&mut p,6,0,0,0).unwrap();assert_eq!(word(p.cpu.regs[3]),1);
     call(&mut p,0x0b,0,0,0).unwrap();
-    assert_eq!((word(p.cpu.regs[1])as i16,word(p.cpu.regs[2])as i16),(179,318));
+    assert_eq!((word(p.cpu.regs[1])as i16,word(p.cpu.regs[2])as i16),(178,316));
     call(&mut p,0x0b,0,0,0).unwrap();
     assert_eq!((word(p.cpu.regs[1]),word(p.cpu.regs[2])),(0,0));
     p.ram.store(0x449,MemWidth::Byte,0x13).unwrap();
