@@ -4,7 +4,7 @@ use crate::{Cpu, guest::Image, memory::Ram};
 #[path = "fpu_decode.rs"]
 mod operations;
 #[allow(unused_imports)]
-pub use operations::{classify, DecodeError, Operation};
+pub use operations::{classify, Arithmetic, DecodeError, Operation};
 #[path = "fpu_state.rs"]
 mod state;
 #[allow(unused_imports)]
@@ -15,6 +15,8 @@ mod present;
 pub use present::PresentFpu;
 #[path = "fpu_convert.rs"]
 mod convert;
+#[path = "fpu_math.rs"]
+mod math;
 #[path = "fpu_address.rs"]
 mod address;
 
@@ -41,7 +43,7 @@ impl Fpu {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Absent(device) => device.name(),
-            Self::Present(_) => "80387 register backend (partial)",
+            Self::Present(_) => "80387 finite arithmetic backend (partial)",
         }
     }
     pub fn equipment(&self, value: u16) -> u16 {
