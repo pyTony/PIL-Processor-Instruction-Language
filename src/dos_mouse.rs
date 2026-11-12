@@ -125,6 +125,11 @@ pub(super) fn service(p:&mut Loaded)->Result<(),String>{
     let es=p.selectors[SegmentRegister::Es.index()];
     p.mouse.call(&mut p.cpu.regs,mode,es)
 }
+pub(super) fn ready(p:&Loaded)->bool{
+    p.image.real_mode&&p.cpu.eflags&0x200!=0
+        &&p.image.sti_shadow==0&&p.image.ss_shadow==0
+        &&p.mouse.frame.is_none()&&p.mouse.handler.is_some()&&!p.mouse.events.is_empty()
+}
 /// Run one queued user callback as a FAR call between guest instructions.
 /// This is not IRQ12: the software driver has no hardware controller.
 pub(super) fn deliver(p:&mut Loaded)->Result<bool,String>{
