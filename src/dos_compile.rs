@@ -53,10 +53,23 @@ pub(crate) fn emit(bytes:&[u8],name:&str)->Result<(String,String),String>{
 }
 /// Training keystrokes stay inside the isolated DOS machine: no host-folder
 /// mounts are exposed to the profiled program.
+#[cfg(test)]
 pub(crate) fn emit_trained(bytes:&[u8],name:&str,keys:&[u8],steps:usize,max_sites:usize)->Result<(String,String),String>{
+    emit_trained_with_options(bytes,name,keys,steps,max_sites,None,None)
+}
+/// Opt-in real-time IRQ0 clock and a caller-provided training directory. The
+/// caller must pass a disposable directory: host-mounted DOS files are writable.
+pub(crate) fn emit_trained_with_options(bytes:&[u8],name:&str,keys:&[u8],steps:usize,max_sites:usize,clock_offset:Option<i64>,mount:Option<&std::path::Path>)->Result<(String,String),String>{
     if !(1..=120_000_000).contains(&steps)||!(1..=65_536).contains(&max_sites){return Err("invalid profiling budget or site limit".into());}
     if !crate::containers::executable(name){return Err("expected a DOS .COM or .EXE file".into());}
-    let mut p=dos::load_with_drives(bytes,name,vec![dos::Source::Empty,dos::Source::Memory(dos::MemDir::default())],None)?;
+    if clock_offset.is_some_and(|seconds|seconds.abs()>14*3600){return Err("profile clock offset must be -50400..50400 seconds".into());}
+    let drives=if let Some(dir)=mount{
+        vec![dos::Source::Host(dir.to_path_buf()),dos::Source::Memory(dos::MemDir::default())]
+    }else{
+        vec![dos::Source::Empty,dos::Source::Memory(dos::MemDir::default())]
+    };
+    let mut p=dos::load_with_drives(bytes,name,drives,None)?;
+    p.clock_offset=clock_offset;
     let entry=p.cpu.eip;
     let mut recorder=Recorder{original:bytes,sites:BTreeMap::new(),visits:BTreeMap::new(),entries:BTreeSet::new(),previous:None};
     let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
@@ -94,7 +107,7 @@ pub(crate) fn emit_trained(bytes:&[u8],name:&str,keys:&[u8],steps:usize,max_site
         recorder.sites.retain(|ip,_|keep.contains(ip));
     }
     let captured=output.into_bytes();let tail=&captured[captured.len().saturating_sub(512)..];
-    let status=format!("profile stop: {stop:?}; {} instruction sites ({recorded} observed); {slices} slices; {key_at}/{} training keys queued; output tail: {:?}",recorder.sites.len(),keys.len(),String::from_utf8_lossy(tail));
+    let status=format!("profile stop: {stop:?}; {} instruction sites ({recorded} observed); {slices} slices; {key_at}/{} training keys queued; clock={clock_offset:?}; training mount={}; output tail: {:?}",recorder.sites.len(),keys.len(),if mount.is_some(){"yes"}else{"no"},String::from_utf8_lossy(tail));
     let mut counts:BTreeMap<&str,usize>=BTreeMap::new();
     for site in recorder.sites.values(){*counts.entry(site.profile.tag()).or_default()+=1;}
     let status=format!("{status}; instruction profiles: {counts:?}");
@@ -138,7 +151,7 @@ fn code_matches(image:&guest::Image,ram:&Ram,ip:u32,bytes:&[u8])->bool{{
 {modules}
 {blocks}
 #[derive(Default)]
-pub(crate) struct Backend {{ matched:Option<(std::sync::Arc<Vec<u8>>,bool)>, checks:std::collections::BTreeMap<u32,(std::rc::Rc<guest::Decoded>,bool)>,blocks:u64,block_instructions:u64 }}
+pub(crate) struct Backend {{ matched:Option<(std::sync::Arc<Vec<u8>>,bool)>, checks:std::collections::BTreeMap<u32,(std::rc::Rc<guest::Decoded>,bool)>,blocks:u64,block_instructions:u64,single_instructions:u64 }}
 impl Backend {{
  fn accepts(&mut self,active:&dos::ProgramIdentity)->bool{{
   if !self.matched.as_ref().is_some_and(|(bytes,_)|std::sync::Arc::ptr_eq(bytes,&active.bytes)){{self.matched=Some((active.bytes.clone(),active.bytes.as_slice()==ORIGINAL));}}
@@ -156,6 +169,7 @@ impl dos::InstructionBackend for Backend {{
  fn may_block(&mut self,active:&dos::ProgramIdentity,image:&guest::Image,ram:&Ram,ip:u32)->bool{{self.accepts(active)&&{block_entries}}}
  fn may_execute(&mut self,active:&dos::ProgramIdentity,image:&guest::Image,ram:&Ram,ip:u32)->bool{{self.accepts(active)&&{instruction_entries}}}
  fn block_stats(&self)->(u64,u64){{(self.blocks,self.block_instructions)}}
+ fn single_stats(&self)->u64{{self.single_instructions}}
  fn block(&mut self,active:&dos::ProgramIdentity,image:&guest::Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut address::SegmentState,budget:usize)->Option<(usize,Result<(),crate::ExecError>)>{{
   if !self.matched.as_ref().is_some_and(|(bytes,_)|std::sync::Arc::ptr_eq(bytes,&active.bytes)){{self.matched=Some((active.bytes.clone(),active.bytes.as_slice()==ORIGINAL));}}
   if !self.matched.as_ref().unwrap().1{{return None;}}
@@ -188,6 +202,7 @@ impl dos::InstructionBackend for Backend {{
 {cases}
    _=>return None,
   }};
+  self.single_instructions+=1;
   Some(result)
  }}
 }}
@@ -320,6 +335,16 @@ mod tests {
         assert!(block.contains("ins_100::execute_unpaged_register"));
         assert!(block.contains("ins_103::execute_unpaged_register"));
         assert!(block.contains("ins_104::execute_unpaged_register"),"branch is the last instruction in the block");
+    }
+    #[test]
+    fn clocked_profile_options_do_not_change_default_or_touch_unmounted_files(){
+        let bytes=dos::hello("com").unwrap();
+        let (_,normal)=emit_trained(&bytes,"HELLO.COM",&[],1_000,16).unwrap();
+        let (_,clocked)=emit_trained_with_options(&bytes,"HELLO.COM",&[],1_000,16,Some(0),None).unwrap();
+        assert!(normal.contains("clock=None; training mount=no"));
+        assert!(clocked.contains("clock=Some(0); training mount=no"));
+        assert!(emit_trained_with_options(&bytes,"HELLO.COM",&[],1_000,16,Some(50_401),None).is_err());
+        assert!(emit_trained_with_options(&bytes,"HELLO.COM",&[],1_000,16,None,Some(std::path::Path::new("nonexistent-training-mount"))).is_err());
     }
     #[test]
     fn profiles_hello_in_isolation_and_emits_guarded_sites(){
