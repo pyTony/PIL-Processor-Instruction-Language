@@ -282,6 +282,10 @@ mod tests {
         let source=emit(&video,"VIDEO.COM").unwrap();
         assert!(source.contains("video:dos_runtime::VideoState::default()"));
         assert!(source.contains("key:None"));
+        assert!(source.contains("mod dine_native_video"),
+            "compiled guest must contain native video adapter, not a CPU interpreter");
+        assert!(source.contains("mod dine_window"),
+            "compiled guest must reuse Dine's Win32/GDI VGA presenter");
         assert!(source.contains("c.interrupt(16,output)"));
         assert!(!source.contains("include_str!(\"dos_font8x8.txt\")"),"native Rust must embed font data");
         for bytes in [
@@ -313,6 +317,12 @@ mod tests {
         let yes=[0x30,0xe4,0xcd,0x16,0xb8,0,0x4c,0xcd,0x21];
         let source=emit(&yes,"KEY.COM").unwrap();
         assert!(source.contains("c.interrupt(22,output)"));
+        assert!(source.contains("video.tick(c,true)"),
+            "draw the frame before entering the blocking BIOS keyboard service");
+        assert!(source.contains("c.key=video.read_key()?"),
+            "native window mode must be able to send terminal Enter");
+        assert!(source.contains("block_step(&mut c,&mut output,&mut video)"),
+            "main compiled block loop must tick native presentation");
         assert!(emit(&[0xcd,0x16,0xb8,0,0x4c,0xcd,0x21],"KEY.COM").is_err());
     }
     // Pending: original MANDVGA still exercises memory writes, calls and
