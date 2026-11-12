@@ -169,6 +169,10 @@ python tools/dos_terminal.py `
 The number of other steps also includes DOS/BIOS services and interrupt work,
 so it must not be labelled pure interpreter fallback. Compare both engines
 at the same visible game point and test five-ball gameplay, timer animation,
-keyboard responsiveness, and exit before accepting a speed claim. A later
-optimization can examine timer-safe native batching, but it must retain
-instruction-level IRQ0 semantics or provide an equivalent scheduling guard.
+keyboard responsiveness, and exit before accepting a speed claim.
+Clocked sessions now cap each compiled block region at the next 256-step IRQ0
+sampling boundary, including when a program owns INT 08h. This preserves the
+interpreter's existing timer-poll schedule while allowing compiled blocks.
+It does not change the timer frequency and does not guarantee a speedup.
+The bounded-poll unit test covers the 255/256-step transition; real DOS
+timer-handler behavior and gameplay still require comparative verification.
