@@ -59,7 +59,7 @@ class LinesHybridProbeTests(unittest.TestCase):
             record = path / "manifest.json"
             record.write_text(json.dumps(manifest), encoding="utf-8")
             with mock.patch.object(helper.subprocess, "check_output",
-                                   return_value="host: test-target\\n"):
+                                   return_value="host: test-target\n"):
                 self.assertEqual(helper.reusable_hybrid(guest, path), hybrid)
                 hybrid.write_bytes(b"wrong engine")
                 with self.assertRaisesRegex(ValueError, "differs"):
