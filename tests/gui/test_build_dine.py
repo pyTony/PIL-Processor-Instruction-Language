@@ -59,7 +59,8 @@ class DineBuildTests(unittest.TestCase):
 
     def test_builds_small_launcher_with_shared_guest_independent_runtime(self):
         result = self.invoke()
-        self.assertEqual(result, self.launcher)
+        self.assertTrue(result.samefile(self.launcher),
+                        f"builder returned {result}, expected {self.launcher}")
         self.assertEqual(self.library.read_bytes(), b"shared Dine runtime, no guest blocks")
         self.assertEqual(self.launcher.read_bytes(), b"small host executable containing guest bytes")
         record = json.loads(self.manifest.read_text())
