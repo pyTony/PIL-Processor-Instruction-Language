@@ -94,11 +94,16 @@ coprocessor halfway through execution. Snapshots report `fpu_present`, and
 BIOS INT 11h plus the BDA equipment word reflect the selected device.
 Without the switch, existing no-coprocessor behavior is unchanged.
 
-**This backend is incomplete.** It currently handles selected x87 register
-operations and IEEE memory load/store, but not arithmetic, comparisons, full
-exceptions or Turbo Pascal hardware floating-point (`{$N+}`) programs.
-Unsupported instructions stop explicitly. This option is for targeted tests,
-not a promise of full 80387 compatibility.
+**This backend is incomplete.** It handles selected x87 register operations,
+IEEE memory load/store, and finite normalized *register* FADD, FADDP, FMUL,
+FMULP, FSUB, FSUBP, FSUBR and FSUBRP. Register arithmetic uses an integer-only
+80-bit calculation with round-to-nearest-even at 64-bit significand precision.
+Masked inexact results set PE and C1 indicates upward rounding. Unmasked PE,
+unsupported precision/rounding modes, denormals, infinities, NaNs, exponent
+underflow/overflow, memory arithmetic, division, comparisons and complete x87
+exception delivery still stop explicitly. In particular, Turbo Pascal hardware
+floating-point (`{$N+}`) programs are **not yet supported**. This opt-in mode
+is intended for targeted tests, not full 80387 compatibility.
 
 ## Select a configuration
 
