@@ -7,11 +7,17 @@ use crate::dos_translate::{self,near_call,near_return};
 use std::fmt::Write as _;
 use crate::dos_codegen::{self,Bindings,BlockAdapter};
 use crate::dos_blocks::{Site,BlockPlan};
+use std::collections::BTreeSet;
 #[cfg(test)] use std::collections::BTreeMap;
 
 // Standalone control metadata and retirement belong to this runtime adapter;
 // the instruction call and bounded block plan are shared with Dine.
-fn standalone_instruction(ip:u32,site:&Site,fast:bool)->String{
+fn standalone_instruction(ip:u32,site:&Site,fast:bool,vga_port:bool)->String{
+    // Statically verified OUT DX,AX is a native device boundary, not the
+    // generic open-bus PIL operation. It preserves all registers and flags.
+    if vga_port{
+        return format!("c.out_vga_word()?;c.eip={};c.machine.retired();\n",site.flow.next_eip);
+    }
     let program=&site.program;let flow=site.flow;
     let before=if near_return(program){format!("let expected=*c.calls.last().ok_or(\"standalone RET has no proven caller\")?; if expected.1!={}{{return Err(\"standalone CALL/RET operand widths differ\".into());}} let before=(c.regs,c.flags,c.undefined,c.eip,c.machine);",program.operand_width)}else{String::new()};
     let after=if near_return(program){String::from("if c.eip!=expected.0{let target=c.eip;(c.regs,c.flags,c.undefined,c.eip,c.machine)=before;return Err(format!(\"unproven standalone return target {target:04x}, expected {:04x}\",expected.0));} c.calls.pop();")}
@@ -19,10 +25,10 @@ fn standalone_instruction(ip:u32,site:&Site,fast:bool)->String{
     let call=dos_codegen::instruction_call(ip,site,&Bindings{regs:"&mut c.regs",flags:"&mut c.flags",undefined:"&mut c.undefined",eip:"&mut c.eip",ram:"&mut c.ram",machine:"&mut c.machine"},fast);
     format!("{before} {call}.map_err(|e|format!(\"guest instruction: {{e:?}}\"))?; {after} c.machine.retired();\n")
 }
-struct StandaloneBlocks;
-impl BlockAdapter for StandaloneBlocks {
+struct StandaloneBlocks<'a>{vga_ports:&'a BTreeSet<u32>}
+impl BlockAdapter for StandaloneBlocks<'_> {
     fn header(&self,start:u32)->String{format!("#[inline(never)] fn block_{start:x}(c:&mut dos_runtime::Context)->Result<(),String>{{\n")}
-    fn instruction(&self,ip:u32,site:&Site,_:usize)->String{standalone_instruction(ip,site,true)}
+    fn instruction(&self,ip:u32,site:&Site,_:usize)->String{standalone_instruction(ip,site,true,self.vga_ports.contains(&ip))}
     fn footer(&self,_:usize)->String{String::from("Ok(())\n}\n")}
 }
 
@@ -30,28 +36,37 @@ impl BlockAdapter for StandaloneBlocks {
 /// from the existing PIL Rust emitter. No decoder is included in the result.
 fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
     let p=&unit.loaded;let graph=&unit.instructions;let sites=&unit.sites;
+    // dos_translate has verified the exact DX port on every incoming path.
+    let vga_ports:BTreeSet<u32>=graph.iter().filter_map(|(&ip,decoded)|
+        (decoded.label=="OUT DX,AX").then_some(ip)).collect();
     let plan=BlockPlan::new(sites,std::iter::once(p.cpu.eip));
-    let blocks=dos_codegen::emit_blocks(sites,&plan,&StandaloneBlocks);
+    let blocks=dos_codegen::emit_blocks(sites,&plan,&StandaloneBlocks{vga_ports:&vga_ports});
     let mut modules=String::new();let mut cases=String::new();let mut block_cases=String::new();
     for (&ip,decoded) in graph {
         match &decoded.operation {
             guest::Operation::Pil{program,..}=>{
-                modules.push_str(&dos_codegen::instruction_module(ip,program));
-                let body=standalone_instruction(ip,&sites[&ip],false);
+                if !vga_ports.contains(&ip){modules.push_str(&dos_codegen::instruction_module(ip,program));}
+                let body=standalone_instruction(ip,&sites[&ip],false,vga_ports.contains(&ip));
                 writeln!(cases,"{ip} => {{ {body} Ok(None) }},").unwrap();
                 writeln!(block_cases,"{ip} => {{block_{ip:x}(c)?;Ok(None)}},").unwrap();
             },
             guest::Operation::Interrupt{vector:0x20,..}=>{
                 let case=format!("{ip} => Ok(Some(0)),\n");cases.push_str(&case);block_cases.push_str(&case);
             },
-            guest::Operation::Interrupt{vector:0x21,next,..}=>{
-                let case=format!("{ip} => {{ let exit=c.interrupt(0x21,output)?; c.eip={next}; c.machine.retired(); Ok(exit) }},\n");cases.push_str(&case);block_cases.push_str(&case);
+            guest::Operation::Interrupt{vector,next,..} if matches!(*vector,0x10|0x16|0x21)=>{
+                let case=format!("{ip} => {{ let exit=c.interrupt({vector},output)?; c.eip={next}; c.machine.retired(); Ok(exit) }},\n");cases.push_str(&case);block_cases.push_str(&case);
             },
             _=>return Err("unsupported operation in verified graph".into()),
         }
     }
     let mut source=crate::emit_rust_support();
     for (name,text) in [("dos_encoding",include_str!("dos_encoding.rs")),("host_io",include_str!("host_io.rs")),("dos_runtime",include_str!("dos_runtime.rs"))]{
+        // A native executable must be independent of the compiler's source
+        // tree. Embed the same font asset as Dine, not an include_str! path
+        // relative to the generated .rs file.
+        let text=if name=="dos_runtime"{
+            text.replace("include_str!(\"dos_font8x8.txt\")",&format!("{:?}",include_str!("dos_font8x8.txt")))
+        }else{text.to_owned()};
         writeln!(source,"\nmod {name} {{\n{}\n}}",text.split("#[cfg(test)]").next().unwrap()).unwrap();
     }
     source.push_str(&modules);source.push_str(&blocks);
@@ -78,13 +93,13 @@ fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
     for span in spans {
         writeln!(source,"ram.protect({},{}).map_err(|e|format!(\"initial protection: {{e:?}}\"))?;",span.start,span.len()).unwrap();
     }
-    writeln!(source,"ram.set_a20_enabled({});\nOk(dos_runtime::Context{{regs:{:?},flags:{},undefined:{},eip:{},ram,machine:{:?},calls:Vec::new()}})\n}}",p.ram.a20_enabled(),p.cpu.regs,p.cpu.eflags,p.cpu.undefined_flags,p.cpu.eip,p.image.segment_state()).unwrap();
+    writeln!(source,"ram.set_a20_enabled({});\nOk(dos_runtime::Context{{regs:{:?},flags:{},undefined:{},eip:{},ram,machine:{:?},video:dos_runtime::VideoState::default(),key:None,calls:Vec::new()}})\n}}",p.ram.a20_enabled(),p.cpu.regs,p.cpu.eflags,p.cpu.undefined_flags,p.cpu.eip,p.image.segment_state()).unwrap();
     source.push_str("#[cfg(test)] fn step(c:&mut dos_runtime::Context,output:&mut host_io::CaptureOutput)->Result<Option<u8>,String>{match c.eip {\n");
     source.push_str(&cases);
     source.push_str("_=>Err(format!(\"unexpected compiled target {:04x}\",c.eip)),\n}}\n");
     source.push_str("fn block_step(c:&mut dos_runtime::Context,output:&mut host_io::CaptureOutput)->Result<Option<u8>,String>{match c.eip {\n");
     source.push_str(&block_cases);
-    writeln!(source,"_=>Err(format!(\"unexpected compiled target {{:04x}}\",c.eip)),\n}}}}\nfn run_with_tail(tail:Option<&str>)->Result<(u8,Vec<u8>),String>{{let mut c=initial_context()?;if let Some(text)=tail{{dos_runtime::command_tail(&mut c.ram,{},text)?;}}let mut output=host_io::CaptureOutput::new(host_io::DOS_OUTPUT_LIMIT);loop{{if let Some(code)=block_step(&mut c,&mut output)?{{return Ok((code,output.into_bytes()));}}}}}}",p.image.segments[3].base).unwrap();
+    writeln!(source,"_=>Err(format!(\"unexpected compiled target {{:04x}}\",c.eip)),\n}}}}\nfn run_with_tail(tail:Option<&str>)->Result<(u8,Vec<u8>),String>{{let mut c=initial_context()?;if let Some(raw)=std::env::var_os(\"PIL_DOS_BIOS_KEY\"){{let raw=raw.into_string().map_err(|_|\"PIL_DOS_BIOS_KEY must be Unicode\".to_string())?;c.key=Some(dos_runtime::parse_key(&raw)?);}}if let Some(text)=tail{{dos_runtime::command_tail(&mut c.ram,{},text)?;}}let mut output=host_io::CaptureOutput::new(host_io::DOS_OUTPUT_LIMIT);loop{{if let Some(code)=block_step(&mut c,&mut output)?{{return Ok((code,output.into_bytes()));}}}}}}",p.image.segments[3].base).unwrap();
     source.push_str("fn run()->Result<(u8,Vec<u8>),String>{let args=std::env::args_os().skip(1).map(|a|a.into_string().map_err(|_|\"host argument is not valid Unicode\".to_string())).collect::<Result<Vec<_>,_>>()?;let text=args.join(\" \");run_with_tail(if args.is_empty(){None}else{Some(&text)})}\n");
     source.push_str("fn main(){use std::io::Write;match run(){Ok((code,bytes))=>{let raw=std::env::var_os(\"PIL_DOS_RAW_OUTPUT\").is_some_and(|v|v==\"1\");if let Err(e)=std::io::stdout().lock().write_all(&dos_encoding::output_bytes(&bytes,raw)){eprintln!(\"output: {e}\");std::process::exit(1);}std::process::exit(i32::from(code));},Err(e)=>{eprintln!(\"{e}\");std::process::exit(1);}}}\n");
     source.push_str("\nuse address::*; use address::SegmentAccess::*; use address::{EffectiveAddress::*,Address16::*,SegmentRegister::*,Gpr::*};\n");
@@ -244,6 +259,60 @@ mod tests {
         let source=emit(&dos::hello("com").unwrap(),"HELLO.COM").unwrap();
         assert!(source.contains("mod dos_runtime"));assert!(source.contains("mod ins_100"));
         assert!(!source.contains("mod guest")&&!source.contains("enum Token")&&!source.contains("InstructionBackend"));
+    }
+    #[test]
+    fn video_bios_boundary_requires_proven_mode_and_service_function(){
+        // Mode 12h, cursor row 29, mode 3 restore, INT20 termination.
+        let video=[0xb8,0x12,0,0xcd,0x10,0xb4,2,0xbb,0,0,0xba,0,0x1d,0xcd,0x10,0xb8,3,0,0xcd,0x10,0xcd,0x20];
+        let source=emit(&video,"VIDEO.COM").unwrap();
+        assert!(source.contains("video:dos_runtime::VideoState::default()"));
+        assert!(source.contains("key:None"));
+        assert!(source.contains("c.interrupt(16,output)"));
+        assert!(!source.contains("include_str!(\"dos_font8x8.txt\")"),"native Rust must embed font data");
+        for bytes in [
+            vec![0xb4,0,0xcd,0x10,0xcd,0x20],
+            vec![0xb8,0x13,0,0xcd,0x10,0xcd,0x20],
+            vec![0xb4,3,0xcd,0x10,0xcd,0x20],
+            vec![0xcd,0x16,0xcd,0x20],
+            // An unproven or incorrect graphics-controller port fails:
+            vec![0xba,0xcf,3,0xb8,5,2,0xef,0xcd,0x20],
+            vec![0xec,0xcd,0x20], // IN AL,DX
+        ]{assert!(emit(&bytes,"V.COM").is_err(),"{bytes:?}");}
+    }
+    #[test]
+    fn proven_vga_out_word_calls_native_device_in_both_dispatch_paths(){
+        // MOV DX,3CEh; MOV AX,0205h; OUT DX,AX; INT20.
+        let guest=[0xba,0xce,3,0xb8,5,2,0xef,0xcd,0x20];
+        let source=emit(&guest,"PORT.COM").unwrap();
+        assert!(source.contains("c.out_vga_word()?;c.eip="));
+        assert!(!source.contains("mod ins_106 {"),"port does not embed open-bus semantics");
+        // Clobbering DX or varying its source cannot be considered proven.
+        let wrong=[0xba,0xcf,3,0xb8,5,2,0xef,0xcd,0x20];
+        assert!(emit(&wrong,"PORT.COM").is_err());
+        let clobber=[0xba,0xce,3,0x42,0xb8,5,2,0xef,0xcd,0x20]; // INC DX
+        assert!(emit(&clobber,"PORT.COM").is_err());
+    }
+    #[test]
+    fn bios_key_wait_accepts_proven_xor_ah_ah_and_rejects_unproven_ah(){
+        // XOR AH,AH; INT16; MOV AX,4C00h; INT21.
+        let yes=[0x30,0xe4,0xcd,0x16,0xb8,0,0x4c,0xcd,0x21];
+        let source=emit(&yes,"KEY.COM").unwrap();
+        assert!(source.contains("c.interrupt(22,output)"));
+        assert!(emit(&[0xcd,0x16,0xb8,0,0x4c,0xcd,0x21],"KEY.COM").is_err());
+    }
+    // Pending: original MANDVGA still exercises memory writes, calls and
+    // arithmetic beyond the currently admitted native static graph. Keep
+    // this as the end-to-end acceptance gate, not a false passing test.
+    #[test]
+    #[ignore = "full original MANDVGA.COM control-flow support is the next native milestone"]
+    fn original_mandvga_guest_reaches_compiled_vga_and_keyboard_boundaries(){
+        let bytes=include_bytes!("../programs/dos/MANDVGA.COM");
+        let source=emit(bytes,"MANDVGA.COM").expect("original MANDVGA.COM must have a fully proven static graph");
+        assert!(source.contains("c.out_vga_word()?"),"GC word port must use native device, not an open bus");
+        assert!(source.contains("c.interrupt(16,output)"),"BIOS video boundary missing");
+        assert!(source.contains("c.interrupt(22,output)"),"BIOS key wait boundary missing");
+        assert!(source.contains("mod vga_planar"),"generated code must include the original VGA engine");
+        assert!(!source.contains("include_str!(\"dos_font8x8.txt\")"),"generated source must embed its font");
     }
     #[test]
     fn unsupported_programs_are_rejected(){

@@ -444,12 +444,12 @@ def main():
             if expected:
                 assert f'OUTPUT (escaped bytes): {escaped}' in probe, probe
             subprocess.run([str(engine), '--emit-dos-standalone', str(program), str(source)], check=True)
-            generated = source.read_text()
+            generated = source.read_text(encoding='utf-8')
             for forbidden in ('mod guest', 'enum Token', 'InstructionBackend', 'DecodeCache', 'include!(', 'include_str!('):
                 assert forbidden not in generated, forbidden
             # A second emit must preserve the existing source.
             rejected = subprocess.run([str(engine), '--emit-dos-standalone', str(program), str(source)], capture_output=True)
-            assert rejected.returncode != 0 and source.read_text() == generated
+            assert rejected.returncode != 0 and source.read_text(encoding='utf-8') == generated
             subprocess.run(['rustc', '--edition=2021', '-Awarnings', '-O', str(source), '-o', str(binary)], check=True)
             program.unlink()
             source.unlink()
