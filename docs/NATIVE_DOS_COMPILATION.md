@@ -110,9 +110,13 @@ CP437-aware terminal/transport needs raw bytes.
   output, and `AH=4Ch` process exit.
 - Command-tail translation through CP437 and output transcoding to UTF-8.
 
-There is **no file API, keyboard input, graphics screen, EXEC child process,
+There is **no file API, interactive host keyboard, general graphics screen, EXEC child process,
 installed interrupt handler, REP string support or arbitrary indirect
-control-flow discovery** in standalone mode today. Unsupported reachable
+control-flow discovery** in standalone mode today. An experimental mode-12h
+VGA planar device boundary supports selected GC word ports and ROM-font
+caption rendering, with a single explicit BIOS key supplied through
+`PIL_DOS_BIOS_KEY`. It remains unverified end-to-end and does not imply full
+VGA/DOS video compatibility. Unsupported reachable
 code is rejected during translation; generated executables cannot fall back
 to Dine. Standalone services and Dine services must not be conflated.
 
@@ -169,12 +173,22 @@ Incremental acceptance plan:
    semantics at the generated runtime boundary, including latches, write
    mode 2 and pixel masks. Make the four planes inspectable without needing
    Tk, and preserve the exact register/flag/IP state at every service.
-3. Provide a deterministic headless completion option for the key wait
-   (e.g. a documented supplied key), restore mode 3 and return the original
-   DOS exit code. Do not convert a waited key into a forged successful exit.
+3. Provide a deterministic headless completion option for the key wait,
+   restore mode 3 and return the original DOS exit code. Do not convert a
+   waited key into a forged successful exit. The first implementation
+   accepts one key from `PIL_DOS_BIOS_KEY=1C0D` (BIOS scan byte 1Ch plus
+   ASCII 0Dh for Enter); without that variable an INT 16h AH=00h wait
+   reports a missing-input error instead of silently exiting.
+   This does **not** mean MANDVGA is fully supported yet.
 4. Compare all pixels, four planes, palette, caption and text-mode
    restoration with `tools/verify_mandel_vga.py` and the existing
-   interpreter. Verify arithmetic and CPU/flag state at agreed checkpoints.
+   interpreter. The new `tools/verify_mandel_vga_native.py` builds the
+   original COM as a native executable, supplies `PIL_DOS_BIOS_KEY=1C0D`,
+   captures 153600 visible plane bytes through an explicit
+   `PIL_DOS_VGA_CAPTURE` file path at the key wait, and checks 296960
+   fractal pixels and the caption glyphs against the independent reference.
+   These are **proposed verification gates**, not claimed passing results.
+   Verify palette and CPU/flag state at agreed checkpoints separately.
 5. Benchmark fresh `dev` builds of the **same guest binary**, same host,
    output mode and process-start policy. Measure native block execution,
    video/controller time and framebuffer serialization separately. An

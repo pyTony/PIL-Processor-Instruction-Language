@@ -48,8 +48,8 @@ country selection, command tails, serial input, and FPU options.
 | Terminal keyboard and DOS console | Python COM1 bridge, using the launching terminal |
 | Interactive fullscreen keyboard/mouse | Not migrated; keep Tk GUI for programs requiring it |
 
-The native window does not take focus. In this terminal mode, serial
-console input reaches DOS via COM1. Programs that update only the
+The native window does not take focus. In CGA/VGA graphics mode,
+terminal keys reach BIOS INT 16h; other modes retain COM1 input. Programs that update only the
 **text-mode VGA screen buffer B8000h**, rather than producing serial
 console output, do **not** yet have a complete terminal-mode rendering
 replacement. For editors/interactive full-screen text applications,
@@ -71,14 +71,15 @@ python -m unittest discover -s tests/gui -p test_dos_terminal.py
 python tools/dos_terminal.py --headless --rust-graphics --engine .\target\release\pil.exe programs/dos/MANDVGA.COM
 ```
 
-Verify that MANDVGA renders progressively and displays its software
-font caption, Enter is received from the terminal, no Python Tk
-window is created, and the program exits without a stuck GDI thread.
+Verify progressive MANDVGA graphics and manual key input in the launching
+terminal. Closing the native window ends the session without reporting a
+false DOS program exit. No Python Tk window should appear.
 Compare CGA palette and mode 5 against normal PILdos; verify mode 6
 monochrome and mode 13 DAC updates. Compare the elapsed time with and
 without native video under the same CPU workload; do not conflate CPU
 execution improvements with reduced Python framebuffer serialization.
 
-The native renderer has been committed but has **not yet been compiled
-or exercised on Windows from this conversation**. Keep the dependent
-PR as draft until the full regression suite and Windows tests pass.
+Original branch on 2026-11-13: 49 Python tests and four Rust scanout
+tests passed; Windows release build succeeded; Mandelbrot rendered; automatic
+Enter completed in 9.66 seconds. Verify the new manual keyboard and window
+close paths on Windows after this merge. Keep the PR draft meanwhile.

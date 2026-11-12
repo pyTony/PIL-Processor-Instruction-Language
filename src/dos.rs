@@ -63,6 +63,8 @@ mod serial;
 mod brk;
 #[path="dos_keyboard.rs"]
 mod keyboard;
+#[path="dos_mouse.rs"]
+mod mouse;
 #[path="dos_vectors.rs"]
 mod vectors;
 use services::dispatch as service;
@@ -115,6 +117,8 @@ pub struct Loaded{
     pub com1:Option<serial::Serial>,
     /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
     breaks:Vec<brk::Frame>,
+    /// Optional software INT 33h mouse driver, enabled by interactive sessions.
+    mouse:mouse::Mouse,
     /// Persistent, signature-validated cache across session slices.
     pub cache:super::cache::DecodeCache,
     /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
@@ -133,7 +137,7 @@ impl Clone for Loaded{
         own_name:self.own_name.clone(),drive:self.drive.clone(),active_program:self.active_program.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
+        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
     }}
 }
 impl std::fmt::Debug for Loaded{
@@ -337,7 +341,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -510,7 +514,6 @@ pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
             }else{bytes[0xa0000+i]};
             pixels.push(colors[usize::from(index)]);
         }
-        if p.vga.cga_mode()&0x08==0{pixels.fill(0);}
         return Some((width,height,pixels));
     }
     let geometry=planar::geometry(mode)?;
@@ -536,7 +539,6 @@ pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
             }
         }
     }
-    if p.vga.cga_mode()&0x08==0{pixels.fill(0);}
     Some((width,height,pixels))
 }
 
@@ -614,6 +616,8 @@ pub(crate) trait InstructionBackend {
     fn may_block(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
     fn may_execute(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
     fn block_stats(&self)->(u64,u64){(0,0)}
+    /// Number of generated single-instruction dispatches outside native blocks.
+    fn single_stats(&self)->u64{0}
     fn block(&mut self,_program:&ProgramIdentity,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,program:&ProgramIdentity,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
 }
@@ -814,13 +818,17 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         }
         if let Some(b)=backend.as_deref_mut(){
             if b.may_block(&p.active_program,&p.image,&p.ram,p.cpu.eip){
-            // Multi-instruction execution is opt-in. Interrupt shadows and
-            // installed timer handlers retain instruction-level scheduling.
+            // A clocked DOS session samples IRQ0 every 256 guest steps.
+            // Never batch across that boundary, even when a guest owns INT 08h:
+            // the next outer-loop iteration must get the same timer/pending-IRQ
+            // check as the interpreter. Interrupt shadows still forbid batching.
             let mut machine=p.image.segment_state();
-            let guest_timer=p.clock_offset.is_some()&&vectors::answered(&p,p.speaker.pic.timer_vector())!=Ok(true);
-            if machine.ss_shadow==0&&machine.sti_shadow==0&&!guest_timer{
+            if machine.ss_shadow==0&&machine.sti_shadow==0{
+                let remaining=budget-execution_steps;
+                let next_timer_poll=if p.clock_offset.is_some(){256-execution_steps%256}else{remaining};
+                let block_budget=remaining.min(next_timer_poll);
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if let Some((n,result))=b.block(&p.active_program,&p.image,&mut p.cpu,&mut p.ram,&mut machine,budget-execution_steps){
+                if let Some((n,result))=b.block(&p.active_program,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
                     p.image.set_segment_state(machine);p.selectors=machine.selectors;
                     execution_steps+=n;completed+=n;pil_steps+=n;
                     *instructions.entry("native block instructions".into()).or_insert(0)+=n;
