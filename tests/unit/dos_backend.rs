@@ -25,7 +25,9 @@ fn clocked_native_block_budget_stops_at_each_irq_poll_boundary() {
     assert_eq!(backend.0[0],256);
     assert_eq!(backend.0[255],1);
     assert_eq!(backend.0[256],256);
-    assert_eq!(backend.0[599],169);
+    assert_eq!(backend.0[511],1);
+    assert_eq!(backend.0[512],88);
+    assert_eq!(backend.0[599],1);
 }
 
 
