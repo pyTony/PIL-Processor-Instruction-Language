@@ -420,14 +420,14 @@ fn present_80387_memory_arithmetic_m32_m64_dos_com_roundtrip() {
 
 #[test]
 fn present_80387_memory_arithmetic_fault_preserves_stack_and_ip() {
-    // FLD1; FADD m64 [0200h]; INT 20h. Last byte of source is unreadable.
+    // FLD1; FADD m64 [0200h]; INT 20h. Last bytes exceed DS limit.
     let mut p=dos::load(&[0xd9,0xe8, 0xdc,0x06,0x00,0x02,
                           0xcd,0x20],"x87-memory-math-fault.com").unwrap();
     p.fpu=Fpu::present();
     let base=p.image.segments[3].base;
     p.ram.store(base+0x200,MemWidth::Dword,0).unwrap();
     p.ram.store(base+0x204,MemWidth::Dword,0x3ff0_0000).unwrap();
-    p.ram.protect(base+0x207,1).unwrap();
+    p.image.segments[3].limit=0x205; // DS:0200..0207 crosses segment limit
     let result=dos::run(p,16).unwrap();
     assert!(matches!(result.stop,dos::Stop::Fault(ref s)
                      if s.contains("80387 memory operand")), "{:?}",result.stop);
