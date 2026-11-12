@@ -84,8 +84,9 @@ def play(engine, program, count, quantum, keys):
                 if not reply["ok"]:
                     raise RuntimeError(f"BIOS key rejected: {reply.get('text')}")
                 key_index += 1
-            session.send(f"run {quantum} buffered")
+            step = session.send(f"run {quantum} buffered")
             frame = session.send("snapshot")
+            frame["output"] = step.get("output", "")
             frames.append(summary(frame))
             print(f"  {Path(engine).name}: slice {index + 1}, "
                   f"{frame['steps']} steps, {frame['status']}, "
