@@ -522,6 +522,8 @@ pub(crate) trait InstructionBackend {
     fn may_block(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
     fn may_execute(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
     fn block_stats(&self)->(u64,u64){(0,0)}
+    /// Number of generated single-instruction dispatches outside native blocks.
+    fn single_stats(&self)->u64{0}
     fn block(&mut self,_program:&ProgramIdentity,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,program:&ProgramIdentity,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
 }
