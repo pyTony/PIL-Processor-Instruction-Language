@@ -1,7 +1,7 @@
-//! Partial opt-in 80387 backend: register stack, IEEE memory loads and stores.
-//! Unsupported encodings, unmodelled exception/rounding behaviours, and
-//! arithmetic stop explicitly instead of fabricating successful execution.
-use super::{address, classify, convert, Cpu, Extended80, Instruction, Operation, Outcome, Ram, StackError, X87State};
+//! Partial opt-in 80387 backend: register stack, IEEE loads/stores,
+//! and finite register arithmetic. Unsupported exceptional/rounding
+//! behaviours stop explicitly rather than fabricating successful execution.
+use super::{address, classify, convert, math, Arithmetic, Cpu, Extended80, Instruction, Operation, Outcome, Ram, StackError, X87State};
 use crate::{guest::Image, memory::MemWidth};
 
 #[derive(Clone, Debug, Default)]
@@ -49,6 +49,8 @@ impl PresentFpu {
                         self.state.pop().map(|_| ())
                     })
             },
+            Operation::Arithmetic { kind, index, pop } =>
+                return self.execute_arithmetic(kind, index, pop),
             Operation::FldM32 | Operation::FstpM32 |
             Operation::FldM64 | Operation::FstpM64 =>
                 return self.execute_memory(operation,instruction,cpu,ram,image),
@@ -57,6 +59,36 @@ impl PresentFpu {
             Ok(()) => Outcome::Completed,
             Err(error) => Outcome::StackFault(error),
         }
+    }
+
+
+    /// Calculate completely before changing register tags, TOP or status.
+    /// Unmasked precision exceptions and unsupported RC/PC/special encodings
+    /// retain the original machine state and are reported explicitly.
+    fn execute_arithmetic(&mut self, kind: Arithmetic, index: u8, pop: bool) -> Outcome {
+        let dst = if pop { usize::from(index) } else { 0 };
+        let src = if pop { 0 } else { usize::from(index) };
+        let Some(lhs) = self.state.st(dst) else {
+            return Outcome::StackFault(StackError::Underflow);
+        };
+        let Some(rhs) = self.state.st(src) else {
+            return Outcome::StackFault(StackError::Underflow);
+        };
+        let Ok(computed) = math::calculate(kind, lhs, rhs, self.state.control) else {
+            return Outcome::Unsupported;
+        };
+        // #MF delivery and exception prioritization are not yet implemented.
+        if computed.inexact && self.state.control & 0x0020 == 0 {
+            return Outcome::Unsupported;
+        }
+        self.state.store(dst, computed.value);
+        if pop { self.state.pop().expect("checked arithmetic ST(0)"); }
+        // C1 reports upward rounding for this finite arithmetic subset;
+        // PE records a masked inexact result. Preserve other status bits.
+        self.state.status &= !0x0200;
+        if computed.rounded_up { self.state.status |= 0x0200; }
+        if computed.inexact { self.state.status |= 0x0020; }
+        Outcome::Completed
     }
 
     /// Load/store one IEEE operand. Segment permission and complete span are
