@@ -15,7 +15,14 @@ pub enum Operation {
     FstpM32,
     FldM64,
     FstpM64,
+    /// Register arithmetic, either ST(0) op ST(i) or ST(i) op ST(0), pop.
+    Arithmetic { kind: Arithmetic, index: u8, pop: bool },
+    /// ST(0) op IEEE m32/m64, source is read only.
+    MemoryArithmetic { kind: Arithmetic, bytes: u32 },
 }
+/// Order is explicit: Subtract is destination-source, ReverseSubtract is source-destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arithmetic { Add, Multiply, Subtract, ReverseSubtract }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodeError { Unsupported { opcode: u8, modrm: u8 } }
 
@@ -35,6 +42,14 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0xc0..=0xc7) => Some(Operation::FldSt(rm)),
             (0xd9, 0xc8..=0xcf) => Some(Operation::Fxch(rm)),
             (0xdd, 0xd8..=0xdf) => Some(Operation::FstpSt(rm)),
+            (0xd8, 0xc0..=0xc7) => Some(Operation::Arithmetic { kind: Arithmetic::Add, index: rm, pop: false }),
+            (0xd8, 0xc8..=0xcf) => Some(Operation::Arithmetic { kind: Arithmetic::Multiply, index: rm, pop: false }),
+            (0xd8, 0xe0..=0xe7) => Some(Operation::Arithmetic { kind: Arithmetic::Subtract, index: rm, pop: false }),
+            (0xd8, 0xe8..=0xef) => Some(Operation::Arithmetic { kind: Arithmetic::ReverseSubtract, index: rm, pop: false }),
+            (0xde, 0xc0..=0xc7) => Some(Operation::Arithmetic { kind: Arithmetic::Add, index: rm, pop: true }),
+            (0xde, 0xc8..=0xcf) => Some(Operation::Arithmetic { kind: Arithmetic::Multiply, index: rm, pop: true }),
+            (0xde, 0xe0..=0xe7) => Some(Operation::Arithmetic { kind: Arithmetic::ReverseSubtract, index: rm, pop: true }),
+            (0xde, 0xe8..=0xef) => Some(Operation::Arithmetic { kind: Arithmetic::Subtract, index: rm, pop: true }),
             _ => None,
         }
     } else {
@@ -43,6 +58,14 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 3) => Some(Operation::FstpM32),
             (0xdd, 0) => Some(Operation::FldM64),
             (0xdd, 3) => Some(Operation::FstpM64),
+            (0xd8, 0) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Add, bytes: 4 }),
+            (0xd8, 1) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Multiply, bytes: 4 }),
+            (0xd8, 4) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Subtract, bytes: 4 }),
+            (0xd8, 5) => Some(Operation::MemoryArithmetic { kind: Arithmetic::ReverseSubtract, bytes: 4 }),
+            (0xdc, 0) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Add, bytes: 8 }),
+            (0xdc, 1) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Multiply, bytes: 8 }),
+            (0xdc, 4) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Subtract, bytes: 8 }),
+            (0xdc, 5) => Some(Operation::MemoryArithmetic { kind: Arithmetic::ReverseSubtract, bytes: 8 }),
             _ => None,
         }
     };
@@ -78,8 +101,37 @@ mod tests {
         }
     }
     #[test]
+    fn register_arithmetic_opcode_order_and_pop_semantics() {
+        for i in 0..8 {
+            for (op,base,kind,pop) in [
+                (0xd8,0xc0,Arithmetic::Add,false),
+                (0xd8,0xc8,Arithmetic::Multiply,false),
+                (0xd8,0xe0,Arithmetic::Subtract,false),
+                (0xd8,0xe8,Arithmetic::ReverseSubtract,false),
+                (0xde,0xc0,Arithmetic::Add,true),
+                (0xde,0xc8,Arithmetic::Multiply,true),
+                (0xde,0xe0,Arithmetic::ReverseSubtract,true),
+                (0xde,0xe8,Arithmetic::Subtract,true),
+            ] {
+                assert_eq!(classify(op,base+i),Ok(Operation::Arithmetic{kind,index:i,pop}));
+            }
+        }
+    }
+    #[test]
+    fn memory_arithmetic_opcodes_are_distinct_from_store() {
+        for (opcode,bytes) in [(0xd8,4),(0xdc,8)] {
+            for (reg,kind) in [(0,Arithmetic::Add),(1,Arithmetic::Multiply),
+                               (4,Arithmetic::Subtract),(5,Arithmetic::ReverseSubtract)] {
+                assert_eq!(classify(opcode,reg<<3),
+                    Ok(Operation::MemoryArithmetic{kind,bytes}));
+            }
+        }
+        assert_eq!(classify(0xdc,0x18),
+                   Err(DecodeError::Unsupported{opcode:0xdc,modrm:0x18}));
+    }
+    #[test]
     fn unsupported_is_not_silent_success() {
-        for (op,modrm) in [(0xd8,0xc0),(0xd9,0xe0),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
+        for (op,modrm) in [(0xd8,0xf0),(0xd9,0xe0),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
         }
     }

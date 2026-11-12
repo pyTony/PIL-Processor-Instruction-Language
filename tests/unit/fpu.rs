@@ -168,14 +168,14 @@ fn present_80387_reports_equipment_and_persists_across_slices() {
 }
 
 #[test]
-fn present_80387_rejects_unimplemented_arithmetic_without_retiring() {
-    let mut p=dos::load(&[0xdb,0xe3,0xd8,0xc0,0xcd,0x20],"x87-unsupported.com").unwrap();
+fn present_80387_rejects_unimplemented_division_without_retiring() {
+    let mut p=dos::load(&[0xdb,0xe3,0xd8,0xf0,0xcd,0x20],"x87-unsupported.com").unwrap();
     p.fpu=Fpu::present();
     let result=dos::run(p,20).unwrap();
     match result.stop {
         dos::Stop::Fault(message)=>{
             assert!(message.contains("80387 unsupported instruction"),"{message}");
-            assert!(message.contains("d8 c0"),"{message}");
+            assert!(message.contains("d8 f0"),"{message}");
         },
         other=>panic!("{other:?}"),
     }
@@ -324,4 +324,116 @@ fn runtime_fpu_selection_rejects_switch_after_a_waiting_run_without_retirement()
     let (reply,_)=session.command(2,"fpu 80387").unwrap();
     assert!(reply.contains("\"ok\":false"),"{reply}");
     assert!(!session.loaded().unwrap().fpu.available());
+}
+
+#[test]
+fn present_80387_dos_register_arithmetic_pop_and_ieee_store() {
+    // FNINIT; FLD1; FLD1; FADDP => 2; FLD1; FLD1; FADDP => 2;
+    // FMULP ST(1),ST(0) => 4; FSTP m64; INT 20h.
+    let bytes=[0xdb,0xe3, 0xd9,0xe8, 0xd9,0xe8, 0xde,0xc1,
+               0xd9,0xe8, 0xd9,0xe8, 0xde,0xc1, 0xde,0xc9,
+               0xdd,0x1e,0x00,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-arith.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let low=u64::from(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap());
+    let high=u64::from(result.loaded.ram.load(base+0x204,MemWidth::Dword).unwrap());
+    assert_eq!(low|(high<<32),0x4010_0000_0000_0000); // 4.0f64
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_register_subtract_and_reverse_subtract() {
+    // FLDZ; FLD1; FSUB ST0,ST1 = 1; FSTP m32
+    // FLD1; FLDZ; FSUBR ST0,ST1 = 1; FSTP m32; INT 20h
+    let bytes=[0xd9,0xee, 0xd9,0xe8, 0xd8,0xe1,
+               0xd9,0x1e,0x00,0x02,
+               0xd9,0xe8, 0xd9,0xee, 0xd8,0xe9,
+               0xd9,0x1e,0x04,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-sub.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap(),0x3f80_0000);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Dword).unwrap(),0x3f80_0000);
+}
+
+#[test]
+fn present_80387_precision_masking_is_atomic_and_sets_pe_when_masked() {
+    // 1 + 2^-64 is halfway between two extended80 numbers: tie to even 1.
+    // D8 C1 is FADD ST(0), ST(1), using an already populated FPU stack.
+    let mut p=dos::load(&[0xd8,0xc1,0xcd,0x20],"x87-pe.com").unwrap();
+    let one=Extended80::from_bits(1u64<<63,0x3fff);
+    let half_ulp=Extended80::from_bits(1u64<<63,0x3fff-64);
+    let mut backend=PresentFpu::default();
+    backend.state.push(half_ulp).unwrap();
+    backend.state.push(one).unwrap();
+    backend.state.control &= !0x0020; // precision exception unmasked
+    let snapshot=backend.state.clone();
+    p.fpu=Fpu::Present(backend);
+    let rejected=dos::run(p.clone(),8).unwrap();
+    assert!(matches!(rejected.stop,dos::Stop::Fault(ref s) if s.contains("80387 unsupported")));
+    assert_eq!(rejected.completed,0);
+    assert_eq!(rejected.loaded.cpu.eip,0x100);
+    assert_eq!(rejected.loaded.fpu.state().unwrap(),&snapshot);
+    if let Fpu::Present(ref mut backend)=p.fpu {
+        backend.state.control|=0x0020;
+    }
+    let result=dos::run(p,8).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.st(0),Some(one));
+    assert_eq!(state.st(1),Some(half_ulp));
+    assert_eq!(state.status&0x20,0x20); // PE recorded, masked
+    assert_eq!(state.status&0x200,0);  // C1: tied downward to even
+}
+
+#[test]
+fn present_80387_memory_arithmetic_m32_m64_dos_com_roundtrip() {
+    // FNINIT; FLD m64(1.5); FADD m64(2.25); FMUL m64(2.0);
+    // FSUB m32(0.5); FSUBR m32(8.0); FSTP m64; INT 20h.
+    // 8 - ((1.5+2.25)*2 - 0.5) = 1.0.
+    let bytes=[0xdb,0xe3, 0xdd,0x06,0x00,0x02,
+               0xdc,0x06,0x08,0x02, 0xdc,0x0e,0x10,0x02,
+               0xd8,0x26,0x18,0x02, 0xd8,0x2e,0x1c,0x02,
+               0xdd,0x1e,0x20,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-memory-math.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    for (addr,value) in [(0x200,0x3ff8_0000_0000_0000u64),
+                         (0x208,0x4002_0000_0000_0000),
+                         (0x210,0x4000_0000_0000_0000)] {
+        p.ram.store(base+addr,MemWidth::Dword,value as u32).unwrap();
+        p.ram.store(base+addr+4,MemWidth::Dword,(value>>32) as u32).unwrap();
+    }
+    p.ram.store(base+0x218,MemWidth::Dword,0x3f00_0000).unwrap();
+    p.ram.store(base+0x21c,MemWidth::Dword,0x4100_0000).unwrap();
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x220,MemWidth::Dword).unwrap(),0);
+    assert_eq!(result.loaded.ram.load(base+0x224,MemWidth::Dword).unwrap(),0x3ff0_0000);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_memory_arithmetic_fault_preserves_stack_and_ip() {
+    // FLD1; FADD m64 [0200h]; INT 20h. Last bytes exceed DS limit.
+    let mut p=dos::load(&[0xd9,0xe8, 0xdc,0x06,0x00,0x02,
+                          0xcd,0x20],"x87-memory-math-fault.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Dword,0).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,0x3ff0_0000).unwrap();
+    p.image.segments[3].limit=0x205; // DS:0200..0207 crosses segment limit
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s)
+                     if s.contains("80387 memory operand")), "{:?}",result.stop);
+    assert_eq!(result.completed,1);
+    assert_eq!(result.loaded.cpu.eip,0x102);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.status & 0x003f,0);
 }
