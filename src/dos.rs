@@ -63,6 +63,8 @@ mod serial;
 mod brk;
 #[path="dos_keyboard.rs"]
 mod keyboard;
+#[path="dos_mouse.rs"]
+mod mouse;
 #[path="dos_vectors.rs"]
 mod vectors;
 use services::dispatch as service;
@@ -115,6 +117,8 @@ pub struct Loaded{
     pub com1:Option<serial::Serial>,
     /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
     breaks:Vec<brk::Frame>,
+    /// Optional software INT 33h mouse driver, enabled by interactive sessions.
+    mouse:mouse::Mouse,
     /// Persistent, signature-validated cache across session slices.
     pub cache:super::cache::DecodeCache,
     /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
@@ -133,7 +137,7 @@ impl Clone for Loaded{
         own_name:self.own_name.clone(),drive:self.drive.clone(),active_program:self.active_program.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
+        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
     }}
 }
 impl std::fmt::Debug for Loaded{
@@ -337,7 +341,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}

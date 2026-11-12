@@ -121,7 +121,8 @@ impl Session{
         let native_total=native+single;
         let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total}",mode_control&8!=0,mode_control&0x20!=0);
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
-        let diagnostic=format!("{diagnostic},\"fpu_present\":{fpu_present}");
+        let (present,active,visible,mx,my,max_x,max_y)=self.loaded.as_ref().map_or((false,false,false,0,0,639,199),|p|p.mouse.view());
+        let diagnostic=format!("{diagnostic},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}");
         Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
@@ -151,6 +152,32 @@ impl Session{
                 }
             },
             ["fpu",..]=>(false,"fpu requires none or 80387".into(),false),
+            // Explicit opt-in while callbacks and custom cursors are incomplete.
+            // Never advertise a mouse to an existing DOS app by surprise.
+            ["mouse","on"]=>{
+                if self.started{(false,"mouse on requires a fresh session before the first run".into(),false)}
+                else{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    let vector=p.ram.load(0x33*4,MemWidth::Dword).map_err(|e|format!("mouse IVT read: {e:?}"))?;
+                    if vector!=0 && vector!=vectors::entry(0x33){
+                        (false,"INT 33h already belongs to another mouse handler".into(),false)
+                    }else{
+                        p.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33))
+                            .map_err(|e|format!("mouse IVT write: {e:?}"))?;
+                        p.mouse.enable();(true,"DOS mouse enabled".into(),false)
+                    }
+                }
+            },
+            // X/Y are Microsoft virtual mouse coordinates; BUTTONS bit 0/1/2
+            // represents left/right/middle. Events never enter the BIOS key ring.
+            ["mouse",x,y,buttons]=>match(x.parse::<u16>(),y.parse::<u16>(),buttons.parse::<u16>()){
+                (Ok(x),Ok(y),Ok(buttons)) if buttons<=7=>{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("mouse mode: {e:?}"))?as u8;
+                    p.mouse.host(x,y,buttons,mode);(true,String::new(),false)
+                },
+                _=>(false,"mouse needs X Y BUTTONS (0..7)".into(),false),
+            },
             ["run",n]=>match n.parse::<usize>(){
                 Ok(n) if (1..=MAX_STEPS).contains(&n)=>{output=self.run(n)?;(true,String::new(),false)},
                 _=>(false,"run budget must be 1..1000000".into(),false),

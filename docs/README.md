@@ -9,6 +9,10 @@ runtime delivery and contains a smaller set of user documentation.
 For DOS startup, drive mounts and command-line overrides, see
 [DOS environment configuration](DOS_CONFIG.md).
 
+For the experimental `--mouse` DOS INT 33h polling driver, Tk pointer
+mapping, limitations, and regression checks, see
+[DOS mouse support](DOS_MOUSE.md).
+
 For small **self-running interpreted Dine programs** that share a single
 application-independent DOS/BIOS library, see
 [Dine executables](DINE_EXECUTABLES.md). Unlike standalone compiled blocks,

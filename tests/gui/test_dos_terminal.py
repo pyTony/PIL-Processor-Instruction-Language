@@ -20,6 +20,51 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def test_mouse_opt_in_sends_command_before_guest_execution(self):
+        frames = ''.join(json.dumps({'protocol': 1, 'seq': i, 'ok': True}) + '\n' for i in range(2))
+        process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(frames), stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process):
+            session = term.Session('engine', 'program', mouse=True)
+        self.assertEqual(process.stdin.getvalue(), 'mouse on\n')
+        self.assertEqual(session.seq, 1)
+
+    def test_dos_mouse_session_click_reaches_int33_registers(self):
+        # MOV AX,0 / INT33 reset / MOV AX,3 / INT33 poll / INT20 exit
+        code = bytes.fromhex('b8 00 00 cd 33 b8 03 00 cd 33 cd 20')
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / 'mouse.com'
+            program.write_bytes(code)
+            session = term.Session(engine, program, mouse=True, stop_log='')
+            try:
+                reply = session.send('run 2')
+                self.assertTrue(reply['mouse_active'])
+                self.assertTrue(reply['mouse_present'])
+                reply = session.send('mouse 160 80 1')
+                self.assertTrue(reply['ok'])
+                reply = session.send('run 32')
+                self.assertEqual(reply['status'], 'exit')
+                regs = reply['registers']
+                self.assertEqual((regs[3] & 0xffff, regs[1] & 0xffff, regs[2] & 0xffff),
+                                 (1, 160, 80))
+            finally:
+                session.close()
+
+    def test_dos_mouse_coordinates_buttons_and_overlay(self):
+        self.assertEqual(term.mouse_virtual_coords(320, 240, 640, 480, 639, 199), (320, 100))
+        self.assertEqual(term.mouse_virtual_coords(-10, 999, 640, 480, 639, 479), (0, 479))
+        self.assertEqual(term.mouse_virtual_coords(639, 479, 640, 480, 639, 479), (639, 479))
+        self.assertEqual(term.mouse_command(80, 16, 3), 'mouse 80 16 3')
+        events = term.MouseEvents()
+        for x, buttons in ((10, 0), (20, 1), (30, 1), (40, 1), (50, 0)):
+            events.push(x, 4, buttons)
+        self.assertEqual(events.pending, [(10, 4, 0), (20, 4, 1), (40, 4, 1), (50, 4, 0)])
+        rgb = bytes([127] * (20 * 20 * 3))
+        painted = term.mouse_overlay(rgb, 20, 20, 0, 0, 639, 199)
+        self.assertEqual(rgb, bytes([127] * (20 * 20 * 3)))
+        self.assertEqual(painted[:3], bytes(3))
+        self.assertNotEqual(painted, rgb)
+
     def test_native_statistics_separate_blocks_singles_and_services(self):
         output = term.format_native_stats({
             'steps': 1000, 'native_blocks': 100,

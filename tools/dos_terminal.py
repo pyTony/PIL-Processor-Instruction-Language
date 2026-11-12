@@ -370,6 +370,59 @@ def key_command(code):
     return 'key {} {}'.format(*code)
 
 
+def mouse_virtual_coords(x, y, width, height, max_x, max_y):
+    """Map the drawn 4:3 image to DOS's virtual mouse coordinates."""
+    if width < 1 or height < 1:
+        raise ValueError('mouse display dimensions must be positive')
+    return (min(max(int(x), 0) * (max_x + 1) // width, max_x),
+            min(max(int(y), 0) * (max_y + 1) // height, max_y))
+
+
+def mouse_command(x, y, buttons):
+    return f'mouse {x} {y} {buttons}'
+
+
+class MouseEvents:
+    """Coalesce movement, but never lose button up/down edges."""
+    def __init__(self):
+        self.pending = []
+
+    def push(self, x, y, buttons):
+        event = (x, y, buttons)
+        if self.pending and self.pending[-1][2] == buttons:
+            # Keep the first coordinates of a button edge. Only a following
+            # motion is replaceable, otherwise the click would drift.
+            if len(self.pending) >= 2 and self.pending[-2][2] == buttons:
+                self.pending[-1] = event
+            else:
+                self.pending.append(event)
+        else:
+            self.pending.append(event)
+
+
+def mouse_overlay(rgb, width, height, x, y, max_x, max_y):
+    """Draw a host-only arrow on an RGB snapshot; never mutate guest VRAM."""
+    x = max(0, min(width - 1, x * width // (max_x + 1)))
+    y = max(0, min(height - 1, y * height // (max_y + 1)))
+    shape = ('X           ', 'Xo          ', 'Xoo         ',
+             'Xooo        ', 'Xoooo       ', 'Xooooo      ',
+             'Xoooooo     ', 'Xooooooo    ', 'Xoooooooo   ',
+             'XXXXXXXXXX  ', 'XoooX       ', 'XooX X      ',
+             'XoX   X     ', 'XX     X    ')
+    pixels = bytearray(rgb)
+    for dy, line in enumerate(shape):
+        if y + dy >= height:
+            break
+        for dx, colour in enumerate(line):
+            if x + dx >= width:
+                break
+            if colour not in 'Xo':
+                continue
+            at = ((y + dy) * width + x + dx) * 3
+            pixels[at:at + 3] = b'\x00\x00\x00' if colour == 'X' else b'\xff\xff\xff'
+    return bytes(pixels)
+
+
 class KeyEvents:
     """Keep physical key releases separate while a guest owns the keyboard."""
     def __init__(self, supported):
@@ -444,7 +497,7 @@ def screen_rows(reply, blink_on=True):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none"):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False):
         options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else []) + (['--fpu', fpu] if fpu != "none" else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
@@ -455,6 +508,10 @@ class Session:
         if ansi:
             self.send('ansi on')
         try:
+            if mouse:
+                reply = self.send('mouse on')
+                if not reply.get('ok'):
+                    raise ValueError(reply.get('text', 'DOS mouse initialization failed'))
             for letter, path in (drives or []):
                 reply = self.send(mount_command(letter, path))
                 if not reply.get('ok'):
@@ -937,7 +994,7 @@ def prepare_image_drives(engine, images, drives):
     return drives
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None, auto_graphics_key=False, fpu="none"):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None, auto_graphics_key=False, fpu="none", mouse=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -952,11 +1009,13 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     for attr in range(256):
         text.tag_configure(f'a{attr}', foreground=PALETTE[attr & 15], background=PALETTE[(attr >> 4) & 15])
     text.tag_configure('cursor', underline=True)
+    text.tag_configure('mouse_pointer', foreground='#000000', background='#ffffff')
+    text.tag_raise('mouse_pointer')
     # The colour tags paint every cell's background: keep the selection above
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives, config=config, fpu=fpu)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives, config=config, fpu=fpu, mouse=mouse)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -964,6 +1023,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         session.send(f'country {country}')
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
+    mouse_events = MouseEvents()
+    mouse_buttons = [0]
+    last_mouse = [(320, 96)]
     edges = KeyEvents(session.last.get('key_edges', False))
     held, state = set(), {'shift': 0, 'settle': 0, 'auto_key_sent': False}
     speaker = QuietSpeaker(speaker_level, session.last.get('beeps', 0))
@@ -988,7 +1050,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             else:
                 descriptor = ('cga', cga, reply['cga_mode'], reply['cga_color'])
                 width = 640 if reply['cga_mode'] == 6 else 320
-            descriptor += (reply.get('video_enabled', True),)
+            mouse_draw = reply.get('mouse_active') and reply.get('mouse_visible')
+            descriptor += (reply.get('video_enabled', True),
+                           (reply.get('mouse_x'), reply.get('mouse_y')) if mouse_draw else None,)
             if frame[0] != descriptor:
                 if pixels is not None:
                     rgb = graphics_rgb(pixels, reply['palette'])
@@ -998,6 +1062,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                     rgb = cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
                 if not reply.get('video_enabled', True):
                     rgb = bytes(len(rgb))
+                if mouse_draw:
+                    rgb = mouse_overlay(rgb, width, height, reply['mouse_x'], reply['mouse_y'],
+                                        reply.get('mouse_max_x', 639), reply.get('mouse_max_y', 199))
                 picture = graphics_photo(tk, rgb, width, height)
                 graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
@@ -1025,6 +1092,13 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             row, column = cursor
             text.tag_add('cursor', f'{row + 1}.{column}')
             drawn[1] = cursor
+        # The text mouse pointer is a presentation tag, not a guest B800 write.
+        text.tag_remove('mouse_pointer', '1.0', 'end')
+        if reply.get('mouse_active') and reply.get('mouse_visible') and reply.get('video_enabled', True):
+            col = min(geom[0] - 1, reply['mouse_x'] // 8)
+            row = min(geom[1] - 1, reply['mouse_y'] // 8)
+            text.tag_add('mouse_pointer', f'{row + 1}.{col}', f'{row + 1}.{col + 1}')
+        text.tag_raise('sel')
         detail = f" — {reply['detail']}" if reply['detail'] else ''
         status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}   clock {zone}" + (f"   {notice[0]}" if notice[0] else ''))
 
@@ -1074,6 +1148,31 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             keys.extend(map(key_command, paste_keys(root.clipboard_get())))
         except tk.TclError:
             pass  # nothing text-like on the clipboard
+        return 'break'
+
+    def on_mouse(event, bit=None, down=None):
+        if not session.last.get('mouse_active', False):
+            return None
+        # Hold Shift while dragging to select host text rather than sending
+        # DOS mouse buttons. Shift+right-click opens the host Drives menu.
+        if event.widget is text and event.state & 1:
+            return None
+        if bit is not None:
+            mouse_buttons[0] = (mouse_buttons[0] | bit) if down else (mouse_buttons[0] & ~bit)
+        if event.widget is text:
+            row, col = map(int, text.index(f'@{event.x},{event.y}').split('.'))
+            x = max(0, min(geom[0] - 1, col)) * 8
+            y = max(0, min(geom[1] - 1, row - 1)) * 8
+        elif event.widget is graphics:
+            x, y = mouse_virtual_coords(event.x, event.y,
+                graphics.winfo_width(), graphics.winfo_height(),
+                session.last.get('mouse_max_x', 639), session.last.get('mouse_max_y', 199))
+        else:
+            return None
+        last_mouse[0] = (x, y)
+        mouse_events.push(x, y, mouse_buttons[0])
+        if down:
+            event.widget.focus_set()
         return 'break'
 
     def on_key(event):
@@ -1127,6 +1226,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         keys.extend(edges.release_all())
         held.clear()
         shift_changed()
+        if mouse_buttons[0]:
+            mouse_buttons[0] = 0
+            mouse_events.push(*last_mouse[0], 0)
 
     def tick():
         try:
@@ -1152,6 +1254,17 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 if sent.startswith('shift'):
                     break
                 state['settle'] = SETTLE
+            # Send at most one mouse state per guest execution slice.
+            # Draining a down/up pair before running would make clicks
+            # invisible to DOS programs that poll AX=0003h.
+            sent_mouse = False
+            if mouse_events.pending and reply['status'] in ('running', 'waiting_input'):
+                x, y, buttons = mouse_events.pending[0]
+                reply = session.send(mouse_command(x, y, buttons))
+                mouse_events.pending.pop(0)
+                sent_mouse = reply.get('ok', False)
+                if not sent_mouse:
+                    notice[0] = reply.get('text', 'mouse command refused')
             incoming = b''
             if com1:
                 incoming = com1.read()
@@ -1161,10 +1274,11 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             if reply['status'] in ('running', 'waiting_input'):
                 reply = run_slice(session, SLICE)
                 until = time.monotonic() + FRAME
-                idle = (not sent and not keys and not incoming and reply.get('idle_hint', False) and
+                idle = (not sent and not sent_mouse and not keys and not mouse_events.pending and
+                        not incoming and reply.get('idle_hint', False) and
                         all(reply.get(k) == previous.get(k) for k in
                             ('screen', 'graphics_planar', 'graphics_cga', 'graphics13')))
-                while reply['status'] == 'running' and not keys and not idle and time.monotonic() < until:
+                while reply['status'] == 'running' and not keys and not mouse_events.pending and not idle and time.monotonic() < until:
                     speaker.observe(reply)
                     reply = run_slice(session, BURST)
             else:
@@ -1186,7 +1300,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         except (OSError, RuntimeError, ValueError) as error:
             status.configure(text=f'session error: {error}')
             return
-        root.after(next_tick_delay(bool(keys), session.last['status'], idle), tick)
+        root.after(next_tick_delay(bool(keys or mouse_events.pending), session.last['status'], idle), tick)
 
     def close():
         if com1 and hasattr(com1, 'close'):
@@ -1220,6 +1334,14 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     root.bind('<Key>', on_key)
     root.bind('<KeyRelease>', on_release)
     root.bind('<FocusOut>', lost_focus)
+    for widget in (text, graphics):
+        widget.bind('<Motion>', on_mouse)
+        for number, bit in ((1, 1), (2, 4), (3, 2)):
+            widget.bind(f'<ButtonPress-{number}>',
+                        lambda event, b=bit: on_mouse(event, b, True))
+            widget.bind(f'<ButtonRelease-{number}>',
+                        lambda event, b=bit: on_mouse(event, b, False))
+            widget.bind(f'<B{number}-Motion>', on_mouse)
     menu = tk.Menu(root, tearoff=0)
     menu.add_command(label='Copy (Ctrl+Shift+C)', command=copy)
     menu.add_command(label='Paste (Ctrl+Shift+V)', command=paste)
@@ -1232,8 +1354,16 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         sub.add_command(label=f'Unmount {drv}:', command=lambda d=drv: unmount_drive(d))
         drives_menu.add_cascade(label=f'Drive {drv}:', menu=sub)
     menu.add_cascade(label='Drives', menu=drives_menu)
+    def right_click(event):
+        # Mouse-enabled DOS applications receive the right button. The host
+        # popup remains available with Shift+right-click or on the status bar.
+        if event.widget is status or not session.last.get('mouse_active') or event.state & 1:
+            menu.tk_popup(event.x_root, event.y_root)
+            return 'break'
+        return on_mouse(event, 2, True)
+
     for widget in (text, graphics, status):
-        widget.bind('<Button-3>', lambda event: menu.tk_popup(event.x_root, event.y_root))
+        widget.bind('<Button-3>', right_click)
     root.protocol('WM_DELETE_WINDOW', close)
     draw(session.last)
     root.after(10, tick)
@@ -1272,6 +1402,8 @@ def main(argv=None):
                         help='optional partial 80387 backend (default none; arithmetic is not yet implemented)')
     parser.add_argument('--ansi', action='store_true',
                         help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
+    parser.add_argument('--mouse', action='store_true',
+                        help='experimental INT 33h mouse (polling, no event callbacks yet); Tk frontend supports clicks')
     parser.add_argument('--country', type=int, choices=[1, 358],
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',
@@ -1312,7 +1444,7 @@ def main(argv=None):
         session = None
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
-                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu)
+                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, mouse=args.mouse)
             is_shell = any(sh in args.program.upper() for sh in ('COMMAND.COM', 'CMD.EXE', '4DOS'))
             reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell, auto_graphics_key=args.auto_graphics_key)
             if reply['status'] != 'exit':
@@ -1327,7 +1459,7 @@ def main(argv=None):
         return
     import tkinter as tk
     root = tk.Tk()
-    session = make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key, fpu=args.fpu)
+    session = make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key, fpu=args.fpu, mouse=args.mouse)
     root.mainloop()
     if args.native_stats:
         print(format_native_stats(session.last))
