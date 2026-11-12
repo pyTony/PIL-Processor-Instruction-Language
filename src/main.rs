@@ -2435,18 +2435,20 @@ fn main() -> R<()> {
         println!("wrote standalone Rust source {} (no interpreter fallback)",dos_args[3]);return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--emit-dos-backend"){
-        if dos_args.len()<4||(dos_args.len()-4)%2!=0{return Err("usage: pil --emit-dos-backend INPUT OUTPUT [--keys FILE] [--steps N] [--sites N]".into());}
-        let(mut keys,mut steps,mut sites)=(Vec::new(),120_000_000usize,65_536usize);
+        if dos_args.len()<4||(dos_args.len()-4)%2!=0{return Err("usage: pil --emit-dos-backend INPUT OUTPUT [--keys FILE] [--steps N] [--sites N] [--clock-offset SECONDS] [--mount DIR]".into());}
+        let(mut keys,mut steps,mut sites,mut clock_offset,mut mount)=(Vec::new(),120_000_000usize,65_536usize,None::<i64>,None::<std::path::PathBuf>);
         for pair in dos_args[4..].chunks(2){match pair[0].as_str(){
             "--keys"=>{keys=std::fs::read(&pair[1]).map_err(|e|e.to_string())?;if keys.len()>65_536||!keys.iter().all(|b|b.is_ascii_graphic()||matches!(*b,b' '|b'\r'|b'\n'|b'\t')){return Err("training keys must be at most 64 KiB of ASCII text".into());}keys=String::from_utf8(keys).map_err(|e|e.to_string())?.replace("\r\n","\n").replace('\r',"\n").replace('\n',"\r").into_bytes();},
             "--steps"=>{steps=pair[1].parse().map_err(|e:std::num::ParseIntError|e.to_string())?;if !(1..=120_000_000).contains(&steps){return Err("profile steps must be 1..120000000".into());}},
             "--sites"=>{sites=pair[1].parse().map_err(|e:std::num::ParseIntError|e.to_string())?;if !(1..=65_536).contains(&sites){return Err("profile sites must be 1..65536".into());}},
+            "--clock-offset"=>{let offset=pair[1].parse::<i64>().map_err(|e|e.to_string())?;if offset.abs()>14*3600{return Err("profile clock offset must be -50400..50400 seconds".into());}clock_offset=Some(offset);},
+            "--mount"=>{let folder=std::path::PathBuf::from(&pair[1]);if !folder.is_dir(){return Err(format!("profile mount is not a directory: {}",folder.display()));}mount=Some(folder);},
             _=>return Err("unknown DOS profiling option".into()),
         }}
         let path=std::path::Path::new(&dos_args[2]);
         let name=path.file_name().and_then(|n|n.to_str()).ok_or("DOS program name must be Unicode")?;
         let bytes=dos::read_file(path)?;
-        let (source,status)=dos_compile::emit_trained(&bytes,name,&keys,steps,sites)?;
+        let (source,status)=dos_compile::emit_trained_with_options(&bytes,name,&keys,steps,sites,clock_offset,mount.as_deref())?;
         use std::io::Write;
         let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
         file.write_all(source.as_bytes()).map_err(|e|e.to_string())?;

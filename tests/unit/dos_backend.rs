@@ -2,6 +2,36 @@ use super::*;
 use crate::host_io::Output;
 
 #[test]
+fn clocked_native_block_budget_stops_at_each_irq_poll_boundary() {
+    #[derive(Default)]
+    struct Observe(Vec<usize>);
+    impl InstructionBackend for Observe {
+        fn block(&mut self,_:&ProgramIdentity,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,budget:usize)->Option<(usize,Result<(),crate::ExecError>)>{
+            self.0.push(budget);
+            None
+        }
+        fn execute(&mut self,_:&ProgramIdentity,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::ExecError>>{
+            None
+        }
+    }
+    // JMP short -2: an infinite loop in the guest, bounded by our step limit.
+    let mut p=load(&[0xeb,0xfe],"SPIN.COM").unwrap();
+    p.clock_offset=Some(0);
+    let mut backend=Observe::default();
+    let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let result=run_with_backend(p,600,&mut output,Some(&mut backend)).unwrap();
+    assert_eq!(result.stop,Stop::Budget);
+    assert_eq!(backend.0.len(),600);
+    assert_eq!(backend.0[0],256);
+    assert_eq!(backend.0[255],1);
+    assert_eq!(backend.0[256],256);
+    assert_eq!(backend.0[511],1);
+    assert_eq!(backend.0[512],88);
+    assert_eq!(backend.0[599],1);
+}
+
+
+#[test]
 fn unsupported_native_sites_skip_hooks_and_preserve_lazy_interpreter_state(){
     struct Unavailable;
     impl InstructionBackend for Unavailable{

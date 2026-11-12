@@ -20,6 +20,23 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def test_native_statistics_separate_blocks_singles_and_services(self):
+        output = term.format_native_stats({
+            'steps': 1000, 'native_blocks': 100,
+            'native_block_instructions': 400,
+            'native_single_instructions': 300,
+        })
+        self.assertIn('Native total: 700 (70.0% of steps)', output)
+        self.assertIn('Native single instructions: 300', output)
+        self.assertIn('Other steps: 300 (includes DOS/BIOS services)', output)
+        self.assertIn('Average native block length: 4.00', output)
+        self.assertIn('stats unavailable', term.format_native_stats({'steps': 10}))
+        self.assertIn('n/a', term.format_native_stats({
+            'steps': 0, 'native_blocks': 0,
+            'native_block_instructions': 0, 'native_single_instructions': 0,
+        }))
+
+
     def test_raw_key_release_does_not_block_later_keys_for_modifier_settle(self):
         # The keydown must reach the guest before its keyup, but no further
         # ten idle ticks should hold that release and every following key.
