@@ -20,6 +20,14 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def test_mouse_opt_in_sends_command_before_guest_execution(self):
+        frames = ''.join(json.dumps({'protocol': 1, 'seq': i, 'ok': True}) + '\n' for i in range(2))
+        process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(frames), stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process):
+            session = term.Session('engine', 'program', mouse=True)
+        self.assertEqual(process.stdin.getvalue(), 'mouse on\n')
+        self.assertEqual(session.seq, 1)
+
     def test_dos_mouse_coordinates_buttons_and_overlay(self):
         self.assertEqual(term.mouse_virtual_coords(320, 240, 640, 480, 639, 199), (320, 100))
         self.assertEqual(term.mouse_virtual_coords(-10, 999, 640, 480, 639, 479), (0, 479))
