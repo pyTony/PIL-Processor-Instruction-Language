@@ -7,8 +7,7 @@
 //! display a software framebuffer. Non-Windows builds retain ANSI preview.
 use crate::dos;
 
-/// A top-down 32-bit RGB scanout (0x00RRGGBB), not guest VRAM.
-
+// The independent RGB frame type lives in dine_window.rs.
 pub(crate) enum Display {
     Off,
     Ansi { shown: bool },
