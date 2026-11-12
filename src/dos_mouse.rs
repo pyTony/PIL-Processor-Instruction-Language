@@ -27,7 +27,7 @@ impl Mouse{
         let enabled=self.enabled;*self=Self::default();self.enabled=enabled;
         self.ready=true;self.mode=mode;(self.screen_x,self.screen_y)=bounds(mode);
         self.xmax=self.screen_x;self.ymax=self.screen_y;
-        self.x=self.screen_x/2;self.y=self.screen_y/2;self.clamp();
+        self.x=(self.screen_x+1)/2;self.y=(self.screen_y+1)/2;self.clamp();
     }
     fn sync(&mut self,mode:u8){if self.ready&&self.mode!=mode{self.reset(mode);}}
     fn clamp(&mut self){
