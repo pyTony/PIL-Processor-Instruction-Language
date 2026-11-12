@@ -103,6 +103,32 @@ def play(engine, program, count, quantum, keys):
         session.close()
 
 
+
+def reusable_hybrid(program, output):
+    """Return an existing verified hybrid only for the exact original guest."""
+    manifest_path = output / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("no prior verified hybrid manifest; run without --reuse first")
+    record = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected = "pil-" + program.stem.lower() + (".exe" if os.name == "nt" else "")
+    if (record.get("guest_sha256") != hashlib.sha256(program.read_bytes()).hexdigest()
+            or record.get("guest_name", "").casefold() != program.name.casefold()
+            or record.get("engine") != expected
+            or record.get("guard_tests_verified") is not True):
+        raise ValueError("previous hybrid does not match this guest or lacks guard verification")
+    engine = output / expected
+    if not engine.is_file():
+        raise ValueError("the previous verified hybrid executable is missing")
+    if hashlib.sha256(engine.read_bytes()).hexdigest() != record.get("engine_sha256"):
+        raise ValueError("previous hybrid executable differs from its verified manifest")
+    compiler = subprocess.check_output(["rustc", "-vV"], text=True)
+    host = next((line.split(": ", 1)[1] for line in compiler.splitlines()
+                 if line.startswith("host: ")), None)
+    if host != record.get("target_triple"):
+        raise ValueError("previous hybrid executable targets a different host")
+    return engine
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("program", type=Path, help="original DOS LINES.EXE (not a native .exe)")
@@ -115,6 +141,7 @@ def main():
     parser.add_argument("--slices", type=int, default=6)
     parser.add_argument("--keys", type=Path, help="optional DOS key script, replayed at BIOS waits")
     parser.add_argument("--scan-only", action="store_true", help="inspect EXE without building or executing")
+    parser.add_argument("--reuse", action="store_true", help="reuse an existing hash-verified compiled hybrid without profiling/building")
     args = parser.parse_args()
     program = args.program.resolve()
     if not program.is_file() or program.suffix.lower() != ".exe":
@@ -136,16 +163,24 @@ def main():
     keys = args.keys.read_bytes() if args.keys else b""
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    if args.reuse:
+        try:
+            hybrid = reusable_hybrid(program, output)
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            parser.error(f"--reuse: {exc}")
+        print(f"Reusing guard-verified hybrid: {hybrid}", flush=True)
+    else:
+        hybrid = output / ("pil-" + program.stem.lower() + (".exe" if os.name == "nt" else ""))
     print("Reference interpreter run", flush=True)
     reference, reference_stats = play(engine, program, args.slices, args.run_steps, keys)
-    print("Building profiled native blocks (interpretation remains available)", flush=True)
-    subprocess.run([sys.executable, str(ROOT / "tools" / "build_dos_shadow.py"),
-                    str(program), "--engine", str(engine),
-                    "--output-dir", str(output),
-                    "--steps", str(args.profile_steps), "--sites", str(args.sites),
-                    "--verify"] + (["--keys", str(args.keys.resolve())] if args.keys else []),
-                   cwd=ROOT, check=True)
-    hybrid = output / ("pil-" + program.stem.lower() + (".exe" if os.name == "nt" else ""))
+    if not args.reuse:
+        print("Building profiled native blocks (interpretation remains available)", flush=True)
+        subprocess.run([sys.executable, str(ROOT / "tools" / "build_dos_shadow.py"),
+                        str(program), "--engine", str(engine),
+                        "--output-dir", str(output),
+                        "--steps", str(args.profile_steps), "--sites", str(args.sites),
+                        "--verify"] + (["--keys", str(args.keys.resolve())] if args.keys else []),
+                       cwd=ROOT, check=True)
     print("Hybrid run", flush=True)
     compiled, compiled_stats = play(hybrid, program, args.slices, args.run_steps, keys)
     mismatches = []
@@ -158,10 +193,14 @@ def main():
         mismatches.append({"field": "frame_count", "reference": len(reference),
                            "hybrid": len(compiled)})
     terminal = reference[-1]["status"]
+    graphics_observed = any(
+        frame.get(field) is not None
+        for frame in reference for field in ("graphics13", "graphics_cga", "graphics_planar")
+    )
     result = {
         "guest": info, "reference": reference, "hybrid": compiled,
         "reference_stats": reference_stats, "compiled_stats": compiled_stats,
-        "mismatches": mismatches,
+        "mismatches": mismatches, "graphics_observed": graphics_observed,
         "conclusion": "mismatch" if mismatches else "unsupported_service" if terminal == "stopped"
                       else "matching_with_compiled_blocks" if compiled_stats["native_block_instructions"]
                       else "matching_interpreter_fallback_only",
@@ -171,8 +210,8 @@ def main():
                       encoding="utf-8")
     print(f"Report: {report}", flush=True)
     print(f"Result: {result['conclusion']}; "
-          f"native block instructions={compiled_stats['native_block_instructions']}",
-          flush=True)
+          f"native block instructions={compiled_stats['native_block_instructions']}; "
+          f"graphics observed={graphics_observed}", flush=True)
     if mismatches:
         print("First mismatches:", json.dumps(mismatches[:5], indent=2), flush=True)
         return 1
