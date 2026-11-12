@@ -56,11 +56,14 @@ fn session_installs_mouse_vector_but_standalone_has_none(){
     assert!(!p.mouse.view().0);
     assert_eq!(p.ram.load(0x33*4,MemWidth::Dword).unwrap(),0);
     let mut s=session::Session::new(p);
+    assert!(!s.loaded().unwrap().mouse.view().0);
+    let (reply,_)=s.command(1,"mouse on").unwrap();
+    assert!(reply.contains("\"mouse_present\":true"));
     assert!(s.loaded().unwrap().mouse.view().0);
     assert_eq!(s.loaded().unwrap().ram.load(0x33*4,MemWidth::Dword).unwrap(),crate::dos::vectors::entry(0x33));
-    let (reply,_)=s.command(1,"run 8").unwrap();
+    let (reply,_)=s.command(2,"run 8").unwrap();
     assert!(reply.contains("\"mouse_active\":true"));
-    let (reply,_)=s.command(2,"mouse 160 40 1").unwrap();
+    let (reply,_)=s.command(3,"mouse 160 40 1").unwrap();
     assert!(reply.contains("\"mouse_x\":160"));
     assert!(reply.contains("\"mouse_y\":40"));
     assert!(reply.contains("\"mouse_visible\":false"));
