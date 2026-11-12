@@ -111,3 +111,64 @@ success means full runtime correctness. Guest clock-dependent draws may
 produce snapshot mismatches that need investigation.
 
 No LINES.EXE binary or vendor library is committed with this test.
+
+
+### Performance baseline and clock-aware training (experimental)
+
+The LINES.EXE title sequence was manually timed on Windows 11 to the first
+appearing game balls (approximately the same visible point):
+
+| Runtime | Approximate elapsed time |
+| --- | ---: |
+| DOSBox-X, configured for 3000 cycles | 10.00 s |
+| PILdos interpreter | 28.94 s |
+| Existing early-profiled shadow | 28.78–28.96 s |
+
+The old shadow reported 767,490 compiled **block** instructions in 95,456,824
+guest steps, but did not report compiled single-instruction dispatches. Its
+0.8% is *block coverage only*, not total native coverage. Manual exit timing
+and DOSBox-X's cycle setting prevent treating this as a precise CPU benchmark.
+
+The earlier shadow training kept the deterministic clock disabled. LINES waits
+in a loop at `18F0:0AE4` for a memory byte to change and does not enter its
+intro until the normal host-clock DOS service is enabled. Extend training
+through the animated title and board, with a **disposable copy** of any
+external game files so the DOS guest cannot modify the original folder:
+
+```powershell
+python tools/build_dos_shadow.py .\DriveD\Lines\LINES.EXE `
+  --engine .\target\release\pil.exe `
+  --profile-clock 7200 `
+  --train-mount .\DriveD\Lines `
+  --steps 120000000 --sites 2048 `
+  --output-dir .\target\lines-hybrid-clock --verify
+```
+
+`--profile-clock` is the UTC offset **in seconds**; 7200 is UTC+02:00.
+It is opt-in to preserve existing deterministic shadow training. The profile
+uses the host wall clock, including guest IRQ0 interrupts. It is consequently
+**not deterministic** across runs, and training for a fixed step budget is
+not equivalent to playback to a fixed wall-clock timestamp. The training
+copy is removed after profiling; do not point a manually invoked
+`pil --emit-dos-backend --mount` at valuable original directories, because
+host-mounted DOS files are writable. The LINES executable and vendor files
+are not committed. This is a performance experiment, not a verified speedup.
+
+After compilation, run the same original program and mount with the revised
+backend and print native counters on exit:
+
+```powershell
+python tools/dos_terminal.py `
+  --engine .\target\lines-hybrid-clock\pil-lines.exe `
+  --mount .\DriveD\Lines --native-stats `
+  .\DriveD\Lines\LINES.EXE
+```
+
+`native_block_instructions` measures compiled basic-block dispatch;
+`native_single_instructions` measures compiled single-instruction dispatch.
+The number of other steps also includes DOS/BIOS services and interrupt work,
+so it must not be labelled pure interpreter fallback. Compare both engines
+at the same visible game point and test five-ball gameplay, timer animation,
+keyboard responsiveness, and exit before accepting a speed claim. A later
+optimization can examine timer-safe native batching, but it must retain
+instruction-level IRQ0 semantics or provide an equivalent scheduling guard.
