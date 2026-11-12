@@ -497,7 +497,7 @@ def screen_rows(reply, blink_on=True):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none"):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False):
         options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else []) + (['--fpu', fpu] if fpu != "none" else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
@@ -508,6 +508,10 @@ class Session:
         if ansi:
             self.send('ansi on')
         try:
+            if mouse:
+                reply = self.send('mouse on')
+                if not reply.get('ok'):
+                    raise ValueError(reply.get('text', 'DOS mouse initialization failed'))
             for letter, path in (drives or []):
                 reply = self.send(mount_command(letter, path))
                 if not reply.get('ok'):
@@ -990,7 +994,7 @@ def prepare_image_drives(engine, images, drives):
     return drives
 
 
-def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None, auto_graphics_key=False, fpu="none"):
+def make_app(root, engine, program, mount=None, utc_offset=None, args=None, country=None, com1=None, keylog=False, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, speaker_level=5, drives=None, config=None, auto_graphics_key=False, fpu="none", mouse=False):
     import tkinter as tk
     from tkinter import font as tkfont
 
@@ -1011,7 +1015,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
     text.tag_raise('sel')
-    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives, config=config, fpu=fpu)
+    session = Session(engine, program, mount, args, profile=profile, stop_log=stop_log, ignore_unassigned_out=ignore_unassigned_out, ansi=ansi, drives=drives, config=config, fpu=fpu, mouse=mouse)
     # DOS date and time come from this computer's clock in local time.
     offset = local_offset() if utc_offset is None else utc_offset
     session.send(f'clock {offset}')
@@ -1395,6 +1399,8 @@ def main(argv=None):
                         help='optional partial 80387 backend (default none; arithmetic is not yet implemented)')
     parser.add_argument('--ansi', action='store_true',
                         help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
+    parser.add_argument('--mouse', action='store_true',
+                        help='experimental INT 33h mouse (polling, no event callbacks yet); Tk frontend supports clicks')
     parser.add_argument('--country', type=int, choices=[1, 358],
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',
@@ -1435,7 +1441,7 @@ def main(argv=None):
         session = None
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
-                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu)
+                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, mouse=args.mouse)
             is_shell = any(sh in args.program.upper() for sh in ('COMMAND.COM', 'CMD.EXE', '4DOS'))
             reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell, auto_graphics_key=args.auto_graphics_key)
             if reply['status'] != 'exit':
@@ -1450,7 +1456,7 @@ def main(argv=None):
         return
     import tkinter as tk
     root = tk.Tk()
-    session = make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key, fpu=args.fpu)
+    session = make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key, fpu=args.fpu, mouse=args.mouse)
     root.mainloop()
     if args.native_stats:
         print(format_native_stats(session.last))
