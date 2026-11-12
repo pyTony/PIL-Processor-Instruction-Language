@@ -37,6 +37,7 @@ fn mode12_rgb(planes:&crate::vga_planar::Planar)->Vec<u32>{
 /// preserves repeatable verifier runs and Linux/Termux native binaries.
 pub(crate) struct Display {
     interactive:bool,
+    blocks_since_check:u16,
     #[cfg(windows)]
     window:Option<crate::dine_window::Window>,
     #[cfg(windows)]
@@ -54,6 +55,7 @@ impl Display {
         }
         Ok(Self{
             interactive,
+            blocks_since_check:0,
             #[cfg(windows)]
             window:if interactive{Some(crate::dine_window::Window::new())}else{None},
             #[cfg(windows)]
@@ -65,6 +67,10 @@ impl Display {
     /// final frame *before* the guest starts its BIOS keyboard wait.
     /// The window is non-activating, and all keyboard input stays in stdin.
     pub(crate) fn tick(&mut self,context:&Context,force:bool){
+        // Avoid a host clock query after every tiny native block. Only every
+        // 256 blocks, or at an explicit BIOS boundary, check display timing.
+        self.blocks_since_check=self.blocks_since_check.wrapping_add(1);
+        if !force&&self.blocks_since_check&255!=0{return;}
         #[cfg(windows)]
         if let Some(window)=self.window.as_mut(){
             if context.video.mode==0x12 &&
