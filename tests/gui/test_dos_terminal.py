@@ -28,6 +28,28 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(process.stdin.getvalue(), 'mouse on\n')
         self.assertEqual(session.seq, 1)
 
+    def test_dos_mouse_session_click_reaches_int33_registers(self):
+        # MOV AX,0 / INT33 reset / MOV AX,3 / INT33 poll / INT20 exit
+        code = bytes.fromhex('b8 00 00 cd 33 b8 03 00 cd 33 cd 20')
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / 'mouse.com'
+            program.write_bytes(code)
+            session = term.Session(engine, program, mouse=True, stop_log='')
+            try:
+                reply = session.send('run 2')
+                self.assertTrue(reply['mouse_active'])
+                self.assertTrue(reply['mouse_present'])
+                reply = session.send('mouse 160 80 1')
+                self.assertTrue(reply['ok'])
+                reply = session.send('run 32')
+                self.assertEqual(reply['status'], 'exit')
+                regs = reply['registers']
+                self.assertEqual((regs[3] & 0xffff, regs[1] & 0xffff, regs[2] & 0xffff),
+                                 (1, 160, 80))
+            finally:
+                session.close()
+
     def test_dos_mouse_coordinates_buttons_and_overlay(self):
         self.assertEqual(term.mouse_virtual_coords(320, 240, 640, 480, 639, 199), (320, 100))
         self.assertEqual(term.mouse_virtual_coords(-10, 999, 640, 480, 639, 479), (0, 479))
