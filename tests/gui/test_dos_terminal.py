@@ -32,7 +32,7 @@ class DosTerminalTests(unittest.TestCase):
         rgb = bytes([127] * (20 * 20 * 3))
         painted = term.mouse_overlay(rgb, 20, 20, 0, 0, 639, 199)
         self.assertEqual(rgb, bytes([127] * (20 * 20 * 3)))
-        self.assertEqual(painted[:3], b'\\x00\\x00\\x00')
+        self.assertEqual(painted[:3], bytes(3))
         self.assertNotEqual(painted, rgb)
 
     def test_native_statistics_separate_blocks_singles_and_services(self):
