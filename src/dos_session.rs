@@ -22,15 +22,7 @@ pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
 }
 pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,backend:Option<Box<dyn InstructionBackend>>}
 impl Session{
-    pub fn new(mut loaded:Loaded)->Self{
-        // The interactive DOS host has a virtual mouse; bare load()/run()
-        // still behave as machines with no installed MOUSE.COM.
-        if loaded.ram.load(0x33*4,MemWidth::Dword).ok()==Some(0)
-            &&loaded.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33)).is_ok(){
-            loaded.mouse.enable();
-        }
-        Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,backend:None}
-    }
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,backend:None}}
     /// Keep the executor for the whole session, including across frontend slices.
     #[allow(dead_code)]
     pub(crate) fn with_backend(loaded:Loaded,backend:Box<dyn InstructionBackend>)->Self{
@@ -160,6 +152,22 @@ impl Session{
                 }
             },
             ["fpu",..]=>(false,"fpu requires none or 80387".into(),false),
+            // Explicit opt-in while callbacks and custom cursors are incomplete.
+            // Never advertise a mouse to an existing DOS app by surprise.
+            ["mouse","on"]=>{
+                if self.started{(false,"mouse on requires a fresh session before the first run".into(),false)}
+                else{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    let vector=p.ram.load(0x33*4,MemWidth::Dword).map_err(|e|format!("mouse IVT read: {e:?}"))?;
+                    if vector!=0 && vector!=vectors::entry(0x33){
+                        (false,"INT 33h already belongs to another mouse handler".into(),false)
+                    }else{
+                        p.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33))
+                            .map_err(|e|format!("mouse IVT write: {e:?}"))?;
+                        p.mouse.enable();(true,"DOS mouse enabled".into(),false)
+                    }
+                }
+            },
             // X/Y are Microsoft virtual mouse coordinates; BUTTONS bit 0/1/2
             // represents left/right/middle. Events never enter the BIOS key ring.
             ["mouse",x,y,buttons]=>match(x.parse::<u16>(),y.parse::<u16>(),buttons.parse::<u16>()){
