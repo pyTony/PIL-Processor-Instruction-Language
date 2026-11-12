@@ -724,13 +724,17 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         }
         if let Some(b)=backend.as_deref_mut(){
             if b.may_block(&p.active_program,&p.image,&p.ram,p.cpu.eip){
-            // Multi-instruction execution is opt-in. Interrupt shadows and
-            // installed timer handlers retain instruction-level scheduling.
+            // A clocked DOS session samples IRQ0 every 256 guest steps.
+            // Never batch across that boundary, even when a guest owns INT 08h:
+            // the next outer-loop iteration must get the same timer/pending-IRQ
+            // check as the interpreter. Interrupt shadows still forbid batching.
             let mut machine=p.image.segment_state();
-            let guest_timer=p.clock_offset.is_some()&&vectors::answered(&p,p.speaker.pic.timer_vector())!=Ok(true);
-            if machine.ss_shadow==0&&machine.sti_shadow==0&&!guest_timer{
+            if machine.ss_shadow==0&&machine.sti_shadow==0{
+                let remaining=budget-execution_steps;
+                let next_timer_poll=if p.clock_offset.is_some(){256-execution_steps%256}else{remaining};
+                let block_budget=remaining.min(next_timer_poll);
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if let Some((n,result))=b.block(&p.active_program,&p.image,&mut p.cpu,&mut p.ram,&mut machine,budget-execution_steps){
+                if let Some((n,result))=b.block(&p.active_program,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
                     p.image.set_segment_state(machine);p.selectors=machine.selectors;
                     execution_steps+=n;completed+=n;pil_steps+=n;
                     *instructions.entry("native block instructions".into()).or_insert(0)+=n;
