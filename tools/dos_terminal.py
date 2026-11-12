@@ -1000,6 +1000,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
     for attr in range(256):
         text.tag_configure(f'a{attr}', foreground=PALETTE[attr & 15], background=PALETTE[(attr >> 4) & 15])
     text.tag_configure('cursor', underline=True)
+    text.tag_configure('mouse_pointer', foreground='#000000', background='#ffffff')
+    text.tag_raise('mouse_pointer')
     # The colour tags paint every cell's background: keep the selection above
     # them, and visible when the window does not have the focus.
     text.configure(selectbackground='#3366cc', selectforeground='#ffffff', inactiveselectbackground='#3366cc')
@@ -1012,6 +1014,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         session.send(f'country {country}')
     zone = f"UTC{'+' if offset >= 0 else '-'}{abs(offset) // 3600:02d}:{abs(offset) % 3600 // 60:02d}"
     keys = []
+    mouse_events = MouseEvents()
+    mouse_buttons = [0]
+    last_mouse = [(320, 96)]
     edges = KeyEvents(session.last.get('key_edges', False))
     held, state = set(), {'shift': 0, 'settle': 0, 'auto_key_sent': False}
     speaker = QuietSpeaker(speaker_level, session.last.get('beeps', 0))
@@ -1036,7 +1041,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             else:
                 descriptor = ('cga', cga, reply['cga_mode'], reply['cga_color'])
                 width = 640 if reply['cga_mode'] == 6 else 320
-            descriptor += (reply.get('video_enabled', True),)
+            mouse_draw = reply.get('mouse_active') and reply.get('mouse_visible')
+            descriptor += (reply.get('video_enabled', True),
+                           (reply.get('mouse_x'), reply.get('mouse_y')) if mouse_draw else None,)
             if frame[0] != descriptor:
                 if pixels is not None:
                     rgb = graphics_rgb(pixels, reply['palette'])
@@ -1046,6 +1053,9 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                     rgb = cga_rgb(cga, reply['cga_mode'], reply['cga_color'])
                 if not reply.get('video_enabled', True):
                     rgb = bytes(len(rgb))
+                if mouse_draw:
+                    rgb = mouse_overlay(rgb, width, height, reply['mouse_x'], reply['mouse_y'],
+                                        reply.get('mouse_max_x', 639), reply.get('mouse_max_y', 199))
                 picture = graphics_photo(tk, rgb, width, height)
                 graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
@@ -1073,6 +1083,13 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             row, column = cursor
             text.tag_add('cursor', f'{row + 1}.{column}')
             drawn[1] = cursor
+        # The text mouse pointer is a presentation tag, not a guest B800 write.
+        text.tag_remove('mouse_pointer', '1.0', 'end')
+        if reply.get('mouse_active') and reply.get('mouse_visible') and reply.get('video_enabled', True):
+            col = min(geom[0] - 1, reply['mouse_x'] // 8)
+            row = min(geom[1] - 1, reply['mouse_y'] // 8)
+            text.tag_add('mouse_pointer', f'{row + 1}.{col}', f'{row + 1}.{col + 1}')
+        text.tag_raise('sel')
         detail = f" — {reply['detail']}" if reply['detail'] else ''
         status.configure(text=f"{reply['status']}{detail}   steps {reply['steps']}   CS:IP {reply['cs']:04x}:{reply['eip']:04x}   clock {zone}" + (f"   {notice[0]}" if notice[0] else ''))
 
