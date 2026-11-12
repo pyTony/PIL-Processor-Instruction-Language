@@ -170,3 +170,41 @@ fn invalid_mouse_callback_target_stops_without_changing_guest_stack(){
     assert_eq!(result.loaded.cpu.regs[4],sp);
     assert_eq!(result.loaded.ram.load(PSP as u32*16+sp-4,MemWidth::Dword).unwrap(),original);
 }
+
+#[test]
+fn guest_can_install_callback_through_int33_and_receive_host_session_event(){
+    // Set ES=CS; reset mouse; register ES:0120 for left-button press,
+    // then spin. No direct Rust invocation of the mouse service is needed.
+    let mut code=vec![
+        0xb8,0,0,0xcd,0x33,      // mov ax,0 / int 33
+        0x0e,0x07,             // push cs / pop es
+        0xba,0x20,0x01,        // mov dx,0120
+        0xb9,0x02,0x00,        // mov cx,2 (left press only)
+        0xb8,0x0c,0x00,        // mov ax,000c
+        0xcd,0x33,            // register callback
+        0xeb,0xfe,            // spin
+    ];
+    code.resize(0x20,0x90);
+    code.extend_from_slice(&[0x2e,0xff,0x06,0x80,0x01,0xcb]); // inc word [cs:0180]; retf
+    code.resize(0x82,0);
+    let mut session=session::Session::new(load(&code,"mouseapp.com").unwrap());
+    let (reply,_)=session.command(1,"mouse on").unwrap();
+    assert!(reply.contains("\"mouse_present\":true"));
+    let (reply,_)=session.command(2,"run 8").unwrap();
+    assert!(reply.contains("\"status\":\"running\""));
+    assert_eq!(session.loaded().unwrap().mouse.handler.unwrap().offset,0x120);
+    session.command(3,"mouse 320 96 1").unwrap();
+    session.command(4,"run 48").unwrap();
+    let p=session.loaded().unwrap();
+    assert_eq!(mouse_word(p,0x180),1);
+    assert!(p.mouse.frame.is_none());
+}
+#[test]
+fn callback_iret_is_rejected_as_an_unbalanced_far_return(){
+    let mut p=callback_setup();
+    p.ram.store(u32::from(PSP)*16+0x110,MemWidth::Byte,0xcf).unwrap(); // iret, not retf
+    p.mouse.host(320,240,1,0x12);
+    let result=crate::dos::run(p,20).unwrap();
+    assert!(matches!(&result.stop,crate::dos::Stop::Service(s) if s.contains("RETF required")),
+        "unexpected result: {:?}",result.stop);
+}
