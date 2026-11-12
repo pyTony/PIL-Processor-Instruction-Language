@@ -268,20 +268,12 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
+        (0x33,_) if p.mouse.view().0=>{mouse::service(p)?;Ok(None)},
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
-            // No mouse driver is loaded: the reset reports AX=0 (not installed)
-            // and BX=0 buttons, as MOUSE.COM-less DOS does where INT 33h points
-            // at an IRET and callers have zeroed AX.
-            p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;
-            Ok(None)
+            // Standalone probes keep the no-MOUSE.COM contract.
+            p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;Ok(None)
         },
-        (0x33,_)=>{
-            // No driver owns the host stub. Configuration/state calls act
-            // like the conventional absent-driver IRET: no register, flag or
-            // buffer effects. A guest-installed INT 33 handler runs through
-            // the IVT before reaching this default service.
-            Ok(None)
-        },
+        (0x33,_)=>Ok(None), // absent driver: conventional no-op
         (0x1a,0x00)=>{
             let (ticks,rollover)=bios_ticks(p)?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|rollover;
