@@ -55,7 +55,7 @@ def main():
         temp = Path(temp)
         source = temp / 'mandelbrot.rs'
         subprocess.run([str(engine), '--emit-dos-standalone', str(program), str(source)], check=True)
-        generated = source.read_text()
+        generated = source.read_text(encoding='utf-8')
         assert not any(s in generated for s in ('mod guest', 'enum Token', 'InstructionBackend', 'DecodeCache', 'include!('))
         native = args.native.resolve() if args.native else temp / ('mandelbrot.exe' if os.name == 'nt' else 'mandelbrot')
         if not args.native:
