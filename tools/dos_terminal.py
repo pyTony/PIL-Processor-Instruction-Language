@@ -390,7 +390,12 @@ class MouseEvents:
     def push(self, x, y, buttons):
         event = (x, y, buttons)
         if self.pending and self.pending[-1][2] == buttons:
-            self.pending[-1] = event
+            # Keep the first coordinates of a button edge. Only a following
+            # motion is replaceable, otherwise the click would drift.
+            if len(self.pending) >= 2 and self.pending[-2][2] == buttons:
+                self.pending[-1] = event
+            else:
+                self.pending.append(event)
         else:
             self.pending.append(event)
 
