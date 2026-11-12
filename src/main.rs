@@ -21,6 +21,10 @@ mod dos;
 mod dine_ffi;
 #[cfg(feature = "dine-library")]
 mod dine_display;
+#[cfg(all(windows, any(feature = "dine-library", test)))]
+mod dine_window;
+#[cfg(test)]
+mod dine_native_video;
 mod dos_compile;
 mod dos_codegen;
 mod dos_blocks;
