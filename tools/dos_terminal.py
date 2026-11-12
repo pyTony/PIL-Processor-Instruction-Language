@@ -1254,15 +1254,17 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 if sent.startswith('shift'):
                     break
                 state['settle'] = SETTLE
-            # Mouse state is sent before the next execution slice. Movement
-            # coalesces; button edges stay ordered and never enter BIOS keys.
-            while mouse_events.pending and reply['status'] in ('running', 'waiting_input'):
+            # Send at most one mouse state per guest execution slice.
+            # Draining a down/up pair before running would make clicks
+            # invisible to DOS programs that poll AX=0003h.
+            sent_mouse = False
+            if mouse_events.pending and reply['status'] in ('running', 'waiting_input'):
                 x, y, buttons = mouse_events.pending[0]
                 reply = session.send(mouse_command(x, y, buttons))
                 mouse_events.pending.pop(0)
-                if not reply.get('ok', False):
+                sent_mouse = reply.get('ok', False)
+                if not sent_mouse:
                     notice[0] = reply.get('text', 'mouse command refused')
-                    break
             incoming = b''
             if com1:
                 incoming = com1.read()
@@ -1272,10 +1274,11 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             if reply['status'] in ('running', 'waiting_input'):
                 reply = run_slice(session, SLICE)
                 until = time.monotonic() + FRAME
-                idle = (not sent and not keys and not incoming and reply.get('idle_hint', False) and
+                idle = (not sent and not sent_mouse and not keys and not mouse_events.pending and
+                        not incoming and reply.get('idle_hint', False) and
                         all(reply.get(k) == previous.get(k) for k in
                             ('screen', 'graphics_planar', 'graphics_cga', 'graphics13')))
-                while reply['status'] == 'running' and not keys and not idle and time.monotonic() < until:
+                while reply['status'] == 'running' and not keys and not mouse_events.pending and not idle and time.monotonic() < until:
                     speaker.observe(reply)
                     reply = run_slice(session, BURST)
             else:
