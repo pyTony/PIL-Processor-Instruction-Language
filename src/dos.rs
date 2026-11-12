@@ -560,6 +560,9 @@ mod desktop_scanout_tests{
     fn cga_banks_palette_intensity_monochrome_and_display_blank(){
         let mut p=load(&[0xcd,0x20],"CGA.COM").unwrap();
         p.ram.store(0x449,MemWidth::Byte,4).unwrap();
+        // A new CGA test must select the low-intensity palette explicitly;
+        // the emulated adapter defaults to colour-select 30h (bright palette).
+        p.vga.set_cga_color(0x00);
         p.ram.store(0xb8000,MemWidth::Byte,0x1b).unwrap();
         p.ram.store(0xba000,MemWidth::Byte,0xe4).unwrap();
         let (width,height,pixels)=desktop_vga_frame(&p).unwrap();
