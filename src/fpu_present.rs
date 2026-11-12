@@ -1,5 +1,5 @@
 //! Partial opt-in 80387 backend: register stack, IEEE loads/stores,
-//! and finite register arithmetic. Unsupported exceptional/rounding
+//! and finite register/memory arithmetic. Unsupported exceptional/rounding
 //! behaviours stop explicitly rather than fabricating successful execution.
 use super::{address, classify, convert, math, Arithmetic, Cpu, Extended80, Instruction, Operation, Outcome, Ram, StackError, X87State};
 use crate::{guest::Image, memory::MemWidth};
@@ -51,6 +51,8 @@ impl PresentFpu {
             },
             Operation::Arithmetic { kind, index, pop } =>
                 return self.execute_arithmetic(kind, index, pop),
+            Operation::MemoryArithmetic { kind, bytes } =>
+                return self.execute_arithmetic_memory(kind, bytes, instruction, cpu, ram, image),
             Operation::FldM32 | Operation::FstpM32 |
             Operation::FldM64 | Operation::FstpM64 =>
                 return self.execute_memory(operation,instruction,cpu,ram,image),
@@ -62,9 +64,7 @@ impl PresentFpu {
     }
 
 
-    /// Calculate completely before changing register tags, TOP or status.
-    /// Unmasked precision exceptions and unsupported RC/PC/special encodings
-    /// retain the original machine state and are reported explicitly.
+    /// Register arithmetic validates both operands before any state change.
     fn execute_arithmetic(&mut self, kind: Arithmetic, index: u8, pop: bool) -> Outcome {
         let dst = if pop { usize::from(index) } else { 0 };
         let src = if pop { 0 } else { usize::from(index) };
@@ -74,17 +74,55 @@ impl PresentFpu {
         let Some(rhs) = self.state.st(src) else {
             return Outcome::StackFault(StackError::Underflow);
         };
+        self.commit_arithmetic(kind, lhs, rhs, dst, pop)
+    }
+
+    /// Memory arithmetic uses the same effective-address and segment checks
+    /// as FLD/FSTP, without writing RAM or changing the x87 stack until
+    /// the entire IEEE source and arithmetic result are valid.
+    fn execute_arithmetic_memory(&mut self, kind: Arithmetic, bytes: u32,
+                                 instruction: &Instruction, cpu: &Cpu,
+                                 ram: &mut Ram, image: &Image) -> Outcome {
+        let Some(lhs) = self.state.st(0) else {
+            return Outcome::StackFault(StackError::Underflow);
+        };
+        let Ok((offset, context)) = address::resolve(instruction, cpu, image) else {
+            return Outcome::MemoryFault;
+        };
+        let Ok(linear) = context.translate_span(u64::from(offset), bytes, false, cpu.eip) else {
+            return Outcome::MemoryFault;
+        };
+        let Ok(low) = ram.load(linear, MemWidth::Dword) else {
+            return Outcome::MemoryFault;
+        };
+        let rhs = if bytes == 4 {
+            convert::from_f32_bits(low)
+        } else {
+            let Some(high) = linear.checked_add(4) else {
+                return Outcome::MemoryFault;
+            };
+            let Ok(upper) = ram.load(high, MemWidth::Dword) else {
+                return Outcome::MemoryFault;
+            };
+            convert::from_f64_bits(u64::from(low) | (u64::from(upper) << 32))
+        };
+        let Ok(rhs) = rhs else { return Outcome::Unsupported; };
+        self.commit_arithmetic(kind, lhs, rhs, 0, false)
+    }
+
+    /// Atomic retirement shared by register and memory arithmetic. For an
+    /// unmasked PE, report an unsupported operation until #MF is implemented.
+    fn commit_arithmetic(&mut self, kind: Arithmetic, lhs: Extended80,
+                         rhs: Extended80, dst: usize, pop: bool) -> Outcome {
         let Ok(computed) = math::calculate(kind, lhs, rhs, self.state.control) else {
             return Outcome::Unsupported;
         };
-        // #MF delivery and exception prioritization are not yet implemented.
         if computed.inexact && self.state.control & 0x0020 == 0 {
             return Outcome::Unsupported;
         }
         self.state.store(dst, computed.value);
         if pop { self.state.pop().expect("checked arithmetic ST(0)"); }
-        // C1 reports upward rounding for this finite arithmetic subset;
-        // PE records a masked inexact result. Preserve other status bits.
+        // C1 describes upward rounding; PE records a masked inexact result.
         self.state.status &= !0x0200;
         if computed.rounded_up { self.state.status |= 0x0200; }
         if computed.inexact { self.state.status |= 0x0020; }
