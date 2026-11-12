@@ -20,6 +20,21 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def test_dos_mouse_coordinates_buttons_and_overlay(self):
+        self.assertEqual(term.mouse_virtual_coords(320, 240, 640, 480, 639, 199), (320, 100))
+        self.assertEqual(term.mouse_virtual_coords(-10, 999, 640, 480, 639, 479), (0, 479))
+        self.assertEqual(term.mouse_virtual_coords(639, 479, 640, 480, 639, 479), (639, 479))
+        self.assertEqual(term.mouse_command(80, 16, 3), 'mouse 80 16 3')
+        events = term.MouseEvents()
+        for x, buttons in ((10, 0), (20, 1), (30, 1), (40, 1), (50, 0)):
+            events.push(x, 4, buttons)
+        self.assertEqual(events.pending, [(10, 4, 0), (20, 4, 1), (40, 4, 1), (50, 4, 0)])
+        rgb = bytes([127] * (20 * 20 * 3))
+        painted = term.mouse_overlay(rgb, 20, 20, 0, 0, 639, 199)
+        self.assertEqual(rgb, bytes([127] * (20 * 20 * 3)))
+        self.assertEqual(painted[:3], b'\\x00\\x00\\x00')
+        self.assertNotEqual(painted, rgb)
+
     def test_native_statistics_separate_blocks_singles_and_services(self):
         output = term.format_native_stats({
             'steps': 1000, 'native_blocks': 100,
