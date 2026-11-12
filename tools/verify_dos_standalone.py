@@ -368,8 +368,9 @@ def verify_shared_blocks(engine, directory):
   let mut a=initial_context().unwrap();let mut b=initial_context().unwrap();
   a.regs[0]=0xabcd0000;b.regs[0]=0xabcd0000;
   let mut x=host_io::CaptureOutput::new(16384);let mut y=host_io::CaptureOutput::new(16384);
+  let mut video=dine_native_video::Display::new().unwrap();
   for _ in 0..3{assert_eq!(step(&mut a,&mut x).unwrap(),None);}
-  let expected=step(&mut a,&mut x).unwrap_err();let actual=block_step(&mut b,&mut y).unwrap_err();
+  let expected=step(&mut a,&mut x).unwrap_err();let actual=block_step(&mut b,&mut y,&mut video).unwrap_err();
   assert_eq!(actual,expected);assert!(actual.contains("GeneralProtection"));
   assert_eq!(b.eip,0x107);assert_eq!(b.regs[0],0xabcd0002);
   assert_eq!((a.regs,a.flags,a.undefined,a.eip,a.machine,a.ram,a.calls),
@@ -378,11 +379,12 @@ def verify_shared_blocks(engine, directory):
  #[test] fn interior_entry_executes_only_its_single_instruction(){
   let mut c=initial_context().unwrap();c.eip=0x103;c.regs[0]=7;
   let mut out=host_io::CaptureOutput::new(16384);
-  assert_eq!(block_step(&mut c,&mut out).unwrap(),None);
+  let mut video=dine_native_video::Display::new().unwrap();
+  assert_eq!(block_step(&mut c,&mut out,&mut video).unwrap(),None);
   assert_eq!(c.eip,0x104);assert_eq!(c.regs[0],8);assert_eq!(c.regs[3],0);
-  assert_eq!(block_step(&mut c,&mut out).unwrap(),None);
+  assert_eq!(block_step(&mut c,&mut out,&mut video).unwrap(),None);
   assert_eq!(c.eip,0x107);assert_eq!(c.regs[3],0xffff);
-  assert!(block_step(&mut c,&mut out).unwrap_err().contains("GeneralProtection"));
+  assert!(block_step(&mut c,&mut out,&mut video).unwrap_err().contains("GeneralProtection"));
  }
 }
 ''')
