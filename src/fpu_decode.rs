@@ -17,6 +17,8 @@ pub enum Operation {
     FstpM64,
     /// Register arithmetic, either ST(0) op ST(i) or ST(i) op ST(0), pop.
     Arithmetic { kind: Arithmetic, index: u8, pop: bool },
+    /// ST(0) op IEEE m32/m64, source is read only.
+    MemoryArithmetic { kind: Arithmetic, bytes: u32 },
 }
 /// Order is explicit: Subtract is destination-source, ReverseSubtract is source-destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +58,14 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 3) => Some(Operation::FstpM32),
             (0xdd, 0) => Some(Operation::FldM64),
             (0xdd, 3) => Some(Operation::FstpM64),
+            (0xd8, 0) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Add, bytes: 4 }),
+            (0xd8, 1) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Multiply, bytes: 4 }),
+            (0xd8, 4) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Subtract, bytes: 4 }),
+            (0xd8, 5) => Some(Operation::MemoryArithmetic { kind: Arithmetic::ReverseSubtract, bytes: 4 }),
+            (0xdc, 0) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Add, bytes: 8 }),
+            (0xdc, 1) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Multiply, bytes: 8 }),
+            (0xdc, 4) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Subtract, bytes: 8 }),
+            (0xdc, 5) => Some(Operation::MemoryArithmetic { kind: Arithmetic::ReverseSubtract, bytes: 8 }),
             _ => None,
         }
     };
@@ -106,6 +116,18 @@ mod tests {
                 assert_eq!(classify(op,base+i),Ok(Operation::Arithmetic{kind,index:i,pop}));
             }
         }
+    }
+    #[test]
+    fn memory_arithmetic_opcodes_are_distinct_from_store() {
+        for (opcode,bytes) in [(0xd8,4),(0xdc,8)] {
+            for (reg,kind) in [(0,Arithmetic::Add),(1,Arithmetic::Multiply),
+                               (4,Arithmetic::Subtract),(5,Arithmetic::ReverseSubtract)] {
+                assert_eq!(classify(opcode,reg<<3),
+                    Ok(Operation::MemoryArithmetic{kind,bytes}));
+            }
+        }
+        assert_eq!(classify(0xdc,0x18),
+                   Err(DecodeError::Unsupported{opcode:0xdc,modrm:0x18}));
     }
     #[test]
     fn unsupported_is_not_silent_success() {
