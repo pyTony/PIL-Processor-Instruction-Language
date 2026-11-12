@@ -501,6 +501,29 @@ class Session:
                     pass
 
 
+def format_native_stats(reply):
+    """Report measured compiled work; other steps also include DOS/BIOS services."""
+    steps = int(reply.get('steps', 0))
+    block = int(reply.get('native_block_instructions', 0))
+    blocks = int(reply.get('native_blocks', 0))
+    if 'native_single_instructions' not in reply:
+        return ('Native single-instruction stats unavailable; rebuild the PIL engine.\\n'
+                f'Guest steps: {steps:,}; compiled block instructions: {block:,}')
+    single = int(reply['native_single_instructions'])
+    native = block + single
+    other = max(0, steps - native)
+    return (
+        f'Guest steps: {steps:,}\\n'
+        f'Native block instructions: {block:,} in {blocks:,} blocks\\n'
+        f'Native single instructions: {single:,}\\n'
+        f'Native total: {native:,} ({native / steps:.1%} of steps)\\n'
+        f'Other steps: {other:,} (includes DOS/BIOS services)\\n'
+        f'Average native block length: {block / blocks:.2f} instructions'
+        if steps and blocks else
+        f'Guest steps: {steps:,}; native total: {native:,}; native blocks: {blocks:,}'
+    )
+
+
 def local_offset():
     """Seconds east of UTC of local time now, daylight saving included."""
     from datetime import datetime
@@ -1261,6 +1284,7 @@ def main(argv=None):
     parser.add_argument('--ignore-unassigned-out', action='store_true', help='ignore and log OUT to unassigned ports; known devices still stop')
     parser.add_argument('--stop-log', default='PILdos-stops.jsonl', metavar='PATH', help='append stop diagnostics (default: PILdos-stops.jsonl)')
     parser.add_argument('--profile', metavar='JSON_PATH', help='write engine timings when the session closes')
+    parser.add_argument('--native-stats', action='store_true', help='print native block/single execution coverage when the DOS window closes')
     parser.add_argument('--keylog', action='store_true',
                         help='print each key event the window gets (name, character, state) to the console')
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
@@ -1296,13 +1320,17 @@ def main(argv=None):
                 raise SystemExit(1)
         finally:
             if session:
+                if args.native_stats:
+                    print(format_native_stats(session.last))
                 session.close()
             com1.close()
         return
     import tkinter as tk
     root = tk.Tk()
-    make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key, fpu=args.fpu)
+    session = make_app(root, find_dos_engine(args.engine), args.program, args.mount, args.utc_offset, args.args, args.country, com1, args.keylog, args.profile, args.stop_log, args.ignore_unassigned_out, args.ansi, args.speaker_volume, args.drive, args.config, args.auto_graphics_key, fpu=args.fpu)
     root.mainloop()
+    if args.native_stats:
+        print(format_native_stats(session.last))
 
 
 if __name__ == '__main__':
