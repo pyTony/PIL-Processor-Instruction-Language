@@ -46,6 +46,8 @@ impl PresentFpu {
                 cpu.regs[0] = (cpu.regs[0] & 0xffff_0000) | u32::from(self.state.status);
                 Ok(())
             },
+            Operation::Fldcw | Operation::Fnstcw =>
+                return self.execute_control_word_memory(operation,instruction,cpu,ram,image),
             Operation::Fld1 => self.state.push(one),
             Operation::Fldz => self.state.push(Extended80::default()),
             Operation::FldSt(i) => self.state.st(usize::from(i))
@@ -82,6 +84,38 @@ impl PresentFpu {
         }
     }
 
+
+
+    /// FLDCW/FNSTCW use the same segment and effective-address model as all
+    /// other x87 memory operands. An unsuccessful read/write cannot change the
+    /// control word, RAM or instruction retirement state.
+    fn execute_control_word_memory(&mut self, operation:Operation,
+                                   instruction:&Instruction, cpu:&Cpu,
+                                   ram:&mut Ram, image:&Image) -> Outcome {
+        let write=matches!(operation,Operation::Fnstcw);
+        let Ok((offset,context))=address::resolve(instruction,cpu,image) else {
+            return Outcome::MemoryFault;
+        };
+        let Ok(linear)=context.translate_span(u64::from(offset),2,write,cpu.eip) else {
+            return Outcome::MemoryFault;
+        };
+        if write {
+            if ram.check_write(linear,MemWidth::Word).is_err() {
+                return Outcome::MemoryFault;
+            }
+            if ram.store(linear,MemWidth::Word,u32::from(self.state.control)).is_err() {
+                return Outcome::MemoryFault;
+            }
+        } else {
+            let Ok(control)=ram.load(linear,MemWidth::Word) else {
+                return Outcome::MemoryFault;
+            };
+            // Preserve the guest control word. The finite arithmetic backend
+            // still explicitly rejects unsupported precision/rounding modes.
+            self.state.control=control as u16;
+        }
+        Outcome::Completed
+    }
 
     /// Register arithmetic validates both operands before any state change.
     fn execute_arithmetic(&mut self, kind: Arithmetic, index: u8, pop: bool) -> Outcome {
