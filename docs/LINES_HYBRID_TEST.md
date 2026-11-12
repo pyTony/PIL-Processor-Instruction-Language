@@ -58,6 +58,28 @@ ASCII bytes with `--keys file`. Use Enter (`0D`) when a keypress ends
 a splash screen. The replay helper injects keys only at blocking BIOS waits;
 polling-only input loops may require a different training scenario.
 
+### Continue without another Rust compilation
+
+Once the first acceptance run has published `target/lines-hybrid/manifest.json`,
+reuse the **same** compiled backend for a longer identical interpreter/hybrid
+checkpoint comparison. The helper validates the guest SHA-256, target host,
+compiled engine SHA-256, name and previous guard-test success; it refuses
+stale or mismatched artifacts.
+
+```powershell
+git pull --ff-only
+python tools/verify_lines_hybrid.py .\\DriveD\\LINES\\LINES.EXE `
+  --engine .\\target\\release\\pil.exe --reuse `
+  --run-steps 500000 --slices 20
+```
+
+This tests up to 10 million additional step-budget units **without re-profiling
+or rebuilding**. It may be computationally expensive, so inspect each
+checkpoint before raising the budget again. The report includes
+`graphics_observed` and the native block counters. The initial roughly
+569-thousand-step run stayed in text mode without output; its matching native
+blocks therefore prove startup/unpacking correctness only, not BGI display.
+
 ### Visual run after comparison
 
 The hybrid executable is generated at:
