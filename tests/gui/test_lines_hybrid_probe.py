@@ -1,10 +1,13 @@
 """Offline checks for the LINES hybrid acceptance helper (no DOS binary bundled)."""
 import hashlib
+import json
+import os
 import importlib.util
 from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -37,6 +40,35 @@ class LinesHybridProbeTests(unittest.TestCase):
             path.write_bytes(b"MZ" + bytes(62))
             with self.assertRaises(ValueError):
                 helper.inspect_mz(path)
+
+    def test_reuse_accepts_only_verified_matching_guest_and_engine(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            guest = path / "LINES.EXE"
+            guest.write_bytes(b"MZ" + bytes(62))
+            hybrid = path / ("pil-lines.exe" if os.name == "nt" else "pil-lines")
+            hybrid.write_bytes(b"verified Rust binary")
+            manifest = {
+                "guest_sha256": hashlib.sha256(guest.read_bytes()).hexdigest(),
+                "guest_name": "LINES.EXE",
+                "guard_tests_verified": True,
+                "engine": hybrid.name,
+                "engine_sha256": hashlib.sha256(hybrid.read_bytes()).hexdigest(),
+                "target_triple": "test-target",
+            }
+            record = path / "manifest.json"
+            record.write_text(json.dumps(manifest), encoding="utf-8")
+            with mock.patch.object(helper.subprocess, "check_output",
+                                   return_value="host: test-target\\n"):
+                self.assertEqual(helper.reusable_hybrid(guest, path), hybrid)
+                hybrid.write_bytes(b"wrong engine")
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    helper.reusable_hybrid(guest, path)
+                hybrid.write_bytes(b"verified Rust binary")
+                manifest["guest_sha256"] = "bad digest"
+                record.write_text(json.dumps(manifest), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    helper.reusable_hybrid(guest, path)
 
     def test_snapshot_hashes_pixels_but_preserves_status_and_cpu(self):
         frame = {"status": "waiting_input", "eip": 0x100,
