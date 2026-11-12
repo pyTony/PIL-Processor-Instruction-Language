@@ -10,7 +10,7 @@ pub(crate) struct Frame {
 }
 
 #[cfg(windows)]
-pub(crate) use windows::Window;
+pub(crate) use self::windows::Window;
 
 #[cfg(windows)]
 mod windows {
