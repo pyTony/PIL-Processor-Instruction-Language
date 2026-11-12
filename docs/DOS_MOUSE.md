@@ -99,7 +99,7 @@ validated with the actual target programs.
 ## Regression checks
 
 ```powershell
-cargo test --locked dos_mouse --bin pil
+cargo test --locked mouse::tests --bin pil
 python -m unittest discover -s tests/gui -p test_dos_terminal.py
 cargo test --locked
 ```
