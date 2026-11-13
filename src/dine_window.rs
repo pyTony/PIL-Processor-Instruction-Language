@@ -15,6 +15,20 @@ pub(crate) use self::windows::Window;
 #[cfg(windows)]
 mod windows {
     use super::Frame;
+    // This module is also copied into generated standalone DOS executables.
+    // Keep diagnostics self-contained: standalone code has no dine_display.
+    fn debug_log(message:&str) {
+        let Some(path)=std::env::var_os("DINE_VIDEO_LOG") else {return;};
+        if path.is_empty(){return;}
+        let milliseconds=std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0,|elapsed|elapsed.as_millis());
+        let line=format!("{milliseconds} pid={} {message}\n",std::process::id());
+        use std::io::Write as _;
+        let _=std::fs::OpenOptions::new().create(true).append(true)
+            .open(std::path::Path::new(&path))
+            .and_then(|mut file|file.write_all(line.as_bytes()));
+    }
     use std::ffi::c_void;
     use std::ptr;
     use std::sync::{atomic::{AtomicBool,AtomicIsize,Ordering},mpsc,Mutex,OnceLock};
@@ -35,6 +49,7 @@ mod windows {
     static FRAME:OnceLock<Mutex<Option<Frame>>>=OnceLock::new();
     static WINDOW:AtomicIsize=AtomicIsize::new(0);
     static CLOSED:AtomicBool=AtomicBool::new(false);
+    static PAINT_REPORTED:AtomicBool=AtomicBool::new(false);
 
     #[repr(C)]
     #[derive(Default,Clone,Copy)]
@@ -73,6 +88,7 @@ mod windows {
     #[link(name="kernel32")]
     extern "system" {
         fn GetModuleHandleW(name:*const u16)->Handle;
+        fn GetLastError()->u32;
     }
     #[link(name="user32")]
     extern "system" {
@@ -92,6 +108,8 @@ mod windows {
         fn BeginPaint(window:Handle,paint:*mut Paint)->Handle;
         fn EndPaint(window:Handle,paint:*const Paint)->i32;
         fn GetClientRect(window:Handle,area:*mut Rect)->i32;
+        fn GetWindowRect(window:Handle,area:*mut Rect)->i32;
+        fn IsWindowVisible(window:Handle)->i32;
     }
     #[link(name="gdi32")]
     extern "system" {
@@ -120,9 +138,13 @@ mod windows {
                                     },
                                     colors:[0],
                                 };
-                                StretchDIBits(dc,0,0,rect.right-rect.left,
+                                let drawn=StretchDIBits(dc,0,0,rect.right-rect.left,
                                     rect.bottom-rect.top,0,0,frame.width,frame.height,
                                     frame.pixels.as_ptr().cast(),&info,DIB_RGB_COLORS,SRCCOPY);
+                                if !PAINT_REPORTED.swap(true,Ordering::AcqRel) {
+                                    debug_log(&format!("WM_PAINT first GDI result={drawn}; client={}x{}; scanout={}x{}",
+                                        rect.right-rect.left,rect.bottom-rect.top,frame.width,frame.height));
+                                }
                             }
                         }
                     }
@@ -132,6 +154,7 @@ mod windows {
             },
             WM_CLOSE=>{DestroyWindow(hwnd);0},
             WM_DESTROY=>{
+                debug_log("WM_DESTROY: VGA window closed");
                 CLOSED.store(true,Ordering::Release);
                 WINDOW.store(0,Ordering::Release);
                 PostQuitMessage(0);
@@ -142,6 +165,7 @@ mod windows {
     }
 
     fn run(ready:mpsc::Sender<isize>){
+        debug_log("Win32 video worker entered");
         unsafe{
             let class:Vec<u16>="DineVgaFrame\0".encode_utf16().collect();
             let title:Vec<u16>="Dine VGA (keyboard in terminal)\0".encode_utf16().collect();
@@ -153,22 +177,33 @@ mod windows {
                 menu_name:ptr::null(),class_name:class.as_ptr(),
             };
             if RegisterClassW(&descriptor)==0{
-                eprintln!("Dine video: cannot register VGA window class");
+                let error=GetLastError();
+                debug_log(&format!("RegisterClassW FAILED GetLastError={error}"));
+                eprintln!("Dine video: cannot register VGA window class ({error})");
                 let _=ready.send(0);
                 return;
             }
+            debug_log("RegisterClassW succeeded; calling CreateWindowExW (WS_EX_NOACTIVATE)");
             let hwnd=CreateWindowExW(WS_EX_NOACTIVATE,class.as_ptr(),title.as_ptr(),
                 WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,664,520,
                 ptr::null_mut(),ptr::null_mut(),instance,ptr::null_mut());
             if hwnd.is_null(){
-                eprintln!("Dine video: cannot create VGA window");
+                let error=GetLastError();
+                debug_log(&format!("CreateWindowExW FAILED GetLastError={error}"));
+                eprintln!("Dine video: cannot create VGA window ({error})");
                 let _=ready.send(0);
                 return;
             }
+            debug_log(&format!("CreateWindowExW succeeded HWND={hwnd:p}"));
             CLOSED.store(false,Ordering::Release);
             WINDOW.store(hwnd as isize,Ordering::Release);
             let _=ready.send(hwnd as isize);
-            ShowWindow(hwnd,SW_SHOWNOACTIVATE);
+            let previous_visible=ShowWindow(hwnd,SW_SHOWNOACTIVATE);
+            let now_visible=IsWindowVisible(hwnd);
+            let mut bounds=Rect::default();
+            let rect_ok=GetWindowRect(hwnd,&mut bounds);
+            debug_log(&format!("ShowWindow SW_SHOWNOACTIVATE: previous_visible={previous_visible} now_visible={now_visible} rect_ok={rect_ok} bounds=({},{},{},{})",
+                bounds.left,bounds.top,bounds.right,bounds.bottom));
             InvalidateRect(hwnd,ptr::null(),0);
             let mut msg=std::mem::MaybeUninit::<Msg>::uninit();
             loop{
@@ -188,18 +223,30 @@ mod windows {
     pub(crate) struct Window{
         worker:Option<thread::JoinHandle<()>>,
         ready:Option<mpsc::Receiver<isize>>,
+        last_had_frame:Option<bool>,
     }
     impl Window{
-        pub(crate) fn new()->Self{Self{worker:None,ready:None}}
+        pub(crate) fn new()->Self{Self{worker:None,ready:None,last_had_frame:None}}
+        pub(crate) fn no_frame(&mut self) {
+            if self.last_had_frame!=Some(false) {
+                debug_log("scanout absent: text mode or unsupported graphics BDA mode");
+                self.last_had_frame=Some(false);
+            }
+        }
         pub(crate) fn closed(&self)->bool{self.worker.is_some()&&CLOSED.load(Ordering::Acquire)}
         pub(crate) fn present(&mut self,frame:Frame){
+            if self.last_had_frame!=Some(true) {
+                debug_log(&format!("scanout ready: {}x{} RGB pixels",frame.width,frame.height));
+                self.last_had_frame=Some(true);
+            }
             let state=FRAME.get_or_init(||Mutex::new(None));
             if let Ok(mut guard)=state.lock(){*guard=Some(frame);}
             if self.worker.is_none(){
+                debug_log("spawning Win32 video worker");
                 let(tx,rx)=mpsc::channel();
                 match thread::Builder::new().name("dine-vga".into()).spawn(move||run(tx)){
-                    Ok(worker)=>{self.worker=Some(worker);self.ready=Some(rx);},
-                    Err(e)=>eprintln!("Dine video: cannot start display thread: {e}"),
+                    Ok(worker)=>{self.worker=Some(worker);self.ready=Some(rx);debug_log("Win32 worker spawn succeeded");},
+                    Err(e)=>{debug_log(&format!("Win32 worker spawn FAILED: {e}"));eprintln!("Dine video: cannot start display thread: {e}");},
                 }
             }
             let hwnd=WINDOW.load(Ordering::Acquire);
@@ -214,6 +261,7 @@ mod windows {
     // otherwise its Win32 callback could execute unmapped DLL code.
     impl Drop for Window {
         fn drop(&mut self){
+            debug_log("Win32 video owner dropped; closing worker if present");
             if let Some(worker)=self.worker.take(){
                 let hwnd=self.ready.take().and_then(|rx|rx.recv().ok()).unwrap_or(0);
                 if hwnd!=0 && WINDOW.load(Ordering::Acquire)==hwnd {

@@ -9,6 +9,58 @@ This is a deliberately optional migration. The existing Tk PILdos
 GUI and Tk headless graphics modes remain available and unchanged by
 default.
 
+## Diagnosing a missing Win32 window (opt-in, Windows)
+
+If `MANDVGA.COM` renders when launched directly but **not** after starting
+FreeCOM and typing `MANDVGA`, capture the native display lifecycle before
+making changes to VGA or BIOS input semantics.
+
+Set `DINE_VIDEO_LOG` in the same PowerShell window that starts PILdos:
+
+```powershell
+cargo build --release --locked
+$env:DINE_VIDEO_LOG = (Join-Path (Get-Location) 'target\dine-video.log')
+Remove-Item $env:DINE_VIDEO_LOG -ErrorAction SilentlyContinue
+python tools/dos_terminal.py --headless --rust-graphics --mouse --fpu 80387 --engine .\target\release\pil.exe --mount DriveD images/FD14LITE.img::COMMAND.COM
+```
+
+At the FreeCOM prompt, enter `D:` and `MANDVGA`. **Do not press the
+exit key until you have inspected the log.** In another PowerShell window,
+run `Get-Content target\dine-video.log -Tail 50`, or inspect the file
+after closing PILdos. To disable the diagnostic, run
+`Remove-Item Env:DINE_VIDEO_LOG` before starting a fresh session.
+
+The log records only transitions and one initial paint, not frame pixels,
+DOS keystrokes, full command lines, or register dumps:
+
+- `DOS session started`: whether `DINE_VIDEO=window` enabled the renderer.
+- `BDA video mode changed`: whether the DOS machine entered mode 12h.
+- `scanout absent` or `scanout ready`: whether the Rust VGA framebuffer
+  converter supplied an RGB frame.
+- `spawning Win32 video worker` and `Win32 video worker entered`:
+  thread startup, or an explicit spawn failure.
+- `RegisterClassW` and `CreateWindowExW`: success or Windows
+  `GetLastError` codes on failure.
+- `ShowWindow`: HWND visibility and window bounds. The current nonactivating
+  window may appear behind the terminal. `previous_visible=0` is normal:
+  it reports the *previous*, not the new, visibility state.
+- `WM_PAINT first GDI result`: whether the graphics API was reached.
+  A nonpositive result should be investigated, as should a window reported
+  visible outside the desktop area.
+- `WM_DESTROY` and `Win32 video owner dropped`: shutdown ordering.
+
+The file is append-only across launches unless you delete it first.
+It is written **directly by `pil.exe`**, not to the JSON session
+stdout or to the pipe-captured stderr. This avoids losing Win32 errors
+while the FreeCOM session stays alive. Logging is disabled completely
+unless `DINE_VIDEO_LOG` is set. Compare a *direct MANDVGA* launch and
+the *FreeCOM child launch* using the same release binary and log setting.
+
+Related reports: [#177](https://github.com/pyTony/PIL-Processor-Instruction-Language/issues/177)
+(native window missing after FreeCOM) and
+[#178](https://github.com/pyTony/PIL-Processor-Instruction-Language/issues/178)
+(COM1 arrow-key editing/history, separately tracked).
+
 ## Windows trial
 
 Build the regular (interpreted) PIL engine from this branch:
