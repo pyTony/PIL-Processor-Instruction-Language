@@ -1,3 +1,29 @@
+# AT coprocessor ports F0h and F1h — 13 November 2026
+
+Tony's 80387 Mandelbrot in Turbo Pascal 7.0 ({$N+} {$E-}) stopped on
+"OUT to port 00F0h (coprocessor control) is not modelled". The Turbo
+Pascal runtime writes 0 to port F0h before its coprocessor probe (FNINIT,
+FNSTCW) and again in its IRQ13 (INT 75h) handler, as AT software does.
+- OUT F0h (any byte) clears the AT busy latch that the 287/387 ERROR#
+  output sets and that raises IRQ13. This FPU finishes each instruction
+  before the next and stops on an unmasked exception, so the latch is
+  never set: the write changes nothing, with or without --fpu 80387.
+- OUT F1h resets the coprocessor: the 80387 goes to its FNINIT state
+  (Fpu::reset); with no coprocessor nothing receives it.
+- IN from F0h/F1h and word OUT still stop.
+- Next stop for the program with --fpu 80387 (local): DE F9, FDIVP
+  ST(1),ST computing 1/0 in the runtime's 287/387 test (FLD1, FLDZ,
+  FDIVP, FLD ST, FCHS, FCOMPP, FSTSW m16). That needs masked
+  divide-by-zero giving infinity, infinity compares, FCHS (draft #181)
+  and FSTSW m16, which are 80387 phase work. With --fpu none the
+  program prints "Numeric co-processor required" and exits, as on a
+  machine without one.
+
+Local Linux, release: 806 Rust tests pass, 2 ignored (3 new in
+tests/unit/fpu.rs). TPC.EXE 7.0 (Tony's, local only) under FreeCOM from
+FD14LITE.img compiles MANDELFP.PAS (93 lines); the EXE then runs past
+port F0h to the FDIVP above.
+
 # PIL and Dine are program-independent libraries — 13 November 2026
 
 Standing rules (Tony, 13 November 2026):
