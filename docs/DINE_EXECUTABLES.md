@@ -47,6 +47,42 @@ unset to keep **all application-specific blocks out**. The launcher is then
 compiled separately with the local Rust compiler and `opt-level=z` to favor
 small output. Actual binary sizes depend on the compiler and target.
 
+## DOS Turbo Pascal and long host filenames
+
+The host native launcher translates a named source argument to the **same
+8.3 alias that the existing Dine mapped-host drive provides**. This is
+not a change to Turbo Pascal itself, and the original Pascal file is never
+renamed or copied.
+
+Build `Dine_TURBO.exe` from your existing DOS Turbo Pascal executable. Then
+run it **from the folder holding the Pascal source**, so that folder is mapped
+as Dine's DOS C: drive:
+
+```powershell
+python tools/build_dine.py path/to/TURBO.EXE
+Set-Location path/to/pascal-sources
+C:\path\to\PIL-Processor-Instruction-Language\programs\compiled\Dine_TURBO.exe this_is_my_long_name_pascal_code_in_x86_windows.pas
+```
+
+If the source exists, and Dine assigns it `THIS_I~1.PAS`, the legacy DOS
+command tail contains `THIS_I~1.PAS`. Turbo's DOS open/find operations use
+that alias to access the **original** host file. Dine itself retains native
+UTF-8 host filenames in the directory listing. Actual aliases are allocated
+by the directory listing, with collision suffixes, not hardcoded in the
+launcher. Quoted filename arguments with spaces are supported too.
+
+This bridge supports existing **files in the current directory** and maps
+the caller's current directory as a writable host drive. It does not yet
+translate native absolute paths, nested host path components or nonexisting
+long filenames intended for creation. Do not launch an untrusted DOS program
+from a directory containing sensitive files: mapped-drive DOS file operations
+can modify host files there. For other directories, use a dedicated working
+folder. DOS command tail length still limits the **translated** arguments.
+
+A successful short-alias file-open test is not proof that the full Turbo
+Pascal interactive editor, compiler, keyboard or DOS services work yet.
+The initial Dine launcher still has only terminal input/preview support.
+
 ## Present runtime limitations
 
 The initial `dine_run` ABI accepts the original guest bytes, DOS filename
@@ -101,6 +137,9 @@ The runtime C ABI is version 1 and currently exports
 `dine_run(bytes, byte_count, name, tail) -> i32`.
 The loader verifies the ABI before invoking guest code and reports a missing
 or incompatible library rather than running without DOS services.
+
+See [PILdos native CGA/VGA graphics](PILDOS_RUST_GRAPHICS.md) for the
+opt-in Rust window with Python terminal and BIOS keyboard bridge.
 
 ## Refactoring direction
 

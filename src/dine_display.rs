@@ -16,6 +16,10 @@ pub(crate) enum Display {
 }
 
 impl Display {
+    #[cfg(windows)]
+    pub(crate) fn window_closed(&self)->bool{
+        match self{Self::Window(window)=>window.closed(),_=>false}
+    }
     pub(crate) fn new() -> Self {
         let mode=std::env::var("DINE_VIDEO")
             .unwrap_or_default().to_ascii_lowercase();

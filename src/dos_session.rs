@@ -121,15 +121,21 @@ impl Session{
             for n in 0..15{match p.image.fetch_signature(&p.ram,p.cpu.eip,n+1){Ok(b)=>bytes.push(b[n as usize]),Err(_)=>break}}
             format!("\"instruction_bytes\":\"{}\",\"registers\":{:?},\"selectors\":{:?},\"eflags\":{},\"msw\":{}",bytes.iter().map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" "),p.cpu.regs,p.selectors,p.cpu.eflags,p.image.msw)
         }).unwrap_or_else(||"\"instruction_bytes\":\"\"".into());
-        let graphics=self.loaded.as_ref().and_then(super::planar::mode13_snapshot).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()));
-        let cga=self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
+        // Native graphics sample VRAM directly; preserve JSON frames for other clients.
+        let native_video=cfg!(windows)&&std::env::var("DINE_VIDEO").ok()
+            .is_some_and(|mode|matches!(mode.to_ascii_lowercase().as_str(),"window"|"desktop"));
+        let native_graphics=native_video&&self.loaded.as_ref()
+            .and_then(|p|p.ram.load(0x449,MemWidth::Byte).ok())
+            .is_some_and(|mode|matches!(mode,4|5|6|0x0d|0x0e|0x10|0x12|0x13));
+        let graphics=if native_video{String::new()}else{self.loaded.as_ref().and_then(super::planar::mode13_snapshot).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()))};
+        let cga=if native_video{String::new()}else{self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
             Some(bios_mode @ (4|5|6))=>{let mode=if bios_mode==6{6}else if p.vga.cga_mode()&4!=0{5}else{4};Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
                 p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color()))},
             _=>None,
-        }).unwrap_or_default();
+        }).unwrap_or_default()};
         // 16-colour planar modes: each plane's used bytes, then the 16 RGB colours.
-        let planar=self.loaded.as_ref().and_then(super::planar::snapshot).map(|(mode,g,planes,rgb)|
-            format!(",\"graphics_planar\":\"{planes}\",\"planar_mode\":{mode},\"planar_width\":{},\"planar_height\":{},\"planar_rgb\":\"{rgb}\"",g.width,g.height)).unwrap_or_default();
+        let planar=if native_video{String::new()}else{self.loaded.as_ref().and_then(super::planar::snapshot).map(|(mode,g,planes,rgb)|
+            format!(",\"graphics_planar\":\"{planes}\",\"planar_mode\":{mode},\"planar_width\":{},\"planar_height\":{},\"planar_rgb\":\"{rgb}\"",g.width,g.height)).unwrap_or_default()};
         let raw_keyboard=self.loaded.as_ref().is_some_and(|p|keyboard::hooked(p).unwrap_or(false));
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
@@ -148,7 +154,7 @@ impl Session{
         // 16 cursor-mask rows (high bit leftmost) as little-endian words.
         let shape=self.loaded.as_ref().and_then(|p|p.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
             format!(",\"mouse_hotspot\":[{hx},{hy}],\"mouse_shape\":\"{}\"",rows.iter().map(|w|format!("{:02x}{:02x}",w&0xff,w>>8)).collect::<String>()));
-        let diagnostic=format!("{diagnostic},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
+        let diagnostic=format!("{diagnostic},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
         Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
@@ -344,11 +350,32 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     let mut session=Session::with_backend(loaded,Box::new(crate::shadow_backend::Backend::default()));
     #[cfg(not(pil_shadow_backend))]
     let mut session=Session::new(loaded);
+    // The normal interpreted pil.exe owns opt-in Win32 graphics, not Python.
+    #[cfg(windows)]
+    let mut desktop=std::env::var("DINE_VIDEO").ok()
+        .filter(|mode|matches!(mode.to_ascii_lowercase().as_str(),"window"|"desktop"))
+        .map(|_|crate::dine_display::Display::new());
+    #[cfg(windows)]
+    let mut last_video=std::time::Instant::now()-std::time::Duration::from_millis(40);
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
     for(seq,line)in stdin.lock().lines().enumerate(){
         let line=line.map_err(|e|e.to_string())?;
         let(reply,quit)=if line.len()>MAX_LINE{(session.reply(seq as u64+1,false,"command line too long",&[])?,false)}else{session.command(seq as u64+1,&line)?};
+        #[cfg(windows)]
+        let reply=if let Some(display)=desktop.as_mut(){
+            let waiting=session.status().0=="waiting_input";
+            if waiting||last_video.elapsed()>=std::time::Duration::from_millis(33){
+                if let Some(p)=session.loaded.as_ref(){
+                    display.update(p,waiting);
+                    last_video=std::time::Instant::now();
+                }
+            }
+            // Host window close is not a guest DOS exit.
+            if display.window_closed(){
+                format!("{},\"native_window_closed\":true}}",reply.strip_suffix('}').unwrap_or(&reply))
+            }else{reply}
+        }else{reply};
         if session.status().0=="stopped"{if let Some(p)=session.loaded.as_ref(){logger.record(p,"stopped",&session.status().1,session.steps,&session.exceptions,session.exception_count);}}
         writeln!(stdout,"{reply}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
         if quit{break;}

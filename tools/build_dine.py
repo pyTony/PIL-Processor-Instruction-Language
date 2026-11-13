@@ -116,7 +116,14 @@ fn launch() -> Result<i32, String> {
         std::mem::transmute(runtime.symbol(c"dine_run")?)
     };
     let name = CString::new(GUEST_NAME).map_err(|e| e.to_string())?;
-    let tail = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+    // Preserve native argument boundaries in the UTF-8 tail sent to Dine.
+    // The Dine compatibility shim resolves quoted host long names to
+    // legacy DOS aliases before constructing PSP:0080.
+    let tail = std::env::args().skip(1).map(|arg| {
+        if arg.chars().any(char::is_whitespace) {
+            format!("\"{arg}\"")
+        } else { arg }
+    }).collect::<Vec<_>>().join(" ");
     let tail = CString::new(tail).map_err(|_| "NUL character in DOS command line")?;
     Ok(unsafe { run(PROGRAM.as_ptr(), PROGRAM.len(), name.as_ptr(), tail.as_ptr()) })
 }

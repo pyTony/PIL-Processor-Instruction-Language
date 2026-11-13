@@ -303,6 +303,32 @@ fn listing(d:&Drive,dir:&Dir)->Result<Vec<Entry>,u16>{
         _=>Ok(Vec::new()),
     }
 }
+/// Translate one literal host filename in the currently mounted host folder
+/// to the same stable-in-this-listing 8.3 spelling DOS services will use.
+/// The host filename itself is never renamed or copied. A missing entry,
+/// symlink, path with separators, or non-host drive is left unresolved.
+///
+/// The alias is advisory for the current directory snapshot. File creation,
+/// deletion or a new colliding host name can change dynamically generated
+/// BASIS~N aliases, so callers should not cache them across directory changes.
+impl Drives {
+    pub(crate) fn host_argument_alias(&self,host_name:&str)->Result<Option<String>,String>{
+        let Some(drive)=self.list.get(self.current)else{return Ok(None);};
+        let Source::Host(root)=&drive.source else{return Ok(None)};
+        if host_name.is_empty()||host_name=="."||host_name==".."||
+           host_name.contains('/')||host_name.contains('\\'){return Ok(None);}
+        let entries=host_listing(root).map_err(|code|format!("Dine host directory listing failed: DOS error {code}"))?;
+        for entry in entries {
+            if let Node::Host(path)=&entry.node{
+                if path.file_name().and_then(|n|n.to_str())==Some(host_name){
+                    return String::from_utf8(display(&entry.name))
+                        .map(Some).map_err(|e|format!("non-ASCII DOS alias: {e}"));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
 /// The drive (list index) and absolute 8.3 components of a guest path;
 /// `Err(3)` for a drive that does not exist or `..` above the root.
 fn components(d:&Drives,raw:&[u8])->Result<(usize,Vec<Name>),u16>{
