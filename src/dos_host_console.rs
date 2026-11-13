@@ -204,9 +204,10 @@ impl VtParser{
 enum Parsed{Done(Option<Event>,usize),More}
 
 /// IBM PC symbols for the glyphs of 00h-1Fh and 7Fh.
-const LOW:[char;32]=[' ','☺','☻','♥','♦','♣','♠','•','◘','○','◙','♂','♀','♪','♫','☼','►','◄','↕','‼','¶','§','▬','↨','↑','↓','→','←','∟','↔','▲','▼'];
+// Escaped so compiler diagnostics stay ASCII (Windows CI reads them as cp1252).
+const LOW:[char;32]=[' ','\u{263a}','\u{263b}','\u{2665}','\u{2666}','\u{2663}','\u{2660}','\u{2022}','\u{25d8}','\u{25cb}','\u{25d9}','\u{2642}','\u{2640}','\u{266a}','\u{266b}','\u{263c}','\u{25ba}','\u{25c4}','\u{2195}','\u{203c}','\u{b6}','\u{a7}','\u{25ac}','\u{21a8}','\u{2191}','\u{2193}','\u{2192}','\u{2190}','\u{221f}','\u{2194}','\u{25b2}','\u{25bc}'];
 fn glyph(b:u8)->char{
-    match b{0..=31=>LOW[usize::from(b)],0x7f=>'⌂',_=>crate::dos_encoding::decode(&[b]).chars().next().unwrap_or(' ')}
+    match b{0..=31=>LOW[usize::from(b)],0x7f=>'\u{2302}',_=>crate::dos_encoding::decode(&[b]).chars().next().unwrap_or(' ')}
 }
 /// CGA colour index to the ANSI colour number.
 const ANSI:[u8;8]=[0,4,2,6,1,5,3,7];
