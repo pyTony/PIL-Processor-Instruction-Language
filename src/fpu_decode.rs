@@ -6,10 +6,13 @@ pub enum Operation {
     Finit,
     Fnclex,
     FnstswAx,
+    /// Store the 16-bit status word to a memory operand (DD /7).
+    FnstswM16,
     /// Load the 16-bit control word from a memory operand (D9 /5).
     Fldcw,
     /// Store the current 16-bit control word to a memory operand (D9 /7).
     Fnstcw,
+    Fchs,
     Fld1,
     Fldz,
     FldSt(u8),
@@ -21,6 +24,8 @@ pub enum Operation {
     FstpM64,
     FldM80,
     FstpM80,
+    FildM16,
+    FildM32,
     Compare { index: u8, pop: bool },
     ComparePop2,
     CompareMemory { bytes: u32, pop: bool },
@@ -46,6 +51,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xdb, 0xe3) => Some(Operation::Finit),
             (0xdb, 0xe2) => Some(Operation::Fnclex),
             (0xdf, 0xe0) => Some(Operation::FnstswAx),
+            (0xd9, 0xe0) => Some(Operation::Fchs),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xee) => Some(Operation::Fldz),
             (0xd9, 0xc0..=0xc7) => Some(Operation::FldSt(rm)),
@@ -76,8 +82,11 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 7) => Some(Operation::Fnstcw),
             (0xdd, 0) => Some(Operation::FldM64),
             (0xdd, 3) => Some(Operation::FstpM64),
+            (0xdd, 7) => Some(Operation::FnstswM16),
+            (0xdb, 0) => Some(Operation::FildM32),
             (0xdb, 5) => Some(Operation::FldM80),
             (0xdb, 7) => Some(Operation::FstpM80),
+            (0xdf, 0) => Some(Operation::FildM16),
             (0xd8 | 0xdc, 2) => Some(Operation::CompareMemory { bytes: if opcode == 0xd8 { 4 } else { 8 }, pop: false }),
             (0xd8 | 0xdc, 3) => Some(Operation::CompareMemory { bytes: if opcode == 0xd8 { 4 } else { 8 }, pop: true }),
             (0xd8, 0) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Add, bytes: 4 }),
@@ -174,7 +183,9 @@ mod tests {
     }
     #[test]
     fn unsupported_is_not_silent_success() {
-        for (op,modrm) in [(0xd9,0xe0),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
+        assert_eq!(classify(0xd9,0xe0),Ok(Operation::Fchs));
+        assert_eq!(classify(0xdd,0x3f),Ok(Operation::FnstswM16));
+        for (op,modrm) in [(0xd9,0xe1),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
         }
     }

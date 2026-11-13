@@ -42,6 +42,15 @@ pub fn from_f32_bits(bits:u32)->Result<Extended80,ConversionError>{
 pub fn from_f64_bits(bits:u64)->Result<Extended80,ConversionError>{
     widen(bits,52,11,1023)
 }
+pub fn from_i32(value:i32)->Extended80{
+    if value==0{return Extended80::default();}
+    let negative=value<0;
+    let mag=u64::from(value.unsigned_abs());
+    let lz=mag.leading_zeros() as u16;
+    let significand=mag<<lz;
+    let exp=16383+(63-lz);
+    Extended80::from_bits(significand,exp|if negative{0x8000}else{0})
+}
 
 fn round_even(significand:u64,shift:u32)->(u64,bool){
     if shift==0{return (significand,false);}
