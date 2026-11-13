@@ -163,7 +163,8 @@ fn enter_final_stack_pointer_checks_user_write_access_before_committing(){
   r.set_paging(None);r.store(PT0+8,MemWidth::Dword,0x9000|7).unwrap();
   step(&mut i,&mut r,&mut c).unwrap();
   assert_eq!(c.regs[4],(old.regs[4]&if stack32{0}else{0xffff_0000})|0x2fff);
-  assert_eq!(c.regs[5],0x3000);assert_eq!(i.ss_shadow,0);
+  // A 32-bit ENTER on a 16-bit stack gives EBP the upper half of ESP.
+  assert_eq!(c.regs[5],0x3000|if w==32&&!stack32{0xabcd_0000}else{0});assert_eq!(i.ss_shadow,0);
   assert_eq!((c.eflags,c.undefined_flags),(old.eflags,old.undefined_flags));
   assert_eq!(dword(&r,0xa000)&if w==16{0xffff}else{u32::MAX},0x4567);
   let mut flat=r.clone();flat.set_paging(None);assert_eq!(flat.load(0x9fff,MemWidth::Byte).unwrap(),0x5a,"probe must not store a byte");

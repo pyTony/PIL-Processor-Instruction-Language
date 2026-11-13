@@ -1,3 +1,29 @@
+# test386 to POST FFh: ENTER frame pointer, SHL/SHR CF — 13 November 2026
+
+Follow-up to protected-mode increment 7 (#172). Both test386 ROMs (64 KB
+and 128 KB, built locally) now run every POST to FFh, and the POST EEh
+output matches test386-EE-reference.txt line for line (44,926 lines).
+- POST 1Ah did not stop on the ring-3 #PF case, as noted before, but on an
+  earlier `o32 ENTER 8,4` on a 16-bit stack with ESP=10000h. The 386 takes
+  the frame pointer as ESP after the 16-bit push, so EBP and the pushed
+  frame pointer keep the upper half of ESP; PIL zeroed it. SingleStepTests
+  always has that half zero, so it could not tell (src/guest.rs, enter.pil).
+- POST EEh: SHL and SHR with a count equal to the operand width now set CF
+  to the last bit shifted out (bit 0 for SHL, the sign bit for SHR), as
+  the 386 does, and CF is defined there. Above the width it stays
+  undefined (zero, marked). isa/i386/shl.pil, shr.pil.
+- `--run-rom` writes bytes sent to port E9h to stdout (test386 with
+  `OUT_PORT equ 0E9h`); a DOS session still ignores the port.
+
+Local Linux, release: 806 Rust tests pass, 3 ignored (4 expectations
+changed: ENTER with a nonzero ESP upper half, the shift oracle, the
+host-CPU shift policy and the paging ENTER retry). The host-CPU oracle
+now compares CF at a count equal to the width and agrees.
+tools/verify_descriptions.py: 59,940 shift cases pass. SingleStepTests/80386
+for the shift and ENTER files (29 files, 72,500 cases): 70,728 pass, up 62
+(D2.5 2,404 -> 2,426, D3.5 2,459 -> 2,499), no new failures, 0
+generated-backend disagreements. The full suite was not rerun.
+
 # Protected mode, increment 7: task switching — 13 November 2026
 
 Protected-mode plan increment 7 (#128 was V86 mode; #129, #131 and #132

@@ -37,7 +37,7 @@ protected, unreal and V86 sets are announced but not published.
 | 5 | Privilege levels: call gates, conforming code, inter-level transfers, IOPL, I/O bitmap | 20h | done, #124 |
 | 6 | V86 mode | 21h | done, #128; follow-ups #129 (ARPL `store_if`) and #131 (128 KB ROM) |
 | 7 | Task switching | 22h (128 KB ROM) | in review (src/task.rs) |
-| 8 | Remaining test386 (E0h, EEh) | FFh | open; includes the ENTER fault below |
+| 8 | Remaining test386 (E0h, EEh) | FFh | reached locally: every POST to FFh, EEh output matches the reference (follow-up to #172) |
 | 9 | Dine: memory above 1 MiB (INT 15h 88h/E801h/87h, CMOS) | — | open |
 | 10 | Dine: XMS 3.0 driver (INT 2Fh 4300h/4310h) | — | open |
 
@@ -194,20 +194,22 @@ and #132 (SMSW r32 keeps PG). Increment 7, on the same branch:
 
 ## Current state and handoff — 13 November 2026
 
-Where test386 stops (local Linux, release build, `--steps 100000000`):
-- Both ROMs pass every POST through 19h (the 128 KB one including 22h)
-  and stop in POST 1Ah. That test runs ENTER 1,0 at ring 3 with
-  ESP=1004h, the stack on a supervisor page (linear 21000h), and expects
-  #PF. PIL's ENTER does not fault there; not yet diagnosed (check that
-  ENTER's pushes and its frame pointer read translate at CPL 3, in
-  isa/i386/enter.pil and Ram's user checks in src/memory.rs).
-- Test counts after increment 7: 806 Rust tests pass, 3 ignored; the
-  generated-backend suite (`pil --compare`, src/native.rs) has 278 cases.
+Where test386 stands (local Linux, release build, `--steps 100000000`;
+a full run takes about 76 million instructions):
+- Both ROMs run every POST to FFh: 00h-06h, 08h, 09h, 20h, 21h, 22h
+  (128 KB only), 0Bh-1Ch, E0h, EEh, FFh. The POST EEh output (built with
+  `OUT_PORT equ 0E9h`) matches test386-EE-reference.txt line for line.
+- The old POST 1Ah stop was not the ring-3 #PF test but a 32-bit ENTER on
+  a 16-bit stack, whose frame pointer keeps the upper half of ESP. EEh
+  needed SHL/SHR CF at a count equal to the width.
+- Test counts: 806 Rust tests pass, 3 ignored; the generated-backend
+  suite (`pil --compare`, src/native.rs) has 278 cases.
   SingleStepTests/80386 run 10: 1,621,228 of 1,758,700 real-mode cases
-  pass, 0 generated-backend disagreements (not rerun for increment 7).
+  pass, 0 generated-backend disagreements; the shift and ENTER files were
+  rerun after the CF change (62 more passes, no new failures).
 
-Next: the ENTER fault above, the rest of test386 (increment 8), Dine's
-memory above 1 MiB (9) and XMS (10).
+Next: Dine's memory above 1 MiB (increment 9) and XMS (10). test386 does
+not cover the parts listed as not modelled under increment 7.
 
 Key files:
 - src/address.rs: SegmentState (caches, CPL, GDT/LDT/IDT/TR, CR0-CR3,
@@ -248,6 +250,13 @@ cd /path/to/PIL-Processor-Instruction-Language
 cargo run --release -- --run-rom ../test386.asm/test386-128.bin --steps 100000000
 ```
 The runner prints each POST code written to port 190h and the stop reason.
+To check POST EEh, set `OUT_PORT equ 0E9h` as well; the runner writes port
+E9h bytes to stdout, between the "Starting" line and the report:
+```sh
+cargo run --release -- --run-rom ../test386.asm/test386.bin --steps 100000000 2>/dev/null \
+  | sed -n '/^Starting/,/^=== ROM/{/^Starting/d;/^=== ROM/d;/^$/d;p}' > ee.txt
+diff --strip-trailing-cr ee.txt ../test386.asm/test386-EE-reference.txt
+```
 
 
 ## DOS games increment, 10 November 2026
