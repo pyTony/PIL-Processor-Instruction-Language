@@ -2941,3 +2941,122 @@ fn cga_mode_control_port_3d8_routes_video_enable_and_blink_changes(){
  p.cpu.regs[0]=0x28;
  assert!(ports::io(&mut p).is_err());
 }
+
+
+/// Drive an actual in-memory COM child through AH4Ch and a PSP INT22 callback.
+/// AH55 itself is still running in the parent; no AH4B CPU frame is pushed.
+fn stage_ah55_child(mut p:Loaded,borrowed:bool)->(Loaded,u16,u16,[(u32,u32);SYSTEM_RANGES]){
+    let parent=p.psp;
+    let system=p.image.system;
+    p.dta=(parent,0x1c0);
+    let handles=p.open_handles;
+    p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x40;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.eflags&1,0);
+    let block=p.cpu.regs[0]as u16;
+    let child=if borrowed{block+0x10}else{block};
+    let base=u32::from(child)*16;
+    p.ram.write_bytes(base+0x100,&[0xb8,0x37,0x4c,0xcd,0x21]).unwrap(); // MOV AX,4C37; INT 21
+    p.ram.write_bytes(u32::from(parent)*16+0x180,&[0xb4,0x4d,0xcd,0x21,0xfa,0xf4]).unwrap(); // AH4D; CLI; HLT
+    p.ram.store(0x22*4,MemWidth::Dword,(u32::from(parent)<<16)|0x100).unwrap();
+    p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(block+0x40);
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.psp,child);
+    assert_eq!(p.ram.load(base+0x16,MemWidth::Word).unwrap(),u32::from(parent));
+    assert_eq!(p.dta,(child,0x80));
+    assert_eq!(p.open_handles,handles);
+    assert_eq!(p.in_memory.len(),1);
+    // The AH4B parent may already grant a system fetch window covering the
+    // entire DOS conventional-memory arena. AH55 then needs no extra slot.
+    // Assert the child can execute, rather than demanding an unnecessary
+    // mutation to the system-window table.
+    let child_end=u32::from(block+0x40)*16;
+    let covered=(p.image.fetch_base+p.image.start<=base && p.image.fetch_base+p.image.end>=child_end)
+        ||p.image.system.iter().any(|&(a,b)|a<=base&&b>=child_end&&a<b);
+    assert!(covered,"AH55 child code region is not executable");
+    // Turbo sets the actual return vector once the PSP is created. Read it
+    // at termination rather than using an AH55-time CPU/vector snapshot.
+    p.ram.store(base+0x0a,MemWidth::Dword,(u32::from(parent)<<16)|0x180).unwrap();
+    let cs=SegmentRegister::Cs.index();
+    p.selectors[cs]=child;p.image.selectors[cs]=child;p.image.segments[cs]=SegmentCache::real_mode(child);
+    p.cpu.eip=0x100;
+    (p,child,block,system)
+}
+
+#[test]
+fn ah55_child_returns_to_ide_without_an_ah4b_frame(){
+    let mut p=load(&[0xfa,0xf4],"TURBO.COM").unwrap();
+    p.image.selectors[SegmentRegister::Es.index()]=PSP;
+    p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x60;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.eflags&1,0);
+    p.image.end=0x600;
+    let (p,child,block,system)=stage_ah55_child(p,false);
+    assert_eq!(p.arena.block_owner(block),Some(child));
+    let r=run(p,40).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    let p=r.loaded;
+    assert_eq!(p.psp,PSP);
+    assert!(p.exec.is_empty()&&p.in_memory.is_empty());
+    assert_eq!(p.cpu.regs[0]&0xffff,0x0037,"AH4D must read the in-memory child's exit code");
+    assert_eq!(p.return_code,0);
+    assert_eq!(p.dta,(PSP,0x1c0));
+    assert_eq!(p.open_handles,0x1f);
+    assert_eq!(p.arena.block_owner(block),Some(0),"child MCB must be released");
+    assert_eq!(p.image.system,system,"temporary child fetch range must be dropped");
+    assert_eq!(p.selectors[SegmentRegister::Cs.index()],PSP);
+}
+
+#[test]
+fn ah55_interior_child_returns_to_turbo_not_freecom_and_can_run_twice(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let dir=std::env::temp_dir().join(format!("pil-ah55-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("TURBO.COM"),[0xfa,0xf4]).unwrap();
+    // FreeCOM launches a Turbo stand-in through AH4B; the stack has a
+    // waiting shell frame even while Turbo's in-memory child runs.
+    let mut p=load_with_drives(&[0xfa,0xf4],"COMMAND.COM",vec![Source::Host(dir.clone())],None).unwrap();
+    p.image.selectors[SegmentRegister::Es.index()]=PSP;
+    p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x60;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.eflags&1,0);
+    let base=u32::from(PSP)*16;
+    let ptr=|off:u16|(u32::from(PSP)<<16)|u32::from(off);
+    p.ram.store(base+0x200,MemWidth::Word,0).unwrap();
+    p.ram.store(base+0x202,MemWidth::Dword,ptr(0x80)).unwrap();
+    p.ram.store(base+0x206,MemWidth::Dword,ptr(0x5c)).unwrap();
+    p.ram.store(base+0x20a,MemWidth::Dword,ptr(0x6c)).unwrap();
+    p.ram.write_bytes(base+0x300,b"TURBO.COM\0").unwrap();
+    p.cpu.regs[0]=0x4b00;p.cpu.regs[2]=0x300;p.cpu.regs[3]=0x200;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.exec.len(),1);
+    let turbo=p.psp;
+    assert_ne!(turbo,PSP);
+    p.image.selectors[SegmentRegister::Es.index()]=turbo;
+    p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x60;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.eflags&1,0);
+    p.image.end=0x600;
+    for _ in 0..2 {
+        let (child_program,_child,block,system)=stage_ah55_child(p,true);
+        assert_eq!(child_program.arena.block_owner(block),Some(turbo),"borrowed MCB ownership changed");
+        assert_eq!(child_program.exec.len(),1);
+        let r=run(child_program,40).unwrap();
+        assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+        p=r.loaded;
+        assert_eq!(p.psp,turbo,"must return to Turbo, not FreeCOM");
+        assert_eq!(p.exec.len(),1,"shell's AH4B frame was popped");
+        assert!(p.in_memory.is_empty());
+        assert_eq!(p.cpu.regs[0]&0xffff,0x0037);
+        assert_eq!(p.dta,(turbo,0x1c0));
+        assert_eq!(p.open_handles,0x1f);
+        assert_eq!(p.arena.block_owner(block),Some(turbo));
+        assert_eq!(p.image.system,system);
+        assert_eq!(p.selectors[SegmentRegister::Cs.index()],turbo);
+    }
+    // Only Turbo's own termination may return to the waiting shell.
+    exec::terminate(&mut p,0,0).unwrap();
+    assert_eq!(p.psp,PSP);
+    assert!(p.exec.is_empty()&&p.in_memory.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}

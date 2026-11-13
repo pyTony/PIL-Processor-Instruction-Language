@@ -202,9 +202,16 @@ impl Image {
                     stores+=&format!("const back{k} $S {}\nsub link{k} chain_bp back{k}\nzext link_at{k} link{k} 32\nload_segment copy{k} 2 link_at{k} $W\n",k*n);
                     stores+=&format!("const down{k} $S {}\nsub slot{k} frame down{k}\nzext slot_at{k} slot{k} 32\nstore_segment 2 slot_at{k} copy{k}\n",k*n);
                 }
-                let frame_value=match w.cmp(&stack_bits){std::cmp::Ordering::Greater=>"zext frame_value frame $W",std::cmp::Ordering::Less=>"trunc frame_value frame $W",_=>"zext frame_value frame $W"};
+                // A 32-bit ENTER on a 16-bit stack pushes and loads into EBP the frame
+                // pointer with the upper half of ESP (FrameTemp is ESP after the
+                // 16-bit push of EBP).
+                let wide=w>stack_bits;
+                let mut prefix=String::new();
+                if wide{prefix+="read_gpr whole_sp 4 32\nconst sp_high_mask 32 4294901760\nand sp_high whole_sp sp_high_mask\nzext frame32 frame 32\nor frame_wide sp_high frame32\n";}
+                let mut stores=prefix+&stores;
+                let frame_value=if wide{"zext frame_value frame_wide 32"}else if w<stack_bits{"trunc frame_value frame $W"}else{"zext frame_value frame $W"};
                 if level32>0{stores+=&format!("{frame_value}\nconst down_last $S {}\nsub last frame down_last\nzext last_at last 32\nstore_segment 2 last_at frame_value\n",level32*n);}
-                let pointer=if w>stack_bits{"zext frame_pointer frame 32"}else{"zext frame_pointer frame $S"};
+                let pointer=if wide{"zext frame_pointer frame_wide 32"}else{"zext frame_pointer frame $S"};
                 let text=include_str!("../isa/i386/enter.pil").replace("$COPY_STORES",stores.trim_end()).replace("$FRAME_POINTER",pointer).replace("$PUSHED",&(level32*n).to_string()).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("ENTER 0x{size:04x},{level}"),compile(&instantiate(&text,w),w))
             }

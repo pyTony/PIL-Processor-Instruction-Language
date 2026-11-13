@@ -63,6 +63,8 @@ mod serial;
 mod brk;
 #[path="dos_keyboard.rs"]
 mod keyboard;
+#[path="dos_mouse.rs"]
+mod mouse;
 #[path="dos_vectors.rs"]
 mod vectors;
 use services::dispatch as service;
@@ -98,7 +100,7 @@ pub struct Loaded{
     /// The running program's PSP, the parents waiting in EXEC, the last
     /// child's return code for AH4D, and console bytes AH3F read but did not
     /// return yet.
-    pub psp:u16,exec:Vec<exec::Frame>,pub return_code:u16,con_pending:Vec<u8>,
+    pub psp:u16,exec:Vec<exec::Frame>,in_memory:Vec<exec::InMemoryChild>,pub return_code:u16,con_pending:Vec<u8>,
     /// The PC speaker behind ports 42h, 43h and 61h.
     pub speaker:ports::Speaker,
     /// The host's local time, as seconds east of UTC, for the clock (INT 1Ah
@@ -115,6 +117,8 @@ pub struct Loaded{
     pub com1:Option<serial::Serial>,
     /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
     breaks:Vec<brk::Frame>,
+    /// Optional software INT 33h mouse driver, enabled by interactive sessions.
+    mouse:mouse::Mouse,
     /// Persistent, signature-validated cache across session slices.
     pub cache:super::cache::DecodeCache,
     /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
@@ -130,10 +134,10 @@ impl Clone for Loaded{
         module_base:self.module_base,allocated_end:self.allocated_end,trailing_bytes:self.trailing_bytes,timer_ticks:self.timer_ticks,timer_tick_adjust:self.timer_tick_adjust,
         open_handles:self.open_handles,dos_error:self.dos_error,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
         input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
-        own_name:self.own_name.clone(),drive:self.drive.clone(),active_program:self.active_program.clone(),psp:self.psp,exec:self.exec.clone(),return_code:self.return_code,
+        own_name:self.own_name.clone(),drive:self.drive.clone(),active_program:self.active_program.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
+        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
     }}
 }
 impl std::fmt::Debug for Loaded{
@@ -143,7 +147,8 @@ impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
     #[allow(dead_code)]
     pub fn enqueue_key(&mut self,key:u16)->Result<bool,String>{console::enqueue(self,key)}
-    /// Ctrl+Break: see `brk::ctrl_break`.
+    /// Ctrl+Break: see `brk::ctrl_break`. Retained for a future frontend hook.
+    #[allow(dead_code)]
     pub fn ctrl_break(&mut self)->Result<(),String>{brk::ctrl_break(self)}
     /// Select the optional 80387 backend before executing the first guest instruction.
     /// Keep the BIOS equipment word consistent with INT 11h without replacing
@@ -336,7 +341,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),active_program:ProgramIdentity{path:None,bytes:std::sync::Arc::new(bytes.to_vec())},drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -429,6 +434,180 @@ pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
     }
     Some(rendered)
 }
+// Match the EGA/CGA 16-colour host palette already used by the PILdos
+// Python frontend. The CGA colour-select register 3D9h selects entries in
+// this palette; it is not the VGA 256-entry DAC.
+const CGA_RGB:[u32;16]=[
+    0x000000,0x0000aa,0x00aa00,0x00aaaa,
+    0xaa0000,0xaa00aa,0xaa5500,0xaaaaaa,
+    0x555555,0x5555ff,0x55ff55,0x55ffff,
+    0xff5555,0xff55ff,0xffff55,0xffffff,
+];
+/// CGA even/odd banks, the 3D9h background/palette/intensity latch, and
+/// 320x200 four-colour / 640x200 two-colour scanout.
+fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
+    let width=if mode==6{640}else{320};
+    let height=200usize;
+    let ram=p.ram.bytes();
+    if ram.len()<0xbc000{return None;}
+    let register=p.vga.cga_color();
+    let current=if mode==6{6}else if p.vga.cga_mode()&4!=0{5}else{4};
+    let palette:[u32;4]=if current==6{
+        [CGA_RGB[0],CGA_RGB[usize::from(register&15)],0,0]
+    }else{
+        let base=if current==5{[3,4,7]}else if register&0x20==0{
+            [2,4,6]
+        }else{[3,5,7]};
+        let high=if register&0x10!=0{8}else{0};
+        [
+            CGA_RGB[usize::from(register&15)],
+            CGA_RGB[base[0]+high],
+            CGA_RGB[base[1]+high],
+            CGA_RGB[base[2]+high],
+        ]
+    };
+    let blank=p.vga.cga_mode()&0x08==0;
+    let mut pixels=vec![0u32;width*height];
+    for y in 0..height{
+        let row=0xb8000+(y&1)*0x2000+(y/2)*80;
+        for bx in 0..80{
+            let byte=ram[row+bx];
+            if blank{continue;}
+            if current==6{
+                for bit in 0..8{
+                    pixels[y*width+bx*8+bit]=palette[usize::from((byte>>(7-bit))&1)];
+                }
+            }else{
+                for pair in 0..4{
+                    pixels[y*width+bx*4+pair]=palette[usize::from((byte>>(6-2*pair))&3)];
+                }
+            }
+        }
+    }
+    Some((width,height,pixels))
+}
+
+/// Native desktop scanout of the *existing* emulated VGA framebuffer.
+/// All text drawn by BIOS in a graphics mode has already reached these pixels
+/// via dos_graphics_text, so the host renderer needs no duplicate font logic.
+/// The output never aliases guest RAM and cannot mutate VGA/CPU state.
+pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
+    let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
+    if matches!(mode,4|5|6){return desktop_cga_frame(p,mode);}
+    let color=|rgb:[u8;3]|u32::from(rgb[0])<<16|u32::from(rgb[1])<<8|u32::from(rgb[2]);
+    if mode==0x13 {
+        let (width,height)=(320usize,200usize);
+        let mut colors=[0u32;256];
+        for (i,slot) in colors.iter_mut().enumerate(){
+            let rgb=p.vga.dac(i&usize::from(p.vga.dac_mask()))
+                .map(|channel|(u16::from(channel)*255/63)as u8);
+            *slot=color(rgb);
+        }
+        let start=usize::from(p.vga.start());
+        let bytes=p.ram.bytes();
+        let planes=p.ram.planar();
+        if planes.is_none()&&bytes.len()<0xa0000+width*height{return None;}
+        let mut pixels=Vec::with_capacity(width*height);
+        for i in 0..width*height {
+            let index=if let Some(planes)=planes{
+                planes.peek(i&3,(start+(i>>2))&0xffff)
+            }else{bytes[0xa0000+i]};
+            pixels.push(colors[usize::from(index)]);
+        }
+        return Some((width,height,pixels));
+    }
+    let geometry=planar::geometry(mode)?;
+    let planes=p.ram.planar()?;
+    let width=geometry.width as usize;
+    let height=geometry.height as usize;
+    let colors=p.vga.planar_rgb().map(color);
+    let mut pixels=vec![0u32;width*height];
+    let start=usize::from(p.vga.start());
+    for y in 0..height {
+        for bx in 0..width/8 {
+            let offset=(start+y*(width/8)+bx)&0xffff;
+            let bytes=[
+                planes.peek(0,offset),planes.peek(1,offset),
+                planes.peek(2,offset),planes.peek(3,offset),
+            ];
+            let base=y*width+bx*8;
+            for bit in 0..8 {
+                let shift=7-bit;
+                let index=(bytes[0]>>shift&1)|((bytes[1]>>shift&1)<<1)|
+                    ((bytes[2]>>shift&1)<<2)|((bytes[3]>>shift&1)<<3);
+                pixels[base+bit]=colors[usize::from(index)];
+            }
+        }
+    }
+    Some((width,height,pixels))
+}
+
+#[cfg(test)]
+mod desktop_scanout_tests{
+    use super::*;
+    #[test]
+    fn mode12_frame_preserves_graphics_pixels_and_existing_vga_palette(){
+        let mut p=load(&[0xcd,0x20],"PIX.COM").unwrap();
+        assert!(desktop_vga_frame(&p).is_none());
+        planar::set_mode(&mut p,0x12,false).unwrap();
+        p.ram.planar_mut().unwrap().set_pixel(0,0,1);
+        let (width,height,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!((width,height,pixels.len()),(640,480,640*480));
+        let rgb=p.vga.planar_rgb()[1];
+        let expected=(u32::from(rgb[0])<<16)|(u32::from(rgb[1])<<8)|u32::from(rgb[2]);
+        assert_eq!(pixels[0],expected);
+        assert_ne!(pixels[0],pixels[1]);
+    }
+    #[test]
+    fn cga_banks_palette_intensity_monochrome_and_display_blank(){
+        let mut p=load(&[0xcd,0x20],"CGA.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,4).unwrap();
+        // A new CGA test must select the low-intensity palette explicitly;
+        // the emulated adapter defaults to colour-select 30h (bright palette).
+        p.vga.set_cga_color(0x00);
+        p.ram.store(0xb8000,MemWidth::Byte,0x1b).unwrap();
+        p.ram.store(0xba000,MemWidth::Byte,0xe4).unwrap();
+        let (width,height,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!((width,height,pixels.len()),(320,200,64000));
+        assert_eq!(&pixels[..4],&[CGA_RGB[0],CGA_RGB[2],CGA_RGB[4],CGA_RGB[6]]);
+        assert_eq!(&pixels[320..324],&[CGA_RGB[6],CGA_RGB[4],CGA_RGB[2],CGA_RGB[0]]);
+        p.vga.set_cga_color(0x30);
+        assert_eq!(&desktop_vga_frame(&p).unwrap().2[..4],
+            &[CGA_RGB[0],CGA_RGB[11],CGA_RGB[13],CGA_RGB[15]]);
+        p.ram.store(0x449,MemWidth::Byte,6).unwrap();
+        p.vga.set_cga_color(0x0e);
+        p.ram.store(0xb8000,MemWidth::Byte,0x80).unwrap();
+        let (width,_,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!(width,640);
+        assert_eq!(&pixels[..2],&[CGA_RGB[14],CGA_RGB[0]]);
+        p.vga.bios_cga_mode(4);
+        p.vga.io(0x3d8,false,0x22).unwrap(); // clear video-enable only
+        assert!(desktop_vga_frame(&p).unwrap().2.iter().all(|c|*c==0));
+    }
+    #[test]
+    fn cga_mode5_ignores_palette_selection_for_cyan_red_and_white(){
+        let mut p=load(&[0xcd,0x20],"CGA.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,5).unwrap();
+        p.vga.bios_cga_mode(5);
+        p.vga.set_cga_color(0x20);
+        p.ram.store(0xb8000,MemWidth::Byte,0x1b).unwrap();
+        let pixels=desktop_vga_frame(&p).unwrap().2;
+        assert_eq!(&pixels[..4],&[CGA_RGB[0],CGA_RGB[3],CGA_RGB[4],CGA_RGB[7]]);
+    }
+    #[test]
+    fn mode13_frame_uses_dac_and_linear_vram(){
+        let mut p=load(&[0xcd,0x20],"PIX.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,0x13).unwrap();
+        p.ram.store(0xa0000,MemWidth::Byte,1).unwrap();
+        let (width,height,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!((width,height,pixels.len()),(320,200,320*200));
+        let rgb=p.vga.dac(1);
+        let expected=(u32::from(rgb[0])*255/63)<<16|
+            (u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63);
+        assert_eq!(pixels[0],expected);
+    }
+}
+
 /// An optional executor for decoded PIL instructions. A miss falls back to the
 /// interpreter; DOS services and instruction retirement stay in the shared loop.
 pub(crate) trait InstructionBackend {
@@ -437,6 +616,8 @@ pub(crate) trait InstructionBackend {
     fn may_block(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
     fn may_execute(&mut self,_program:&ProgramIdentity,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
     fn block_stats(&self)->(u64,u64){(0,0)}
+    /// Number of generated single-instruction dispatches outside native blocks.
+    fn single_stats(&self)->u64{0}
     fn block(&mut self,_program:&ProgramIdentity,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,program:&ProgramIdentity,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
 }
@@ -451,13 +632,21 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
         if !p.rom_mode {
+        // A callback returns by RETF to the private BIOS continuation.
+        // Its scratch registers/flags are discarded; guest memory writes remain.
+        match mouse::returned(&mut p){
+            Ok(true)=>{lazy=super::LazyFlags::None;execution_steps+=1;
+                *instructions.entry("DOS mouse callback RETF".into()).or_insert(0)+=1;continue;},
+            Ok(false)=>{},
+            Err(message)=>break Stop::Service(message),
+        }
         if !p.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match brk::returned(&mut p){
             Ok(None)=>{},
             Ok(Some(brk::Return::Resume))=>{execution_steps+=1;*instructions.entry("DOS INT23 return (resume)".into()).or_insert(0)+=1;continue;},
             Ok(Some(brk::Return::Abort))=>{
                 execution_steps+=1;*instructions.entry("DOS INT23 return (abort)".into()).or_insert(0)+=1;
-                if p.exec.is_empty(){break Stop::Exit(0);}
+                if !exec::has_parent(&p){break Stop::Exit(0);}
                 if let Err(message)=exec::terminate(&mut p,0,1){break Stop::Service(message);}
                 continue;
             },
@@ -474,6 +663,18 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             match keyboard::interrupt(&mut p,false){
                 Ok(true)=>{execution_steps+=1;*instructions.entry("IRQ1 to INT 09h".into()).or_insert(0)+=1;continue;},
+                Ok(false)=>{},
+                Err(message)=>break Stop::Service(message),
+            }
+        }
+        // Mouse callbacks behave as asynchronous far calls, not hardware IRQ12.
+        // Defer them while IF is clear, the interrupt shadow is active, or a
+        // previous callback has not yet returned.
+        if mouse::ready(&p){
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            match mouse::deliver(&mut p){
+                Ok(true)=>{execution_steps+=1;
+                    *instructions.entry("DOS mouse callback FAR".into()).or_insert(0)+=1;continue;},
                 Ok(false)=>{},
                 Err(message)=>break Stop::Service(message),
             }
@@ -539,7 +740,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{
                         // A child returns to the parent that ran it; the first program ends the run.
-                        if p.exec.is_empty(){break Stop::Exit(code);}
+                        if !exec::has_parent(&p){break Stop::Exit(code);}
                         let kind=if p.resident.is_some(){3}else{0};
                         if let Err(message)=exec::terminate(&mut p,code,kind){break Stop::Service(message);}
                     }continue;},
@@ -637,13 +838,17 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         }
         if let Some(b)=backend.as_deref_mut(){
             if b.may_block(&p.active_program,&p.image,&p.ram,p.cpu.eip){
-            // Multi-instruction execution is opt-in. Interrupt shadows and
-            // installed timer handlers retain instruction-level scheduling.
+            // A clocked DOS session samples IRQ0 every 256 guest steps.
+            // Never batch across that boundary, even when a guest owns INT 08h:
+            // the next outer-loop iteration must get the same timer/pending-IRQ
+            // check as the interpreter. Interrupt shadows still forbid batching.
             let mut machine=p.image.segment_state();
-            let guest_timer=p.clock_offset.is_some()&&vectors::answered(&p,p.speaker.pic.timer_vector())!=Ok(true);
-            if machine.ss_shadow==0&&machine.sti_shadow==0&&!guest_timer{
+            if machine.ss_shadow==0&&machine.sti_shadow==0{
+                let remaining=budget-execution_steps;
+                let next_timer_poll=if p.clock_offset.is_some(){256-execution_steps%256}else{remaining};
+                let block_budget=remaining.min(next_timer_poll);
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if let Some((n,result))=b.block(&p.active_program,&p.image,&mut p.cpu,&mut p.ram,&mut machine,budget-execution_steps){
+                if let Some((n,result))=b.block(&p.active_program,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
                     p.image.set_segment_state(machine);p.selectors=machine.selectors;
                     execution_steps+=n;completed+=n;pil_steps+=n;
                     *instructions.entry("native block instructions".into()).or_insert(0)+=n;

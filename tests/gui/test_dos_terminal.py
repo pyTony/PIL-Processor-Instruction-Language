@@ -20,6 +20,153 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def test_native_graphics_child_environment(self):
+        frames = [dict(protocol=1, seq=0, ok=True, native_graphics=True)]
+        def process():
+            return SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(
+                ''.join(json.dumps(v) + '\n' for v in frames)), stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process()) as popen:
+            term.Session('engine', 'program', rust_graphics=True)
+            self.assertEqual(popen.call_args.kwargs['env']['DINE_VIDEO'], 'window')
+        with patch.object(term.subprocess, 'Popen', return_value=process()) as popen:
+            term.Session('engine', 'program')
+            self.assertNotIn('env', popen.call_args.kwargs)
+
+    def test_native_bios_key_conversion(self):
+        self.assertEqual(term.bios_keys(b'a\r\x1b\x08\t'),
+                         [(97, 30), (13, 28), (27, 1), (8, 14), (9, 15)])
+        import queue
+        port = term.ConsolePort.__new__(term.ConsolePort)
+        port.input = queue.Queue()
+        port.input.put((0, 72))
+        port.input.put(b'Z')
+        self.assertEqual(port.read_bios(), [(0, 72), (90, 44)])
+
+    def test_native_bios_key_not_com1(self):
+        class Session:
+            com1_out = b''
+            last = {}
+            def __init__(self): self.commands = []
+            def send(self, command):
+                self.commands.append(command)
+                if command.startswith('run '):
+                    return {'status': 'exit' if 'key 97 30' in self.commands else 'waiting_input',
+                            'native_graphics': True}
+                return {'status': 'waiting_input', 'native_graphics': True}
+        class Port:
+            def __init__(self): self.calls = 0
+            def read_bios(self):
+                self.calls += 1
+                return [(97, 30)] if self.calls == 1 else []
+            def read(self): raise AssertionError('graphics BIOS key reached COM1')
+        session=Session()
+        with patch.object(term, 'HeadlessGraphics') as graphics:
+            result=term.run_headless(session, Port(), 0, is_shell=False, rust_graphics=True)
+            graphics.assert_not_called()
+        self.assertEqual(result['status'], 'exit')
+        self.assertIn('key 97 30', session.commands)
+
+    def test_native_window_close_is_distinct_from_dos_exit(self):
+        class Session:
+            com1_out = b''
+            last = {}
+            def send(self, command):
+                return ({'status': 'waiting_input', 'native_graphics': True,
+                         'native_window_closed': True} if command.startswith('run ')
+                        else {'status': 'running', 'native_graphics': True})
+        class Port:
+            def read(self): return b''
+        self.assertEqual(term.run_headless(Session(), Port(), 0, is_shell=False,
+                                            rust_graphics=True)['status'], 'window_closed')
+
+    def test_rust_graphics_option_requires_headless(self):
+        with self.assertRaises(SystemExit):
+            term.main(['--rust-graphics', 'program.com'])
+
+
+    def test_mouse_opt_in_sends_command_before_guest_execution(self):
+        frames = ''.join(json.dumps({'protocol': 1, 'seq': i, 'ok': True}) + '\n' for i in range(2))
+        process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(frames), stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process):
+            session = term.Session('engine', 'program', mouse=True)
+        self.assertEqual(process.stdin.getvalue(), 'mouse on\n')
+        self.assertEqual(session.seq, 1)
+
+    def test_dos_mouse_session_click_reaches_int33_registers(self):
+        # MOV AX,0 / INT33 reset / MOV AX,3 / INT33 poll / INT20 exit
+        code = bytes.fromhex('b8 00 00 cd 33 b8 03 00 cd 33 cd 20')
+        engine = term.find_engine()
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / 'mouse.com'
+            program.write_bytes(code)
+            session = term.Session(engine, program, mouse=True, stop_log='')
+            try:
+                reply = session.send('run 2')
+                self.assertTrue(reply['mouse_active'])
+                self.assertTrue(reply['mouse_present'])
+                reply = session.send('mouse 160 80 1')
+                self.assertTrue(reply['ok'])
+                reply = session.send('run 32')
+                self.assertEqual(reply['status'], 'exit')
+                regs = reply['registers']
+                self.assertEqual((regs[3] & 0xffff, regs[1] & 0xffff, regs[2] & 0xffff),
+                                 (1, 160, 80))
+            finally:
+                session.close()
+
+    def test_dos_mouse_coordinates_buttons_and_overlay(self):
+        self.assertEqual(term.mouse_virtual_coords(320, 240, 640, 480, 639, 199), (320, 100))
+        self.assertEqual(term.mouse_virtual_coords(-10, 999, 640, 480, 639, 479), (0, 479))
+        self.assertEqual(term.mouse_virtual_coords(639, 479, 640, 480, 639, 479), (639, 479))
+        self.assertEqual(term.mouse_command(80, 16, 3), 'mouse 80 16 3')
+        events = term.MouseEvents()
+        for x, buttons in ((10, 0), (20, 1), (30, 1), (40, 1), (50, 0)):
+            events.push(x, 4, buttons)
+        self.assertEqual(events.pending, [(10, 4, 0), (20, 4, 1), (40, 4, 1), (50, 4, 0)])
+        rgb = bytes([127] * (20 * 20 * 3))
+        painted = term.mouse_overlay(rgb, 20, 20, 0, 0, 639, 199)
+        self.assertEqual(rgb, bytes([127] * (20 * 20 * 3)))
+        self.assertEqual(painted[:3], bytes(3))
+        self.assertNotEqual(painted, rgb)
+
+    def test_native_statistics_separate_blocks_singles_and_services(self):
+        output = term.format_native_stats({
+            'steps': 1000, 'native_blocks': 100,
+            'native_block_instructions': 400,
+            'native_single_instructions': 300,
+        })
+        self.assertIn('Native total: 700 (70.0% of steps)', output)
+        self.assertIn('Native single instructions: 300', output)
+        self.assertIn('Other steps: 300 (includes DOS/BIOS services)', output)
+        self.assertIn('Average native block length: 4.00', output)
+        self.assertIn('stats unavailable', term.format_native_stats({'steps': 10}))
+        self.assertIn('n/a', term.format_native_stats({
+            'steps': 0, 'native_blocks': 0,
+            'native_block_instructions': 0, 'native_single_instructions': 0,
+        }))
+
+
+    def test_raw_key_release_does_not_block_later_keys_for_modifier_settle(self):
+        # The keydown must reach the guest before its keyup, but no further
+        # ten idle ticks should hold that release and every following key.
+        self.assertTrue(term.defer_key_command('keyup 97 30', sent=True, settle=10))
+        self.assertFalse(term.defer_key_command('keyup 97 30', sent=False, settle=10))
+        # Alt/Ctrl/Shift state changes retain the guest run-slice delay used
+        # by Turbo and EDIT's function-key/modifier combinations.
+        self.assertTrue(term.defer_key_command('shift 0', sent=True, settle=0))
+        self.assertTrue(term.defer_key_command('shift 0', sent=False, settle=10))
+        self.assertFalse(term.defer_key_command('shift 0', sent=False, settle=0))
+        self.assertFalse(term.defer_key_command('keydown 97 30', sent=True, settle=10))
+        self.assertFalse(term.defer_key_command('key 97 30', sent=True, settle=10))
+
+    def test_queued_keyboard_input_keeps_tk_tick_fast_while_guest_is_idle(self):
+        self.assertEqual(term.next_tick_delay(True, 'waiting_input', True), 1)
+        self.assertEqual(term.next_tick_delay(True, 'running', True), 1)
+        self.assertEqual(term.next_tick_delay(False, 'waiting_input', True), 40)
+        self.assertEqual(term.next_tick_delay(False, 'running', True), 40)
+        self.assertEqual(term.next_tick_delay(False, 'running', False), 1)
+
+
     def test_partial_80387_mode_is_explicit_and_reports_bios_equipment(self):
         engine = term.find_engine()
         with tempfile.TemporaryDirectory() as directory:

@@ -610,7 +610,7 @@ fn shift_oracle(op:&str,a:u32,count:u32,w:u8,f:u32,u:u32)->(u32,u32,u32){
     let n=count&31;if n==0{return (a,f,u);}
     let m=mask(w) as u32;let sign=1u32<<(w-1);let mut result=a&m;let mut carry=0;
     for _ in 0..n {if op=="shl"{carry=u32::from(result&sign!=0);result=(result<<1)&m;}else{carry=result&1;result=(result>>1)|if op=="sar"{result&sign}else{0};}}
-    let cf_undefined=op!="sar"&&n>=u32::from(w);
+    let cf_undefined=op!="sar"&&n>u32::from(w); // count == width: the last bit out, as the 386 gives
     let undefined=16|if n>1{0x800}else{0}|u32::from(cf_undefined);
     let overflow=if n!=1{0}else if op=="shl"{u32::from(result&sign!=0)^carry}else if op=="shr"{u32::from(a&sign!=0)}else{0};
     let flags=(f&!0x8d5)|if cf_undefined{0}else{carry}|(u32::from((result as u8).count_ones()%2==0)<<2)|(u32::from(result==0)<<6)|(u32::from(result&sign!=0)<<7)|(overflow<<11);

@@ -1,3 +1,67 @@
+# test386 to POST FFh: ENTER frame pointer, SHL/SHR CF — 13 November 2026
+
+Follow-up to protected-mode increment 7 (#172). Both test386 ROMs (64 KB
+and 128 KB, built locally) now run every POST to FFh, and the POST EEh
+output matches test386-EE-reference.txt line for line (44,926 lines).
+- POST 1Ah did not stop on the ring-3 #PF case, as noted before, but on an
+  earlier `o32 ENTER 8,4` on a 16-bit stack with ESP=10000h. The 386 takes
+  the frame pointer as ESP after the 16-bit push, so EBP and the pushed
+  frame pointer keep the upper half of ESP; PIL zeroed it. SingleStepTests
+  always has that half zero, so it could not tell (src/guest.rs, enter.pil).
+- POST EEh: SHL and SHR with a count equal to the operand width now set CF
+  to the last bit shifted out (bit 0 for SHL, the sign bit for SHR), as
+  the 386 does, and CF is defined there. Above the width it stays
+  undefined (zero, marked). isa/i386/shl.pil, shr.pil.
+- `--run-rom` writes bytes sent to port E9h to stdout (test386 with
+  `OUT_PORT equ 0E9h`); a DOS session still ignores the port.
+
+Local Linux, release: 806 Rust tests pass, 3 ignored (4 expectations
+changed: ENTER with a nonzero ESP upper half, the shift oracle, the
+host-CPU shift policy and the paging ENTER retry). The host-CPU oracle
+now compares CF at a count equal to the width and agrees.
+tools/verify_descriptions.py: 59,940 shift cases pass. SingleStepTests/80386
+for the shift and ENTER files (29 files, 72,500 cases): 70,728 pass, up 62
+(D2.5 2,404 -> 2,426, D3.5 2,459 -> 2,499), no new failures, 0
+generated-backend disagreements. The full suite was not rerun.
+
+# Protected mode, increment 7: task switching — 13 November 2026
+
+Protected-mode plan increment 7 (#128 was V86 mode; #129, #131 and #132
+were its follow-ups).
+- New src/task.rs, shared by both backends (embedded in generated Rust
+  next to privilege.rs) and interrupt delivery: far JMP and CALL to an
+  available 286/386 TSS or through a task gate, exceptions and INT n
+  through IDT task gates, and IRET with NT set (new PIL token
+  `task_return_if`, which ends the instruction as a gate CALL does).
+- The old task's EIP, EFLAGS, registers and selectors go to its TSS (386
+  or 286 layout; IRET stores NT clear). JMP and IRET clear the old busy
+  bit; CALL and interrupts write the back link and set NT; JMP leaves NT
+  as each TSS has it. The new task's registers, EFLAGS, EIP, LDTR,
+  segments and, from a 386 TSS while paging is on, CR3 are loaded; TR
+  takes the new TSS (busy) and CR0.TS is set. A 286 TSS gives FFFFh upper
+  register halves and null FS/GS; a 386 TSS with VM enters V86 mode. An
+  exception's error code goes on the new task's stack.
+- Faults: #GP for a busy or non-TSS target or too low a DPL, #NP when
+  not present, #TS for a short TSS, a bad LDT or a bad new segment. Not
+  modelled: the 386 raises the last group in the new task after the
+  switch; here every check comes first and the old task stays as it was.
+  New-task descriptor reads and the error-code push use the old CR3; the
+  TSS T bit is ignored.
+- Transfer (privilege.rs) gains a task part; commit takes EFLAGS and its
+  undefined markers. Gate gains `task` for IDT task gates. Far JMP and
+  CALL now flush lazy flags, since a task switch stores EFLAGS.
+- CLTS wrote only the low CR0 word, clearing PG (found by test386 POST
+  22h, whose TS handler runs CLTS with paging on). It now keeps every
+  other CR0 bit and needs CPL 0 (#GP(0) above it and in V86 mode).
+
+Local Linux: 806 Rust tests pass, 3 ignored, release (7 new in task.rs;
+2 older expectations changed from a stop to a task gate and a task
+return). The generated-backend suite has 278 cases (1 new: pm_task, CALL
+to a TSS and IRET back). test386 with the 128 KB ROM (built locally,
+scratchpad only) now passes POST 22h, all of its task-switch tests, then
+0Bh-19h, and stops in POST 1Ah (ENTER at ring 3 on a supervisor stack
+page) as the 64 KB ROM does. SingleStepTests/80386 was not rerun.
+
 # Observed DOS native blocks — 9 November 2026
 
 The DOS profiling writer now records up to 120 million interpreted steps,

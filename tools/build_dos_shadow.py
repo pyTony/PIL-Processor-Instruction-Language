@@ -20,10 +20,18 @@ def main():
     parser.add_argument('--steps', type=int, default=2_000_000, help='profiling step budget (default 2000000; maximum 120000000)')
     parser.add_argument('--sites', type=int, default=512, help='maximum compiled instruction sites (default 512 hottest sites)')
     parser.add_argument('--keys', type=Path, help='ASCII training keystrokes')
+    parser.add_argument('--profile-clock', type=int, metavar='UTC_SECONDS',
+                        help='enable real-time BIOS/PIT timer interrupts during profiling; offset in seconds east of UTC')
+    parser.add_argument('--train-mount', type=Path, metavar='DIR',
+                        help='copy game files to a disposable writable DOS drive for isolated training')
     parser.add_argument('--verify', action='store_true', help='run generated guard/state tests; for Mandelbrot, compare full VGA output too')
     args = parser.parse_args()
     if not 1 <= args.steps <= 120_000_000 or not 1 <= args.sites <= 65_536:
         parser.error('--steps must be 1..120000000 and --sites 1..65536')
+    if args.profile_clock is not None and not -50_400 <= args.profile_clock <= 50_400:
+        parser.error('--profile-clock must be -50400..50400 seconds')
+    if args.train_mount is not None and not args.train_mount.is_dir():
+        parser.error('--train-mount must be a directory')
     program = args.program.resolve()
     if program.suffix.lower() not in ('.com', '.exe') or not program.is_file():
         parser.error('program must be an existing DOS .COM or .EXE')
@@ -54,6 +62,14 @@ def main():
         source = Path(temporary) / 'backend.rs'
         print(f'Profiling {program.name}: at most {args.steps:,} steps; retaining {args.sites} sites', flush=True)
         profile = [str(engine), '--emit-dos-backend', str(program), str(source), '--steps', str(args.steps), '--sites', str(args.sites)]
+        if args.profile_clock is not None:
+            profile += ['--clock-offset', str(args.profile_clock)]
+        if args.train_mount is not None:
+            # DOS folder mounts permit writes. Never expose the original folder
+            # to a profiling guest, even if that guest modifies or deletes files.
+            train_copy = Path(temporary) / 'dos-drive'
+            shutil.copytree(args.train_mount.resolve(), train_copy, symlinks=True)
+            profile += ['--mount', str(train_copy)]
         if args.keys:
             profile += ['--keys', str(args.keys.resolve())]
         result = subprocess.run(profile, cwd=ROOT, text=True, stdout=subprocess.PIPE, check=True)
@@ -74,6 +90,8 @@ def main():
                 'engine': native.name, 'engine_sha256': hashlib.sha256(pending.read_bytes()).hexdigest(),
                 'profiling_result': result.stdout.strip(), 'execution': 'observed compiled blocks plus interpreter fallback; linked Dine service',
                 'profiling_steps': args.steps, 'max_sites': args.sites,
+                'profile_clock_offset_seconds': args.profile_clock,
+                'training_mount_used': args.train_mount is not None,
                 'automatic_loading': False, 'guard_tests_verified': args.verify}
     if args.verify:
         subprocess.run(['cargo', 'test', '--release', '--locked', '--target', host, 'shadow_backend::guard_tests', '--', '--nocapture'], cwd=ROOT, env=env, check=True)

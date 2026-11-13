@@ -68,7 +68,7 @@ def main():
         pending_binary = work / name
         subprocess.run([str(engine), "--emit-dos-standalone", str(guest), str(pending_source)],
                        cwd=ROOT, env=env, check=True)
-        subprocess.run(["rustc", "--edition=2021", "-O", "-Ccodegen-units=1",
+        subprocess.run(["rustc", "--edition=2021", "-O", "-Ccodegen-units=1", "-A", "unused",
                         str(pending_source), "-o", str(pending_binary)], cwd=ROOT, check=True)
         record = {
             "format": 1,

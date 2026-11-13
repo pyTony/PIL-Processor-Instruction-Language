@@ -114,16 +114,17 @@ impl Descriptor {
 /// An IDT interrupt or trap gate, or a call gate: target selector and
 /// offset, whether it is a trap gate (IF stays as it is), whether it is a
 /// 386 gate (32-bit frame and offset) rather than a 286 one, and for a call
-/// gate the number of stack parameters it copies to an inner level.
+/// gate the number of stack parameters it copies to an inner level. An IDT
+/// task gate has `task` set and names a TSS selector (task.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Gate { pub selector: u16, pub offset: u32, pub trap: bool, pub big: bool, pub count: u8 }
+pub struct Gate { pub selector: u16, pub offset: u32, pub trap: bool, pub big: bool, pub count: u8, pub task: bool }
 impl Gate {
     /// Decodes the gate fields of a raw 8-byte descriptor of a 386 (`big`)
     /// or 286 gate.
     pub fn decode(raw: u64, big: bool) -> Self {
         let low = (raw & 0xffff) as u32;
         let offset = if big { low | (((raw >> 48) as u32) << 16) } else { low };
-        Self { selector: (raw >> 16) as u16, offset, trap: (raw >> 40) & 1 != 0, big, count: ((raw >> 32) & 0x1f) as u8 }
+        Self { selector: (raw >> 16) as u16, offset, trap: (raw >> 40) & 1 != 0, big, count: ((raw >> 32) & 0x1f) as u8, task: false }
     }
 }
 /// A segment register load, ready to commit: the visible selector, the new
@@ -254,9 +255,9 @@ impl SegmentState {
         let Some(at)=self.descriptor_address(selector) else{return Err(gp(code));};
         let d=Descriptor::decode(read(at)?);
         if !d.segment(){
-            // Call gates are read by privilege.rs before it gets here; task
-            // gates and TSS descriptors (task switches) are not modelled yet.
-            return Err(if reg==1{ExecError::InvalidContext}else{gp(code)});
+            // Call gates, task gates and TSS descriptors are read by
+            // privilege.rs before a far JMP or CALL gets here.
+            return Err(gp(code));
         }
         let (readable_or_writable,conforming)=(d.access&2!=0,d.access&4!=0);
         let mut visible=selector;
@@ -328,7 +329,8 @@ impl SegmentState {
     /// a 286 or 386 interrupt or trap gate, for INT n/INT3/INTO (`software`)
     /// a gate DPL of at least CPL, and the present bit. Faults name the IDT
     /// entry (vector*8+2) with EXT (bit 0) set when an exception or external
-    /// event is being delivered. Task gates are not modelled yet.
+    /// event is being delivered. A task gate comes back with `task` set
+    /// and its TSS selector, after the same DPL and present checks.
     pub fn interrupt_gate(&self,vector:u8,software:bool,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<Gate,ExecError>{
         let code=u16::from(vector)*8+2+u16::from(!software);
         let gp=ExecError::GeneralProtection{eip,error_code:code};
@@ -337,10 +339,10 @@ impl SegmentState {
         if at+7>u32::from(limit){return Err(gp);}
         let raw=read(base.wrapping_add(at))?;
         let access=(raw>>40) as u8;
-        let big=match access&0x1f{0x06|0x07=>false,0x0e|0x0f=>true,0x05=>return Err(ExecError::InvalidContext),_=>return Err(gp)};
+        let (big,task)=match access&0x1f{0x06|0x07=>(false,false),0x0e|0x0f=>(true,false),0x05=>(false,true),_=>return Err(gp)};
         if software&&((access>>5)&3)<self.cpl(){return Err(gp);}
         if access&0x80==0{return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
-        Ok(Gate{count:0,..Gate::decode(raw,big)})
+        Ok(Gate{count:0,task,..Gate::decode(raw,big)})
     }
     /// The code segment an interrupt gate names: a present code segment
     /// with DPL at most CPL. A conforming one runs at CPL; a nonconforming

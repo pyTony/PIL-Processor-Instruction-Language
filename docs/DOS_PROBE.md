@@ -40,14 +40,26 @@ a child PSP with INT 21h AH=55h.
 - Active PSP switch: `p.psp` switches to `DX`, `p.open_handles` reflects the
   inherited JFT handles, `p.dta` resets to `(DX, 0080h)`, and AL is destroyed
   (0F0h) while CF is preserved.
-- Remaining Turbo Pascal IDE blockers:
-  - In-memory child termination: when an in-memory compiled program terminates
-    via `AH=4Ch` without an `exec::Frame`, execution currently stops rather than
-    returning control to the IDE via `PSP:000Ah` (INT 22h).
-  - Floating-point numerics: compiling or running with `{$N+}` requires the
-    80387 coprocessor execution core (phases 2+ under development).
-  - Full interactive Ctrl+F9 execution is not claimed until end-to-end IDE runs
-    are verified.
+- In-memory child termination (issue #151, 11 November 2026):
+  - AH55 keeps a separate PSP/parent-DTA/handle lifecycle, keyed by the active
+    PSP and AH4B nesting depth. Its child returns to the live PSP:000Ah INT22
+    target without restoring the CPU state captured at AH55 and without popping
+    Turbo's parent FreeCOM EXEC frame.
+  - The child's executable RAM is temporarily allowed as an instruction-fetch
+    region. On exit, its owned MCBs are released, the parent PSP/DTA/handles
+    and fetch windows are restored, and AH4Dh can read the termination code.
+    An interior/borrowed PSP does **not** free its parent's MCB.
+  - Synthetic guest tests cover direct Turbo-style launch and a simulated
+    FreeCOM -> AH4B Turbo -> AH55 child -> AH4Ch return, including two child runs.
+    These tests do not establish that the actual Turbo Pascal IDE succeeds.
+- Remaining Turbo Pascal IDE verification and blockers:
+  - The actual IDE Ctrl+F9 must compile/run a program, return to Turbo, and
+    allow DIR after exiting the IDE. Capture --keylog and PILdos-stops.jsonl.
+  - After any premature IDE exit, compare prompt keyboard echo with a clean
+    FreeCOM session; log IRQ1, INT09/08/1C, PIC state, raw_keyboard, idle_hint,
+    CS:IP, and video mode before changing the Tk key scheduling.
+  - Programs using unsupported 80387 operations may still stop until numerical
+    coprocessor execution is sufficiently implemented.
 
 # PIC reinitialization (ICW1-ICW4) for CWSDPMI — 8 November 2026
 

@@ -273,8 +273,10 @@ if __name__ == "__main__":
                         if not n:want=(a,initial,u)
                         else:
                             result=((x<<n) if op=="shl" else (x>>n) if op=="shr" else ((x-(1<<width) if x&sign else x)>>n))&mask
-                            cf_undefined=op!="sar" and n>=width
-                            cf=0 if cf_undefined else (x>>(width-n))&1 if op=="shl" else int(bool(x&sign)) if n>=width else (x>>(n-1))&1
+                            # CF is the last bit shifted out up to a count equal to the width
+                            # (the 386, test386 POST EEh); above it SHL/SHR leave CF undefined.
+                            cf_undefined=op!="sar" and n>width
+                            cf=0 if cf_undefined else (x>>(width-n))&1 if op=="shl" else (x>>(n-1))&1 if op=="shr" else int(bool(x&sign)) if n>=width else (x>>(n-1))&1
                             of=0 if n!=1 or op=="sar" else int(bool((x^result)&sign)) if op=="shl" else int(bool(x&sign))
                             flags=(initial&~0x8d5)|cf|(int((result&255).bit_count()%2==0)<<2)|(int(result==0)<<6)|(int(bool(result&sign))<<7)|(of<<11)
                             want=((a&~mask)|result,flags,16|(0x800 if n>1 else 0)|int(cf_undefined))

@@ -4,7 +4,7 @@ use crate::{Cpu, guest::Image, memory::Ram};
 #[path = "fpu_decode.rs"]
 mod operations;
 #[allow(unused_imports)]
-pub use operations::{classify, DecodeError, Operation};
+pub use operations::{classify, Arithmetic, DecodeError, Operation};
 #[path = "fpu_state.rs"]
 mod state;
 #[allow(unused_imports)]
@@ -15,6 +15,8 @@ mod present;
 pub use present::PresentFpu;
 #[path = "fpu_convert.rs"]
 mod convert;
+#[path = "fpu_math.rs"]
+mod math;
 #[path = "fpu_address.rs"]
 mod address;
 
@@ -32,6 +34,8 @@ impl Default for Fpu {
 }
 impl Fpu {
     pub fn present() -> Self { Self::Present(PresentFpu::default()) }
+    // Kept as an inspection hook for tests and debugger integration.
+    #[allow(dead_code)]
     pub fn state(&self) -> Option<&X87State> {
         match self { Self::Absent(_) => None, Self::Present(fpu) => Some(&fpu.state) }
     }
@@ -39,7 +43,7 @@ impl Fpu {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Absent(device) => device.name(),
-            Self::Present(_) => "80387 register backend (partial)",
+            Self::Present(_) => "80387 finite arithmetic backend (partial)",
         }
     }
     pub fn equipment(&self, value: u16) -> u16 {
@@ -69,6 +73,9 @@ pub struct Instruction {
 /// Decode the CPU's ESC envelope, without interpreting the coprocessor opcode.
 /// Fetch only bytes belonging to this instruction; WAIT is a separate instruction.
 /// Prefix/address sizes follow the existing real-mode decoder's profile.
+// Convenience decoder used by contract tests; production decoding supplies
+// its actual CS default address size through decode_with_default.
+#[allow(dead_code)]
 pub fn decode<E>(fetch: impl FnMut(u32) -> Result<u8, E>) -> Result<Option<Instruction>, E> {
     decode_with_default(fetch,false)
 }
@@ -130,9 +137,12 @@ pub fn decode_with_default<E>(mut fetch: impl FnMut(u32) -> Result<u8, E>,
 }
 
 impl AbsentFpu {
+    // Retain these methods for the explicitly swappable absent-FPU contract.
+    #[allow(dead_code)]
     pub fn available(&self) -> bool { false }
     pub fn name(&self) -> &'static str { "80387 unavailable (no coprocessor installed)" }
     /// BIOS equipment bit 1 is shared by INT 11h, the BDA and CMOS.
+    #[allow(dead_code)]
     pub fn equipment(&self, value: u16) -> u16 {
         (value & !2) | if self.available() { 2 } else { 0 }
     }

@@ -92,18 +92,54 @@ compiled blocks yet**. A real `Stop::Exit` becomes the process exit status.
 Budget stops continue automatically. At a DOS keyboard wait, the terminal
 accepts Enter and enqueues its BIOS scan/ASCII key.
 
-For a 16-colour planar VGA mode, the initial host-only display is a sampled
-**80x24 truecolour terminal preview** shown at the first keyboard wait. This
-is not a graphical 640x480 window, live frame renderer or SDL replacement.
-The actual framebuffer continues to be the existing shared Dine VGA model,
-including 0x12 and mapped planes. Visual output should be tested in an ANSI
-truecolour terminal. Text output uses the existing CP437 decoder.
+The Windows Dine DLL now provides a **live, host-native Win32/GDI VGA
+window** for planar VGA modes 0Dh/0Eh/10h/12h and linear or unchained mode
+13h. No third-party SDL/wgpu or Rust GUI crate is needed for this first
+desktop display. The window samples the existing emulated VGA planes/DAC,
+not a new graphics implementation. BIOS characters already drawn with the
+software graphics font appear automatically because they are pixels in VGA
+memory. Display updates are attempted at bounded interpreter slices with
+an 80 ms minimum interval, and the last framebuffer is shown at input wait.
+The image is stretched to a 4:3 desktop view, preserving intended VGA pixel
+aspect ratios across 320x200 and 640x350 modes.
+
+**Keyboard and text remain in the native terminal.** The non-activating
+display window does not capture keystrokes, send game events or replace
+DOS console I/O. At a BIOS input wait press Enter in the launching terminal.
+Later interactive games will need a dedicated event-driven keyboard/mouse
+frontend rather than terminal-line input. DOS text output continues through
+the existing CP437 decoder. Text-mode VGA custom font plane contents are
+still not presented as bitmapped glyphs in the desktop window.
+
+The mode is selected at startup with `DINE_VIDEO`:
+
+| `DINE_VIDEO` | Windows | Linux / Termux / other |
+| --- | --- | --- |
+| unset / `window` | Live native VGA window when graphics mode is active | Existing ANSI preview |
+| `ansi` | 80x24 ANSI preview at input wait | Same |
+| `off` | No graphical presentation, normal DOS text and terminal keyboard | Same |
+
+Example on Windows (the original COM input is not needed at launch):
+
+```powershell
+$env:DINE_VIDEO = "window"
+.\programs\compiled\Dine_MANDVGA.exe
+Remove-Item Env:DINE_VIDEO
+```
+
+This GDI frontend is limited to **Windows desktop** today; it doesn't
+pretend to be a cross-platform SDL implementation. CI and server hosts can
+use `DINE_VIDEO=off` to avoid terminal escape sequences. The VGA sampler
+does not emulate new graphics hardware or accelerate the DOS CPU.
 
 The runtime C ABI is version 1 and currently exports
 `dine_abi_version() -> u32` and
 `dine_run(bytes, byte_count, name, tail) -> i32`.
 The loader verifies the ABI before invoking guest code and reports a missing
 or incompatible library rather than running without DOS services.
+
+See [PILdos native CGA/VGA graphics](PILDOS_RUST_GRAPHICS.md) for the
+opt-in Rust window with Python terminal and BIOS keyboard bridge.
 
 ## Refactoring direction
 
@@ -142,5 +178,6 @@ Verify that the COM inputs can be renamed or removed **after** compilation,
 the EXE still runs when the DLL is alongside it, and a missing DLL fails
 clearly. Compare the Mandelbrot guest state and VGA planes to
 `tools/verify_mandel_vga.py` and the linked-Dine reference before claiming
-image fidelity. No new runtime benchmarks, builds or graphics parity checks
-have been executed in this chat.
+image fidelity. Full-window presentation and performance require manual Windows testing;
+no run-time benchmark or graphics-window parity check has been executed
+in this chat.

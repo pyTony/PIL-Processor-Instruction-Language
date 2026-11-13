@@ -106,7 +106,7 @@ fn the_conforming_target_keeps_cpl_and_the_gate_type_checks_come_first(){
     assert_eq!(m.interrupt_gate(0x22,true,0x500,&mut read),Err(ExecError::GeneralProtection{eip:0x500,error_code:0x112}));
     assert_eq!(m.interrupt_gate(0x22,false,0x500,&mut read),Err(ExecError::GeneralProtection{eip:0x500,error_code:0x113}));
     assert_eq!(m.interrupt_gate(0x06,true,0x500,&mut read),Err(ExecError::SegmentNotPresent{eip:0x500,error_code:0x32}));
-    assert_eq!(m.interrupt_gate(0x07,true,0x500,&mut read),Err(ExecError::InvalidContext),"task gates are not modelled yet");
+    assert!(m.interrupt_gate(0x07,true,0x500,&mut read).unwrap().task,"a task gate comes back for task.rs");
     assert_eq!(m.interrupt_gate(0x10,true,0x500,&mut read),Err(ExecError::GeneralProtection{eip:0x500,error_code:0x82}),"an empty entry is not a gate");
     assert_eq!(m.interrupt_target(0x10,false,0x500,&mut read),Err(ExecError::GeneralProtection{eip:0x500,error_code:0x11}));
     assert_eq!(m.interrupt_target(0x28,true,0x500,&mut read),Err(ExecError::SegmentNotPresent{eip:0x500,error_code:0x28}));
@@ -204,9 +204,11 @@ fn iretd_at_the_same_level_restores_eip_cs_and_eflags(){
 }
 
 #[test]
-fn iret_task_returns_stop_and_vm_in_the_frame_counts_only_at_cpl0(){
+fn iret_with_nt_is_a_task_return_and_vm_in_the_frame_counts_only_at_cpl0(){
+    // NT=1 is a task return (tests/unit/task.rs); with no TSS in TR it is
+    // #TS before anything is read from the stack.
     let (mut cpu,mut image,mut ram)=iret(0x0000_0002,false);cpu.eflags|=0x4000;
-    assert_eq!(step(&mut image,&mut ram,&mut cpu),Err(ExecError::InvalidContext),"NT=1 is a task return");
+    assert!(matches!(step(&mut image,&mut ram,&mut cpu),Err(ExecError::InvalidTss{..})),"NT=1 is a task return");
     // VM=1 at CPL 0 is the return to virtual-8086 mode (tests/unit/v86.rs).
     // At CPL 3 the VM bit in the frame is ignored.
     let (mut cpu,mut image,mut ram)=iret(0x0002_0002,true);
