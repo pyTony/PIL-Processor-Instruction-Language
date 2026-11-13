@@ -1,3 +1,32 @@
+# Precompiled instruction forms and run-time blocks — 13 November 2026
+
+Tony asked to integrate native Rust compiling into the shared libraries
+(tracking issue #183). Step 1-3 of docs/development/BLOCK_COMPILER.md; one
+`pil` binary and the `dine` library, the same for every program.
+- `pil --emit-precompiled-forms src/precompiled/forms.rs [--check]`
+  enumerates the real-mode decoder and writes one Rust function per PIL
+  form (2,669 forms, 13.5 MB, committed, `linguist-generated`). Immediates
+  that varied between enumerated decodes are run-time slots; the rest are
+  literals checked at lookup. CI fails when the file is stale: regenerate
+  it after any decoder, ISA or emitter change.
+- src/block_compiler/engine.rs: the DOS loop plans blocks (at most 16
+  straight-line PIL instructions; ends after control transfer, store,
+  context write, interrupt shadow, TF/IF/IOPL/NT/VM write) and runs one per
+  loop iteration with entry guards (segment state, fetch window, unchanged
+  bytes). Port I/O, 80387, INT, HLT and 0000h-0FFFh, A0000h+ never join.
+  Probe instruction mixes are unchanged.
+- `PIL_PRECOMPILED=off` interpreter only; `verify` native and interpreter
+  in lockstep (copies RAM each step, slow). Protected-mode and 32-bit-stack
+  forms are not in the table yet (interpreter).
+
+Local Linux release: 808 Rust tests pass, 2 ignored (5 new in
+tests/unit/precompiled.rs: >10,000 sampled forms against the interpreter
+on full state, blocks against the interpreter per slice on 4 fixtures and a
+self-modifying loop, lockstep verify). GUI tests 77 run, 6 skipped. Probe
+1M steps, whole process, reports identical: MANDEL 143 -> 71 ms, MANDCGA
+240 -> 58 ms; verify_mandel_vga.py 9.5 s -> 2.6 s. Release build about
+1 m 40 s here, binary 8.5 MB.
+
 # PIL and Dine are program-independent libraries — 13 November 2026
 
 Standing rules (Tony, 13 November 2026):

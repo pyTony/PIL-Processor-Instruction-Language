@@ -140,7 +140,7 @@ impl Session{
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
-        let(blocks,native)=self.backend.as_ref().map_or((0,0),|b|b.block_stats());
+        let(blocks,native)=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(b),_)=>b.block_stats(),(None,Some(p))=>(p.blocks.blocks,p.blocks.instructions),(None,None)=>(0,0)};
         let single=self.backend.as_ref().map_or(0,|b|b.single_stats());
         let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
         let native_total=native+single;

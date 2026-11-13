@@ -1974,7 +1974,8 @@ fn run_test386_rom_image() {
 
 #[test]
 fn session_cache_survives_slices_and_rechecks_changed_code(){
- let p=load(&[0xeb,0xfe],"loop.com").unwrap();
+ // The decode cache itself: no run-time blocks.
+ let mut p=load(&[0xeb,0xfe],"loop.com").unwrap();p.blocks.mode=Some(crate::precompiled::Mode::Off);
  let first=run(p,1).unwrap();
  assert_eq!(first.loaded.cache.stats().misses,1);
  let mut second=run(first.loaded,1).unwrap();
