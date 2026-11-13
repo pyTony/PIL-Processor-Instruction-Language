@@ -41,6 +41,8 @@ mod console;
 mod color_text;
 #[path="dos_session.rs"]
 pub mod session;
+#[path="dos_host_console.rs"]
+pub(crate) mod host_console;
 #[path="dos_files.rs"]
 mod files;
 #[path="dos_nls.rs"]

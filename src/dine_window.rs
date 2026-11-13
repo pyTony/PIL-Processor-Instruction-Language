@@ -9,12 +9,23 @@ pub(crate) struct Frame {
     pub(crate) pixels: Vec<u32>,
 }
 
+/// Input from an interactive window, before any DOS mapping: a typed
+/// character, a key that types none (Windows virtual-key code), or the mouse
+/// in client coordinates.
+#[cfg(windows)]
+#[derive(Clone,Copy,Debug)]
+pub(crate) enum Input{
+    Char{ch:char,shift:bool,ctrl:bool,alt:bool},
+    Key{vk:u16,shift:bool,ctrl:bool,alt:bool},
+    Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16},
+}
+
 #[cfg(windows)]
 pub(crate) use self::windows::Window;
 
 #[cfg(windows)]
 mod windows {
-    use super::Frame;
+    use super::{Frame,Input};
     // This module is also copied into generated standalone DOS executables.
     // Keep diagnostics self-contained: standalone code has no dine_display.
     fn debug_log(message:&str) {
@@ -41,6 +52,7 @@ mod windows {
     const WS_OVERLAPPEDWINDOW:u32=0x00cf0000;
     const WS_EX_NOACTIVATE:u32=0x08000000;
     const SW_SHOWNOACTIVATE:i32=4;
+    const SW_SHOWNORMAL:i32=1;
     const CW_USEDEFAULT:i32=i32::MIN;
     const DIB_RGB_COLORS:u32=0;
     const SRCCOPY:u32=0x00cc0020;
@@ -50,6 +62,29 @@ mod windows {
     static WINDOW:AtomicIsize=AtomicIsize::new(0);
     static CLOSED:AtomicBool=AtomicBool::new(false);
     static PAINT_REPORTED:AtomicBool=AtomicBool::new(false);
+    /// Set for a window that takes keyboard and mouse input (the DOS console).
+    static INPUT:OnceLock<Mutex<Option<mpsc::Sender<Input>>>>=OnceLock::new();
+    static TITLE:OnceLock<Mutex<String>>=OnceLock::new();
+    const WM_KEYDOWN:u32=0x100;
+    const WM_CHAR:u32=0x102;
+    const WM_SYSKEYDOWN:u32=0x104;
+    const WM_SYSCHAR:u32=0x106;
+    const WM_MOUSEMOVE:u32=0x200;
+    const WM_MBUTTONUP:u32=0x208;
+    const VK_SHIFT:i32=0x10;
+    const VK_CONTROL:i32=0x11;
+    const VK_MENU:i32=0x12;
+    const VK_F4:usize=0x73;
+
+    fn send(input:Input)->bool{
+        let Some(state)=INPUT.get() else {return false;};
+        let Ok(guard)=state.lock() else {return false;};
+        match guard.as_ref(){Some(tx)=>{let _=tx.send(input);true},None=>false}
+    }
+    fn held(vk:i32)->bool{unsafe{GetKeyState(vk)<0}}
+    /// Keys that type no character reach WM_KEYDOWN only: arrows, the editing
+    /// block, F1-F12 and Ctrl+Break.
+    fn untyped(vk:usize)->bool{matches!(vk,0x03|0x21..=0x28|0x2d|0x2e|0x70..=0x7b)}
 
     #[repr(C)]
     #[derive(Default,Clone,Copy)]
@@ -110,6 +145,8 @@ mod windows {
         fn GetClientRect(window:Handle,area:*mut Rect)->i32;
         fn GetWindowRect(window:Handle,area:*mut Rect)->i32;
         fn IsWindowVisible(window:Handle)->i32;
+        fn GetKeyState(key:i32)->i16;
+        fn SetFocus(window:Handle)->Handle;
     }
     #[link(name="gdi32")]
     extern "system" {
@@ -152,6 +189,26 @@ mod windows {
                 }
                 0
             },
+            WM_KEYDOWN|WM_SYSKEYDOWN if untyped(w)&&!(msg==WM_SYSKEYDOWN&&w==VK_F4)=>{
+                let input=Input::Key{vk:w as u16,shift:held(VK_SHIFT),ctrl:held(VK_CONTROL),alt:held(VK_MENU)};
+                if send(input){0}else{DefWindowProcW(hwnd,msg,w,l)}
+            },
+            WM_CHAR|WM_SYSCHAR=>{
+                let Some(ch)=char::from_u32(w as u32) else {return 0;};
+                let (ctrl,alt)=(held(VK_CONTROL),msg==WM_SYSCHAR||held(VK_MENU));
+                // AltGr arrives as Ctrl+Alt with the character it typed.
+                let altgr=ctrl&&alt&&!ch.is_control();
+                let input=Input::Char{ch,shift:held(VK_SHIFT),ctrl:ctrl&&!altgr,alt:alt&&!altgr};
+                if send(input){0}else{DefWindowProcW(hwnd,msg,w,l)}
+            },
+            WM_MOUSEMOVE..=WM_MBUTTONUP=>{
+                let mut rect=Rect::default();
+                GetClientRect(hwnd,&mut rect);
+                let (x,y)=(i32::from(l as u16 as i16),i32::from((l>>16) as u16 as i16));
+                let buttons=(w&1) as u16|((w>>1)&1) as u16*2|((w>>4)&1) as u16*4;
+                let input=Input::Mouse{x,y,width:rect.right-rect.left,height:rect.bottom-rect.top,buttons};
+                if send(input){0}else{DefWindowProcW(hwnd,msg,w,l)}
+            },
             WM_CLOSE=>{DestroyWindow(hwnd);0},
             WM_DESTROY=>{
                 debug_log("WM_DESTROY: VGA window closed");
@@ -168,7 +225,10 @@ mod windows {
         debug_log("Win32 video worker entered");
         unsafe{
             let class:Vec<u16>="DineVgaFrame\0".encode_utf16().collect();
-            let title:Vec<u16>="Dine VGA (keyboard in terminal)\0".encode_utf16().collect();
+            let title=TITLE.get().and_then(|t|t.lock().ok().map(|t|t.clone()))
+                .unwrap_or_else(||"Dine VGA (keyboard in terminal)".into());
+            let title:Vec<u16>=title.encode_utf16().chain([0]).collect();
+            let interactive=INPUT.get().is_some_and(|i|i.lock().is_ok_and(|i|i.is_some()));
             let instance=GetModuleHandleW(ptr::null());
             let descriptor=WndClass{
                 style:0,proc:Some(wndproc),class_extra:0,window_extra:0,
@@ -184,7 +244,7 @@ mod windows {
                 return;
             }
             debug_log("RegisterClassW succeeded; calling CreateWindowExW (WS_EX_NOACTIVATE)");
-            let hwnd=CreateWindowExW(WS_EX_NOACTIVATE,class.as_ptr(),title.as_ptr(),
+            let hwnd=CreateWindowExW(if interactive{0}else{WS_EX_NOACTIVATE},class.as_ptr(),title.as_ptr(),
                 WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,664,520,
                 ptr::null_mut(),ptr::null_mut(),instance,ptr::null_mut());
             if hwnd.is_null(){
@@ -198,7 +258,8 @@ mod windows {
             CLOSED.store(false,Ordering::Release);
             WINDOW.store(hwnd as isize,Ordering::Release);
             let _=ready.send(hwnd as isize);
-            let previous_visible=ShowWindow(hwnd,SW_SHOWNOACTIVATE);
+            let previous_visible=ShowWindow(hwnd,if interactive{SW_SHOWNORMAL}else{SW_SHOWNOACTIVATE});
+            if interactive{SetFocus(hwnd);}
             let now_visible=IsWindowVisible(hwnd);
             let mut bounds=Rect::default();
             let rect_ok=GetWindowRect(hwnd,&mut bounds);
@@ -227,6 +288,13 @@ mod windows {
     }
     impl Window{
         pub(crate) fn new()->Self{Self{worker:None,ready:None,last_had_frame:None}}
+        /// A window that takes keyboard and mouse input and sends it to
+        /// `input`. One per process, as the frame is.
+        pub(crate) fn interactive(title:&str,input:mpsc::Sender<Input>)->Self{
+            if let Ok(mut slot)=INPUT.get_or_init(||Mutex::new(None)).lock(){*slot=Some(input);}
+            if let Ok(mut slot)=TITLE.get_or_init(||Mutex::new(String::new())).lock(){*slot=title.into();}
+            Self::new()
+        }
         pub(crate) fn no_frame(&mut self) {
             if self.last_had_frame!=Some(false) {
                 debug_log("scanout absent: text mode or unsupported graphics BDA mode");

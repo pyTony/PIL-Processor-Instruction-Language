@@ -13,6 +13,10 @@ For the experimental `--mouse` DOS INT 33h polling driver, Tk pointer
 mapping, limitations, and regression checks, see
 [DOS mouse support](DOS_MOUSE.md).
 
+To run a DOS session in the `pil` process, with its own keyboard and
+screen (the host terminal, or a window on Windows) and no Python, see
+[DOS console in Rust](DOS_CONSOLE.md).
+
 PIL and Dine are **program-independent libraries**, used the same way for
 every program. The per-program builds (shadow engines, standalone
 translation, `Dine_<program>` launchers) were removed on 13 November 2026;

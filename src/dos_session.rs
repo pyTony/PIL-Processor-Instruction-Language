@@ -51,6 +51,14 @@ impl Session{
     }
     #[cfg(test)]
     pub fn loaded(&self)->Option<&Loaded>{self.loaded.as_ref()}
+    /// The machine, for a host console in this process.
+    pub(crate) fn machine(&self)->Option<&Loaded>{self.loaded.as_ref()}
+    pub(crate) fn machine_mut(&mut self)->Option<&mut Loaded>{self.loaded.as_mut()}
+    pub(crate) fn steps(&self)->usize{self.steps}
+    /// Record a stop in the stop log, as `--dos-session` does.
+    pub(crate) fn log_stop(&self,logger:&mut stoplog::Logger){
+        if self.status().0=="stopped"{if let Some(p)=self.loaded.as_ref(){logger.record(p,"stopped",&self.status().1,self.steps,&self.exceptions,self.exception_count);}}
+    }
     /// Queues one key as the BIOS stores it: scan code in the high byte, ASCII low.
     pub fn key(&mut self,ascii:u8,scan:u8)->Result<bool,String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
@@ -62,6 +70,21 @@ impl Session{
         let vector=p.speaker.pic.keyboard_vector();
         if vector!=0x09{return Err(format!("IRQ1 through INT {vector:02X}h (PIC base moved), which has no program handler, is not modelled"));}
         console::enqueue(p,word)
+    }
+    /// The host mouse at Microsoft virtual coordinates X, Y; BUTTONS bit 0/1/2
+    /// is left/right/middle.
+    pub(crate) fn mouse(&mut self,x:u16,y:u16,buttons:u16)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("mouse mode: {e:?}"))?as u8;
+        p.mouse.host(x,y,buttons&7,mode);Ok(())
+    }
+    /// Ctrl+Break. The inner error is a refusal the frontend may show.
+    pub(crate) fn ctrl_break(&mut self)->Result<Result<(),String>,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        let through_irq=keyboard::hooked(p)?||(super::vectors::answered(p,p.speaker.pic.keyboard_vector())?&&super::vectors::reachable(p,0x1b)?);
+        if through_irq{
+            Ok(if keyboard::ctrl_break(p)?{Ok(())}else{Err("keyboard scan codes still waiting for the program".into())})
+        }else{Ok(brk::ctrl_break(p))}
     }
     fn key_edge(&mut self,ascii:u8,scan:u8,down:bool)->Result<bool,String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
@@ -99,7 +122,7 @@ impl Session{
         let (column,row)=((u32::from(view.x)*columns/640).min(columns-1),(u32::from(view.y)/8).min(24));
         Ok(Some(((row*columns+column)*2)as usize))
     }
-    fn status(&self)->(&'static str,String){
+    pub(crate) fn status(&self)->(&'static str,String){
         match &self.stop{
             Stop::Budget=>("running",String::new()),Stop::WaitingForInput=>("waiting_input",String::new()),
             Stop::Exit(code)=>("exit",format!("exit code {code}")),
@@ -203,11 +226,7 @@ impl Session{
             // X/Y are Microsoft virtual mouse coordinates; BUTTONS bit 0/1/2
             // represents left/right/middle. Events never enter the BIOS key ring.
             ["mouse",x,y,buttons]=>match(x.parse::<u16>(),y.parse::<u16>(),buttons.parse::<u16>()){
-                (Ok(x),Ok(y),Ok(buttons)) if buttons<=7=>{
-                    let p=self.loaded.as_mut().ok_or("session state lost")?;
-                    let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("mouse mode: {e:?}"))?as u8;
-                    p.mouse.host(x,y,buttons,mode);(true,String::new(),false)
-                },
+                (Ok(x),Ok(y),Ok(buttons)) if buttons<=7=>{self.mouse(x,y,buttons)?;(true,String::new(),false)},
                 _=>(false,"mouse needs X Y BUTTONS (0..7)".into(),false),
             },
             ["run",n]=>match n.parse::<usize>(){
@@ -293,18 +312,9 @@ impl Session{
             // `break`: Ctrl+Break, as the BIOS and DOS's INT 1Bh handler take it.
             // When the program owns INT 09h or INT 1Bh, Ctrl and Scroll Lock
             // arrive through IRQ1 and the BIOS keyboard handler calls INT 1Bh.
-            ["break"]=>{
-                let p=self.loaded.as_mut().ok_or("session state lost")?;
-                let through_irq=keyboard::hooked(p)?||(super::vectors::answered(p,p.speaker.pic.keyboard_vector())?&&super::vectors::reachable(p,0x1b)?);
-                if through_irq{
-                    match keyboard::ctrl_break(p)?{
-                        true=>(true,String::new(),false),
-                        false=>(false,"keyboard scan codes still waiting for the program".into(),false),
-                    }
-                }else{match brk::ctrl_break(p){
-                    Ok(())=>(true,String::new(),false),
-                    Err(message)=>(false,message,false),
-                }}
+            ["break"]=>match self.ctrl_break()?{
+                Ok(())=>(true,String::new(),false),
+                Err(message)=>(false,message,false),
             },
             ["quit"]=>(true,String::new(),true),
             _=>(false,format!("unknown command: {line}"),false),
@@ -322,6 +332,12 @@ pub(crate) fn quote(text:&str)->String{
 /// and DIR the next drive; TEXT is the program's command line.
 pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config:Option<&str>,fpu_mode:Option<&str>)->Result<(),String>{
     let mut logger=stoplog::Logger::new(log_path,path);
+    let mut session=open(path,mount,args,config,fpu_mode)?;
+    serve_session(&mut session,&mut logger)
+}
+/// Load PATH (a file or IMAGE::INNER) with its drives, configuration, FPU
+/// choice, command line and COM1, as `--dos-session` and `--dos-console` do.
+pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<&str>,fpu_mode:Option<&str>)->Result<Session,String>{
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;
     let bytes=match containers{
@@ -346,7 +362,9 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     }
     if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
     serial::attach(&mut loaded)?;
-    let mut session=Session::new(loaded);
+    Ok(Session::new(loaded))
+}
+fn serve_session(session:&mut Session,logger:&mut stoplog::Logger)->Result<(),String>{
     // The normal interpreted pil.exe owns opt-in Win32 graphics, not Python.
     #[cfg(windows)]
     let mut desktop=std::env::var("DINE_VIDEO").ok()
