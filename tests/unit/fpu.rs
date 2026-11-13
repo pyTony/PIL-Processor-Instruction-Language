@@ -168,14 +168,14 @@ fn present_80387_reports_equipment_and_persists_across_slices() {
 }
 
 #[test]
-fn present_80387_rejects_unimplemented_division_without_retiring() {
-    let mut p=dos::load(&[0xdb,0xe3,0xd8,0xf0,0xcd,0x20],"x87-unsupported.com").unwrap();
+fn present_80387_rejects_unimplemented_fchs_without_retiring() {
+    let mut p=dos::load(&[0xdb,0xe3,0xd9,0xe0,0xcd,0x20],"x87-unsupported.com").unwrap();
     p.fpu=Fpu::present();
     let result=dos::run(p,20).unwrap();
     match result.stop {
         dos::Stop::Fault(message)=>{
             assert!(message.contains("80387 unsupported instruction"),"{message}");
-            assert!(message.contains("d8 f0"),"{message}");
+            assert!(message.contains("d9 e0"),"{message}");
         },
         other=>panic!("{other:?}"),
     }
@@ -436,4 +436,239 @@ fn present_80387_memory_arithmetic_fault_preserves_stack_and_ip() {
     let state=result.loaded.fpu.state().unwrap();
     assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
     assert_eq!(state.status & 0x003f,0);
+}
+
+#[test]
+fn present_80387_fd_iv_computes_exact_ext80_rounded_third() {
+    // FLD m64(3); FLD m64(1); FDIV ST0,ST1; FSTP m80; INT 20h.
+    let code=[0xdd,0x06,0x00,0x02, 0xdd,0x06,0x08,0x02,
+              0xd8,0xf1, 0xdb,0x3e,0x20,0x02, 0xcd,0x20];
+    let mut p=dos::load(&code,"x87-div.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    for (at,hi) in [(0x200,0x4008_0000u32),(0x208,0x3ff0_0000u32)] {
+        p.ram.store(base+at,MemWidth::Dword,0).unwrap();
+        p.ram.store(base+at+4,MemWidth::Dword,hi).unwrap();
+    }
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let bits=u64::from(result.loaded.ram.load(base+0x220,MemWidth::Dword).unwrap())
+        |u64::from(result.loaded.ram.load(base+0x224,MemWidth::Dword).unwrap())<<32;
+    assert_eq!(bits,0xaaaa_aaaa_aaaa_aaab);
+    assert_eq!(result.loaded.ram.load(base+0x228,MemWidth::Word).unwrap(),0x3ffd);
+    assert_eq!(result.loaded.fpu.state().unwrap().status&0x20,0x20);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0x3fff); // ST(0)=3 lives in physical register 7
+}
+
+#[test]
+fn present_80387_fcompp_and_fcom_memory_set_correct_condition_codes() {
+    // FLD1; FLDZ; FCOMPP, then FNSTSW AX; INT20.
+    let code=[0xd9,0xe8,0xd9,0xee,0xde,0xd9,0xdf,0xe0,0xcd,0x20];
+    let mut p=dos::load(&code,"x87-compare.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,20).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.cpu.regs[0]&0x4700,0x0100);
+    assert_eq!(result.loaded.fpu.state().unwrap().top(),0);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+
+    // FLD1; FCOM m32(1): equal without pop; FCOMP m64(2): less and pop.
+    let code=[0xd9,0xe8,0xd8,0x16,0x00,0x02,
+              0xdc,0x1e,0x08,0x02,0xcd,0x20];
+    let mut p=dos::load(&code,"x87-compare-memory.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Dword,0x3f80_0000).unwrap();
+    p.ram.store(base+0x208,MemWidth::Dword,0).unwrap();
+    p.ram.store(base+0x20c,MemWidth::Dword,0x4000_0000).unwrap();
+    let first=dos::run(p,2).unwrap();
+    assert!(matches!(first.stop,dos::Stop::Budget));
+    assert_eq!(first.loaded.fpu.state().unwrap().status&0x4700,0x4000);
+    assert_eq!(first.loaded.fpu.state().unwrap().top(),7);
+    let result=dos::run(first.loaded,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.fpu.state().unwrap().status&0x4700,0x0100);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_m80_exact_transfer_negative_and_protected_atomicity() {
+    let code=[0xdb,0x2e,0x00,0x02,0xdb,0x3e,0x20,0x02,0xcd,0x20];
+    let mut p=dos::load(&code,"x87-tbyte.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let source=Extended80::from_bits(0xc000_0123_4567_89ab,0xbfff);
+    p.ram.store(base+0x200,MemWidth::Dword,source.significand as u32).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,(source.significand>>32)as u32).unwrap();
+    p.ram.store(base+0x208,MemWidth::Word,u32::from(source.sign_exponent)).unwrap();
+    let before=p.clone();
+    // A protected final byte must prevent any output bytes or stack pops.
+    p.ram.protect(base+0x229,1).unwrap();
+    let stopped=dos::run(p,16).unwrap();
+    assert!(matches!(stopped.stop,dos::Stop::Fault(ref s) if s.contains("memory operand")));
+    assert_eq!(stopped.completed,1);
+    assert_eq!(stopped.loaded.cpu.eip,0x104);
+    assert_eq!(stopped.loaded.fpu.state().unwrap().st(0),Some(source));
+    for at in 0x220..=0x229 {
+        assert_eq!(stopped.loaded.ram.load(base+at,MemWidth::Byte).unwrap(),
+                   before.ram.load(base+at,MemWidth::Byte).unwrap());
+    }
+
+    let result=dos::run(before,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let got=u64::from(result.loaded.ram.load(base+0x220,MemWidth::Dword).unwrap())
+        |(u64::from(result.loaded.ram.load(base+0x224,MemWidth::Dword).unwrap())<<32);
+    assert_eq!(got,source.significand);
+    assert_eq!(result.loaded.ram.load(base+0x228,MemWidth::Word).unwrap(),
+               u32::from(source.sign_exponent));
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_invalid_tbyte_and_divide_by_zero_do_not_retire() {
+    let mut p=dos::load(&[0xdb,0x2e,0x00,0x02,0xcd,0x20],
+                        "x87-unnormal.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Dword,1).unwrap();
+    p.ram.store(base+0x204,MemWidth::Dword,0).unwrap();
+    p.ram.store(base+0x208,MemWidth::Word,0x3fff).unwrap(); // missing integer bit
+    let stopped=dos::run(p,8).unwrap();
+    assert!(matches!(stopped.stop,dos::Stop::Fault(ref s) if s.contains("unsupported")));
+    assert_eq!(stopped.completed,0);
+    assert_eq!(stopped.loaded.cpu.eip,0x100);
+    assert_eq!(stopped.loaded.fpu.state().unwrap().tag_word(),0xffff);
+
+    // FLDZ; FLD1; FDIV ST0,ST1 = 1/0, intentionally unsupported until
+    // full masked exception semantics exist.
+    let mut p=dos::load(&[0xd9,0xee,0xd9,0xe8,0xd8,0xf1,0xcd,0x20],
+                        "x87-divzero.com").unwrap();
+    p.fpu=Fpu::present();
+    let stopped=dos::run(p,8).unwrap();
+    assert!(matches!(stopped.stop,dos::Stop::Fault(ref s) if s.contains("unsupported")));
+    assert_eq!(stopped.completed,2);
+    assert_eq!(stopped.loaded.cpu.eip,0x104);
+    let state=stopped.loaded.fpu.state().unwrap();
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.st(1),Some(Extended80::default()));
+}
+
+#[test]
+fn present_80387_dividing_reverse_memory_operands() {
+    // FLD m64(3); FDIVR m64(1) => 1/3; FSTP m80
+    let code=[0xdd,0x06,0x00,0x02,0xdc,0x3e,0x08,0x02,
+              0xdb,0x3e,0x20,0x02,0xcd,0x20];
+    let mut p=dos::load(&code,"x87-fdivr.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    for (at,hi) in [(0x200,0x4008_0000u32),(0x208,0x3ff0_0000u32)] {
+        p.ram.store(base+at,MemWidth::Dword,0).unwrap();
+        p.ram.store(base+at+4,MemWidth::Dword,hi).unwrap();
+    }
+    let result=dos::run(p,20).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x220,MemWidth::Dword).unwrap(),0xaaaa_aaab);
+    assert_eq!(result.loaded.ram.load(base+0x224,MemWidth::Dword).unwrap(),0xaaaa_aaaa);
+    assert_eq!(result.loaded.ram.load(base+0x228,MemWidth::Word).unwrap(),0x3ffd);
+}
+
+#[test]
+fn present_80387_turbo_fnstcw_bx_and_fldcw_roundtrip() {
+    // FNINIT; MOV BX,0200h; FNSTCW [BX] (D9 3F, Turbo Pascal);
+    // FLDCW [BX+2]; FNSTCW [BX+4]; INT 20h.
+    let code=[0xdb,0xe3, 0xbb,0x00,0x02, 0xd9,0x3f,
+              0xd9,0x6f,0x02, 0xd9,0x7f,0x04, 0xcd,0x20];
+    let mut p=dos::load(&code,"x87-control.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0xdead).unwrap();
+    p.ram.store(base+0x202,MemWidth::Word,0x027f).unwrap();
+    p.ram.store(base+0x204,MemWidth::Word,0xdead).unwrap();
+
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Word).unwrap(),0x037f);
+    assert_eq!(result.loaded.ram.load(base+0x202,MemWidth::Word).unwrap(),0x027f);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Word).unwrap(),0x027f);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x027f);
+    assert_eq!(state.status,0);
+    assert_eq!(state.tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_fnstcw_protected_destination_is_atomic() {
+    // FNSTCW [BX] with protection covering the *second* destination byte.
+    let mut p=dos::load(&[0xd9,0x3f,0xcd,0x20],"x87-control-protected.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0xa55a).unwrap();
+    let prior=p.fpu.state().unwrap().clone();
+    p.ram.protect(base+0x201,1).unwrap();
+
+    let result=dos::run(p,8).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s)
+        if s.contains("80387 memory operand")),"{:?}",result.stop);
+    assert_eq!(result.completed,0);
+    assert_eq!(result.loaded.cpu.eip,0x100);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Word).unwrap(),0xa55a);
+    assert_eq!(result.loaded.fpu.state().unwrap(),&prior);
+}
+
+#[test]
+fn present_80387_fldcw_cross_segment_limit_preserves_control() {
+    let mut p=dos::load(&[0xd9,0x2f,0xcd,0x20],"x87-control-limit.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x0b7f).unwrap();
+    p.image.segments[3].limit=0x200; // BX=0200, but word extends to 0201.
+    let prior=p.fpu.state().unwrap().clone();
+
+    let result=dos::run(p,8).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s)
+        if s.contains("80387 memory operand")),"{:?}",result.stop);
+    assert_eq!(result.completed,0);
+    assert_eq!(result.loaded.cpu.eip,0x100);
+    assert_eq!(result.loaded.fpu.state().unwrap(),&prior);
+}
+
+#[test]
+fn present_80387_fnstcw_uses_ss_default_for_bp_and_supports_override() {
+    // FNSTCW [BP-2], then FLDCW ES:[BX], intentionally different source.
+    let code=[0xd9,0x7e,0xfe, 0x26,0xd9,0x2f, 0xcd,0x20];
+    let mut p=dos::load(&code,"x87-control-segments.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[5]=0x302; // [BP-2] points to SS:0300
+    p.cpu.regs[3]=0x200;
+    let ss=p.image.segments[2].base;
+    let es=p.image.segments[0].base;
+    p.ram.store(ss+0x300,MemWidth::Word,0).unwrap();
+    p.ram.store(es+0x200,MemWidth::Word,0x0b7f).unwrap();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(ss+0x300,MemWidth::Word).unwrap(),0x037f);
+    assert_eq!(result.loaded.fpu.state().unwrap().control,0x0b7f);
+}
+
+#[test]
+fn present_80387_fldcw_does_not_silently_enable_unsupported_arithmetic_mode() {
+    // Loading PC=10 is legal. Subsequent FADD still explicitly refuses
+    // unsupported precision-control modes rather than computing wrong data.
+    let code=[0xd9,0x2f, 0xd9,0xe8, 0xd9,0xe8, 0xd8,0xc1, 0xcd,0x20];
+    let mut p=dos::load(&code,"x87-control-precision.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x027f).unwrap();
+    let stopped=dos::run(p,16).unwrap();
+    assert!(matches!(stopped.stop,dos::Stop::Fault(ref s)
+        if s.contains("80387 unsupported")),"{:?}",stopped.stop);
+    assert_eq!(stopped.completed,3);
+    assert_eq!(stopped.loaded.cpu.eip,0x106);
+    let state=stopped.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x027f);
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.st(1),Some(Extended80::from_bits(1u64<<63,0x3fff)));
 }

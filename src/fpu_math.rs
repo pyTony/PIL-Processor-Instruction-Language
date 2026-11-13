@@ -3,6 +3,7 @@
 //! round-to-nearest-even only. NaNs, infinities, denormals, exceptional
 //! exponent ranges and other control-word modes must not execute silently.
 use super::{Arithmetic, Extended80};
+use std::cmp::Ordering;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MathError { Unsupported }
@@ -68,14 +69,35 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
                  control: u16) -> Result<Computed, MathError> {
     // PC=11 (64-bit) and RC=00 (nearest-even) only.
     if control & 0x0f00 != 0x0300 { return Err(MathError::Unsupported); }
-    let (a, b, subtract, multiply) = match operation {
-        Arithmetic::Add => (a, b, false, false),
-        Arithmetic::Multiply => (a, b, false, true),
-        Arithmetic::Subtract => (a, b, true, false),
-        Arithmetic::ReverseSubtract => (b, a, true, false),
+    let (a, b, subtract, multiply, divide) = match operation {
+        Arithmetic::Add => (a, b, false, false, false),
+        Arithmetic::Multiply => (a, b, false, true, false),
+        Arithmetic::Subtract => (a, b, true, false, false),
+        Arithmetic::ReverseSubtract => (b, a, true, false, false),
+        Arithmetic::Divide => (a, b, false, false, true),
+        Arithmetic::ReverseDivide => (b, a, false, false, true),
     };
     let (asign, ae, av) = split(a)?;
     let (bsign, be, bv) = split(b)?;
+    if divide {
+        // av and bv are normalized 64-bit integers. Long division in u128
+        // yields the 64 significand bits and the exact remainder, which
+        // suffices for correct nearest-even rounding without host floats.
+        // 0/0 and finite/0 need invalid/divide-by-zero exception modelling.
+        if bv == 0 { return Err(MathError::Unsupported); }
+        if av == 0 { return Ok(signed_zero(asign ^ bsign)); }
+        let low = av < bv;
+        let exponent = ae - be + 16383 - i32::from(low);
+        let numerator = u128::from(av) << if low { 64 } else { 63 };
+        let q = numerator / u128::from(bv);
+        let rem = numerator % u128::from(bv);
+        debug_assert!((1u128 << 63..1u128 << 64).contains(&q));
+        let doubled = rem * 2;
+        let rounded_up = doubled > u128::from(bv) ||
+            (doubled == u128::from(bv) && q & 1 != 0);
+        return finish(asign ^ bsign, exponent, q as u64,
+                      rem != 0, rounded_up);
+    }
     if multiply {
         let negative = asign ^ bsign;
         if av == 0 || bv == 0 { return Ok(signed_zero(negative)); }
@@ -140,6 +162,19 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
     finish(negative, exponent, significand, discarded != 0, rounded_up)
 }
 
+/// Ordered comparisons of finite normalized values. Reject NaNs and
+/// unmodelled denormals rather than inventing x87 condition codes.
+pub fn compare(a: Extended80, b: Extended80) -> Result<Ordering, MathError> {
+    let (negative_a, exponent_a, significand_a) = split(a)?;
+    let (negative_b, exponent_b, significand_b) = split(b)?;
+    if significand_a == 0 && significand_b == 0 { return Ok(Ordering::Equal); }
+    if negative_a != negative_b {
+        return Ok(if negative_a { Ordering::Less } else { Ordering::Greater });
+    }
+    let mag = (exponent_a, significand_a).cmp(&(exponent_b, significand_b));
+    Ok(if negative_a { mag.reverse() } else { mag })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +221,49 @@ mod tests {
         assert_eq!(minus_tiny.value, ONE);
         assert!(minus_tiny.inexact);
         assert!(minus_tiny.rounded_up);
+    }
+
+
+    #[test]
+    fn integer_long_division_rounds_nearest_even() {
+        let three = Extended80::from_bits(0xc000_0000_0000_0000, 0x4000);
+        let half = Extended80::from_bits(1u64 << 63, 0x3ffe);
+        assert_eq!(calculate(Arithmetic::Divide, three, TWO, CW).unwrap().value,
+                   Extended80::from_bits(0xc000_0000_0000_0000, 0x3fff));
+        assert_eq!(calculate(Arithmetic::ReverseDivide, TWO, three, CW).unwrap().value,
+                   Extended80::from_bits(0xc000_0000_0000_0000, 0x3fff));
+        let third = calculate(Arithmetic::Divide, ONE, three, CW).unwrap();
+        assert_eq!(third.value, Extended80::from_bits(0xaaaaaaaaaaaaaaab, 0x3ffd));
+        assert!(third.inexact && third.rounded_up);
+        let negative_third = calculate(Arithmetic::Divide,
+             Extended80::from_bits(ONE.significand, 0xbfff), three, CW).unwrap();
+        assert_eq!(negative_third.value,
+             Extended80::from_bits(0xaaaaaaaaaaaaaaab, 0xbffd));
+        assert_eq!(calculate(Arithmetic::Divide, ZERO, TWO, CW).unwrap().value, ZERO);
+        assert_eq!(calculate(Arithmetic::Divide, ONE, ZERO, CW),
+                   Err(MathError::Unsupported));
+        assert_eq!(calculate(Arithmetic::Divide, ZERO, ZERO, CW),
+                   Err(MathError::Unsupported));
+        assert_eq!(calculate(Arithmetic::Divide, half, TWO, CW).unwrap().value,
+                   Extended80::from_bits(1u64 << 63, 0x3ffd));
+    }
+
+    #[test]
+    fn ordered_compare_handles_exponent_sign_and_signed_zero() {
+        let neg = Extended80::from_bits(ONE.significand, 0xbfff);
+        let minus_zero = Extended80::from_bits(0, 0x8000);
+        assert_eq!(compare(ONE, ONE), Ok(Ordering::Equal));
+        assert_eq!(compare(ZERO, minus_zero), Ok(Ordering::Equal));
+        assert_eq!(compare(neg, ZERO), Ok(Ordering::Less));
+        assert_eq!(compare(ZERO, neg), Ok(Ordering::Greater));
+        assert_eq!(compare(ONE, TWO), Ok(Ordering::Less));
+        assert_eq!(compare(neg, TWO), Ok(Ordering::Less));
+        assert_eq!(compare(neg, Extended80::from_bits(TWO.significand, 0xc000)),
+                   Ok(Ordering::Greater));
+        assert_eq!(compare(ONE, Extended80::from_bits(0xc000_0000_0000_0000, 0x3fff)),
+                   Ok(Ordering::Less));
+        assert_eq!(compare(ONE, Extended80::from_bits(0xc000_0000_0000_0000, 0x7fff)),
+                   Err(MathError::Unsupported));
     }
 
     #[test]
