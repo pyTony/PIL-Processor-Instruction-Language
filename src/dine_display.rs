@@ -7,6 +7,24 @@
 //! display a software framebuffer. Non-Windows builds retain ANSI preview.
 use crate::dos;
 
+/// Opt-in native-video diagnostics, independent of the session JSON protocol.
+/// The host launcher inherits DINE_VIDEO_LOG from the user's environment.
+/// Each event is one append so the Win32 worker and DOS execution thread can
+/// record transitions without holding a shared lock or altering guest state.
+pub(crate) fn debug_log(message:&str) {
+    let Some(path)=std::env::var_os("DINE_VIDEO_LOG") else {return;};
+    if path.is_empty(){return;}
+    let milliseconds=std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0,|elapsed|elapsed.as_millis());
+    let line=format!("{milliseconds} pid={} {message}\n",std::process::id());
+    let _=append_log(std::path::Path::new(&path),line.as_bytes());
+}
+fn append_log(path:&std::path::Path,line:&[u8])->std::io::Result<()> {
+    use std::io::Write as _;
+    std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(line)
+}
+
 // The independent RGB frame type lives in dine_window.rs.
 pub(crate) enum Display {
     Off,
@@ -27,7 +45,10 @@ impl Display {
             "off" | "none" | "headless" => Self::Off,
             "ansi" | "terminal" => Self::Ansi { shown: false },
             #[cfg(windows)]
-            "" | "window" | "desktop" => Self::Window(crate::dine_window::Window::new()),
+            "" | "window" | "desktop" => {
+                debug_log("display selected: Win32 GDI window (lazy until first graphics frame)");
+                Self::Window(crate::dine_window::Window::new())
+            },
             #[cfg(not(windows))]
             "" | "window" | "desktop" => Self::Ansi { shown: false },
             _ => Self::Ansi { shown: false },
@@ -51,8 +72,25 @@ impl Display {
             Self::Window(window) => {
                 if let Some((width,height,pixels))=dos::desktop_vga_frame(p) {
                     window.present(crate::dine_window::Frame{width:width as i32,height:height as i32,pixels});
+                }else{
+                    window.no_frame();
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod video_log_tests {
+    #[test]
+    fn video_log_appends_without_replacing_existing_events() {
+        let unique=std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path=std::env::temp_dir()
+            .join(format!("pil-video-log-{}-{unique}.txt",std::process::id()));
+        super::append_log(&path,b"frame absent\n").unwrap();
+        super::append_log(&path,b"window created\n").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(),b"frame absent\nwindow created\n");
+        std::fs::remove_file(path).unwrap();
     }
 }
