@@ -1,3 +1,38 @@
+# INT 33h mouse driver completed — 13 November 2026
+
+Tony asked to check the mouse support and finish what was missing. This
+builds on draft #170 (event callbacks) and is checked against RBIL's INT 33h
+list and CuteMouse 2.1, the FreeDOS driver (FD14LITE.img CTMOUSE package:
+its INT33.LST and source were read for behaviour, nothing was copied).
+- Callback fixes to #170: the call mask keeps the low byte and accepts
+  CX=FFFFh (bits 7-15 are unused, not an error); AX holds only the
+  conditions in the call mask; SI/DI are the motion counters that AX=000Bh
+  reads (CuteMouse), not the movement since the previous event; IF stays
+  set in the handler, as CuteMouse does STI before the call.
+- New functions: 09h graphics cursor shape and 0Ah software text cursor
+  masks; 0Dh/0Eh/12h/1Ch/1Dh/22h accepted with no effect, as in CuteMouse;
+  10h update region; 13h, 1Ah/1Bh threshold and sensitivity (stored, no
+  acceleration); 14h exchange handlers; 15h/16h/17h save and restore the
+  driver state (158 bytes, BX ignored as Turbo Pascal's IDE passes garbage;
+  a buffer without the driver's signature is refused); 1Eh page; 1Fh/20h
+  disable/enable; 23h language; 24h version 7.05, PS/2, IRQ 0. 21h now
+  resets the driver state like 00h. Physical buttons survive a reset.
+- Cursor drawing: the session applies the text cursor masks to the screen
+  copy it sends (mouse_drawn), never to B800h; the Tk terminal draws an
+  AX=0009h shape in graphics modes, its own arrow before one is defined.
+- Still not implemented (visible stops): 11h, 18h/19h, 25h, 27h and later,
+  the hardware text cursor; no IRQ12/PS/2 device; the native Dine window
+  and compiled DOS programs get no mouse input.
+
+Local Linux: 815 Rust tests pass, 3 ignored (11 new mouse tests); Python
+terminal tests 51 run, 4 skipped (1 new). MOUSECALL.COM in a scripted
+session: callback on left click, clean exit. Tony's Turbo Pascal 7.0
+TURBO.EXE (driveD\TP\BIN, local only, /SD:\ for its swap file) under
+FreeCOM with the mouse on: #170 alone stopped at AX=0015h; now the IDE runs
+and a click on File opens the menu. FreeDOS EDIT 0.9a from FD14LITE.img
+(SHA256 f539d456...): a click on File opens the menu. No FreeDOS probe rerun
+(the probe never enables the mouse).
+
 # test386 to POST FFh: ENTER frame pointer, SHL/SHR CF — 13 November 2026
 
 Follow-up to protected-mode increment 7 (#172). Both test386 ROMs (64 KB

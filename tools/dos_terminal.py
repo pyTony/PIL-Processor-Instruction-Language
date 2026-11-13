@@ -400,10 +400,39 @@ class MouseEvents:
             self.pending.append(event)
 
 
-def mouse_overlay(rgb, width, height, x, y, max_x, max_y):
-    """Draw a host-only arrow on an RGB snapshot; never mutate guest VRAM."""
+def mouse_shape_overlay(pixels, width, height, x, y, shape, hotspot):
+    """Draw an INT 33h AX=0009h cursor: screen mask then cursor mask rows
+    (little-endian words, high bit leftmost). For each pixel the two bits
+    choose black (0,0), white (0,1), unchanged (1,0) or inverted (1,1), the
+    usual reading of AND-then-XOR masks on a two-colour pointer."""
+    data = bytes.fromhex(shape)
+    rows = [data[2 * i] | data[2 * i + 1] << 8 for i in range(32)]
+    left, top = x - hotspot[0], y - hotspot[1]
+    for dy in range(16):
+        py = top + dy
+        if not 0 <= py < height:
+            continue
+        for dx in range(16):
+            px = left + dx
+            if not 0 <= px < width:
+                continue
+            bit = 0x8000 >> dx
+            screen, cursor = rows[dy] & bit, rows[16 + dy] & bit
+            at = (py * width + px) * 3
+            if not screen:
+                pixels[at:at + 3] = b'\xff\xff\xff' if cursor else b'\x00\x00\x00'
+            elif cursor:
+                pixels[at:at + 3] = bytes(255 - b for b in pixels[at:at + 3])
+    return bytes(pixels)
+
+
+def mouse_overlay(rgb, width, height, x, y, max_x, max_y, shape=None, hotspot=(0, 0)):
+    """Draw a host-only pointer on an RGB snapshot; never mutate guest VRAM.
+    Without a program-defined shape this is the frontend's own arrow."""
     x = max(0, min(width - 1, x * width // (max_x + 1)))
     y = max(0, min(height - 1, y * height // (max_y + 1)))
+    if shape:
+        return mouse_shape_overlay(bytearray(rgb), width, height, x, y, shape, hotspot)
     shape = ('X           ', 'Xo          ', 'Xoo         ',
              'Xooo        ', 'Xoooo       ', 'Xooooo      ',
              'Xoooooo     ', 'Xooooooo    ', 'Xoooooooo   ',
@@ -1095,7 +1124,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 width = 640 if reply['cga_mode'] == 6 else 320
             mouse_draw = reply.get('mouse_active') and reply.get('mouse_visible')
             descriptor += (reply.get('video_enabled', True),
-                           (reply.get('mouse_x'), reply.get('mouse_y')) if mouse_draw else None,)
+                           (reply.get('mouse_x'), reply.get('mouse_y'), reply.get('mouse_shape'),
+                            tuple(reply.get('mouse_hotspot', (0, 0)))) if mouse_draw else None,)
             if frame[0] != descriptor:
                 if pixels is not None:
                     rgb = graphics_rgb(pixels, reply['palette'])
@@ -1107,7 +1137,8 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                     rgb = bytes(len(rgb))
                 if mouse_draw:
                     rgb = mouse_overlay(rgb, width, height, reply['mouse_x'], reply['mouse_y'],
-                                        reply.get('mouse_max_x', 639), reply.get('mouse_max_y', 199))
+                                        reply.get('mouse_max_x', 639), reply.get('mouse_max_y', 199),
+                                        reply.get('mouse_shape'), tuple(reply.get('mouse_hotspot', (0, 0))))
                 picture = graphics_photo(tk, rgb, width, height, master=root)
                 graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
@@ -1136,8 +1167,11 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
             text.tag_add('cursor', f'{row + 1}.{column}')
             drawn[1] = cursor
         # The text mouse pointer is a presentation tag, not a guest B800 write.
+        # Newer engines apply the program's text cursor masks to the screen
+        # copy they send (mouse_drawn); the tag is only for older ones.
         text.tag_remove('mouse_pointer', '1.0', 'end')
-        if reply.get('mouse_active') and reply.get('mouse_visible') and reply.get('video_enabled', True):
+        if (reply.get('mouse_active') and reply.get('mouse_visible') and reply.get('video_enabled', True)
+                and not reply.get('mouse_drawn', False)):
             col = min(geom[0] - 1, reply['mouse_x'] // 8)
             row = min(geom[1] - 1, reply['mouse_y'] // 8)
             text.tag_add('mouse_pointer', f'{row + 1}.{col}', f'{row + 1}.{col + 1}')
@@ -1446,7 +1480,7 @@ def main(argv=None):
     parser.add_argument('--ansi', action='store_true',
                         help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
     parser.add_argument('--mouse', action='store_true',
-                        help='experimental INT 33h mouse (polling, no event callbacks yet); Tk frontend supports clicks')
+                        help='experimental INT 33h mouse driver (polling, event callbacks, cursor shapes); Tk frontend supports clicks')
     parser.add_argument('--country', type=int, choices=[1, 358],
                         help='DOS country: 1 (USA, the default: 10-31-2026, 2:27p) or 358 (Finland: 31.10.2026, 14.27)')
     parser.add_argument('--com1', metavar='console|tcp:PORT',

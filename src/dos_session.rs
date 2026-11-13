@@ -78,7 +78,26 @@ impl Session{
         let base=0xb8000;
         let cells=(0..columns*25*2).map(|i|byte(base+(origin+i)%32768).map(|b|b as u8)).collect::<Result<Vec<_>,_>>()?;
         let cursor=if p.vga.cursor_override{let cell=u32::from(p.vga.cursor()).wrapping_sub(origin/2)&0x3fff;((cell/columns)<<8)|(cell%columns)}else{word(0x450+page*2)?};
+        let mut cells=cells;
+        if let Some(at)=Self::mouse_cell(p,columns)?{
+            // The software text cursor: the cell's character/attribute word
+            // ANDed with the screen mask and XORed with the cursor mask
+            // (INT 33h AX=000Ah), on this copy only, never in B800h.
+            let (screen,cursor_mask)=p.mouse.text_masks().unwrap();
+            let value=(u16::from(cells[at])|u16::from(cells[at+1])<<8)&screen^cursor_mask;
+            cells[at]=value as u8;cells[at+1]=(value>>8)as u8;
+        }
         Ok((cells,columns,(cursor>>8,cursor&0xff)))
+    }
+    /// The byte offset in `screen` of the cell under a visible software text
+    /// mouse cursor, in text modes only.
+    fn mouse_cell(p:&Loaded,columns:u32)->Result<Option<usize>,String>{
+        let view=p.mouse.view();
+        let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"))?&0x7f;
+        if !view.visible||!matches!(mode,0..=3|7)||p.mouse.text_masks().is_none(){return Ok(None);}
+        // Virtual X spans 640 for 40 and 80 columns alike; rows are 8 high.
+        let (column,row)=((u32::from(view.x)*columns/640).min(columns-1),(u32::from(view.y)/8).min(24));
+        Ok(Some(((row*columns+column)*2)as usize))
     }
     fn status(&self)->(&'static str,String){
         match &self.stop{
@@ -127,8 +146,15 @@ impl Session{
         let native_total=native+single;
         let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total}",mode_control&8!=0,mode_control&0x20!=0);
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
-        let (present,active,visible,mx,my,max_x,max_y)=self.loaded.as_ref().map_or((false,false,false,0,0,639,199),|p|p.mouse.view());
-        let diagnostic=format!("{diagnostic},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}");
+        let view=self.loaded.as_ref().map(|p|p.mouse.view());
+        let (present,active,visible,mx,my,max_x,max_y)=view.map_or((false,false,false,0,0,639,199),|v|(v.present,v.active,v.visible,v.x,v.y,v.max_x,v.max_y));
+        // Text modes: the session already applied the text cursor masks.
+        let drawn=self.loaded.as_ref().is_some_and(|p|Self::mouse_cell(p,columns).ok().flatten().is_some());
+        // Graphics cursor from AX=0009h: hot spot, then 16 screen-mask and
+        // 16 cursor-mask rows (high bit leftmost) as little-endian words.
+        let shape=self.loaded.as_ref().and_then(|p|p.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
+            format!(",\"mouse_hotspot\":[{hx},{hy}],\"mouse_shape\":\"{}\"",rows.iter().map(|w|format!("{:02x}{:02x}",w&0xff,w>>8)).collect::<String>()));
+        let diagnostic=format!("{diagnostic},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
         Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
@@ -170,7 +196,7 @@ impl Session{
                     }else{
                         p.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33))
                             .map_err(|e|format!("mouse IVT write: {e:?}"))?;
-                        p.mouse.enable();(true,"DOS mouse enabled".into(),false)
+                        p.mouse.enable(vector);(true,"DOS mouse enabled".into(),false)
                     }
                 }
             },
