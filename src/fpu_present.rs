@@ -50,6 +50,24 @@ impl PresentFpu {
                 return self.execute_control_word_memory(operation,instruction,cpu,ram,image),
             Operation::Fld1 => self.state.push(one),
             Operation::Fldz => self.state.push(Extended80::default()),
+            Operation::Fchs | Operation::Fabs => {
+                // These operations only affect the sign bit. They do not
+                // round or change TOP, and even signed zero is supported.
+                // On an empty stack neither state nor status may change.
+                match self.state.st(0) {
+                    Some(mut value) => {
+                        value.sign_exponent = if matches!(operation, Operation::Fabs) {
+                            value.sign_exponent & 0x7fff
+                        } else {
+                            value.sign_exponent ^ 0x8000
+                        };
+                        self.state.store(0, value);
+                        self.state.status &= !0x0200; // C1=0 on success.
+                        Ok(())
+                    },
+                    None => Err(StackError::Underflow),
+                }
+            },
             Operation::FldSt(i) => self.state.st(usize::from(i))
                 .ok_or(StackError::Underflow)
                 .and_then(|value| self.state.push(value)),
