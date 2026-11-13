@@ -366,6 +366,23 @@ the transfer it returns is applied when the instruction retires.
   popped as dwords from OUTER, every segment register gets its V86 cache
   and EIP must be within FFFFh. The description sets VM itself
   (`flag VM`).
+- Task switches (src/task.rs, embedded next to privilege.rs): `far_jump`
+  and `far_call` to an available TSS descriptor or a task gate (DPL >= CPL
+  and >= RPL, else #GP(selector); a gate that is not present is #NP) switch
+  tasks instead of loading CS. The old task's EIP, EFLAGS, general
+  registers and selectors go to its TSS (386 or 286 layout); JMP clears
+  its busy bit, CALL writes the back link in the new TSS and sets NT; the
+  new task's registers, EFLAGS, EIP, LDTR, segment registers and (from a
+  386 TSS while paging is on) CR3 are loaded, TR takes the new TSS, which
+  is marked busy, and CR0.TS is set. Faults on the new TSS are #GP (busy
+  or not a TSS), #NP or #TS (limit below 67h or 2Bh, a bad LDT or segment
+  register of the new task).
+- `task_return_if PREDICATE` (iret_protected.pil) must precede every load
+  and effect. When the bv1 predicate is one (NT set) the whole instruction
+  is a return to the task in the current TSS's back link: that TSS must be
+  busy (#TS otherwise), the old one is stored with NT clear and marked
+  available, and nothing else in the description runs. When it is zero
+  nothing happens.
 - `require_iopl` (CLI, STI): #GP(0) in protected mode when CPL > IOPL
   (so in virtual-8086 mode, CPL 3, unless IOPL is 3).
 - `check_io PORT BYTES` (IN, OUT, INS, OUTS): in protected mode with CPL >

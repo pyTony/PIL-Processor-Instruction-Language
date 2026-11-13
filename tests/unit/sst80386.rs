@@ -276,8 +276,8 @@ fn runner_source(variants:&[String])->String{
     s.push_str("mod vga_planar {\n");s.push_str(include_str!("../../src/vga_planar.rs").split("#[cfg(test)]").next().unwrap());s.push_str("\n}\n");
     s.push_str("mod memory {\n");s.push_str(include_str!("../../src/memory.rs").split("#[cfg(test)]").next().unwrap());s.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
     s.push_str("mod address {\n");s.push_str(include_str!("../../src/address.rs").split("#[cfg(test)]").next().unwrap());s.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*};\n");
-    s.push_str("mod privilege {\n");s.push_str(include_str!("../../src/privilege.rs"));s.push_str("\n}\n");
-    for (i,v) in variants.iter().enumerate(){s.push_str(&format!("mod p{i} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {v} }}\n"));}
+    s.push_str("mod privilege {\n");s.push_str(include_str!("../../src/privilege.rs"));s.push_str("\n}\n");s.push_str("mod task {\n");s.push_str(include_str!("../../src/task.rs"));s.push_str("\n}\n");
+    for (i,v) in variants.iter().enumerate(){s.push_str(&format!("mod p{i} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege,task}}; {v} }}\n"));}
     s.push_str("fn dispatch(v:u32,regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),flow:FlowContext,ram:&mut Ram,address:Option<AddressContext>,machine:&mut SegmentState)->Result<(),ExecError>{match v{\n");
     for i in 0..variants.len(){s.push_str(&format!("{i}=>p{i}::execute_with_machine(regs,flags,undefined,eip,dst,src,flow,ram,address,machine),\n"));}
     s.push_str("_=>panic!(\"bad variant\")}}\n");s.push_str(RUNNER);s

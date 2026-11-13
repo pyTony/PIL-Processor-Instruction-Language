@@ -1,8 +1,9 @@
 # Protected-mode interrupt return: read EIP, CS and EFLAGS, then return
 # through far_return as RETF does (privilege.rs): at the same level, or to
 # an outer one with ESP and SS popped from above the frame and data
-# segments the outer level may not use nulled. NT=1 (a task return) stops
-# here. IRETD at CPL 0 with VM=1 in the popped flags returns to
+# segments the outer level may not use nulled. NT=1 is a task return:
+# task_return_if switches to the task in the TSS back link (task.rs) and
+# nothing below runs. IRETD at CPL 0 with VM=1 in the popped flags returns to
 # virtual-8086 mode: far_return's last operand pops ESP, SS, ES, DS, FS
 # and GS too and gives every segment its V86 cache, and VM is set (IRET
 # leaves VM clear; elsewhere VM=1 in the frame is ignored). The flag rules
@@ -13,8 +14,7 @@
 require_width 16_or_32
 require_protected_mode
 read_flag task NT
-not no_task task
-require no_task
+task_return_if task
 read_gpr old_sp 4 $S
 zext stack_offset old_sp 32
 load_segment target_value 2 stack_offset $W
