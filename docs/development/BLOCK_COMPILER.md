@@ -2,8 +2,10 @@
 
 13 November 2026. Standing rule (Tony): **PIL and Dine are always
 program-independent libraries, used the same way everywhere.** Nothing in the
-repository may build, generate or ship an executable, a backend or a launcher
-for one guest program. Precompilation is not a JIT, but it is not exempt.
+repository may build an engine, backend, Dine library or translator for one
+guest program. `Dine_<program>` launchers stay: a tiny loader plus the guest
+bytes on the shared dine library, with no copy of Dine or PIL inside
+([DINE_EXECUTABLES.md](../DINE_EXECUTABLES.md)). Precompilation is not a JIT, but it is not exempt.
 
 ## What was removed
 
@@ -11,8 +13,8 @@ for one guest program. Precompilation is not a JIT, but it is not exempt.
 |---|---|
 | `build.rs` (`PIL_SHADOW_SOURCE`, cfg `pil_shadow_backend`), `src/dos_compile.rs`, `pil --emit-dos-backend` | Recorded one program and linked its observed blocks into a per-program `pil` engine |
 | `src/dos_standalone.rs`, `src/dos_translate.rs`, `src/dos_runtime.rs`, `src/dine_native_video.rs`, `pil --emit-dos-standalone` | Translated one program into a standalone native executable with its own small DOS runtime |
-| `tools/build_dos_shadow.py/.ps1`, `build_dos_native.py`, `build_dos_bundle.py`, `build_dine.py`, `audit_dos_codegen.py`, `pildos_raw.sh` | Build drivers for the above, and the `Dine_<program>` launchers that embedded one guest |
-| `tools/verify_dos_standalone.py`, `verify_dos_smc.py`, `verify_*_native.py`, `verify_dos_shadow*.py`, `verify_lines_hybrid.py`, `verify_landmark_shadow.py`, `verify_gwbasic_bundle.py`, `verify_dine_executable.py` and three GUI tests | Checks of those per-program builds |
+| `tools/build_dos_shadow.py/.ps1`, `build_dos_native.py`, `build_dos_bundle.py`, `audit_dos_codegen.py`, `pildos_raw.sh` | Build drivers for the above |
+| `tools/verify_dos_standalone.py`, `verify_dos_smc.py`, `verify_*_native.py`, `verify_dos_shadow*.py`, `verify_lines_hybrid.py`, `verify_landmark_shadow.py`, `verify_gwbasic_bundle.py` and two GUI tests | Checks of those per-program builds |
 | `ProgramIdentity` and `Loaded::active_program` in `src/dos.rs`, saved and restored by EXEC | Existed only so a per-program backend knew which program it was compiled for |
 | `scratch/pil-*before*.exe`, `scratch/*_backend.rs`, `scratch/mandvga_*.rs`, `scratch/shadow_guard_test.rs`, `scratch/compare_*.py`, `scratch/bench_lm_fallback.py` | Tracked host executables and one-off generated Rust from shadow experiments |
 
@@ -80,6 +82,7 @@ program:
    the interpreter.
 3. Both backends must agree: the existing trace comparison (`native.rs`,
    `--verify-backends`) extends to block execution.
-4. No output file, cache directory or launcher belongs to one program.
+4. No engine, library or cache belongs to one program; a `Dine_<program>`
+   launcher only carries the guest bytes and loads the shared library.
 
 Issue #148 (file I/O in the standalone runtime) is obsolete with this change.
