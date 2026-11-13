@@ -1,15 +1,9 @@
-# 80386 protected mode plan — 7 November 2026 (status 8 November 2026)
-
-Update: the 128 KiB POST 22h stop at #GP(00A8h) was the ROM's error path,
-after its TS-check handler compared SMSW EAX and CR0 while paging was on.
-The emulator now chooses full modeled CR0 for SMSW r32's undefined upper
-half. It reaches the first actual task gate, INT 28h at 0053:E0A18; task
-switching remains unimplemented. The 64 KiB ENTER failure remains open.
+# 80386 protected mode plan — 7 November 2026 (status 13 November 2026)
 
 Tony set protected mode as the priority, ahead of the x87 FPU. The plan is
 eight CPU increments and two Dine increments, each a PR against dev with
 expected-state, fault and size-combination tests and green Windows/Linux CI.
-Increments 1-6 are merged; increment 7 (task switching) is next. The section
+Increments 1-6 are merged; increment 7 (task switching) is in review. The section
 "Current state and handoff" below is written so that another assistant can
 pick the work up from this file alone.
 
@@ -42,7 +36,7 @@ protected, unreal and V86 sets are announced but not published.
 | 4 | Protected-mode exceptions and interrupts: IDT gates, error codes, #DF, triple fault as shutdown | 11h-1Ch | done, #123 |
 | 5 | Privilege levels: call gates, conforming code, inter-level transfers, IOPL, I/O bitmap | 20h | done, #124 |
 | 6 | V86 mode | 21h | done, #128; follow-ups #129 (ARPL `store_if`) and #131 (128 KB ROM) |
-| 7 | Task switching | 22h (128 KB ROM) | next |
+| 7 | Task switching | 22h (128 KB ROM) | in review (src/task.rs) |
 | 8 | Remaining test386 (E0h, EEh) | FFh | open; includes the ENTER fault below |
 | 9 | Dine: memory above 1 MiB (INT 15h 88h/E801h/87h, CMOS) | — | open |
 | 10 | Dine: XMS 3.0 driver (INT 2Fh 4300h/4310h) | — | open |
@@ -175,55 +169,52 @@ Merged increment 5: #124. Increment 6, on the same branch:
   starting mode: its V86 case runs 16-bit code on both sides of the IRETD
   and ends on MOV CR0 rather than HLT (HLT decoded at CPL 0 halts there).
 
-## Current state and handoff — 8 November 2026
+## Increment 7 status
+
+Merged increment 6: #128, with follow-ups #129 (ARPL), #131 (128 KB ROM)
+and #132 (SMSW r32 keeps PG). Increment 7, on the same branch:
+- src/task.rs (shared by both backends and interrupt delivery): far JMP
+  and CALL to an available TSS or through a task gate, exceptions and
+  INT n through IDT task gates, and IRET with NT set (new PIL token
+  `task_return_if`). The old task is stored in its 386 or 286 TSS; busy
+  bits, the back link, NT, CR0.TS, LDTR, TR, CR3 (386 TSS with paging on)
+  and the new task's registers and segments follow the 386 rules. A 286
+  TSS gives FFFFh in the upper register halves and null FS/GS; a 386 TSS
+  with VM enters virtual-8086 mode; an error code goes on the new stack.
+- CLTS kept only the low CR0 word, so it cleared PG; it now keeps every
+  other bit and needs CPL 0.
+- Not modelled: the 386 checks the new task's LDT and segment registers
+  after the switch has committed, so a fault there belongs to the new
+  task; here all checks come first and such a fault leaves the old task.
+  New-task descriptor reads and the error-code push use the old CR3. The
+  TSS T bit (debug trap) is ignored.
+- test386 with the 128 KB ROM passes POST 22h (every task-switch test,
+  286 and 386, JMP/CALL/IRET/INT, and its V86 task) and then runs POST
+  0Bh-19h, stopping in POST 1Ah like the 64 KB ROM.
+
+## Current state and handoff — 13 November 2026
 
 Where test386 stops (local Linux, release build, `--steps 100000000`):
-- 64 KB ROM: passes POST 00h-06h, 08h, 09h, 20h, 21h, 0Bh-19h and stops in
-  POST 1Ah. That test runs ENTER 1,0 at ring 3 with ESP=1004h, the stack on
-  a supervisor page (linear 21000h), and expects #PF. PIL's ENTER does not
-  fault there; not yet diagnosed (check that ENTER's pushes and its frame
-  pointer read translate at CPL 3, in isa/i386/enter.pil and Ram's user
-  checks in src/memory.rs).
-- 128 KB ROM: passes POST 00h-21h and stops in POST 22h with #GP(00A8h) at
-  00C0:0012, in its first task-switch test (why it is #GP(00A8h) and not
-  the InvalidContext stop for a TSS target is not yet traced).
-- Test counts after #131: 654 Rust tests pass, 1 ignored; the generated-
-  backend suite (`pil --compare`, src/native.rs) has 276 cases.
+- Both ROMs pass every POST through 19h (the 128 KB one including 22h)
+  and stop in POST 1Ah. That test runs ENTER 1,0 at ring 3 with
+  ESP=1004h, the stack on a supervisor page (linear 21000h), and expects
+  #PF. PIL's ENTER does not fault there; not yet diagnosed (check that
+  ENTER's pushes and its frame pointer read translate at CPL 3, in
+  isa/i386/enter.pil and Ram's user checks in src/memory.rs).
+- Test counts after increment 7: 806 Rust tests pass, 3 ignored; the
+  generated-backend suite (`pil --compare`, src/native.rs) has 278 cases.
   SingleStepTests/80386 run 10: 1,621,228 of 1,758,700 real-mode cases
-  pass, 0 generated-backend disagreements.
+  pass, 0 generated-backend disagreements (not rerun for increment 7).
 
-Increment 7, task switching, should cover:
-- Far JMP and CALL to an available TSS descriptor (types 1 and 9) and
-  through a task gate (type 5), in src/privilege.rs (the descriptor check
-  near line 128, used by `far_jump` and `far_call`, refuses them today with
-  InvalidContext) and src/address.rs (segment
-  loads refuse them, line ~258).
-- Interrupts and exceptions through a task gate in the IDT
-  (src/address.rs `interrupt_target` refuses type 5; src/interrupt.rs
-  delivers).
-- IRET with NT=1: return to the task in the TSS back link
-  (isa/i386/iret_protected.pil stops on NT=1 now).
-- The switch itself: save the current state into the old TSS (386 and 286
-  layouts), check and load the new TSS (limit at least 67h or 2Bh, #TS with
-  the selector otherwise), busy bits (set on the new task; cleared on the
-  old one for JMP and IRET, kept for CALL and interrupts), NT and the back
-  link for CALL and interrupts, CR0.TS set, CR3 reloaded from a 386 TSS,
-  LDTR and all segment registers loaded with the new task's CPL, the error
-  code pushed on the new stack when the exception has one.
-- A shared Rust module (for example src/task.rs) embedded in the generated
-  backend like privilege.rs, so both backends switch tasks the same way;
-  new tests in tests/unit (a task.rs file) and at least one generated case
-  in src/native.rs.
-
-Then: the ENTER fault above, the rest of test386 (increment 8), Dine's
-memory above 1 MiB (9) and XMS (10). The x87 FPU comes after protected mode
-(estimate: 9-12 PRs; src/fpu.rs has only the absent-FPU backend).
+Next: the ENTER fault above, the rest of test386 (increment 8), Dine's
+memory above 1 MiB (9) and XMS (10).
 
 Key files:
 - src/address.rs: SegmentState (caches, CPL, GDT/LDT/IDT/TR, CR0-CR3,
   paging), segment loads, `interrupt_target`.
 - src/privilege.rs: far JMP/CALL/RETF/IRET, call gates, TSS stack switch,
   V86 entry. Shared by both backends.
+- src/task.rs: task switches (TSS save and load, busy bits, back link).
 - src/interrupt.rs: exception and interrupt delivery (real, protected, V86),
   #DF and shutdown.
 - src/memory.rs: Ram, paging walk, A/D marks, user/supervisor checks.

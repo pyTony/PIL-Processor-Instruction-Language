@@ -1,13 +1,14 @@
-# CLTS clears CR0.TS (bit 3); every other CR0 bit and all flags stay put.
-# Real mode runs at privilege 0, so no #GP check applies here. When TS is
-# already clear nothing changes, so the step retires without a CR0 write.
-read_msw status
+# CLTS clears CR0.TS (bit 3); every other CR0 bit, PG included, and all
+# flags stay put. It needs CPL 0 (#GP(0) above it and in virtual-8086
+# mode; real mode runs at level 0). When TS is already clear nothing
+# changes, so the step retires without a CR0 write.
+require_ring0
+read_msw32 status
 bit ts status 3
 not clear ts
 retire_if clear
-const keep 16 65527
-and cleared status keep
-zext value cleared 32
+const keep 32 4294967287
+and value status keep
 write_control 0 value
 preserve_flags all
 retire
