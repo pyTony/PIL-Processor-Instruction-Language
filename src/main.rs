@@ -20,9 +20,8 @@ mod guest;
 mod dos;
 #[cfg(feature = "dine-library")]
 mod dine_ffi;
-#[cfg(feature = "dine-library")]
 mod dine_display;
-#[cfg(all(windows, any(feature = "dine-library", test)))]
+#[cfg(windows)]
 mod dine_window;
 #[cfg(test)]
 mod dine_native_video;

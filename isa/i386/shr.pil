@@ -1,4 +1,6 @@
 # Count and conditional effects are explicit PIL, not interpreter x86 logic.
+# CF is the last bit shifted out, also for a count equal to the width (the
+# 386 does this; test386 POST EEh checks it). Above the width it is undefined.
 read a dst $W
 read b src $W
 const count_mask $W 31
@@ -15,7 +17,8 @@ sub last count one
 lshr r a count
 lshr previous a last
 bit cf previous 0
-ult cf_defined count width
+ult beyond width count
+not cf_defined beyond
 bit sf r $SIGN
 zero zf r
 parity pf r

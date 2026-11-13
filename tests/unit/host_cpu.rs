@@ -19,7 +19,7 @@ fn case_policy(op:usize,w:u8,count:u32)->FlagPolicy{
     if matches!(op,13..=15){
         let n=count&31;
         if n==0{return FlagPolicy{defined:0,preserved:u32::MAX,undefined:0};}
-        let undefined=0x10|if n!=1{0x800}else{0}|if op!=15&&n>=u32::from(w){1}else{0};
+        let undefined=0x10|if n!=1{0x800}else{0}|if op!=15&&n>u32::from(w){1}else{0};
         FlagPolicy{defined:ARITH&!undefined,preserved:!ARITH,undefined}
     }else if matches!(op,17|18){
         let n=count&31;
@@ -84,7 +84,7 @@ fn host_cpu_shift_count_policies_and_imul_masks_are_independent(){
         assert_eq!((p.defined&p.preserved)|(p.defined&p.undefined)|(p.preserved&p.undefined),0);
         if n==0{assert_eq!((p.defined,p.preserved,p.undefined),(0,u32::MAX,0));}
         else{assert_eq!(p.undefined&0x10,0x10);assert_eq!(p.undefined&0x800,if n==1{0}else{0x800});
-            assert_eq!(p.undefined&1,u32::from(op!=15&&n>=u32::from(w)));}
+            assert_eq!(p.undefined&1,u32::from(op!=15&&n>u32::from(w)));}
         let same=case_policy(op,w,n);assert_eq!((p.defined,p.preserved,p.undefined),(same.defined,same.preserved,same.undefined));
     }}}
     let p=case_policy(16,32,0);assert_eq!((p.defined,p.preserved,p.undefined),(0x801,!ARITH,0xd4));

@@ -102,6 +102,9 @@ The runtime C ABI is version 1 and currently exports
 The loader verifies the ABI before invoking guest code and reports a missing
 or incompatible library rather than running without DOS services.
 
+See [PILdos native CGA/VGA graphics](PILDOS_RUST_GRAPHICS.md) for the
+opt-in Rust window with Python terminal and BIOS keyboard bridge.
+
 ## Refactoring direction
 
 The next increment will move guest-specific compiled blocks into

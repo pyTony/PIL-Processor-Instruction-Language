@@ -227,7 +227,7 @@ def planar_rgb(planes, width, height, colors):
     return bytes(result)
 
 
-def graphics_photo(tk, rgb, width, height=200):
+def graphics_photo(tk, rgb, width, height=200, master=None):
     """Show 200-line CGA/VGA graphics at 4:3 using nearest-neighbour pixels.
 
     320x200 pixels are 5:6 and 640x200 pixels are 5:12 on a 4:3
@@ -240,7 +240,7 @@ def graphics_photo(tk, rgb, width, height=200):
     row_bytes = width * 3
     rows = [rgb[y * row_bytes:(y + 1) * row_bytes] for y in range(height)]
     scaled = b''.join(rows[y * height // 480] for y in range(480))
-    picture = tk.PhotoImage(data=f'P6 {width} 480 255\n'.encode('ascii') + scaled, format='PPM')
+    picture = tk.PhotoImage(master=master, data=f'P6 {width} 480 255\n'.encode('ascii') + scaled, format='PPM')
     return picture.zoom(2, 1) if width == 320 else picture
 
 
@@ -497,11 +497,12 @@ def screen_rows(reply, blink_on=True):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False, rust_graphics=False):
         options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else []) + (['--fpu', fpu] if fpu != "none" else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-                                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                                        **({'env': {**os.environ, 'DINE_VIDEO': 'window'}} if rust_graphics else {}))
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
@@ -620,6 +621,21 @@ def from_cp437(data):
     return data.decode('cp437')
 
 
+def bios_keys(data):
+    """Map CP437 input to BIOS ASCII / set-1 scan-code pairs."""
+    result = []
+    for value in data:
+        if value in (10, 13): result.append(SPECIAL['Return'])
+        elif value == 8: result.append(SPECIAL['BackSpace'])
+        elif value == 9: result.append(SPECIAL['Tab'])
+        elif value == 27: result.append(SPECIAL['Escape'])
+        else:
+            ch = bytes((value,)).decode('cp437')
+            code = key_code(ch, ch)
+            if code is not None: result.append(code)
+    return result
+
+
 class ConsolePort:
     """COM1 on the console this terminal was started from: what the program
     sends is printed there (an ANSI terminal draws its escape sequences), and
@@ -676,7 +692,7 @@ class ConsolePort:
         while True:
             char = msvcrt.getwch()
             if char in ('\x00', '\xe0'):
-                msvcrt.getwch()  # DOS serial input does not understand VT key sequences
+                self.input.put((0, ord(msvcrt.getwch())))
             else:
                 self.input.put(to_cp437(char))
 
@@ -703,8 +719,16 @@ class ConsolePort:
     def read(self):
         data = b''
         while not self.input.empty():
-            data += self.input.get_nowait()
+            item = self.input.get_nowait()
+            if isinstance(item, bytes): data += item
         return data
+
+    def read_bios(self):
+        codes = []
+        while not self.input.empty():
+            item = self.input.get_nowait()
+            codes.extend(bios_keys(item) if isinstance(item, bytes) else [item])
+        return codes
 
     def close(self):
         if self._terminal is not None:
@@ -901,13 +925,20 @@ class HeadlessGraphics:
             self.root = None
 
 
-def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False):
+class NativeRustGraphics:
+    """Graphics in pil.exe; Python is a keyboard/COM1 bridge only."""
+    stop_requested = False
+    def update(self, reply, session=None): pass
+    def close(self): pass
+
+
+def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False, rust_graphics=False):
     """Route DOS input and output over COM1 before running the guest."""
     session.send(f'clock {offset}')
     if country:
         session.send(f'country {country}')
     reply = session.send('console com1')
-    gfx = HeadlessGraphics()
+    gfx = NativeRustGraphics() if rust_graphics else HeadlessGraphics()
     ctty_done = False
     com1_seen = False
     auto_key_sent = False
@@ -919,9 +950,18 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
                 session.send(f'key 27 {SCAN.get(chr(27), 1)}')
                 if not is_shell:
                     break
-            incoming = com1.read()
-            for at in range(0, len(incoming), 100):
-                reply = session.send('com1 ' + incoming[at:at + 100].hex())
+            if rust_graphics and reply.get('native_window_closed'):
+                return {**reply, 'status': 'window_closed', 'detail': 'native graphics window closed'}
+            if rust_graphics and reply.get('native_graphics'):
+                codes = (com1.read_bios() if hasattr(com1, 'read_bios')
+                         else bios_keys(com1.read()))
+                for ascii_code, scan in codes:
+                    session.send(f'key {ascii_code} {scan}')
+                incoming = b''
+            else:
+                incoming = com1.read()
+                for at in range(0, len(incoming), 100):
+                    reply = session.send('com1 ' + incoming[at:at + 100].hex())
             reply = run_slice(session, SLICE)
             # Match the GUI's busy-run budget: avoid decoding and repainting a
             # full VGA frame after every small execution slice. Return to Tk
@@ -930,12 +970,15 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
             while reply['status'] == 'running' and time.monotonic() < until:
                 reply = run_slice(session, BURST)
             reply = refresh_frame(session, reply)
+            if rust_graphics and reply.get('native_window_closed'):
+                return {**reply, 'status': 'window_closed', 'detail': 'native graphics window closed'}
             if session.com1_out:
                 com1_seen = True
                 com1.write(session.com1_out)
                 session.com1_out = b''
             gfx.update(reply, session)
-            graphics_active = any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar'))
+            graphics_active = (bool(reply.get('native_graphics')) or
+                               any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar')))
             if not graphics_active:
                 auto_key_sent = False
             if auto_graphics_key and graphics_active and reply['status'] == 'waiting_input' and not auto_key_sent:
@@ -1065,7 +1108,7 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
                 if mouse_draw:
                     rgb = mouse_overlay(rgb, width, height, reply['mouse_x'], reply['mouse_y'],
                                         reply.get('mouse_max_x', 639), reply.get('mouse_max_y', 199))
-                picture = graphics_photo(tk, rgb, width, height)
+                picture = graphics_photo(tk, rgb, width, height, master=root)
                 graphics.configure(image=picture); graphics.image = picture; frame[0] = descriptor
             if graphics.winfo_manager() != "pack":
                 text.pack_forget(); graphics.pack(before=status, padx=8, pady=(8, 4)); graphics.focus_set()
@@ -1410,6 +1453,8 @@ def main(argv=None):
                         help='connect COM1 to the console this was started from, or to a TCP port for telnet/PuTTY')
     parser.add_argument('--headless', action='store_true',
                         help='run without a window, interacting through this terminal (shows a window only when graphics output is active)')
+    parser.add_argument('--rust-graphics', action='store_true',
+                        help='native Windows CGA/VGA with --headless, BIOS keys from terminal')
     parser.add_argument('--shell', action='store_true',
                         help='the program is a command shell: with --headless, start it with /K CTTY COM1 (unless --args is given), '
                              'type CTTY COM1 at its first prompt if it shows nothing on COM1, and keep running after Esc')
@@ -1425,6 +1470,10 @@ def main(argv=None):
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
+    if args.rust_graphics and not args.headless:
+        parser.error('--rust-graphics requires --headless (terminal keyboard via COM1/BIOS)')
+    if args.rust_graphics and sys.platform != 'win32':
+        parser.error('--rust-graphics currently needs Windows')
     if args.program is None:
         try:
             args.program, default_args = configured_startup(find_dos_engine(args.engine), args.config)
@@ -1447,9 +1496,9 @@ def main(argv=None):
         session = None
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
-                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, mouse=args.mouse)
-            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=args.shell, auto_graphics_key=args.auto_graphics_key)
-            if reply['status'] != 'exit':
+                              stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, mouse=args.mouse, rust_graphics=args.rust_graphics)
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=args.shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics)
+            if reply['status'] not in ('exit', 'window_closed'):
                 print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
                 raise SystemExit(1)
         finally:

@@ -20,6 +20,70 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def test_native_graphics_child_environment(self):
+        frames = [dict(protocol=1, seq=0, ok=True, native_graphics=True)]
+        def process():
+            return SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(
+                ''.join(json.dumps(v) + '\n' for v in frames)), stderr=io.StringIO())
+        with patch.object(term.subprocess, 'Popen', return_value=process()) as popen:
+            term.Session('engine', 'program', rust_graphics=True)
+            self.assertEqual(popen.call_args.kwargs['env']['DINE_VIDEO'], 'window')
+        with patch.object(term.subprocess, 'Popen', return_value=process()) as popen:
+            term.Session('engine', 'program')
+            self.assertNotIn('env', popen.call_args.kwargs)
+
+    def test_native_bios_key_conversion(self):
+        self.assertEqual(term.bios_keys(b'a\r\x1b\x08\t'),
+                         [(97, 30), (13, 28), (27, 1), (8, 14), (9, 15)])
+        import queue
+        port = term.ConsolePort.__new__(term.ConsolePort)
+        port.input = queue.Queue()
+        port.input.put((0, 72))
+        port.input.put(b'Z')
+        self.assertEqual(port.read_bios(), [(0, 72), (90, 44)])
+
+    def test_native_bios_key_not_com1(self):
+        class Session:
+            com1_out = b''
+            last = {}
+            def __init__(self): self.commands = []
+            def send(self, command):
+                self.commands.append(command)
+                if command.startswith('run '):
+                    return {'status': 'exit' if 'key 97 30' in self.commands else 'waiting_input',
+                            'native_graphics': True}
+                return {'status': 'waiting_input', 'native_graphics': True}
+        class Port:
+            def __init__(self): self.calls = 0
+            def read_bios(self):
+                self.calls += 1
+                return [(97, 30)] if self.calls == 1 else []
+            def read(self): raise AssertionError('graphics BIOS key reached COM1')
+        session=Session()
+        with patch.object(term, 'HeadlessGraphics') as graphics:
+            result=term.run_headless(session, Port(), 0, is_shell=False, rust_graphics=True)
+            graphics.assert_not_called()
+        self.assertEqual(result['status'], 'exit')
+        self.assertIn('key 97 30', session.commands)
+
+    def test_native_window_close_is_distinct_from_dos_exit(self):
+        class Session:
+            com1_out = b''
+            last = {}
+            def send(self, command):
+                return ({'status': 'waiting_input', 'native_graphics': True,
+                         'native_window_closed': True} if command.startswith('run ')
+                        else {'status': 'running', 'native_graphics': True})
+        class Port:
+            def read(self): return b''
+        self.assertEqual(term.run_headless(Session(), Port(), 0, is_shell=False,
+                                            rust_graphics=True)['status'], 'window_closed')
+
+    def test_rust_graphics_option_requires_headless(self):
+        with self.assertRaises(SystemExit):
+            term.main(['--rust-graphics', 'program.com'])
+
+
     def test_mouse_opt_in_sends_command_before_guest_execution(self):
         frames = ''.join(json.dumps({'protocol': 1, 'seq': i, 'ok': True}) + '\n' for i in range(2))
         process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(frames), stderr=io.StringIO())
