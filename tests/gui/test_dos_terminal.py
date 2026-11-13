@@ -65,6 +65,24 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(painted[:3], bytes(3))
         self.assertNotEqual(painted, rgb)
 
+    def test_program_defined_graphics_cursor_masks(self):
+        # Row 0: screen 0x7FFF, cursor 0x8000 -> pixel 0 white, others kept.
+        # Row 1: screen 0x3FFF, cursor 0x4000 -> pixel 0 black, pixel 1 white.
+        # Row 2: screen 0xFFFF, cursor 0x8000 -> pixel 0 inverted.
+        screen = [0x7fff, 0x3fff, 0xffff] + [0xffff] * 13
+        cursor = [0x8000, 0x4000, 0x8000] + [0] * 13
+        shape = ''.join(f'{w & 255:02x}{w >> 8:02x}' for w in screen + cursor)
+        rgb = bytes([100] * (8 * 8 * 3))
+        # Hot spot (1,1) at the point (1,1) puts the bitmap's corner at (0,0).
+        painted = term.mouse_overlay(rgb, 8, 8, 1, 1, 7, 7, shape, (1, 1))
+        pixel = lambda x, y: painted[(y * 8 + x) * 3:(y * 8 + x) * 3 + 3]
+        self.assertEqual(pixel(0, 0), b'\xff\xff\xff')
+        self.assertEqual(pixel(1, 0), bytes([100] * 3))
+        self.assertEqual(pixel(0, 1), bytes(3))
+        self.assertEqual(pixel(1, 1), b'\xff\xff\xff')
+        self.assertEqual(pixel(0, 2), bytes([155] * 3))
+        self.assertEqual(rgb, bytes([100] * (8 * 8 * 3)))
+
     def test_native_statistics_separate_blocks_singles_and_services(self):
         output = term.format_native_stats({
             'steps': 1000, 'native_blocks': 100,

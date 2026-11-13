@@ -1,3 +1,12 @@
+# INT 33h mouse driver completed — 13 November 2026
+
+Event callbacks follow RBIL and CuteMouse (call mask low byte, masked AX,
+SI/DI motion counters, interrupts on). New INT 33h functions 09h, 0Ah, 0Dh,
+0Eh, 10h, 12h-17h, 1Ah-1Fh, 20h, 22h-24h; 21h now resets. Text cursor masks
+are drawn on the session's screen copy and AX=0009h shapes in the terminal.
+Turbo Pascal 7's IDE and FreeDOS EDIT open their menus with a mouse click
+(local runs). See docs/DOS_MOUSE.md.
+
 # CUBE3 header text: AH09h on the page in BH — 8 November 2026
 
 Tony's CUBE3.BAS (SCREEN 9 with two pages) showed no header lines, only one

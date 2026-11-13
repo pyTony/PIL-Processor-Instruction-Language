@@ -268,7 +268,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
-        (0x33,_) if p.mouse.view().0=>{mouse::service(p)?;Ok(None)},
+        (0x33,_) if p.mouse.present()=>{mouse::service(p)?;Ok(None)},
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
             // Standalone probes keep the no-MOUSE.COM contract.
             p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;Ok(None)
