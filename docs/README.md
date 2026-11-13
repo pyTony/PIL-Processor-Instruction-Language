@@ -13,15 +13,12 @@ For the experimental `--mouse` DOS INT 33h polling driver, Tk pointer
 mapping, limitations, and regression checks, see
 [DOS mouse support](DOS_MOUSE.md).
 
-For small **self-running interpreted Dine programs** that share a single
-application-independent DOS/BIOS library, see
-[Dine executables](DINE_EXECUTABLES.md). Unlike standalone compiled blocks,
-these launchers retain PIL interpreter fallback via a shared DLL/so.
-
-For standalone **native DOS block compilation**, including build commands,
-verified program targets and runtime limitations, see
-[Native DOS compilation](NATIVE_DOS_COMPILATION.md). This is the active compiler
-track; profile-guided Dine shadow engines are deferred.
+PIL and Dine are **program-independent libraries**, used the same way for
+every program. The per-program builds (shadow engines, standalone
+translation, `Dine_<program>` launchers) were removed on 13 November 2026;
+what was kept for a later in-engine block compiler is described in
+[Block compiler](development/BLOCK_COMPILER.md). Their old documents are in
+[history/precompiled](history/precompiled/).
 
 ## Current increment: 0.34.0-alpha.1
 
@@ -96,7 +93,7 @@ questions; proposed syntax and plans are not implementation claims.
 |---|---|
 | [FAT16 and ZIP containers](CONTAINERS.md) | Open FreeDOS images,expand packages,list/extract files and feed the DOS probe |
 | [DOS COM/EXE probe](DOS_PROBE.md) | Import DOS executables, run original hello examples and rank first instruction/service blockers |
-| [Observed DOS native blocks](DOS_NATIVE.md) | Build observed guest code with Dine, verify graphics and compare native blocks with the interpreter |
+| [Block compiler](development/BLOCK_COMPILER.md) | What was kept of the precompilers, the full blocks design status and the integration route |
 | [Debugger guide](DEBUGGER.md) | Launchers, commands, demos, memory inspection, serial, comparisons and supported instruction forms |
 | [Feature matrix](../delivery/source/FEATURE_MATRIX.md) | Supported, partial and planned delivery features |
 | [Release notes](../delivery/source/RELEASE_NOTES.md) | User-facing changes by delivered version |

@@ -1,3 +1,20 @@
+## PIL and Dine are program-independent libraries
+
+PIL and Dine are always program-independent libraries, used the same way
+everywhere. No tool, build step, launcher or CI job may generate an engine,
+backend, library or executable for one guest program; precompilation is not
+a JIT, but it is not exempt. See docs/development/BLOCK_COMPILER.md.
+
+Do not put code for one guest program into PIL's general files (src/, isa/,
+Cargo.toml and every script in tools/ except tests, benchmarks and fixture
+builders): no program or file names, hashes, PSP or command-line checks, and
+no addresses or values taken from one program's run. Model the documented
+DOS/BIOS/CPU behaviour instead and test it with an original fixture. The
+program's history goes in docs/ or a test. Only #[cfg(test)] items, tests,
+fixtures, docs and launchers are exempt. `python
+tools/check_program_specific.py --self-test` enforces this in CI; an
+interface name may be listed with a reason in tools/program_specific_allow.txt.
+
 # GitHub state synced — 7 November 2026
 
 Current `origin/dev` is `f8747a9d405c9ff15be483293ab39ddb6e2efd7a` (CI 42411110618 passed on Windows/Linux).

@@ -92,8 +92,8 @@ this is not an all-register or arbitrary-addressing test.
 
 `tools/verify_dosbox_cpu.py` records each case's 1-based `index` and exact
 guest addresses (`entry_eip`, `test_eip`, `check_eip`, `fail_eip`, `done_eip`)
-in `cases.json`. Opening `cases.json` explicitly—or opening `CPUTEST.COM`
-when its instruction bytes match the neighbouring `cases.json`—in
+in `cases.json`. Opening `cases.json` explicitly—or any COM file (such as `CPUTEST.COM`)
+whose instruction bytes match the neighbouring `cases.json`—in
 `tools/pil_debugger.py` populates the **Case** selector and synthesizes a
 self-contained `<200`-byte monitor image for any selected case so you can jump
 directly to `test_eip` (`BP @ Test`), step individual PIL tokens (`Step PIL F8`),

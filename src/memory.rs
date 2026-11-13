@@ -158,7 +158,6 @@ impl Ram {
     fn locate(&self,linear:u32,write:bool)->Result<u32,AccessFault>{Ok(self.physical_address(self.translate(linear,write)?))}
     pub fn bytes(&self)->&[u8] {&self.data}
     /// Physical read-only spans, for reproducing an initialized guest snapshot.
-    pub fn readonly_ranges(&self)->&[std::ops::Range<usize>]{&self.readonly}
     pub fn a20_enabled(&self)->bool{self.a20_enabled}
     pub fn planar(&self)->Option<&super::vga_planar::Planar>{self.planar.as_deref()}
     pub fn planar_mut(&mut self)->Option<&mut super::vga_planar::Planar>{self.planar.as_deref_mut()}

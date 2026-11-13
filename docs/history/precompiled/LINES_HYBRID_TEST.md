@@ -1,3 +1,11 @@
+> **Historical (removed 13 November 2026).** This page describes tools that
+> built an executable for one DOS program (shadow `pil-<program>`, standalone
+> `<PROGRAM>.exe`, `Dine_<program>` launchers). They were removed: PIL and Dine
+> are program-independent libraries, used the same everywhere. The commands
+> below no longer exist. What was kept for later integration is listed in
+> [BLOCK_COMPILER.md](../../development/BLOCK_COMPILER.md); measurements here
+> remain as recorded.
+
 # LINES.EXE hybrid acceptance
 
 This is a **manual, program-supplied** acceptance test, not a bundled DOS

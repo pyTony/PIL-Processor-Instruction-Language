@@ -180,7 +180,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
             let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            let text=crate::dos_runtime::dollar_string(&p.ram,context,p.cpu.regs[2]&0xffff,p.cpu.eip,out.remaining())?;
+            let text=dollar_string(&p.ram,context,p.cpu.regs[2]&0xffff,p.cpu.eip,out.remaining())?;
             console::dos_break_check(p)?;
             if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
             let screen=console::dos_screen(p,&text)?;
@@ -667,7 +667,7 @@ fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
 /// AH02 (and AH06 output): capture and active-page screen change together.
 fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
     if to_file(p,&[byte])?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(byte);return Ok(());}
-    let (bytes,value)=crate::dos_runtime::character_output(byte,out)?;
+    let (bytes,value)=character_output(byte,out)?;
     let screen=console::dos_screen(p,&bytes)?;
     out.write_atomic(&bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
     console::store(p,&screen)?;
@@ -961,4 +961,24 @@ fn divide_error(p:&mut Loaded)->Result<Option<u8>,String>{
     console::check(p,&writes)?;console::store(p,&writes)?;
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x4c7f;
     Ok(Some(0x7f))
+}
+
+/// AH09 validation: collect the whole string before any visible effects.
+pub(crate) fn dollar_string(ram:&Ram,context:MemoryContext,offset:u32,eip:u32,remaining:usize)->Result<Vec<u8>,String>{
+    let mut text=Vec::new();
+    for n in offset..=0xffff {
+        let at=context.translate(n,MemWidth::Byte,false,eip).map_err(|e|format!("DOS string access: {e:?}"))?;
+        let b=ram.load(at,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))? as u8;
+        if b==b'$'{return Ok(text);}
+        if text.len()>=remaining{return Err("DOS output limit reached before string terminator".into());}
+        text.push(b);
+    }
+    Err("DOS string has no $ terminator before segment end".into())
+}
+
+/// AH02 console-byte plan. Validate a complete tab before output or AL.
+pub(crate) fn character_output(byte:u8,out:&impl Output)->Result<(Vec<u8>,u8),String>{
+    let count=if byte==9{8-out.column()%8}else{1};
+    if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
+    Ok((vec![if byte==9{b' '}else{byte};count],if byte==9{b' '}else{byte}))
 }

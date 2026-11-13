@@ -1,5 +1,7 @@
 # Guarded block execution upgrade
 
+> **Design reference.** Since 13 November 2026 nothing builds a backend or executable for one program; the per-program tools this document mentions were removed. What was kept, and the integration route, are in [BLOCK_COMPILER.md](BLOCK_COMPILER.md).
+
 Generated blocks retain their maximum of 16 instructions. The dispatcher can
 follow observed branches, calls and returns across blocks for at most 256
 instructions per invocation, bounded by the caller's remaining step budget.

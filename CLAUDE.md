@@ -1,3 +1,52 @@
+# PIL and Dine are program-independent libraries — 13 November 2026
+
+Standing rules (Tony, 13 November 2026):
+- **PIL and Dine are always program-independent libraries, used the same
+  way everywhere.** No tool, build step, launcher or CI job may generate a
+  `pil` engine, backend, library or executable for one guest program.
+  Precompilation is not a JIT, but it is not exempt.
+- **No program-specific code in general files.** src/, isa/, Cargo.toml and
+  every script in tools/ except tests, benchmarks and fixture builders model
+  the CPU, DOS, BIOS and devices for every program: no program or file
+  names, hashes, PSP or command-line checks, no addresses or values taken
+  from one program's run. Model the documented behaviour (FreeDOS kernel,
+  RBIL, Intel manuals) and test it with an original fixture; the program's
+  story goes in docs/, CHANGELOG or a test. Exempt: Rust #[cfg(test)]
+  items, tests/, fixtures, docs and root launchers.
+- `python tools/check_program_specific.py --self-test` runs first in Windows
+  and Linux CI. It flags guest program names, X.COM/X.EXE-style literals,
+  64-hex hashes, any use of the removed per-program build interfaces outside
+  docs and comments, and tracked host executables or shared libraries (DOS
+  fixtures in programs/ are inputs). An interface name may be allow-listed
+  in tools/program_specific_allow.txt as PATH | TEXT | REASON.
+
+This PR replaces #173 (Tony found it disappointing) and takes its useful
+parts: the guard, the explicit headless `--shell` (no shell guessed from a
+program name), the reworded comments, the case manifest for any COM with a
+cases.json, and vga_planar::Planar::controller_io shared VGA port rules.
+- Removed: the linked shadow engine (build.rs, PIL_SHADOW_SOURCE,
+  dos_compile.rs, `--emit-dos-backend`), the standalone translator
+  (dos_standalone.rs, dos_translate.rs, dos_runtime.rs,
+  dine_native_video.rs, `--emit-dos-standalone`), the Dine_<program>
+  launchers (build_dine.py), their build/verify scripts, three GUI tests,
+  ProgramIdentity / active_program in Dine, and tracked scratch .exe and
+  generated .rs files. Their docs are in docs/history/precompiled/.
+- Kept in src/block_compiler/ (compiled, tested, not wired to a command):
+  sites (Site, InstructionProfile, BlockPlan), codegen, guards and a
+  recorder without program identity. The InstructionBackend hook, native.rs
+  backend comparison and the program-independent `dine` cdylib stay; the
+  cdylib is now tested by tools/verify_dine_library.py through ctypes.
+  tools/verify_dos_demos.py checks FACTOR, RECURFIB and the MZ demo in Dine.
+- The full blocks design is on dev (block PRs #133, #134, #140, #164, #167;
+  NATIVE_DOS_ARCHITECTURE.md, COMPILER_REUSE.md, BLOCK_EXECUTION_UPGRADE.md);
+  Tony's 10 November stashes hold nothing missing. Details and the
+  integration route: docs/development/BLOCK_COMPILER.md. Issue #148 is
+  obsolete.
+
+Local Linux, debug: 802 Rust tests pass, 2 ignored; GUI tests 77 run, 6
+skipped, all pass. verify_dine_library.py, verify_dos_demos.py and
+verify_ansi_mandel.py pass.
+
 # INT 33h mouse driver completed — 13 November 2026
 
 Tony asked to check the mouse support and finish what was missing. This

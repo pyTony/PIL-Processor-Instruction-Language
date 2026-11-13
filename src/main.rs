@@ -23,20 +23,10 @@ mod dine_ffi;
 mod dine_display;
 #[cfg(windows)]
 mod dine_window;
-#[cfg(test)]
-mod dine_native_video;
-mod dos_compile;
-mod dos_codegen;
-mod dos_blocks;
-mod dos_translate;
-mod dos_runtime;
+mod block_compiler;
 mod dos_encoding;
-mod dos_standalone;
 mod rust_codegen;
 mod pil_opt;
-#[cfg(pil_shadow_backend)]
-#[allow(dead_code, unused_mut, unused_variables, unused_imports, unused_assignments)]
-mod shadow_backend { include!(concat!(env!("OUT_DIR"), "/pil_shadow.rs")); }
 mod dos_config;
 mod fpu;
 mod containers;
@@ -2438,8 +2428,6 @@ Code generation and examples:
   --write-factorials PATH           Write a factorial example
   --write-loop PATH                 Write a loop example
   --write-dos-hello com|exe PATH     Write a DOS hello (new file only)
-  --emit-dos-backend INPUT OUTPUT    Profile a DOS COM/EXE and emit a partial Rust backend
-  --emit-dos-standalone INPUT OUTPUT Emit standalone Rust (COM/MZ RAM and direct branches)
   --demo-branch                     Show a conditional branch example
 
 Options (before COMMAND):
@@ -2452,36 +2440,6 @@ For a DOS window use: python tools/dos_terminal.py --help
 ";
 fn main() -> R<()> {
     let mut dos_args:Vec<_>=std::env::args().collect();
-    if dos_args.get(1).map(String::as_str)==Some("--emit-dos-standalone"){
-        if dos_args.len()!=4{return Err("usage: pil --emit-dos-standalone INPUT.COM|INPUT.EXE OUTPUT.rs".into());}
-        let path=std::path::Path::new(&dos_args[2]);
-        let name=path.file_name().and_then(|n|n.to_str()).ok_or("DOS program name must be Unicode")?;
-        let source=dos_standalone::emit(&dos::read_file(path)?,name)?;
-        use std::io::Write;
-        let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
-        file.write_all(source.as_bytes()).map_err(|e|e.to_string())?;
-        println!("wrote standalone Rust source {} (no interpreter fallback)",dos_args[3]);return Ok(());
-    }
-    if dos_args.get(1).map(String::as_str)==Some("--emit-dos-backend"){
-        if dos_args.len()<4||(dos_args.len()-4)%2!=0{return Err("usage: pil --emit-dos-backend INPUT OUTPUT [--keys FILE] [--steps N] [--sites N] [--clock-offset SECONDS] [--mount DIR]".into());}
-        let(mut keys,mut steps,mut sites,mut clock_offset,mut mount)=(Vec::new(),120_000_000usize,65_536usize,None::<i64>,None::<std::path::PathBuf>);
-        for pair in dos_args[4..].chunks(2){match pair[0].as_str(){
-            "--keys"=>{keys=std::fs::read(&pair[1]).map_err(|e|e.to_string())?;if keys.len()>65_536||!keys.iter().all(|b|b.is_ascii_graphic()||matches!(*b,b' '|b'\r'|b'\n'|b'\t')){return Err("training keys must be at most 64 KiB of ASCII text".into());}keys=String::from_utf8(keys).map_err(|e|e.to_string())?.replace("\r\n","\n").replace('\r',"\n").replace('\n',"\r").into_bytes();},
-            "--steps"=>{steps=pair[1].parse().map_err(|e:std::num::ParseIntError|e.to_string())?;if !(1..=120_000_000).contains(&steps){return Err("profile steps must be 1..120000000".into());}},
-            "--sites"=>{sites=pair[1].parse().map_err(|e:std::num::ParseIntError|e.to_string())?;if !(1..=65_536).contains(&sites){return Err("profile sites must be 1..65536".into());}},
-            "--clock-offset"=>{let offset=pair[1].parse::<i64>().map_err(|e|e.to_string())?;if offset.abs()>14*3600{return Err("profile clock offset must be -50400..50400 seconds".into());}clock_offset=Some(offset);},
-            "--mount"=>{let folder=std::path::PathBuf::from(&pair[1]);if !folder.is_dir(){return Err(format!("profile mount is not a directory: {}",folder.display()));}mount=Some(folder);},
-            _=>return Err("unknown DOS profiling option".into()),
-        }}
-        let path=std::path::Path::new(&dos_args[2]);
-        let name=path.file_name().and_then(|n|n.to_str()).ok_or("DOS program name must be Unicode")?;
-        let bytes=dos::read_file(path)?;
-        let (source,status)=dos_compile::emit_trained_with_options(&bytes,name,&keys,steps,sites,clock_offset,mount.as_deref())?;
-        use std::io::Write;
-        let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
-        file.write_all(source.as_bytes()).map_err(|e|e.to_string())?;
-        println!("{status}; wrote {}",dos_args[3]);return Ok(());
-    }
     if dos_args.get(1).map(String::as_str)==Some("--pildos-startup"){
         if dos_args.len()>3{return Err("usage: pil --pildos-startup [CONFIG]".into());}
         let(program,args)=dos_config::startup(dos_args.get(2).map(String::as_str))?;

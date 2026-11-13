@@ -71,7 +71,7 @@ PALETTE = ['#000000', '#0000aa', '#00aa00', '#00aaaa', '#aa0000', '#aa00aa', '#a
            '#555555', '#5555ff', '#55ff55', '#55ffff', '#ff5555', '#ff55ff', '#ffff55', '#ffffff']
 # Host PC speaker: the DOS session reports activation counts, not PCM or the
 # duration of each pulse. A short, quiet click is therefore an approximation.
-# It avoids playing a long system notification for each Landmark speaker pulse.
+# It avoids playing a long system notification for each speaker pulse.
 SPEAKER_INTERVAL = 0.2
 
 
@@ -258,7 +258,7 @@ def key_code(keysym, char, control=False, alt=False, altgr=False, shift=False):
     if keysym in SPECIAL and keysym.startswith('F'):
         ascii_code, scan = SPECIAL[keysym]
         # BIOS function-key words depend on the modifier, not only 0040:0017.
-        # Turbo Pascal uses F9 (4300h) to compile and Ctrl+F9 (6600h) to run.
+        # F9 is 4300h, Ctrl+F9 6600h and Shift+F9 5Ch, as the BIOS gives them.
         if control and not altgr:
             return ascii_code, scan + 0x23  # Ctrl+F1..F10: 5Eh..67h
         if shift:
@@ -1489,8 +1489,11 @@ def main(argv=None):
                         help='run without a window, interacting through this terminal (shows a window only when graphics output is active)')
     parser.add_argument('--rust-graphics', action='store_true',
                         help='native Windows CGA/VGA with --headless, BIOS keys from terminal')
+    parser.add_argument('--shell', action='store_true',
+                        help='the program is a command shell: with --headless, start it with /K CTTY COM1 (unless --args is given), '
+                             'type CTTY COM1 at its first prompt if it shows nothing on COM1, and keep running after Esc')
     parser.add_argument('--auto-graphics-key', action='store_true',
-                        help='send Enter at a graphics program key wait (useful with DOS TIMEIT)')
+                        help='send Enter at a graphics program key wait (useful for timing runs)')
     parser.add_argument('--engine', help='pil executable (default: newest build)')
     parser.add_argument('--ignore-unassigned-out', action='store_true', help='ignore and log OUT to unassigned ports; known devices still stop')
     parser.add_argument('--stop-log', default='PILdos-stops.jsonl', metavar='PATH', help='append stop diagnostics (default: PILdos-stops.jsonl)')
@@ -1520,7 +1523,7 @@ def main(argv=None):
     if args.headless:
         if args.com1 is None:
             args.com1 = 'console'
-        if args.args is None:
+        if args.args is None and args.shell:
             args.args = '/K CTTY COM1'
     com1 = open_com1(args.com1) if args.com1 else None
     if args.headless:
@@ -1528,8 +1531,7 @@ def main(argv=None):
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
                               stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, mouse=args.mouse, rust_graphics=args.rust_graphics)
-            is_shell = any(sh in args.program.upper() for sh in ('COMMAND.COM', 'CMD.EXE', '4DOS'))
-            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=is_shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics)
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=args.shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics)
             if reply['status'] not in ('exit', 'window_closed'):
                 print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
                 raise SystemExit(1)

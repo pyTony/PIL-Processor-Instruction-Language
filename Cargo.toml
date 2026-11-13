@@ -6,15 +6,15 @@ edition = "2021"
 [dependencies]
 thiserror = "1.0"
 
-# Build the same CPU and DOS implementation as a reusable native Dine
-# runtime, independent of guest programs. The existing `pil` binary remains
-# the compiler/interpreter command. Build with `cargo build --release --lib --features dine-library`.
+# Build the same CPU and DOS implementation as the Dine shared library
+# (C ABI in src/dine_ffi.rs). PIL and Dine are program-independent: no build
+# embeds a guest program. The `pil` binary is the interpreter command. Build with `cargo build --release --lib --features dine-library`.
 [lib]
 name = "dine"
 path = "src/main.rs"
 crate-type = ["cdylib"]
 # Avoid running the main.rs development test suite twice in ordinary cargo test.
-# The explicit Dine DLL integration check exercises this target on both hosts.
+# tools/verify_dine_library.py exercises this target on both hosts.
 test = false
 doctest = false
 

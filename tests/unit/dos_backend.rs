@@ -6,11 +6,11 @@ fn clocked_native_block_budget_stops_at_each_irq_poll_boundary() {
     #[derive(Default)]
     struct Observe(Vec<usize>);
     impl InstructionBackend for Observe {
-        fn block(&mut self,_:&ProgramIdentity,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,budget:usize)->Option<(usize,Result<(),crate::ExecError>)>{
+        fn block(&mut self,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,budget:usize)->Option<(usize,Result<(),crate::ExecError>)>{
             self.0.push(budget);
             None
         }
-        fn execute(&mut self,_:&ProgramIdentity,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::ExecError>>{
+        fn execute(&mut self,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::ExecError>>{
             None
         }
     }
@@ -35,10 +35,10 @@ fn clocked_native_block_budget_stops_at_each_irq_poll_boundary() {
 fn unsupported_native_sites_skip_hooks_and_preserve_lazy_interpreter_state(){
     struct Unavailable;
     impl InstructionBackend for Unavailable{
-        fn may_block(&mut self,_:&ProgramIdentity,_:&Image,_:&Ram,_:u32)->bool{false}
-        fn may_execute(&mut self,_:&ProgramIdentity,_:&Image,_:&Ram,_:u32)->bool{false}
-        fn block(&mut self,_:&ProgramIdentity,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,_:usize)->Option<(usize,Result<(),crate::ExecError>)>{panic!("unavailable native block must not run")}
-        fn execute(&mut self,_:&ProgramIdentity,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::ExecError>>{panic!("unavailable native instruction must not run")}
+        fn may_block(&mut self,_:&Image,_:&Ram,_:u32)->bool{false}
+        fn may_execute(&mut self,_:&Image,_:&Ram,_:u32)->bool{false}
+        fn block(&mut self,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,_:usize)->Option<(usize,Result<(),crate::ExecError>)>{panic!("unavailable native block must not run")}
+        fn execute(&mut self,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::ExecError>>{panic!("unavailable native instruction must not run")}
     }
     let bytes=[0xb9,32,0,0xb8,0,0,0x83,0xc0,1,0xe2,0xfb,0xb8,0,0x4c,0xcd,0x21];
     let mut a=load(&bytes,"LAZY.COM").unwrap();let mut b=a.clone();let mut backend=Unavailable;
@@ -101,7 +101,7 @@ fn rust_mandelbrot_uses_dine_vga_and_matches_the_dos_program() {
 #[derive(Default)]
 struct Misses(usize,usize);
 impl InstructionBackend for Misses {
-    fn execute(&mut self,_:&ProgramIdentity,_:&Image,decoded:&std::rc::Rc<super::super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::super::address::SegmentState)->Option<Result<(),super::super::flow::ExecError>> {
+    fn execute(&mut self,_:&Image,decoded:&std::rc::Rc<super::super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::super::address::SegmentState)->Option<Result<(),super::super::flow::ExecError>> {
         self.0+=1;
         if self.0 % 2 == 0 {
             if let Operation::Pil{program,dst,src,flow,address}=&decoded.operation {
@@ -142,7 +142,7 @@ fn session_retains_backend_across_frontend_slices() {
     use std::{cell::Cell,rc::Rc};
     struct Count(Rc<Cell<usize>>);
     impl InstructionBackend for Count {
-        fn execute(&mut self,_:&ProgramIdentity,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::flow::ExecError>> {
+        fn execute(&mut self,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::flow::ExecError>> {
             self.0.set(self.0.get()+1);None
         }
     }

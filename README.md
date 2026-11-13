@@ -51,9 +51,7 @@ Main is a runtime-only export and intentionally runs zero development tests.
 **[Start here: PIL documentation overview](docs/README.md)** — a single guide
 with links to all references, examples, user guides, verification plans and history.
 
-**[Build small Dine applications](docs/DINE_EXECUTABLES.md)**: interpreted-first `Dine_<program>.exe` launchers use the program-independent `dine.dll`, embedding the original DOS program. This is different from pure native block compilation.
-
-**[Compile DOS programs to native executables](docs/NATIVE_DOS_COMPILATION.md)**: supported COM/MZ EXE subset, one-command standalone block builds, verification and next native-runtime milestones. Profile-guided shadow engines are deferred.
+**PIL and Dine are program-independent libraries**, used the same way for every DOS program: one `pil` engine and one `dine` library (`--features dine-library`, C ABI `dine_run`) take the guest at run time. Nothing builds an executable for one program; the kept block-compiler parts and the integration route are in [docs/development/BLOCK_COMPILER.md](docs/development/BLOCK_COMPILER.md).
 
 - [Implemented language reference](docs/LANGUAGE.md): executable syntax and semantics.
 - [Original design proposal](docs/design/processor_instruction_language_v01.md): broader architecture and planned features.
