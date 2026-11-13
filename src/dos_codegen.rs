@@ -9,7 +9,7 @@ pub(crate) fn instruction_module(ip:u32,p:&Program)->String{
     let functions=crate::emit_rust_functions(p)
         .replace("fn execute_state(","#[inline(always)] fn execute_state(")
         .replace("pub fn execute_with_machine(","#[inline(always)] pub fn execute_with_machine(");
-    let mut out=format!("mod ins_{ip:x} {{use crate::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {functions}\n");
+    let mut out=format!("mod ins_{ip:x} {{use crate::{{FlowContext,ExecError,Ram,MemWidth,address,privilege,task}}; {functions}\n");
     if unpaged_register_only(p){
         out.push_str("#[inline(always)] pub fn execute_unpaged_register(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,_ram:&mut Ram,_address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,Some(machine),None)}\n");
     }

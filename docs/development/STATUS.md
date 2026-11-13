@@ -1,3 +1,41 @@
+# Protected mode, increment 7: task switching — 13 November 2026
+
+Protected-mode plan increment 7 (#128 was V86 mode; #129, #131 and #132
+were its follow-ups).
+- New src/task.rs, shared by both backends (embedded in generated Rust
+  next to privilege.rs) and interrupt delivery: far JMP and CALL to an
+  available 286/386 TSS or through a task gate, exceptions and INT n
+  through IDT task gates, and IRET with NT set (new PIL token
+  `task_return_if`, which ends the instruction as a gate CALL does).
+- The old task's EIP, EFLAGS, registers and selectors go to its TSS (386
+  or 286 layout; IRET stores NT clear). JMP and IRET clear the old busy
+  bit; CALL and interrupts write the back link and set NT; JMP leaves NT
+  as each TSS has it. The new task's registers, EFLAGS, EIP, LDTR,
+  segments and, from a 386 TSS while paging is on, CR3 are loaded; TR
+  takes the new TSS (busy) and CR0.TS is set. A 286 TSS gives FFFFh upper
+  register halves and null FS/GS; a 386 TSS with VM enters V86 mode. An
+  exception's error code goes on the new task's stack.
+- Faults: #GP for a busy or non-TSS target or too low a DPL, #NP when
+  not present, #TS for a short TSS, a bad LDT or a bad new segment. Not
+  modelled: the 386 raises the last group in the new task after the
+  switch; here every check comes first and the old task stays as it was.
+  New-task descriptor reads and the error-code push use the old CR3; the
+  TSS T bit is ignored.
+- Transfer (privilege.rs) gains a task part; commit takes EFLAGS and its
+  undefined markers. Gate gains `task` for IDT task gates. Far JMP and
+  CALL now flush lazy flags, since a task switch stores EFLAGS.
+- CLTS wrote only the low CR0 word, clearing PG (found by test386 POST
+  22h, whose TS handler runs CLTS with paging on). It now keeps every
+  other CR0 bit and needs CPL 0 (#GP(0) above it and in V86 mode).
+
+Local Linux: 806 Rust tests pass, 3 ignored, release (7 new in task.rs;
+2 older expectations changed from a stop to a task gate and a task
+return). The generated-backend suite has 278 cases (1 new: pm_task, CALL
+to a TSS and IRET back). test386 with the 128 KB ROM (built locally,
+scratchpad only) now passes POST 22h, all of its task-switch tests, then
+0Bh-19h, and stops in POST 1Ah (ENTER at ring 3 on a supervisor stack
+page) as the 64 KB ROM does. SingleStepTests/80386 was not rerun.
+
 # Observed DOS native blocks — 9 November 2026
 
 The DOS profiling writer now records up to 120 million interpreted steps,
