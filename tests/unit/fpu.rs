@@ -571,3 +571,104 @@ fn present_80387_dividing_reverse_memory_operands() {
     assert_eq!(result.loaded.ram.load(base+0x224,MemWidth::Dword).unwrap(),0xaaaa_aaaa);
     assert_eq!(result.loaded.ram.load(base+0x228,MemWidth::Word).unwrap(),0x3ffd);
 }
+
+#[test]
+fn present_80387_turbo_fnstcw_bx_and_fldcw_roundtrip() {
+    // FNINIT; MOV BX,0200h; FNSTCW [BX] (D9 3F, Turbo Pascal);
+    // FLDCW [BX+2]; FNSTCW [BX+4]; INT 20h.
+    let code=[0xdb,0xe3, 0xbb,0x00,0x02, 0xd9,0x3f,
+              0xd9,0x6f,0x02, 0xd9,0x7f,0x04, 0xcd,0x20];
+    let mut p=dos::load(&code,"x87-control.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0xdead).unwrap();
+    p.ram.store(base+0x202,MemWidth::Word,0x027f).unwrap();
+    p.ram.store(base+0x204,MemWidth::Word,0xdead).unwrap();
+
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Word).unwrap(),0x037f);
+    assert_eq!(result.loaded.ram.load(base+0x202,MemWidth::Word).unwrap(),0x027f);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Word).unwrap(),0x027f);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x027f);
+    assert_eq!(state.status,0);
+    assert_eq!(state.tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_fnstcw_protected_destination_is_atomic() {
+    // FNSTCW [BX] with protection covering the *second* destination byte.
+    let mut p=dos::load(&[0xd9,0x3f,0xcd,0x20],"x87-control-protected.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0xa55a).unwrap();
+    let prior=p.fpu.state().unwrap().clone();
+    p.ram.protect(base+0x201,1).unwrap();
+
+    let result=dos::run(p,8).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s)
+        if s.contains("80387 memory operand")),"{:?}",result.stop);
+    assert_eq!(result.completed,0);
+    assert_eq!(result.loaded.cpu.eip,0x100);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Word).unwrap(),0xa55a);
+    assert_eq!(result.loaded.fpu.state().unwrap(),&prior);
+}
+
+#[test]
+fn present_80387_fldcw_cross_segment_limit_preserves_control() {
+    let mut p=dos::load(&[0xd9,0x2f,0xcd,0x20],"x87-control-limit.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x0b7f).unwrap();
+    p.image.segments[3].limit=0x200; // BX=0200, but word extends to 0201.
+    let prior=p.fpu.state().unwrap().clone();
+
+    let result=dos::run(p,8).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Fault(ref s)
+        if s.contains("80387 memory operand")),"{:?}",result.stop);
+    assert_eq!(result.completed,0);
+    assert_eq!(result.loaded.cpu.eip,0x100);
+    assert_eq!(result.loaded.fpu.state().unwrap(),&prior);
+}
+
+#[test]
+fn present_80387_fnstcw_uses_ss_default_for_bp_and_supports_override() {
+    // FNSTCW [BP-2], then FLDCW ES:[BX], intentionally different source.
+    let code=[0xd9,0x7e,0xfe, 0x26,0xd9,0x2f, 0xcd,0x20];
+    let mut p=dos::load(&code,"x87-control-segments.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[5]=0x302; // [BP-2] points to SS:0300
+    p.cpu.regs[3]=0x200;
+    let ss=p.image.segments[2].base;
+    let es=p.image.segments[0].base;
+    p.ram.store(ss+0x300,MemWidth::Word,0).unwrap();
+    p.ram.store(es+0x200,MemWidth::Word,0x0b7f).unwrap();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(ss+0x300,MemWidth::Word).unwrap(),0x037f);
+    assert_eq!(result.loaded.fpu.state().unwrap().control,0x0b7f);
+}
+
+#[test]
+fn present_80387_fldcw_does_not_silently_enable_unsupported_arithmetic_mode() {
+    // Loading PC=10 is legal. Subsequent FADD still explicitly refuses
+    // unsupported precision-control modes rather than computing wrong data.
+    let code=[0xd9,0x2f, 0xd9,0xe8, 0xd9,0xe8, 0xd8,0xc1, 0xcd,0x20];
+    let mut p=dos::load(&code,"x87-control-precision.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x027f).unwrap();
+    let stopped=dos::run(p,16).unwrap();
+    assert!(matches!(stopped.stop,dos::Stop::Fault(ref s)
+        if s.contains("80387 unsupported")),"{:?}",stopped.stop);
+    assert_eq!(stopped.completed,3);
+    assert_eq!(stopped.loaded.cpu.eip,0x106);
+    let state=stopped.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x027f);
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.st(1),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+}

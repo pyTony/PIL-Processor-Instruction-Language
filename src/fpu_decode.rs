@@ -6,6 +6,10 @@ pub enum Operation {
     Finit,
     Fnclex,
     FnstswAx,
+    /// Load the 16-bit control word from a memory operand (D9 /5).
+    Fldcw,
+    /// Store the current 16-bit control word to a memory operand (D9 /7).
+    Fnstcw,
     Fld1,
     Fldz,
     FldSt(u8),
@@ -68,6 +72,8 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
         match (opcode, reg) {
             (0xd9, 0) => Some(Operation::FldM32),
             (0xd9, 3) => Some(Operation::FstpM32),
+            (0xd9, 5) => Some(Operation::Fldcw),
+            (0xd9, 7) => Some(Operation::Fnstcw),
             (0xdd, 0) => Some(Operation::FldM64),
             (0xdd, 3) => Some(Operation::FstpM64),
             (0xdb, 5) => Some(Operation::FldM80),
@@ -99,6 +105,10 @@ mod tests {
         assert_eq!(classify(0xdf,0xe0),Ok(Operation::FnstswAx));
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
+        assert_eq!(classify(0xd9,0x2f),Ok(Operation::Fldcw)); // FLDCW [BX]
+        assert_eq!(classify(0xd9,0x3f),Ok(Operation::Fnstcw)); // FNSTCW [BX]
+        // /5 and /7 require memory operands, not ModR/M register mode.
+        assert_eq!(classify(0xd9,0xef),Err(DecodeError::Unsupported{opcode:0xd9,modrm:0xef}));
     }
     #[test]
     fn register_stack_indices() {
