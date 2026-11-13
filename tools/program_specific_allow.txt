@@ -10,4 +10,7 @@ tools/dos_terminal.py | images/FD14LITE.img::COMMAND.COM | Usage example in the 
 tools/dos_terminal.py | have COMMAND.COM run a batch file first | --args help text example
 src/native.rs | "generated.exe" | host executable built by the fixed-image backend comparison, not a guest program
 src/native.rs | "mandelbrot.exe" | host executable of the built-in --compare-mandelbrot image check, not a DOS guest
-tools/build_dos_native.py | "pil.exe" | the PIL engine's own Windows executable name
+tools/package.py | HELLO. | package smoke test of the built-in --write-dos-hello fixture, not a guest switch
+tools/package.py | dos-hello. | package smoke test of the built-in --write-dos-hello fixture, not a guest switch
+tools/export_runtime.py | HELLO. | export smoke test of the built-in --write-dos-hello fixture, not a guest switch
+tools/export_runtime.py | dos-hello. | export smoke test of the built-in --write-dos-hello fixture, not a guest switch

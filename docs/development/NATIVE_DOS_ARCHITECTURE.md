@@ -1000,7 +1000,7 @@ samples per build, discarding the first sample per build. No terminal output;
 RAM initialization/runtime setup included. Median before: 12.094 ms/frame;
 shared blocks: 8.604 ms/frame, about 1.41x or 29% less time. This excludes
 process startup and is not an isolated flag-only benchmark. Reproduce with
-`tools/audit_dos_codegen.py --baseline SAVED_SOURCE.rs --benchmark`; results,
+`tools/audit_dos_codegen.py --program programs/dos/MANDANSI.COM --baseline SAVED_SOURCE.rs --benchmark`; results,
 IR and assembly are saved under `target/compiler-optimization-audit/`.
 
 The standalone output adapter defaults to UTF-8, with `PIL_DOS_RAW_OUTPUT=1`

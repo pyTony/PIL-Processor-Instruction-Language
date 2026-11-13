@@ -1,7 +1,8 @@
 ## No program-specific code in general files
 
 Do not put code for one guest program into PIL's general files (src/, isa/,
-build.rs, tools/dos_terminal.py and the precompiler build tools): no program
+build.rs and every script in tools/ except tests, benchmarks and fixture
+builders): no program
 or file names, hashes, PSP or command-line checks, and no addresses or values
 taken from one program's run. Model the documented DOS/BIOS/CPU behaviour
 instead and test it with an original fixture. The program's history goes in

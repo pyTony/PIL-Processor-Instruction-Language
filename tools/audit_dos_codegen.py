@@ -109,7 +109,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine', type=Path, default=ROOT / 'target/debug' / ('pil.exe' if os.name == 'nt' else 'pil'))
     parser.add_argument('--baseline', type=Path, help='saved standalone source before shared blocks')
-    parser.add_argument('--program',type=Path,default=ROOT/'programs/dos/MANDANSI.COM')
+    parser.add_argument('--program',type=Path,required=True,help='DOS program to compile and audit')
     parser.add_argument('--argument',action='append',default=[],help='guest argument (repeat for multiple arguments)')
     parser.add_argument('--out', type=Path, default=ROOT / 'target/compiler-optimization-audit')
     parser.add_argument('--benchmark',action='store_true')

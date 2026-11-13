@@ -24,7 +24,7 @@ tests below before calling any local outstanding optimizer change published.
 | --- | --- | --- |
 | `programs/dos/FACTOR.COM` | DOS factorial output (0! through 99!), scalar LODS, DIV/IDIV, DOS command tail | `python tools/verify_factor_native.py --engine target/release/pil.exe` |
 | `programs/dos/RECURFIB.COM` | recursive near calls/returns, runtime stack integrity, arguments 0..20 | `python tools/verify_recursive_native.py --engine target/release/pil.exe` |
-| `programs/dos/MANDANSI.COM` | ANSI Mandelbrot output/blocks, compared against independent reference | `python tools/verify_ansi_mandel.py` and `tools/audit_dos_codegen.py` |
+| `programs/dos/MANDANSI.COM` | ANSI Mandelbrot output/blocks, compared against independent reference | `python tools/verify_ansi_mandel.py` and `tools/audit_dos_codegen.py --program programs/dos/MANDANSI.COM` |
 | generated DOS MZ hello and argument example | MZ/ZM loading, relocations, entry CS:IP, Unicode/CP437 command-tail boundary | `python tools/verify_mz_native.py --engine target/release/pil.exe` |
 | small COM control-flow and memory fixtures | Jcc/loop edges, RAM load/store/RMW, stack, division and precision faults | `python tools/verify_dos_standalone.py --engine target/release/pil.exe` |
 

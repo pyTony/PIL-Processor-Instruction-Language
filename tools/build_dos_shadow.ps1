@@ -2,8 +2,8 @@
 # this PowerShell process. Python cannot modify the environment of its parent.
 #
 # Usage:
-#   .\tools\build_dos_shadow.ps1 programs/dos/MANDVGA.COM --verify
-#   python tools/dos_terminal.py --engine $env:SHADOW_SERVICE --auto-graphics-key --headless programs/dos/MANDVGA.COM
+#   .\tools\build_dos_shadow.ps1 PROGRAM --verify
+#   python tools/dos_terminal.py --engine $env:SHADOW_SERVICE --headless PROGRAM
 #
 # All arguments are forwarded unchanged to build_dos_shadow.py, including
 # --output-dir, --steps, --sites and --keys.

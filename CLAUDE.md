@@ -27,8 +27,8 @@ generated-backend disagreements. The full suite was not rerun.
 # No program-specific code in general files — 13 November 2026
 
 Standing rule (Tony, 13 November 2026). PIL's general files (src/, isa/,
-build.rs, tools/dos_terminal.py and the precompiler build tools
-build_dos_shadow.py, build_dos_native.py, build_dine.py) model the CPU, DOS, BIOS and devices for
+build.rs and every script in tools/ except tests, benchmarks and fixture
+builders) model the CPU, DOS, BIOS and devices for
 every program. They must not branch on, or be justified by, one guest
 program: no program or file names, hashes, PSP or command-line checks, and
 no addresses or values taken from one program's run. When a program hits a
@@ -67,8 +67,19 @@ goes in docs/, CHANGELOG or a test, not in the general source.
   MANDVGA test, ignored as "next milestone" although it already compiled,
   runs again. No PIL file is specific to the compilers: all 108 in
   isa/i386 come through the general decoder.
+- Scripts (Tony: "there was also program specific switches in scripts").
+  The guard now scans every script in tools/ (.py, .ps1, .sh, .cmd), not
+  only the terminal; verify_*, bench_* and the demo fixture builders are
+  tests by design. Found and fixed: pil_debugger.py loaded a case manifest
+  only for a file named CPUTEST.COM; it now does so for any COM file with
+  a cases.json beside it, still authenticated by its bytes (new GUI test
+  with a renamed file). audit_dos_codegen.py defaulted --program to one
+  demo; --program is now required. The build_dos_shadow.ps1 usage example
+  names no program. Host executables (pil.exe, PowerShell) are not guest
+  names; package.py and export_runtime.py smoke-test the built-in
+  --write-dos-hello fixture (allow-listed). Root launchers stay exempt.
 
-Local Linux, release: 815 Rust tests pass, 2 ignored; GUI tests 82 pass.
+Local Linux, release: 815 Rust tests pass, 2 ignored; GUI tests 82 pass, 6 skipped.
 tools/verify_dos_standalone.py: 49 applications match Dine. Standalone
 native MANDVGA: 296,960 pixels, four planes and 36 caption glyphs match.
 build_dos_shadow.py MANDVGA.COM --verify --compare-vga: VGA planes, caption,
