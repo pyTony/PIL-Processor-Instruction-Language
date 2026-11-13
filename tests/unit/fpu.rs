@@ -672,3 +672,52 @@ fn present_80387_fldcw_does_not_silently_enable_unsupported_arithmetic_mode() {
     assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
     assert_eq!(state.st(1),Some(Extended80::from_bits(1u64<<63,0x3fff)));
 }
+
+#[test]
+fn at_coprocessor_port_f0h_clears_nothing_with_or_without_80387() {
+    // FLD1, then XOR AL,AL; OUT F0h,AL (the busy-latch clear a runtime does
+    // before probing for a coprocessor and in its IRQ13 handler); INT 20h.
+    let mut p=dos::load(&[0xd9,0xe8,0x32,0xc0,0xe6,0xf0,0xcd,0x20],"x87-port-f0.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.tag_word()&0xc000,0,"OUT F0h must not empty the stack");
+    for present in [false, true] {
+        let mut p=dos::load(&[0x32,0xc0,0xe6,0xf0,0xcd,0x20],"x87-port-f0-only.com").unwrap();
+        if present { p.fpu=Fpu::present(); }
+        let result=dos::run(p,16).unwrap();
+        assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+        assert_eq!(result.completed,3);
+    }
+}
+
+#[test]
+fn at_coprocessor_port_f1h_resets_80387_to_fninit_state() {
+    // FLDCW [BX] (precision 53 bits), FLD1, OUT F1h,AL, INT 20h.
+    let mut p=dos::load(&[0xd9,0x2f,0xd9,0xe8,0xe6,0xf1,0xcd,0x20],"x87-port-f1.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x027f).unwrap();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x037f);
+    assert_eq!(state.status,0);
+    assert_eq!(state.tag_word(),0xffff);
+    // With no coprocessor the reset reaches nothing and the run goes on.
+    let p=dos::load(&[0xe6,0xf1,0xcd,0x20],"x87-port-f1-absent.com").unwrap();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+}
+
+#[test]
+fn at_coprocessor_port_reads_still_stop() {
+    for port in [0xf0u8, 0xf1] {
+        let p=dos::load(&[0xe4,port,0xcd,0x20],"x87-port-read.com").unwrap();
+        let result=dos::run(p,16).unwrap();
+        assert!(matches!(result.stop,dos::Stop::Service(ref s) if s.contains("coprocessor control")),"{:?}",result.stop);
+        assert_eq!(result.completed,0);
+    }
+}

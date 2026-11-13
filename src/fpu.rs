@@ -49,6 +49,11 @@ impl Fpu {
     pub fn equipment(&self, value: u16) -> u16 {
         (value & !2) | if self.available() { 2 } else { 0 }
     }
+    /// The AT coprocessor reset (any byte written to port F1h). A 387 leaves
+    /// RESET in the FNINIT state; with no coprocessor nothing receives it.
+    pub fn reset(&mut self) {
+        if let Self::Present(device) = self { device.state.finit(); }
+    }
     pub fn execute(&mut self, instruction: &Instruction, cpu: &mut Cpu,
                    ram: &mut Ram, image: &Image) -> Outcome {
         match self {
