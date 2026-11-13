@@ -17,12 +17,12 @@ builder (verify_*, bench_*, the demo builders). The kept block-compiler parts
 Rust #[cfg(test)] items, docs, tests, fixtures and launchers. Anything else
 must be listed in tools/program_specific_allow.txt with a reason.
 
-It also fails when anything builds or ships an executable for one program
+It also fails when anything builds an engine or translator for one program
 (Tony, 13 November 2026: PIL and Dine are program-independent libraries, used
 the same everywhere). Outside docs/ and comments, no file may use the removed
 per-program build interfaces (the shadow engine's PIL_SHADOW_SOURCE /
-pil_shadow_backend / --emit-dos-backend, the standalone --emit-dos-standalone,
-the Dine_<program> launcher builder), and the repository may not track
+pil_shadow_backend / --emit-dos-backend, the standalone
+--emit-dos-standalone), and the repository may not track
 host executables or shared libraries (.exe, .dll, .so, .dylib; the
 DOS guest fixtures in programs/ are inputs, not host binaries).
 
@@ -68,7 +68,7 @@ HASH = re.compile(r'(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])')
 
 # Per-program build interfaces that were removed and must not come back.
 PER_PROGRAM_BUILD = re.compile(r'PIL_SHADOW_SOURCE|pil_shadow_backend|--emit-dos-backend|--emit-dos-standalone|'
-                               r'build_dos_(?:shadow|native|bundle)|build_dine\.py|Dine_<|shadow_backend::')
+                               r'build_dos_(?:shadow|native|bundle)|shadow_backend::')
 BUILD_SCOPE = ['src/**/*.rs', 'isa/**/*.pil', 'build.rs', 'Cargo.toml', 'tools/*', 'tests/**/*.py', 'tests/**/*.rs',
                '.github/workflows/*', '*.cmd', '*.sh', '*.vbs', '*.ps1', 'scratch/**/*.py']
 BINARY = re.compile(r'\.(?:exe|dll|so|dylib)$', re.I)
@@ -196,8 +196,7 @@ def self_test():
     rust = ['fn general() {}', '#[cfg(test)]', 'mod tests {', '    fn t() { load("X.COM"); }', '}', 'fn after() {}']
     assert rust_test_lines(rust) == {1, 2, 3, 4}, rust_test_lines(rust)
     assert rust_test_lines(['#[cfg(test)]', '#[path="x.rs"] mod tests;', 'fn f() {}']) == {0, 1}
-    for line in ['env["PIL_SHADOW_SOURCE"] = str(source)', "[pil, '--emit-dos-standalone', prog, out]",
-                 'subprocess.run([sys.executable, "tools/build_dine.py", guest])']:
+    for line in ['env["PIL_SHADOW_SOURCE"] = str(source)', "[pil, '--emit-dos-standalone', prog, out]"]:
         assert PER_PROGRAM_BUILD.search(line), line
     assert comment_only('src/x.rs', '//! the removed --emit-dos-backend') and not comment_only('src/x.rs', 'let a = "--emit-dos-backend";')
     assert BINARY.search('scratch/pil-old.exe') and not BINARY.search('src/dine_window.rs')

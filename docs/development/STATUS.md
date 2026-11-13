@@ -2,9 +2,12 @@
 
 Standing rules (Tony, 13 November 2026):
 - **PIL and Dine are always program-independent libraries, used the same
-  way everywhere.** No tool, build step, launcher or CI job may generate a
-  `pil` engine, backend, library or executable for one guest program.
-  Precompilation is not a JIT, but it is not exempt.
+  way everywhere.** No tool, build step or CI job may generate a `pil`
+  engine, backend, Dine library or translator for one guest program.
+  Precompilation is not a JIT, but it is not exempt. A `Dine_<program>`
+  launcher is allowed: a tiny loader plus the guest bytes that loads the
+  shared dine library and contains no copy of Dine or PIL (Tony: "as long
+  as they contain not dine or pil they are fine"). See docs/DINE_EXECUTABLES.md.
 - **No program-specific code in general files.** src/, isa/, Cargo.toml and
   every script in tools/ except tests, benchmarks and fixture builders model
   the CPU, DOS, BIOS and devices for every program: no program or file
@@ -27,8 +30,8 @@ cases.json, and vga_planar::Planar::controller_io shared VGA port rules.
 - Removed: the linked shadow engine (build.rs, PIL_SHADOW_SOURCE,
   dos_compile.rs, `--emit-dos-backend`), the standalone translator
   (dos_standalone.rs, dos_translate.rs, dos_runtime.rs,
-  dine_native_video.rs, `--emit-dos-standalone`), the Dine_<program>
-  launchers (build_dine.py), their build/verify scripts, three GUI tests,
+  dine_native_video.rs, `--emit-dos-standalone`), their build/verify
+  scripts, two GUI tests,
   ProgramIdentity / active_program in Dine, and tracked scratch .exe and
   generated .rs files. Their docs are in docs/history/precompiled/.
 - Kept in src/block_compiler/ (compiled, tested, not wired to a command):

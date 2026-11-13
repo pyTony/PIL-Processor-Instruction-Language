@@ -15,10 +15,12 @@ mapping, limitations, and regression checks, see
 
 PIL and Dine are **program-independent libraries**, used the same way for
 every program. The per-program builds (shadow engines, standalone
-translation, `Dine_<program>` launchers) were removed on 13 November 2026;
+translation) were removed on 13 November 2026;
 what was kept for a later in-engine block compiler is described in
 [Block compiler](development/BLOCK_COMPILER.md). Their old documents are in
 [history/precompiled](history/precompiled/).
+[Dine executables](DINE_EXECUTABLES.md) are small launchers that carry one
+guest program and load the shared dine library.
 
 ## Current increment: 0.34.0-alpha.1
 
