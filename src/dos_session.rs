@@ -354,11 +354,26 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
         .map(|_|crate::dine_display::Display::new());
     #[cfg(windows)]
     let mut last_video=std::time::Instant::now()-std::time::Duration::from_millis(40);
+    #[cfg(windows)]
+    let mut last_bda_mode:Option<u32>=None;
+    #[cfg(windows)]
+    crate::dine_display::debug_log(&format!("DOS session started: DINE_VIDEO={:?}, native_window={}",
+        std::env::var("DINE_VIDEO").ok(),desktop.is_some()));
     let stdin=std::io::stdin();let mut stdout=std::io::stdout();
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
     for(seq,line)in stdin.lock().lines().enumerate(){
         let line=line.map_err(|e|e.to_string())?;
         let(reply,quit)=if line.len()>MAX_LINE{(session.reply(seq as u64+1,false,"command line too long",&[])?,false)}else{session.command(seq as u64+1,&line)?};
+        #[cfg(windows)]
+        if let Some(p)=session.loaded.as_ref(){
+            let mode=p.ram.load(0x449,MemWidth::Byte).ok();
+            if mode!=last_bda_mode{
+                crate::dine_display::debug_log(&format!(
+                    "BDA video mode changed: previous={last_bda_mode:?} current={mode:?}; steps={} status={}",
+                    session.steps,session.status().0));
+                last_bda_mode=mode;
+            }
+        }
         #[cfg(windows)]
         let reply=if let Some(display)=desktop.as_mut(){
             let waiting=session.status().0=="waiting_input";
