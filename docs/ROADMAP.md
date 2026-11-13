@@ -8,8 +8,8 @@ export in addition to development tests. Full history and planning remain here.
 ## Program-independent block compiler (13 November 2026)
 
 PIL and Dine are program-independent libraries, used the same way
-everywhere. Per-program shadow engines, standalone translation and
-`Dine_<program>` launchers were removed. Next compiler step: blocks inside
+everywhere. Per-program shadow engines and standalone translation were
+removed; `Dine_<program>` launchers stay as loaders on the shared library. Next compiler step: blocks inside
 the one `pil` engine, from build-time Rust per PIL instruction form, planned
 at run time and guarded, with interpreter fallback. See
 [Block compiler](development/BLOCK_COMPILER.md).

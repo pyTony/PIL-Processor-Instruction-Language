@@ -1,9 +1,10 @@
 ## PIL and Dine are program-independent libraries
 
 PIL and Dine are always program-independent libraries, used the same way
-everywhere. No tool, build step, launcher or CI job may generate an engine,
-backend, library or executable for one guest program; precompilation is not
-a JIT, but it is not exempt. See docs/development/BLOCK_COMPILER.md.
+everywhere. No tool, build step or CI job may generate an engine, backend,
+Dine library or translator for one guest program; precompilation is not a
+JIT, but it is not exempt. `Dine_<program>` launchers are fine: a loader
+plus guest bytes on the shared dine library, no copy of Dine or PIL. See docs/development/BLOCK_COMPILER.md.
 
 Do not put code for one guest program into PIL's general files (src/, isa/,
 Cargo.toml and every script in tools/ except tests, benchmarks and fixture
