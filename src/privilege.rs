@@ -9,10 +9,11 @@
 //! caller applies once the whole instruction has passed its checks, so a
 //! fault leaves the machine as it was. Descriptor tables, the TSS and an
 //! inner-level stack are accessed at supervisor level, as the 386 does.
-//! Task gates and TSS descriptors (task switches) are not modelled yet.
+//! Task gates and TSS descriptors switch tasks (task.rs).
 use super::{ExecError,MemWidth};
 use super::memory::Ram;
-use super::address::{Descriptor,Gate,MemoryContext,SegmentAccess,SegmentCache,SegmentRegister,SegmentState};
+use super::address::{Descriptor,Gate,MemoryContext,SegmentAccess,SegmentCache,SegmentRegister,SegmentState,SystemSegment};
+use super::task::{self,Entry};
 
 /// The effects of a far transfer, to apply after every check has passed.
 #[derive(Clone,Debug,Default,PartialEq,Eq)]
@@ -26,12 +27,27 @@ pub struct Transfer{
     /// Stack pushes and accessed-bit stores: linear address, width, value,
     /// and whether the store is at user level.
     pub stores:Vec<(u32,MemWidth,u32,bool)>,
+    /// A task switch (task.rs): the new task's registers and system state.
+    pub task:Option<TaskLoad>,
 }
+/// The part of a task switch beyond CS:EIP, the segments and the stores:
+/// all eight general registers, EFLAGS, LDTR and TR, and CR3 when a 386 TSS
+/// loads it. Committing one also sets CR0.TS.
+#[derive(Clone,Debug,Default,PartialEq,Eq)]
+pub struct TaskLoad{pub regs:[u32;8],pub eflags:u32,pub system:[SystemSegment;2],pub cr3:Option<u32>}
 impl Transfer{
     /// Applies the transfer. The stores were checked when it was built.
-    pub fn commit(self,regs:&mut [u32;8],eip:&mut u32,machine:&mut SegmentState,ram:&mut Ram)->Result<(),ExecError>{
+    /// `flags` and `undefined` are EFLAGS and its undefined-bit markers,
+    /// which only a task switch replaces.
+    pub fn commit(self,regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,machine:&mut SegmentState,ram:&mut Ram)->Result<(),ExecError>{
         let at=*eip;
         for (address,width,value,user) in self.stores{ram.store_as(user,address,width,value).map_err(|f|f.error(at))?;}
+        if let Some(task)=self.task{
+            *regs=task.regs;*flags=task.eflags;*undefined=0;
+            machine.ldt_tr=task.system;
+            if let Some(cr3)=task.cr3{machine.controls[1]=cr3;}
+            machine.msw|=8;
+        }
         if let Some(esp)=self.esp{regs[4]=esp;}
         for (reg,selector,cache) in self.segments{machine.selectors[reg]=selector;machine.segments[reg]=cache;}
         *eip=self.eip;
@@ -112,6 +128,9 @@ enum Target{
     /// A call gate and the code segment it names (descriptor and its
     /// address), checked as far as JMP and CALL share the rules.
     Gate{gate:Gate,code:Descriptor,code_at:u32},
+    /// A TSS descriptor or a task gate, checked for its own level: the
+    /// TSS selector to switch to (task.rs checks the TSS).
+    Task(u16),
 }
 fn far_target(machine:&SegmentState,ram:&Ram,selector:u16,eip:u32)->Result<Target,ExecError>{
     let mut read=|at:u32|read_descriptor(ram,at,eip);
@@ -122,13 +141,19 @@ fn far_target(machine:&SegmentState,ram:&Ram,selector:u16,eip:u32)->Result<Targe
     let raw=read(at)?;
     let d=Descriptor::decode(raw);
     if d.segment(){return Ok(Target::Code(machine.load_segment(1,selector,eip,&mut read)?));}
+    let cpl=machine.cpl();
     let big=match d.access&0x1f{
         0x0c=>true,0x04=>false,
-        // Task gates and TSS descriptors switch tasks (increment 7).
-        0x05|0x01|0x03|0x09|0x0b=>return Err(ExecError::InvalidContext),
+        // A task gate or an available TSS: DPL at least CPL and RPL. A
+        // TSS's other checks (present, limit) are task.rs's.
+        0x05|0x01|0x09=>{
+            if d.dpl()<cpl||d.dpl()<(selector&3) as u8{return Err(gp(eip,code));}
+            if d.access&0x1f!=0x05{return Ok(Target::Task(selector));}
+            if !d.present(){return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
+            return Ok(Target::Task((raw>>16) as u16));
+        }
         _=>return Err(gp(eip,code)),
     };
-    let cpl=machine.cpl();
     if d.dpl()<cpl||d.dpl()<(selector&3) as u8{return Err(gp(eip,code));}
     if !d.present(){return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
     let gate=Gate::decode(raw,big);
@@ -154,10 +179,13 @@ fn checked_eip(cache:&SegmentCache,offset:u32,eip:u32)->Result<u32,ExecError>{
 /// Far JMP to `selector:offset`: a code segment at CPL, or a call gate to
 /// a conforming segment or a nonconforming one at CPL (#GP(selector) for a
 /// nonconforming one of another level). The offset is checked against the
-/// new CS limit (#GP(0)).
-pub fn far_jump(machine:&SegmentState,ram:&Ram,selector:u16,offset:u32,eip:u32)->Result<Transfer,ExecError>{
+/// new CS limit (#GP(0)). A TSS or task gate switches tasks (task.rs);
+/// `regs`, `flags` and `next` are what the old task keeps.
+#[allow(clippy::too_many_arguments)]
+pub fn far_jump(machine:&SegmentState,ram:&Ram,regs:&[u32;8],flags:u32,selector:u16,offset:u32,next:u32,eip:u32)->Result<Transfer,ExecError>{
     let mut transfer=Transfer::default();
     let (visible,cache,mark,target)=match far_target(machine,ram,selector,eip)?{
+        Target::Task(tss)=>return task::switch(machine,ram,regs,flags,next,tss,Entry::Jump,None,0,eip),
         Target::Code((visible,cache,mark))=>(visible,cache,mark,offset),
         Target::Gate{gate,code,code_at}=>{
             let cpl=machine.cpl();
@@ -179,10 +207,13 @@ pub fn far_jump(machine:&SegmentState,ram:&Ram,selector:u16,offset:u32,eip:u32)-
 /// size on the current stack; to a nonconforming segment of a more
 /// privileged level, the stack for that level comes from the TSS and gets
 /// the old SS and ESP, the gate's parameter count of words or dwords copied
-/// from the old stack, then CS and EIP. `next` is the return EIP.
-pub fn far_call(machine:&SegmentState,ram:&Ram,regs:&[u32;8],selector:u16,next:u32,eip:u32,direct:&mut Option<(u16,SegmentCache,Option<(u32,u8)>)>)->Result<Option<Transfer>,ExecError>{
+/// from the old stack, then CS and EIP. `next` is the return EIP. A TSS or
+/// task gate switches tasks (task.rs) with a back link to this one.
+#[allow(clippy::too_many_arguments)]
+pub fn far_call(machine:&SegmentState,ram:&Ram,regs:&[u32;8],flags:u32,selector:u16,next:u32,eip:u32,direct:&mut Option<(u16,SegmentCache,Option<(u32,u8)>)>)->Result<Option<Transfer>,ExecError>{
     let (gate,code,code_at)=match far_target(machine,ram,selector,eip)?{
         Target::Code(load)=>{*direct=Some(load);return Ok(None);},
+        Target::Task(tss)=>return task::switch(machine,ram,regs,flags,next,tss,Entry::Call,None,0,eip).map(Some),
         Target::Gate{gate,code,code_at}=>(gate,code,code_at),
     };
     let cpl=machine.cpl();
