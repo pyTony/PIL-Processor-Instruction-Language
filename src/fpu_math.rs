@@ -13,6 +13,7 @@ pub struct Computed {
     pub value: Extended80,
     pub inexact: bool,
     pub rounded_up: bool,
+    pub zero_divide: bool,
 }
 
 fn split(value: Extended80) -> Result<(bool, i32, u64), MathError> {
@@ -28,7 +29,7 @@ fn split(value: Extended80) -> Result<(bool, i32, u64), MathError> {
 }
 
 fn exact(value: Extended80) -> Computed {
-    Computed { value, inexact: false, rounded_up: false }
+    Computed { value, inexact: false, rounded_up: false, zero_divide: false }
 }
 
 fn signed_zero(negative: bool) -> Computed {
@@ -60,6 +61,7 @@ fn finish(negative: bool, mut exponent: i32, mut significand: u64,
             exponent as u16 | if negative { 0x8000 } else { 0 }),
         inexact,
         rounded_up,
+        zero_divide: false,
     })
 }
 
@@ -83,8 +85,18 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
         // av and bv are normalized 64-bit integers. Long division in u128
         // yields the 64 significand bits and the exact remainder, which
         // suffices for correct nearest-even rounding without host floats.
-        // 0/0 and finite/0 need invalid/divide-by-zero exception modelling.
-        if bv == 0 { return Err(MathError::Unsupported); }
+        // 0/0 needs invalid-operation modelling; finite nonzero / 0 produces
+        // signed infinity when ZE is masked in the caller.
+        if av == 0 && bv == 0 { return Err(MathError::Unsupported); }
+        if bv == 0 {
+            return Ok(Computed {
+                value: Extended80::from_bits(1u64 << 63,
+                    0x7fff | if asign ^ bsign { 0x8000 } else { 0 }),
+                inexact: false,
+                rounded_up: false,
+                zero_divide: true,
+            });
+        }
         if av == 0 { return Ok(signed_zero(asign ^ bsign)); }
         let low = av < bv;
         let exponent = ae - be + 16383 - i32::from(low);
@@ -162,11 +174,20 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
     finish(negative, exponent, significand, discarded != 0, rounded_up)
 }
 
-/// Ordered comparisons of finite normalized values. Reject NaNs and
-/// unmodelled denormals rather than inventing x87 condition codes.
+fn split_comparable(value: Extended80) -> Result<(bool, i32, u64), MathError> {
+    let sign = value.sign_exponent & 0x8000 != 0;
+    let exp = i32::from(value.sign_exponent & 0x7fff);
+    if exp == 0x7fff && value.significand == (1u64 << 63) {
+        return Ok((sign, 0x7fff, value.significand));
+    }
+    split(value)
+}
+
+/// Ordered comparisons of finite normalized values and affine infinities.
+/// Reject NaNs and unmodelled denormals rather than inventing x87 condition codes.
 pub fn compare(a: Extended80, b: Extended80) -> Result<Ordering, MathError> {
-    let (negative_a, exponent_a, significand_a) = split(a)?;
-    let (negative_b, exponent_b, significand_b) = split(b)?;
+    let (negative_a, exponent_a, significand_a) = split_comparable(a)?;
+    let (negative_b, exponent_b, significand_b) = split_comparable(b)?;
     if significand_a == 0 && significand_b == 0 { return Ok(Ordering::Equal); }
     if negative_a != negative_b {
         return Ok(if negative_a { Ordering::Less } else { Ordering::Greater });
@@ -240,8 +261,12 @@ mod tests {
         assert_eq!(negative_third.value,
              Extended80::from_bits(0xaaaaaaaaaaaaaaab, 0xbffd));
         assert_eq!(calculate(Arithmetic::Divide, ZERO, TWO, CW).unwrap().value, ZERO);
+        let pos_inf = Extended80::from_bits(1u64 << 63, 0x7fff);
+        let neg_inf = Extended80::from_bits(1u64 << 63, 0xffff);
         assert_eq!(calculate(Arithmetic::Divide, ONE, ZERO, CW),
-                   Err(MathError::Unsupported));
+                   Ok(Computed { value: pos_inf, inexact: false, rounded_up: false, zero_divide: true }));
+        assert_eq!(calculate(Arithmetic::Divide, ONE, Extended80::from_bits(0, 0x8000), CW),
+                   Ok(Computed { value: neg_inf, inexact: false, rounded_up: false, zero_divide: true }));
         assert_eq!(calculate(Arithmetic::Divide, ZERO, ZERO, CW),
                    Err(MathError::Unsupported));
         assert_eq!(calculate(Arithmetic::Divide, half, TWO, CW).unwrap().value,
@@ -262,6 +287,14 @@ mod tests {
                    Ok(Ordering::Greater));
         assert_eq!(compare(ONE, Extended80::from_bits(0xc000_0000_0000_0000, 0x3fff)),
                    Ok(Ordering::Less));
+        let pos_inf = Extended80::from_bits(1u64 << 63, 0x7fff);
+        let neg_inf = Extended80::from_bits(1u64 << 63, 0xffff);
+        assert_eq!(compare(pos_inf, pos_inf), Ok(Ordering::Equal));
+        assert_eq!(compare(neg_inf, neg_inf), Ok(Ordering::Equal));
+        assert_eq!(compare(pos_inf, neg_inf), Ok(Ordering::Greater));
+        assert_eq!(compare(neg_inf, pos_inf), Ok(Ordering::Less));
+        assert_eq!(compare(ONE, pos_inf), Ok(Ordering::Less));
+        assert_eq!(compare(neg_inf, ONE), Ok(Ordering::Less));
         assert_eq!(compare(ONE, Extended80::from_bits(0xc000_0000_0000_0000, 0x7fff)),
                    Err(MathError::Unsupported));
     }

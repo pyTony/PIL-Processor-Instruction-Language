@@ -63,6 +63,7 @@ jobs:
       - run: cargo build --release --locked
       - run: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check
       - run: python tools/verify_dine_library.py
+      - run: python tools/verify_dine_executable.py
       - run: python tools/verify_mandel_cycle.py
       - run: python tools/verify_mandel_cga.py
       - run: python tools/verify_mandel_vga.py

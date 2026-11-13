@@ -46,8 +46,17 @@ impl PresentFpu {
                 cpu.regs[0] = (cpu.regs[0] & 0xffff_0000) | u32::from(self.state.status);
                 Ok(())
             },
-            Operation::Fldcw | Operation::Fnstcw =>
-                return self.execute_control_word_memory(operation,instruction,cpu,ram,image),
+            Operation::Fldcw | Operation::Fnstcw | Operation::FnstswM16 =>
+                return self.execute_word_memory(operation,instruction,cpu,ram,image),
+            Operation::Fchs => {
+                let Some(mut value) = self.state.st(0) else {
+                    return Outcome::StackFault(StackError::Underflow);
+                };
+                value.sign_exponent ^= 0x8000;
+                self.state.store(0, value);
+                self.state.status &= !0x0200;
+                return Outcome::Completed;
+            },
             Operation::Fld1 => self.state.push(one),
             Operation::Fldz => self.state.push(Extended80::default()),
             Operation::FldSt(i) => self.state.st(usize::from(i))
@@ -75,7 +84,8 @@ impl PresentFpu {
                 return self.compare_memory(bytes, pop, instruction, cpu, ram, image),
             Operation::FldM32 | Operation::FstpM32 |
             Operation::FldM64 | Operation::FstpM64 |
-            Operation::FldM80 | Operation::FstpM80 =>
+            Operation::FldM80 | Operation::FstpM80 |
+            Operation::FildM16 | Operation::FildM32 =>
                 return self.execute_memory(operation,instruction,cpu,ram,image),
         };
         match result {
@@ -86,13 +96,13 @@ impl PresentFpu {
 
 
 
-    /// FLDCW/FNSTCW use the same segment and effective-address model as all
-    /// other x87 memory operands. An unsuccessful read/write cannot change the
-    /// control word, RAM or instruction retirement state.
-    fn execute_control_word_memory(&mut self, operation:Operation,
-                                   instruction:&Instruction, cpu:&Cpu,
-                                   ram:&mut Ram, image:&Image) -> Outcome {
-        let write=matches!(operation,Operation::Fnstcw);
+    /// FLDCW/FNSTCW/FNSTSW m16 use the same segment and effective-address model
+    /// as all other x87 memory operands. An unsuccessful read/write cannot
+    /// change the control word, RAM or instruction retirement state.
+    fn execute_word_memory(&mut self, operation:Operation,
+                           instruction:&Instruction, cpu:&Cpu,
+                           ram:&mut Ram, image:&Image) -> Outcome {
+        let write=matches!(operation,Operation::Fnstcw|Operation::FnstswM16);
         let Ok((offset,context))=address::resolve(instruction,cpu,image) else {
             return Outcome::MemoryFault;
         };
@@ -103,7 +113,12 @@ impl PresentFpu {
             if ram.check_write(linear,MemWidth::Word).is_err() {
                 return Outcome::MemoryFault;
             }
-            if ram.store(linear,MemWidth::Word,u32::from(self.state.control)).is_err() {
+            let value=match operation {
+                Operation::Fnstcw=>self.state.control,
+                Operation::FnstswM16=>self.state.status,
+                _=>unreachable!(),
+            };
+            if ram.store(linear,MemWidth::Word,u32::from(value)).is_err() {
                 return Outcome::MemoryFault;
             }
         } else {
@@ -164,20 +179,24 @@ impl PresentFpu {
     }
 
     /// Atomic retirement shared by register and memory arithmetic. For an
-    /// unmasked PE, report an unsupported operation until #MF is implemented.
+    /// unmasked ZE or PE, report an unsupported operation until #MF is implemented.
     fn commit_arithmetic(&mut self, kind: Arithmetic, lhs: Extended80,
                          rhs: Extended80, dst: usize, pop: bool) -> Outcome {
         let Ok(computed) = math::calculate(kind, lhs, rhs, self.state.control) else {
             return Outcome::Unsupported;
         };
+        if computed.zero_divide && self.state.control & 0x0004 == 0 {
+            return Outcome::Unsupported;
+        }
         if computed.inexact && self.state.control & 0x0020 == 0 {
             return Outcome::Unsupported;
         }
         self.state.store(dst, computed.value);
         if pop { self.state.pop().expect("checked arithmetic ST(0)"); }
-        // C1 describes upward rounding; PE records a masked inexact result.
+        // C1 describes upward rounding; ZE/PE record masked exceptions.
         self.state.status &= !0x0200;
         if computed.rounded_up { self.state.status |= 0x0200; }
+        if computed.zero_divide { self.state.status |= 0x0004; }
         if computed.inexact { self.state.status |= 0x0020; }
         Outcome::Completed
     }
@@ -247,7 +266,8 @@ impl PresentFpu {
                       cpu:&Cpu,ram:&mut Ram,image:&Image)->Outcome {
         let write=matches!(operation,Operation::FstpM32|Operation::FstpM64|Operation::FstpM80);
         let bytes: u32=match operation {
-            Operation::FldM32|Operation::FstpM32=>4,
+            Operation::FildM16=>2,
+            Operation::FldM32|Operation::FstpM32|Operation::FildM32=>4,
             Operation::FldM64|Operation::FstpM64=>8,
             Operation::FldM80|Operation::FstpM80=>10,
             _=>return Outcome::Unsupported,
@@ -258,6 +278,16 @@ impl PresentFpu {
         let Ok(linear)=context.translate_span(u64::from(offset),bytes,write,cpu.eip) else {
             return Outcome::MemoryFault;
         };
+        if bytes==2 {
+            let Ok(raw)=ram.load(linear,MemWidth::Word) else {
+                return Outcome::MemoryFault;
+            };
+            let value=convert::from_i32(i32::from(raw as i16));
+            return match self.state.push(value) {
+                Ok(())=>Outcome::Completed,
+                Err(err)=>Outcome::StackFault(err),
+            };
+        }
         let Some(high)=linear.checked_add(4) else {return Outcome::MemoryFault;};
         if bytes==10 {
             let Some(top)=linear.checked_add(8) else {return Outcome::MemoryFault;};
@@ -301,7 +331,9 @@ impl PresentFpu {
             let Ok(low)=ram.load(linear,MemWidth::Dword) else {
                 return Outcome::MemoryFault;
             };
-            let converted=if bytes==4 {
+            let converted=if matches!(operation,Operation::FildM32) {
+                Ok(convert::from_i32(low as i32))
+            }else if bytes==4 {
                 convert::from_f32_bits(low)
             }else{
                 let Ok(upper)=ram.load(high,MemWidth::Dword) else {

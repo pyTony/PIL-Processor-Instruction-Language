@@ -1,17 +1,12 @@
-> **Historical (removed 13 November 2026).** This page describes tools that
-> built an executable for one DOS program (shadow `pil-<program>`, standalone
-> `<PROGRAM>.exe`, `Dine_<program>` launchers). They were removed: PIL and Dine
-> are program-independent libraries, used the same everywhere. The commands
-> below no longer exist. What was kept for later integration is listed in
-> [BLOCK_COMPILER.md](../../development/BLOCK_COMPILER.md); measurements here
-> remain as recorded.
-
 # Small, self-running Dine applications
 
-This is the **interpreted-first** host-native executable path. It is distinct
-from [pure compiled DOS standalone binaries](NATIVE_DOS_COMPILATION.md), which
-contain no x86 decoder or interpreter, and from the deferred profile-guided
-linked shadow executable.
+A `Dine_<program>` launcher is a hybrid executable: a tiny loader plus the
+original guest bytes, running on the **shared** Dine library. It contains no
+copy of Dine or PIL (Tony, 13 November 2026: "as long as they contain not
+dine or pil they are fine"). The library is the same for every program and
+holds no generated code for one guest. When block compilation comes back it
+will live inside that shared library, program-independent, so every
+launcher gets it ([Block compiler](development/BLOCK_COMPILER.md)).
 
 The names reflect separate responsibilities:
 
@@ -50,8 +45,7 @@ python tools/build_dine.py programs/dos/MANDVGA.COM --force
 
 Builds for Linux or Termux emit `Dine_MANDVGA` plus `libdine.so`; for macOS,
 `Dine_MANDVGA` plus `libdine.dylib`. The library is built using Cargo's
-`--lib --features dine-library`, with `PIL_SHADOW_SOURCE` deliberately
-unset to keep **all application-specific blocks out**. The launcher is then
+`--lib --features dine-library`, which never holds **application-specific blocks**. The launcher is then
 compiled separately with the local Rust compiler and `opt-level=z` to favor
 small output. Actual binary sizes depend on the compiler and target.
 

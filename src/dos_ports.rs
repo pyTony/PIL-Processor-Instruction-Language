@@ -5,6 +5,8 @@
 //! word access, unsupported CMOS writes or unsupported PIT use stops the run.
 //! Channel 0 supports binary modes 2/3; channel 2 has timed binary modes
 //! 0/2/3 and latched reads. Port 3DAh (and 3BAh) reports video status.
+//! Writes to the AT coprocessor ports F0h (clear busy) and F1h (reset) are
+//! taken; reads from them stop.
 use super::*;
 #[path="dos_pit.rs"]
 mod pit;
@@ -242,6 +244,13 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             // results there; a DOS session ignores them.
             0xe9 if p.rom_mode => {use std::io::Write;let _=std::io::stdout().write_all(&[value]);},
             0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
+            // AT coprocessor ports, any byte value. F0h clears the busy latch
+            // that the 287/387 ERROR# output sets and that raises IRQ13. This
+            // FPU finishes each instruction before the next one and stops on
+            // an unmasked exception, so the latch is never set and the write
+            // changes nothing, with or without a coprocessor. F1h resets it.
+            0xf0 => {},
+            0xf1 => p.fpu.reset(),
             _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         }
     }
