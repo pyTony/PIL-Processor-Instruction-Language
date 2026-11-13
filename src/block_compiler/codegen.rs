@@ -1,7 +1,9 @@
-//! Rust instruction/block rendering and runtime-adapter bindings.
+//! Rust rendering of PIL instruction bodies and planned blocks. Runtime
+//! adapters supply bindings, fault reporting and retirement; the instruction
+//! semantics always come from the PIL program (emit_rust_functions).
 use crate::Program;
 use std::collections::BTreeMap;
-use crate::dos_blocks::{Site,BlockPlan,unpaged_register_only};
+use super::sites::{Site,BlockPlan,unpaged_register_only};
 
 /// Both backends compile the same PIL bodies and expose the same checked and
 /// unpaged-register entry points. Selection is a block planning decision.

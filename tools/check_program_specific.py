@@ -12,18 +12,25 @@ This check scans the general files and fails on:
   * 64-hex-digit literals (SHA-256 hashes of guest files).
 
 Every script in tools/ is general unless it is a test, benchmark or fixture
-builder (verify_*, bench_*, the demo builders). The precompilers (the mixed
-shadow backend and the full standalone native translator, with their build
-tools) are general files too: they compile any
-program, so only their generated output, which is never in the repository, is
-about one program. Exempt: Rust #[cfg(test)] items, docs, tests, fixtures
-and launchers. Anything else must be listed in
-tools/program_specific_allow.txt with a reason.
+builder (verify_*, bench_*, the demo builders). The kept block-compiler parts
+(src/block_compiler) are general too: precompilation is not exempt. Exempt:
+Rust #[cfg(test)] items, docs, tests, fixtures and launchers. Anything else
+must be listed in tools/program_specific_allow.txt with a reason.
 
-Usage: python tools/check_program_specific.py [--list]
+It also fails when anything builds or ships an executable for one program
+(Tony, 13 November 2026: PIL and Dine are program-independent libraries, used
+the same everywhere). Outside docs/ and comments, no file may use the removed
+per-program build interfaces (the shadow engine's PIL_SHADOW_SOURCE /
+pil_shadow_backend / --emit-dos-backend, the standalone --emit-dos-standalone,
+the Dine_<program> launcher builder), and the repository may not track
+host executables or shared libraries (.exe, .dll, .so, .dylib; the
+DOS guest fixtures in programs/ are inputs, not host binaries).
+
+Usage: python tools/check_program_specific.py [--list] [--self-test]
 Runs on Windows and Linux with the standard library only.
 """
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -58,6 +65,50 @@ FILE = re.compile(r'''["'][^"'\n]*?[A-Za-z0-9_~$-]+\.(?:com|exe|bas|bat|pas|sys|
 HOST = re.compile(r'(?:^|[/\\"\'$])(?:pil|pwsh|powershell)\.exe["\']$', re.I)
 HASH = re.compile(r'(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])')
 
+
+# Per-program build interfaces that were removed and must not come back.
+PER_PROGRAM_BUILD = re.compile(r'PIL_SHADOW_SOURCE|pil_shadow_backend|--emit-dos-backend|--emit-dos-standalone|'
+                               r'build_dos_(?:shadow|native|bundle)|build_dine\.py|Dine_<|shadow_backend::')
+BUILD_SCOPE = ['src/**/*.rs', 'isa/**/*.pil', 'build.rs', 'Cargo.toml', 'tools/*', 'tests/**/*.py', 'tests/**/*.rs',
+               '.github/workflows/*', '*.cmd', '*.sh', '*.vbs', '*.ps1', 'scratch/**/*.py']
+BINARY = re.compile(r'\.(?:exe|dll|so|dylib)$', re.I)
+
+
+def comment_only(rel, line):
+    """A comment cannot build anything; history may name the removed tools."""
+    s = line.strip()
+    if rel.endswith('.rs'):
+        return s.startswith('//')
+    if rel.endswith(('.py', '.sh', '.toml', '.yml', '.yaml', '.ps1')):
+        return s.startswith('#')
+    if rel.endswith('.cmd'):
+        return s.lower().startswith(('rem', '::'))
+    return False
+
+
+def per_program_builds():
+    """Findings: uses of removed per-program build interfaces, tracked binaries."""
+    found = []
+    me = Path(__file__).resolve()
+    files = sorted({p for g in BUILD_SCOPE for p in ROOT.glob(g) if p.is_file() and p.resolve() != me})
+    for path in files:
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            lines = path.read_text(encoding='utf-8').splitlines()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for number, line in enumerate(lines, 1):
+            if PER_PROGRAM_BUILD.search(line) and not comment_only(rel, line):
+                found.append(f'{rel}:{number}: per-program build interface: {line.strip()[:120]}')
+    try:
+        tracked = subprocess.run(['git', 'ls-files'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split('\n')
+    except (OSError, subprocess.CalledProcessError):
+        tracked = []
+    for rel in tracked:
+        # DOS guest fixtures (programs/) are inputs, not host executables.
+        if BINARY.search(rel) and not rel.startswith('programs/'):
+            found.append(f'{rel}: tracked executable or shared library')
+    return found
 
 def load_allow():
     """Each line: PATH | TEXT | REASON. A finding is allowed when its line in
@@ -140,11 +191,16 @@ def self_test():
     for line in skip:
         assert not any(p.search(line) for p in (NAME, FILE, HASH)), line
     assert TEST_SCRIPTS.match('verify_dos_games.py') and not TEST_SCRIPTS.match('pil_debugger.py')
-    for script in ('tools/pil_debugger.py', 'tools/build_dos_shadow.py', 'tools/dos_terminal.py'):
+    for script in ('tools/pil_debugger.py', 'tools/dos_terminal.py', 'tools/export_runtime.py'):
         assert script in {p.relative_to(ROOT).as_posix() for g in GENERAL for p in ROOT.glob(g)}, script
     rust = ['fn general() {}', '#[cfg(test)]', 'mod tests {', '    fn t() { load("X.COM"); }', '}', 'fn after() {}']
     assert rust_test_lines(rust) == {1, 2, 3, 4}, rust_test_lines(rust)
     assert rust_test_lines(['#[cfg(test)]', '#[path="x.rs"] mod tests;', 'fn f() {}']) == {0, 1}
+    for line in ['env["PIL_SHADOW_SOURCE"] = str(source)', "[pil, '--emit-dos-standalone', prog, out]",
+                 'subprocess.run([sys.executable, "tools/build_dine.py", guest])']:
+        assert PER_PROGRAM_BUILD.search(line), line
+    assert comment_only('src/x.rs', '//! the removed --emit-dos-backend') and not comment_only('src/x.rs', 'let a = "--emit-dos-backend";')
+    assert BINARY.search('scratch/pil-old.exe') and not BINARY.search('src/dine_window.rs')
     print('check_program_specific self-test passed')
 
 
@@ -162,17 +218,18 @@ def main(argv):
                 print(f'allowed {rel}:{number}: {kind} {text!r}')
             continue
         bad.append(f'{rel}:{number}: {kind} {text!r}: {line[:120]}')
+    bad.extend(per_program_builds())
     stale = [entry for entry in allow if entry[2] not in used]
     for path, text, number in stale:
         bad.append(f'{ALLOW.name}:{number}: allow-list entry no longer matches ({path} | {text})')
     if bad:
-        print('Program-specific code in general files (see CLAUDE.md, "No program-specific code"):')
+        print('Program-specific code or per-program builds (see CLAUDE.md, "No program-specific code"):')
         for entry in bad:
             print('  ' + entry)
         print('Model the DOS/BIOS/CPU behaviour generally, move program history to docs/ or a test,'
               ' or, for an interface name, add PATH | TEXT | REASON to tools/program_specific_allow.txt.')
         return 1
-    print(f'No program-specific code in general files ({len(used)} allow-list entries used).')
+    print(f'No program-specific code in general files ({len(used)} allow-list entries used); no per-program builds.')
     return 0
 
 

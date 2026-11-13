@@ -1396,18 +1396,8 @@ fn exec_runs_a_com_and_a_relocated_exe_and_returns_their_codes(){
   0x00,0x00,0x52,0x01,0x00,0x00,0x57,0x01,0x00,0x00,0x57,0x01,0x00,0x00,0x03,0x20,0x68,0x69,0x0d,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
  let mut code=parent.to_vec();code.extend(b"CHILD.COM\0CHILD.EXE\0NONE.COM\0");
  let p=load_with_drives(&code,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
- struct Identities(Vec<ProgramIdentity>);
- impl InstructionBackend for Identities{
-  fn execute(&mut self,id:&ProgramIdentity,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::flow::ExecError>>{
-   if !self.0.contains(id){self.0.push(id.clone());}None
-  }
- }
- let mut seen=Identities(Vec::new());let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
- let r=run_with_backend(p,200,&mut output,Some(&mut seen)).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
- assert!(seen.0.iter().any(|id|id.path.as_deref()==Some(b"C:\\CHILD.COM")));
- assert!(seen.0.iter().any(|id|id.path.as_deref()==Some(b"C:\\CHILD.EXE")));
- assert_eq!(r.loaded.active_program.path,None);
- assert_eq!(r.loaded.active_program.bytes.as_slice(),code.as_slice());
+ let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+ let r=run_with_output(p,200,&mut output).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  let regs=&r.loaded.cpu.regs;assert_eq!((regs[6]&0xffff,regs[7]&0xffff,regs[5]&0xffff),(3,7,2));
  // Back in the parent: its PSP again, the children's blocks free, no frames left.
  assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
@@ -3059,4 +3049,15 @@ fn ah55_interior_child_returns_to_turbo_not_freecom_and_can_run_twice(){
     assert_eq!(p.psp,PSP);
     assert!(p.exec.is_empty()&&p.in_memory.is_empty());
     std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn command_tail_bounds_and_validation_are_atomic(){
+    let mut ram=Ram::new(0x200);ram.protect(0x100,0x100).unwrap();
+    command_tail(&mut ram,0,&"x".repeat(125)).unwrap();
+    assert_eq!(ram.load(0x80,MemWidth::Byte).unwrap(),126);
+    assert_eq!(ram.load(0xff,MemWidth::Byte).unwrap(),13);
+    let before=ram.clone();
+    for text in [&"x".repeat(126),"bad\nline","🙂"]{assert!(command_tail(&mut ram,0,text).is_err());assert_eq!(ram,before);}
+    ram.protect(0x82,1).unwrap();let before=ram.clone();
+    assert!(command_tail(&mut ram,0,"abc").is_err());assert_eq!(ram,before);
 }

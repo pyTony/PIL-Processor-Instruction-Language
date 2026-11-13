@@ -1,13 +1,14 @@
-//! C ABI for compact, program-specific Dine executables.
+//! C ABI of the Dine shared library (dine.dll / libdine.so).
 //!
-//! This module is part of the guest-independent dine shared library. It loads
-//! DOS bytes supplied by the caller and runs the existing PIL interpreter,
-//! DOS/BIOS services, VGA device and memory model in-process. A compiled
-//! guest-block ABI can be added later without putting applications in the DLL.
+//! The library is program-independent: the host passes the bytes of any DOS
+//! program at run time, and the same PIL interpreter, DOS/BIOS services, VGA
+//! device and memory model run them in-process. Nothing here, and no build
+//! step, embeds a guest program. tools/verify_dine_library.py calls it with
+//! ctypes.
 use std::ffi::{c_char, CStr};
 use std::io::{self, Write};
 
-/// Convert a native launcher command line to the legacy 8.3 DOS view.
+/// Convert a host command line to the legacy 8.3 DOS view.
 /// File operands are resolved against the current host working directory,
 /// mounted as C:. Quoted long host filenames are supported, but the legacy
 /// guest receives its regular DOS command tail, not a new filesystem API.
@@ -53,9 +54,7 @@ fn interpreted(guest: &[u8], name: &str, tail: &str) -> Result<i32, String> {
     let mut last_video = std::time::Instant::now() - std::time::Duration::from_millis(100);
     loop {
         let mut output = crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
-        // No shadow backend is linked into dine.dll. In this first milestone,
-        // every guest instruction is interpreted, including the ones a
-        // program-specific block compiler will eventually handle.
+        // Every guest instruction goes through the shared interpreter.
         let result = crate::dos::run_with_output(
             loaded, 150_000, &mut output
         )?;
@@ -94,12 +93,11 @@ fn interpreted(guest: &[u8], name: &str, tail: &str) -> Result<i32, String> {
     }
 }
 
-/// Stable ABI version for launchers. A future compiled guest-block interface
-/// can increase this version when it changes the C contract.
+/// Stable ABI version for hosts. A change to the C contract increases it.
 #[no_mangle]
 pub extern "C" fn dine_abi_version() -> u32 { 1 }
 
-/// Run embedded DOS data through the Dine interpreter.
+/// Run DOS program bytes supplied by the host through the Dine interpreter.
 ///
 /// `name` and `tail` must point to valid NUL-terminated UTF-8 strings.
 /// `guest` must reference `guest_len` readable bytes (non-null).

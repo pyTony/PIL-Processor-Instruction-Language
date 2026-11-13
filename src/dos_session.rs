@@ -346,9 +346,6 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     }
     if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
     serial::attach(&mut loaded)?;
-    #[cfg(pil_shadow_backend)]
-    let mut session=Session::with_backend(loaded,Box::new(crate::shadow_backend::Backend::default()));
-    #[cfg(not(pil_shadow_backend))]
     let mut session=Session::new(loaded);
     // The normal interpreted pil.exe owns opt-in Win32 graphics, not Python.
     #[cfg(windows)]

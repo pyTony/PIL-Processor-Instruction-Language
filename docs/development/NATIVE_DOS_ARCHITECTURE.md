@@ -1,5 +1,7 @@
 # PILdos Native Compiler Architecture
 
+> **Design reference.** Since 13 November 2026 nothing builds a backend or executable for one program; the per-program tools this document mentions were removed. What was kept, and the integration route, are in [BLOCK_COMPILER.md](BLOCK_COMPILER.md).
+
 **Project:** PIL-Processor-Instruction-Language  
 **Repository:** `pyTony/PIL-Processor-Instruction-Language`  
 **Branch:** `dev`  

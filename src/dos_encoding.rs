@@ -22,11 +22,6 @@ const HIGH:[char;128]=[
 pub(crate) fn decode(bytes:&[u8])->String{
     bytes.iter().map(|&b|if b<128{char::from(b)}else{HIGH[usize::from(b-128)]}).collect()
 }
-/// Host output mode is selected by the executable adapter, never by guest RAM.
-#[allow(dead_code)] // Embedded into the generated standalone executable.
-pub(crate) fn output_bytes(bytes:&[u8],raw_cp437:bool)->Vec<u8>{
-    if raw_cp437{bytes.to_vec()}else{decode(bytes).into_bytes()}
-}
 pub(crate) fn command_line(text:&str)->Result<Vec<u8>,String>{
     let mut bytes=Vec::new();
     for c in text.chars(){
@@ -46,8 +41,7 @@ mod tests {
         for b in 128..=255u8{let text=decode(&[b]);assert_eq!(command_line(&text).unwrap(),[b]);}
         assert_eq!(decode(b"\x1b[31m\r\n"),"\x1b[31m\r\n");
         assert_eq!(command_line("tämä on demo").unwrap(),b"t\x84m\x84 on demo");
-        assert_eq!(output_bytes(b"t\x84m\x84",true),b"t\x84m\x84");
-        assert_eq!(output_bytes(b"t\x84m\x84",false),"tämä".as_bytes());
+        assert_eq!(decode(b"t\x84m\x84"),"tämä");
     }
     #[test] fn bounds_count_dos_bytes_and_unmappable_characters_fail(){
         assert_eq!(command_line(&"ä".repeat(125)).unwrap(),vec![0x84;125]);

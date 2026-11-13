@@ -1,5 +1,5 @@
-//! Reusable Win32/GDI RGB framebuffer window for the Dine interpreter
-//! and generated *native* DOS programs. No interpreter or DOS dependency.
+//! Reusable Win32/GDI RGB framebuffer window for Dine (pil and the Dine
+//! library). No interpreter or DOS dependency.
 //! `Frame` contains host RGB pixels, never guest state or pointers.
 
 #[cfg(windows)]
@@ -209,7 +209,7 @@ mod windows {
         }
     }
 
-    // The executable unloads dine.dll immediately after dine_run returns.
+    // A host may unload dine.dll immediately after dine_run returns.
     // The window thread MUST be stopped and joined before that happens,
     // otherwise its Win32 callback could execute unmapped DLL code.
     impl Drop for Window {

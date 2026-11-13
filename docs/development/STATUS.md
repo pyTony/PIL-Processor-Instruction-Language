@@ -1,3 +1,52 @@
+# PIL and Dine are program-independent libraries — 13 November 2026
+
+Standing rules (Tony, 13 November 2026):
+- **PIL and Dine are always program-independent libraries, used the same
+  way everywhere.** No tool, build step, launcher or CI job may generate a
+  `pil` engine, backend, library or executable for one guest program.
+  Precompilation is not a JIT, but it is not exempt.
+- **No program-specific code in general files.** src/, isa/, Cargo.toml and
+  every script in tools/ except tests, benchmarks and fixture builders model
+  the CPU, DOS, BIOS and devices for every program: no program or file
+  names, hashes, PSP or command-line checks, no addresses or values taken
+  from one program's run. Model the documented behaviour (FreeDOS kernel,
+  RBIL, Intel manuals) and test it with an original fixture; the program's
+  story goes in docs/, CHANGELOG or a test. Exempt: Rust #[cfg(test)]
+  items, tests/, fixtures, docs and root launchers.
+- `python tools/check_program_specific.py --self-test` runs first in Windows
+  and Linux CI. It flags guest program names, X.COM/X.EXE-style literals,
+  64-hex hashes, any use of the removed per-program build interfaces outside
+  docs and comments, and tracked host executables or shared libraries (DOS
+  fixtures in programs/ are inputs). An interface name may be allow-listed
+  in tools/program_specific_allow.txt as PATH | TEXT | REASON.
+
+This PR replaces #173 (Tony found it disappointing) and takes its useful
+parts: the guard, the explicit headless `--shell` (no shell guessed from a
+program name), the reworded comments, the case manifest for any COM with a
+cases.json, and vga_planar::Planar::controller_io shared VGA port rules.
+- Removed: the linked shadow engine (build.rs, PIL_SHADOW_SOURCE,
+  dos_compile.rs, `--emit-dos-backend`), the standalone translator
+  (dos_standalone.rs, dos_translate.rs, dos_runtime.rs,
+  dine_native_video.rs, `--emit-dos-standalone`), the Dine_<program>
+  launchers (build_dine.py), their build/verify scripts, three GUI tests,
+  ProgramIdentity / active_program in Dine, and tracked scratch .exe and
+  generated .rs files. Their docs are in docs/history/precompiled/.
+- Kept in src/block_compiler/ (compiled, tested, not wired to a command):
+  sites (Site, InstructionProfile, BlockPlan), codegen, guards and a
+  recorder without program identity. The InstructionBackend hook, native.rs
+  backend comparison and the program-independent `dine` cdylib stay; the
+  cdylib is now tested by tools/verify_dine_library.py through ctypes.
+  tools/verify_dos_demos.py checks FACTOR, RECURFIB and the MZ demo in Dine.
+- The full blocks design is on dev (block PRs #133, #134, #140, #164, #167;
+  NATIVE_DOS_ARCHITECTURE.md, COMPILER_REUSE.md, BLOCK_EXECUTION_UPGRADE.md);
+  Tony's 10 November stashes hold nothing missing. Details and the
+  integration route: docs/development/BLOCK_COMPILER.md. Issue #148 is
+  obsolete.
+
+Local Linux, debug: 802 Rust tests pass, 2 ignored; GUI tests 77 run, 6
+skipped, all pass. verify_dine_library.py, verify_dos_demos.py and
+verify_ansi_mandel.py pass.
+
 # INT 33h mouse driver completed — 13 November 2026
 
 Tony asked to check the mouse support and finish what was missing. This
@@ -58,67 +107,6 @@ tools/verify_descriptions.py: 59,940 shift cases pass. SingleStepTests/80386
 for the shift and ENTER files (29 files, 72,500 cases): 70,728 pass, up 62
 (D2.5 2,404 -> 2,426, D3.5 2,459 -> 2,499), no new failures, 0
 generated-backend disagreements. The full suite was not rerun.
-
-# No program-specific code in general files — 13 November 2026
-
-Standing rule (Tony, 13 November 2026). PIL's general files (src/, isa/,
-build.rs and every script in tools/ except tests, benchmarks and fixture
-builders) model the CPU, DOS, BIOS and devices for
-every program. They must not branch on, or be justified by, one guest
-program: no program or file names, hashes, PSP or command-line checks, and
-no addresses or values taken from one program's run. When a program hits a
-gap, model the documented DOS/BIOS/CPU behaviour (FreeDOS kernel, RBIL,
-Intel manuals) and test it with an original fixture; the program's story
-goes in docs/, CHANGELOG or a test, not in the general source.
-- The compile path is precompilation, not a JIT (Tony), and is not
-  exempt: the mixed shadow backend (dos_compile.rs, dos_blocks.rs,
-  dos_codegen.rs) and the full standalone translator (dos_standalone.rs,
-  dos_translate.rs, dos_runtime.rs) compile any program. Only their
-  generated output, never in the repository, is about one program.
-  Exempt: Rust #[cfg(test)] items, tests/, fixtures, docs and launchers.
-- `python tools/check_program_specific.py --self-test` runs first in
-  Windows and Linux CI. It flags guest program names, X.COM/X.EXE-style file
-  literals and 64-hex hashes. An interface name (an RBIL function that
-  belongs to a product, the COMSPEC convention) may be listed in
-  tools/program_specific_allow.txt as PATH | TEXT | REASON; a stale entry
-  fails the check.
-- Cleanup in this PR: the headless terminal no longer guesses a shell from
-  the program's name (COMMAND.COM, CMD.EXE, 4DOS). `--shell` says so
-  explicitly: /K CTTY COM1 by default, CTTY typed at the first silent prompt,
-  and Esc keeps it running. Without --shell there is no default command tail.
-  Comments that named programs (Quake/CWSDPMI, Turbo, Norton SysInfo,
-  GW-BASIC, FreeCOM, Landmark, TIMEIT, test386) were reworded to the general
-  behaviour; the ROM runner's placeholder program name is "ROM". No engine
-  behaviour changed.
-- Precompiler cleanup in this PR. The standalone translator accepted only
-  OUT DX,AX with DX=3CEh, and its runtime only GC registers 05h and 08h,
-  the two one demo used. The VGA sequencer and graphics-controller rules
-  now live in vga_planar::Planar::controller_io, shared by Dine
-  (dos_planar::io) and the standalone runtime (Context::vga_port): byte or
-  word IN/OUT through a DX proven to be 3C4h/3C5h/3CEh/3CFh (word accesses
-  at an index port), same planar profile, all checks before any change.
-  tools/build_dos_shadow.py chose its VGA comparison by file name; that is
-  now the explicit `--compare-vga` option (with --verify). The standalone
-  MANDVGA test, ignored as "next milestone" although it already compiled,
-  runs again. No PIL file is specific to the compilers: all 108 in
-  isa/i386 come through the general decoder.
-- Scripts (Tony: "there was also program specific switches in scripts").
-  The guard now scans every script in tools/ (.py, .ps1, .sh, .cmd), not
-  only the terminal; verify_*, bench_* and the demo fixture builders are
-  tests by design. Found and fixed: pil_debugger.py loaded a case manifest
-  only for a file named CPUTEST.COM; it now does so for any COM file with
-  a cases.json beside it, still authenticated by its bytes (new GUI test
-  with a renamed file). audit_dos_codegen.py defaulted --program to one
-  demo; --program is now required. The build_dos_shadow.ps1 usage example
-  names no program. Host executables (pil.exe, PowerShell) are not guest
-  names; package.py and export_runtime.py smoke-test the built-in
-  --write-dos-hello fixture (allow-listed). Root launchers stay exempt.
-
-Local Linux, release: 815 Rust tests pass, 2 ignored; GUI tests: 87 run, 6 skipped, all pass.
-tools/verify_dos_standalone.py: 49 applications match Dine. Standalone
-native MANDVGA: 296,960 pixels, four planes and 36 caption glyphs match.
-build_dos_shadow.py MANDVGA.COM --verify --compare-vga: VGA planes, caption,
-CPU state and key exit match (8.7x).
 
 # Protected mode, increment 7: task switching — 13 November 2026
 

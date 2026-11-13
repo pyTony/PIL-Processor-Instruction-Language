@@ -34,15 +34,11 @@ jobs:
       - run: python tools/verify_flag_transfer.py
       - run: python tools/verify_direction_flag.py
       - run: python tools/verify_dos_probe.py
-      - run: python tools/verify_dos_standalone.py
-      - run: python tools/verify_dos_smc.py
       - run: python tools/build_ansi_mandel.py --check
       - run: python tools/verify_ansi_mandel.py
-      - run: python tools/verify_factor_native.py
       - run: python tools/build_recursive_fib.py --check
-      - run: python tools/verify_recursive_native.py
       - run: python tools/build_mz_demo.py --check
-      - run: python tools/verify_mz_native.py
+      - run: python tools/verify_dos_demos.py
       - if: runner.os == 'Linux'
         run: python tools/verify_dos_console.py --engine target/debug/pil --out target/console-fixtures
       - if: runner.os == 'Windows'
@@ -65,11 +61,10 @@ jobs:
         run: ./tools/debug.ps1 -Check
       - run: python tools/export_runtime.py target/runtime-source --verify
       - run: cargo build --release --locked
-      - run: python tools/verify_dine_executable.py
+      - run: python tools/verify_dine_library.py
       - run: python tools/verify_mandel_cycle.py
       - run: python tools/verify_mandel_cga.py
       - run: python tools/verify_mandel_vga.py
-      - run: python tools/build_dos_shadow.py programs/dos/MANDVGA.COM --verify --compare-vga
       - if: runner.os == 'Linux'
         run: sh tools/bench.sh 10000 5
       - if: runner.os == 'Linux'
