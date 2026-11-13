@@ -14,6 +14,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      - run: python tools/check_program_specific.py --self-test
       - run: cargo test --locked -- --show-output
       - run: cargo run --locked -- --selftest
       - run: python -m unittest discover -s tests/gui -v
@@ -68,7 +69,7 @@ jobs:
       - run: python tools/verify_mandel_cycle.py
       - run: python tools/verify_mandel_cga.py
       - run: python tools/verify_mandel_vga.py
-      - run: python tools/build_dos_shadow.py programs/dos/MANDVGA.COM --verify
+      - run: python tools/build_dos_shadow.py programs/dos/MANDVGA.COM --verify --compare-vga
       - if: runner.os == 'Linux'
         run: sh tools/bench.sh 10000 5
       - if: runner.os == 'Linux'

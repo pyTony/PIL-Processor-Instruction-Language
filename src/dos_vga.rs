@@ -36,8 +36,8 @@ impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;
 /// standard values. Programs may write the registers that only steer planar
 /// writes and reads (map mask, set/reset, compare, rotate, read map, write
 /// mode, bit mask): they read back, and video memory keeps the mode's own
-/// layout until the next mode set, as GW-BASIC expects when it programs them
-/// ahead of SCREEN 7-9. Registers that remap or reshape video memory (memory
+/// layout until the next mode set, so a program may program them ahead of
+/// its own mode set. Registers that remap or reshape video memory (memory
 /// mode, miscellaneous, shift and 256-colour bits) stay refused, except in
 /// the text modes, where a program may map the font plane at A0000h (see
 /// dos_vga_font).

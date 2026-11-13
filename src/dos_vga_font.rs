@@ -2,8 +2,8 @@
 //! plane 2; programs reach it by switching the sequencer and graphics
 //! controller to plane addressing at A0000h (map mask 04h, odd/even off,
 //! read map 2, memory map A0000h), copying 32-byte glyph slots, and switching
-//! back to the text values. Norton SysInfo 8 does this to draw its own window
-//! frames and check boxes.
+//! back to the text values, as programs that draw their own window frames
+//! and check boxes do.
 //!
 //! While the registers select that addressing (memory map A0000h, odd/even
 //! off in both the sequencer and the graphics controller, chain-4 off), the

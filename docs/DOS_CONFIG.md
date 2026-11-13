@@ -16,7 +16,10 @@ and `D:\AUTOEXEC.BAT`; the config file does not supply these files.
 Start with `python tools/dos_terminal.py`, `PILdos.vbs` on Windows, or
 `sh PILdos.sh` on Linux/Termux with a graphical display. `freedos.cmd` also
 connects COM1 to its launching console. For a headless terminal, run
-`python tools/dos_terminal.py --headless`.
+`python tools/dos_terminal.py --headless --shell` for a command shell such as
+COMMAND.COM (it starts with `/K CTTY COM1` and keeps running after Esc), or
+`--headless` alone for any other program (Esc ends the run). The terminal
+never guesses this from the program's name.
 
 Automatic engine discovery chooses the newest standard executable it finds,
 including `target/release/pil` and `target/debug/pil` (`.exe` on Windows).

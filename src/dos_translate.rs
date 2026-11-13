@@ -106,6 +106,12 @@ fn next_known(program:&Program,dst:View,src:View,mut known:Known)->Known{
     known
 }
 
+/// IN/OUT through DX that the standalone runtime answers with Dine's VGA
+/// sequencer and graphics controller rules, as (input, word).
+pub(crate) fn vga_port_access(label:&str)->Option<(bool,bool)>{
+    match label{"IN AL,DX"=>Some((true,false)),"IN AX,DX"=>Some((true,true)),"OUT DX,AL"=>Some((false,false)),"OUT DX,AX"=>Some((false,true)),_=>None}
+}
+
 /// Discover the complete reachable instruction graph for a deliberately small
 /// ordinary-RAM DOS subset. No byte is classified as code unless reached by
 /// a direct edge from the entry point. Unsupported or overlapping code fails
@@ -131,23 +137,27 @@ fn discover_direct(p:&dos::Loaded)->Result<std::collections::BTreeMap<u32,guest:
         let end=ip.checked_add(decoded.length).ok_or("standalone instruction address overflow")?;
         if physical+u64::from(decoded.length)>module_end{return Err(format!("standalone instruction at {ip:04x} crosses loaded module end"));}
         for byte in ip..end {if let Some(old)=occupied.insert(byte,ip){if old!=ip{return Err(format!("overlapping standalone instructions at {old:04x} and {ip:04x}"));}}}
-        // The decoder's generic I/O PIL is an open bus. Replace it only for
-        // the proven word graphics-controller port. All other port operations
-        // fail closed, including a dynamic or clobbered DX.
+        // The decoder's generic I/O PIL is an open bus. The VGA sequencer and
+        // graphics controller ports, reached through a DX proven on every
+        // incoming path, use the runtime's device model instead; every other
+        // port operation fails closed, including a dynamic or clobbered DX.
+        let vga=vga_port_access(&decoded.label);
         if decoded.label.starts_with("IN ")||decoded.label.starts_with("OUT "){
-            if decoded.label!="OUT DX,AX"||known.2!=Some(0x3ce)||!p.image.real_mode{
-                return Err(format!("standalone port I/O requires proven DX=03CEh and OUT DX,AX at {ip:04x}: {}",decoded.label));
+            // A word access must start at an index port, as in Dine.
+            let index=matches!(known.2,Some(0x3c4|0x3ce));
+            if vga.is_none()||!(index||!vga.unwrap().1&&matches!(known.2,Some(0x3c5|0x3cf)))||!p.image.real_mode{
+                return Err(format!("standalone port I/O needs IN/OUT through a proven DX of 03C4h or 03CEh (bytes also 03C5h or 03CFh) at {ip:04x}: {}",decoded.label));
             }
         }
         match &decoded.operation {
             guest::Operation::Pil{program,flow,dst,src,address}
-                if decoded.label=="OUT DX,AX" || standalone_ram(program,*address)=>{
-                // The validated VGA OUT port has its own native service
-                // boundary. Its generic PIL contains CheckIo (a control
-                // effect), but no guest branch or actual open-bus operation.
-                // Preserve AL/AH/DX and advance exactly one x86 instruction.
-                if decoded.label=="OUT DX,AX"{
-                    pending.push((flow.next_eip,known,context));
+                if vga.is_some() || standalone_ram(program,*address)=>{
+                // A validated VGA port access is a native device boundary
+                // with one successor. OUT keeps AL/AH/DX; IN replaces AL (and
+                // AH for a word) with a value unknown at build time.
+                if let Some((input,word))=vga{
+                    let next=match(input,word){(false,_)=>known,(true,false)=>(None,known.1,known.2),(true,true)=>(None,None,known.2)};
+                    pending.push((flow.next_eip,next,context));
                 }else{
                 let next=next_known(program,*dst,*src,known);
                 if near_return(program){

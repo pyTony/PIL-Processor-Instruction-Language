@@ -239,7 +239,14 @@ class FrontendTests(unittest.TestCase):
             self.assertEqual(front.load_case_manifest(unrelated_path), [])
             self.assertEqual(front.load_case_manifest(small_path), [])
 
-            # A mismatched/fake CPUTEST.COM must also be rejected
+            # The file name does not matter, only the authenticated bytes.
+            renamed = Path(d) / 'OTHER.COM'
+            renamed.write_bytes(com_bytes)
+            self.assertEqual(front.load_case_manifest(renamed), loaded_direct)
+            self.assertTrue(front.has_case_manifest(renamed))
+            self.assertFalse(front.has_case_manifest(unrelated_path))
+
+            # A mismatched/fake case COM file must also be rejected
             com_path.write_bytes(b'\x90' * 4000)
             self.assertEqual(front.load_case_manifest(com_path), [])
 

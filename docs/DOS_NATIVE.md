@@ -298,13 +298,15 @@ artifact, but cannot set a variable in its parent PowerShell process.
 From the repository root, with Rust and Python installed:
 
 ```text
-python tools/build_dos_shadow.py programs/dos/MANDVGA.COM --verify
+python tools/build_dos_shadow.py programs/dos/MANDVGA.COM --verify --compare-vga
 ```
 
 The helper builds a profiling engine, runs the original COM file, writes the
 observed Rust source, and builds it in one Cargo invocation. `--verify` runs
-generated-code state and invalidation tests and then three complete Mandelbrot
-comparisons. The source/output cache is:
+generated-code state and invalidation tests. `--compare-vga` (with `--verify`)
+then runs the guest three times in both engines to its first key wait in VGA
+mode 12h, compares the full session state, and checks that Enter exits to text
+mode. The option is explicit; the builder never chooses checks by file name. The source/output cache is:
 
 ```text
 shadow/<target_os>-<target_cpu>/<guest_sha256>/
