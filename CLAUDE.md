@@ -79,7 +79,7 @@ goes in docs/, CHANGELOG or a test, not in the general source.
   names; package.py and export_runtime.py smoke-test the built-in
   --write-dos-hello fixture (allow-listed). Root launchers stay exempt.
 
-Local Linux, release: 815 Rust tests pass, 2 ignored; GUI tests 82 pass, 6 skipped.
+Local Linux, release: 815 Rust tests pass, 2 ignored; GUI tests: 87 run, 6 skipped, all pass.
 tools/verify_dos_standalone.py: 49 applications match Dine. Standalone
 native MANDVGA: 296,960 pixels, four planes and 36 caption glyphs match.
 build_dos_shadow.py MANDVGA.COM --verify --compare-vga: VGA planes, caption,
