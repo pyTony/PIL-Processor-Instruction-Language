@@ -632,6 +632,14 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
         if !p.rom_mode {
+        // A callback returns by RETF to the private BIOS continuation.
+        // Its scratch registers/flags are discarded; guest memory writes remain.
+        match mouse::returned(&mut p){
+            Ok(true)=>{lazy=super::LazyFlags::None;execution_steps+=1;
+                *instructions.entry("DOS mouse callback RETF".into()).or_insert(0)+=1;continue;},
+            Ok(false)=>{},
+            Err(message)=>break Stop::Service(message),
+        }
         if !p.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match brk::returned(&mut p){
             Ok(None)=>{},
@@ -655,6 +663,18 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             match keyboard::interrupt(&mut p,false){
                 Ok(true)=>{execution_steps+=1;*instructions.entry("IRQ1 to INT 09h".into()).or_insert(0)+=1;continue;},
+                Ok(false)=>{},
+                Err(message)=>break Stop::Service(message),
+            }
+        }
+        // Mouse callbacks behave as asynchronous far calls, not hardware IRQ12.
+        // Defer them while IF is clear, the interrupt shadow is active, or a
+        // previous callback has not yet returned.
+        if mouse::ready(&p){
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            match mouse::deliver(&mut p){
+                Ok(true)=>{execution_steps+=1;
+                    *instructions.entry("DOS mouse callback FAR".into()).or_insert(0)+=1;continue;},
                 Ok(false)=>{},
                 Err(message)=>break Stop::Service(message),
             }
