@@ -7,16 +7,15 @@ use crate::dos_translate::{self,near_call,near_return};
 use std::fmt::Write as _;
 use crate::dos_codegen::{self,Bindings,BlockAdapter};
 use crate::dos_blocks::{Site,BlockPlan};
-use std::collections::BTreeSet;
-#[cfg(test)] use std::collections::BTreeMap;
+use std::collections::BTreeMap;
 
 // Standalone control metadata and retirement belong to this runtime adapter;
 // the instruction call and bounded block plan are shared with Dine.
-fn standalone_instruction(ip:u32,site:&Site,fast:bool,vga_port:bool)->String{
-    // Statically verified OUT DX,AX is a native device boundary, not the
-    // generic open-bus PIL operation. It preserves all registers and flags.
-    if vga_port{
-        return format!("c.out_vga_word()?;c.eip={};c.machine.retired();\n",site.flow.next_eip);
+fn standalone_instruction(ip:u32,site:&Site,fast:bool,vga_port:Option<(bool,bool)>)->String{
+    // A statically verified VGA port access is a native device boundary,
+    // not the generic open-bus PIL operation. Only IN changes AL or AX.
+    if let Some((input,word))=vga_port{
+        return format!("c.vga_port({input},{word})?;c.eip={};c.machine.retired();\n",site.flow.next_eip);
     }
     let program=&site.program;let flow=site.flow;
     let before=if near_return(program){format!("let expected=*c.calls.last().ok_or(\"standalone RET has no proven caller\")?; if expected.1!={}{{return Err(\"standalone CALL/RET operand widths differ\".into());}} let before=(c.regs,c.flags,c.undefined,c.eip,c.machine);",program.operand_width)}else{String::new()};
@@ -25,10 +24,10 @@ fn standalone_instruction(ip:u32,site:&Site,fast:bool,vga_port:bool)->String{
     let call=dos_codegen::instruction_call(ip,site,&Bindings{regs:"&mut c.regs",flags:"&mut c.flags",undefined:"&mut c.undefined",eip:"&mut c.eip",ram:"&mut c.ram",machine:"&mut c.machine"},fast);
     format!("{before} {call}.map_err(|e|format!(\"guest instruction: {{e:?}}\"))?; {after} c.machine.retired();\n")
 }
-struct StandaloneBlocks<'a>{vga_ports:&'a BTreeSet<u32>}
+struct StandaloneBlocks<'a>{vga_ports:&'a BTreeMap<u32,(bool,bool)>}
 impl BlockAdapter for StandaloneBlocks<'_> {
     fn header(&self,start:u32)->String{format!("#[inline(never)] fn block_{start:x}(c:&mut dos_runtime::Context)->Result<(),String>{{\n")}
-    fn instruction(&self,ip:u32,site:&Site,_:usize)->String{standalone_instruction(ip,site,true,self.vga_ports.contains(&ip))}
+    fn instruction(&self,ip:u32,site:&Site,_:usize)->String{standalone_instruction(ip,site,true,self.vga_ports.get(&ip).copied())}
     fn footer(&self,_:usize)->String{String::from("Ok(())\n}\n")}
 }
 
@@ -37,16 +36,16 @@ impl BlockAdapter for StandaloneBlocks<'_> {
 fn emit_direct(unit:&dos_translate::Unit)->Result<String,String>{
     let p=&unit.loaded;let graph=&unit.instructions;let sites=&unit.sites;
     // dos_translate has verified the exact DX port on every incoming path.
-    let vga_ports:BTreeSet<u32>=graph.iter().filter_map(|(&ip,decoded)|
-        (decoded.label=="OUT DX,AX").then_some(ip)).collect();
+    let vga_ports:BTreeMap<u32,(bool,bool)>=graph.iter().filter_map(|(&ip,decoded)|
+        dos_translate::vga_port_access(&decoded.label).map(|access|(ip,access))).collect();
     let plan=BlockPlan::new(sites,std::iter::once(p.cpu.eip));
     let blocks=dos_codegen::emit_blocks(sites,&plan,&StandaloneBlocks{vga_ports:&vga_ports});
     let mut modules=String::new();let mut cases=String::new();let mut block_cases=String::new();
     for (&ip,decoded) in graph {
         match &decoded.operation {
             guest::Operation::Pil{program,..}=>{
-                if !vga_ports.contains(&ip){modules.push_str(&dos_codegen::instruction_module(ip,program));}
-                let body=standalone_instruction(ip,&sites[&ip],false,vga_ports.contains(&ip));
+                if !vga_ports.contains_key(&ip){modules.push_str(&dos_codegen::instruction_module(ip,program));}
+                let body=standalone_instruction(ip,&sites[&ip],false,vga_ports.get(&ip).copied());
                 writeln!(cases,"{ip} => {{ {body} Ok(None) }},").unwrap();
                 writeln!(block_cases,"{ip} => {{block_{ip:x}(c)?;Ok(None)}},").unwrap();
             },
@@ -293,17 +292,25 @@ mod tests {
             vec![0xb8,0x13,0,0xcd,0x10,0xcd,0x20],
             vec![0xb4,3,0xcd,0x10,0xcd,0x20],
             vec![0xcd,0x16,0xcd,0x20],
-            // An unproven or incorrect graphics-controller port fails:
+            // A word access to a data port, a port outside the sequencer
+            // and graphics controller, a dword OUT or an unproven DX fails:
             vec![0xba,0xcf,3,0xb8,5,2,0xef,0xcd,0x20],
+            vec![0xba,0xd4,3,0xb0,5,0xee,0xcd,0x20],
+            vec![0xba,0xce,3,0x66,0xef,0xcd,0x20],
             vec![0xec,0xcd,0x20], // IN AL,DX
         ]{assert!(emit(&bytes,"V.COM").is_err(),"{bytes:?}");}
     }
     #[test]
-    fn proven_vga_out_word_calls_native_device_in_both_dispatch_paths(){
+    fn proven_vga_ports_call_native_device_in_both_dispatch_paths(){
         // MOV DX,3CEh; MOV AX,0205h; OUT DX,AX; INT20.
         let guest=[0xba,0xce,3,0xb8,5,2,0xef,0xcd,0x20];
         let source=emit(&guest,"PORT.COM").unwrap();
-        assert!(source.contains("c.out_vga_word()?;c.eip="));
+        assert!(source.contains("c.vga_port(false,true)?;c.eip="));
+        // MOV DX,3CFh; IN AL,DX; MOV DX,3C4h; MOV AL,2; OUT DX,AL; INT20.
+        let bytes=[0xba,0xcf,3,0xec,0xba,0xc4,3,0xb0,2,0xee,0xcd,0x20];
+        let source=emit(&bytes,"PORT.COM").unwrap();
+        assert!(source.contains("c.vga_port(true,false)?;c.eip="));
+        assert!(source.contains("c.vga_port(false,false)?;c.eip="));
         assert!(!source.contains("mod ins_106 {"),"port does not embed open-bus semantics");
         // Clobbering DX or varying its source cannot be considered proven.
         let wrong=[0xba,0xcf,3,0xb8,5,2,0xef,0xcd,0x20];
@@ -325,15 +332,12 @@ mod tests {
             "main compiled block loop must tick native presentation");
         assert!(emit(&[0xcd,0x16,0xb8,0,0x4c,0xcd,0x21],"KEY.COM").is_err());
     }
-    // Pending: original MANDVGA still exercises memory writes, calls and
-    // arithmetic beyond the currently admitted native static graph. Keep
-    // this as the end-to-end acceptance gate, not a false passing test.
+    // End-to-end gate with the project's own planar-mode demo.
     #[test]
-    #[ignore = "full original MANDVGA.COM control-flow support is the next native milestone"]
     fn original_mandvga_guest_reaches_compiled_vga_and_keyboard_boundaries(){
         let bytes=include_bytes!("../programs/dos/MANDVGA.COM");
         let source=emit(bytes,"MANDVGA.COM").expect("original MANDVGA.COM must have a fully proven static graph");
-        assert!(source.contains("c.out_vga_word()?"),"GC word port must use native device, not an open bus");
+        assert!(source.contains("c.vga_port(false,true)?"),"GC word port must use native device, not an open bus");
         assert!(source.contains("c.interrupt(16,output)"),"BIOS video boundary missing");
         assert!(source.contains("c.interrupt(22,output)"),"BIOS key wait boundary missing");
         assert!(source.contains("mod vga_planar"),"generated code must include the original VGA engine");

@@ -67,33 +67,9 @@ pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<
     // Outside the planar modes (where a text mode may still map its font
     // plane at A0000h) the controllers are the idle set.
     let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?;
-    let(true,Some(planar))=(geometry(mode).is_some(),p.ram.planar()) else{return idle_io(p,sequencer,port&1==0,input,value,word).map(Some);};
-    let mut next=planar.clone();
-    let mut index=if sequencer{next.seq_index}else{next.gc_index};
-    let mut access=|data:bool,value:u8|->Result<u8,String>{
-        if !data{if input{return Ok(index);}index=value;return Ok(0);}
-        let i=usize::from(index);
-        let regs:&mut [u8]=if sequencer{&mut next.seq}else{&mut next.gc};
-        // Unimplemented extension indices are absent on this plain VGA: reads
-        // stay FFh and writes have no effect, so vendor probes can fail normally.
-        let Some(old)=regs.get(i).copied() else{return Ok(if input{0xff}else{0});};
-        if input{return Ok(old);}
-        // Only the planar addressing these modes use: no chain-4, odd/even,
-        // shift modes or map changes, and no clocking/reset changes.
-        let allowed=match(sequencer,i){
-            (true,2)=>true,(true,4)=>value&0x0c==0x04,
-            (false,0..=4|7|8)=>true,(false,5)=>value&0x74==0,(false,6)=>value&0x0f==0x05,
-            _=>value==old,
-        };
-        if !allowed{return Err(format!("VGA {} register {i:02X}h value {value:02X}h is outside the planar profile",if sequencer{"sequencer"}else{"graphics controller"}));}
-        regs[i]=value;Ok(0)
-    };
-    let even=port&1==0;
-    let lo=access(!even,value as u8)?;
-    let hi=if word{access(true,(value>>8)as u8)?}else{0};
-    if sequencer{next.seq_index=index;}else{next.gc_index=index;}
-    *p.ram.planar_mut().unwrap()=next;
-    Ok(Some(u16::from(lo)|u16::from(hi)<<8))
+    let(true,Some(_))=(geometry(mode).is_some(),p.ram.planar()) else{return idle_io(p,sequencer,port&1==0,input,value,word).map(Some);};
+    // The register rules are shared with the native runtime (vga_planar).
+    p.ram.planar_mut().unwrap().controller_io(port,input,value,word).map(Some)
 }
 /// The same ports outside the planar modes (see dos_vga::Controllers):
 /// all checks precede any change.

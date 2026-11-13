@@ -24,8 +24,13 @@ def main():
                         help='enable real-time BIOS/PIT timer interrupts during profiling; offset in seconds east of UTC')
     parser.add_argument('--train-mount', type=Path, metavar='DIR',
                         help='copy game files to a disposable writable DOS drive for isolated training')
-    parser.add_argument('--verify', action='store_true', help='run generated guard/state tests; for Mandelbrot, compare full VGA output too')
+    parser.add_argument('--compare-vga', action='store_true',
+                        help='with --verify: run the guest to its first key wait in both engines, compare the full '
+                             'session state including VGA mode 12h, then Enter must exit to text mode')
+    parser.add_argument('--verify', action='store_true', help='run the generated guard/state tests')
     args = parser.parse_args()
+    if args.compare_vga and not args.verify:
+        parser.error('--compare-vga needs --verify')
     if not 1 <= args.steps <= 120_000_000 or not 1 <= args.sites <= 65_536:
         parser.error('--steps must be 1..120000000 and --sites 1..65536')
     if args.profile_clock is not None and not -50_400 <= args.profile_clock <= 50_400:
@@ -95,7 +100,7 @@ def main():
                 'automatic_loading': False, 'guard_tests_verified': args.verify}
     if args.verify:
         subprocess.run(['cargo', 'test', '--release', '--locked', '--target', host, 'shadow_backend::guard_tests', '--', '--nocapture'], cwd=ROOT, env=env, check=True)
-        if program.name.upper() == 'MANDVGA.COM':
+        if args.compare_vga:
             subprocess.run(['python', 'tools/verify_dos_shadow.py', '--native-engine', str(pending), '--engine', str(engine), '--program', str(program)], cwd=ROOT, check=True)
     # Publish only after requested verification passes. A failed build/test
     # must not replace the last usable engine.

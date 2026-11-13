@@ -131,25 +131,16 @@ impl Context {
         }
         Ok(Some((planar,video)))
     }
-    /// Native boundary for the precisely proven VGA OUT DX,AX at port 3CEh.
-    /// Write the graphics-controller index followed by its data atomically,
-    /// without using the decoder's generic open-bus PIL instruction.
-    pub fn out_vga_word(&mut self)->Result<(),String>{
+    /// IN or OUT through DX to the VGA sequencer or graphics controller
+    /// (3C4h/3C5h/3CEh/3CFh) in the planar mode, with the same register
+    /// rules as Dine (vga_planar::Planar::controller_io), instead of the
+    /// decoder's open-bus PIL. IN writes AL or AX; nothing else changes.
+    pub fn vga_port(&mut self,input:bool,word:bool)->Result<(),String>{
         let port=self.regs[2] as u16;
-        if self.video.mode!=0x12 || !self.machine.real_mode || port!=0x3ce {
-            return Err(format!("standalone VGA OUT DX,AX requires mode 12h and DX=03CEh, got port {port:04x}h"));
-        }
-        let index=(self.regs[0]&255)as usize;
-        let value=(self.regs[0]>>8)as u8;
-        let planar=self.ram.planar_mut().ok_or("standalone VGA planes are not mapped")?;
-        // Exactly the GC write-mode and bit-mask registers used by MANDVGA.
-        // Extend only with matching Dine controller validation and tests.
-        let allowed=match index{5=>value&0x74==0,8=>true,_=>false};
-        if !allowed{return Err(format!("standalone VGA GC register {index:02x}h value {value:02x}h is not supported"));}
-        let mut next=planar.clone();
-        next.gc_index=index as u8;
-        next.gc[index]=value;
-        *planar=next;
+        if !self.machine.real_mode{return Err("standalone VGA port access requires real mode".into());}
+        let planar=self.ram.planar_mut().ok_or_else(||format!("standalone VGA port {port:04x}h needs a planar BIOS mode"))?;
+        let value=planar.controller_io(port,input,self.regs[0] as u16,word)?;
+        if input{let mask=if word{0xffff}else{0xff};self.regs[0]=(self.regs[0]&!mask)|(u32::from(value)&mask);}
         Ok(())
     }
     pub fn interrupt(&mut self,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
@@ -284,7 +275,7 @@ mod tests {
         assert!(out.bytes().is_empty());
     }
     #[test]
-    fn vga_out_word_uses_shared_plane_latches_mask_and_rejects_unsupported_ports(){
+    fn vga_ports_use_shared_controller_rules_latches_and_mask(){
         let p=crate::dos::load(&[0xcd,0x20],"V.COM").unwrap();
         let mut c=Context{regs:p.cpu.regs,flags:0x246,undefined:0,eip:p.cpu.eip,ram:p.ram,machine:p.image.segment_state(),video:VideoState::default(),key:None,calls:Vec::new()};
         let mut output=crate::host_io::CaptureOutput::new(64);
@@ -294,8 +285,8 @@ mod tests {
         let at=crate::vga_planar::WINDOW+7;
         c.ram.store(at,MemWidth::Byte,0xff).unwrap();
         c.regs[2]=0x3ce;
-        c.regs[0]=0x0205;c.out_vga_word().unwrap();
-        c.regs[0]=0xc008;c.out_vga_word().unwrap();
+        c.regs[0]=0x0205;c.vga_port(false,true).unwrap();
+        c.regs[0]=0xc008;c.vga_port(false,true).unwrap();
         assert_eq!(c.ram.load(at,MemWidth::Byte).unwrap(),0xff); // load latches
         c.ram.store(at,MemWidth::Byte,6).unwrap();
         let p=c.ram.planar().unwrap();
@@ -306,12 +297,22 @@ mod tests {
             assert_eq!(image[n*80*480+7],want);
         }
         let before=c.ram.planar().unwrap().clone();
-        c.regs[2]=0x3cf;assert!(c.out_vga_word().is_err());
-        c.regs[2]=0x3ce;c.regs[0]=0x1106;assert!(c.out_vga_word().is_err());
+        c.regs[2]=0x3cf;assert!(c.vga_port(false,true).is_err());
+        c.regs[2]=0x3ce;c.regs[0]=0x1106;assert!(c.vga_port(false,true).is_err());
+        c.regs[2]=0x3d4;c.regs[0]=0x0005;assert!(c.vga_port(false,false).is_err());
         assert_eq!(c.ram.planar().unwrap(),&before);
+        // Byte accesses: select bit mask (08h) at 3CEh, read it back at 3CFh
+        // into AL only; the sequencer map mask round-trips the same way.
+        c.regs[2]=0x3ce;c.regs[0]=0x1234_0008;c.vga_port(false,false).unwrap();
+        c.regs[2]=0x3cf;c.vga_port(true,false).unwrap();
+        assert_eq!(c.regs[0],0x1234_00c0);
+        c.regs[2]=0x3c4;c.regs[0]=0x0502;c.vga_port(false,true).unwrap();
+        c.regs[2]=0x3c5;c.vga_port(true,false).unwrap();
+        assert_eq!(c.regs[0]&0xff,5);
         c.regs[0]=3;c.interrupt(0x10,&mut output).unwrap();
         assert!(c.ram.planar().is_none());
         assert_eq!(c.ram.load(0x449,MemWidth::Byte).unwrap(),3);
+        c.regs[2]=0x3ce;assert!(c.vga_port(false,true).is_err());
     }
     #[test]
     fn bios_key_wait_needs_one_explicit_key_and_consumes_it_once(){

@@ -11,10 +11,12 @@ This check scans the general files and fails on:
     X.BAS, ...),
   * 64-hex-digit literals (SHA-256 hashes of guest files).
 
-Exempt: Rust #[cfg(test)] items, the runtime JIT / native-block path (it
-records and compiles one program by design), docs, tests, fixtures and
-launchers. Anything else must be listed in tools/program_specific_allow.txt
-with a reason.
+The precompilers (the mixed shadow backend and the full standalone native
+translator, with their build tools) are general files too: they compile any
+program, so only their generated output, which is never in the repository, is
+about one program. Exempt: Rust #[cfg(test)] items, docs, tests, fixtures
+and launchers. Anything else must be listed in
+tools/program_specific_allow.txt with a reason.
 
 Usage: python tools/check_program_specific.py [--list]
 Runs on Windows and Linux with the standard library only.
@@ -26,16 +28,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ALLOW = ROOT / 'tools' / 'program_specific_allow.txt'
 
-# General files: everything under src/ and isa/, build.rs and the terminal.
-GENERAL = ['src/**/*.rs', 'isa/**/*.pil', 'build.rs', 'tools/dos_terminal.py']
-
-# Runtime JIT / native-block path (Tony, 2026-11-13: exempt). It records and
-# compiles the blocks of one program, so program-specific output is expected.
-JIT = {
-    'src/dos_blocks.rs', 'src/dos_codegen.rs', 'src/dos_compile.rs',
-    'src/dos_runtime.rs', 'src/dos_standalone.rs', 'src/dos_translate.rs',
-    'src/native.rs',
-}
+# General files: everything under src/ and isa/, build.rs, the terminal and
+# the precompiler build tools (Tony, 2026-11-13: the compile path is
+# precompilation, not a JIT, and is not exempt).
+GENERAL = ['src/**/*.rs', 'isa/**/*.pil', 'build.rs', 'tools/dos_terminal.py',
+           'tools/build_dos_shadow.py', 'tools/build_dos_native.py', 'tools/build_dine.py']
 
 # Guest programs. Matched case-insensitively as whole words.
 PROGRAMS = [
@@ -108,8 +105,6 @@ def scan():
     files = sorted({path for pattern in GENERAL for path in ROOT.glob(pattern) if path.is_file()})
     for path in files:
         rel = path.relative_to(ROOT).as_posix()
-        if rel in JIT:
-            continue
         lines = path.read_text(encoding='utf-8').splitlines()
         skip = rust_test_lines(lines) if rel.endswith('.rs') else set()
         for number, line in enumerate(lines):
