@@ -168,14 +168,81 @@ fn present_80387_reports_equipment_and_persists_across_slices() {
 }
 
 #[test]
-fn present_80387_rejects_unimplemented_fchs_without_retiring() {
-    let mut p=dos::load(&[0xdb,0xe3,0xd9,0xe0,0xcd,0x20],"x87-unsupported.com").unwrap();
+fn present_80387_fchs_fabs_preserve_exact_sign_and_top_in_dos() {
+    // FNINIT; FLD1; FCHS; FSTP m80; FLDZ; FCHS; FSTP m80;
+    // FLD m80; FABS; FSTP m80; INT 20h.
+    let code=[
+        0xdb,0xe3, 0xd9,0xe8, 0xd9,0xe0, 0xdb,0x3e,0x00,0x02,
+        0xd9,0xee, 0xd9,0xe0, 0xdb,0x3e,0x10,0x02,
+        0xdb,0x2e,0x00,0x02, 0xd9,0xe1, 0xdb,0x3e,0x20,0x02,
+        0xcd,0x20,
+    ];
+    let mut p=dos::load(&code,"x87-sign.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let result=dos::run(p,40).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)), "{:?}",result.stop);
+    // -1.0 in the exact 80-bit representation.
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap(),0);
+    assert_eq!(result.loaded.ram.load(base+0x204,MemWidth::Dword).unwrap(),0x8000_0000);
+    assert_eq!(result.loaded.ram.load(base+0x208,MemWidth::Word).unwrap(),0xbfff);
+    // FCHS turns +0 into -0, without dropping the sign bit.
+    assert_eq!(result.loaded.ram.load(base+0x210,MemWidth::Dword).unwrap(),0);
+    assert_eq!(result.loaded.ram.load(base+0x214,MemWidth::Dword).unwrap(),0);
+    assert_eq!(result.loaded.ram.load(base+0x218,MemWidth::Word).unwrap(),0x8000);
+    // FABS restores positive 1.0 from the stored negative value.
+    assert_eq!(result.loaded.ram.load(base+0x220,MemWidth::Dword).unwrap(),0);
+    assert_eq!(result.loaded.ram.load(base+0x224,MemWidth::Dword).unwrap(),0x8000_0000);
+    assert_eq!(result.loaded.ram.load(base+0x228,MemWidth::Word).unwrap(),0x3fff);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.top(),0);
+    assert_eq!(state.tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_sign_ops_clear_c1_but_do_not_change_cpu_flags() {
+    let (image,mut ram)=Image::load(&[0x90]).unwrap();
+    let mut cpu=Cpu::default();
+    cpu.eflags=0x0000_0ad7;
+    let original=cpu.clone();
+    let mut device=PresentFpu::default();
+    device.state.push(Extended80::from_bits(1u64<<63,0x3fff)).unwrap();
+    let top=device.state.top();
+    device.state.status|=0x0200;
+    assert_eq!(device.execute(&instruction(&[0xd9,0xe0]),&mut cpu,&mut ram,&image),Outcome::Completed);
+    assert_eq!(device.state.st(0),Some(Extended80::from_bits(1u64<<63,0xbfff)));
+    assert_eq!(device.state.status&0x0200,0);
+    assert_eq!(device.state.top(),top);
+    device.state.status|=0x0200;
+    assert_eq!(device.execute(&instruction(&[0xd9,0xe1]),&mut cpu,&mut ram,&image),Outcome::Completed);
+    assert_eq!(device.state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(device.state.status&0x0200,0);
+    assert_eq!(device.state.top(),top);
+    assert_eq!(cpu,original);
+}
+
+#[test]
+fn present_80387_sign_ops_on_empty_stack_do_not_retire() {
+    for opcode in [0xe0,0xe1] {
+        let mut p=dos::load(&[0xdb,0xe3,0xd9,opcode,0xcd,0x20],"x87-empty-sign.com").unwrap();
+        p.fpu=Fpu::present();
+        let result=dos::run(p,10).unwrap();
+        assert!(matches!(result.stop,dos::Stop::Fault(ref s) if s.contains("stack fault (Underflow)")));
+        assert_eq!(result.completed,1);
+        assert_eq!(result.loaded.cpu.eip,0x102);
+        assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+    }
+}
+
+#[test]
+fn present_80387_rejects_unimplemented_ftst_without_retiring() {
+    let mut p=dos::load(&[0xdb,0xe3,0xd9,0xe4,0xcd,0x20],"x87-ftst-unsupported.com").unwrap();
     p.fpu=Fpu::present();
     let result=dos::run(p,20).unwrap();
     match result.stop {
         dos::Stop::Fault(message)=>{
             assert!(message.contains("80387 unsupported instruction"),"{message}");
-            assert!(message.contains("d9 e0"),"{message}");
+            assert!(message.contains("d9 e4"),"{message}");
         },
         other=>panic!("{other:?}"),
     }
