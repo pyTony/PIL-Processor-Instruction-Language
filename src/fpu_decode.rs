@@ -12,6 +12,10 @@ pub enum Operation {
     Fnstcw,
     Fld1,
     Fldz,
+    /// Change the sign bit of ST(0), including negative zero.
+    Fchs,
+    /// Clear the sign bit of ST(0), including negative zero.
+    Fabs,
     FldSt(u8),
     Fxch(u8),
     FstpSt(u8),
@@ -48,6 +52,8 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xdf, 0xe0) => Some(Operation::FnstswAx),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xee) => Some(Operation::Fldz),
+            (0xd9, 0xe0) => Some(Operation::Fchs),
+            (0xd9, 0xe1) => Some(Operation::Fabs),
             (0xd9, 0xc0..=0xc7) => Some(Operation::FldSt(rm)),
             (0xd9, 0xc8..=0xcf) => Some(Operation::Fxch(rm)),
             (0xdd, 0xd8..=0xdf) => Some(Operation::FstpSt(rm)),
@@ -105,6 +111,8 @@ mod tests {
         assert_eq!(classify(0xdf,0xe0),Ok(Operation::FnstswAx));
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
+        assert_eq!(classify(0xd9,0xe0),Ok(Operation::Fchs));
+        assert_eq!(classify(0xd9,0xe1),Ok(Operation::Fabs));
         assert_eq!(classify(0xd9,0x2f),Ok(Operation::Fldcw)); // FLDCW [BX]
         assert_eq!(classify(0xd9,0x3f),Ok(Operation::Fnstcw)); // FNSTCW [BX]
         // /5 and /7 require memory operands, not ModR/M register mode.
@@ -174,7 +182,7 @@ mod tests {
     }
     #[test]
     fn unsupported_is_not_silent_success() {
-        for (op,modrm) in [(0xd9,0xe0),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
+        for (op,modrm) in [(0xd9,0xe4),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
         }
     }
