@@ -68,11 +68,12 @@ fn bound_raises_br_outside_the_signed_pair_and_changes_nothing(){
 #[test]
 fn enter_with_a_nesting_level_copies_enclosing_frame_pointers(){
  // 66 C8 08 00 03 = ENTER 8,3 (32-bit) on the 16-bit stack, SP=0100h, EBP=1234_0080h.
- // Copies [SS:7Ch] and [SS:78h], then pushes the frame pointer 00FCh.
+ // Copies [SS:7Ch] and [SS:78h], then pushes the frame pointer with the upper
+ // half of ESP, ABCD_00FCh, which EBP takes too.
  let(mut i,mut r,mut c)=machine(&[0x66,0xc8,0x08,0x00,0x03],[0,0,0,0,0xabcd_0100,0x1234_0080,0,0],2,&[(0x27c,32,0x1111_1111),(0x278,32,0x2222_2222)]);
  step(&mut i,&mut r,&mut c).unwrap();
- assert_eq!((c.regs[5],c.regs[4],c.eip),(0xfc,0xabcd_00e8,0x105));
- assert_eq!([0x2fc,0x2f8,0x2f4,0x2f0].map(|a|r.load(a,MemWidth::Dword).unwrap()),[0x1234_0080,0x1111_1111,0x2222_2222,0xfc]);
+ assert_eq!((c.regs[5],c.regs[4],c.eip),(0xabcd_00fc,0xabcd_00e8,0x105));
+ assert_eq!([0x2fc,0x2f8,0x2f4,0x2f0].map(|a|r.load(a,MemWidth::Dword).unwrap()),[0x1234_0080,0x1111_1111,0x2222_2222,0xabcd_00fc]);
  // C8 04 00 01 = ENTER 4,1: push BP, push the frame pointer; BP=00FEh, SP=00FEh-2-4.
  let(mut i,mut r,mut c)=machine(&[0xc8,0x04,0x00,0x01],[0,0,0,0,0x100,0x5555_4444,0,0],2,&[]);
  step(&mut i,&mut r,&mut c).unwrap();

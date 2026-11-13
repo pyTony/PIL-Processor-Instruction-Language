@@ -237,6 +237,10 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             0x80 | 0x190 => {
                 eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
             },
+            // Port E9h (the Bochs debug port): the ROM runner passes its bytes to
+            // stdout, so test386 built with OUT_PORT equ 0E9h prints its POST EEh
+            // results there; a DOS session ignores them.
+            0xe9 if p.rom_mode => {use std::io::Write;let _=std::io::stdout().write_all(&[value]);},
             0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
             _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         }
