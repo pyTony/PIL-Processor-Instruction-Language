@@ -7,9 +7,48 @@
 use std::ffi::{c_char, CStr};
 use std::io::{self, Write};
 
+/// Convert a native launcher command line to the legacy 8.3 DOS view.
+/// File operands are resolved against the current host working directory,
+/// mounted as C:. Quoted long host filenames are supported, but the legacy
+/// guest receives its regular DOS command tail, not a new filesystem API.
+/// DOS aliases come from the same listing implementation as INT 21h/AH3Dh.
+fn dos_tail(loaded:&crate::dos::Loaded,command_line:&str)->Result<String,String>{
+    let mut chars=command_line.chars().peekable();
+    let mut arguments=Vec::new();
+    while chars.peek().is_some(){
+        while chars.peek().is_some_and(|c|c.is_whitespace()){chars.next();}
+        if chars.peek().is_none(){break;}
+        let mut value=String::new();
+        let(mut quoted,mut had_quote)=(false,false);
+        while let Some(&next)=chars.peek(){
+            if !quoted&&next.is_whitespace(){break;}
+            chars.next();
+            if next=='"' {quoted=!quoted;had_quote=true;}
+            else{value.push(next);}
+        }
+        if quoted{return Err("unterminated quotation mark in Dine command line".into());}
+        if let Some(alias)=loaded.drive.host_argument_alias(&value)?{
+            arguments.push(alias);
+        }else if had_quote {
+            // Retain quotes for ordinary guest arguments that aren't host
+            // files. A DOS filename alias itself has no spaces or quotes.
+            arguments.push(format!("\"{value}\""));
+        }else{
+            arguments.push(value);
+        }
+    }
+    Ok(arguments.join(" "))
+}
+
 fn interpreted(guest: &[u8], name: &str, tail: &str) -> Result<i32, String> {
-    let mut loaded = crate::dos::load(guest, name)?;
-    crate::dos::set_command_tail(&mut loaded, tail)?;
+    // Current-directory mapping is intentional: Dine runs with the host
+    // caller's folder as DOS C: so the aliases refer to real host files.
+    // This is a compatibility mount, not unrestricted native filesystem I/O.
+    let cwd=std::env::current_dir().map_err(|e|format!("Dine working directory: {e}"))?;
+    let mut loaded = crate::dos::load_with_drives(
+        guest, name, vec![crate::dos::Source::Host(cwd)], None)?;
+    let translated=dos_tail(&loaded,tail)?;
+    crate::dos::set_command_tail(&mut loaded,&translated)?;
     let mut display = crate::dine_display::Display::new();
     let mut last_video = std::time::Instant::now() - std::time::Duration::from_millis(100);
     loop {
