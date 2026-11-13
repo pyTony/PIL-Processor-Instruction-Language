@@ -17,7 +17,7 @@ mod windows {
     use super::Frame;
     use std::ffi::c_void;
     use std::ptr;
-    use std::sync::{atomic::{AtomicIsize,Ordering},mpsc,Mutex,OnceLock};
+    use std::sync::{atomic::{AtomicBool,AtomicIsize,Ordering},mpsc,Mutex,OnceLock};
     use std::thread;
 
     type Handle=*mut c_void;
@@ -34,6 +34,7 @@ mod windows {
 
     static FRAME:OnceLock<Mutex<Option<Frame>>>=OnceLock::new();
     static WINDOW:AtomicIsize=AtomicIsize::new(0);
+    static CLOSED:AtomicBool=AtomicBool::new(false);
 
     #[repr(C)]
     #[derive(Default,Clone,Copy)]
@@ -131,6 +132,7 @@ mod windows {
             },
             WM_CLOSE=>{DestroyWindow(hwnd);0},
             WM_DESTROY=>{
+                CLOSED.store(true,Ordering::Release);
                 WINDOW.store(0,Ordering::Release);
                 PostQuitMessage(0);
                 0
@@ -163,6 +165,7 @@ mod windows {
                 let _=ready.send(0);
                 return;
             }
+            CLOSED.store(false,Ordering::Release);
             WINDOW.store(hwnd as isize,Ordering::Release);
             let _=ready.send(hwnd as isize);
             ShowWindow(hwnd,SW_SHOWNOACTIVATE);
@@ -188,6 +191,7 @@ mod windows {
     }
     impl Window{
         pub(crate) fn new()->Self{Self{worker:None,ready:None}}
+        pub(crate) fn closed(&self)->bool{self.worker.is_some()&&CLOSED.load(Ordering::Acquire)}
         pub(crate) fn present(&mut self,frame:Frame){
             let state=FRAME.get_or_init(||Mutex::new(None));
             if let Ok(mut guard)=state.lock(){*guard=Some(frame);}
