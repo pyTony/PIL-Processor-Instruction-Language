@@ -265,11 +265,21 @@ class DosTerminalTests(unittest.TestCase):
         with patch.object(term, 'open_com1') as mock_open, \
              patch.object(term, 'Session') as mock_session, \
              patch.object(term, 'run_headless', return_value={'status': 'exit'}):
-            term.main(['--headless', 'images/FD14LITE.img::COMMAND.COM'])
+            term.main(['--headless', '--shell', 'images/FD14LITE.img::COMMAND.COM'])
             mock_open.assert_called_once_with('console')
             mock_session.assert_called_once()
-            _, kwargs = mock_session.call_args
             self.assertEqual(mock_session.call_args[0][3], '/K CTTY COM1')
+            self.assertTrue(term.run_headless.call_args[1]['is_shell'])
+
+    def test_headless_shell_only_from_the_flag_not_the_name(self):
+        # The program's name never decides: without --shell even COMMAND.COM
+        # gets no command tail and ends on Esc.
+        with patch.object(term, 'open_com1'), \
+             patch.object(term, 'Session') as mock_session, \
+             patch.object(term, 'run_headless', return_value={'status': 'exit'}) as mock_run:
+            term.main(['--headless', 'images/FD14LITE.img::COMMAND.COM'])
+            self.assertIsNone(mock_session.call_args[0][3])
+            self.assertFalse(mock_run.call_args[1]['is_shell'])
 
     def test_headless_fallback_injects_ctty_when_waiting_input_without_traffic(self):
         class FakeWaitingSession:

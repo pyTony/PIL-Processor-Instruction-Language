@@ -467,7 +467,7 @@ fn device(p:&mut Loaded,sft:u8)->Result<(),String>{
 /// returns the handle in AX; error 4 when either runs out.
 fn install(p:&mut Loaded,mut file:OpenFile)->Result<(),String>{
     let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
-    // FreeCOM redirects by closing handle 0 or 1 and opening: the file takes it.
+    // A shell redirects by closing handle 0 or 1 and opening: the file takes it.
     let Some(handle)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
     // System file numbers 0..5 are the devices; files take the lowest free one above.
     let Some(sft)=(NUL+1..=0xfeu8).find(|n|!p.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};

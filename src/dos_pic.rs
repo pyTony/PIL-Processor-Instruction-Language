@@ -103,7 +103,7 @@ mod tests{
         p.acknowledge_timer();p.write(0x20,0x60).unwrap();assert_eq!(p.read(0x20),0);p.write(0x20,0x0a).unwrap();assert_eq!(p.read(0x20),0);
         let old=p.clone();for value in [0x0c,0xa0,0x68]{assert!(p.write(0x20,value).is_err());assert_eq!(p,old);}
     }
-    /// CWSDPMI's sequence (Quake's DPMI host): 11h, base, 04h, 01h.
+    /// A DPMI host's reinitialization sequence: 11h, base, 04h, 01h.
     #[test]fn reinitialization_moves_the_vector_base_and_resets_state(){
         let mut p=Pair::default();assert_eq!((p.timer_vector(),p.keyboard_vector()),(0x08,0x09));
         p.write(0x21,0xb8).unwrap();p.raise_timer();p.acknowledge_timer();p.write(0x20,0x0b).unwrap();assert_eq!(p.read(0x20),1);p.raise_timer();

@@ -273,8 +273,8 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
         let mcb_owner_addr=u32::from(header)*16+1;
         p.ram.check_write(mcb_owner_addr,MemWidth::Word).map_err(|e|format!("child MCB owner write check: {e:?}"))?;
     }
-    // Temporarily allow instruction fetch from the child region while Turbo
-    // continues to execute in its own window. Do not replace the current
+    // Temporarily allow instruction fetch from the child region while the
+    // caller continues to execute in its own window. Do not replace the current
     // image or capture the CPU here: the child has not started yet.
     let saved_system=p.image.system;
     let mut next_system=saved_system;

@@ -1,0 +1,10 @@
+# Allowed program or file names in general files: PATH | TEXT | REASON
+# Checked by tools/check_program_specific.py. Each entry must name an
+# interface or DOS convention, never a guest program's behaviour.
+src/dos.rs | COMSPEC={drive}:\\COMMAND.COM | DOS convention: COMSPEC names the command shell in every environment block
+src/dos.rs | COMSPEC=A:\\COMMAND.COM | Same COMSPEC string, used to size the environment
+src/dos_services.rs | DOS/4GW | RBIL INT 15h BFxxh: the DOS/16M interface that DOS extenders answer; reported as absent
+src/dos_services.rs | 4DOS installation check | RBIL INT 2Fh D44Dh: the multiplex function a resident 4DOS answers; reported as absent
+src/dos_services.rs | 4DOS broadcasts | RBIL INT 2Fh D44Eh/D44Fh: multiplex broadcasts nobody takes
+tools/dos_terminal.py | images/FD14LITE.img::COMMAND.COM | Usage example in the module docstring
+tools/dos_terminal.py | have COMMAND.COM run a batch file first | --args help text example

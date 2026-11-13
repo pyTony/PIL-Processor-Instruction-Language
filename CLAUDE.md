@@ -1,3 +1,32 @@
+# No program-specific code in general files — 13 November 2026
+
+Standing rule (Tony, 13 November 2026). PIL's general files (src/, isa/,
+build.rs, tools/dos_terminal.py) model the CPU, DOS, BIOS and devices for
+every program. They must not branch on, or be justified by, one guest
+program: no program or file names, hashes, PSP or command-line checks, and
+no addresses or values taken from one program's run. When a program hits a
+gap, model the documented DOS/BIOS/CPU behaviour (FreeDOS kernel, RBIL,
+Intel manuals) and test it with an original fixture; the program's story
+goes in docs/, CHANGELOG or a test, not in the general source.
+- Exempt: the runtime JIT / native-block path (src/dos_blocks.rs,
+  dos_codegen.rs, dos_compile.rs, dos_runtime.rs, dos_standalone.rs,
+  dos_translate.rs, native.rs, the generated shadow service), Rust
+  #[cfg(test)] items, tests/, fixtures, docs and launchers.
+- `python tools/check_program_specific.py --self-test` runs first in
+  Windows and Linux CI. It flags guest program names, X.COM/X.EXE-style file
+  literals and 64-hex hashes. An interface name (an RBIL function that
+  belongs to a product, the COMSPEC convention) may be listed in
+  tools/program_specific_allow.txt as PATH | TEXT | REASON; a stale entry
+  fails the check.
+- Cleanup in this PR: the headless terminal no longer guesses a shell from
+  the program's name (COMMAND.COM, CMD.EXE, 4DOS). `--shell` says so
+  explicitly: /K CTTY COM1 by default, CTTY typed at the first silent prompt,
+  and Esc keeps it running. Without --shell there is no default command tail.
+  Comments that named programs (Quake/CWSDPMI, Turbo, Norton SysInfo,
+  GW-BASIC, FreeCOM, Landmark, TIMEIT, test386) were reworded to the general
+  behaviour; the ROM runner's placeholder program name is "ROM". No engine
+  behaviour changed.
+
 # Observed DOS native blocks — 9 November 2026
 
 The DOS recorder profiles the requested executable through bounded slices,
