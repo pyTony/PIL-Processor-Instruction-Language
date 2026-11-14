@@ -53,6 +53,50 @@ pub fn from_i64(value:i64)->Extended80{
     Extended80::from_bits(significand,exp|if negative{0x8000}else{0})
 }
 
+/// Convert a finite normalized x87 value to 18-digit packed BCD (FBSTP).
+pub fn to_bcd80(value:Extended80,control:u16)->Result<([u8;10],bool,bool),()>{
+    let rounded=super::math::frndint(value,control).map_err(|_|())?;
+    let sign_bit=rounded.value.sign_exponent&0x8000!=0;
+    let exp=i32::from(rounded.value.sign_exponent&0x7fff);
+    let mut bytes=[0u8;10];
+    if exp==0&&rounded.value.significand==0 {
+        bytes[9]=if sign_bit{0x80}else{0};
+        return Ok((bytes,rounded.inexact,rounded.rounded_up));
+    }
+    let unbiased=exp-16383;
+    if !(0..60).contains(&unbiased) { return Err(()); }
+    let mut mag=rounded.value.significand>>(63-unbiased);
+    if mag>999_999_999_999_999_999 { return Err(()); }
+    for slot in &mut bytes[..9] {
+        let low=(mag%10) as u8;
+        mag/=10;
+        let high=(mag%10) as u8;
+        mag/=10;
+        *slot=(high<<4)|low;
+    }
+    bytes[9]=if sign_bit{0x80}else{0};
+    Ok((bytes,rounded.inexact,rounded.rounded_up))
+}
+
+/// Convert a finite normalized x87 value to a signed 64-bit integer (FISTP m64).
+pub fn to_i64(value:Extended80,control:u16)->Result<(i64,bool,bool),()>{
+    let rounded=super::math::frndint(value,control).map_err(|_|())?;
+    let sign_bit=rounded.value.sign_exponent&0x8000!=0;
+    let exp=i32::from(rounded.value.sign_exponent&0x7fff);
+    if exp==0&&rounded.value.significand==0 {
+        return Ok((0,rounded.inexact,rounded.rounded_up));
+    }
+    let unbiased=exp-16383;
+    if !(0..=63).contains(&unbiased) { return Err(()); }
+    let val=if unbiased==63 {
+        if sign_bit&&rounded.value.significand==(1u64<<63) { i64::MIN } else { return Err(()); }
+    } else {
+        let mag=rounded.value.significand>>(63-unbiased);
+        if sign_bit { -(mag as i64) } else { mag as i64 }
+    };
+    Ok((val,rounded.inexact,rounded.rounded_up))
+}
+
 fn round_even(significand:u64,shift:u32)->(u64,bool){
     if shift==0{return (significand,false);}
     if shift<64 {

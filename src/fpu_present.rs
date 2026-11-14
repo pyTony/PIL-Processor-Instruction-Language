@@ -141,7 +141,7 @@ impl PresentFpu {
             Operation::FldM32 | Operation::FstpM32 |
             Operation::FldM64 | Operation::FstpM64 |
             Operation::FldM80 | Operation::FstpM80 |
-            Operation::FildM16 | Operation::FildM32 | Operation::FildM64 =>
+            Operation::FildM16 | Operation::FildM32 | Operation::FildM64 | Operation::FistpM64 | Operation::FbstpM80 =>
                 return self.execute_memory(operation,instruction,cpu,ram,image),
         };
         match result {
@@ -393,12 +393,12 @@ impl PresentFpu {
     /// checked before RAM access; FSTP commits a pop only after a successful write.
     fn execute_memory(&mut self,operation:Operation,instruction:&Instruction,
                       cpu:&Cpu,ram:&mut Ram,image:&Image)->Outcome {
-        let write=matches!(operation,Operation::FstpM32|Operation::FstpM64|Operation::FstpM80);
+        let write=matches!(operation,Operation::FstpM32|Operation::FstpM64|Operation::FstpM80|Operation::FistpM64|Operation::FbstpM80);
         let bytes: u32=match operation {
             Operation::FildM16=>2,
             Operation::FldM32|Operation::FstpM32|Operation::FildM32=>4,
-            Operation::FldM64|Operation::FstpM64|Operation::FildM64=>8,
-            Operation::FldM80|Operation::FstpM80=>10,
+            Operation::FldM64|Operation::FstpM64|Operation::FildM64|Operation::FistpM64=>8,
+            Operation::FldM80|Operation::FstpM80|Operation::FbstpM80=>10,
             _=>return Outcome::Unsupported,
         };
         let Ok((offset,context))=address::resolve(instruction,cpu,image) else {
@@ -441,6 +441,17 @@ impl PresentFpu {
                 return Outcome::StackFault(StackError::Underflow);
             };
             if !supported_m80(value){return Outcome::Unsupported;}
+            let (raw,inexact,rounded_up)=if matches!(operation,Operation::FbstpM80) {
+                let Ok(res)=convert::to_bcd80(value,self.state.control) else {
+                    return Outcome::Unsupported;
+                };
+                if res.1 && self.state.control & 0x0020 == 0 {
+                    return Outcome::Unsupported;
+                }
+                res
+            } else {
+                (value.to_le_bytes(),false,false)
+            };
             // Validate every byte of the 10-byte destination before the
             // first write, so protection failures never pop ST(0).
             for i in 0..10u32 {
@@ -448,10 +459,18 @@ impl PresentFpu {
                     return Outcome::MemoryFault;
                 }
             }
-            if ram.store(linear,MemWidth::Dword,value.significand as u32).is_err()
-                ||ram.store(high,MemWidth::Dword,(value.significand>>32)as u32).is_err()
-                ||ram.store(top,MemWidth::Word,u32::from(value.sign_exponent)).is_err() {
+            let lo=u32::from_le_bytes([raw[0],raw[1],raw[2],raw[3]]);
+            let hi=u32::from_le_bytes([raw[4],raw[5],raw[6],raw[7]]);
+            let ex=u16::from_le_bytes([raw[8],raw[9]]);
+            if ram.store(linear,MemWidth::Dword,lo).is_err()
+                ||ram.store(high,MemWidth::Dword,hi).is_err()
+                ||ram.store(top,MemWidth::Word,u32::from(ex)).is_err() {
                 return Outcome::MemoryFault;
+            }
+            if matches!(operation,Operation::FbstpM80) {
+                self.state.status &= !0x0200;
+                if rounded_up { self.state.status |= 0x0200; }
+                if inexact { self.state.status |= 0x0020; }
             }
             self.state.pop().expect("FSTP m80 checked ST(0)");
             return Outcome::Completed;
@@ -486,6 +505,29 @@ impl PresentFpu {
         let Some(value)=self.state.st(0) else {
             return Outcome::StackFault(StackError::Underflow);
         };
+        if matches!(operation,Operation::FistpM64) {
+            let Ok((ival,inexact,rounded_up))=convert::to_i64(value,self.state.control) else {
+                return Outcome::Unsupported;
+            };
+            if inexact && self.state.control & 0x0020 == 0 {
+                return Outcome::Unsupported;
+            }
+            for i in 0..8u32 {
+                if ram.check_write(linear+i,MemWidth::Byte).is_err() {
+                    return Outcome::MemoryFault;
+                }
+            }
+            let bits=ival as u64;
+            if ram.store(linear,MemWidth::Dword,bits as u32).is_err()
+                ||ram.store(high,MemWidth::Dword,(bits>>32) as u32).is_err() {
+                return Outcome::MemoryFault;
+            }
+            self.state.status &= !0x0200;
+            if rounded_up { self.state.status |= 0x0200; }
+            if inexact { self.state.status |= 0x0020; }
+            self.state.pop().expect("FISTP m64 checked ST(0)");
+            return Outcome::Completed;
+        }
         let converted=if bytes==4{
             convert::to_f32_bits(value,self.state.control)
         }else{
