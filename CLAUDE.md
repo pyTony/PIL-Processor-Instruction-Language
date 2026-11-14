@@ -32,8 +32,8 @@ text mode as a VGA does.
 - Not changed: the BIOS still reports only the 8x8 font (AX=1130h BH=06h
   stops), and fonts a program loads into plane 2 are not shown.
 
-Local Linux, release: full Rust suite (see PR), 3 new tests in
-tests/unit/host_console.rs. Windows code type-checks for
+Local Linux, release: 844 Rust tests pass, 2 ignored (3 new in
+tests/unit/host_console.rs). Windows code type-checks for
 x86_64-pc-windows-gnu; the window was not run on Windows.
 
 # PILdos setup screen: pil --pildos — 14 November 2026
