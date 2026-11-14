@@ -48,8 +48,8 @@ impl PresentFpu {
             },
             Operation::Fldcw | Operation::Fnstcw | Operation::FnstswM16 =>
                 return self.execute_word_memory(operation,instruction,cpu,ram,image),
-            Operation::Fnstenv =>
-                return self.execute_fnstenv(instruction, cpu, ram, image),
+            Operation::Fnstenv | Operation::Fldenv =>
+                return self.execute_env(operation == Operation::Fnstenv, instruction, cpu, ram, image),
             Operation::Fchs => {
                 let Some(mut value) = self.state.st(0) else {
                     return Outcome::StackFault(StackError::Underflow);
@@ -134,52 +134,76 @@ impl PresentFpu {
         Outcome::Completed
     }
 
-    /// FNSTENV m14/m28 writes the x87 environment and then masks all exceptions.
-    /// The full span is checked before any RAM write or control-word update.
-    fn execute_fnstenv(&mut self, instruction: &Instruction, cpu: &Cpu,
-                       ram: &mut Ram, image: &Image) -> Outcome {
+    /// FNSTENV/FLDENV m14/m28 store or restore the x87 environment atomically.
+    fn execute_env(&mut self, store: bool, instruction: &Instruction, cpu: &Cpu,
+                   ram: &mut Ram, image: &Image) -> Outcome {
         let wide = instruction.operand_32;
         let span = if wide { 28 } else { 14 };
         let width = if wide { MemWidth::Dword } else { MemWidth::Word };
         let Ok((offset, context)) = address::resolve(instruction, cpu, image) else {
             return Outcome::MemoryFault;
         };
-        let Ok(linear) = context.translate_span(u64::from(offset), span, true, cpu.eip) else {
+        let Ok(linear) = context.translate_span(u64::from(offset), span, store, cpu.eip) else {
             return Outcome::MemoryFault;
         };
         let step = if wide { 4u32 } else { 2u32 };
-        for i in 0..7u32 {
-            if ram.check_write(linear + i * step, width).is_err() {
-                return Outcome::MemoryFault;
+        if store {
+            for i in 0..7u32 {
+                if ram.check_write(linear + i * step, width).is_err() {
+                    return Outcome::MemoryFault;
+                }
             }
-        }
-        let words: [u32; 7] = if wide {
-            [
-                u32::from(self.state.control),
-                u32::from(self.state.status),
-                u32::from(self.state.tag_word()),
-                self.state.instruction_pointer,
-                u32::from(self.state.instruction_selector) | (u32::from(self.state.last_opcode & 0x07ff) << 16),
-                self.state.operand_pointer,
-                u32::from(self.state.operand_selector),
-            ]
+            let words: [u32; 7] = if wide {
+                [
+                    u32::from(self.state.control),
+                    u32::from(self.state.status),
+                    u32::from(self.state.tag_word()),
+                    self.state.instruction_pointer,
+                    u32::from(self.state.instruction_selector) | (u32::from(self.state.last_opcode & 0x07ff) << 16),
+                    self.state.operand_pointer,
+                    u32::from(self.state.operand_selector),
+                ]
+            } else {
+                [
+                    u32::from(self.state.control),
+                    u32::from(self.state.status),
+                    u32::from(self.state.tag_word()),
+                    self.state.instruction_pointer & 0xffff,
+                    u32::from(self.state.instruction_selector),
+                    self.state.operand_pointer & 0xffff,
+                    u32::from(self.state.operand_selector),
+                ]
+            };
+            for (i, &val) in words.iter().enumerate() {
+                if ram.store(linear + (i as u32) * step, width, val).is_err() {
+                    return Outcome::MemoryFault;
+                }
+            }
+            self.state.control |= 0x003f;
         } else {
-            [
-                u32::from(self.state.control),
-                u32::from(self.state.status),
-                u32::from(self.state.tag_word()),
-                self.state.instruction_pointer & 0xffff,
-                u32::from(self.state.instruction_selector),
-                self.state.operand_pointer & 0xffff,
-                u32::from(self.state.operand_selector),
-            ]
-        };
-        for (i, &val) in words.iter().enumerate() {
-            if ram.store(linear + (i as u32) * step, width, val).is_err() {
-                return Outcome::MemoryFault;
+            let mut words = [0u32; 7];
+            for (i, slot) in words.iter_mut().enumerate() {
+                let Ok(val) = ram.load(linear + (i as u32) * step, width) else {
+                    return Outcome::MemoryFault;
+                };
+                *slot = val;
+            }
+            self.state.control = words[0] as u16;
+            self.state.status = words[1] as u16;
+            self.state.set_tag_word(words[2] as u16);
+            if wide {
+                self.state.instruction_pointer = words[3];
+                self.state.instruction_selector = words[4] as u16;
+                self.state.last_opcode = ((words[4] >> 16) as u16) & 0x07ff;
+                self.state.operand_pointer = words[5];
+                self.state.operand_selector = words[6] as u16;
+            } else {
+                self.state.instruction_pointer = words[3] & 0xffff;
+                self.state.instruction_selector = words[4] as u16;
+                self.state.operand_pointer = words[5] & 0xffff;
+                self.state.operand_selector = words[6] as u16;
             }
         }
-        self.state.control |= 0x003f;
         Outcome::Completed
     }
 

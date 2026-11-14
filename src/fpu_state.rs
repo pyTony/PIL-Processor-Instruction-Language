@@ -71,6 +71,16 @@ impl X87State {
     pub fn tag_word(&self) -> u16 {
         self.tags.iter().enumerate().fold(0u16, |w, (i, tag)| w | ((*tag as u16) << (i * 2)))
     }
+    pub fn set_tag_word(&mut self, word: u16) {
+        for (i, tag) in self.tags.iter_mut().enumerate() {
+            *tag = match (word >> (i * 2)) & 3 {
+                0 => Tag::Valid,
+                1 => Tag::Zero,
+                2 => Tag::Special,
+                _ => Tag::Empty,
+            };
+        }
+    }
     fn classify(value: Extended80) -> Tag {
         let exponent = value.sign_exponent & 0x7fff;
         if exponent == 0 && value.significand == 0 { Tag::Zero }
