@@ -1,5 +1,10 @@
 # DOS environment configuration
 
+The Python-free Rust route is `pil --dos-text` (Windows:
+`.\target\release\pil.exe --dos-text`), or `PILdos.vbs --rust-text` /
+`sh PILdos.sh --rust-text`. It reads the same startup and drive configuration.
+See [Rust DOS console](DOS_CONSOLE.md) for options and redirected I/O behavior.
+
 ## Build once, start without parameters
 
 From the repository directory:

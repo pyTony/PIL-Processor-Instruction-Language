@@ -35,6 +35,19 @@ For Each arg In WScript.Arguments
     cmd = cmd & " " & Chr(34) & Replace(arg, Chr(34), Chr(34) & Chr(34)) & Chr(34)
 Next
 
+If WScript.Arguments.Count > 0 Then
+    If WScript.Arguments(0) = "--rust-text" Then
+        engine = WshShell.Environment("PROCESS")("PILDOS_ENGINE")
+        If Len(engine) = 0 Then engine = dir & "\target\release\pil.exe"
+        cmd = Chr(34) & engine & Chr(34) & " --dos-text"
+        For i = 1 To WScript.Arguments.Count - 1
+            arg = WScript.Arguments(i)
+            cmd = cmd & " " & Chr(34) & Replace(arg, Chr(34), Chr(34) & Chr(34)) & Chr(34)
+        Next
+        windowStyle = 1
+    End If
+End If
+
 On Error Resume Next
 result = WshShell.Run(cmd, windowStyle, True)
 If Err.Number <> 0 Then

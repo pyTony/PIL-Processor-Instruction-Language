@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1.0"
+crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
 
 # Build the same CPU and DOS implementation as the Dine shared library
 # (C ABI in src/dine_ffi.rs). PIL and Dine are program-independent: no build

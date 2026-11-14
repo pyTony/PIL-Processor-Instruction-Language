@@ -34,6 +34,7 @@ jobs:
       - run: python tools/verify_flag_transfer.py
       - run: python tools/verify_direction_flag.py
       - run: python tools/verify_dos_probe.py
+      - run: python tools/verify_dos_text_io.py
       - run: python tools/build_ansi_mandel.py --check
       - run: python tools/verify_ansi_mandel.py
       - run: python tools/build_recursive_fib.py --check
@@ -63,6 +64,10 @@ jobs:
       - run: cargo build --release --locked
       - run: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check
       - run: python tools/verify_dine_library.py
+      - if: runner.os == 'Windows'
+        run: python tools/verify_dos_text_io.py --library target/release/dine.dll
+      - if: runner.os == 'Linux'
+        run: python tools/verify_dos_text_io.py --library target/release/libdine.so
       - run: python tools/verify_dine_executable.py
       - run: python tools/verify_mandel_cycle.py
       - run: python tools/verify_mandel_cga.py

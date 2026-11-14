@@ -26,6 +26,7 @@ mod dine_window;
 mod block_compiler;
 mod precompiled;
 mod dos_encoding;
+mod dos_text_io;
 mod rust_codegen;
 mod pil_opt;
 mod dos_config;
@@ -2415,6 +2416,7 @@ DOS and ROM:
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
+  --dos-text [--plain] [OPTIONS] [PROGRAM]  Rust terminal; config startup if omitted
   --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] PROGRAM
       DOS session with its own keyboard and screen: the host terminal
       (--tty, default except on Windows) or a window (--window, Windows).
@@ -2532,38 +2534,9 @@ fn main() -> R<()> {
         let[program]=rest else{return Err(usage.into())};
         return dos::session::serve(program,mount,tail,&stop_log,config,fpu).map_err(Into::into);
     }
-    if dos_args.get(1).map(String::as_str)==Some("--dos-console"){
-        let usage="usage: pil --dos-console [--tty|--window] [--mouse] [--ansi] [--country 1|358] [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
-        let(mut mount,mut tail,mut config,mut fpu)=(None,None,None,None);
-        let mut options=dos::host_console::Options{window:cfg!(windows),mouse:false,ansi:false,country:None,utc_offset:None};
-        let mut rest=&dos_args[2..];
-        loop{
-            match rest{
-                [flag,more@..] if flag=="--tty"=>{options.window=false;rest=more;},
-                [flag,more@..] if flag=="--window"=>{options.window=true;rest=more;},
-                [flag,more@..] if flag=="--mouse"=>{options.mouse=true;rest=more;},
-                [flag,more@..] if flag=="--ansi"=>{options.ansi=true;rest=more;},
-                [flag,value,more@..] if more.len()>=1=>{
-                    match flag.as_str(){
-                        "--mount" if mount.is_none()=>mount=Some(value.as_str()),
-                        "--args" if tail.is_none()=>tail=Some(value.as_str()),
-                        "--config" if config.is_none()=>config=Some(value.as_str()),
-                        "--fpu" if fpu.is_none()&&matches!(value.as_str(),"none"|"80387")=>fpu=Some(value.as_str()),
-                        "--country"=>options.country=Some(value.parse().map_err(|_|usage)?),
-                        "--utc-offset"=>options.utc_offset=Some(value.parse().map_err(|_|usage)?),
-                        _=>return Err(usage.into()),
-                    }
-                    rest=more;
-                },
-                _=>break,
-            }
-        }
-        let[program]=rest else{return Err(usage.into())};
-        let mut session=dos::session::open(program,mount,tail,config,fpu)?;
-        let mut logger=dos::stoplog::Logger::new(&stop_log,program);
-        let result=dos::host_console::run(&mut session,&options);
-        session.log_stop(&mut logger);
-        println!("{}",result?);
+    if matches!(dos_args.get(1).map(String::as_str),Some("--dos-console"|"--dos-text")){
+        let code=dos_text_io::cli(&dos_args[2..],dos_args[1]=="--dos-text",&stop_log)?;
+        if code!=0{std::process::exit(code);}
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){

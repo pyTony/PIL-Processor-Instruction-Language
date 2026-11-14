@@ -109,8 +109,10 @@ pub(crate) fn bios_word(key:Key,m:Mods)->Option<u16>{
 /// after a short pause (`flush`); ESC [ and ESC O start VT sequences, ESC
 /// and another key is Alt with that key. Ctrl+] (1Dh) ends the console.
 #[derive(Default)]
+#[cfg(test)]
 #[cfg_attr(windows,allow(dead_code))]
 pub(crate) struct VtParser{pending:Vec<u8>}
+#[cfg(test)]
 #[cfg_attr(windows,allow(dead_code))]
 impl VtParser{
     pub(crate) fn feed(&mut self,byte:u8,out:&mut Vec<Event>){
@@ -201,6 +203,7 @@ impl VtParser{
     }
 }
 #[cfg_attr(windows,allow(dead_code))]
+#[cfg(test)]
 enum Parsed{Done(Option<Event>,usize),More}
 
 /// IBM PC symbols for the glyphs of 00h-1Fh and 7Fh.
@@ -283,17 +286,21 @@ pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate
 /// Run the session until the program ends, it stops, or the user quits.
 /// Returns the closing line for the host terminal.
 pub(crate) fn run(session:&mut Session,options:&Options)->Result<String,String>{
+    configure(session,options)?;
+    let (tx,rx)=mpsc::channel();
+    let mut front=Front::open(options.window,tx)?;
+    let result=drive(session,&mut front,&rx);
+    drop(front);
+    result
+}
+pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String>{
     let offset=options.utc_offset.unwrap_or_else(local_utc_offset);
     for command in [Some(format!("clock {offset}")),options.country.map(|c|format!("country {c}")),
         options.ansi.then(||"ansi on".to_string()),options.mouse.then(||"mouse on".to_string())].into_iter().flatten(){
         let (reply,_)=session.command(0,&command)?;
         if reply.contains("\"ok\":false"){return Err(format!("{command}: {reply}"));}
     }
-    let (tx,rx)=mpsc::channel();
-    let mut front=Front::open(options.window,tx)?;
-    let result=drive(session,&mut front,&rx);
-    drop(front);
-    result
+    Ok(())
 }
 
 fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>)->Result<String,String>{
@@ -304,7 +311,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>)->Resul
     loop{
         // Input first: keys wait while the BIOS ring is full.
         let mut events:Vec<Event>=rx.try_iter().collect();
-        front.poll(&mut events);
+        front.poll(&mut events)?;
         for event in events{
             match event{
                 Event::Quit=>return Ok("DOS console closed by the user".into()),
@@ -374,9 +381,10 @@ impl Front{
         let _=tx;
         Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,graphics_note:false})
     }
-    fn poll(&mut self,events:&mut Vec<Event>){
+    fn poll(&mut self,events:&mut Vec<Event>)->Result<(),String>{
         events.splice(0..0,self.held.drain(..));
-        if let Some(t)=self.tty.as_mut(){t.poll(events);}
+        if let Some(t)=self.tty.as_mut(){t.poll(events)?;}
+        Ok(())
     }
     fn unpoll(&mut self,event:Event){self.held.push(event);}
     fn closed(&self)->bool{
@@ -503,186 +511,8 @@ fn local_utc_offset()->i64{
     }
 }
 
-/// The host terminal in raw mode, on the alternate screen; restored on drop.
-mod tty{
-    use super::Event;
-    #[cfg(not(windows))]
-    use super::VtParser;
-    use std::io::Write as _;
-    use std::sync::mpsc;
-    #[cfg(not(windows))]
-    use std::time::{Duration,Instant};
-
-    pub(super) struct Terminal{
-        #[cfg(not(windows))]
-        saved:Option<String>,
-        #[cfg(not(windows))]
-        bytes:mpsc::Receiver<u8>,
-        #[cfg(not(windows))]
-        parser:VtParser,
-        #[cfg(not(windows))]
-        last_byte:Instant,
-        #[cfg(windows)]
-        modes:Option<(u32,u32,u32)>,
-    }
-    impl Terminal{
-        #[cfg(not(windows))]
-        pub(super) fn open(_events:mpsc::Sender<Event>)->Result<Self,String>{
-            use std::process::{Command,Stdio};
-            let saved=Command::new("stty").arg("-g").stdin(Stdio::inherit()).output().ok()
-                .filter(|o|o.status.success()).and_then(|o|String::from_utf8(o.stdout).ok()).map(|s|s.trim().to_string());
-            if saved.is_some(){
-                let _=Command::new("stty").args(["raw","-echo"]).stdin(Stdio::inherit()).status();
-            }
-            let (tx,bytes)=mpsc::channel();
-            std::thread::Builder::new().name("dine-console-stdin".into()).spawn(move||{
-                use std::io::Read as _;
-                let mut stdin=std::io::stdin();let mut buf=[0u8;64];
-                while let Ok(n)=stdin.read(&mut buf){
-                    if n==0{break;}
-                    if buf[..n].iter().any(|b|tx.send(*b).is_err()){break;}
-                }
-            }).map_err(|e|e.to_string())?;
-            let t=Self{saved,bytes,parser:VtParser::default(),last_byte:Instant::now()};
-            t.write("\x1b[?1049h\x1b[2J")?;
-            Ok(t)
-        }
-        #[cfg(not(windows))]
-        pub(super) fn poll(&mut self,out:&mut Vec<Event>){
-            let mut got=false;
-            while let Ok(b)=self.bytes.try_recv(){self.parser.feed(b,out);got=true;}
-            if got{self.last_byte=Instant::now();}
-            else if self.parser.waiting()&&self.last_byte.elapsed()>=Duration::from_millis(40){self.parser.flush(out);}
-        }
-        #[cfg(windows)]
-        pub(super) fn open(events:mpsc::Sender<Event>)->Result<Self,String>{
-            let modes=windows::raw()?;
-            windows::spawn_reader(events)?;
-            let t=Self{modes:Some(modes)};
-            t.write("\x1b[?1049h\x1b[2J")?;
-            Ok(t)
-        }
-        #[cfg(windows)]
-        pub(super) fn poll(&mut self,_out:&mut Vec<Event>){}
-        pub(super) fn write(&self,text:&str)->Result<(),String>{
-            let mut out=std::io::stdout().lock();
-            out.write_all(text.as_bytes()).and_then(|_|out.flush()).map_err(|e|e.to_string())
-        }
-    }
-    impl Drop for Terminal{
-        fn drop(&mut self){
-            let _=self.write("\x1b[0m\x1b[?25h\x1b[?1049l");
-            #[cfg(not(windows))]
-            if let Some(saved)=self.saved.take(){
-                let _=std::process::Command::new("stty").arg(saved).stdin(std::process::Stdio::inherit()).status();
-            }
-            #[cfg(windows)]
-            if let Some(modes)=self.modes.take(){windows::restore(modes);}
-        }
-    }
-
-    /// Windows console: raw key events with their scan codes.
-    #[cfg(windows)]
-    mod windows{
-        use super::super::{Event,Key,Mods};
-        use std::ffi::c_void;
-        use std::sync::mpsc;
-        type Handle=*mut c_void;
-        const STD_INPUT:u32=-10i32 as u32;
-        const STD_OUTPUT:u32=-11i32 as u32;
-        const ENABLE_PROCESSED_OUTPUT:u32=1;
-        const ENABLE_VIRTUAL_TERMINAL_PROCESSING:u32=4;
-        const ENABLE_WINDOW_INPUT:u32=8;
-        const ENABLE_EXTENDED_FLAGS:u32=0x80;
-        #[repr(C)]
-        #[derive(Clone,Copy)]
-        struct KeyEvent{down:i32,repeat:u16,vk:u16,scan:u16,ch:u16,state:u32}
-        #[repr(C)]
-        #[derive(Clone,Copy)]
-        struct Record{kind:u16,_pad:u16,key:KeyEvent}
-        #[link(name="kernel32")]
-        extern "system"{
-            fn GetStdHandle(which:u32)->Handle;
-            fn GetConsoleMode(console:Handle,mode:*mut u32)->i32;
-            fn SetConsoleMode(console:Handle,mode:u32)->i32;
-            fn GetConsoleOutputCP()->u32;
-            fn SetConsoleOutputCP(cp:u32)->i32;
-            fn ReadConsoleInputW(console:Handle,records:*mut Record,length:u32,read:*mut u32)->i32;
-        }
-        pub(super) fn raw()->Result<(u32,u32,u32),String>{
-            unsafe{
-                let (input,output)=(GetStdHandle(STD_INPUT),GetStdHandle(STD_OUTPUT));
-                let (mut im,mut om)=(0u32,0u32);
-                if GetConsoleMode(input,&mut im)==0||GetConsoleMode(output,&mut om)==0{
-                    return Err("--tty needs a Windows console (run it in a terminal window)".into());
-                }
-                let cp=GetConsoleOutputCP();
-                // No line input, echo or Ctrl+C processing: every key reaches DOS.
-                SetConsoleMode(input,ENABLE_WINDOW_INPUT|ENABLE_EXTENDED_FLAGS);
-                SetConsoleMode(output,om|ENABLE_PROCESSED_OUTPUT|ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-                SetConsoleOutputCP(65001);
-                Ok((im,om,cp))
-            }
-        }
-        pub(super) fn restore((im,om,cp):(u32,u32,u32)){
-            unsafe{
-                SetConsoleMode(GetStdHandle(STD_INPUT),im);
-                SetConsoleMode(GetStdHandle(STD_OUTPUT),om);
-                SetConsoleOutputCP(cp);
-            }
-        }
-        pub(super) fn spawn_reader(events:mpsc::Sender<Event>)->Result<(),String>{
-            let input=unsafe{GetStdHandle(STD_INPUT)} as usize;
-            std::thread::Builder::new().name("dine-console-keys".into()).spawn(move||{
-                let mut surrogate=None::<u16>;
-                loop{
-                    let mut records=[Record{kind:0,_pad:0,key:KeyEvent{down:0,repeat:0,vk:0,scan:0,ch:0,state:0}};16];
-                    let mut read=0u32;
-                    if unsafe{ReadConsoleInputW(input as Handle,records.as_mut_ptr(),16,&mut read)}==0{break;}
-                    for r in &records[..read as usize]{
-                        if r.kind!=1||r.key.down==0{continue;}
-                        let k=r.key;
-                        let m=Mods{shift:k.state&0x10!=0,ctrl:k.state&0x0c!=0,alt:k.state&0x03!=0};
-                        // Keys named by their virtual-key code first: those that
-                        // type nothing, and Enter/Backspace/Tab/Esc whatever Ctrl does.
-                        let event=match k.vk{
-                            0x03=>Some(Event::Break),
-                            0x08=>Some(Event::Key(Key::Backspace,m)),0x09=>Some(Event::Key(Key::Tab,m)),
-                            0x0d=>Some(Event::Key(Key::Enter,m)),0x1b=>Some(Event::Key(Key::Escape,m)),
-                            0x21=>Some(Event::Key(Key::PageUp,m)),0x22=>Some(Event::Key(Key::PageDown,m)),
-                            0x23=>Some(Event::Key(Key::End,m)),0x24=>Some(Event::Key(Key::Home,m)),
-                            0x25=>Some(Event::Key(Key::Left,m)),0x26=>Some(Event::Key(Key::Up,m)),
-                            0x27=>Some(Event::Key(Key::Right,m)),0x28=>Some(Event::Key(Key::Down,m)),
-                            0x2d=>Some(Event::Key(Key::Insert,m)),0x2e=>Some(Event::Key(Key::Delete,m)),
-                            0x70..=0x7b=>Some(Event::Key(Key::F((k.vk-0x6f) as u8),m)),
-                            _ if k.ch==0=>None,
-                            _=>{
-                                let unit=k.ch;
-                                let ch=if (0xd800..0xdc00).contains(&unit){surrogate=Some(unit);continue;}
-                                    else if (0xdc00..0xe000).contains(&unit){
-                                        let Some(high)=surrogate.take() else{continue};
-                                        char::from_u32(0x10000+((u32::from(high)-0xd800)<<10)+(u32::from(unit)-0xdc00))
-                                    }else{char::from_u32(u32::from(unit))};
-                                let Some(ch)=ch else{continue};
-                                // Ctrl+] ends the console, as in the terminal front end.
-                                if ch=='\u{1d}'{let _=events.send(Event::Quit);return;}
-                                // AltGr is right Alt with left Ctrl: a typed character.
-                                let altgr=m.ctrl&&m.alt&&!ch.is_control();
-                                let m=if altgr{Mods{shift:m.shift,..Mods::default()}}else{m};
-                                // Ctrl+letter arrives as its control code; keep the letter.
-                                let ch=if (1..=26).contains(&(ch as u32)){char::from(ch as u8+0x60)}else{ch};
-                                Some(Event::Key(Key::Char(ch),m))
-                            },
-                        };
-                        if let Some(event)=event{
-                            for _ in 0..k.repeat.max(1){if events.send(event).is_err(){return;}}
-                        }
-                    }
-                }
-            }).map(|_|()).map_err(|e|e.to_string())
-        }
-    }
-}
+#[path="dos_host_terminal.rs"]
+mod tty;
 
 #[cfg(test)]
 #[path="../tests/unit/host_console.rs"]

@@ -3,7 +3,9 @@ use crate::dos::{self,Loaded};
 use std::path::{Path,PathBuf};
 
 #[derive(Debug,Default)]
-struct Config{drives:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>}
+struct Config{drives:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,text:TextOptions,utc_offset:Option<String>}
+#[derive(Debug,Default)]
+pub(crate) struct TextOptions{pub ansi:bool,pub mouse:bool,pub fpu:Option<String>,pub utc_offset:Option<i64>}
 
 pub(crate) fn host_path(text:&str)->PathBuf{
     #[cfg(windows)]{
@@ -42,11 +44,18 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
         }
         if matches!(key.to_ascii_lowercase().as_str(),"headless"|"rust_graphics"|"rust-graphics"|"mouse"|"shell"|"ansi"){
             if !matches!(value.to_ascii_lowercase().as_str(),"true"|"false"|"1"|"0"){return Err(format!("invalid boolean for {key} on config line {}",i+1));}
+            let enabled=matches!(value.to_ascii_lowercase().as_str(),"true"|"1");
+            match key.to_ascii_lowercase().as_str(){"ansi"=>config.text.ansi=enabled,"mouse"=>config.text.mouse=enabled,_=>{}}
             continue;
         }
         if key.eq_ignore_ascii_case("fpu"){
             if !matches!(value.to_ascii_lowercase().as_str(),"none"|"80387"){return Err(format!("invalid fpu on config line {}",i+1));}
+            config.text.fpu=Some(value.to_ascii_lowercase());
             continue;
+        }
+        if matches!(key.to_ascii_lowercase().as_str(),"utc_offset"|"utc-offset"){
+            if value.is_empty(){return Err("empty utc_offset".into());}
+            config.utc_offset=Some(value.to_string());continue;
         }
         if matches!(key.to_ascii_lowercase().as_str(),"engine"|"com1"|"speaker_volume"|"speaker-volume"|"utc_offset"|"utc-offset"){
             if value.is_empty(){return Err(format!("empty {key} on config line {}",i+1));}
@@ -76,6 +85,15 @@ fn load(explicit:Option<&str>)->Result<Option<Config>,String>{
 }
 pub(crate) fn startup(explicit:Option<&str>)->Result<(String,Option<String>),String>{
     startup_optional(explicit)?.ok_or_else(||"DOS configuration needs #@program=...".to_string())
+}
+pub(crate) fn text_options(explicit:Option<&str>)->Result<TextOptions,String>{
+    let Some(mut config)=load(explicit)? else{return Ok(TextOptions::default())};
+    if let Some(value)=config.utc_offset{
+        let offset=value.parse::<i64>().map_err(|_|"Rust utc_offset requires integer seconds")?;
+        if !(-50400..=50400).contains(&offset){return Err("utc_offset must be -50400..50400".into());}
+        config.text.utc_offset=Some(offset);
+    }
+    Ok(config.text)
 }
 pub(crate) fn startup_optional(explicit:Option<&str>)->Result<Option<(String,Option<String>)>,String>{
     let Some(config)=load(explicit)? else{return Ok(None)};

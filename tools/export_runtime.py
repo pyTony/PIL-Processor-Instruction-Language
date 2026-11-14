@@ -30,6 +30,7 @@ def export(destination,source_ref):
     files['docs/DOS_PROBE.md']=(ROOT/'docs/DOS_PROBE.md').read_bytes()
     files['docs/CONTAINERS.md']=(ROOT/'docs/CONTAINERS.md').read_bytes()
     files['docs/DOS_CONFIG.md']=(ROOT/'docs/DOS_CONFIG.md').read_bytes()
+    files['docs/DOS_CONSOLE.md']=(ROOT/'docs/DOS_CONSOLE.md').read_bytes()
     files['docs/DOS_GAMES.md']=(ROOT/'docs/development/DOS_GAMES.md').read_bytes()
     files['.gitignore']=b'/target/\n/images/\n'
     version=re.search(r'^version = "([^"]+)"',(ROOT/'Cargo.toml').read_text(),re.M)[1]

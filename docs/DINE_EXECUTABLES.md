@@ -91,48 +91,27 @@ The initial `dine_run` ABI accepts the original guest bytes, DOS filename
 and command tail. It runs all reached instructions through the existing PIL
 interpreter plus the Dine DOS/BIOS services; there are **no native guest
 compiled blocks yet**. A real `Stop::Exit` becomes the process exit status.
-Budget stops continue automatically. At a DOS keyboard wait, the terminal
-accepts Enter and enqueues its BIOS scan/ASCII key.
+Budget stops continue automatically. The shared Rust console now handles host
+input and output for this entry point as well as the CLI.
 
-The Windows Dine DLL now provides a **live, host-native Win32/GDI VGA
-window** for planar VGA modes 0Dh/0Eh/10h/12h and linear or unchained mode
-13h. No third-party SDL/wgpu or Rust GUI crate is needed for this first
-desktop display. The window samples the existing emulated VGA planes/DAC,
-not a new graphics implementation. BIOS characters already drawn with the
-software graphics font appear automatically because they are pixels in VGA
-memory. Display updates are attempted at bounded interpreter slices with
-an 80 ms minimum interval, and the last framebuffer is shown at input wait.
-The image is stretched to a 4:3 desktop view, preserving intended VGA pixel
-aspect ratios across 320x200 and 640x350 modes.
+With terminal stdin/stdout it displays the shared DOS text page and sends real
+BIOS keys, including typed CP437 text, arrows and function keys. On Windows,
+graphics modes use the existing separate Win32/GDI window. The guest screen,
+ANSI driver and VGA devices are the same ones used by the interpreter session.
 
-**Keyboard and text remain in the native terminal.** The non-activating
-display window does not capture keystrokes, send game events or replace
-DOS console I/O. At a BIOS input wait press Enter in the launching terminal.
-Later interactive games will need a dedicated event-driven keyboard/mouse
-frontend rather than terminal-line input. DOS text output continues through
-the existing CP437 decoder. Text-mode VGA custom font plane contents are
-still not presented as bitmapped glyphs in the desktop window.
+With redirected stdin/stdout, or `DINE_TEXT=headless`, it uses UTF-8 transcript
+output and bounded line input. EOF during a guest read is an explicit error;
+it no longer discards the typed line and sends Enter alone. Transcript mode
+escapes guest control sequences and does not present BIOS/direct-VRAM drawings.
+`DINE_TEXT=terminal` requires terminal input and output; `auto` is the default.
+The Dine entry point now uses `DINE_TEXT` for this choice rather than the older
+`DINE_VIDEO` preview selection. `DINE_VIDEO` still applies to the separate JSON
+session/native-video frontend.
 
-The mode is selected at startup with `DINE_VIDEO`:
-
-| `DINE_VIDEO` | Windows | Linux / Termux / other |
-| --- | --- | --- |
-| unset / `window` | Live native VGA window when graphics mode is active | Existing ANSI preview |
-| `ansi` | 80x24 ANSI preview at input wait | Same |
-| `off` | No graphical presentation, normal DOS text and terminal keyboard | Same |
-
-Example on Windows (the original COM input is not needed at launch):
-
-```powershell
-$env:DINE_VIDEO = "window"
-.\programs\compiled\Dine_MANDVGA.exe
-Remove-Item Env:DINE_VIDEO
-```
-
-This GDI frontend is limited to **Windows desktop** today; it doesn't
-pretend to be a cross-platform SDL implementation. CI and server hosts can
-use `DINE_VIDEO=off` to avoid terminal escape sequences. The VGA sampler
-does not emulate new graphics hardware or accelerate the DOS CPU.
+Host keyboard polling leaves no detached stdin reader after `dine_run` returns,
+and terminal modes are restored on exit or unwinding. Physical held-key state,
+custom font rendering, blinking attributes, speaker playback and COM1-only
+console routing remain limited. See [Rust DOS console](DOS_CONSOLE.md).
 
 The runtime C ABI is version 1 and currently exports
 `dine_abi_version() -> u32` and

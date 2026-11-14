@@ -1,5 +1,52 @@
 # DOS console in Rust: `pil --dos-console`
 
+## Startup, shortcuts and redirected input
+
+`pil --dos-text` selects the Rust terminal console (`--dos-console --tty`).
+With no program argument, both commands use startup from `pildos.conf`,
+`PILDOS_CONFIG`, or `--config FILE`. They honor configured drives, country,
+command tail, `fpu`, `mouse`, `ansi` and `utc_offset` (integer seconds).
+Explicit command-line options override these defaults. Configured arguments
+belong to configured startup; an explicitly named program starts with an empty
+tail unless `--args` is given.
+
+```powershell
+.\target\release\pil.exe --dos-text --mouse --fpu 80387 --mount driveD images/FD14LITE.img::COMMAND.COM
+```
+
+On Windows, terminal mode opens the existing separate graphics window when
+needed; `--rust-graphics` is accepted as an alias for `--tty`. No Python process
+is involved. `PILdos.vbs --rust-text` and `sh PILdos.sh --rust-text` use this route,
+forwarding remaining options. `PILDOS_ENGINE` selects another executable;
+otherwise the shortcuts use `target/release/pil`. Ordinary shortcut launches
+retain the existing Python/COM1 behavior. Existing `headless`, `com1`, `shell`,
+`engine`, `speaker_volume` and `rust_graphics` config flags belong to the Python
+frontend; Rust text mode already supplies a terminal and native Windows graphics.
+
+When terminal-mode stdin or stdout is redirected, the Rust console uses a
+UTF-8 transcript and line-buffered input. `--plain` or `DINE_TEXT=headless`
+forces this mode. Typed text becomes CP437 BIOS keys, CRLF/LF becomes Enter,
+and keys remain pending when the BIOS queue fills. Unrepresentable input, input
+lines above 4096 UTF-8 bytes, and EOF during a guest read are explicit errors.
+DOS output controls other than CR/LF/TAB are escaped, so guest escapes cannot
+operate the host terminal. Transcript mode does not display direct VRAM or BIOS
+drawings, graphics, or mouse input. Interactive mode still reads the shared screen.
+`DINE_TEXT=terminal` requires terminal stdin/stdout; `auto` is the default.
+
+The Dine shared-library entry point uses this same I/O adapter, in terminal or
+transcript mode. It no longer discards typed lines and sends only Enter. Host
+keyboard polling uses Crossterm on the execution thread, with no detached stdin
+reader left after the caller returns/unloads the library. Raw input mode, Windows
+output mode and the alternate screen are restored on return and unwind. The
+existing BIOS mapping, ANSI screen renderer and guest ANSI driver are reused;
+no second guest ANSI parser or per-program runtime is generated. Both
+interpreter and backend sessions use the same boundary.
+
+Physical held-key/modifier state and Ctrl+Break delivery depend on what the host
+terminal reports. Blink, custom fonts/palettes, speaker sound and COM1-only/TCP
+console routing retain the limitations listed below. The Python serial frontend
+remains available for COM1/CTTY COM1 applications.
+
 `pil --dos-console` runs a DOS session in the `pil` process and is its
 keyboard and screen. It needs no Python and no Tk. It uses the same session
 as `--dos-session`: the same drives, `--config`, `--mount`, `--args`, `--fpu`
