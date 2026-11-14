@@ -38,5 +38,5 @@ fn config_mounts_selects_c_and_updates_the_startup_environment(){
 #[cfg(windows)]
 #[test]
 fn wsl_paths_convert_for_windows_targets(){
-    assert_eq!(host_path("/mnt/c/Users/admin/drive D"),PathBuf::from(r"C:\Users\admin\drive D"));
+    assert_eq!(host_path("/mnt/c/fixtures/drive D"),PathBuf::from(r"C:\fixtures\drive D"));
 }

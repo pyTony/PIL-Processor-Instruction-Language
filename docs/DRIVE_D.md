@@ -43,10 +43,10 @@ and `git stash -a` touch ignored files, so do not use those here.
 To keep drive D: outside the checkout instead, set `PILDRIVE` before running
 `freedos.cmd`:
 
-    $env:PILDRIVE = "C:\Users\admin\PILdrive"      # PowerShell
+    $env:PILDRIVE = "../PILdrive"      # PowerShell
     .\freedos.cmd
 
-    PILDRIVE=$HOME/PILdrive                         # sh: pass it to --mount
+    PILDRIVE=../PILdrive                         # sh: pass it to --mount
     python3 tools/dos_terminal.py --mount "$PILDRIVE" images/FD14LITE.img::COMMAND.COM
 
 ## Updating from a version that still tracked driveD

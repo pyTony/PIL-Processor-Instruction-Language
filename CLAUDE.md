@@ -1,3 +1,13 @@
+## Portable paths in every change
+
+Do not commit machine-specific host paths anywhere, including code, tests,
+scripts, examples, documentation, HTML, JSON and historical reports. Use relative
+paths, configuration, environment variables or paths resolved at runtime. Keep
+path-handling fixtures synthetic, without personal home or checkout directories.
+Before every commit/PR, review host-path examples and run
+`python tools/check_portable_paths.py --self-test`; repeat after edits. DOS guest
+paths and standard OS interfaces are separate from host checkout locations.
+
 # Debug registers and the reset TR — 14 November 2026
 
 Tony's stop log for a 3D benchmark in his dosbench menu (a DOS extender

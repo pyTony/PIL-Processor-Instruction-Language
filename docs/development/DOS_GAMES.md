@@ -10,8 +10,8 @@ Build with `cargo build --release --locked`. Run from the game directory or
 mount that directory so the executable can find its data:
 
 ```powershell
-python tools/dos_terminal.py --engine target/release/pil.exe --mount C:/games/doom --args '-nosound -nomusic -warp 1 1 -skill 3' C:/games/doom/DOOM.EXE
-python tools/dos_terminal.py --engine target/release/pil.exe --mount C:/games/3dbench C:/games/3dbench/3DBENCH.EXE
+python tools/dos_terminal.py --engine target/release/pil.exe --mount games/doom --args '-nosound -nomusic -warp 1 1 -skill 3' games/doom/DOOM.EXE
+python tools/dos_terminal.py --engine target/release/pil.exe --mount games/3dbench games/3dbench/3DBENCH.EXE
 ```
 
 The DOS terminal enables the host clock for PIT interrupts. In a scripted

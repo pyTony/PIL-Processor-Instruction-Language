@@ -62,8 +62,9 @@ as Dine's DOS C: drive:
 
 ```powershell
 python tools/build_dine.py path/to/TURBO.EXE
+$launcher = (Resolve-Path programs/compiled/Dine_TURBO.exe).Path
 Set-Location path/to/pascal-sources
-C:\path\to\PIL-Processor-Instruction-Language\programs\compiled\Dine_TURBO.exe this_is_my_long_name_pascal_code_in_x86_windows.pas
+& $launcher this_is_my_long_name_pascal_code_in_x86_windows.pas
 ```
 
 If the source exists, and Dine assigns it `THIS_I~1.PAS`, the legacy DOS

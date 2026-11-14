@@ -699,7 +699,7 @@ RAM-backed BIOS text read/write and queued keyboard input are available to the
 DOS probe; Python UI wiring is pending. See [DOS profile](docs/DOS_PROBE.md).
 
 ```powershell
-python tools/verify_dosbox_cpu.py --suite console --engine target/release/pil.exe --dosbox C:/DOSBox-X/dosbox-x.exe --out target/console-check
+python tools/verify_dosbox_cpu.py --suite console --engine target/release/pil.exe --dosbox tools-local/DOSBox-X/dosbox-x.exe --out target/console-check
 ```
 
 Use a fresh output directory. `--negative-control` deliberately gives one failed
