@@ -1,6 +1,6 @@
 //! Host terminal operations only. BIOS mapping and screen rendering are shared
 //! with the Rust window frontend. Polling owns no background reader thread.
-use super::{Event,Key,Mods};
+use super::{Event,Key,Mods,typed_mods};
 use crossterm::{event::{self,KeyCode,KeyEventKind,KeyModifiers},terminal};
 use std::{io::{self,Write},sync::mpsc,time::Duration};
 
@@ -22,8 +22,9 @@ impl Terminal{
             if !event::poll(Duration::ZERO).map_err(|e|e.to_string())?{break;}
             if let event::Event::Key(e)=event::read().map_err(|e|e.to_string())?{
                 if e.kind==KeyEventKind::Release{continue;}
-                let m=Mods{shift:e.modifiers.contains(KeyModifiers::SHIFT),ctrl:e.modifiers.contains(KeyModifiers::CONTROL),alt:e.modifiers.contains(KeyModifiers::ALT)};
-                if m.ctrl&&e.code==KeyCode::Char(']'){out.push(Event::Quit);continue;}
+                let mut m=Mods{shift:e.modifiers.contains(KeyModifiers::SHIFT),ctrl:e.modifiers.contains(KeyModifiers::CONTROL),alt:e.modifiers.contains(KeyModifiers::ALT)};
+                if let KeyCode::Char(c)=e.code{m=typed_mods(c,m);}
+                if m.ctrl&&!m.alt&&e.code==KeyCode::Char(']'){out.push(Event::Quit);continue;}
                 let key=match e.code{
                     KeyCode::Char(c)=>Key::Char(c),KeyCode::Enter=>Key::Enter,KeyCode::Backspace=>Key::Backspace,
                     KeyCode::Tab|KeyCode::BackTab=>Key::Tab,KeyCode::Esc=>Key::Escape,

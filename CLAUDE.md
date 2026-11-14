@@ -8,6 +8,35 @@ running invisibly. dine_window.rs now calls ShowWindow again when the
 window is still not visible (only the first call is replaced).
 Windows code type-checks for x86_64-pc-windows-gnu; not run on Windows.
 
+# Graphics-text fonts, window copy/paste, AltGr in --tty — 14 November 2026
+
+Tony's feedback on the console window after #192 (his checkout was on
+main, so his runs still had the old window).
+- EGA/VGA fonts: the video BIOS area holds an 8x14 font (C000:2000, the
+  8x16 one without rows 0 and 15) and the 8x16 font (C000:3000). INT 43h
+  starts at F000:FA6E and the mode set points it at 8x14 for mode 10h,
+  8x16 for 12h, 8x8 for 04h-06h/0Dh/0Eh/13h. Graphics text in 14/16-line
+  cells draws all 256 characters from the INT 43h table (dos_graphics_text),
+  instead of stretching the 8x8 font. AX=1130h BH=02h/06h return them;
+  BH=05h/07h (9-dot) still stop.
+- Window copy and paste (src/dos_console_select.rs): left drag selects
+  cells (inverted), Ctrl+Shift+C copies to the clipboard, Ctrl+Shift+V,
+  Shift+Insert or right-click without a selection pastes as keys. With the
+  program's mouse driver active, Shift+drag selects. Graphics modes copy
+  by matching cells against the BIOS glyphs (graphics_text::screen_text).
+- `--tty` on Windows: AltGr arrives from crossterm as Ctrl+Alt plus the
+  character; typed_mods drops the modifiers for printable characters, so
+  @ \ | { [ ] } $ type, and AltGr+9 no longer ends the session as Ctrl+].
+- Not a bug: GW-BASIC's Ok under the input line after `LOCATE 25,1: END`
+  (row 25 sits outside its scroll area). MANDELG's HUD boxes are the VGA
+  BIOS clearing cell backgrounds to 0 in mode 13h.
+
+Local Linux, release: 848 Rust tests pass, 2 ignored (4 new: 2 in
+tests/unit/host_console.rs for selection and paste, 1 AltGr, 1 graphics
+screen text in tests/unit/dos.rs; 2 font tests updated). Windows code
+type-checks for x86_64-pc-windows-gnu; the window and --tty were not run on
+Windows.
+
 # Desktop launcher opens the Rust setup screen — 14 November 2026
 
 Tony asked that the desktop launcher use the new Rust PILdos screen.

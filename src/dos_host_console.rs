@@ -30,8 +30,13 @@ pub(crate) enum Event{
     Key(Key,Mods),
     /// Ctrl+Break.
     Break,
-    /// The pointer at a fraction of the drawn screen: x/width, y/height.
-    Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16},
+    /// The pointer at a fraction of the drawn screen: x/width, y/height;
+    /// `shift` when Shift is held (a drag then selects host text).
+    Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16,shift:bool},
+    /// Ctrl+Shift+C: copy the selection, or the whole screen.
+    Copy,
+    /// Ctrl+Shift+V or Shift+Insert: type the host clipboard.
+    Paste,
     Quit,
 }
 
@@ -53,6 +58,14 @@ fn cp437(c:char)->Option<u8>{
     match c{'¶'=>Some(0x14),'§'=>Some(0x15),_=>None}
 }
 
+/// The modifiers of a typed character. On Windows AltGr arrives as Ctrl+Alt
+/// together with the character it typed (@, \, |, {, [, ], } and $ on a
+/// Finnish keyboard): that character is typed plainly, as a DOS keyboard
+/// driver would give it, not as a Ctrl or Alt combination. (The euro sign
+/// has no code page 437 character and types nothing.)
+pub(crate) fn typed_mods(c:char,m:Mods)->Mods{
+    if m.ctrl&&m.alt&&!c.is_control(){Mods{ctrl:false,alt:false,..m}}else{m}
+}
 /// The BIOS keyboard word for a host key, as INT 16h AH=10h returns it
 /// (IBM PC/AT BIOS tables), or None for keys DOS never sees.
 pub(crate) fn bios_word(key:Key,m:Mods)->Option<u16>{
@@ -297,9 +310,18 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>)->Resul
             match event{
                 Event::Quit=>return Ok("DOS console closed by the user".into()),
                 Event::Break=>{if let Err(refused)=session.ctrl_break()?{note=Some(refused);}},
-                Event::Key(key,mods)=>if let Some(word)=bios_word(key,mods){pending.push_back(word);},
-                Event::Mouse{x,y,width,height,buttons}=>{
-                    if width>0&&height>0{
+                Event::Key(key,mods)=>{front.clear_selection();if let Some(word)=bios_word(key,mods){pending.push_back(word);}},
+                Event::Copy=>front.copy(session)?,
+                Event::Paste=>pending.extend(front.paste()),
+                Event::Mouse{x,y,width,height,buttons,shift}=>{
+                    let active=session.machine().is_some_and(|p|p.mouse.view().active);
+                    if front.selects(active,shift){
+                        match front.select(session,x,y,width,height,buttons)?{
+                            select::Gesture::Copy=>front.copy(session)?,
+                            select::Gesture::Paste=>pending.extend(front.paste()),
+                            select::Gesture::None=>{},
+                        }
+                    }else if width>0&&height>0{
                         let view=session.machine().map(|p|p.mouse.view()).ok_or("session state lost")?;
                         let fx=(x.clamp(0,width-1) as i64*(i64::from(view.max_x)+1)/i64::from(width)) as u16;
                         let fy=(y.clamp(0,height-1) as i64*(i64::from(view.max_y)+1)/i64::from(height)) as u16;
@@ -352,6 +374,10 @@ pub(crate) struct Front{
     /// The cursor `present_text` last drew, to skip unchanged frames.
     previous_cursor:Option<(u32,u32)>,
     graphics_note:bool,
+    /// Host text selection in the window, and the (columns, rows) grid it
+    /// was made on.
+    selecting:select::Selecting,
+    grid:(u32,u32),
 }
 impl Front{
     pub(crate) fn open(window:bool,tx:mpsc::Sender<Event>)->Result<Self,String>{
@@ -362,7 +388,7 @@ impl Front{
         let (window,window_tx)=if window{(Some(WindowFront::new(tx)),None)}else{(None,Some(tx))};
         #[cfg(not(windows))]
         let _=tx;
-        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false})
+        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false,selecting:select::Selecting::default(),grid:(0,0)})
     }
     pub(crate) fn poll(&mut self,events:&mut Vec<Event>)->Result<(),String>{
         events.splice(0..0,self.held.drain(..));
@@ -372,7 +398,7 @@ impl Front{
     fn unpoll(&mut self,event:Event){self.held.push(event);}
     /// Forget what is on the host screen, so the next frame draws it all.
     pub(crate) fn reset(&mut self){
-        self.previous=None;self.previous_cursor=None;self.graphics_note=false;self.held.clear();
+        self.previous=None;self.previous_cursor=None;self.graphics_note=false;self.held.clear();self.selecting.clear();
         #[cfg(windows)]
         if let Some(w)=self.window.as_mut(){w.last=None;}
         if let Some(t)=self.tty.as_ref(){let _=t.write("\x1b[0m\x1b[2J");}
@@ -390,6 +416,37 @@ impl Front{
         if let Some(w)=self.window.as_mut(){w.present_text(cells,cursor);}
         Ok(())
     }
+    /// Whether a pointer event selects host text instead of reaching the
+    /// program: only in the window, when the program has no mouse driver
+    /// active, while Shift is held, or during a selection drag.
+    fn selects(&self,active:bool,shift:bool)->bool{
+        #[cfg(windows)]
+        if self.window.is_some(){return !active||shift||self.selecting.dragging();}
+        let _=(active,shift);false
+    }
+    /// A pointer event for the selection, on the screen's character grid.
+    fn select(&mut self,session:&Session,x:i32,y:i32,width:i32,height:i32,buttons:u16)->Result<select::Gesture,String>{
+        let grid=grid(session.machine().ok_or("session state lost")?)?;
+        if grid!=self.grid{self.selecting.clear();self.grid=grid;}
+        Ok(self.selecting.pointer(select::cell_at(x,y,width,height,grid.0,grid.1),buttons))
+    }
+    fn clear_selection(&mut self){self.selecting.clear();}
+    /// Copy the selection, or the whole screen, to the host clipboard.
+    fn copy(&mut self,session:&Session)->Result<(),String>{
+        let(columns,_,text)=select::screen_text(session)?;
+        let chosen=select::copy_text(&text,columns,self.selecting.selection);
+        #[cfg(windows)]
+        if self.window.is_some(){crate::dine_window::set_clipboard(&chosen);}
+        let _=chosen;
+        self.selecting.clear();
+        Ok(())
+    }
+    /// The keys that type the host clipboard.
+    fn paste(&mut self)->Vec<u16>{
+        #[cfg(windows)]
+        if self.window.is_some(){return crate::dine_window::clipboard().map_or_else(Vec::new,|t|select::paste_keys(&t));}
+        Vec::new()
+    }
     pub(crate) fn closed(&self)->bool{
         #[cfg(windows)]
         if let Some(w)=self.window.as_ref(){return w.closed();}
@@ -404,7 +461,10 @@ impl Front{
             if graphics&&self.window.is_none(){
                 if let Some(tx)=self.window_tx.take(){self.window=Some(WindowFront::new(tx));}
             }
-            if let Some(w)=self.window.as_mut(){w.present(session)?;}
+            let grid=grid(p)?;
+            if grid!=self.grid{self.selecting.clear();self.grid=grid;}
+            let selection=self.selecting.selection.map(|s|(s,grid.0,grid.1));
+            if let Some(w)=self.window.as_mut(){w.present(session,selection)?;}
         }
         if let Some(t)=self.tty.as_mut(){
             if graphics{
@@ -445,11 +505,7 @@ impl WindowFront{
         // The window thread sends raw input; map it here, off the window thread.
         std::thread::Builder::new().name("dine-console-input".into()).spawn(move||{
             for input in raw{
-                let event=match input{
-                    crate::dine_window::Input::Char{ch,shift,ctrl,alt}=>Some(Event::Key(Key::Char(ch),Mods{shift,ctrl,alt})),
-                    crate::dine_window::Input::Key{vk,shift,ctrl,alt}=>windows_key(vk).map(|k|if k==Event::Break{k}else if let Event::Key(k,_)=k{Event::Key(k,Mods{shift,ctrl,alt})}else{k}),
-                    crate::dine_window::Input::Mouse{x,y,width,height,buttons}=>Some(Event::Mouse{x,y,width,height,buttons}),
-                };
+                let event=window_event(input);
                 if let Some(event)=event{if tx.send(event).is_err(){break;}}
             }
         }).ok();
@@ -464,7 +520,7 @@ impl WindowFront{
         self.window.present(crate::dine_window::Frame{width:frame.0 as i32,height:frame.1 as i32,pixels:frame.2.clone()});
         self.last=Some(frame);
     }
-    fn present(&mut self,session:&Session)->Result<(),String>{
+    fn present(&mut self,session:&Session,selection:Option<(select::Selection,u32,u32)>)->Result<(),String>{
         let p=session.machine().ok_or("session state lost")?;
         let frame=if graphics_mode(p){desktop_vga_frame(p)}else{
             let (cells,columns,(row,column))=session.screen()?;
@@ -473,11 +529,26 @@ impl WindowFront{
             let cursor=cursor_shape(p).filter(|_|on).map(|(a,b)|(row,column,a,b));
             Some(text_pixels(&cells,columns,&self.font,cursor))
         };
-        let Some(frame)=frame else{self.window.no_frame();return Ok(());};
+        let Some(mut frame)=frame else{self.window.no_frame();return Ok(());};
+        if let Some((s,columns,rows))=selection{select::highlight(&mut frame,columns,rows,s);}
         if self.last.as_ref()==Some(&frame){return Ok(());}
         self.window.present(crate::dine_window::Frame{width:frame.0 as i32,height:frame.1 as i32,pixels:frame.2.clone()});
         self.last=Some(frame);
         Ok(())
+    }
+}
+/// A window input as a console event. Ctrl+Shift+C and Ctrl+Shift+V copy
+/// and paste, as Shift+Insert pastes; plain Ctrl+C and Ctrl+V reach DOS.
+#[cfg(windows)]
+fn window_event(input:crate::dine_window::Input)->Option<Event>{
+    use crate::dine_window::Input;
+    match input{
+        Input::Char{ch:'\u{3}',shift:true,ctrl:true,alt:false}=>Some(Event::Copy),
+        Input::Char{ch:'\u{16}',shift:true,ctrl:true,alt:false}=>Some(Event::Paste),
+        Input::Key{vk:0x2d,shift:true,ctrl:false,alt:false}=>Some(Event::Paste),
+        Input::Char{ch,shift,ctrl,alt}=>Some(Event::Key(Key::Char(ch),Mods{shift,ctrl,alt})),
+        Input::Key{vk,shift,ctrl,alt}=>windows_key(vk).map(|k|if k==Event::Break{k}else if let Event::Key(k,_)=k{Event::Key(k,Mods{shift,ctrl,alt})}else{k}),
+        Input::Mouse{x,y,width,height,buttons,shift}=>Some(Event::Mouse{x,y,width,height,buttons,shift}),
     }
 }
 /// Windows virtual-key codes of the keys that type nothing.
@@ -523,6 +594,16 @@ fn local_utc_offset()->i64{
 
 #[path="dos_host_terminal.rs"]
 mod tty;
+#[path="dos_console_select.rs"]
+pub(crate) mod select;
+
+/// The character grid of the screen shown now: (columns, rows).
+fn grid(p:&Loaded)->Result<(u32,u32),String>{
+    let read=|at,w|p.ram.load(at,w).map_err(|e|format!("BIOS screen size read: {e:?}"));
+    let columns=read(0x44a,MemWidth::Word)?.clamp(1,80);
+    let rows=if graphics_mode(p){read(0x484,MemWidth::Byte)?+1}else{25};
+    Ok((columns,rows))
+}
 
 #[cfg(test)]
 #[path="../tests/unit/host_console.rs"]

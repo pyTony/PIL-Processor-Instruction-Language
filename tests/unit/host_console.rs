@@ -202,3 +202,55 @@ fn window_view_uses_whole_number_scaling(){
     assert_eq!(initial_scale(Some("3"),1904,1001,720,400),3);
     assert_eq!(initial_scale(Some("0"),1904,1001,720,400),2);
 }
+
+#[test]
+fn window_selection_follows_the_pointer_in_reading_order(){
+    use select::*;
+    // A 720x400 picture of 80x25 cells; the pointer clamps to the screen.
+    assert_eq!(cell_at(0,0,720,400,80,25),(0,0));
+    assert_eq!(cell_at(719,399,720,400,80,25),(24,79));
+    assert_eq!(cell_at(-5,9999,720,400,80,25),(24,0));
+    assert_eq!(cell_at(9*10+4,16*3+15,720,400,80,25),(3,10));
+    // Press, drag backwards, release: the cells between, in reading order.
+    let mut s=Selecting::default();
+    assert_eq!(s.pointer((2,5),1),Gesture::None);assert!(s.dragging());
+    s.pointer((1,70),1);s.pointer((1,70),0);assert!(!s.dragging());
+    let sel=s.selection.unwrap();
+    assert!(sel.contains(1,70)&&sel.contains(1,79)&&sel.contains(2,0)&&sel.contains(2,5));
+    assert!(!sel.contains(1,69)&&!sel.contains(2,6));
+    // A right press copies a selection; without one it pastes.
+    assert_eq!(s.pointer((0,0),2),Gesture::Copy);s.pointer((0,0),0);
+    s.clear();assert_eq!(s.pointer((0,0),2),Gesture::Paste);s.pointer((0,0),0);
+    // A click that does not move clears the selection.
+    s.pointer((3,3),1);s.pointer((3,3),0);assert_eq!(s.selection,None);
+}
+
+#[test]
+fn copied_text_trims_lines_and_pasted_text_becomes_keys(){
+    use select::*;
+    // Four columns, three rows; CP437 bytes come out as host characters.
+    let text=b"ab  cd\x84 \x00\x00\x00\x00";
+    assert_eq!(copy_text(text,4,None),"ab\r\ncd\u{e4}");
+    let sel=Selection{anchor:(1,1),head:(0,1)};
+    assert_eq!(copy_text(text,4,Some(sel)),"b\r\ncd");
+    // Past the screen: clamped.
+    assert_eq!(copy_text(text,4,Some(Selection{anchor:(0,3),head:(9,9)})),"\r\ncd\u{e4}");
+    assert_eq!(paste_keys("a\r\nB\t\u{e4}\u{263a}"),vec![0x1e61,0x1c0d,0x3042,0x0f09,0x2884]);
+    // The selected cells are inverted on the picture.
+    let mut frame=(4usize,2usize,vec![0x000000u32,0x0000aa,0xffffff,0x123456,0,0,0,0]);
+    highlight(&mut frame,2,1,Selection{anchor:(0,1),head:(0,1)});
+    assert_eq!(frame.2,vec![0x000000,0x0000aa,0x000000,0xedcba9,0,0,0xffffff,0xffffff]);
+}
+
+#[test]
+fn altgr_characters_type_plainly_in_the_terminal(){
+    // AltGr arrives as Ctrl+Alt with the typed character (Windows consoles).
+    let altgr=Mods{shift:false,ctrl:true,alt:true};
+    for (c,word) in [('@',0x0340u16),('\\',0x2b5c),('|',0x2b7c),('{',0x1a7b),(']',0x1b5d),('$',0x0524)]{
+        assert_eq!(bios_word(Key::Char(c),typed_mods(c,altgr)),Some(word),"{c:?}");
+    }
+    // A real Ctrl or Alt combination keeps its modifiers.
+    assert_eq!(typed_mods('\u{3}',altgr),altgr);
+    assert_eq!(typed_mods(']',CTRL),CTRL);
+    assert_eq!(typed_mods('x',ALT),ALT);
+}
