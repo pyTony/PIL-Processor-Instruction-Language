@@ -18,8 +18,11 @@ On Linux or Termux, use `cp pildos.conf.example pildos.conf`. Edit the paths
 before starting. The example requires your local FreeDOS image, `driveD` folder
 and `D:\AUTOEXEC.BAT`; the config file does not supply these files.
 
-Start with `python tools/dos_terminal.py`, `PILdos.vbs` on Windows, or
-`sh PILdos.sh` on Linux/Termux with a graphical display. `freedos.cmd` also
+`PILdos.vbs` on Windows and `sh PILdos.sh` on Linux/Termux open the Rust
+setup screen below (`pil --pildos`); F10 starts the configured program. The
+older Python/Tk terminal is `python tools/dos_terminal.py`, or
+`PILdos.vbs --python` / `sh PILdos.sh --python` (Linux/Termux needs a
+graphical display for it). `freedos.cmd` also uses the Python terminal and
 connects COM1 to its launching console. For a headless terminal, run
 `python tools/dos_terminal.py --headless --shell` for a command shell such as
 COMMAND.COM (it starts with `/K CTTY COM1` and keeps running after Esc), or

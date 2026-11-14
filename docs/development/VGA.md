@@ -35,10 +35,16 @@ The inactive status port reads FFh; active status timing remains synthetic.
 
 Reference: [FreeVGA external registers](https://www.scs.stanford.edu/10wi-cs140/pintos/specs/freevga/vga/extreg.htm), I/O Address Select.
 
-The Windows launcher forwards terminal options, for example:
+The flag goes before the command. For the Rust setup screen and console:
 
 ```powershell
-wscript.exe .\PILdos.vbs --ignore-unassigned-out
+.\target\release\pil.exe --ignore-unassigned-out --pildos
+```
+
+The launcher's Python route forwards terminal options:
+
+```powershell
+wscript.exe .\PILdos.vbs --python --ignore-unassigned-out
 ```
 
 This flag only ignores unassigned OUT ports; recognized video devices retain explicit unsupported-operation stops.

@@ -17,7 +17,7 @@ class ShortcutTests(unittest.TestCase):
         (ROOT / 'target').mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix='shortcut-', dir=ROOT / 'target')
         self.addCleanup(self.temp.cleanup)
-        self.environment = patch.dict(os.environ, {'PILDOS_CONFIG': '', 'PILDRIVE': 'driveD'})
+        self.environment = patch.dict(os.environ, {'PILDOS_CONFIG': '', 'PILDOS_ENGINE': '', 'PILDRIVE': 'driveD'})
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
@@ -25,7 +25,7 @@ class ShortcutTests(unittest.TestCase):
         root = Path(self.temp.name) / name
         (root / 'tools').mkdir(parents=True)
         shutil.copyfile(ROOT / 'tools/makeshortcut.py', root / 'tools/makeshortcut.py')
-        for name in ('PILdos.vbs', 'PILdos.sh', 'PILdos.ico', 'tools/dos_terminal.py', 'tools/pil_debugger.py'):
+        for name in ('PILdos.vbs', 'PILdos.sh', 'PILdos.ico'):
             (root / name).write_bytes(b'fixture')
         spec = importlib.util.spec_from_file_location('shortcut_fixture', root / 'tools/makeshortcut.py')
         module = importlib.util.module_from_spec(spec)
@@ -42,15 +42,37 @@ class ShortcutTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, 'cargo build --release --locked'):
             module.validate_setup()
 
-    def test_missing_default_data_is_reported_before_creating_shortcut(self):
+    def test_built_engine_is_enough_without_config_or_default_data(self):
+        # The setup screen starts from pildos.conf.example when pildos.conf
+        # is missing, so no image or drive folder is needed for the shortcut.
         module = self.checkout('pil_main')
         self.engine(module)
-        with self.assertRaisesRegex(SystemExit, 'FD14LITE.img'):
-            module.validate_setup()
-        (module.root / 'images').mkdir()
-        (module.root / 'images/FD14LITE.img').write_bytes(b'fixture')
-        (module.root / ('DriveD' if sys.platform == 'win32' else 'driveD')).mkdir()
         module.validate_setup()
+
+    def test_pildos_engine_overrides_checkout_search(self):
+        module = self.checkout('engine elsewhere')
+        engine = Path(self.temp.name) / 'elsewhere' / 'pil'
+        with patch.dict(os.environ, {'PILDOS_ENGINE': str(engine)}):
+            with self.assertRaisesRegex(SystemExit, 'cargo build'):
+                module.validate_setup()
+            engine.parent.mkdir()
+            engine.write_bytes(b'fixture')
+            module.validate_setup()
+
+    @unittest.skipIf(sys.platform == 'win32', 'desktop entries are for Linux')
+    def test_desktop_entry_runs_launcher_in_a_terminal(self):
+        module = self.checkout('desktop entry')
+        home = Path(self.temp.name) / 'home'
+        with patch.object(module.Path, 'home', return_value=home), \
+             patch.object(module, 'desktop_folder', return_value=None), \
+             patch.dict(os.environ, {'TERMUX_VERSION': '1', 'PREFIX': ''}):
+            module.unix()
+        entry = (home / '.local/share/applications/pildos.desktop').read_text()
+        self.assertIn('Terminal=true', entry)
+        self.assertIn('PILdos.sh', entry)
+        widget = (home / '.shortcuts' / 'PIL DOS').read_text()
+        self.assertNotIn('termux-x11', widget)
+        self.assertIn('PILdos.sh', widget)
 
     def test_custom_config_does_not_require_default_data_paths(self):
         module = self.checkout('external data')

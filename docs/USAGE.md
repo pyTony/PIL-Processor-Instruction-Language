@@ -31,7 +31,8 @@ PIL runs full DOS sessions using FreeDOS `COMMAND.COM` and the Dine BIOS/DOS run
   ```powershell
   python tools/makeshortcut.py
   ```
-  Creates a "PIL DOS" desktop shortcut (`PIL DOS.lnk` on Windows Desktop, `.desktop` on Linux).
+  Creates a "PIL DOS" desktop shortcut (`PIL DOS.lnk` on Windows Desktop, `.desktop` on Linux)
+  that opens the Rust PILdos setup screen (`pil --pildos`); F10 starts the configured program.
 
 ### Mounting Host Folders as Drives
 * `--mount PATH`: Mounts a writable host folder as the next available drive (typically `D:`).

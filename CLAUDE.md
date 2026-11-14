@@ -1,3 +1,21 @@
+# Desktop launcher opens the Rust setup screen — 14 November 2026
+
+Tony asked that the desktop launcher use the new Rust PILdos screen.
+PILdos.vbs and PILdos.sh (the "PIL DOS" shortcut targets) now run
+`pil --pildos`: the Dine window on Windows, the terminal on Linux and
+Termux. No Python is needed to start it. `--python` keeps the older Tk
+terminal and `--rust-text` still runs `pil --dos-text`; PILDOS_ENGINE picks
+the executable, otherwise pil, target/release/pil, then target/debug/pil.
+A missing build gives "cargo build --release --locked". makeshortcut.py no
+longer needs the image or drive folder (the screen starts from
+pildos.conf.example), its Linux entry runs in a terminal, and the
+Termux:Widget script no longer starts Termux-x11. freedos.cmd still runs
+the Python terminal with COM1 on its console.
+
+Local Linux: shortcut tests 7 run, 1 skipped (Windows only; 3 new, 1
+removed); `sh PILdos.sh` in a pseudo-terminal showed the setup screen and
+Esc quit. PILdos.vbs was not run (no Windows here).
+
 ## Portable paths in every change
 
 Do not commit machine-specific host paths anywhere, including code, tests,
