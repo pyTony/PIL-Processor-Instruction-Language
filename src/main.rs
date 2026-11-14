@@ -2412,14 +2412,18 @@ const CLI_HELP:&str = "PIL - Processor Instruction Language
 Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
 
 DOS and ROM:
+  --pildos [--tty|--window] [CONFIG]  PILdos setup screen: edit pildos.conf
+      (or CONFIG, or PILDOS_CONFIG) and start its program; F10 starts.
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
-  --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] PROGRAM
+  --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] [PROGRAM]
       DOS session with its own keyboard and screen: the host terminal
       (--tty, default except on Windows) or a window (--window, Windows).
       Ctrl+] in a terminal ends it. Same OPTIONS as --dos-session, plus
       --country 1|358 and --utc-offset SECONDS (default: host time zone).
+      Without PROGRAM, the configuration's program and args start; its
+      fpu, mouse, ansi and utc_offset apply unless options are given.
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
   --run-rom PATH [--steps N]          Run a 64 or 128 KiB ROM
   --dos-list [--all] IMAGE|ZIP        List container entries
@@ -2533,7 +2537,7 @@ fn main() -> R<()> {
         return dos::session::serve(program,mount,tail,&stop_log,config,fpu).map_err(Into::into);
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-console"){
-        let usage="usage: pil --dos-console [--tty|--window] [--mouse] [--ansi] [--country 1|358] [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        let usage="usage: pil --dos-console [--tty|--window] [--mouse] [--ansi] [--country 1|358] [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] [PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH]";
         let(mut mount,mut tail,mut config,mut fpu)=(None,None,None,None);
         let mut options=dos::host_console::Options{window:cfg!(windows),mouse:false,ansi:false,country:None,utc_offset:None};
         let mut rest=&dos_args[2..];
@@ -2543,7 +2547,7 @@ fn main() -> R<()> {
                 [flag,more@..] if flag=="--window"=>{options.window=true;rest=more;},
                 [flag,more@..] if flag=="--mouse"=>{options.mouse=true;rest=more;},
                 [flag,more@..] if flag=="--ansi"=>{options.ansi=true;rest=more;},
-                [flag,value,more@..] if more.len()>=1=>{
+                [flag,value,more@..] if flag.starts_with("--")=>{
                     match flag.as_str(){
                         "--mount" if mount.is_none()=>mount=Some(value.as_str()),
                         "--args" if tail.is_none()=>tail=Some(value.as_str()),
@@ -2558,12 +2562,35 @@ fn main() -> R<()> {
                 _=>break,
             }
         }
-        let[program]=rest else{return Err(usage.into())};
+        let settings=dos_config::console_settings(config)?;
+        options.mouse|=settings.mouse;options.ansi|=settings.ansi;
+        if options.utc_offset.is_none(){options.utc_offset=settings.utc_offset;}
+        let fpu=fpu.or(settings.fpu.map(|on|if on{"80387"}else{"none"}));
+        let configured;
+        let(program,tail)=match rest{
+            [program]=>(program.as_str(),tail),
+            []=>{configured=dos_config::startup(config)?;(configured.0.as_str(),tail.or(configured.1.as_deref()))},
+            _=>return Err(usage.into()),
+        };
         let mut session=dos::session::open(program,mount,tail,config,fpu)?;
         let mut logger=dos::stoplog::Logger::new(&stop_log,program);
         let result=dos::host_console::run(&mut session,&options);
         session.log_stop(&mut logger);
         println!("{}",result?);
+        return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--pildos"){
+        let usage="usage: pil --pildos [--tty|--window] [CONFIG]";
+        let mut window=cfg!(windows);let mut config=None;
+        for arg in &dos_args[2..]{
+            match arg.as_str(){
+                "--tty"=>window=false,
+                "--window"=>window=true,
+                a if a.starts_with("--")||config.is_some()=>return Err(usage.into()),
+                a=>config=Some(a),
+            }
+        }
+        println!("{}",dos::setup::run(config,window,&stop_log)?);
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
