@@ -42,6 +42,16 @@ country=358
 | `args` | DOS command tail. `/K D:\AUTOEXEC.BAT` runs that batch file in FreeCOM and keeps the shell open. Optional. |
 | `A` through `E` | Mount a host folder or FAT IMG/IMA image. A colon is allowed in the key, such as `D:`. |
 | `country` | `1` for USA or `358` for Finland. Optional; the engine defaults to USA. |
+| `fpu` | `none` (default) or `80387` to enable the optional 80387 FPU backend. |
+| `mouse` | Boolean (`true`/`false` or `1`/`0`). Enables the experimental INT 33h mouse driver. |
+| `ansi` | Boolean (`true`/`false` or `1`/`0`). Loads an ANSI.SYS-style console driver. |
+| `headless` | Boolean (`true`/`false` or `1`/`0`). Runs the frontend without a window, interacting through the terminal (opens a window only when graphics output is active). |
+| `rust_graphics` / `rust-graphics` | Boolean (`true`/`false` or `1`/`0`). Enables native Windows CGA/VGA graphics with `headless` and terminal BIOS keys. |
+| `shell` | Boolean (`true`/`false` or `1`/`0`). Marks the startup program as a command shell for `headless` mode (`/K CTTY COM1`, keeps running after Esc). |
+| `com1` | `console` or `tcp:PORT`. Connects COM1 to the console or a TCP port. |
+| `speaker_volume` / `speaker-volume` | PC speaker click volume `0..100` (`0` mutes; frontend default `5`). |
+| `utc_offset` / `utc-offset` | DOS clock UTC offset in seconds (`-50400..=50400`) for the engine; `tools/dos_terminal.py` also accepts hour forms such as `2`, `-5`, `5.5`, or `+02:00`. |
+| `engine` | Path to the `pil` executable (relative to the config file, or absolute). |
 
 Keys are case-insensitive and may appear once. Files are UTF-8, optionally with
 a leading BOM, and at most 32 KiB. Blank lines and lines starting with `#` or
@@ -141,8 +151,11 @@ An explicit frontend program argument replaces the configured startup program;
 its arguments then come from `--args`, if supplied. When the program comes from
 configuration, `--args` overrides the configured args.
 
-Frontend `--country` and `--drive LETTER=PATH` are applied after configuration
-and override those settings. A legacy `--mount PATH` keeps the drive it supplies
+Frontend `--country`, `--drive LETTER=PATH`, `--fpu`, `--speaker-volume`,
+`--engine`, `--com1`, and `--utc-offset` are applied after configuration and
+override those settings. Boolean flags (`--headless`, `--rust-graphics`,
+`--mouse`, `--shell`, `--ansi`) enable the corresponding option even if it is
+`false` or omitted in the config file. A legacy `--mount PATH` keeps the drive it supplies
 instead of that config mount: normally D after loading from an image, or C for
 a standalone host program. Paths supplied directly on the command line are
 relative to the working directory.
