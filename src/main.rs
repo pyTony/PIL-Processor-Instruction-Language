@@ -21,7 +21,7 @@ mod dos;
 #[cfg(feature = "dine-library")]
 mod dine_ffi;
 mod dine_display;
-#[cfg(windows)]
+// Window code is Windows-only inside; the layout helpers are tested everywhere.
 mod dine_window;
 mod block_compiler;
 mod precompiled;
