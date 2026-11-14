@@ -78,13 +78,13 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
             path=>if program.replace(path.to_string()).is_some(){return Err("only one DOS program is allowed".into());},
         }at+=1;
     }
-    let defaults=crate::dos_config::text_options(config)?;
+    let defaults=crate::dos_config::console_settings(config)?;
     options.ansi|=defaults.ansi;options.mouse|=defaults.mouse;
     options.utc_offset=options.utc_offset.or(defaults.utc_offset);
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
     let tail=tail.or_else(||startup.as_ref().and_then(|s|s.1.as_deref()));
-    let mut session=dos::session::open(path,mount,tail,config,fpu.or(defaults.fpu.as_deref()))?;
+    let mut session=dos::session::open(path,mount,tail,config,fpu.or(defaults.fpu.map(|on|if on{"80387"}else{"none"})))?;
     let result=run(&mut session,&options,plain);
     session.log_stop(&mut dos::stoplog::Logger::new(log_path,path));
     result

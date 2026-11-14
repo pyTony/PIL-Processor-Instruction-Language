@@ -5,7 +5,7 @@
 `pil --dos-text` selects the Rust terminal console (`--dos-console --tty`).
 With no program argument, both commands use startup from `pildos.conf`,
 `PILDOS_CONFIG`, or `--config FILE`. They honor configured drives, country,
-command tail, `fpu`, `mouse`, `ansi` and `utc_offset` (integer seconds).
+command tail, `fpu`, `mouse`, `ansi` and `utc_offset` (hours or +HH:MM, as in the setup editor).
 Explicit command-line options override these defaults. Configured arguments
 belong to configured startup; an explicitly named program starts with an empty
 tail unless `--args` is given.
@@ -55,11 +55,15 @@ and stop log. Nothing in it depends on which program runs.
 ```text
 pil --dos-console [--tty|--window] [--mouse] [--ansi] [--country 1|358]
                   [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER]
-                  [--args COMMAND_LINE] [--fpu none|80387] PROGRAM
+                  [--args COMMAND_LINE] [--fpu none|80387] [PROGRAM]
 ```
 
 PROGRAM is a .COM or .EXE file, or `IMAGE.img::INNER_PATH`, as in
-`--dos-session`.
+`--dos-session`. Without it, the configuration's `program` and `args` start
+(docs/DOS_CONFIG.md). The configuration's `fpu`, `mouse`, `ansi` and
+`utc_offset` apply in both cases unless an option overrides them. For a
+setup screen that edits the configuration and starts it, see `pil --pildos`
+in [DOS_CONFIG.md](DOS_CONFIG.md).
 
 | Option | Effect |
 |---|---|

@@ -21,7 +21,7 @@ faults/stops for behavior outside their implemented scope.
 | Mouse | Optional DOS driver and native-window mouse events; no terminal mouse capture in this route |
 | Graphics limits | Custom font/palette/blink fidelity varies by frontend; no new sound or complete hardware timing claim |
 | Dine library | Program-independent C ABI taking any supported guest at runtime; shared Rust I/O adapter |
-| Configuration | Same `pildos.conf` startup, drives, country and Rust-console options; graphical configuration editor is separate work |
+| Configuration | Same `pildos.conf` startup, drives, country and Rust-console options; Rust `--pildos` editor preserves comments, ordering and line endings |
 | Optional Python | Legacy Tk debugger/console and COM1/TCP routing, helpers and development tools; not required by Rust DOS execution |
 | Debugging/checks | Built-in text debugger, diagnostic/probe commands, backend comparisons and original regression fixtures on dev |
 | Platforms | Windows native window; other hosts terminal console. Build for the target host; cross-platform completeness is not assumed |

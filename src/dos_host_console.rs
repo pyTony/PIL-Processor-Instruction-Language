@@ -276,7 +276,7 @@ fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
     // An 8-line CGA shape (6-7) doubles; a taller one is already in lines.
     Some(if end<8{(start*2,end*2+1)}else{(start.min(15),end.min(15))})
 }
-fn graphics_mode(p:&Loaded)->bool{
+pub(crate) fn graphics_mode(p:&Loaded)->bool{
     p.ram.load(0x449,MemWidth::Byte).is_ok_and(|m|!matches!(m&0x7f,0..=3|7))
 }
 
@@ -286,13 +286,13 @@ pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate
 /// Run the session until the program ends, it stops, or the user quits.
 /// Returns the closing line for the host terminal.
 pub(crate) fn run(session:&mut Session,options:&Options)->Result<String,String>{
-    configure(session,options)?;
     let (tx,rx)=mpsc::channel();
     let mut front=Front::open(options.window,tx)?;
-    let result=drive(session,&mut front,&rx);
+    let result=run_on(session,options,&mut front,&rx);
     drop(front);
     result
 }
+/// Apply the same console settings to interactive and redirected sessions.
 pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String>{
     let offset=options.utc_offset.unwrap_or_else(local_utc_offset);
     for command in [Some(format!("clock {offset}")),options.country.map(|c|format!("country {c}")),
@@ -301,6 +301,14 @@ pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String
         if reply.contains("\"ok\":false"){return Err(format!("{command}: {reply}"));}
     }
     Ok(())
+}
+/// Run on the setup screen's already-open frontend.
+pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&mpsc::Receiver<Event>)->Result<String,String>{
+    configure(session,options)?;
+    front.reset();
+    let result=drive(session,front,rx);
+    front.reset();
+    result
 }
 
 fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>)->Result<String,String>{
@@ -360,7 +368,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>)->Resul
 
 /// The host side: a terminal, a window, or both (Windows terminal with
 /// graphics in a window).
-struct Front{
+pub(crate) struct Front{
     tty:Option<tty::Terminal>,
     #[cfg(windows)]
     window:Option<WindowFront>,
@@ -368,10 +376,12 @@ struct Front{
     window_tx:Option<mpsc::Sender<Event>>,
     held:Vec<Event>,
     previous:Option<Vec<u8>>,
+    /// The cursor `present_text` last drew, to skip unchanged frames.
+    previous_cursor:Option<(u32,u32)>,
     graphics_note:bool,
 }
 impl Front{
-    fn open(window:bool,tx:mpsc::Sender<Event>)->Result<Self,String>{
+    pub(crate) fn open(window:bool,tx:mpsc::Sender<Event>)->Result<Self,String>{
         #[cfg(not(windows))]
         if window{return Err("the DOS console window needs Windows; use --tty".into());}
         let tty=if window{None}else{Some(tty::Terminal::open(tx.clone())?)};
@@ -379,15 +389,35 @@ impl Front{
         let (window,window_tx)=if window{(Some(WindowFront::new(tx)),None)}else{(None,Some(tx))};
         #[cfg(not(windows))]
         let _=tx;
-        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,graphics_note:false})
+        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false})
     }
-    fn poll(&mut self,events:&mut Vec<Event>)->Result<(),String>{
+    pub(crate) fn poll(&mut self,events:&mut Vec<Event>)->Result<(),String>{
         events.splice(0..0,self.held.drain(..));
         if let Some(t)=self.tty.as_mut(){t.poll(events)?;}
         Ok(())
     }
     fn unpoll(&mut self,event:Event){self.held.push(event);}
-    fn closed(&self)->bool{
+    /// Forget what is on the host screen, so the next frame draws it all.
+    pub(crate) fn reset(&mut self){
+        self.previous=None;self.previous_cursor=None;self.graphics_note=false;self.held.clear();
+        #[cfg(windows)]
+        if let Some(w)=self.window.as_mut(){w.last=None;}
+        if let Some(t)=self.tty.as_ref(){let _=t.write("\x1b[0m\x1b[2J");}
+    }
+    /// Show a text page that is not a DOS session's (the setup screen):
+    /// 80-column character/attribute cells and the cursor, if any.
+    pub(crate) fn present_text(&mut self,cells:&[u8],cursor:Option<(u32,u32)>)->Result<(),String>{
+        if let Some(t)=self.tty.as_mut(){
+            if self.previous.as_deref()==Some(cells)&&self.previous_cursor==cursor{return Ok(());}
+            let text=ansi_frame(cells,80,cursor.unwrap_or((24,79)),cursor.is_some(),self.previous.as_deref());
+            self.previous=Some(cells.to_vec());self.previous_cursor=cursor;
+            return t.write(&text);
+        }
+        #[cfg(windows)]
+        if let Some(w)=self.window.as_mut(){w.present_text(cells,cursor);}
+        Ok(())
+    }
+    pub(crate) fn closed(&self)->bool{
         #[cfg(windows)]
         if let Some(w)=self.window.as_ref(){return w.closed();}
         false
@@ -454,6 +484,13 @@ impl WindowFront{
         Self{window:crate::dine_window::Window::interactive("Dine DOS console",input),font,started:Instant::now(),last:None}
     }
     fn closed(&self)->bool{self.window.closed()}
+    fn present_text(&mut self,cells:&[u8],cursor:Option<(u32,u32)>){
+        let on=self.started.elapsed().as_millis()/267%2==0;
+        let frame=text_pixels(cells,80,&self.font,cursor.filter(|_|on).map(|(r,c)|(r,c,14,15)));
+        if self.last.as_ref()==Some(&frame){return;}
+        self.window.present(crate::dine_window::Frame{width:frame.0 as i32,height:frame.1 as i32,pixels:frame.2.clone()});
+        self.last=Some(frame);
+    }
     fn present(&mut self,session:&Session)->Result<(),String>{
         let p=session.machine().ok_or("session state lost")?;
         let frame=if graphics_mode(p){desktop_vga_frame(p)}else{

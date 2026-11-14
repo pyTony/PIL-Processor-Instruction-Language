@@ -6,6 +6,8 @@
   Python. The existing screen/ANSI driver and Windows graphics window are reused.
 - Share terminal/transcript I/O with Dine. Typed lines reach DOS as CP437 keys;
   redirected EOF and input limits are explicit, and guest exit status is returned.
+- Include the Rust `--pildos` configuration editor and launcher, using the same
+  parser as the console and preserving existing configuration formatting.
 - Add Python-free `--rust-text` shortcut routes. Legacy Python GUI/COM1 tools
   remain optional; building/running the Rust executable does not invoke Python.
 - Remove local host paths from published examples and records. The development
