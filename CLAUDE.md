@@ -8,6 +8,34 @@ Before every commit/PR, review host-path examples and run
 `python tools/check_portable_paths.py --self-test`; repeat after edits. DOS guest
 paths and standard OS interfaces are separate from host checkout locations.
 
+# VGA text resolution in the Dine console window — 14 November 2026
+
+Tony compared Landmark 6.00 in the `pil --dos-console --window` window with
+DOSBox-X: Dine's text was small and coarse (the 8x8 font with each line
+drawn twice, 640x400, stretched to a 664x520 window). The window now draws
+text mode as a VGA does.
+- src/dos_vga_text.rs: 9x16 cells, 720x400 for 80 columns (40 columns are
+  360 wide, doubled). The ninth column is the background except for
+  C0h-DFh, which repeat the eighth (line graphics). BIOS cursor shapes in 8
+  lines scale as the VGA BIOS does (6-7 -> 13-14).
+- src/dos_font8x16.txt: Dine's own 8x16 font, drawn for this project:
+  letters, digits and punctuation by hand (capitals rows 2-11, small letters
+  5-11, descenders to 14); accented letters from those letters plus
+  accents; box, block and shade characters computed from line positions;
+  00h-1Fh and most of E0h-FFh are the 8x8 rows drawn twice.
+- dine_window.rs: the window opens at the largest whole-number size of its
+  first picture that fits the desktop (1440x800 on 1920x1080);
+  `DINE_WINDOW_SCALE=1..8` overrides. Painting keeps whole-number scaling
+  with black borders, or fits with proportions kept when that would use
+  under 85% of the room. Mouse positions are taken relative to the picture.
+  The same applies to the separate graphics preview window.
+- Not changed: the BIOS still reports only the 8x8 font (AX=1130h BH=06h
+  stops), and fonts a program loads into plane 2 are not shown.
+
+Local Linux, release: 844 Rust tests pass, 2 ignored (3 new in
+tests/unit/host_console.rs). Windows code type-checks for
+x86_64-pc-windows-gnu; the window was not run on Windows.
+
 # PILdos setup screen: pil --pildos — 14 November 2026
 
 Tony asked for a PILdos GUI configuration screen and launcher, in Rust (the

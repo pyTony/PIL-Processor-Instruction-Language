@@ -5,7 +5,7 @@ import argparse,hashlib,json,os,re,subprocess,sys,zipfile
 ROOT=Path(__file__).resolve().parents[1]
 # Explicit run/build inputs only. Tests and development documents cannot leak
 # through a broad repository copy. These patterns are intentionally narrow.
-PATTERNS=('src/*.rs','src/block_compiler/*.rs','src/precompiled/*.rs','src/dos_font8x8.txt','isa/i386/*.pil','programs/selftest.hex','programs/selftest.lst','programs/hello.hex','programs/hello.lst','programs/factorials.hex','programs/factorials.lst','programs/loop.hex','programs/loop.lst',
+PATTERNS=('src/*.rs','src/block_compiler/*.rs','src/precompiled/*.rs','src/dos_font8x8.txt','src/dos_font8x16.txt','isa/i386/*.pil','programs/selftest.hex','programs/selftest.lst','programs/hello.hex','programs/hello.lst','programs/factorials.hex','programs/factorials.lst','programs/loop.hex','programs/loop.lst',
           'Cargo.toml','Cargo.lock','.gitattributes','pildos.conf.example','PILdos.vbs','PILdos.sh','PILdos.ico','PILdos.png','programs/dos/*','tools/dos_terminal.py','tools/makeshortcut.py','tools/pil_debugger.py','tools/build.sh','tools/build.ps1',
           'tools/debug.sh','tools/debug.ps1','tools/bench.sh','tools/bench.ps1','tools/compare.sh','tools/compare.ps1','tools/mandelbrot.sh','tools/mandelbrot.ps1')
 DOCUMENTS={'README.md':'README.md','DEBUGGER.md':'docs/DEBUGGER.md',
