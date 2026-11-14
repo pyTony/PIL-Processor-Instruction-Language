@@ -12,6 +12,8 @@ pub enum Operation {
     Fldcw,
     /// Store the current 16-bit control word to a memory operand (D9 /7).
     Fnstcw,
+    /// Store the 14-byte (16-bit) or 28-byte (32-bit) x87 environment (D9 /6).
+    Fnstenv,
     Fchs,
     Fld1,
     Fldz,
@@ -79,6 +81,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0) => Some(Operation::FldM32),
             (0xd9, 3) => Some(Operation::FstpM32),
             (0xd9, 5) => Some(Operation::Fldcw),
+            (0xd9, 6) => Some(Operation::Fnstenv),
             (0xd9, 7) => Some(Operation::Fnstcw),
             (0xdd, 0) => Some(Operation::FldM64),
             (0xdd, 3) => Some(Operation::FstpM64),
@@ -115,6 +118,7 @@ mod tests {
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
         assert_eq!(classify(0xd9,0x2f),Ok(Operation::Fldcw)); // FLDCW [BX]
+        assert_eq!(classify(0xd9,0x36),Ok(Operation::Fnstenv)); // FNSTENV [disp16]
         assert_eq!(classify(0xd9,0x3f),Ok(Operation::Fnstcw)); // FNSTCW [BX]
         // /5 and /7 require memory operands, not ModR/M register mode.
         assert_eq!(classify(0xd9,0xef),Err(DecodeError::Unsupported{opcode:0xd9,modrm:0xef}));

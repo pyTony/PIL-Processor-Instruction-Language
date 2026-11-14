@@ -73,6 +73,7 @@ pub struct Instruction {
     pub opcode: u8,
     /// None for WAIT; ESC ModR/M is retained after consuming any prefixes.
     pub modrm: Option<u8>,
+    pub operand_32: bool,
 }
 
 /// Decode the CPU's ESC envelope, without interpreting the coprocessor opcode.
@@ -138,7 +139,7 @@ pub fn decode_with_default<E>(mut fetch: impl FnMut(u32) -> Result<u8, E>,
             length += 1;
         }
     }
-    Ok(Some(Instruction { bytes, length: length as u32, opcode, modrm }))
+    Ok(Some(Instruction { bytes, length: length as u32, opcode, modrm, operand_32: default_32 ^ wide }))
 }
 
 impl AbsentFpu {
