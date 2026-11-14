@@ -59,6 +59,22 @@ impl PresentFpu {
                 self.state.status &= !0x0200;
                 return Outcome::Completed;
             },
+            Operation::Frndint => {
+                let Some(x) = self.state.st(0) else {
+                    return Outcome::StackFault(StackError::Underflow);
+                };
+                let Ok(computed) = math::frndint(x, self.state.control) else {
+                    return Outcome::Unsupported;
+                };
+                if computed.inexact && self.state.control & 0x0020 == 0 {
+                    return Outcome::Unsupported;
+                }
+                self.state.store(0, computed.value);
+                self.state.status &= !0x0200;
+                if computed.rounded_up { self.state.status |= 0x0200; }
+                if computed.inexact { self.state.status |= 0x0020; }
+                return Outcome::Completed;
+            },
             Operation::Fxam => {
                 let raw = self.state.raw_st(0);
                 let c1 = if raw.sign_exponent & 0x8000 != 0 { 0x0200 } else { 0 };

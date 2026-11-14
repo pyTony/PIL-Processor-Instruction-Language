@@ -272,6 +272,59 @@ pub fn fyl2xp1(y: Extended80, x: Extended80, control: u16) -> Result<Computed, M
     Ok(result)
 }
 
+/// Round `x` to an integer according to the x87 rounding control (`RC`).
+pub fn frndint(x: Extended80, control: u16) -> Result<Computed, MathError> {
+    let (negative, exp, sig) = split(x)?;
+    if exp == 0 && sig == 0 {
+        return Ok(exact(x));
+    }
+    let unbiased = exp - 16383;
+    if unbiased >= 63 {
+        return Ok(exact(x));
+    }
+    let rc = (control >> 10) & 3;
+    if unbiased < 0 {
+        let round_away = match rc {
+            0 => unbiased == -1 && sig > (1u64 << 63),
+            1 => negative,
+            2 => !negative,
+            _ => false,
+        };
+        let value = if round_away {
+            Extended80::from_bits(1u64 << 63, 0x3fff | if negative { 0x8000 } else { 0 })
+        } else {
+            Extended80::from_bits(0, if negative { 0x8000 } else { 0 })
+        };
+        return Ok(Computed { value, inexact: true, rounded_up: round_away, zero_divide: false });
+    }
+    let frac_bits = (63 - unbiased) as u32;
+    let mask = (1u64 << frac_bits) - 1;
+    let frac = sig & mask;
+    if frac == 0 {
+        return Ok(exact(x));
+    }
+    let mut int_sig = sig & !mask;
+    let mut out_exp = exp;
+    let half = 1u64 << (frac_bits - 1);
+    let round_away = match rc {
+        0 => frac > half || (frac == half && ((int_sig >> frac_bits) & 1 != 0)),
+        1 => negative,
+        2 => !negative,
+        _ => false,
+    };
+    if round_away {
+        let (v, carry) = int_sig.overflowing_add(1u64 << frac_bits);
+        int_sig = if carry { 1u64 << 63 } else { v };
+        if carry { out_exp += 1; }
+    }
+    Ok(Computed {
+        value: Extended80::from_bits(int_sig, out_exp as u16 | if negative { 0x8000 } else { 0 }),
+        inexact: true,
+        rounded_up: round_away,
+        zero_divide: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
