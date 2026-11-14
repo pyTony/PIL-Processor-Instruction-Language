@@ -208,6 +208,11 @@ a full run takes about 76 million instructions):
   pass, 0 generated-backend disagreements; the shift and ENTER files were
   rerun after the CF change (62 more passes, no new failures).
 
+14 November 2026: MOV DR0-DR7 (stored, breakpoints not modelled) and TR
+in its reset state (base 0, limit FFFFh, busy 386 TSS), so a task switch
+before any LTR saves the old task at linear 0, as a DOS extender in
+Tony's dosbench expects. Generated-backend suite: 280 cases.
+
 Next: Dine's memory above 1 MiB (increment 9) and XMS (10). test386 does
 not cover the parts listed as not modelled under increment 7.
 

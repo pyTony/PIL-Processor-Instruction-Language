@@ -113,3 +113,43 @@ fn cr0_writes_set_and_clear_pe(){
  let(mut i,mut r,mut c)=protected(&[0x0f,0x20,0xc0]);i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};
  assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::GeneralProtection{eip:0x100,error_code:0}));
 }
+
+/// MOV to and from DR0-DR7 (0F 23 / 0F 21), checked against the 386
+/// manual's rules: 32-bit register moves, CPL 0 only, DR4/DR5 reaching
+/// DR6/DR7 here, breakpoint enables not modelled (a visible stop).
+#[test]
+fn debug_register_moves_store_read_back_and_check_privilege(){
+ // Reset values (Intel SDM table 9-1).
+ let(i,_,_)=machine(&[0x90]);
+ assert_eq!(i.debug,[0,0,0,0,0xffff_0ff0,0x400]);
+ // Real mode: MOV DR3,ESI; MOV EDI,DR3; MOV DR6,EAX; MOV EDX,DR4; MOV DR5,ECX; MOV EBP,DR7.
+ let code=[0x0f,0x23,0xde,0x0f,0x21,0xdf,0x0f,0x23,0xf0,0x0f,0x21,0xe2,0x0f,0x23,0xe9,0x0f,0x21,0xfd];
+ let(mut i,mut r,mut c)=machine(&code);
+ c.regs=[0x0000_4001,0x0000_0300,0,0,0x800,0,0xdead_beef,0];c.eflags=0x0000_08d7;
+ for _ in 0..6{step(&mut i,&mut r,&mut c).unwrap();}
+ assert_eq!(i.debug,[0,0,0,0xdead_beef,0x4001,0x300]);
+ assert_eq!((c.regs[7],c.regs[2],c.regs[5]),(0xdead_beef,0x4001,0x300));
+ assert_eq!(c.eip,0x112);
+ assert_eq!(c.undefined_flags&0x8d5,0x8d5,"arithmetic flags are undefined after MOV DRn");
+ // Protected mode at CPL 0 works the same; the mod field must be 3.
+ let(mut i,mut r,mut c)=protected(&[0x0f,0x23,0xc8]);c.regs[0]=0x1234_5678;
+ step(&mut i,&mut r,&mut c).unwrap();assert_eq!(i.debug[1],0x1234_5678);
+ // CPL 3 and virtual-8086 mode: #GP(0), nothing changes.
+ for v86 in [false,true]{
+  let(mut i,mut r,mut c)=protected(&[0x0f,0x23,0xc0,0x0f,0x21,0xc0]);c.regs[0]=1;
+  if v86{c.eflags|=0x20000;i.segments[1].access=SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:3};}
+  else{i.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};}
+  let before=(i.debug,c.regs,c.eip);
+  assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::GeneralProtection{eip:0x100,error_code:0}));
+  c.eip=0x103;assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::GeneralProtection{eip:0x103,error_code:0}));
+  assert_eq!((i.debug,c.regs),(before.0,before.1));
+ }
+ // DR7 with L0-G3 or GD set stops before any change (breakpoints are not modelled).
+ for value in [0x1u32,0x80,0x2000]{
+  let(mut i,mut r,mut c)=machine(&[0x0f,0x23,0xf8]);c.regs[0]=value;
+  assert_eq!(step(&mut i,&mut r,&mut c),Err(ExecError::UnsupportedControl{eip:0x100,register:15,value}));
+  assert_eq!((i.debug[5],c.eip),(0x400,0x100));
+ }
+ // A memory operand form does not decode.
+ let(i,r,_)=machine(&[0x0f,0x23,0x00]);assert!(i.decode(&r,0x100).is_err());
+}

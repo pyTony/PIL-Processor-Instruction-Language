@@ -1244,8 +1244,8 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if t>1||widths[l]!=16||widths[b]!=32||tokens.iter().any(|x|matches!(x,Token::WriteTable(..))){return Err("write_table needs table 0..1, bv16 limit and bv32 base, once".into());}
                     Token::WriteTable(t,l,b)
                 }
-                ["read_control",out,register]=>{let r=number(register)? as usize;if !matches!(r,0|2|3){return Err("read_control needs CR0, CR2 or CR3".into());}Token::ReadControl(define(&mut names,&mut widths,out,32)?,r)}
-                ["write_control",register,input]=>{let r=number(register)? as usize;let v=slot(&names,input)?;if !matches!(r,0|2|3)||widths[v]!=32||tokens.iter().any(|t|matches!(t,Token::WriteControl(..))){return Err("write_control needs CR0, CR2 or CR3 and bv32, once".into());}Token::WriteControl(r,v)}
+                ["read_control",out,register]=>{let r=number(register)? as usize;if !matches!(r,0|2|3|8..=15){return Err("read_control needs CR0, CR2, CR3 or DR0-DR7 (8-15)".into());}Token::ReadControl(define(&mut names,&mut widths,out,32)?,r)}
+                ["write_control",register,input]=>{let r=number(register)? as usize;let v=slot(&names,input)?;if !matches!(r,0|2|3|8..=15)||widths[v]!=32||tokens.iter().any(|t|matches!(t,Token::WriteControl(..))){return Err("write_control needs CR0, CR2, CR3 or DR0-DR7 (8-15) and bv32, once".into());}Token::WriteControl(r,v)}
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
                 ["read_msw32", out]=>Token::ReadMsw32(define(&mut names,&mut widths,out,32)?),
                 ["require_protected_mode"]=>Token::RequireProtectedMode,

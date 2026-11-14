@@ -1,3 +1,35 @@
+# Debug registers and the reset TR — 14 November 2026
+
+Tony's stop log for a 3D benchmark in his dosbench menu (a DOS extender
+in 32-bit protected mode, CR0=13h) had two stops:
+- `0F 23 C0` (MOV DR0,EAX) at 0018:2B26 was #UD. MOV to and from DR0-DR7
+  (0F 21/0F 23) now decode, through the same read_control/write_control
+  PIL as MOV CRn, with debug registers numbered 8-15. They need CPL 0
+  (#GP(0) above it and in V86 mode), take register operands only and
+  leave the arithmetic flags undefined. Values are stored as written in
+  SegmentState::debug (DR0-DR3, DR6, DR7; DR4/DR5 reach DR6/DR7, as on
+  later CPUs, since the 386 calls them reserved). Reset values follow the
+  Intel SDM table 9-1 (DR6 FFFF0FF0h, DR7 400h). Breakpoints are not
+  modelled: DR7 with L0-G3 or GD set stops (UnsupportedControl, register
+  15) instead of being stored and never firing. The trace now includes
+  the debug registers.
+- `JMP FAR 0070:0000` to a TSS at 0018:3E93 gave #TS(0) 1,661 times and
+  then a triple fault. The extender never runs LTR, and Dine's TR was all
+  zero, which task.rs refused as an invalid old TSS. TR now starts as
+  after a 386 reset (Intel SDM table 9-1: selector 0, base 0, limit
+  FFFFh; type busy 386 TSS, as in Bochs), so the old task is stored at
+  linear 0-67h and the switch goes ahead, as on hardware. JMP and IRET
+  clear the old busy bit in the GDT entry TR's selector indexes without
+  checking it again (entry 0 after reset), as Bochs does. The repeats
+  came from the extender's own #TS handler returning to the JMP; the
+  delivery itself was as the 386 does it, so it is unchanged.
+
+Local Linux, release: 812 Rust tests pass, 2 ignored (2 new: debug
+register moves in tests/unit/protected_mode.rs, a switch before any LTR
+in tests/unit/task.rs). The generated-backend suite has 280 cases (2 new:
+debug_registers, pm_task_reset_tr). The benchmark itself (Tony's, local
+only) was not run here; test386 and SingleStepTests were not rerun.
+
 # AT coprocessor ports F0h and F1h — 13 November 2026
 
 Tony's 80387 Mandelbrot in Turbo Pascal 7.0 ({$N+} {$E-}) stopped on

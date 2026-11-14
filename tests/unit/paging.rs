@@ -218,7 +218,7 @@ fn main(){
  let mut ram=Ram::new(0x20000);
  for(at,v)in [(0x10000,0x11007),(0x11000,7),(0x11004,0x1007),(0x11008,0x9003),(0x1100c,0xa007),(0xa000,0xa5a5a5a5)]{ram.store(at,MemWidth::Dword,v).unwrap();}
  let flat=SegmentCache{base:0,limit:0xffff,access:SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:3}};
- let mut m=SegmentState{segments:[flat;6],selectors:[3;6],msw:0x11,real_mode:false,ss_shadow:1,sti_shadow:0,tables:[(0,0);2],controls:[0,0x10000],flag_checkpoint:None,ldt_tr:[SystemSegment::default();2],paging:true};
+ let mut m=SegmentState{segments:[flat;6],selectors:[3;6],msw:0x11,real_mode:false,ss_shadow:1,sti_shadow:0,tables:[(0,0);2],controls:[0,0x10000],flag_checkpoint:None,ldt_tr:[SystemSegment::default();2],paging:true,debug:[0;6]};
  m.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3};
  let mut regs=[0;8];regs[4]=0x3004;regs[5]=0x4567;
  let mut flags=0xad7;let mut undefined=0x10;let mut ip=0x100;

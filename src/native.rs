@@ -449,7 +449,19 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut t=case("pm_task",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x37,0xc00);
     t.image.ldt_tr[1]=super::address::SystemSegment{selector:0x28,base:0xd00,limit:0x67,kind:0x0b};
     t.image.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
-    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xf00;t.patch=Some((0xb00,tasks));tests.push(t);
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xf00;t.patch=Some((0xb00,tasks.clone()));tests.push(t);
+    // A task switch before any LTR: TR still has its reset state (base 0,
+    // limit FFFFh, busy 386 TSS), so JMP FAR 0030:0 to the available 386
+    // TSS at D80h stores the old task at linear 0-67h and runs HLT at 110h.
+    let mut code=vec![0xea,0,0,0,0,0x30,0];code.resize(0x10,0x90);code.push(0xf4);
+    let mut t=case("pm_task_reset_tr",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x37,0xc00);
+    t.image.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xf00;
+    let mut reset_tasks=tasks.clone();reset_tasks[0x128..0x130].fill(0);t.patch=Some((0xb00,reset_tasks));tests.push(t);
+    // Debug registers in real mode: MOV EAX,12345678h; MOV DR0,EAX; MOV
+    // EBX,DR0; MOV ECX,DR4 (DR6 at reset); MOV DR7,EDX (LE and GE only);
+    // MOV ESI,DR5 (DR7); MOV DR7,EAX enables breakpoints, which stops.
+    let mut t=case("debug_registers",vec![0x66,0xb8,0x78,0x56,0x34,0x12,0x0f,0x23,0xc0,0x0f,0x21,0xc3,0x0f,0x21,0xe1,0x0f,0x23,0xfa,0x0f,0x21,0xee,0x0f,0x23,0xf8,0xf4])?;t.regs[2]=0x300;tests.push(t);
     let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
