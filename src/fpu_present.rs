@@ -59,6 +59,27 @@ impl PresentFpu {
                 self.state.status &= !0x0200;
                 return Outcome::Completed;
             },
+            Operation::Fxam => {
+                let raw = self.state.raw_st(0);
+                let c1 = if raw.sign_exponent & 0x8000 != 0 { 0x0200 } else { 0 };
+                let exp = raw.sign_exponent & 0x7fff;
+                let sig = raw.significand;
+                let class = if self.state.tag(0) == crate::fpu::Tag::Empty {
+                    0x4100 // Empty: C3=1, C2=0, C0=1
+                } else if exp == 0 && sig == 0 {
+                    0x4000 // Zero: C3=1, C2=0, C0=0
+                } else if exp == 0 {
+                    0x4400 // Denormal: C3=1, C2=1, C0=0
+                } else if exp == 0x7fff {
+                    if sig == (1u64 << 63) { 0x0500 } else { 0x0100 } // Infinity / NaN
+                } else if sig & (1u64 << 63) != 0 {
+                    0x0400 // Normal: C3=0, C2=1, C0=0
+                } else {
+                    0x0000 // Unnormal: C3=0, C2=0, C0=0
+                };
+                self.state.status = (self.state.status & !0x4700) | class | c1;
+                return Outcome::Completed;
+            },
             Operation::Fld1 => self.state.push(one),
             Operation::Fldz => self.state.push(Extended80::default()),
             Operation::Fyl2xp1 => {

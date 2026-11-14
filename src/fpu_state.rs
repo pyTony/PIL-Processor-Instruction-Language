@@ -64,6 +64,7 @@ impl X87State {
         self.status = (self.status & !(7 << 11)) | (((top & 7) as u16) << 11);
     }
     pub fn tag(&self, logical: usize) -> Tag { self.tags[self.physical(logical)] }
+    pub fn raw_st(&self, logical: usize) -> Extended80 { self.registers[self.physical(logical)] }
     pub fn st(&self, logical: usize) -> Option<Extended80> {
         let p = self.physical(logical);
         if self.tags[p] == Tag::Empty { None } else { Some(self.registers[p]) }

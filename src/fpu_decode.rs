@@ -17,6 +17,7 @@ pub enum Operation {
     /// Load the 14-byte (16-bit) or 28-byte (32-bit) x87 environment (D9 /4).
     Fldenv,
     Fchs,
+    Fxam,
     Fld1,
     Fldz,
     Fyl2xp1,
@@ -58,6 +59,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xdb, 0xe2) => Some(Operation::Fnclex),
             (0xdf, 0xe0) => Some(Operation::FnstswAx),
             (0xd9, 0xe0) => Some(Operation::Fchs),
+            (0xd9, 0xe5) => Some(Operation::Fxam),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xee) => Some(Operation::Fldz),
             (0xd9, 0xf9) => Some(Operation::Fyl2xp1),
@@ -197,6 +199,7 @@ mod tests {
     #[test]
     fn unsupported_is_not_silent_success() {
         assert_eq!(classify(0xd9,0xe0),Ok(Operation::Fchs));
+        assert_eq!(classify(0xd9,0xe5),Ok(Operation::Fxam));
         assert_eq!(classify(0xdd,0x3f),Ok(Operation::FnstswM16));
         for (op,modrm) in [(0xd9,0xe1),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
