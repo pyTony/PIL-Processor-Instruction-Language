@@ -977,7 +977,7 @@
       "wsl_user_comparison": {
         "reported_by": "user",
         "host": "linux/x86_64 under WSL",
-        "checkout": "/mnt/c/Users/admin/pil_proof",
+        "checkout": ".",
         "profile": "release",
         "iterations": 10000,
         "instructions_per_sample": 30003,

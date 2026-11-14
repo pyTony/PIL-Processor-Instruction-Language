@@ -1,3 +1,13 @@
+## Portable paths in every change
+
+Do not commit machine-specific host paths anywhere, including code, tests,
+scripts, examples, documentation, HTML, JSON and historical reports. Use relative
+paths, configuration, environment variables or paths resolved at runtime. Keep
+path-handling fixtures synthetic, without personal home or checkout directories.
+Before every commit/PR, review host-path examples and run
+`python tools/check_portable_paths.py --self-test`; repeat after edits. DOS guest
+paths and standard OS interfaces are separate from host checkout locations.
+
 # PILdos setup screen: pil --pildos — 14 November 2026
 
 Tony asked for a PILdos GUI configuration screen and launcher, in Rust (the

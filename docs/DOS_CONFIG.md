@@ -1,5 +1,10 @@
 # DOS environment configuration
 
+The Python-free Rust route is `pil --dos-text` (Windows:
+`.\target\release\pil.exe --dos-text`), or `PILdos.vbs --rust-text` /
+`sh PILdos.sh --rust-text`. It reads the same startup and drive configuration.
+See [Rust DOS console](DOS_CONSOLE.md) for options and redirected I/O behavior.
+
 ## Build once, start without parameters
 
 From the repository directory:
@@ -117,8 +122,8 @@ not expanded. DOS arguments must be printable ASCII and at most 125 characters.
 Relative host paths are based on the config file's directory, including the
 image part of `program`. A config at `profiles/home.conf` uses
 `../images/FD14LITE.img` to reach the repository's images folder. Absolute paths
-are accepted. Windows targets translate WSL paths such as `/mnt/c/Users/...`
-to `C:\Users\...`; use paths accessible to the host running the engine.
+are accepted. Windows targets can translate WSL drive-mount paths to their Windows
+equivalents; use paths accessible to the host running the engine.
 
 Images are **read-only**. Folders are **writable**: DOS file creation, changes,
 renames and deletion affect that host folder. Programs can save configuration

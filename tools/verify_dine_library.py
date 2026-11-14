@@ -8,6 +8,7 @@ No executable is built for any program. Checks output, exit status, command
 tails and the long-host-filename argument bridge (8.3 aliases).
 """
 import math
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -89,9 +90,13 @@ def run(lib: Path, cwd: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def main() -> None:
-    subprocess.run(["cargo", "build", "--release", "--locked", "--lib", "--features", "dine-library"],
-                   cwd=ROOT, check=True, timeout=900)
-    lib = library_path()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--library", type=Path, help="verify an already built shared library")
+    args = parser.parse_args()
+    if args.library is None:
+        subprocess.run(["cargo", "build", "--release", "--locked", "--lib", "--features", "dine-library"],
+                       cwd=ROOT, check=True, timeout=900)
+    lib = args.library.resolve() if args.library else library_path()
     assert lib.is_file(), lib
     with tempfile.TemporaryDirectory(prefix="verify-dine-") as temporary:
         root = Path(temporary)

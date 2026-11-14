@@ -325,7 +325,7 @@ fn pause(session:&super::session::Session,line:&str,front:&mut Front,rx:&mpsc::R
     loop{
         if front.closed(){return Ok(());}
         let mut events:Vec<Event>=rx.try_iter().collect();
-        front.poll(&mut events);
+        front.poll(&mut events)?;
         if events.iter().any(|e|matches!(e,Event::Key(..)|Event::Quit)){return Ok(());}
         if events.is_empty(){
             if let Ok(event)=rx.recv_timeout(Duration::from_millis(30)){if matches!(event,Event::Key(..)|Event::Quit){return Ok(());}}
@@ -345,10 +345,10 @@ pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<Strin
         front.present_text(&cells,cursor)?;
         if front.closed(){return Ok("PILdos setup closed".into());}
         let mut events:Vec<Event>=rx.try_iter().collect();
-        front.poll(&mut events);
+        front.poll(&mut events)?;
         if events.is_empty(){
             if let Ok(event)=rx.recv_timeout(Duration::from_millis(30)){events.push(event);}
-            front.poll(&mut events);
+            front.poll(&mut events)?;
         }
         for event in events{
             let action=match event{

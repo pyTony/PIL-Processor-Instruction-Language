@@ -1,3 +1,14 @@
+## Portable paths in every change
+
+Do not commit machine-specific host paths anywhere, including source, tests,
+scripts, examples, documentation, HTML, JSON and historical reports. Use relative
+paths, configuration, environment variables or paths resolved at runtime. Keep
+path-handling fixtures synthetic and independent of any user's home or checkout.
+DOS guest paths and standard operating-system interfaces are separate from host
+checkout locations. Before every commit/PR, review host-path examples and run
+`python tools/check_portable_paths.py --self-test`. Repeat this check after edits;
+documentation and historical records are not exempt.
+
 ## PIL and Dine are program-independent libraries
 
 PIL and Dine are always program-independent libraries, used the same way

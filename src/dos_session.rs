@@ -53,6 +53,7 @@ impl Session{
     pub fn loaded(&self)->Option<&Loaded>{self.loaded.as_ref()}
     /// The machine, for a host console in this process.
     pub(crate) fn machine(&self)->Option<&Loaded>{self.loaded.as_ref()}
+    pub(crate) fn exit_code(&self)->Option<u8>{match self.stop{Stop::Exit(code)=>Some(code),_=>None}}
     pub(crate) fn machine_mut(&mut self)->Option<&mut Loaded>{self.loaded.as_mut()}
     pub(crate) fn steps(&self)->usize{self.steps}
     /// Record a stop in the stop log, as `--dos-session` does.

@@ -99,7 +99,7 @@ The 649 extra failures are SHLD/SHRD cases that now decode past their
 repeated prefixes and reach the known 16-bit count-above-16 refusal. The
 generated runner now embeds src/vga_planar.rs (it stopped building after
 the VGA planar change); 2,265 programs, 0 disagreements. Report:
-/mnt/project-files/pil_proof/sst80386-run-04.md (project files, not in git).
+sst80386-run-04.md (project files, not in git).
 Tony's own Windows run on the merged #107 gave the same 1,555,403 pass and 0
 generated-backend disagreements.
 
@@ -127,7 +127,7 @@ Result:
 - 94 HLT fetch faults, 100 monitor operations and 1 revoked case.
 
 The generated backend ran 2,274 programs with 0 disagreements. Report:
-/mnt/project-files/pil_proof/sst80386-run-05.md (project files, not in git).
+sst80386-run-05.md (project files, not in git).
 
 Run 06 (8 November 2026, local cloud session, same revision) adds:
 - Open-bus IN/OUT and INS/OUTS.
@@ -148,7 +148,7 @@ Result:
   - 14 others.
 
 The generated backend ran 2,306 programs with 0 disagreements. Report:
-/mnt/project-files/pil_proof/sst80386-run-06.md (project files, not in git).
+sst80386-run-06.md (project files, not in git).
 
 Run 07 (8 November 2026, local cloud session, same revision) adds:
 - Far pointers whose selector wraps to offset 0000h (LES/LDS/LSS/LFS/LGS,
@@ -165,7 +165,7 @@ Result:
   - 3 POPA/POPAD cases that write registers before their #SS.
 
 The generated backend ran 2,330 programs with 0 disagreements. Report:
-/mnt/project-files/pil_proof/sst80386-run-07.md (project files, not in git).
+sst80386-run-07.md (project files, not in git).
 
 ## Original plan: SingleStepTests CPU adapter
 

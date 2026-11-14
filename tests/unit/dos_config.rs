@@ -3,6 +3,8 @@ use super::*;
 fn parses_drives_country_and_rejects_ambiguous_entries(){
     let c=parse("# drives\n#@program=images/FD14LITE.img::COMMAND.COM\n#@args=/K D:\\AUTOEXEC.BAT\nC=images/FD14LITE.img\nd: = drive D\ncountry=358\nheadless=true\nrust_graphics=true\nmouse=true\nfpu=80387\nshell=true\nengine=target/release/pil.exe\n",Path::new("base")).unwrap();
     assert_eq!(c.country,Some(358));
+    assert_eq!(c.mouse,Some(true));
+    assert_eq!(c.fpu,Some(true));
     assert_eq!(c.program,Some(format!("{}::COMMAND.COM",Path::new("base").join("images/FD14LITE.img").display())));
     assert_eq!(c.args.as_deref(),Some("/K D:\\AUTOEXEC.BAT"));
     assert_eq!(c.drives,vec![(b'C',PathBuf::from("base/images/FD14LITE.img")),(b'D',PathBuf::from("base/drive D"))]);
@@ -36,7 +38,7 @@ fn config_mounts_selects_c_and_updates_the_startup_environment(){
 #[cfg(windows)]
 #[test]
 fn wsl_paths_convert_for_windows_targets(){
-    assert_eq!(host_path("/mnt/c/Users/admin/drive D"),PathBuf::from(r"C:\Users\admin\drive D"));
+    assert_eq!(host_path("/mnt/c/fixtures/drive D"),PathBuf::from(r"C:\fixtures\drive D"));
 }
 #[test]
 fn console_settings_and_offsets_follow_the_frontend_rules(){

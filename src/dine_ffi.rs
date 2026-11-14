@@ -6,7 +6,6 @@
 //! step, embeds a guest program. tools/verify_dine_library.py calls it with
 //! ctypes.
 use std::ffi::{c_char, CStr};
-use std::io::{self, Write};
 
 /// Convert a host command line to the legacy 8.3 DOS view.
 /// File operands are resolved against the current host working directory,
@@ -50,47 +49,9 @@ fn interpreted(guest: &[u8], name: &str, tail: &str) -> Result<i32, String> {
         guest, name, vec![crate::dos::Source::Host(cwd)], None)?;
     let translated=dos_tail(&loaded,tail)?;
     crate::dos::set_command_tail(&mut loaded,&translated)?;
-    let mut display = crate::dine_display::Display::new();
-    let mut last_video = std::time::Instant::now() - std::time::Duration::from_millis(100);
-    loop {
-        let mut output = crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
-        // Every guest instruction goes through the shared interpreter.
-        let result = crate::dos::run_with_output(
-            loaded, 150_000, &mut output
-        )?;
-        let text = crate::dos_encoding::decode(&output.into_bytes());
-        if !text.is_empty() {
-            print!("{text}");
-            io::stdout().flush().map_err(|e|e.to_string())?;
-        }
-        let waiting = matches!(&result.stop, crate::dos::Stop::WaitingForInput);
-        if waiting || last_video.elapsed() >= std::time::Duration::from_millis(80) {
-            display.update(&result.loaded, waiting);
-            last_video = std::time::Instant::now();
-        }
-        loaded = result.loaded;
-        match result.stop {
-            crate::dos::Stop::Exit(code) => return Ok(i32::from(code)),
-            crate::dos::Stop::Budget => continue,
-            crate::dos::Stop::WaitingForInput => {
-                // The DOS machine blocks on its BIOS keyboard queue. Keep the
-                // host input separate from guest RAM and do not synthesize
-                // input before the guest has actually requested it.
-                eprint!("Press Enter to send a DOS key: ");
-                io::stderr().flush().map_err(|e|e.to_string())?;
-                let mut line = String::new();
-                if io::stdin().read_line(&mut line).map_err(|e|e.to_string())? == 0 {
-                    return Err("DOS guest is waiting for a key, but stdin reached EOF".into());
-                }
-                // ASCII CR with the standard IBM PC BIOS Enter scan code 1Ch.
-                if !loaded.enqueue_key(0x1c0d)? {
-                    return Err("DOS BIOS keyboard queue is full".into());
-                }
-            }
-            stop => return Err(format!("DOS stopped: {stop:?} at {:04X}:{:04X}",
-                                       loaded.selectors[1], loaded.cpu.eip)),
-        }
-    }
+    let mut session = crate::dos::session::Session::new(loaded);
+    let options=crate::dos::host_console::Options{window:false,mouse:false,ansi:false,country:None,utc_offset:None};
+    crate::dos_text_io::run(&mut session,&options,false)
 }
 
 /// Stable ABI version for hosts. A change to the C contract increases it.

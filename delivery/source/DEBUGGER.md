@@ -300,8 +300,8 @@ It is not a JIT, a general binary translator, or a selectable native REPL engine
 
 ## Sharing a source folder between Windows 11 and WSL
 
-A folder such as C:\Users\name\pil_proof is accessible in WSL as
-/mnt/c/Users/name/pil_proof. Give Windows and WSL different build targets.
+Open the same project folder from Windows and WSL, using the location
+appropriate to each environment. Give them different build targets.
 
 PowerShell, in the project folder:
 
