@@ -19,6 +19,7 @@ pub enum Operation {
     Fchs,
     Fld1,
     Fldz,
+    Fyl2xp1,
     FldSt(u8),
     Fxch(u8),
     FstpSt(u8),
@@ -58,6 +59,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0xe0) => Some(Operation::Fchs),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xee) => Some(Operation::Fldz),
+            (0xd9, 0xf9) => Some(Operation::Fyl2xp1),
             (0xd9, 0xc0..=0xc7) => Some(Operation::FldSt(rm)),
             (0xd9, 0xc8..=0xcf) => Some(Operation::Fxch(rm)),
             (0xdd, 0xd8..=0xdf) => Some(Operation::FstpSt(rm)),
@@ -120,6 +122,7 @@ mod tests {
         assert_eq!(classify(0xdf,0xe0),Ok(Operation::FnstswAx));
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
+        assert_eq!(classify(0xd9,0xf9),Ok(Operation::Fyl2xp1));
         assert_eq!(classify(0xd9,0x26),Ok(Operation::Fldenv)); // FLDENV [disp16]
         assert_eq!(classify(0xd9,0x2f),Ok(Operation::Fldcw)); // FLDCW [BX]
         assert_eq!(classify(0xd9,0x36),Ok(Operation::Fnstenv)); // FNSTENV [disp16]

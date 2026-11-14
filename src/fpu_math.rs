@@ -196,6 +196,64 @@ pub fn compare(a: Extended80, b: Extended80) -> Result<Ordering, MathError> {
     Ok(if negative_a { mag.reverse() } else { mag })
 }
 
+fn int_to_ext80(value: i32) -> Extended80 {
+    if value == 0 { return Extended80::default(); }
+    let mag = value.unsigned_abs();
+    let shift = mag.leading_zeros();
+    let sig = u64::from(mag) << (shift + 32);
+    let exp = (0x3fff + 31 - shift as i32) as u16 | if value < 0 { 0x8000 } else { 0 };
+    Extended80::from_bits(sig, exp)
+}
+
+/// Compute `y * log2(1 + x)` for FYL2XP1 using pure integer x87 arithmetic.
+pub fn fyl2xp1(y: Extended80, x: Extended80, control: u16) -> Result<Computed, MathError> {
+    if (control & 0x0c00) != 0 || (control & 0x0300) != 0x0300 {
+        return Err(MathError::Unsupported);
+    }
+    let (y_neg, _, y_sig) = split(y)?;
+    let (x_neg, _, x_sig) = split(x)?;
+    if x_sig == 0 || y_sig == 0 {
+        return Ok(signed_zero(y_neg ^ x_neg));
+    }
+    const CW: u16 = 0x037f;
+    let one = Extended80::from_bits(1u64 << 63, 0x3fff);
+    let two = Extended80::from_bits(1u64 << 63, 0x4000);
+    let one_plus_x = calculate(Arithmetic::Add, one, x, CW)?.value;
+    let (neg, exp, sig) = split(one_plus_x)?;
+    if neg || sig == 0 {
+        return Err(MathError::Unsupported);
+    }
+    let mut k = exp - 0x3fff;
+    let mut m_exp = 0x3fffu16;
+    if sig >= 0xb504_f333_f9de_6484 {
+        m_exp = 0x3ffe;
+        k += 1;
+    }
+    let m = Extended80::from_bits(sig, m_exp);
+    let t = calculate(Arithmetic::Subtract, m, one, CW)?.value;
+    let denom = calculate(Arithmetic::Add, two, t, CW)?.value;
+    let u = calculate(Arithmetic::Divide, t, denom, CW)?.value;
+    let u2 = calculate(Arithmetic::Multiply, u, u, CW)?.value;
+    let mut term = u;
+    let mut acc = u;
+    for n in 1..=14i32 {
+        term = calculate(Arithmetic::Multiply, term, u2, CW)?.value;
+        let part = calculate(Arithmetic::Divide, term, int_to_ext80(2 * n + 1), CW)?.value;
+        acc = calculate(Arithmetic::Add, acc, part, CW)?.value;
+    }
+    let ln_m = calculate(Arithmetic::Multiply, two, acc, CW)?.value;
+    let log2_e = Extended80::from_bits(0xb8aa_3b29_5c17_f0bc, 0x3fff);
+    let log2_m = calculate(Arithmetic::Multiply, ln_m, log2_e, CW)?.value;
+    let log2_1px = if k == 0 {
+        log2_m
+    } else {
+        calculate(Arithmetic::Add, int_to_ext80(k), log2_m, CW)?.value
+    };
+    let mut result = calculate(Arithmetic::Multiply, y, log2_1px, control)?;
+    result.inexact = true;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

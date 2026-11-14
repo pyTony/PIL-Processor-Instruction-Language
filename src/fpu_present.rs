@@ -61,6 +61,23 @@ impl PresentFpu {
             },
             Operation::Fld1 => self.state.push(one),
             Operation::Fldz => self.state.push(Extended80::default()),
+            Operation::Fyl2xp1 => {
+                let (Some(x), Some(y)) = (self.state.st(0), self.state.st(1)) else {
+                    return Outcome::StackFault(StackError::Underflow);
+                };
+                let Ok(computed) = math::fyl2xp1(y, x, self.state.control) else {
+                    return Outcome::Unsupported;
+                };
+                if computed.inexact && self.state.control & 0x0020 == 0 {
+                    return Outcome::Unsupported;
+                }
+                self.state.store(1, computed.value);
+                self.state.pop().expect("checked FYL2XP1 ST(0)");
+                self.state.status &= !0x0200;
+                if computed.rounded_up { self.state.status |= 0x0200; }
+                if computed.inexact { self.state.status |= 0x0020; }
+                return Outcome::Completed;
+            },
             Operation::FldSt(i) => self.state.st(usize::from(i))
                 .ok_or(StackError::Underflow)
                 .and_then(|value| self.state.push(value)),
