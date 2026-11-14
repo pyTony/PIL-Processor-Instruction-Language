@@ -42,10 +42,11 @@ pub fn from_f32_bits(bits:u32)->Result<Extended80,ConversionError>{
 pub fn from_f64_bits(bits:u64)->Result<Extended80,ConversionError>{
     widen(bits,52,11,1023)
 }
-pub fn from_i32(value:i32)->Extended80{
+pub fn from_i32(value:i32)->Extended80{from_i64(i64::from(value))}
+pub fn from_i64(value:i64)->Extended80{
     if value==0{return Extended80::default();}
     let negative=value<0;
-    let mag=u64::from(value.unsigned_abs());
+    let mag=value.unsigned_abs();
     let lz=mag.leading_zeros() as u16;
     let significand=mag<<lz;
     let exp=16383+(63-lz);

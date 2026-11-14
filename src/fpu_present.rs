@@ -104,7 +104,7 @@ impl PresentFpu {
             Operation::FldM32 | Operation::FstpM32 |
             Operation::FldM64 | Operation::FstpM64 |
             Operation::FldM80 | Operation::FstpM80 |
-            Operation::FildM16 | Operation::FildM32 =>
+            Operation::FildM16 | Operation::FildM32 | Operation::FildM64 =>
                 return self.execute_memory(operation,instruction,cpu,ram,image),
         };
         match result {
@@ -360,7 +360,7 @@ impl PresentFpu {
         let bytes: u32=match operation {
             Operation::FildM16=>2,
             Operation::FldM32|Operation::FstpM32|Operation::FildM32=>4,
-            Operation::FldM64|Operation::FstpM64=>8,
+            Operation::FldM64|Operation::FstpM64|Operation::FildM64=>8,
             Operation::FldM80|Operation::FstpM80=>10,
             _=>return Outcome::Unsupported,
         };
@@ -431,7 +431,12 @@ impl PresentFpu {
                 let Ok(upper)=ram.load(high,MemWidth::Dword) else {
                     return Outcome::MemoryFault;
                 };
-                convert::from_f64_bits(u64::from(low)|(u64::from(upper)<<32))
+                let bits = u64::from(low)|(u64::from(upper)<<32);
+                if matches!(operation,Operation::FildM64) {
+                    Ok(convert::from_i64(bits as i64))
+                } else {
+                    convert::from_f64_bits(bits)
+                }
             };
             return match converted {
                 Ok(value)=>match self.state.push(value){
