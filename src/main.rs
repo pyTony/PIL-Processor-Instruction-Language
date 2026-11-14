@@ -1,7 +1,3 @@
-// Reusing the CLI crate root as a cdylib intentionally leaves CLI-only
-// functions unreachable. Suppress that library-only dead-code noise, while
-// retaining normal lint warnings in the pil executable build.
-#![cfg_attr(feature = "dine-library", allow(dead_code))]
 //! PIL proof: text -> validated typed tokens -> register/flag interpreter.
 //! Token interpreter, small 386 decoder and Rust-source emitter; no external crates.
 use std::collections::HashMap;
@@ -20,6 +16,8 @@ mod guest;
 mod dos;
 #[cfg(feature = "dine-library")]
 mod dine_ffi;
+// Win32 window presentation for --dos-session (DINE_VIDEO=window).
+#[cfg(windows)]
 mod dine_display;
 // Window code is Windows-only inside; the layout helpers are tested everywhere.
 mod dine_window;
@@ -2466,7 +2464,11 @@ Options (before COMMAND):
 
 For a DOS window use: python tools/dos_terminal.py --help
 ";
-fn main() -> R<()> {
+// `pub` so that the dine library target, built from this same file, treats
+// main and everything it reaches as used. Without it rustc reported every
+// CLI-only item as dead code in the library (about 280 warnings on Linux and
+// 430 on Windows) although the pil executable uses them.
+pub fn main() -> R<()> {
     let mut dos_args:Vec<_>=std::env::args().collect();
     if dos_args.get(1).map(String::as_str)==Some("--pildos-startup"){
         if dos_args.len()>3{return Err("usage: pil --pildos-startup [CONFIG]".into());}

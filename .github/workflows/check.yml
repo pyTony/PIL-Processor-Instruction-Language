@@ -62,7 +62,9 @@ jobs:
         shell: pwsh
         run: ./tools/debug.ps1 -Check
       - run: python tools/export_runtime.py target/runtime-source --verify
-      - run: cargo build --release --locked
+      # The release build (pil and the dine library target) stays free of rustc warnings.
+      - run: python tools/check_build_warnings.py
+      - run: python tools/check_build_warnings.py build --release --locked --lib --features dine-library
       - run: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check
       - run: python tools/verify_dine_library.py
       - if: runner.os == 'Windows'
