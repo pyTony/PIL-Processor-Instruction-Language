@@ -19,6 +19,8 @@ pub enum Operation {
     Fchs,
     Fxam,
     Frndint,
+    Fsin,
+    Fcos,
     Fld1,
     Fldz,
     Fyl2xp1,
@@ -64,6 +66,8 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0xe0) => Some(Operation::Fchs),
             (0xd9, 0xe5) => Some(Operation::Fxam),
             (0xd9, 0xfc) => Some(Operation::Frndint),
+            (0xd9, 0xfe) => Some(Operation::Fsin),
+            (0xd9, 0xff) => Some(Operation::Fcos),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xee) => Some(Operation::Fldz),
             (0xd9, 0xf9) => Some(Operation::Fyl2xp1),
@@ -207,6 +211,8 @@ mod tests {
         assert_eq!(classify(0xd9,0xe0),Ok(Operation::Fchs));
         assert_eq!(classify(0xd9,0xe5),Ok(Operation::Fxam));
         assert_eq!(classify(0xd9,0xfc),Ok(Operation::Frndint));
+        assert_eq!(classify(0xd9,0xfe),Ok(Operation::Fsin));
+        assert_eq!(classify(0xd9,0xff),Ok(Operation::Fcos));
         assert_eq!(classify(0xdd,0x3f),Ok(Operation::FnstswM16));
         for (op,modrm) in [(0xd9,0xe1),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));

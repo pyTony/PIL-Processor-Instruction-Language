@@ -59,6 +59,22 @@ impl PresentFpu {
                 self.state.status &= !0x0200;
                 return Outcome::Completed;
             },
+            Operation::Fsin | Operation::Fcos => {
+                let Some(x) = self.state.st(0) else {
+                    return Outcome::StackFault(StackError::Underflow);
+                };
+                let Ok(computed) = math::sin_cos(x, matches!(operation, Operation::Fcos), self.state.control) else {
+                    return Outcome::Unsupported;
+                };
+                if computed.inexact && self.state.control & 0x0020 == 0 {
+                    return Outcome::Unsupported;
+                }
+                self.state.store(0, computed.value);
+                self.state.status &= !0x0600;
+                if computed.rounded_up { self.state.status |= 0x0200; }
+                if computed.inexact { self.state.status |= 0x0020; }
+                return Outcome::Completed;
+            },
             Operation::Frndint => {
                 let Some(x) = self.state.st(0) else {
                     return Outcome::StackFault(StackError::Underflow);

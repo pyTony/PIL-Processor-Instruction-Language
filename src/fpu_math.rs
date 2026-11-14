@@ -325,6 +325,68 @@ pub fn frndint(x: Extended80, control: u16) -> Result<Computed, MathError> {
     })
 }
 
+/// Compute `sin(x)` (`cos == false`) or `cos(x)` (`cos == true`) in pure integer x87 arithmetic.
+pub fn sin_cos(x: Extended80, cos: bool, control: u16) -> Result<Computed, MathError> {
+    if (control & 0x0c00) != 0 || (control & 0x0300) == 0x0100 {
+        return Err(MathError::Unsupported);
+    }
+    let (negative, exp, sig) = split(x)?;
+    let one = Extended80::from_bits(1u64 << 63, 0x3fff);
+    if exp == 0 && sig == 0 {
+        return Ok(if cos { exact(one) } else { signed_zero(negative) });
+    }
+    if exp - 16383 >= 62 {
+        return Err(MathError::Unsupported);
+    }
+    const CW: u16 = 0x037f;
+    let two_over_pi = Extended80::from_bits(0xa2f9_836e_4e44_152a, 0x3ffe);
+    let pi_half = Extended80::from_bits(0xc90f_daa2_2168_c235, 0x3fff);
+    let scaled = calculate(Arithmetic::Multiply, x, two_over_pi, CW)?.value;
+    let q_ext = frndint(scaled, CW)?.value;
+    let q = match split(q_ext)? {
+        (_, 0, 0) => 0i64,
+        (q_neg, q_exp, q_sig) => {
+            let mag = (q_sig >> (63 - (q_exp - 16383))) as i64;
+            if q_neg { -mag } else { mag }
+        }
+    };
+    let r = if q == 0 {
+        x
+    } else {
+        let q_pi_half = calculate(Arithmetic::Multiply, q_ext, pi_half, CW)?.value;
+        calculate(Arithmetic::Subtract, x, q_pi_half, CW)?.value
+    };
+    let r2 = calculate(Arithmetic::Multiply, r, r, CW)?.value;
+    let mut sin_term = r;
+    let mut sin_acc = r;
+    let mut cos_term = one;
+    let mut cos_acc = one;
+    for k in 1..=10i32 {
+        let c_div = calculate(Arithmetic::Multiply, int_to_ext80(2 * k - 1), int_to_ext80(2 * k), CW)?.value;
+        cos_term = calculate(Arithmetic::Divide, calculate(Arithmetic::Multiply, cos_term, r2, CW)?.value, c_div, CW)?.value;
+        cos_term.sign_exponent ^= 0x8000;
+        cos_acc = calculate(Arithmetic::Add, cos_acc, cos_term, CW)?.value;
+
+        let s_div = calculate(Arithmetic::Multiply, int_to_ext80(2 * k), int_to_ext80(2 * k + 1), CW)?.value;
+        sin_term = calculate(Arithmetic::Divide, calculate(Arithmetic::Multiply, sin_term, r2, CW)?.value, s_div, CW)?.value;
+        sin_term.sign_exponent ^= 0x8000;
+        sin_acc = calculate(Arithmetic::Add, sin_acc, sin_term, CW)?.value;
+    }
+    let quadrant = q.rem_euclid(4);
+    let (mut val, negate) = match (cos, quadrant) {
+        (false, 0) | (true, 3) => (sin_acc, false),
+        (false, 1) | (true, 0) => (cos_acc, false),
+        (false, 2) | (true, 1) => (sin_acc, true),
+        _ => (cos_acc, true),
+    };
+    if negate && val.significand != 0 {
+        val.sign_exponent ^= 0x8000;
+    }
+    let mut result = calculate(Arithmetic::Multiply, val, one, control)?;
+    result.inexact = true;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
