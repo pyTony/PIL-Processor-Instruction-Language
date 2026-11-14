@@ -198,7 +198,11 @@ fn rom(ram:&mut Ram)->Result<(),String>{
     let font=console::graphics_text::font()?;let upper=console::graphics_text::UPPER_FONT;
     ram.write_bytes(console::graphics_text::FONT,&font[..1024]).map_err(|e|format!("ROM font: {e:?}"))?;
     ram.write_bytes((upper>>16)*16+(upper&0xffff),&font[1024..]).map_err(|e|format!("ROM upper font: {e:?}"))?;
+    ram.write_bytes(vga_text::linear(vga_text::ROM_FONT14),&vga_text::font14()?).map_err(|e|format!("ROM 8x14 font: {e:?}"))?;
+    ram.write_bytes(vga_text::linear(vga_text::ROM_FONT16),&vga_text::font()?).map_err(|e|format!("ROM 8x16 font: {e:?}"))?;
     vectors::install(ram)?;
+    // INT 43h starts at the 8x8 graphics font, as after an EGA/VGA BIOS POST.
+    ram.store(0x43*4,MemWidth::Dword,0xf000_0000|(console::graphics_text::FONT&0xffff)).map_err(|e|format!("INT 43h vector: {e:?}"))?;
     ram.store(0x1f*4,MemWidth::Dword,upper).map_err(|e|format!("INT 1Fh vector: {e:?}"))?;
     ram.protect(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
 }

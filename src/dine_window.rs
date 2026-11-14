@@ -17,11 +17,11 @@ pub(crate) struct Frame {
 pub(crate) enum Input{
     Char{ch:char,shift:bool,ctrl:bool,alt:bool},
     Key{vk:u16,shift:bool,ctrl:bool,alt:bool},
-    Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16},
+    Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16,shift:bool},
 }
 
 #[cfg(windows)]
-pub(crate) use self::windows::Window;
+pub(crate) use self::windows::{Window,set_clipboard,clipboard};
 
 /// Where a `frame_w` x `frame_h` picture goes in a client area, centred
 /// (x, y, width, height): the largest whole-number enlargement that fits, so
@@ -165,6 +165,11 @@ mod windows {
     extern "system" {
         fn GetModuleHandleW(name:*const u16)->Handle;
         fn GetLastError()->u32;
+        fn GlobalAlloc(flags:u32,bytes:usize)->Handle;
+        fn GlobalLock(memory:Handle)->*mut c_void;
+        fn GlobalUnlock(memory:Handle)->i32;
+        fn GlobalFree(memory:Handle)->Handle;
+        fn GlobalSize(memory:Handle)->usize;
     }
     #[link(name="user32")]
     extern "system" {
@@ -193,6 +198,62 @@ mod windows {
         fn SetCursor(cursor:Handle)->Handle;
         fn AdjustWindowRectEx(area:*mut Rect,style:u32,menu:i32,ex:u32)->i32;
         fn SystemParametersInfoW(action:u32,param:u32,data:*mut c_void,ini:u32)->i32;
+        fn OpenClipboard(owner:Handle)->i32;
+        fn CloseClipboard()->i32;
+        fn EmptyClipboard()->i32;
+        fn SetClipboardData(format:u32,memory:Handle)->Handle;
+        fn GetClipboardData(format:u32)->Handle;
+        fn SetCapture(window:Handle)->Handle;
+        fn ReleaseCapture()->i32;
+    }
+    const CF_UNICODETEXT:u32=13;
+    const GMEM_MOVEABLE:u32=0x0002;
+
+    /// Put `text` on the Windows clipboard, owned by the window. Returns
+    /// whether it got there.
+    pub(crate) fn set_clipboard(text:&str)->bool{
+        let wide:Vec<u16>=text.encode_utf16().chain(std::iter::once(0)).collect();
+        let hwnd=WINDOW.load(Ordering::Acquire);
+        if hwnd==0{return false;}
+        unsafe{
+            if OpenClipboard(hwnd as Handle)==0{return false;}
+            let mut done=false;
+            if EmptyClipboard()!=0{
+                let memory=GlobalAlloc(GMEM_MOVEABLE,wide.len()*2);
+                if !memory.is_null(){
+                    let at=GlobalLock(memory).cast::<u16>();
+                    if at.is_null(){GlobalFree(memory);}else{
+                        ptr::copy_nonoverlapping(wide.as_ptr(),at,wide.len());
+                        GlobalUnlock(memory);
+                        // The clipboard owns the memory once this succeeds.
+                        if SetClipboardData(CF_UNICODETEXT,memory).is_null(){GlobalFree(memory);}else{done=true;}
+                    }
+                }
+            }
+            CloseClipboard();
+            done
+        }
+    }
+    /// The text on the Windows clipboard, if there is any.
+    pub(crate) fn clipboard()->Option<String>{
+        let hwnd=WINDOW.load(Ordering::Acquire);
+        unsafe{
+            if OpenClipboard(hwnd as Handle)==0{return None;}
+            let memory=GetClipboardData(CF_UNICODETEXT);
+            let text=if memory.is_null(){None}else{
+                let at=GlobalLock(memory).cast::<u16>();
+                if at.is_null(){None}else{
+                    let units=GlobalSize(memory)/2;
+                    let slice=std::slice::from_raw_parts(at,units);
+                    let end=slice.iter().position(|&u|u==0).unwrap_or(units);
+                    let text=String::from_utf16_lossy(&slice[..end]);
+                    GlobalUnlock(memory);
+                    Some(text)
+                }
+            };
+            CloseClipboard();
+            text
+        }
     }
     #[link(name="gdi32")]
     extern "system" {
@@ -271,7 +332,13 @@ mod windows {
                 let y=i32::from((l>>16) as u16 as i16)-py;
                 // An interactive console window maps the pointer itself.
                 let buttons=(w&1) as u16|((w>>1)&1) as u16*2|((w>>4)&1) as u16*4;
-                if send(Input::Mouse{x,y,width:pw,height:ph,buttons}){return 0;}
+                // Keep the pointer while a button is down, so a drag that
+                // leaves the window still ends here.
+                if INPUT.get().is_some(){
+                    if matches!(msg,WM_LBUTTONDOWN|WM_RBUTTONDOWN|WM_MBUTTONDOWN){SetCapture(hwnd);}
+                    else if msg!=WM_MOUSEMOVE&&buttons==0{ReleaseCapture();}
+                }
+                if send(Input::Mouse{x,y,width:pw,height:ph,buttons,shift:w&4!=0}){return 0;}
                 if pw>0 && ph>0 {
                     let max_x=i32::from(MOUSE_MAX_X.load(Ordering::Relaxed));
                     let max_y=i32::from(MOUSE_MAX_Y.load(Ordering::Relaxed));

@@ -2551,7 +2551,7 @@ fn attribute_controller_flip_flop_and_palette_reach_the_display_colours(){
  let p=graphics_mode(0x0d);assert_eq!(p.vga.planar_rgb()[14],[0xff,0xff,0x55]);
 }
 #[test]
-fn vga_bios_identifies_itself_and_reports_its_8x8_font(){
+fn vga_bios_identifies_itself_and_reports_its_fonts(){
  let mut p=load(&[0xf4],"id.com").unwrap();
  int10(&mut p,0x1a00,0,0,0);assert_eq!((p.cpu.regs[0]&255,p.cpu.regs[3]&0xffff),(0x1a,0x0008));
  int10(&mut p,0x1200,0xff10,0,0);assert_eq!((p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff),(0x0003,0x0009));
@@ -2559,22 +2559,44 @@ fn vga_bios_identifies_itself_and_reports_its_8x8_font(){
  assert_eq!((p.ram.load(0x487,MemWidth::Byte).unwrap(),p.ram.load(0x489,MemWidth::Byte).unwrap()),(0x60,0x11));
  int10(&mut p,0x1130,0x0300,0,0);
  assert_eq!((p.selectors[SegmentRegister::Es.index()],p.cpu.regs[5]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&255),(0xf000,0xfa6e,16,24));
- p.cpu.regs[0]=0x1130;p.cpu.regs[3]=0x0600;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ // BH=02h/06h: the 8x14 and 8x16 fonts in the video BIOS area, as the
+ // vga_text module draws them; the 8x14 one is the 8x16 one without its
+ // top and bottom rows. BH=05h/07h (9-dot alternates) are not present.
+ let f16=crate::dos::vga_text::font().unwrap();
+ for(bh,height,offset)in [(0x0200u32,14usize,0x2000u32),(0x0600,16,0x3000)]{
+  int10(&mut p,0x1130,bh,0,0);
+  assert_eq!((p.selectors[SegmentRegister::Es.index()],p.cpu.regs[5]&0xffff),(0xc000,offset),"BH={bh:04X}h");
+  let at=0xc0000+offset as usize+usize::from(b'A')*height;
+  let want=if height==16{f16[65*16..66*16].to_vec()}else{f16[65*16+1..65*16+15].to_vec()};
+  assert_eq!(&p.ram.bytes()[at..at+height],&want[..]);
+ }
+ p.cpu.regs[0]=0x1130;p.cpu.regs[3]=0x0500;assert!(service(&mut p,0x10,&mut vec![]).is_err());
+ // INT 43h: the 8x8 font after start-up and in 200-line modes, 8x14 in
+ // mode 10h, 8x16 in mode 12h.
+ assert_eq!(p.ram.load(0x43*4,MemWidth::Dword).unwrap(),0xf000_fa6e);
+ for(mode,font)in [(0x0du32,0xf000_fa6eu32),(0x10,0xc000_2000),(0x12,0xc000_3000)]{
+  assert_eq!(graphics_mode(mode).ram.load(0x43*4,MemWidth::Dword).unwrap(),font,"mode {mode:02X}h");
+ }
  p.cpu.regs[0]=0x1100;assert!(service(&mut p,0x10,&mut vec![]).is_err());
  p.cpu.regs[0]=0x1a01;assert!(service(&mut p,0x10,&mut vec![]).is_err());
 }
 #[test]
 fn planar_text_uses_tall_cells_and_scrolls_them(){
+ // Mode 12h: 16-line cells drawn from the 8x16 font INT 43h points to.
+ let f16=crate::dos::vga_text::font().unwrap();
  let mut p=graphics_mode(0x12);p.ram.store(0x450,MemWidth::Word,0x0102).unwrap();
  int10(&mut p,0x0e41,0x000c,0,0);
- let g=glyph_rows(b'A');
- for r in 0..16u32{let at=(16+r)as usize*80+2;let want=g[(r/2)as usize];
+ for r in 0..16u32{let at=(16+r)as usize*80+2;let want=f16[0x41*16+r as usize];
   assert_eq!([0,1,2,3].map(|n|p.ram.planar().unwrap().peek(n,at)),[0,0,want,want],"row {r}");}
  p.ram.store(0x450,MemWidth::Word,0x0102).unwrap();int10(&mut p,0x0800,0,0,0);assert_eq!(p.cpu.regs[0]&255,u32::from(b'A'));
- // Mode 10h: 14-line cells; rows 0 and 7 once, the others twice.
+ // Mode 10h: 14-line cells from the 8x14 font, all 256 characters (FFh,
+ // GW-BASIC's graphics cursor, included) and read back by AH=08h.
  let mut p=graphics_mode(0x10);int10(&mut p,0x0e48,0x0001,0,0);
- let g=glyph_rows(b'H');let rows:Vec<u8>=(0..14).map(|r|p.ram.planar().unwrap().peek(0,r*80)).collect();
- assert_eq!(rows,vec![g[0],g[1],g[1],g[2],g[2],g[3],g[3],g[4],g[4],g[5],g[5],g[6],g[6],g[7]]);
+ let rows:Vec<u8>=(0..14).map(|r|p.ram.planar().unwrap().peek(0,r*80)).collect();
+ assert_eq!(rows,f16[0x48*16+1..0x48*16+15].to_vec());
+ int10(&mut p,0x0e82,0x0001,0,0);p.ram.store(0x450,MemWidth::Word,0x0001).unwrap();int10(&mut p,0x0800,0,0,0);assert_eq!(p.cpu.regs[0]&255,0x82);
+ // A program that clears INT 43h leaves no table: the call stops.
+ p.ram.store(0x43*4,MemWidth::Dword,0).unwrap();p.cpu.regs[0]=0x0e41;assert!(service(&mut p,0x10,&mut vec![]).is_err());
  // A line feed on the last of 30 rows moves everything up 16 lines.
  let mut p=graphics_mode(0x12);p.ram.planar_mut().unwrap().poke(1,20*80+5,0x81);p.ram.store(0x450,MemWidth::Word,0x1d00).unwrap();
  let writes=console::dos_screen(&p,b"\n").unwrap();for(at,w,v)in writes{p.ram.store(at,w,v).unwrap();}
@@ -3125,4 +3147,20 @@ fn command_tail_bounds_and_validation_are_atomic(){
     for text in [&"x".repeat(126),"bad\nline","🙂"]{assert!(command_tail(&mut ram,0,text).is_err());assert_eq!(ram,before);}
     ram.protect(0x82,1).unwrap();let before=ram.clone();
     assert!(command_tail(&mut ram,0,"abc").is_err());assert_eq!(ram,before);
+}
+#[test]
+fn graphics_screen_text_is_read_back_from_the_glyphs(){
+ // Mode 12h text from the 8x16 font, and a picture cell that matches no glyph.
+ let mut p=graphics_mode(0x12);int10(&mut p,0x0e48,0x000e,0,0);int10(&mut p,0x0e69,0x000e,0,0);
+ p.ram.planar_mut().unwrap().poke(0,16*80+5,0x5a);
+ let(columns,rows,text)=console::graphics_text::screen_text(&p).unwrap();
+ assert_eq!((columns,rows),(80,30));assert_eq!(&text[..3],b"Hi ");assert_eq!(text[85],b' ');
+ // Mode 13h: white text on a blue background reads back too.
+ let mut p=graphics_mode(0x13);
+ for y in 0..8u32{for x in 0..8u32{p.ram.store(0xa0000+y*320+x+8,MemWidth::Byte,1).unwrap();}}
+ p.ram.store(0x450,MemWidth::Word,0).unwrap();int10(&mut p,0x0e4f,0x000f,0,0);
+ let(_,_,text)=console::graphics_text::screen_text(&p).unwrap();assert_eq!(&text[..2],b"O ");
+ let glyph:Vec<u32>=(0..64).map(|i|p.ram.load(0xa0000+(i/8)*320+i%8,MemWidth::Byte).unwrap()).collect();
+ for y in 0..8u32{for x in 0..8u32{let v=if glyph[(y*8+x)as usize]!=0{15}else{1};p.ram.store(0xa0000+y*320+x+8,MemWidth::Byte,v).unwrap();}}
+ let(_,_,text)=console::graphics_text::screen_text(&p).unwrap();assert_eq!(&text[..2],b"OO");
 }

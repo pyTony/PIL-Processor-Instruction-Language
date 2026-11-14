@@ -41,7 +41,7 @@ pub(super) fn set_mode(p:&mut Loaded,mode:u32,keep:bool)->Result<(),String>{
     let page=match mode{0x0d=>0x2000,0x0e=>0x4000,0x10=>0x8000,_=>0xa000};
     let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,g.columns()),(0x44c,MemWidth::Word,page),
         (0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0),(0x463,MemWidth::Word,0x3d4),
-        (0x484,MemWidth::Byte,g.rows-1),(0x485,MemWidth::Word,g.cell)];
+        (0x484,MemWidth::Byte,g.rows-1),(0x485,MemWidth::Word,g.cell),(0x43*4,MemWidth::Dword,graphics_font(g.cell))];
     writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
     commit(p,&writes)?;
     let mut planar=Planar::new();
@@ -153,8 +153,14 @@ pub(super) fn palette(p:&mut Loaded)->Result<(),String>{
     }
     Ok(())
 }
-/// AX=1130h: font information. BH=0/1 return the INT 1Fh/43h vectors, BH=3
-/// the 8x8 ROM font (00h-7Fh) and BH=4 its upper half (80h-FFh); CX is the
+/// The INT 43h graphics font a mode set selects: 8x14 for 350-line modes,
+/// 8x16 for 480-line modes, else the 8x8 ROM font, as the EGA/VGA BIOS does.
+pub(super) fn graphics_font(cell:u32)->u32{
+    match cell{14=>super::vga_text::ROM_FONT14,16=>super::vga_text::ROM_FONT16,_=>0xf000_0000|(super::console::graphics_text::FONT&0xffff)}
+}
+/// AX=1130h: font information. BH=0/1 return the INT 1Fh/43h vectors, BH=2
+/// the 8x14 font, BH=3 the 8x8 ROM font (00h-7Fh), BH=4 its upper half
+/// (80h-FFh) and BH=6 the 8x16 font; CX is the
 /// current character height and DL the last text row. Font loading (other
 /// AL) is not modelled.
 pub(super) fn font(p:&mut Loaded)->Result<(),String>{
@@ -164,9 +170,11 @@ pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let bh=(p.cpu.regs[3]>>8)&255;
     let pointer=match bh{
         0|1=>p.ram.load(if bh==0{0x1f*4}else{0x43*4},MemWidth::Dword).map_err(|e|format!("{e:?}"))?,
+        2=>super::vga_text::ROM_FONT14,
         3=>0xf000_fa6e,
         4=>super::console::graphics_text::UPPER_FONT,
-        _=>return Err(format!("INT 10h AX=1130h BH={bh:02X}h: only the 8x8 ROM font is present")),
+        6=>super::vga_text::ROM_FONT16,
+        _=>return Err(format!("INT 10h AX=1130h BH={bh:02X}h: the 9-dot alternate tables are not present")),
     };
     let height=p.ram.load(0x485,MemWidth::Word).map_err(|e|format!("{e:?}"))?;
     let rows=p.ram.load(0x484,MemWidth::Byte).map_err(|e|format!("{e:?}"))?;

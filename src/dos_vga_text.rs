@@ -19,6 +19,21 @@ pub(crate) const CELL_HEIGHT:usize=16;
 pub(crate) const COLORS:[u32;16]=[0x000000,0x0000aa,0x00aa00,0x00aaaa,0xaa0000,0xaa00aa,0xaa5500,0xaaaaaa,
     0x555555,0x5555ff,0x55ff55,0x55ffff,0xff5555,0xff55ff,0xffff55,0xffffff];
 
+/// Far pointers to the 8x14 and 8x16 fonts in the video BIOS area. As on an
+/// EGA/VGA BIOS, INT 43h points at the one that matches a 350- or 480-line
+/// graphics mode, and AX=1130h BH=02h/06h returns them.
+pub(crate) const ROM_FONT14:u32=0xc000_2000;
+pub(crate) const ROM_FONT16:u32=0xc000_3000;
+/// Linear address of a real-mode far pointer.
+pub(crate) fn linear(pointer:u32)->u32{(pointer>>16)*16+(pointer&0xffff)}
+
+/// The 8x14 font, 14 bytes per character: the 8x16 font without its top and
+/// bottom rows, which no glyph that fits a cell uses (line and block
+/// characters run on through the cell either way).
+pub(crate) fn font14()->Result<Vec<u8>,String>{
+    Ok(font()?.chunks(CELL_HEIGHT).flat_map(|g|g[1..15].to_vec()).collect())
+}
+
 /// The 8x16 font, 16 bytes per character (bit 7 is the left column).
 pub(crate) fn font()->Result<Vec<u8>,String>{
     let mut lines=FONT_TEXT.lines().filter(|l|!l.starts_with(';'));

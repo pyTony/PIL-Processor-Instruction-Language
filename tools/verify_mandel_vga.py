@@ -6,8 +6,8 @@ graphics controller (write mode 2, bit mask, latch reads). The reference
 repeats its 4.12 fixed-point arithmetic in Python (escape when |zr| or |zi|
 reaches 2.0 or the squared magnitude passes 4.0, 30 iterations) and
 compares the four planes: colour 0 inside, otherwise 1 + iterations mod 15.
-The 30th text row must hold the caption in the 8x8 ROM font, each row shown
-twice in the 16-line cells, in colour 7. Any key must return to text mode.
+The 30th text row must hold the caption in the 8x16 font that INT 43h
+points to in mode 12h (src/dos_font8x16.txt), in colour 7. Any key must return to text mode.
 """
 from pathlib import Path
 import os
@@ -36,9 +36,9 @@ def colour(px, py):
 
 
 def font():
-    lines = [l for l in (root / 'src' / 'dos_font8x8.txt').read_text(encoding='utf-8').splitlines() if not l.startswith(';')]
-    return {int(lines[n * 9][:2], 16): [int(r.replace('#', '1').replace('.', '0'), 2) for r in lines[n * 9 + 1:n * 9 + 9]]
-            for n in range(128)}
+    lines = [l for l in (root / 'src' / 'dos_font8x16.txt').read_text(encoding='utf-8').splitlines() if not l.startswith(';')]
+    return {int(lines[n * 17][:2], 16): [int(r.replace('#', '1').replace('.', '0'), 2) for r in lines[n * 17 + 1:n * 17 + 17]]
+            for n in range(256)}
 
 
 session = Session(find_engine(str(engine)), root / 'programs' / 'dos' / 'MANDVGA.COM')
@@ -66,7 +66,7 @@ try:
     for col, ch in enumerate(CAPTION):
         for r in range(16):
             got = [pixel(col * 8 + b, 464 + r) for b in range(8)]
-            want = [7 if glyphs[ch][r // 2] & (0x80 >> b) else 0 for b in range(8)]
+            want = [7 if glyphs[ch][r] & (0x80 >> b) else 0 for b in range(8)]
             assert got == want, f'caption column {col} row {r}: {got} != {want}'
     assert reply['cursor'] == [29, len(CAPTION)], reply['cursor']
     session.send('key 13 28')

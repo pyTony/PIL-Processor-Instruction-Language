@@ -280,13 +280,13 @@ fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
         let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,cols),
             (0x44c,MemWidth::Word,0x4000),(0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0),
             (0x463,MemWidth::Word,0x3d4),(0x466,MemWidth::Byte,if mode==6{0x3f}else{0x30}),
-            (0x465,MemWidth::Byte,match mode{4=>0x2a,5=>0x2e,_=>0x1e})];
+            (0x465,MemWidth::Byte,match mode{4=>0x2a,5=>0x2e,_=>0x1e}),(0x43*4,MemWidth::Dword,super::planar::graphics_font(8))];
         writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
         if al&0x80==0{writes.extend((0..0x4000).map(|n|(VIDEO+n,MemWidth::Byte,0)));}
         commit(p,&writes)?;p.vga.set_cga_color(if mode==6{0x3f}else{0x30});return Ok(());
     }
     if al&0x7f==0x13{
-        let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x44c,MemWidth::Word,0xfa00),(0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0)];
+        let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x44c,MemWidth::Word,0xfa00),(0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0),(0x43*4,MemWidth::Dword,super::planar::graphics_font(8))];
         writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
         if al&0x80==0{writes.extend((0..64000).map(|n|(0xa0000+n,MemWidth::Byte,0)));}
         // Check before changing the MMIO mapping; clearing mode 13h must
