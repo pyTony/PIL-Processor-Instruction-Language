@@ -466,7 +466,6 @@ fn open(p:&mut Loaded)->Result<(),String>{
     let(data,drive,loc,stamp)=if own{
         // The program's own file opens by its name from any directory.
         if mode!=0{return Err("opening the program file for writing is not modelled".into());}
-        if p.drive.files.iter().any(|f|Arc::ptr_eq(&f.data,&p.own_file)){return Err("a second open of the program file is not modelled".into());}
         (p.own_file.clone(),p.drive.letter(),None,(0,0x21))
     }else{
         if raw.is_empty(){fail(p,3);return Ok(());}

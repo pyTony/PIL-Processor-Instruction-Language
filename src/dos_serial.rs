@@ -88,6 +88,24 @@ pub(super) fn write(p:&mut Loaded,bytes:&[u8])->Result<u32,String>{
     for &b in bytes{
         s.column=match b{13=>0,8=>s.column.saturating_sub(1),10|7=>s.column,9=>(s.column+8)&!7,_=>s.column+1};
     }
+    if matches!(files::system_file(p,1),Ok(Some(3))){
+        let page=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("BIOS active page read: {e:?}"))?&7;
+        let cols=(p.ram.load(0x44a,MemWidth::Word).map_err(|e|format!("BIOS columns read: {e:?}"))?as u8).max(1);
+        let max_row=(p.ram.load(0x484,MemWidth::Byte).map_err(|e|format!("BIOS rows read: {e:?}"))?as u8).max(24);
+        let pos=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor read: {e:?}"))?as u16;
+        let(mut col,mut row)=((pos&0xff)as u8,(pos>>8)as u8);
+        for &b in bytes{
+            match b{
+                13=>col=0,
+                10=>if row<max_row{row+=1;},
+                8=>col=col.saturating_sub(1),
+                7=>{},
+                9=>col=((col+8)&!7).min(cols-1),
+                _=>{col+=1;if col>=cols{col=0;if row<max_row{row+=1;}}},
+            }
+        }
+        p.ram.store(0x450+page*2,MemWidth::Word,(u32::from(row)<<8)|u32::from(col)).map_err(|e|format!("BIOS cursor write: {e:?}"))?;
+    }
     Ok(bytes.len()as u32)
 }
 /// DOS read from the AUX device: the bytes received so far, up to `wanted`;

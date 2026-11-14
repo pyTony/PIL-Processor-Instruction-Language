@@ -20,9 +20,9 @@ pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
     if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
     Err(format!("mount {path} is not a folder or .img/.ima image"))
 }
-pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,backend:Option<Box<dyn InstructionBackend>>}
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,native_video:bool,backend:Option<Box<dyn InstructionBackend>>}
 impl Session{
-    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,backend:None}}
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None}}
     /// Keep the executor for the whole session, including across frontend slices.
     #[allow(dead_code)]
     pub(crate) fn with_backend(loaded:Loaded,backend:Box<dyn InstructionBackend>)->Self{
@@ -122,8 +122,7 @@ impl Session{
             format!("\"instruction_bytes\":\"{}\",\"registers\":{:?},\"selectors\":{:?},\"eflags\":{},\"msw\":{}",bytes.iter().map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" "),p.cpu.regs,p.selectors,p.cpu.eflags,p.image.msw)
         }).unwrap_or_else(||"\"instruction_bytes\":\"\"".into());
         // Native graphics sample VRAM directly; preserve JSON frames for other clients.
-        let native_video=cfg!(windows)&&std::env::var("DINE_VIDEO").ok()
-            .is_some_and(|mode|matches!(mode.to_ascii_lowercase().as_str(),"window"|"desktop"));
+        let native_video=self.native_video;
         let native_graphics=native_video&&self.loaded.as_ref()
             .and_then(|p|p.ram.load(0x449,MemWidth::Byte).ok())
             .is_some_and(|mode|matches!(mode,4|5|6|0x0d|0x0e|0x10|0x12|0x13));
@@ -146,6 +145,7 @@ impl Session{
         let native_total=native+single;
         let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total}",mode_control&8!=0,mode_control&0x20!=0);
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
+        let com1_wait=matches!(self.stop,Stop::WaitingForInput)&&self.loaded.as_ref().is_some_and(services::stdin_aux);
         let view=self.loaded.as_ref().map(|p|p.mouse.view());
         let (present,active,visible,mx,my,max_x,max_y)=view.map_or((false,false,false,0,0,639,199),|v|(v.present,v.active,v.visible,v.x,v.y,v.max_x,v.max_y));
         // Text modes: the session already applied the text cursor masks.
@@ -155,7 +155,7 @@ impl Session{
         let shape=self.loaded.as_ref().and_then(|p|p.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
             format!(",\"mouse_hotspot\":[{hx},{hy}],\"mouse_shape\":\"{}\"",rows.iter().map(|w|format!("{:02x}{:02x}",w&0xff,w>>8)).collect::<String>()));
         let diagnostic=format!("{diagnostic},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
-        Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
+        Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"com1_wait\":{com1_wait},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
     /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
@@ -353,6 +353,8 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
         .filter(|mode|matches!(mode.to_ascii_lowercase().as_str(),"window"|"desktop"))
         .map(|_|crate::dine_display::Display::new());
     #[cfg(windows)]
+    {session.native_video=desktop.is_some();}
+    #[cfg(windows)]
     let mut last_video=std::time::Instant::now()-std::time::Duration::from_millis(40);
     #[cfg(windows)]
     let mut last_bda_mode:Option<u32>=None;
@@ -363,6 +365,21 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
     for(seq,line)in stdin.lock().lines().enumerate(){
         let line=line.map_err(|e|e.to_string())?;
+        #[cfg(windows)]
+        let mut native_mouse_dirty=false;
+        #[cfg(windows)]
+        if let Some(display)=desktop.as_ref(){
+            let events=display.drain_mouse_events();
+            if !events.is_empty(){
+                if let Some(p)=session.loaded.as_mut(){
+                    let mode=p.ram.load(0x449,MemWidth::Byte).unwrap_or(3) as u8;
+                    for (x,y,buttons) in events {
+                        p.mouse.host(x,y,buttons,mode);
+                    }
+                    native_mouse_dirty=p.mouse.view().visible;
+                }
+            }
+        }
         let(reply,quit)=if line.len()>MAX_LINE{(session.reply(seq as u64+1,false,"command line too long",&[])?,false)}else{session.command(seq as u64+1,&line)?};
         #[cfg(windows)]
         if let Some(p)=session.loaded.as_ref(){
@@ -377,7 +394,7 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
         #[cfg(windows)]
         let reply=if let Some(display)=desktop.as_mut(){
             let waiting=session.status().0=="waiting_input";
-            if waiting||last_video.elapsed()>=std::time::Duration::from_millis(33){
+            if waiting||native_mouse_dirty||last_video.elapsed()>=std::time::Duration::from_millis(33){
                 if let Some(p)=session.loaded.as_ref(){
                     display.update(p,waiting);
                     last_video=std::time::Instant::now();
