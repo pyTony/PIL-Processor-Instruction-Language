@@ -848,8 +848,11 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                         }
                     },
                     super::fpu::Outcome::Unsupported=>{
+                        let detail=p.fpu.state().map_or(String::new(),|s|format!(
+                            "; cw={:04x}; sw={:04x}; st0={:?}; st1={:?}",
+                            s.control,s.status,s.st(0),s.st(1)));
                         break Stop::Fault(format!(
-                            "80387 unsupported instruction; CS:IP={:04x}:{:08x}; bytes={}",
+                            "80387 unsupported instruction; CS:IP={:04x}:{:08x}; bytes={}{detail}",
                             p.selectors[1],p.cpu.eip,
                             instruction.bytes[..instruction.length as usize].iter()
                                 .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")));

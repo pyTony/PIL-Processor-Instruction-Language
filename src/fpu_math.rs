@@ -45,12 +45,31 @@ fn shift_jam(value: u128, shift: u32) -> u128 {
 }
 
 fn finish(negative: bool, mut exponent: i32, mut significand: u64,
-          inexact: bool, rounded_up: bool) -> Result<Computed, MathError> {
-    if rounded_up {
-        let (value, carry) = significand.overflowing_add(1);
-        significand = if carry { 1u64 << 63 } else { value };
-        if carry { exponent += 1; }
-    }
+          rem_nonzero: bool, rem_gt_half: bool, rem_eq_half: bool,
+          drop_bits: u32) -> Result<Computed, MathError> {
+    let (inexact, rounded_up) = if drop_bits == 0 {
+        let up = rem_gt_half || (rem_eq_half && (significand & 1 != 0));
+        if up {
+            let (value, carry) = significand.overflowing_add(1);
+            significand = if carry { 1u64 << 63 } else { value };
+            if carry { exponent += 1; }
+        }
+        (rem_nonzero, up)
+    } else {
+        let low_mask = (1u64 << drop_bits) - 1;
+        let low = significand & low_mask;
+        let half = 1u64 << (drop_bits - 1);
+        let sig_trunc = significand & !low_mask;
+        let inexact = low != 0 || rem_nonzero;
+        let up = low > half || (low == half && (rem_nonzero || ((sig_trunc >> drop_bits) & 1 != 0)));
+        significand = sig_trunc;
+        if up {
+            let (value, carry) = significand.overflowing_add(1u64 << drop_bits);
+            significand = if carry { 1u64 << 63 } else { value };
+            if carry { exponent += 1; }
+        }
+        (inexact, up)
+    };
     // Underflow/overflow and denormal handling require real x87 exception
     // semantics. Do not modify the destination for these cases.
     if !(1..0x7fff).contains(&exponent) {
@@ -69,8 +88,13 @@ fn finish(negative: bool, mut exponent: i32, mut significand: u64,
 /// committing either the destination or the x87 status word.
 pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
                  control: u16) -> Result<Computed, MathError> {
-    // PC=11 (64-bit) and RC=00 (nearest-even) only.
-    if control & 0x0f00 != 0x0300 { return Err(MathError::Unsupported); }
+    // PC=11 (64-bit), PC=10 (53-bit), PC=00 (24-bit), and RC=00 (nearest-even).
+    let drop_bits = match control & 0x0f00 {
+        0x0300 => 0,
+        0x0200 => 11,
+        0x0000 => 40,
+        _ => return Err(MathError::Unsupported),
+    };
     let (a, b, subtract, multiply, divide) = match operation {
         Arithmetic::Add => (a, b, false, false, false),
         Arithmetic::Multiply => (a, b, false, true, false),
@@ -105,10 +129,8 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
         let rem = numerator % u128::from(bv);
         debug_assert!((1u128 << 63..1u128 << 64).contains(&q));
         let doubled = rem * 2;
-        let rounded_up = doubled > u128::from(bv) ||
-            (doubled == u128::from(bv) && q & 1 != 0);
         return finish(asign ^ bsign, exponent, q as u64,
-                      rem != 0, rounded_up);
+                      rem != 0, doubled > u128::from(bv), doubled == u128::from(bv), drop_bits);
     }
     if multiply {
         let negative = asign ^ bsign;
@@ -119,10 +141,8 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
         let significand = (product >> shift) as u64;
         let discarded = product & ((1u128 << shift) - 1);
         let midpoint = 1u128 << (shift - 1);
-        let rounded_up = discarded > midpoint ||
-            (discarded == midpoint && significand & 1 != 0);
         return finish(negative, exponent, significand,
-                      discarded != 0, rounded_up);
+                      discarded != 0, discarded > midpoint, discarded == midpoint, drop_bits);
     }
 
     let bsign = bsign ^ subtract;
@@ -169,9 +189,7 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
     }
     let significand = (magnitude >> 3) as u64;
     let discarded = magnitude & 7;
-    let rounded_up = discarded > 4 ||
-        (discarded == 4 && significand & 1 != 0);
-    finish(negative, exponent, significand, discarded != 0, rounded_up)
+    finish(negative, exponent, significand, discarded != 0, discarded > 4, discarded == 4, drop_bits)
 }
 
 fn split_comparable(value: Extended80) -> Result<(bool, i32, u64), MathError> {
@@ -207,7 +225,7 @@ fn int_to_ext80(value: i32) -> Extended80 {
 
 /// Compute `y * log2(1 + x)` for FYL2XP1 using pure integer x87 arithmetic.
 pub fn fyl2xp1(y: Extended80, x: Extended80, control: u16) -> Result<Computed, MathError> {
-    if (control & 0x0c00) != 0 || (control & 0x0300) != 0x0300 {
+    if (control & 0x0c00) != 0 || (control & 0x0300) == 0x0100 {
         return Err(MathError::Unsupported);
     }
     let (y_neg, _, y_sig) = split(y)?;
@@ -359,8 +377,10 @@ mod tests {
 
     #[test]
     fn unsupported_cases_cannot_fabricate_results() {
-        assert_eq!(calculate(Arithmetic::Add, ONE, ONE, 0x027f),
-                   Err(MathError::Unsupported)); // 53-bit precision
+        assert_eq!(calculate(Arithmetic::Add, ONE, ONE, 0x017f),
+                   Err(MathError::Unsupported)); // reserved precision control PC=01
+        let third_53 = calculate(Arithmetic::Divide, ONE, Extended80::from_bits(3u64 << 62, 0x4000), 0x027f).unwrap();
+        assert_eq!(third_53.value.significand & ((1u64 << 11) - 1), 0);
         assert_eq!(calculate(Arithmetic::Add, ONE, ONE, 0x0b7f),
                    Err(MathError::Unsupported)); // directed rounding
         assert_eq!(calculate(Arithmetic::Add, ONE,

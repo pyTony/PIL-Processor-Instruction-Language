@@ -712,21 +712,21 @@ fn present_80387_fnstcw_uses_ss_default_for_bp_and_supports_override() {
 
 #[test]
 fn present_80387_fldcw_does_not_silently_enable_unsupported_arithmetic_mode() {
-    // Loading PC=10 is legal. Subsequent FADD still explicitly refuses
+    // Loading reserved PC=01 is legal. Subsequent FADD still explicitly refuses
     // unsupported precision-control modes rather than computing wrong data.
     let code=[0xd9,0x2f, 0xd9,0xe8, 0xd9,0xe8, 0xd8,0xc1, 0xcd,0x20];
     let mut p=dos::load(&code,"x87-control-precision.com").unwrap();
     p.fpu=Fpu::present();
     p.cpu.regs[3]=0x200;
     let base=p.image.segments[3].base;
-    p.ram.store(base+0x200,MemWidth::Word,0x027f).unwrap();
+    p.ram.store(base+0x200,MemWidth::Word,0x017f).unwrap();
     let stopped=dos::run(p,16).unwrap();
     assert!(matches!(stopped.stop,dos::Stop::Fault(ref s)
         if s.contains("80387 unsupported")),"{:?}",stopped.stop);
     assert_eq!(stopped.completed,3);
     assert_eq!(stopped.loaded.cpu.eip,0x106);
     let state=stopped.loaded.fpu.state().unwrap();
-    assert_eq!(state.control,0x027f);
+    assert_eq!(state.control,0x017f);
     assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
     assert_eq!(state.st(1),Some(Extended80::from_bits(1u64<<63,0x3fff)));
 }
