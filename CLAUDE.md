@@ -1,3 +1,13 @@
+# PILdos.vbs window was hidden — 14 November 2026
+
+Tony: `.\PILdos.vbs` on Windows showed nothing. The launcher starts
+`pil.exe --pildos` with WshShell.Run style 0 to hide the console, and
+Windows applies that STARTUPINFO show mode to a process's first
+ShowWindow call, so the Dine window was created hidden and pil.exe kept
+running invisibly. dine_window.rs now calls ShowWindow again when the
+window is still not visible (only the first call is replaced).
+Windows code type-checks for x86_64-pc-windows-gnu; not run on Windows.
+
 # Desktop launcher opens the Rust setup screen — 14 November 2026
 
 Tony asked that the desktop launcher use the new Rust PILdos screen.
