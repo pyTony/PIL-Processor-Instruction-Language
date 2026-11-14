@@ -174,7 +174,9 @@ through the attribute palette, colour plane enable, colour select and DAC.
 - AH=1Bh/1Ch and VBE return unchanged.
 
 `programs/dos/MANDVGA.COM` draws a mode 12h Mandelbrot through write mode 2
-and the bit mask; `tools/verify_mandel_vga.py` checks all four planes.
+and the bit mask, computing all 640x480 pixels (until 14 November 2026 it
+computed 320x240 points drawn as 2x2 blocks); `tools/verify_mandel_vga.py`
+checks all four planes.
 
 ## Text-mode font memory (plane 2) — 8 November 2026
 

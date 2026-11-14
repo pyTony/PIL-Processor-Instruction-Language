@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run programs/dos/MANDVGA.COM to its key wait and check every pixel.
 
-The program draws 320x240 points as 2x2 blocks in VGA mode 12h through the
-graphics controller (write mode 2, bit mask, latch reads). The reference
+The program computes all 640x480 pixels in VGA mode 12h and draws each through
+the graphics controller (write mode 2, bit mask, latch reads). The reference
 repeats its 4.12 fixed-point arithmetic in Python (escape when |zr| or |zi|
 reaches 2.0 or the squared magnitude passes 4.0, 30 iterations) and
 compares the four planes: colour 0 inside, otherwise 1 + iterations mod 15.
@@ -19,11 +19,11 @@ from dos_terminal import Session, find_engine
 root = Path(__file__).resolve().parents[1]
 engine = Path(os.environ.get('PIL_TEST_ENGINE', root / 'target' / 'release' / ('pil.exe' if sys.platform == 'win32' else 'pil')))
 CAPTION = b'VGA 640x480 Mandelbrot  any key=exit'
-STEP = 42
+STEP = 21
 
 
 def colour(px, py):
-    cx, cy = -9216 + STEP * px, -120 * STEP + STEP * py
+    cx, cy = -9216 + STEP * px, -240 * STEP + STEP * py
     zr = zi = 0
     for k in range(30):
         if not -8192 < zr < 8192 or not -8192 < zi < 8192:
@@ -43,7 +43,7 @@ def font():
 
 session = Session(find_engine(str(engine)), root / 'programs' / 'dos' / 'MANDVGA.COM')
 try:
-    for _ in range(120):
+    for _ in range(480):
         reply = session.send('run 1000000')
         if reply['status'] != 'running':
             break
@@ -57,10 +57,8 @@ try:
         return sum(((planes[n][y * 80 + x // 8] >> (7 - x % 8)) & 1) << n for n in range(4))
 
     wrong = []
-    for py in range(232):
-        row = [colour(px, py) for px in range(320)]
-        for y in (2 * py, 2 * py + 1):
-            wrong += [(x, y) for x in range(640) if pixel(x, y) != row[x // 2]]
+    for y in range(464):
+        wrong += [(x, y) for x in range(640) if pixel(x, y) != colour(x, y)]
     assert not wrong, f'{len(wrong)} pixels differ, first {wrong[:5]}'
     glyphs = font()
     for col, ch in enumerate(CAPTION):
