@@ -30,6 +30,65 @@ in tests/unit/task.rs). The generated-backend suite has 280 cases (2 new:
 debug_registers, pm_task_reset_tr). The benchmark itself (Tony's, local
 only) was not run here; test386 and SingleStepTests were not rerun.
 
+# DOS console in Rust: pil --dos-console — 13 November 2026
+
+Part 2 of #183. Tony chose "Rust window as the whole console" and asked
+that tty sessions keep full CLI editing. src/dos_host_console.rs runs a
+`--dos-session` Session in process (dos_session.rs `open` now builds it for
+both). Same options as --dos-session, plus --tty/--window, --mouse,
+--ansi, --country, --utc-offset (default: host time zone).
+- Keys become IBM AT BIOS words (Ctrl/Alt/Shift tables for F1-F12, arrows,
+  editing block, Tab/Enter/Backspace; CP437 and Nordic scan codes) and go
+  through the BIOS ring or IRQ1, as session keys do. So the program's own
+  editing works: FreeCOM history and cursor keys (the COM1 route of #178
+  lost them).
+- --tty (default off Windows): raw terminal (stty on Unix; console modes
+  and ReadConsoleInputW with scan codes on Windows), alternate screen,
+  changed rows redrawn in ANSI 16 colours with IBM glyphs, BIOS cursor.
+  Ctrl+] quits. On Windows graphics open the window too.
+- --window (Windows default): dine_window.rs takes keys (WM_CHAR/
+  WM_SYSCHAR, WM_KEYDOWN for untyped keys, AltGr), mouse and focus;
+  text drawn with the 8x8 ROM font doubled to 8x16 and a blinking BIOS
+  cursor; graphics through desktop_vga_frame.
+- Not yet: speaker, drive menu, copy/paste, program fonts, blink attribute,
+  COM1 output. docs/DOS_CONSOLE.md.
+
+Local Linux release: 815 Rust tests pass, 2 ignored (7 new in
+tests/unit/host_console.rs, including an EXEC child's mode 12h frame for
+#177). FreeCOM from FD14LITE.img in a pseudo-terminal: Up recalls, Left and
+insert edit, MANDVGA from D: shows the graphics note, a key returns to the
+prompt, Ctrl+] quits. Windows code type-checks for x86_64-pc-windows-gnu;
+not run on Windows.
+
+# Precompiled instruction forms and run-time blocks — 13 November 2026
+
+Tony asked to integrate native Rust compiling into the shared libraries
+(tracking issue #183). Step 1-3 of docs/development/BLOCK_COMPILER.md; one
+`pil` binary and the `dine` library, the same for every program.
+- `pil --emit-precompiled-forms src/precompiled/forms.rs [--check]`
+  enumerates the real-mode decoder and writes one Rust function per PIL
+  form (2,669 forms, 13.5 MB, committed, `linguist-generated`). Immediates
+  that varied between enumerated decodes are run-time slots; the rest are
+  literals checked at lookup. CI fails when the file is stale: regenerate
+  it after any decoder, ISA or emitter change.
+- src/block_compiler/engine.rs: the DOS loop plans blocks (at most 16
+  straight-line PIL instructions; ends after control transfer, store,
+  context write, interrupt shadow, TF/IF/IOPL/NT/VM write) and runs one per
+  loop iteration with entry guards (segment state, fetch window, unchanged
+  bytes). Port I/O, 80387, INT, HLT and 0000h-0FFFh, A0000h+ never join.
+  Probe instruction mixes are unchanged.
+- `PIL_PRECOMPILED=off` interpreter only; `verify` native and interpreter
+  in lockstep (copies RAM each step, slow). Protected-mode and 32-bit-stack
+  forms are not in the table yet (interpreter).
+
+Local Linux release: 808 Rust tests pass, 2 ignored (5 new in
+tests/unit/precompiled.rs: >10,000 sampled forms against the interpreter
+on full state, blocks against the interpreter per slice on 4 fixtures and a
+self-modifying loop, lockstep verify). GUI tests 77 run, 6 skipped. Probe
+1M steps, whole process, reports identical: MANDEL 143 -> 71 ms, MANDCGA
+240 -> 58 ms; verify_mandel_vga.py 9.5 s -> 2.6 s. Release build about
+1 m 40 s here, binary 8.5 MB.
+
 # AT coprocessor ports F0h and F1h — 13 November 2026
 
 Tony's 80387 Mandelbrot in Turbo Pascal 7.0 ({$N+} {$E-}) stopped on

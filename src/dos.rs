@@ -41,6 +41,8 @@ mod console;
 mod color_text;
 #[path="dos_session.rs"]
 pub mod session;
+#[path="dos_host_console.rs"]
+pub(crate) mod host_console;
 #[path="dos_files.rs"]
 mod files;
 #[path="dos_nls.rs"]
@@ -121,6 +123,8 @@ pub struct Loaded{
     /// Replaceable coprocessor state, preserved between session slices.
     pub fpu:super::fpu::Fpu,
     vga:vga::Vga,
+    /// Run-time blocks over the precompiled instruction forms.
+    pub(crate) blocks:crate::block_compiler::engine::Blocks,
 }
 impl Clone for Loaded{
     fn clone(&self)->Self{Self{
@@ -132,7 +136,7 @@ impl Clone for Loaded{
         own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),
+        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),
     }}
 }
 impl std::fmt::Debug for Loaded{
@@ -343,7 +347,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -659,6 +663,31 @@ pub(crate) trait InstructionBackend {
     fn block(&mut self,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
 }
+/// Run one decoded PIL instruction through its precompiled native form
+/// (src/precompiled). None: no form, or `PIL_PRECOMPILED=off`; the caller
+/// interprets. In verify mode the interpreter also runs on a copy of the
+/// state and any difference stops the session.
+fn precompiled_step(m:crate::precompiled::Mode,decoded:&super::guest::Decoded,p:&mut Loaded,machine:&mut super::address::SegmentState,lazy:&mut super::LazyFlags)->Option<Result<(),super::flow::ExecError>>{
+    use crate::precompiled::Mode;
+    if m==Mode::Off{return None;}
+    let native=decoded.native()?;
+    let Operation::Pil{program,dst,src,flow,address}=&decoded.operation else{return None};
+    lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+    let before=(m==Mode::Verify).then(||(p.cpu.clone(),p.ram.clone(),*machine));
+    let _span=crate::profile::span("precompiled_execute");
+    let cpu=&mut p.cpu;
+    let result=(native.form)(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,&mut p.ram,*address,machine,&native.consts);
+    if let Some((mut cpu,mut ram,mut reference))=before{
+        let mut none=super::LazyFlags::None;
+        let expected=super::execute_machine_lazy(program,&mut cpu,*dst,*src,*flow,&mut ram,*address,&mut reference,&mut none).map(|_|());
+        none.flush(&mut cpu.eflags,&mut cpu.undefined_flags);
+        if expected!=result||cpu!=p.cpu||reference!=*machine||ram!=p.ram{
+            panic!("precompiled form of {} disagrees with the interpreter at {:04x}:{:08x}: native {:?} {:?}, interpreter {:?} {:?}; machine equal {}, RAM equal {}",
+                decoded.label,p.selectors[1],cpu.eip,result,p.cpu,expected,cpu,reference==*machine,ram==p.ram);
+        }
+    }
+    Some(result)
+}
 pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,mut backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
     if !(1..=if p.rom_mode{MAX_ROM_STEPS}else{MAX_STEPS}).contains(&budget){return Err(if p.rom_mode{"ROM step budget must be 1..1000000000"}else{"DOS step budget must be 1..1000000"}.into());}
     let _profile_run=crate::profile::span("dos_run");
@@ -666,6 +695,8 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
     let mut exceptions=Vec::new();let mut exception_count=0;
     let mut lazy=super::LazyFlags::None;
 
+    let mode=p.blocks.mode.unwrap_or_else(crate::precompiled::mode);
+    let blocks_enabled=mode==crate::precompiled::Mode::On&&!p.rom_mode;
     let stop=loop{
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
@@ -877,6 +908,21 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             // The ordinary decoder retains ownership of malformed/non-x87 fetches.
             Ok(None)|Err(_)=>{},
         }
+        if backend.is_none()&&blocks_enabled{
+            let mut machine=p.image.segment_state();
+            if machine.ss_shadow==0&&machine.sti_shadow==0{
+                // Never step over a multiple of 256 steps: the timer check
+                // at the top of the loop runs there.
+                let block_budget=(budget-execution_steps).min(256-execution_steps%256);
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                if let Some((n,result))=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
+                    p.image.set_segment_state(machine);p.selectors=machine.selectors;
+                    execution_steps+=n;completed+=n;pil_steps+=n;
+                    if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
+                    if n>0{continue;}
+                }
+            }
+        }
         if let Some(b)=backend.as_deref_mut(){
             if b.may_block(&p.image,&p.ram,p.cpu.eip){
             // A clocked DOS session samples IRQ0 every 256 guest steps.
@@ -938,6 +984,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                         b.execute(&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
                     }else{None}
                 }else{None};
+                let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
                 let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|())}};
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
@@ -1000,6 +1047,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
 
     };
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+    p.blocks.report(&mut instructions);
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
     let file_offset=linear.and_then(|a|a.checked_sub(p.module_base)).filter(|n|(*n as usize)<p.module_bytes).map(|n|n as usize+p.header_bytes);
     Ok(Probe{exceptions,exception_count,loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})

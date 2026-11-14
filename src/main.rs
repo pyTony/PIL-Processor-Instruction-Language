@@ -24,6 +24,7 @@ mod dine_display;
 #[cfg(windows)]
 mod dine_window;
 mod block_compiler;
+mod precompiled;
 mod dos_encoding;
 mod rust_codegen;
 mod pil_opt;
@@ -2254,12 +2255,27 @@ fn emit_rust_support() -> String {
 }
 // Shared support types can be supplied by a compiled guest runner instead of
 // duplicated in each generated instruction module.
-fn emit_rust_functions(p:&Program)->String {
-    let mut out=String::new();
+const MACHINE_WRAPPER:&str=r#"pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
+let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};
+if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
+ram.set_paging(machine.ram_paging());
+let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
+ram.set_paging(machine.ram_paging());
+if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
+result
+}
+"#;
+fn emit_rust_functions(p:&Program)->String {emit_rust_body(p,None)}
+/// One precompiled form (src/precompiled): `slots[n]` is the n-th `const`
+/// of the program; `Some` keeps a literal, `None` reads `k[n]` at run time.
+/// Only `execute_state` and the machine wrapper `execute_form` are emitted.
+fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {emit_rust_body(p,Some(slots))}
+fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
+    let mut out=String::new();let mut const_index=0usize;
     // A segment load may stage one more byte store: the descriptor's accessed bit.
     let stores=p.tokens.iter().filter(|t|matches!(t,Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)|Token::LoadSystem(..))).count().max(1);
     out.push_str(&format!(
-        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>, effective: Option<address::EffectiveAddress>) -> Result<(), ExecError> {{\n\
+        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>, effective: Option<address::EffectiveAddress>{}) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + {}u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
@@ -2277,7 +2293,7 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_dst: Option<u64> = None;\n\
          let mut pending_src: Option<u64> = None;\n\
          let mut pending_registers: Vec<(usize,u8,u64)> = Vec::new();\n",
-        p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
+        if slots.is_some(){", k: &[u64]"}else{""},p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
     let mut carry_skip=0;
     for (index,t) in p.tokens.iter().enumerate() {
         if carry_skip>0{carry_skip-=1;continue;}
@@ -2330,7 +2346,10 @@ fn emit_rust_functions(p:&Program)->String {
             Token::CheckSegment(reg,a,n)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
             Token::FarBranch(a,b)=>format!("{}if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;",emit_segment_load("1",a)),
             Token::BranchIf(a,c) => format!("if v{c} != 0 {{ if v{a} as u32 > context.code_limit {{ return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}}); }} pending_eip = v{a} as u32; }}"),
-            Token::Const(o,x) => format!("let v{o}: u64 = {}u64;",x.bits),
+            Token::Const(o,x) => {
+                let n=const_index;const_index+=1;
+                match slots{Some(slots)=>match slots.get(n).copied().flatten(){Some(v)=>format!("let v{o}: u64 = {v}u64;"),None=>format!("let v{o}: u64 = k[{n}];")},None=>format!("let v{o}: u64 = {}u64;",x.bits)}
+            },
             Token::PreserveFlags(m) => format!("// Preserve flag mask {m:#x}, including undefined status."),
             Token::UndefFlag(f) => format!("pending_flags &= !{}u32; pending_undefined |= {}u32;",1u32<<f.bit(),1u32<<f.bit()),
             Token::Select(o,c,a,b) => format!("let v{o}: u64 = if v{c} != 0 {{ v{a} }} else {{ v{b} }};"),
@@ -2371,21 +2390,19 @@ fn emit_rust_functions(p:&Program)->String {
         out.push_str(&line); out.push('\n');
     }
     out.push_str("}\n");
+    if slots.is_some(){
+        out.push_str(&MACHINE_WRAPPER.replace("CHECKPOINT",&p.checkpoint_flags.to_string())
+            .replace("pub fn execute_with_machine(","#[inline(never)] pub fn execute_form(")
+            .replace("machine:&mut address::SegmentState)->","machine:&mut address::SegmentState,k:&[u64])->")
+            .replace("address.map(|a|a.effective));","address.map(|a|a.effective),k);"));
+        return out;
+    }
     out.push_str("pub fn execute_with_flow(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext)->Result<(),ExecError>{\n");
     if p.uses_memory {out.push_str("Err(ExecError::InvalidContext)\n}\n");}
     else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,None,None)\n}\n");}
     out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None,None,None)\n}\n");
     out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective))\n}\n");
-    out.push_str(&r#"pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
-let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};
-if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
-ram.set_paging(machine.ram_paging());
-let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
-ram.set_paging(machine.ram_paging());
-if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
-result
-}
-"#.replace("CHECKPOINT",&p.checkpoint_flags.to_string()));
+    out.push_str(&MACHINE_WRAPPER.replace("CHECKPOINT",&p.checkpoint_flags.to_string()));
     out.push_str("pub fn execute_with_metadata(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,dst:(usize,u8),src:(usize,u8))->Result<(), &'static str> {\n");
     if p.uses_flow || p.uses_memory {out.push_str("Err(\"flow context required: use execute_with_flow\")\n");}
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
@@ -2398,6 +2415,11 @@ DOS and ROM:
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
+  --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] PROGRAM
+      DOS session with its own keyboard and screen: the host terminal
+      (--tty, default except on Windows) or a window (--window, Windows).
+      Ctrl+] in a terminal ends it. Same OPTIONS as --dos-session, plus
+      --country 1|358 and --utc-offset SECONDS (default: host time zone).
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
   --run-rom PATH [--steps N]          Run a 64 or 128 KiB ROM
   --dos-list [--all] IMAGE|ZIP        List container entries
@@ -2510,6 +2532,40 @@ fn main() -> R<()> {
         let[program]=rest else{return Err(usage.into())};
         return dos::session::serve(program,mount,tail,&stop_log,config,fpu).map_err(Into::into);
     }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-console"){
+        let usage="usage: pil --dos-console [--tty|--window] [--mouse] [--ansi] [--country 1|358] [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        let(mut mount,mut tail,mut config,mut fpu)=(None,None,None,None);
+        let mut options=dos::host_console::Options{window:cfg!(windows),mouse:false,ansi:false,country:None,utc_offset:None};
+        let mut rest=&dos_args[2..];
+        loop{
+            match rest{
+                [flag,more@..] if flag=="--tty"=>{options.window=false;rest=more;},
+                [flag,more@..] if flag=="--window"=>{options.window=true;rest=more;},
+                [flag,more@..] if flag=="--mouse"=>{options.mouse=true;rest=more;},
+                [flag,more@..] if flag=="--ansi"=>{options.ansi=true;rest=more;},
+                [flag,value,more@..] if more.len()>=1=>{
+                    match flag.as_str(){
+                        "--mount" if mount.is_none()=>mount=Some(value.as_str()),
+                        "--args" if tail.is_none()=>tail=Some(value.as_str()),
+                        "--config" if config.is_none()=>config=Some(value.as_str()),
+                        "--fpu" if fpu.is_none()&&matches!(value.as_str(),"none"|"80387")=>fpu=Some(value.as_str()),
+                        "--country"=>options.country=Some(value.parse().map_err(|_|usage)?),
+                        "--utc-offset"=>options.utc_offset=Some(value.parse().map_err(|_|usage)?),
+                        _=>return Err(usage.into()),
+                    }
+                    rest=more;
+                },
+                _=>break,
+            }
+        }
+        let[program]=rest else{return Err(usage.into())};
+        let mut session=dos::session::open(program,mount,tail,config,fpu)?;
+        let mut logger=dos::stoplog::Logger::new(&stop_log,program);
+        let result=dos::host_console::run(&mut session,&options);
+        session.log_stop(&mut logger);
+        println!("{}",result?);
+        return Ok(());
+    }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;
         if dos_args.get(at).map(String::as_str)==Some("--steps"){
@@ -2609,6 +2665,10 @@ fn main() -> R<()> {
         execute_flow(&jb,&mut cpu,dst,src,FlowContext{next_eip:0x106,displacement:-4,displacement_bits:8,code_limit:u32::MAX}).map_err(|e|format!("{e:?}"))?;
         println!("CMP 10,20; JB -4: EIP=0x{:08x} (expected 0x00000102)",cpu.eip);
         return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--emit-precompiled-forms") {
+        let (path,check)=match args.len(){3=>(args[2].as_str(),false),4 if args[3]=="--check"=>(args[2].as_str(),true),_=>return Err("usage: pil --emit-precompiled-forms PATH [--check]".into())};
+        println!("{}",precompiled::emit(path,check)?);return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("--emit-rust") {
         let w = args.get(2).ok_or("usage: pil --emit-rust 8|16|32 [description]")?;
