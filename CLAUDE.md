@@ -16,6 +16,15 @@ Local Linux, release: 852 Rust tests pass, 2 ignored (4 new: config
 parsing, setup field cycling, --host-pointer refusal; 1 render test
 updated). Windows code type-checks for x86_64-pc-windows-gnu; the window
 was not run on Windows.
+# PILdos.vbs window was hidden — 14 November 2026
+
+Tony: `.\PILdos.vbs` on Windows showed nothing. The launcher starts
+`pil.exe --pildos` with WshShell.Run style 0 to hide the console, and
+Windows applies that STARTUPINFO show mode to a process's first
+ShowWindow call, so the Dine window was created hidden and pil.exe kept
+running invisibly. dine_window.rs now calls ShowWindow again when the
+window is still not visible (only the first call is replaced).
+Windows code type-checks for x86_64-pc-windows-gnu; not run on Windows.
 
 # Graphics-text fonts, window copy/paste, AltGr in --tty — 14 November 2026
 
