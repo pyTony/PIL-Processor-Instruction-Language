@@ -46,6 +46,8 @@ pub struct Speaker{
     pub beeps:u64,
     pit:pit::Counter0,
     pit_clock:Option<(std::time::Instant,u64)>,
+    /// The PIT clock at the last guest access to ports 40h-43h or 61h.
+    pit_last_io:u64,
     /// Counter for video status register 1 (port 3DAh/3BAh): toggles horizontal
     /// blanking and cycles vertical retrace so snow-check and sync loops advance.
     retrace:u32,
@@ -67,6 +69,18 @@ impl Speaker{
             (std::time::Instant::now(),initial)
         });
         *initial+(start.elapsed().as_nanos()*u128::from(PIT_HZ)/1_000_000_000)as u64
+    }
+    /// The PIT clock for a guest port access. An AT bus I/O cycle takes about
+    /// a microsecond, longer than one PIT clock (838 ns), so no two accesses
+    /// see the same count: on a host clock this waits until the next PIT
+    /// clock after the previous access. It waits at most one PIT clock.
+    pub fn pit_io(&mut self,clock:Option<i64>)->u64{
+        let mut now=self.pit_now(clock);
+        if clock.is_some(){
+            while now<=self.pit_last_io{std::hint::spin_loop();now=self.pit_now(clock);}
+            self.pit_last_io=now;
+        }
+        now
     }
     pub fn pit_interrupts(&mut self,clock:Option<i64>)->u64{let now=self.pit_now(clock);self.pit.interrupts(now)}
     /// The tone the speaker plays now in Hz, or 0 when it is off.
@@ -209,8 +223,8 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 let hblank=vblank||(s.retrace&1)!=0;
                 (if hblank{1}else{0})|(if vblank{8}else{0})
             },
-            0x40=>{let now=s.pit_now(p.clock_offset);s.pit.read(now)},
-            0x42=>{let now=s.pit_now(p.clock_offset);s.counter2.read(now)?},
+            0x40=>{let now=s.pit_io(p.clock_offset);s.pit.read(now)},
+            0x42=>{let now=s.pit_io(p.clock_offset);s.counter2.read(now)?},
                         0x378..=0x37a | 0x278..=0x27a => 0x80,
             _=>return Err(format!("IN from port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         };
@@ -222,17 +236,17 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             0x201=>{}, // no game adapter to receive the write
             0x81..=0x8f=>{},
             0x61=>{
-                let was=s.tone()!=0;let now=s.pit_now(p.clock_offset);s.counter2.gate(value&1!=0,now);s.control=value&0x0f;
+                let was=s.tone()!=0;let now=s.pit_io(p.clock_offset);s.counter2.gate(value&1!=0,now);s.control=value&0x0f;
                 if !was&&s.tone()!=0{s.beeps+=1;}
             },
             // Channel 2 mode: access in bits 5..4; the counting mode is not timed.
-            0x43 if value>>6==2=>{let now=s.pit_now(p.clock_offset);s.counter2.command(value,now)?;if value&0x30!=0{s.access=value>>4&3;s.high_next=s.access==2;}},
-            0x43 if value>>6==0=>{let now=s.pit_now(p.clock_offset);s.pit.command(value,now)?;},
+            0x43 if value>>6==2=>{let now=s.pit_io(p.clock_offset);s.counter2.command(value,now)?;if value&0x30!=0{s.access=value>>4&3;s.high_next=s.access==2;}},
+            0x43 if value>>6==0=>{let now=s.pit_io(p.clock_offset);s.pit.command(value,now)?;},
             0x43=>return Err(format!("PIT command {value:02x}h is not modelled")),
-            0x40=>{let now=s.pit_now(p.clock_offset);s.pit.write(value,now)?;},
+            0x40=>{let now=s.pit_io(p.clock_offset);s.pit.write(value,now)?;},
             0x42 if s.access==0=>return Err("PIT channel 2 count written before its mode".into()),
             0x42=>{
-                let now=s.pit_now(p.clock_offset);s.counter2.write(value,now);
+                let now=s.pit_io(p.clock_offset);s.counter2.write(value,now);
                 if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
                 if s.access==3{s.high_next=!s.high_next;}
             },
