@@ -50,11 +50,17 @@ impl PresentFpu {
                 return self.execute_word_memory(operation,instruction,cpu,ram,image),
             Operation::Fnstenv | Operation::Fldenv =>
                 return self.execute_env(operation == Operation::Fnstenv, instruction, cpu, ram, image),
-            Operation::Fchs => {
+            Operation::Fchs | Operation::Fabs => {
+                // Only the sign bit changes: no rounding, TOP and tags stay,
+                // and signed zero is kept. An empty ST(0) changes nothing.
                 let Some(mut value) = self.state.st(0) else {
                     return Outcome::StackFault(StackError::Underflow);
                 };
-                value.sign_exponent ^= 0x8000;
+                if operation == Operation::Fabs {
+                    value.sign_exponent &= 0x7fff;
+                } else {
+                    value.sign_exponent ^= 0x8000;
+                }
                 self.state.store(0, value);
                 self.state.status &= !0x0200;
                 return Outcome::Completed;

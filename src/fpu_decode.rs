@@ -23,6 +23,8 @@ pub enum Operation {
     Fcos,
     Fld1,
     Fldz,
+    /// Clear the sign bit of ST(0), including negative zero.
+    Fabs,
     Fyl2xp1,
     FldSt(u8),
     Fxch(u8),
@@ -70,6 +72,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0xff) => Some(Operation::Fcos),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xee) => Some(Operation::Fldz),
+            (0xd9, 0xe1) => Some(Operation::Fabs),
             (0xd9, 0xf9) => Some(Operation::Fyl2xp1),
             (0xd9, 0xc0..=0xc7) => Some(Operation::FldSt(rm)),
             (0xd9, 0xc8..=0xcf) => Some(Operation::Fxch(rm)),
@@ -136,6 +139,7 @@ mod tests {
         assert_eq!(classify(0xdf,0xe0),Ok(Operation::FnstswAx));
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
+        assert_eq!(classify(0xd9,0xe1),Ok(Operation::Fabs));
         assert_eq!(classify(0xd9,0xf9),Ok(Operation::Fyl2xp1));
         assert_eq!(classify(0xd9,0x26),Ok(Operation::Fldenv)); // FLDENV [disp16]
         assert_eq!(classify(0xd9,0x2f),Ok(Operation::Fldcw)); // FLDCW [BX]
@@ -214,7 +218,7 @@ mod tests {
         assert_eq!(classify(0xd9,0xfe),Ok(Operation::Fsin));
         assert_eq!(classify(0xd9,0xff),Ok(Operation::Fcos));
         assert_eq!(classify(0xdd,0x3f),Ok(Operation::FnstswM16));
-        for (op,modrm) in [(0xd9,0xe1),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
+        for (op,modrm) in [(0xd9,0xe4),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
         }
     }
