@@ -1,4 +1,8 @@
-"""Create a "PIL DOS" shortcut that opens the Dine DOS terminal.
+"""Create a "PIL DOS" shortcut that opens the PILdos setup screen.
+
+The shortcut starts the launcher (PILdos.vbs or PILdos.sh), which runs the
+Rust setup screen `pil --pildos`: it edits pildos.conf and F10 starts the
+configured program. Only this one-time creator uses Python.
 
 Targets always use this script's checkout, independent of the current directory.
 Setup is checked before writing shortcuts. After moving a checkout, rerun this
@@ -7,11 +11,11 @@ script to refresh the absolute paths.
 Windows: uses the bundled PILdos.ico (Pillow is needed only if it is missing) and puts
 "PIL DOS.lnk" on the Desktop, starting PILdos.vbs.
 
-Linux and Android (Termux + Termux-x11): writes pildos.desktop, starting
-PILdos.sh with PILdos.png as its icon, into ~/.local/share/applications
-(the desktop's application menu) and onto the Desktop folder if there is one.
-In Termux it also writes ~/.shortcuts/PIL DOS for the Termux:Widget widget,
-which starts Termux-x11 first when it is not already running.
+Linux: writes pildos.desktop, starting PILdos.sh in a terminal with
+PILdos.png as its icon, into ~/.local/share/applications (the desktop's
+application menu) and onto the Desktop folder if there is one.
+Termux: also writes ~/.shortcuts/PIL DOS for the Termux:Widget widget, which
+opens the setup screen in a Termux session (no Termux-x11 needed).
 """
 import os
 from pathlib import Path
@@ -23,30 +27,24 @@ png = root / "PILdos.png"
 
 
 def validate_setup():
-    """Catch an unbuilt/unconfigured checkout before installing a silent link."""
+    """Catch an unbuilt checkout before installing a silent link."""
     launcher = root / ("PILdos.vbs" if sys.platform == "win32" else "PILdos.sh")
-    for required in (launcher, root / "tools/dos_terminal.py", root / "tools/pil_debugger.py"):
-        if not required.is_file():
-            raise SystemExit(f"Missing runtime file: {required}")
+    if not launcher.is_file():
+        raise SystemExit(f"Missing launcher: {launcher}")
     executable = "pil.exe" if sys.platform == "win32" else "pil"
-    engines = [folder / executable for folder in (root, root / "tools", root / "target/release", root / "target/debug")]
+    explicit_engine = os.environ.get("PILDOS_ENGINE")
+    engines = [Path(explicit_engine).expanduser()] if explicit_engine else [
+        folder / executable for folder in (root, root / "target/release", root / "target/debug")]
     if not any(path.is_file() for path in engines):
         raise SystemExit(f"No PIL engine in {root}.\nRun cargo build --release --locked there, then rerun this creator.")
     explicit = os.environ.get("PILDOS_CONFIG")
-    config = Path(explicit).expanduser() if explicit else root / "pildos.conf"
-    if not config.is_absolute():
-        config = root / config
-    if explicit and not config.is_file():
-        raise SystemExit(f"PILDOS_CONFIG does not exist: {config}")
-    if not config.is_file():
-        image = root / "images/FD14LITE.img"
-        drive = root / (os.environ.get("PILDRIVE", "driveD") if sys.platform != "win32" else "DriveD")
-        missing = [str(image)] if not image.is_file() else []
-        if not drive.is_dir():
-            missing.append(str(drive))
-        if missing:
-            raise SystemExit("Missing default DOS data:\n" + "\n".join(missing) +
-                             "\nLink the existing directories into this checkout, or create pildos.conf with your data paths.")
+    if explicit:
+        config = Path(explicit).expanduser()
+        if not config.is_absolute():
+            config = root / config
+        if not config.is_file():
+            raise SystemExit(f"PILDOS_CONFIG does not exist: {config}")
+    # Without pildos.conf the setup screen starts from pildos.conf.example.
 
 
 def windows():
@@ -130,11 +128,11 @@ def unix():
         "[Desktop Entry]",
         "Type=Application",
         "Name=PIL DOS",
-        "Comment=FreeDOS command prompt in the PIL DOS terminal",
+        "Comment=PILdos setup screen; F10 starts the configured DOS program",
         f"Exec={desktop_quote(launcher)}",
         f"Path={root}",
         f"Icon={png}",
-        "Terminal=false",
+        "Terminal=true",
         "Categories=System;Emulator;",
         "",
     ])
@@ -146,13 +144,7 @@ def unix():
     if termux:
         widget = "\n".join([
             "#!/data/data/com.termux/files/usr/bin/sh",
-            "# PIL DOS for Termux:Widget: start Termux-x11 if needed, then the terminal.",
-            "export DISPLAY=${DISPLAY:-:0}",
-            "if ! pgrep -f termux.x11 >/dev/null 2>&1; then",
-            "    termux-x11 \"$DISPLAY\" >/dev/null 2>&1 &",
-            "    sleep 2",
-            "fi",
-            "am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1",
+            "# PIL DOS for Termux:Widget: the PILdos setup screen in this session.",
             f"exec {desktop_quote(launcher)} \"$@\"",
             "",
         ])
