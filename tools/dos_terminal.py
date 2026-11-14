@@ -678,6 +678,8 @@ class ConsolePort:
             raise RuntimeError('--com1 console needs the terminal started from a console window')
         self.input = queue.Queue()
         self._terminal = None
+        self._win_old_mode = None
+        self._win_mouse_capture = None
         if sys.platform == 'win32':
             self._enable_vt()
             self._configure_win_input()
@@ -703,8 +705,7 @@ class ConsolePort:
         if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
             kernel.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
 
-    @staticmethod
-    def _configure_win_input():
+    def _configure_win_input(self):
         try:
             import atexit
             import ctypes
@@ -712,11 +713,27 @@ class ConsolePort:
             handle = kernel.GetStdHandle(-10)  # STD_INPUT_HANDLE
             mode = ctypes.c_uint32()
             if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
-                old = mode.value
-                # Raw Ctrl+C, mouse events, disable QuickEdit so clicks reach the console input.
-                new = (old & ~0x0041) | 0x0090  # ~ENABLE_PROCESSED_INPUT & ~ENABLE_QUICK_EDIT_MODE | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS
-                kernel.SetConsoleMode(handle, new)
-                atexit.register(lambda: kernel.SetConsoleMode(handle, old))
+                self._win_old_mode = mode.value
+                atexit.register(lambda: kernel.SetConsoleMode(handle, self._win_old_mode))
+                self.set_mouse_capture(False)
+        except Exception:
+            pass
+
+    def set_mouse_capture(self, enable):
+        if sys.platform != 'win32' or self._win_old_mode is None or enable == self._win_mouse_capture:
+            return
+        try:
+            import ctypes
+            kernel = ctypes.windll.kernel32
+            handle = kernel.GetStdHandle(-10)  # STD_INPUT_HANDLE
+            if enable:
+                # Raw Ctrl+C, mouse events, disable QuickEdit so clicks reach the DOS TUI.
+                mode = (self._win_old_mode & ~0x0041) | 0x0090
+            else:
+                # Raw Ctrl+C, QuickEdit enabled so mouse drag selects text for copy/paste.
+                mode = (self._win_old_mode & ~0x0011) | 0x00C0
+            kernel.SetConsoleMode(handle, mode)
+            self._win_mouse_capture = enable
         except Exception:
             pass
 
@@ -1089,7 +1106,7 @@ def raw_key_sequence(ascii_code, scan):
     return (None, 0, scan)
 
 
-def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False, rust_graphics=False):
+def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False, rust_graphics=False, mouse=False):
     """Route DOS input and output over COM1 before running the guest."""
     session.send(f'clock {offset}')
     if country:
@@ -1161,6 +1178,8 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
                 tui.update(com1, reply)
             elif reply.get('screen') and reply['screen'] != baseline_screen:
                 tui.enter(com1, reply)
+            if hasattr(com1, 'set_mouse_capture'):
+                com1.set_mouse_capture(mouse and tui.active and bool(reply.get('mouse_active')))
             if session.com1_out:
                 com1_seen = True
                 if not tui.active:
@@ -1745,7 +1764,7 @@ def main(argv=None):
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
                               stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, mouse=args.mouse, rust_graphics=args.rust_graphics)
-            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=args.shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics)
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=args.shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics, mouse=args.mouse)
             if reply['status'] not in ('exit', 'window_closed'):
                 print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
                 raise SystemExit(1)
