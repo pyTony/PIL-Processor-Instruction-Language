@@ -4,7 +4,7 @@
 //! Two front ends share one loop. `--tty` draws the text page in the host
 //! terminal with ANSI sequences and reads keys in raw mode; on Windows a
 //! graphics mode opens the console window too. `--window` (Windows) is a
-//! Win32 window that draws the text page with the ROM font, the graphics
+//! Win32 window that draws the text page at VGA resolution (dos_vga_text), the graphics
 //! modes through `desktop_vga_frame`, and takes keyboard and mouse input.
 //!
 //! Host keys become the words the IBM BIOS stores (scan code high, ASCII
@@ -240,41 +240,14 @@ pub(crate) fn ansi_frame(cells:&[u8],columns:u32,cursor:(u32,u32),cursor_visible
     out
 }
 
-/// The 16 colours of the CGA text attribute, as GDI 0x00RRGGBB.
-#[cfg_attr(not(windows),allow(dead_code))]
-const COLORS:[u32;16]=[0x000000,0x0000aa,0x00aa00,0x00aaaa,0xaa0000,0xaa00aa,0xaa5500,0xaaaaaa,
-    0x555555,0x5555ff,0x55ff55,0x55ffff,0xff5555,0xff55ff,0xffff55,0xffffff];
-/// The text page drawn with the 8x8 ROM font, each font line twice (8x16
-/// cells, 640x400 for 80 columns). The cursor is drawn when `cursor` is set:
-/// (row, column, first line, last line) on the 16-line cell.
-#[cfg_attr(not(windows),allow(dead_code))]
-pub(crate) fn text_pixels(cells:&[u8],columns:u32,font:&[u8],cursor:Option<(u32,u32,u32,u32)>)->(usize,usize,Vec<u32>){
-    let columns=columns as usize;let rows=cells.len()/(columns*2);
-    let (width,height)=(columns*8,rows*16);
-    let mut pixels=vec![0u32;width*height];
-    for row in 0..rows{for column in 0..columns{
-        let at=(row*columns+column)*2;
-        let (ch,attr)=(usize::from(cells[at]),cells[at+1]);
-        let (fg,bg)=(COLORS[usize::from(attr&15)],COLORS[usize::from((attr>>4)&7)]);
-        let under=cursor.filter(|c|(c.0 as usize,c.1 as usize)==(row,column));
-        for y in 0..16{
-            let bits=font.get(ch*8+y/2).copied().unwrap_or(0);
-            let solid=under.is_some_and(|c|(c.2 as usize..=c.3 as usize).contains(&y));
-            let line=&mut pixels[(row*16+y)*width+column*8..][..8];
-            for (x,p) in line.iter_mut().enumerate(){*p=if solid||bits&(0x80>>x)!=0{fg}else{bg};}
-        }
-    }}
-    (width,height,pixels)
-}
+#[cfg(any(windows,test))]
+pub(crate) use super::vga_text::text_pixels;
 /// The BIOS cursor (0040:0050 for the page, shape at 0040:0060) on a 16-line
 /// cell, or None when it is off.
 fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
     let byte=|at|p.ram.load(at,MemWidth::Byte).ok();
     let (end,start)=(byte(0x460)?,byte(0x461)?);
-    if start&0x20!=0||start&0x1f>end&0x1f{return None;}
-    let (start,end)=(start&0x1f,end&0x1f);
-    // An 8-line CGA shape (6-7) doubles; a taller one is already in lines.
-    Some(if end<8{(start*2,end*2+1)}else{(start.min(15),end.min(15))})
+    super::vga_text::cursor_lines(start as u8,end as u8)
 }
 pub(crate) fn graphics_mode(p:&Loaded)->bool{
     p.ram.load(0x449,MemWidth::Byte).is_ok_and(|m|!matches!(m&0x7f,0..=3|7))
@@ -480,13 +453,13 @@ impl WindowFront{
                 if let Some(event)=event{if tx.send(event).is_err(){break;}}
             }
         }).ok();
-        let font=super::console::graphics_text::font().unwrap_or_else(|_|vec![0;2048]);
+        let font=super::vga_text::font().unwrap_or_else(|_|vec![0;256*super::vga_text::CELL_HEIGHT]);
         Self{window:crate::dine_window::Window::interactive("Dine DOS console",input),font,started:Instant::now(),last:None}
     }
     fn closed(&self)->bool{self.window.closed()}
     fn present_text(&mut self,cells:&[u8],cursor:Option<(u32,u32)>){
         let on=self.started.elapsed().as_millis()/267%2==0;
-        let frame=text_pixels(cells,80,&self.font,cursor.filter(|_|on).map(|(r,c)|(r,c,14,15)));
+        let frame=text_pixels(cells,80,&self.font,cursor.filter(|_|on).map(|(r,c)|(r,c,13,14)));
         if self.last.as_ref()==Some(&frame){return;}
         self.window.present(crate::dine_window::Frame{width:frame.0 as i32,height:frame.1 as i32,pixels:frame.2.clone()});
         self.last=Some(frame);

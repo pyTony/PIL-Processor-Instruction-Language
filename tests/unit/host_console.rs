@@ -88,19 +88,45 @@ fn ansi_frame_redraws_only_changed_rows(){
 fn first_cells()->Vec<u8>{let mut c=vec![0u8;80*25*2];for x in c.chunks_mut(2){x[0]=b' ';x[1]=0x07;}c}
 
 #[test]
-fn text_pixels_draw_the_rom_font_and_the_cursor(){
-    let font=super::super::console::graphics_text::font().unwrap();
-    let mut cells=vec![0u8;80*25*2];
+fn text_pixels_draw_vga_cells_with_the_8x16_font_and_the_cursor(){
+    let font=super::super::vga_text::font().unwrap();
+    assert_eq!(font.len(),256*16);
+    let mut cells=first_cells();
     cells[0]=b'A';cells[1]=0x1f;
-    let (w,h,pixels)=text_pixels(&cells,80,&font,Some((0,1,14,15)));
-    assert_eq!((w,h),(640,400));
-    // Font line y of 'A' becomes pixel rows 2y and 2y+1.
-    for y in 0..16{for x in 0..8{
-        let lit=font[usize::from(b'A')*8+y/2]&(0x80>>x)!=0;
-        assert_eq!(pixels[y*640+x],if lit{0xffffff}else{0x0000aa});
-    }}
-    // The cursor in cell (0,1): lines 14-15 in the cell's foreground (black on black here).
-    assert!(pixels[14*640+8..14*640+16].iter().all(|p|*p==0));
+    cells[4]=0xc4;cells[5]=0x07;   // a horizontal line (C0h-DFh) in column 2
+    cells[6]=0xb3;cells[7]=0x07;   // a vertical line (B3h) in column 3
+    let (w,h,pixels)=text_pixels(&cells,80,&font,Some((0,1,13,14)));
+    assert_eq!((w,h),(720,400));
+    // Each font line is one pixel row; the ninth column is the background.
+    for y in 0..16{
+        for x in 0..8{
+            let lit=font[usize::from(b'A')*16+y]&(0x80>>x)!=0;
+            assert_eq!(pixels[y*720+x],if lit{0xffffff}else{0x0000aa},"A row {y} column {x}");
+        }
+        assert_eq!(pixels[y*720+8],0x0000aa);
+    }
+    // Lines C0h-DFh repeat their eighth column in the ninth; B3h does not.
+    let row=(0..16).find(|&y|font[0xc4*16+y]!=0).unwrap();
+    assert!(pixels[row*720+18..row*720+27].iter().all(|p|*p==0xaaaaaa));
+    assert!((0..16).all(|y|pixels[y*720+27+8]==0));
+    // The cursor in cell (0,1): lines 13-14 in the cell's foreground, 15 not.
+    assert!(pixels[13*720+9..13*720+18].iter().all(|p|*p==0xaaaaaa));
+    assert!(pixels[14*720+9..14*720+18].iter().all(|p|*p==0xaaaaaa));
+    assert!(pixels[15*720+9..15*720+18].iter().all(|p|*p==0));
+    // 40 columns are drawn 360 wide and doubled to 720.
+    let (w,h,wide)=text_pixels(&cells[..40*25*2],40,&font,None);
+    assert_eq!((w,h),(720,400));
+    assert_eq!(wide[0..2],[wide[0],wide[0]]);
+}
+
+#[test]
+fn bios_cursor_shapes_map_to_vga_cell_lines(){
+    use super::super::vga_text::cursor_lines;
+    assert_eq!(cursor_lines(6,7),Some((13,14)));     // the BIOS default underline
+    assert_eq!(cursor_lines(0,7),Some((0,14)));      // a CGA block
+    assert_eq!(cursor_lines(13,14),Some((13,14)));   // a VGA shape stays
+    assert_eq!(cursor_lines(0x20,7),None);           // bit 5: hidden
+    assert_eq!(cursor_lines(7,6),None);              // start after end: hidden
 }
 
 /// FreeCOM-style editing works because keys arrive as BIOS words: a
@@ -152,4 +178,27 @@ fn a_child_started_by_exec_shows_its_graphics_frame(){
     assert_eq!(session.status(),("exit","exit code 0".into()));
     assert!(!graphics_mode(session.machine().unwrap()));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The window shows the picture at a whole-number size, centred, unless
+/// that leaves most of the window empty.
+#[test]
+fn window_view_uses_whole_number_scaling(){
+    use crate::dine_window::{view,initial_scale};
+    assert_eq!(view(1440,800,720,400),(0,0,1440,800));
+    assert_eq!(view(1500,900,720,400),(30,50,1440,800));
+    assert_eq!(view(1439,800,720,400),(0,0,1439,799));        // one pixel short of 2x: fitted
+    assert_eq!(view(1440,800,640,480),(187,0,1066,800));      // 1x would use 60%: fitted
+    assert_eq!(view(1500,1000,640,480),(110,20,1280,960));    // 2x fits
+    assert_eq!(view(1500,900,640,480),(150,0,1200,900));      // 1x 53%: fitted
+    assert_eq!(view(1300,850,1200,800),(50,25,1200,800));     // 1x uses 94%: kept
+    assert_eq!(view(360,300,720,400),(0,50,360,200));       // smaller: shrunk, proportions kept
+    assert_eq!(view(0,0,720,400),(0,0,0,0));
+    // 1920x1080 desktop less the window frame and taskbar.
+    assert_eq!(initial_scale(None,1904,1001,720,400),2);
+    assert_eq!(initial_scale(None,1904,1001,640,480),2);
+    assert_eq!(initial_scale(None,1904,1001,320,200),5);
+    assert_eq!(initial_scale(None,700,380,720,400),1);
+    assert_eq!(initial_scale(Some("3"),1904,1001,720,400),3);
+    assert_eq!(initial_scale(Some("0"),1904,1001,720,400),2);
 }

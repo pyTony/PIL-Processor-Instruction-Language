@@ -102,7 +102,7 @@ codes of the keys they sit on in the Nordic layouts.
 | Front end | Text modes | Graphics modes |
 |---|---|---|
 | `--tty` | Each changed row is redrawn on the terminal's alternate screen, in the 16 CGA colours, with the IBM PC glyphs (CP437 and the symbols for 00h-1Fh). The cursor follows the BIOS cursor and hides when the BIOS cursor is off. | On Windows a window opens. It shows the same frames as `--window` and also takes keys. Elsewhere the terminal shows a one-line note; keys still reach the program. |
-| `--window` | The page is drawn with the 8x8 ROM font, each line twice (640x400 for 80 columns), scaled to the window. The BIOS cursor blinks at its shape. | Drawn from the same scanout as the GDI preview: CGA 4/5/6, EGA/VGA 0Dh/0Eh/10h/12h and 13h. |
+| `--window` | The page is drawn as a VGA shows it: 9x16 cells, 720x400 for 80 columns (40 columns are drawn 360 wide and doubled), with Dine's own 8x16 font (src/dos_font8x16.txt). The ninth column is the background, except that C0h-DFh repeat their eighth column so lines join. The window opens at the largest whole-number size that fits the desktop (1440x800 on a 1920x1080 screen); `DINE_WINDOW_SCALE=1`..`8` chooses it. A resized window keeps whole-number scaling with black borders, unless that would use less than 85% of the room; then the picture fills it with its proportions kept (a 640x480 graphics mode in a 1440x800 window is drawn 1066x800). The BIOS cursor blinks at its shape; the BIOS default 6-7 becomes lines 13-14, as the VGA BIOS scales it. | Drawn from the same scanout as the GDI preview: CGA 4/5/6, EGA/VGA 0Dh/0Eh/10h/12h and 13h. |
 
 Mouse motion and the three buttons scale to the program's virtual
 coordinates over the whole client area.
