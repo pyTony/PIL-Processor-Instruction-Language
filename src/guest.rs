@@ -49,7 +49,14 @@ pub enum Operation {
     Interrupt{vector:u8,overflow:bool,next:u32},
 }
 #[derive(Clone,Debug)]
-pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
+pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation,
+    /// The precompiled native form of a PIL operation, resolved on first use.
+    pub native:std::cell::OnceCell<Option<crate::precompiled::Native>>}
+impl Decoded {
+    pub(crate) fn native(&self)->Option<&crate::precompiled::Native>{
+        self.native.get_or_init(||match &self.operation{Operation::Pil{program,..}=>crate::precompiled::resolve(program),_=>None}).as_ref()
+    }
+}
 pub const SYSTEM_RANGES:usize=10;
 #[derive(Clone,Debug,PartialEq,Eq)]
 /// `fetch_base+start..fetch_base+end` is the program; `system` holds host-provided
@@ -746,7 +753,7 @@ impl Image {
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;
                 let port=if opcode<0xe8{Some(r.byte()?)}else{None};
                 if matches!((opcode,port),(0xe4|0xe6,Some(0xe9)))&&self.end<=RAM_BYTES as u32{
-                    return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
+                    return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}},native:Default::default()});
                 }
                 let input=opcode&2==0;
                 let port_name=port.map(|p|format!("0x{p:02x}")).unwrap_or_else(||"DX".into());
@@ -758,17 +765,17 @@ impl Image {
             0xcc|0xcd|0xce=>{
                 let vector=match opcode{0xcc=>3,0xce=>4,_=>r.byte()?};
                 let label=match opcode{0xcc=>"INT3".to_string(),0xce=>"INTO".to_string(),_=>format!("INT 0x{vector:02x}")};
-                return Ok(Decoded{label,length:r.pos-eip,operation:Operation::Interrupt{vector,overflow:opcode==0xce,next:r.pos}});
+                return Ok(Decoded{label,length:r.pos-eip,operation:Operation::Interrupt{vector,overflow:opcode==0xce,next:r.pos},native:Default::default()});
             }
             // HLT is privileged: above CPL 0 in protected mode it is #GP(0).
             0xf4 if !self.real_mode&&self.segment_state().cpl()!=0=>("HLT".into(),compile("require_ring0\npreserve_flags all\nretire\n",w)),
-            0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
+            0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt,native:Default::default()}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
         if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe0..=0xe3|0x0f) {disp_bits=32;}
         if (opcode==0x0f && disp==0 && disp_bits==8) || call_indirect.is_some() {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
-        Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
+        Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address},native:Default::default()})
     }
 }
 pub(crate) fn register_name(view:View)->&'static str {

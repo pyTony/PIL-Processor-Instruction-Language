@@ -86,3 +86,65 @@ program:
    launcher only carries the guest bytes and loads the shared library.
 
 Issue #148 (file I/O in the standalone runtime) is obsolete with this change.
+
+## Integrated: precompiled forms and run-time blocks (13 November 2026)
+
+Steps 1-3 of the route above are in, in the shared code every launcher,
+session and the `dine` library use. Tracking issue #183.
+
+**Precompiled forms** (`src/precompiled/`). A *form* is a decoded PIL
+program with its immediate values taken out. `pil --emit-precompiled-forms
+src/precompiled/forms.rs` enumerates the real-mode decoder (prefixes 66, 67,
+the six segment overrides, F2/F3; one- and two-byte opcodes; all 256 ModRM
+bytes; three immediate patterns) and finds 2,669 forms. For each it writes
+`execute_state` and `execute_form`, rendered from the PIL tokens by the
+`--emit-rust` emitter. A constant that differed between the enumerated
+decodes becomes a run-time slot (`k[n]`); one that never did stays a
+literal, and `precompiled::resolve` refuses the form when a program's value
+there differs. The key is the program shape (tokens with constants zeroed,
+widths and flags) hashed with two FNV-1a variants. A program the table does
+not have runs in the interpreter, as before.
+
+The generated file is committed (about 13.5 MB). CI regenerates it with
+`--check` and fails when it is stale, so an emitter or decoder change must
+come with a regenerated table. Real-mode code with a 16-bit stack only for
+now: with 32-bit stacks and 32-bit protected-mode code the table was 4,319
+forms (22 MB), which made the release build too slow for its gain today.
+
+**Run-time blocks** (`src/block_compiler/engine.rs`). When the DOS loop
+reaches an address, Dine plans a block there: straight-line PIL instructions
+through the decode cache, at most 16, ending after any control transfer,
+store, segment/control/table write, interrupt shadow or write of TF, IF,
+IOPL, NT or VM. Instructions the loop answers itself never join a block
+(port I/O, INS/OUTS, 80387 escapes and WAIT, INT n, HLT), nor does code
+outside 0400h-9FFFFh. A block runs only with no interrupt shadow and TF
+clear, when the segment state and fetch window equal the planned ones and
+its bytes are unchanged (code-page stamp, else a byte compare); otherwise it
+is planned again. The DOS loop runs one block per iteration, never past a
+multiple of 256 steps (its timer check), and checks timer, keyboard, mouse
+and Ctrl-C events between blocks as it does between instructions; nothing
+inside a block can make one of them due. Dine's own low memory (0000h-0FFFh:
+vectors, BIOS data, the DOS data area with its break stubs) is not covered.
+Retired instructions are counted per mnemonic, so probe reports are
+unchanged.
+
+**Modes** (`PIL_PRECOMPILED`): default runs blocks and native forms; `off`
+uses only the interpreter; `verify` runs each instruction's native form and
+the interpreter on a copy of the state and stops with both states on any
+difference (slow: it copies the 16 MiB RAM each step).
+
+**Checks** (tests/unit/precompiled.rs): forms against the interpreter on
+full state, faults included, for more than 10,000 sampled encodings and
+states; blocks against the interpreter after every slice (odd budgets) on
+FACTOR, RECURFIB, MANDEL, MANDBBC and a self-modifying loop; verify mode in
+lockstep; immediates sharing a form and a changed fixed constant refused.
+
+**Local Linux release** (`PIL_PRECOMPILED=off` against the default):
+`pil --dos-probe --steps 1000000`, whole process, reports identical:
+MANDEL 143 -> 71 ms, MANDANSI 153 -> 74 ms, MANDBBC 166 -> 96 ms, MANDCGA
+240 -> 58 ms. `tools/verify_mandel_vga.py` (a full MANDVGA session through
+the terminal protocol, 296,960 pixels checked): 9.5 s -> 2.6 s.
+
+Not yet: the shadow design's longer regions (stores inside blocks with a
+code-page check), protected-mode and 32-bit-stack forms, a smaller emitter
+for the table.
