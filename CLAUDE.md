@@ -8,6 +8,37 @@ Before every commit/PR, review host-path examples and run
 `python tools/check_portable_paths.py --self-test`; repeat after edits. DOS guest
 paths and standard OS interfaces are separate from host checkout locations.
 
+# PILdos setup screen: pil --pildos — 14 November 2026
+
+Tony asked for a PILdos GUI configuration screen and launcher, in Rust (the
+interface is moving off Python), with pildos.conf unchanged. `pil --pildos`
+(src/dos_setup.rs) is an 80x25 setup screen drawn by the --dos-console
+front ends: the Dine window on Windows, the terminal elsewhere (`--tty`).
+- One field per documented key (program, args, A-E, country, fpu, mouse,
+  ansi, utc_offset, com1, speaker_volume, headless, shell, rust_graphics,
+  engine; the last six marked as Python terminal only). Enter edits or
+  cycles, Del removes, F2 saves, F10 saves and starts, Esc quits (twice
+  with unsaved changes). A missing file starts from pildos.conf.example.
+- src/dos_config_edit.rs saves in place: comments, order, key spelling
+  (`D:`, `#@program=`, `utc-offset`), spacing, CRLF and BOM stay; only a
+  changed value's line is rewritten; the same parser checks before writing.
+- F10 runs the program in the same front end with the config's drives,
+  country, fpu, mouse, ansi and utc_offset; a key after it ends returns to
+  the screen, Ctrl+] ends it early.
+- `pil --dos-console` now takes fpu, mouse, ansi and utc_offset from the
+  configuration too (options override), and starts the configured program
+  and args when PROGRAM is omitted. dos_config parses utc_offset as the
+  Python terminal does (hours or +HH:MM, -12:00..+14:00) and checks
+  speaker_volume 0..100 and duplicate fpu/mouse/ansi/utc_offset. An empty
+  PILDOS_CONFIG now means unset, as in the Python terminal.
+
+Local Linux, release: 831 Rust tests pass, 2 ignored (7 new: 5 in
+tests/unit/dos_setup.rs, 2 in tests/unit/dos_config.rs). In a
+pseudo-terminal: --pildos --tty showed the screen, Mouse turned on, F10
+saved (mouse=true appended, other lines untouched), ran a DOS hello, showed
+"press a key", and returned to the screen; Esc quit. Windows code
+type-checks for x86_64-pc-windows-gnu; the window was not run on Windows.
+
 # Debug registers and the reset TR — 14 November 2026
 
 Tony's stop log for a 3D benchmark in his dosbench menu (a DOS extender

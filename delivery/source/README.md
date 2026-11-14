@@ -59,6 +59,7 @@ not direct video-memory writes, BIOS drawings or graphics.
 
 ## Other runtime entry points
 
+- `pil --pildos` opens the Rust configuration editor and launcher.
 - `pil --dos-session ...` serves the existing JSON frontend protocol.
 - `pil --dos-probe PROGRAM` reports a bounded diagnostic run.
 - `pil --dos-list IMAGE` and `--dos-extract IMAGE NEW_DIRECTORY` inspect

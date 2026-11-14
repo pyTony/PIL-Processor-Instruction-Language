@@ -2413,15 +2413,19 @@ const CLI_HELP:&str = "PIL - Processor Instruction Language
 Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
 
 DOS and ROM:
+  --pildos [--tty|--window] [CONFIG]  PILdos setup screen: edit pildos.conf
+      (or CONFIG, or PILDOS_CONFIG) and start its program; F10 starts.
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
   --dos-text [--plain] [OPTIONS] [PROGRAM]  Rust terminal; config startup if omitted
-  --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] PROGRAM
+  --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] [PROGRAM]
       DOS session with its own keyboard and screen: the host terminal
       (--tty, default except on Windows) or a window (--window, Windows).
       Ctrl+] in a terminal ends it. Same OPTIONS as --dos-session, plus
       --country 1|358 and --utc-offset SECONDS (default: host time zone).
+      Without PROGRAM, the configuration's program and args start; its
+      fpu, mouse, ansi and utc_offset apply unless options are given.
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
   --run-rom PATH [--steps N]          Run a 64 or 128 KiB ROM
   --dos-list [--all] IMAGE|ZIP        List container entries
@@ -2537,6 +2541,20 @@ fn main() -> R<()> {
     if matches!(dos_args.get(1).map(String::as_str),Some("--dos-console"|"--dos-text")){
         let code=dos_text_io::cli(&dos_args[2..],dos_args[1]=="--dos-text",&stop_log)?;
         if code!=0{std::process::exit(code);}
+        return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--pildos"){
+        let usage="usage: pil --pildos [--tty|--window] [CONFIG]";
+        let mut window=cfg!(windows);let mut config=None;
+        for arg in &dos_args[2..]{
+            match arg.as_str(){
+                "--tty"=>window=false,
+                "--window"=>window=true,
+                a if a.starts_with("--")||config.is_some()=>return Err(usage.into()),
+                a=>config=Some(a),
+            }
+        }
+        println!("{}",dos::setup::run(config,window,&stop_log)?);
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){

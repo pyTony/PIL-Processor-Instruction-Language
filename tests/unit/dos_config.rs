@@ -3,8 +3,8 @@ use super::*;
 fn parses_drives_country_and_rejects_ambiguous_entries(){
     let c=parse("# drives\n#@program=images/FD14LITE.img::COMMAND.COM\n#@args=/K D:\\AUTOEXEC.BAT\nC=images/FD14LITE.img\nd: = drive D\ncountry=358\nheadless=true\nrust_graphics=true\nmouse=true\nfpu=80387\nshell=true\nengine=target/release/pil.exe\n",Path::new("base")).unwrap();
     assert_eq!(c.country,Some(358));
-    assert!(c.text.mouse);
-    assert_eq!(c.text.fpu.as_deref(),Some("80387"));
+    assert_eq!(c.mouse,Some(true));
+    assert_eq!(c.fpu,Some(true));
     assert_eq!(c.program,Some(format!("{}::COMMAND.COM",Path::new("base").join("images/FD14LITE.img").display())));
     assert_eq!(c.args.as_deref(),Some("/K D:\\AUTOEXEC.BAT"));
     assert_eq!(c.drives,vec![(b'C',PathBuf::from("base/images/FD14LITE.img")),(b'D',PathBuf::from("base/drive D"))]);
@@ -39,4 +39,32 @@ fn config_mounts_selects_c_and_updates_the_startup_environment(){
 #[test]
 fn wsl_paths_convert_for_windows_targets(){
     assert_eq!(host_path("/mnt/c/fixtures/drive D"),PathBuf::from(r"C:\fixtures\drive D"));
+}
+#[test]
+fn console_settings_and_offsets_follow_the_frontend_rules(){
+    let c=parse("program=A.COM\nfpu=80387\nmouse=1\nansi=false\nutc-offset=5.5\nspeaker_volume=100\n",Path::new("base")).unwrap();
+    assert_eq!((c.fpu,c.mouse,c.ansi,c.utc_offset),(Some(true),Some(true),Some(false),Some(19800)));
+    for (text,seconds) in [("2",7200),("-5",-18000),("+02:00",7200),("-3:30",-12600),("14",50400),("-12",-43200),("0",0)]{
+        assert_eq!(parse_offset(text),Ok(seconds),"{text}");
+    }
+    for text in ["","7200","15","-12:30","2:60","x","1e3","+"]{assert!(parse_offset(text).is_err(),"{text}");}
+    for text in ["mouse=1\nmouse=0","utc_offset=99","speaker_volume=101","speaker-volume=x","fpu=none\nfpu=80387"]{
+        assert!(parse(text,Path::new("base")).is_err(),"{text}");
+    }
+}
+#[test]
+fn the_editor_keeps_lines_spelling_and_line_ends(){
+    use edit::Document;
+    let text="\u{feff}; profile\r\n  #@Program = a.com\r\nD:=drive\r\n\r\nutc-offset=2";
+    let mut d=Document::parse(text);
+    assert_eq!(d.text(),text);
+    assert_eq!(d.get("program").as_deref(),Some("a.com"));
+    assert_eq!(d.get("d").as_deref(),Some("drive"));
+    assert_eq!(d.get("utc_offset").as_deref(),Some("2"));
+    d.set("program",Some("b.exe"));d.set("utc_offset",None);d.set("e",Some("e dir"));d.set("country",Some("358"));
+    assert_eq!(d.text(),"\u{feff}; profile\r\n  #@Program = b.exe\r\nD:=drive\r\n\r\nE=e dir\r\ncountry=358\r\n");
+    assert!(d.check(Path::new("base")).is_ok());
+    assert_eq!(Document::parse("").text(),"");
+    let mut empty=Document::parse("");empty.set("program",Some("x.com"));
+    assert_eq!(empty.text(),"program=x.com\n");
 }

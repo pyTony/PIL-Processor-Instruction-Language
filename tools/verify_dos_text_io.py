@@ -17,17 +17,19 @@ def verify(engine, library=None):
         # Read/echo until CR, then return a distinct DOS status.
         guest.write_bytes(bytes.fromhex("b4 01 cd 21 3c 0d 75 f8 b8 07 4c cd 21"))
         config = root / "pildos.conf"
-        config.write_text("program=ECHO.COM\nfpu=80387\nansi=true\nmouse=true\ncountry=358\n", encoding="utf-8")
+        config.write_text("program=ECHO.COM\nfpu=80387\nansi=true\nmouse=true\ncountry=358\nutc_offset=+02:00\n", encoding="utf-8")
         env = dict(os.environ, PILDOS_CONFIG=str(config), DINE_VIDEO="off", DINE_TEXT="auto")
 
-        def run(args, data=b""):
-            return subprocess.run([str(engine), "--dos-text", *args], input=data,
+        def run(args, data=b"", command="--dos-text"):
+            return subprocess.run([str(engine), command, *args], input=data,
                                   capture_output=True, cwd=root, env=env, timeout=30)
 
         result = run([], "äbc\n".encode())
         assert result.returncode == 7, result.stderr
         assert result.stdout == "äbc\r".encode(), result.stdout
         assert b"\x1b" not in result.stdout
+        result = run(["--tty", "--fpu", "none"], b"override\n", command="--dos-console")
+        assert (result.returncode, result.stdout) == (7, b"override\r"), (result.stdout, result.stderr)
         if library:
             child = """
 import ctypes, sys

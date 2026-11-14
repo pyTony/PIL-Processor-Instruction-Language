@@ -3,9 +3,38 @@ use crate::dos::{self,Loaded};
 use std::path::{Path,PathBuf};
 
 #[derive(Debug,Default)]
-struct Config{drives:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,text:TextOptions,utc_offset:Option<String>}
-#[derive(Debug,Default)]
-pub(crate) struct TextOptions{pub ansi:bool,pub mouse:bool,pub fpu:Option<String>,pub utc_offset:Option<i64>}
+struct Config{drives:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,
+    fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>}
+
+/// The settings `pil --dos-console` takes from a configuration besides the
+/// drives and country (which `apply` loads into the machine).
+#[derive(Debug,Default,PartialEq,Eq)]
+pub(crate) struct ConsoleSettings{pub(crate) fpu:Option<bool>,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) utc_offset:Option<i64>}
+
+/// A UTC offset as the frontends write it: hours ("2", "-5", "5.5") or
+/// "+HH:MM", in seconds; -12:00..+14:00.
+pub(crate) fn parse_offset(text:&str)->Result<i64,String>{
+    let text=text.trim();
+    let bad=||format!("UTC offset {text} needs hours (2, -5, 5.5) or +HH:MM within -12:00..+14:00");
+    let sign=if text.starts_with('-'){-1}else{1};
+    let body=text.trim_start_matches(['+','-']);
+    let seconds=if let Some((h,m))=body.split_once(':'){
+        let (h,m)=(h.parse::<i64>().map_err(|_|bad())?,m.parse::<i64>().map_err(|_|bad())?);
+        if !(0..60).contains(&m){return Err(bad());}
+        h*3600+m*60
+    }else{
+        if body.is_empty()||!body.chars().all(|c|c.is_ascii_digit()||c=='.'){return Err(bad());}
+        let hours=body.parse::<f64>().map_err(|_|bad())?;
+        if !hours.is_finite()||hours>24.0{return Err(bad());}
+        (hours*3600.0).round() as i64
+    };
+    let seconds=sign*seconds;
+    if !(-12*3600..=14*3600).contains(&seconds){return Err(bad());}
+    Ok(seconds)
+}
+fn boolean(key:&str,value:&str,line:usize)->Result<bool,String>{
+    match value.to_ascii_lowercase().as_str(){"true"|"1"=>Ok(true),"false"|"0"=>Ok(false),_=>Err(format!("invalid boolean for {key} on config line {line}"))}
+}
 
 pub(crate) fn host_path(text:&str)->PathBuf{
     #[cfg(windows)]{
@@ -42,24 +71,31 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
             if !matches!(country,1|358)||config.country.replace(country).is_some(){return Err(format!("invalid or duplicate country on config line {}",i+1));}
             continue;
         }
-        if matches!(key.to_ascii_lowercase().as_str(),"headless"|"rust_graphics"|"rust-graphics"|"mouse"|"shell"|"ansi"){
-            if !matches!(value.to_ascii_lowercase().as_str(),"true"|"false"|"1"|"0"){return Err(format!("invalid boolean for {key} on config line {}",i+1));}
-            let enabled=matches!(value.to_ascii_lowercase().as_str(),"true"|"1");
-            match key.to_ascii_lowercase().as_str(){"ansi"=>config.text.ansi=enabled,"mouse"=>config.text.mouse=enabled,_=>{}}
-            continue;
-        }
-        if key.eq_ignore_ascii_case("fpu"){
-            if !matches!(value.to_ascii_lowercase().as_str(),"none"|"80387"){return Err(format!("invalid fpu on config line {}",i+1));}
-            config.text.fpu=Some(value.to_ascii_lowercase());
-            continue;
-        }
-        if matches!(key.to_ascii_lowercase().as_str(),"utc_offset"|"utc-offset"){
-            if value.is_empty(){return Err("empty utc_offset".into());}
-            config.utc_offset=Some(value.to_string());continue;
-        }
-        if matches!(key.to_ascii_lowercase().as_str(),"engine"|"com1"|"speaker_volume"|"speaker-volume"|"utc_offset"|"utc-offset"){
-            if value.is_empty(){return Err(format!("empty {key} on config line {}",i+1));}
-            continue;
+        let lower=key.to_ascii_lowercase().replace('-',"_");
+        let once=|seen:bool|if seen{Err(format!("duplicate {key} on config line {}",i+1))}else{Ok(())};
+        match lower.as_str(){
+            "mouse"=>{once(config.mouse.is_some())?;config.mouse=Some(boolean(key,value,i+1)?);continue;},
+            "ansi"=>{once(config.ansi.is_some())?;config.ansi=Some(boolean(key,value,i+1)?);continue;},
+            "headless"|"rust_graphics"|"shell"=>{boolean(key,value,i+1)?;continue;},
+            "fpu"=>{
+                once(config.fpu.is_some())?;
+                config.fpu=Some(match value.to_ascii_lowercase().as_str(){"none"=>false,"80387"=>true,_=>return Err(format!("invalid fpu on config line {}",i+1))});
+                continue;
+            },
+            "utc_offset"=>{
+                once(config.utc_offset.is_some())?;
+                config.utc_offset=Some(parse_offset(value).map_err(|e|format!("{e} on config line {}",i+1))?);
+                continue;
+            },
+            "speaker_volume"=>{
+                if !value.parse::<u8>().is_ok_and(|v|v<=100){return Err(format!("speaker volume must be 0..100 on config line {}",i+1));}
+                continue;
+            },
+            "engine"|"com1"=>{
+                if value.is_empty(){return Err(format!("empty {key} on config line {}",i+1));}
+                continue;
+            },
+            _=>{},
         }
         let drive=key.trim_end_matches(':').as_bytes();
         if drive.len()!=1||!(b'A'..=b'E').contains(&drive[0].to_ascii_uppercase())||value.is_empty(){return Err(format!("invalid drive on config line {}",i+1));}
@@ -70,13 +106,21 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
     }
     Ok(config)
 }
+/// The configuration file to use: the explicit one, PILDOS_CONFIG, or
+/// ./pildos.conf, and whether it was asked for (a default may be absent).
+pub(crate) fn selected_path(explicit:Option<&str>)->(PathBuf,bool){
+    let selected=if let Some(path)=explicit{Some(host_path(path))}else{
+        std::env::var_os("PILDOS_CONFIG").filter(|p|!p.is_empty()).map(|p|p.to_str().map(host_path).unwrap_or_else(||PathBuf::from(&p)))
+    };
+    let required=selected.is_some();
+    (selected.unwrap_or_else(||PathBuf::from("pildos.conf")),required)
+}
+/// Check configuration text as `load` would, with paths based on `parent`.
+pub(crate) fn check(text:&str,parent:&Path)->Result<(),String>{parse(text,parent).map(|_|())}
 /// Apply an explicit configuration, PILDOS_CONFIG, or optional ./pildos.conf.
 /// `skip` protects a legacy explicit --mount from a configuration default.
 fn load(explicit:Option<&str>)->Result<Option<Config>,String>{
-    let selected=if let Some(path)=explicit{Some(host_path(path))}else{
-        std::env::var_os("PILDOS_CONFIG").map(|p|p.to_str().map(host_path).unwrap_or_else(||PathBuf::from(&p)))
-    };
-    let required=selected.is_some();let path=selected.unwrap_or_else(||PathBuf::from("pildos.conf"));
+    let (path,required)=selected_path(explicit);
     if !required&&!path.exists(){return Ok(None);}
     let meta=std::fs::metadata(&path).map_err(|e|format!("cannot read DOS config {}: {e}",path.display()))?;
     if meta.len()>32768{return Err("DOS config is larger than 32 KiB".into());}
@@ -86,18 +130,14 @@ fn load(explicit:Option<&str>)->Result<Option<Config>,String>{
 pub(crate) fn startup(explicit:Option<&str>)->Result<(String,Option<String>),String>{
     startup_optional(explicit)?.ok_or_else(||"DOS configuration needs #@program=...".to_string())
 }
-pub(crate) fn text_options(explicit:Option<&str>)->Result<TextOptions,String>{
-    let Some(mut config)=load(explicit)? else{return Ok(TextOptions::default())};
-    if let Some(value)=config.utc_offset{
-        let offset=value.parse::<i64>().map_err(|_|"Rust utc_offset requires integer seconds")?;
-        if !(-50400..=50400).contains(&offset){return Err("utc_offset must be -50400..50400".into());}
-        config.text.utc_offset=Some(offset);
-    }
-    Ok(config.text)
-}
 pub(crate) fn startup_optional(explicit:Option<&str>)->Result<Option<(String,Option<String>)>,String>{
     let Some(config)=load(explicit)? else{return Ok(None)};
     Ok(config.program.map(|p|(p,config.args)))
+}
+/// FPU, mouse, ANSI driver and clock offset for `pil --dos-console`.
+pub(crate) fn console_settings(explicit:Option<&str>)->Result<ConsoleSettings,String>{
+    let Some(config)=load(explicit)? else{return Ok(ConsoleSettings::default())};
+    Ok(ConsoleSettings{fpu:config.fpu,mouse:config.mouse==Some(true),ansi:config.ansi==Some(true),utc_offset:config.utc_offset})
 }
 pub(crate) fn apply(p:&mut Loaded,explicit:Option<&str>,skip:Option<u8>)->Result<(),String>{
     let Some(config)=load(explicit)? else{return Ok(())};
@@ -113,6 +153,10 @@ pub(crate) fn apply(p:&mut Loaded,explicit:Option<&str>,skip:Option<u8>)->Result
     if let Some(country)=config.country{p.country=country;}
     Ok(())
 }
+
+/// Line-preserving editing of a configuration file, for `pil --pildos`.
+#[path="dos_config_edit.rs"]
+pub(crate) mod edit;
 
 #[cfg(test)]
 #[path="../tests/unit/dos_config.rs"]
