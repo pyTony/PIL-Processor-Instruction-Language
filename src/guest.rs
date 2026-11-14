@@ -62,7 +62,7 @@ pub const SYSTEM_RANGES:usize=10;
 /// `fetch_base+start..fetch_base+end` is the program; `system` holds host-provided
 /// code ranges (such as Dine's case-map routine and interrupt entries) and waiting
 /// parent programs in EXEC that may run interrupt handlers.
-pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2],pub paging:bool}
+pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2],pub paging:bool,pub debug:[u32;6]}
 impl Image {
     // Keep the imported physical code window fixed when CS changes.
     pub fn contains_offset(&self,offset:u32)->bool{
@@ -74,8 +74,8 @@ impl Image {
             ||self.system.iter().any(|&(s,e)|at>=u64::from(s)&&at<u64::from(e))
     }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
-    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging}}
-    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;}
+    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging,debug:self.debug}}
+    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;self.debug=s.debug;}
 
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
@@ -86,7 +86,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),crate::address::TR_RESET],paging:false,debug:crate::address::DEBUG_RESET},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -446,13 +446,18 @@ impl Image {
             }
             0x0f=>{
                 let second=r.byte()?;
-                if matches!(second,0x20|0x22){
-                    let m=r.byte()?;let control=((m>>3)&7)as usize;
-                    if m>>6!=3||!matches!(control,0|2|3){return Err(GuestError::Decode("MOV control requires register operands and CR0, CR2 or CR3".into()));}
+                if matches!(second,0x20|0x21|0x22|0x23){
+                    // MOV to and from CR0/CR2/CR3 (0F 20/22) and DR0-DR7
+                    // (0F 21/23, control registers 8-15 in PIL).
+                    let m=r.byte()?;let n=((m>>3)&7)as usize;let debug=second&1!=0;
+                    if m>>6!=3{return Err(GuestError::Decode("MOV control or debug register requires register operands".into()));}
+                    if !debug&&!matches!(n,0|2|3){return Err(GuestError::Decode("MOV control requires CR0, CR2 or CR3".into()));}
                     dst=view((m&7)as usize,32);src=dst;
-                    let file=if second==0x20{include_str!("../isa/i386/read_control.pil")}else{include_str!("../isa/i386/write_control.pil")};
-                    let text=file.replace("$CR",&control.to_string());
-                    (if second==0x20{format!("MOV {},CR{control}",register_name(dst))}else{format!("MOV CR{control},{}",register_name(src))},compile(&text,32))
+                    let read=second&2==0;
+                    let file=if read{include_str!("../isa/i386/read_control.pil")}else{include_str!("../isa/i386/write_control.pil")};
+                    let text=file.replace("$CR",&(n+if debug{8}else{0}).to_string());
+                    let name=format!("{}{n}",if debug{"DR"}else{"CR"});
+                    (if read{format!("MOV {},{name}",register_name(dst))}else{format!("MOV {name},{}",register_name(src))},compile(&text,32))
                 }else if second==0x01&&{let mut p=Reader{image:self,ram,start:eip,pos:r.pos};matches!((p.byte()?>>3)&7,0|1)}{
                     let m=r.byte()?;let table=(m>>3)&7;
                     if m>>6==3{return Err(GuestError::Decode("SGDT/SIDT require memory".into()));}

@@ -1,4 +1,5 @@
-# 80386 control moves always transfer 32 bits; arithmetic flags undefined.
+# 80386 control and debug register moves (CR0/2/3, and DR0-DR7 as 8-15)
+# always transfer 32 bits; arithmetic flags undefined.
 require_width 32
 read_control result $CR
 write dst result

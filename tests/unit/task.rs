@@ -190,3 +190,19 @@ fn clts_keeps_paging_and_needs_cpl_0(){
     image.msw=0x19;image.segments[1].access=SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:3};
     assert_eq!(step(&mut image,&mut ram,&mut cpu),Err(ExecError::GeneralProtection{eip:0x500,error_code:0}));
 }
+
+#[test]
+fn a_switch_before_any_ltr_stores_the_old_task_at_linear_zero(){
+    // TR as after reset: selector 0, base 0, limit FFFFh, a busy 386 TSS.
+    let (mut cpu,mut image,mut ram)=machine(&[0xea,0,0,0,0,0x20,0],0x0000_0002);
+    image.ldt_tr[1]=address::TR_RESET;
+    put64(&mut ram,GDT,0x0000_0200_0000_0000);
+    assert_eq!(Image::load(&[0x90]).unwrap().0.ldt_tr[1],SystemSegment{selector:0,base:0,limit:0xffff,kind:0x0b});
+    step(&mut image,&mut ram,&mut cpu).unwrap();
+    assert_in_b(&cpu,&image,0x9000,0x0002);
+    assert_eq!((dword(&ram,0x20),dword(&ram,0x24)),(0x507,0x246),"EIP and EFLAGS at linear 20h and 24h");
+    assert_eq!((0..8).map(|i|dword(&ram,0x28+4*i)).collect::<Vec<_>>(),vec![1,2,3,4,0x8000,6,7,8]);
+    assert_eq!((0..6).map(|i|word(&ram,0x48+4*i)).collect::<Vec<_>>(),vec![0x10,0x08,0x10,0x10,0x10,0x10]);
+    assert_eq!(byte(&ram,GDT+0x20+5),0x8b,"the new TSS is busy");
+    assert_eq!(byte(&ram,GDT+5),0,"JMP clears the busy bit in GDT entry 0, which TR's selector names");
+}

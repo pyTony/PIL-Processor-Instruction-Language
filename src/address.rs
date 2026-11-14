@@ -192,14 +192,31 @@ pub struct SegmentState {
     pub ldt_tr:[SystemSegment;2],
     /// CR0.PG.
     pub paging:bool,
+    /// Debug registers DR0-DR3, DR6 and DR7 (`DEBUG_RESET` after reset).
+    /// DR4 and DR5 are reserved on the 386; moves to and from them reach
+    /// DR6 and DR7, as on later processors. Breakpoints are not modelled.
+    pub debug:[u32;6],
 }
+/// DR0-DR3, DR6 and DR7 after reset (Intel SDM vol. 3 table 9-1; the 386
+/// manual gives no values).
+pub const DEBUG_RESET:[u32;6]=[0,0,0,0,0xffff_0ff0,0x0000_0400];
+/// TR after reset (Intel SDM vol. 3 table 9-1): selector 0, base 0, limit
+/// FFFFh, present. Its type is a busy 386 TSS, as Bochs has it, so a task
+/// switch before any LTR stores the old task at linear address 0, as the 386
+/// does, instead of faulting.
+pub const TR_RESET:SystemSegment=SystemSegment{selector:0,base:0,limit:0xffff,kind:0x0b};
+/// The debug register index (0-5 in `SegmentState::debug`) that MOV DRn
+/// reaches: DR4 and DR5 are DR6 and DR7.
+pub fn debug_index(n:usize)->usize{match n{0..=3=>n,4|6=>4,_=>5}}
 impl SegmentState {
     // The mode bit is coherent with the existing normalized mode state.
     pub fn machine_status(&self)->u16{(self.msw&!1)|u16::from(!self.real_mode)}
+    /// CR0, CR2, CR3 (`register` 0, 2, 3) or DR0-DR7 (8-15): CPL 0 only,
+    /// #GP(0) in virtual-8086 mode and above ring 0.
     pub fn read_control(&self,register:usize,flags:u32,eip:u32)->Result<u32,ExecError>{
         if flags&0x20000!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
         if self.cpl()!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
-        match register{0=>Ok(u32::from(self.machine_status())|(u32::from(self.paging)<<31)),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),_=>Err(ExecError::InvalidContext)}
+        match register{0=>Ok(u32::from(self.machine_status())|(u32::from(self.paging)<<31)),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),8..=15=>Ok(self.debug[debug_index(register-8)]),_=>Err(ExecError::InvalidContext)}
     }
     pub fn validate_control(&self,register:usize,value:u32,flags:u32,eip:u32)->Result<(),ExecError>{
         self.read_control(register,flags,eip)?;
@@ -207,9 +224,13 @@ impl SegmentState {
         // PE and PG may be set or cleared (PG needs PE); CR0 bits the 386 does
         // not have stay unsupported, as do CR3's low bits (486 PCD/PWT).
         if (register==0&&value&!0x8000_001f!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
+        // Registers 8-15 are DR0-DR7. DR7 with a breakpoint enabled (L0-G3)
+        // or general detect (GD) is not modelled, so it stops instead of
+        // being stored and never firing.
+        if register>=8&&debug_index(register-8)==5&&value&0x20ff!=0{return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
         Ok(())
     }
-    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>{self.msw=value as u16;self.real_mode=value&1==0;self.paging=value>>31!=0;},2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}
+    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>{self.msw=value as u16;self.real_mode=value&1==0;self.paging=value>>31!=0;},2=>self.controls[0]=value,3=>self.controls[1]=value,8..=15=>self.debug[debug_index(register-8)]=value,_=>unreachable!()}}
     /// The RAM paging state these registers select: CR3's directory and
     /// CPL 3 for user-level accesses, while CR0.PG is set.
     pub fn ram_paging(&self)->Option<super::memory::Paging>{
