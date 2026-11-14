@@ -39,6 +39,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import threading
@@ -1149,23 +1150,21 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
                 return {**reply, 'status': 'window_closed', 'detail': 'native graphics window closed'}
             graphics_active = (bool(reply.get('native_graphics')) or
                                any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar')))
+            real_com1_out = bool(re.sub(rb'\x1b\[\d+G', b'', session.com1_out))
             if graphics_active:
                 tui.leave(com1)
+            elif real_com1_out or reply.get('com1_wait'):
+                tui.leave(com1)
+                if reply.get('screen'):
+                    baseline_screen = reply.get('screen')
             elif tui.active:
-                if session.com1_out or reply.get('com1_wait'):
-                    tui.leave(com1)
-                    if reply.get('com1_wait'):
-                        baseline_screen = reply.get('screen')
-                else:
-                    tui.update(com1, reply)
-            elif (reply.get('screen') and reply['screen'] != baseline_screen
-                  and not session.com1_out and not reply.get('com1_wait')):
+                tui.update(com1, reply)
+            elif reply.get('screen') and reply['screen'] != baseline_screen:
                 tui.enter(com1, reply)
-            elif reply.get('com1_wait') and reply.get('screen'):
-                baseline_screen = reply.get('screen')
             if session.com1_out:
                 com1_seen = True
-                com1.write(session.com1_out)
+                if not tui.active:
+                    com1.write(session.com1_out)
                 session.com1_out = b''
             gfx.update(reply, session)
             graphics_active = (bool(reply.get('native_graphics')) or
