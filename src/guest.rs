@@ -49,13 +49,20 @@ pub enum Operation {
     Interrupt{vector:u8,overflow:bool,next:u32},
 }
 #[derive(Clone,Debug)]
-pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation}
+pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation,
+    /// The precompiled native form of a PIL operation, resolved on first use.
+    pub native:std::cell::OnceCell<Option<crate::precompiled::Native>>}
+impl Decoded {
+    pub(crate) fn native(&self)->Option<&crate::precompiled::Native>{
+        self.native.get_or_init(||match &self.operation{Operation::Pil{program,..}=>crate::precompiled::resolve(program),_=>None}).as_ref()
+    }
+}
 pub const SYSTEM_RANGES:usize=10;
 #[derive(Clone,Debug,PartialEq,Eq)]
 /// `fetch_base+start..fetch_base+end` is the program; `system` holds host-provided
 /// code ranges (such as Dine's case-map routine and interrupt entries) and waiting
 /// parent programs in EXEC that may run interrupt handlers.
-pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2],pub paging:bool}
+pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2],pub paging:bool,pub debug:[u32;6]}
 impl Image {
     // Keep the imported physical code window fixed when CS changes.
     pub fn contains_offset(&self,offset:u32)->bool{
@@ -67,8 +74,8 @@ impl Image {
             ||self.system.iter().any(|&(s,e)|at>=u64::from(s)&&at<u64::from(e))
     }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
-    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging}}
-    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;}
+    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging,debug:self.debug}}
+    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;self.debug=s.debug;}
 
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
@@ -79,7 +86,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),crate::address::TR_RESET],paging:false,debug:crate::address::DEBUG_RESET},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -202,9 +209,16 @@ impl Image {
                     stores+=&format!("const back{k} $S {}\nsub link{k} chain_bp back{k}\nzext link_at{k} link{k} 32\nload_segment copy{k} 2 link_at{k} $W\n",k*n);
                     stores+=&format!("const down{k} $S {}\nsub slot{k} frame down{k}\nzext slot_at{k} slot{k} 32\nstore_segment 2 slot_at{k} copy{k}\n",k*n);
                 }
-                let frame_value=match w.cmp(&stack_bits){std::cmp::Ordering::Greater=>"zext frame_value frame $W",std::cmp::Ordering::Less=>"trunc frame_value frame $W",_=>"zext frame_value frame $W"};
+                // A 32-bit ENTER on a 16-bit stack pushes and loads into EBP the frame
+                // pointer with the upper half of ESP (FrameTemp is ESP after the
+                // 16-bit push of EBP).
+                let wide=w>stack_bits;
+                let mut prefix=String::new();
+                if wide{prefix+="read_gpr whole_sp 4 32\nconst sp_high_mask 32 4294901760\nand sp_high whole_sp sp_high_mask\nzext frame32 frame 32\nor frame_wide sp_high frame32\n";}
+                let mut stores=prefix+&stores;
+                let frame_value=if wide{"zext frame_value frame_wide 32"}else if w<stack_bits{"trunc frame_value frame $W"}else{"zext frame_value frame $W"};
                 if level32>0{stores+=&format!("{frame_value}\nconst down_last $S {}\nsub last frame down_last\nzext last_at last 32\nstore_segment 2 last_at frame_value\n",level32*n);}
-                let pointer=if w>stack_bits{"zext frame_pointer frame 32"}else{"zext frame_pointer frame $S"};
+                let pointer=if wide{"zext frame_pointer frame_wide 32"}else{"zext frame_pointer frame $S"};
                 let text=include_str!("../isa/i386/enter.pil").replace("$COPY_STORES",stores.trim_end()).replace("$FRAME_POINTER",pointer).replace("$PUSHED",&(level32*n).to_string()).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("ENTER 0x{size:04x},{level}"),compile(&instantiate(&text,w),w))
             }
@@ -432,13 +446,18 @@ impl Image {
             }
             0x0f=>{
                 let second=r.byte()?;
-                if matches!(second,0x20|0x22){
-                    let m=r.byte()?;let control=((m>>3)&7)as usize;
-                    if m>>6!=3||!matches!(control,0|2|3){return Err(GuestError::Decode("MOV control requires register operands and CR0, CR2 or CR3".into()));}
+                if matches!(second,0x20|0x21|0x22|0x23){
+                    // MOV to and from CR0/CR2/CR3 (0F 20/22) and DR0-DR7
+                    // (0F 21/23, control registers 8-15 in PIL).
+                    let m=r.byte()?;let n=((m>>3)&7)as usize;let debug=second&1!=0;
+                    if m>>6!=3{return Err(GuestError::Decode("MOV control or debug register requires register operands".into()));}
+                    if !debug&&!matches!(n,0|2|3){return Err(GuestError::Decode("MOV control requires CR0, CR2 or CR3".into()));}
                     dst=view((m&7)as usize,32);src=dst;
-                    let file=if second==0x20{include_str!("../isa/i386/read_control.pil")}else{include_str!("../isa/i386/write_control.pil")};
-                    let text=file.replace("$CR",&control.to_string());
-                    (if second==0x20{format!("MOV {},CR{control}",register_name(dst))}else{format!("MOV CR{control},{}",register_name(src))},compile(&text,32))
+                    let read=second&2==0;
+                    let file=if read{include_str!("../isa/i386/read_control.pil")}else{include_str!("../isa/i386/write_control.pil")};
+                    let text=file.replace("$CR",&(n+if debug{8}else{0}).to_string());
+                    let name=format!("{}{n}",if debug{"DR"}else{"CR"});
+                    (if read{format!("MOV {},{name}",register_name(dst))}else{format!("MOV {name},{}",register_name(src))},compile(&text,32))
                 }else if second==0x01&&{let mut p=Reader{image:self,ram,start:eip,pos:r.pos};matches!((p.byte()?>>3)&7,0|1)}{
                     let m=r.byte()?;let table=(m>>3)&7;
                     if m>>6==3{return Err(GuestError::Decode("SGDT/SIDT require memory".into()));}
@@ -739,7 +758,7 @@ impl Image {
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;
                 let port=if opcode<0xe8{Some(r.byte()?)}else{None};
                 if matches!((opcode,port),(0xe4|0xe6,Some(0xe9)))&&self.end<=RAM_BYTES as u32{
-                    return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}}});
+                    return Ok(Decoded{label:if opcode==0xe4{"IN AL,0xe9"}else{"OUT 0xe9,AL"}.into(),length:r.pos-eip,operation:if opcode==0xe4{Operation::Input{next:r.pos}}else{Operation::Output{next:r.pos}},native:Default::default()});
                 }
                 let input=opcode&2==0;
                 let port_name=port.map(|p|format!("0x{p:02x}")).unwrap_or_else(||"DX".into());
@@ -751,17 +770,17 @@ impl Image {
             0xcc|0xcd|0xce=>{
                 let vector=match opcode{0xcc=>3,0xce=>4,_=>r.byte()?};
                 let label=match opcode{0xcc=>"INT3".to_string(),0xce=>"INTO".to_string(),_=>format!("INT 0x{vector:02x}")};
-                return Ok(Decoded{label,length:r.pos-eip,operation:Operation::Interrupt{vector,overflow:opcode==0xce,next:r.pos}});
+                return Ok(Decoded{label,length:r.pos-eip,operation:Operation::Interrupt{vector,overflow:opcode==0xce,next:r.pos},native:Default::default()});
             }
             // HLT is privileged: above CPL 0 in protected mode it is #GP(0).
             0xf4 if !self.real_mode&&self.segment_state().cpl()!=0=>("HLT".into(),compile("require_ring0\npreserve_flags all\nretire\n",w)),
-            0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt}),
+            0xf4=>return Ok(Decoded{label:"HLT (monitor stop)".into(),length:r.pos-eip,operation:Operation::Halt,native:Default::default()}),
             _=>return Err(GuestError::Decode(format!("unsupported opcode {opcode:02x} at {eip:08x}"))),
         };
         if !(0x70..=0x7f).contains(&opcode) && !matches!(opcode,0xeb|0xe9|0xe8|0xe0..=0xe3|0x0f) {disp_bits=32;}
         if (opcode==0x0f && disp==0 && disp_bits==8) || call_indirect.is_some() {disp_bits=32;}
         let flow=FlowContext{next_eip:r.pos,displacement:disp,displacement_bits:disp_bits,code_limit:self.segments[SegmentRegister::Cs.index()].limit};
-        Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address}})
+        Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address},native:Default::default()})
     }
 }
 pub(crate) fn register_name(view:View)->&'static str {

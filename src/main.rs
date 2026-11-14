@@ -1,3 +1,7 @@
+// Reusing the CLI crate root as a cdylib intentionally leaves CLI-only
+// functions unreachable. Suppress that library-only dead-code noise, while
+// retaining normal lint warnings in the pil executable build.
+#![cfg_attr(feature = "dine-library", allow(dead_code))]
 //! PIL proof: text -> validated typed tokens -> register/flag interpreter.
 //! Token interpreter, small 386 decoder and Rust-source emitter; no external crates.
 use std::collections::HashMap;
@@ -7,16 +11,24 @@ mod memory;
 mod vga_planar;
 mod address;
 mod privilege;
+mod task;
 use memory::{Ram, MemWidth};
 mod serial;
 mod host_io;
 mod debugger;
 mod guest;
 mod dos;
-mod dos_compile;
-#[cfg(pil_shadow_backend)]
-#[allow(dead_code, unused_mut, unused_variables, unused_imports, unused_assignments)]
-mod shadow_backend { include!(concat!(env!("OUT_DIR"), "/pil_shadow.rs")); }
+#[cfg(feature = "dine-library")]
+mod dine_ffi;
+mod dine_display;
+#[cfg(windows)]
+mod dine_window;
+mod block_compiler;
+mod precompiled;
+mod dos_encoding;
+mod dos_text_io;
+mod rust_codegen;
+mod pil_opt;
 mod dos_config;
 mod fpu;
 mod containers;
@@ -107,6 +119,9 @@ enum Token {
     FarJump(usize,usize),
     FarCall(usize,usize),
     FarReturn(usize,usize,usize,MemWidth,u32,Option<usize>),
+    // IRET with NT set: when the bv1 operand is one, the whole instruction
+    // is a return to the task in the back link (task.rs).
+    TaskReturnIf(usize),
     // CLI/STI: #GP(0) in protected mode when CPL > IOPL.
     RequireIopl,
     // IN/OUT/INS/OUTS: the I/O permission check for a port and byte count.
@@ -320,7 +335,7 @@ fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         |Token::Not(_,a)|Token::Bit(_,a,_)|Token::Zero(_,a)|Token::Parity(_,a)
         |Token::Write(a)|Token::WriteSource(a)|Token::Flag(_,a)|Token::WriteGpr(_,a,_)
         |Token::WriteSegment(_,a)|Token::InterruptShadowIf(a)|Token::RetireIf(a)
-        |Token::ResumeIf(a)|Token::Require(a)|Token::RaiseUnless(a,_)|Token::CheckSegment(_,a,_)|Token::CheckWriteSegment(_,a,_)
+        |Token::ResumeIf(a)|Token::TaskReturnIf(a)|Token::Require(a)|Token::RaiseUnless(a,_)|Token::CheckSegment(_,a,_)|Token::CheckWriteSegment(_,a,_)
         |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
         Token::WriteControl(_,a)|Token::ReadDescriptor(_,_,a)|Token::LoadSystem(_,a)|Token::CheckIo(a,_)=>used(a),
         Token::FarReturn(a,b,c,_,_,v)=>used(a)||used(b)||used(c)||v.as_ref().is_some_and(used),
@@ -675,6 +690,7 @@ impl Program {
             Token::FarBranch(t, s) => format!("far_branch v{t}:v{s}"),
             Token::FarJump(t, s) => format!("far_jump v{t}:v{s}"),
             Token::FarCall(t, s) => format!("far_call v{t}:v{s}"),
+            Token::TaskReturnIf(c) => format!("task_return_if v{c}"),
             Token::FarReturn(t, s, o, w, c, v) => format!("far_return v{t}:v{s} outer v{o} {} +{c}{}", w.bytes() * 8, v.map(|v|format!(" v86 v{v}")).unwrap_or_default()),
             Token::RequireIopl => "require_iopl".into(),
             Token::CheckIo(a, n) => format!("check_io v{a} {n}"),
@@ -730,7 +746,7 @@ impl Program {
                     _ if machine.is_none() && matches!(t,
                         Token::CheckpointFlags | Token::RequireRealMode | Token::RequireRing0 | Token::InterruptShadowIf(..)
                         | Token::LoadSegment(..) | Token::StoreSegment(..) | Token::ReadSegment(..)
-                        | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::CheckWriteSegment(..) | Token::FarBranch(..) | Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..) | Token::RequireIopl | Token::CheckIo(..)
+                        | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::CheckWriteSegment(..) | Token::FarBranch(..) | Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..) | Token::TaskReturnIf(..) | Token::RequireIopl | Token::CheckIo(..)
                         | Token::ReadTable(..) | Token::ReadSystem(..) | Token::ReadCpl(..) | Token::ReadDescriptor(..) | Token::LoadSystem(..) | Token::RequireProtectedMode) => {
                         early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
                     }
@@ -750,6 +766,10 @@ impl Program {
                         if cpu.eflags & 0x20000 != 0 || (!m.real_mode && u32::from(m.cpl()) > (cpu.eflags >> 12) & 3) {
                             early_stop = Some(idx); note = "; I/O bitmap check not shown".into();
                         } else { note = "; I/O permitted".into(); }
+                    }
+                    Token::TaskReturnIf(c) => {
+                        if values[c].bits != 0 { early_stop = Some(idx); note = "; task return not shown".into(); }
+                        else { note = "; NT clear, no task return".into(); }
                     }
                     Token::FarJump(a, b) | Token::FarCall(a, b) | Token::FarReturn(a, b, ..) => {
                         if !machine.unwrap().real_mode || cpu.eflags & 0x20000 != 0 {
@@ -1226,8 +1246,8 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if t>1||widths[l]!=16||widths[b]!=32||tokens.iter().any(|x|matches!(x,Token::WriteTable(..))){return Err("write_table needs table 0..1, bv16 limit and bv32 base, once".into());}
                     Token::WriteTable(t,l,b)
                 }
-                ["read_control",out,register]=>{let r=number(register)? as usize;if !matches!(r,0|2|3){return Err("read_control needs CR0, CR2 or CR3".into());}Token::ReadControl(define(&mut names,&mut widths,out,32)?,r)}
-                ["write_control",register,input]=>{let r=number(register)? as usize;let v=slot(&names,input)?;if !matches!(r,0|2|3)||widths[v]!=32||tokens.iter().any(|t|matches!(t,Token::WriteControl(..))){return Err("write_control needs CR0, CR2 or CR3 and bv32, once".into());}Token::WriteControl(r,v)}
+                ["read_control",out,register]=>{let r=number(register)? as usize;if !matches!(r,0|2|3|8..=15){return Err("read_control needs CR0, CR2, CR3 or DR0-DR7 (8-15)".into());}Token::ReadControl(define(&mut names,&mut widths,out,32)?,r)}
+                ["write_control",register,input]=>{let r=number(register)? as usize;let v=slot(&names,input)?;if !matches!(r,0|2|3|8..=15)||widths[v]!=32||tokens.iter().any(|t|matches!(t,Token::WriteControl(..))){return Err("write_control needs CR0, CR2, CR3 or DR0-DR7 (8-15) and bv32, once".into());}Token::WriteControl(r,v)}
                 ["read_msw", out]=>Token::ReadMsw(define(&mut names,&mut widths,out,16)?),
                 ["read_msw32", out]=>Token::ReadMsw32(define(&mut names,&mut widths,out,32)?),
                 ["require_protected_mode"]=>Token::RequireProtectedMode,
@@ -1314,6 +1334,13 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     // A gate CALL ends the instruction here, so nothing may be staged before it.
                     if call&&tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..))){return Err("far_call must precede every effect".into());}
                     branched=true;segment_written=true;if call{Token::FarCall(a,b)}else{Token::FarJump(a,b)}
+                }
+                ["task_return_if", predicate]=>{
+                    let c=slot(&names,predicate)?;
+                    if widths[c]!=1{return Err("task_return_if needs a bv1 predicate".into());}
+                    // A task return ends the instruction here, as a gate CALL does.
+                    if branched||segment_written||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..)|Token::Load(..)|Token::LoadSegment(..))){return Err("task_return_if must precede every load and effect".into());}
+                    Token::TaskReturnIf(c)
                 }
                 ["far_return", selector, offset, outer, bytes, cleanup, rest @ ..] if rest.len()<=1=>{
                     let a=slot(&names,selector)?;let b=slot(&names,offset)?;let c=slot(&names,outer)?;
@@ -1418,7 +1445,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckWriteSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckWriteSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::TaskReturnIf(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
     let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)|Token::LoadSegment(..)|Token::StoreSegment(..)|Token::CheckWriteSegment(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
@@ -1428,7 +1455,7 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
     let register_effects=tokens.iter().filter(|t|matches!(t,Token::WriteGpr(..))).count();
     let flushes_lazy=packed.iter().any(|op|matches!(op,
         PackedOp::Conditions16|PackedOp::Flags6{..}|PackedOp::Flags5NoCf{..}|PackedOp::LogicFlags{..}|PackedOp::ShiftFlags{..}|PackedOp::ImulCore{..}
-        |PackedOp::Token(Token::ReadFlags(_)|Token::ReadFlag(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(_))
+        |PackedOp::Token(Token::ReadFlags(_)|Token::ReadFlag(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(_)|Token::FarJump(..)|Token::FarCall(..)|Token::TaskReturnIf(_))
     ));
     Ok(Program { checkpoint_flags,partial,tokens,packed, widths, register_effects, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory, has_read_address, flushes_lazy })
 }
@@ -1481,6 +1508,7 @@ fn execute_segmented(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowConte
     let res=execute_state(p,cpu,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective),&mut lazy).map(|_|());
     lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);res
 }
+#[cfg(test)]
 fn execute_machine(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,ram:&mut Ram,address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
     let mut lazy=LazyFlags::None;
     let res=execute_machine_lazy(p,cpu,dst,src,context,ram,address,machine,&mut lazy).map(|_|());
@@ -1977,7 +2005,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::FarJump(a,b)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
-                pending_transfer=Some(privilege::far_jump(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,values[a].bits as u16,values[b].bits as u32,cpu.eip)?);
+                pending_transfer=Some(privilege::far_jump(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,&cpu.regs,cpu.eflags,values[a].bits as u16,values[b].bits as u32,context.next_eip,cpu.eip)?);
             }
             Token::FarReturn(a,b,c,w,n,v)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
@@ -1986,16 +2014,26 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::FarCall(a,b)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let mut direct=None;let eip=cpu.eip;
-                if let Some(t)=privilege::far_call(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,&cpu.regs,values[a].bits as u16,context.next_eip,eip,&mut direct)?{
-                    // A call gate: the whole transfer, nothing else of the description.
+                if let Some(t)=privilege::far_call(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,&cpu.regs,cpu.eflags,values[a].bits as u16,context.next_eip,eip,&mut direct)?{
+                    // A call gate or a task: the whole transfer, nothing else of the description.
                     let m=machine.as_deref_mut().ok_or(ExecError::InvalidContext)?;
-                    t.commit(&mut cpu.regs,&mut cpu.eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;
+                    t.commit(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;
                     m.retired();return Ok(probed);
                 }
                 let (selector,cache,accessed)=direct.ok_or(ExecError::InvalidContext)?;let target=values[b].bits as u32;
                 if target>cache.limit{return Err(ExecError::GeneralProtection{eip,error_code:0});}
                 if let Some((at,v))=accessed{stage_accessed(ram.as_deref(),at,v,eip,&mut pending_stores,&mut extra_stores,&mut store_index)?;}
                 pending_segment=Some((1,selector,cache));pending_eip=target;
+            }
+            Token::TaskReturnIf(c)=>{
+                if values[c].bits!=0{
+                    let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
+                    let back=ram.as_deref().ok_or(ExecError::InvalidContext)?.as_level(false,|r|r.load(m.ldt_tr[1].base,MemWidth::Word)).map_err(|f|f.error(cpu.eip))? as u16;
+                    let t=task::switch(m,ram.as_deref().ok_or(ExecError::InvalidContext)?,&cpu.regs,cpu.eflags,context.next_eip,back,task::Entry::Return,None,0,cpu.eip)?;
+                    let m=machine.as_deref_mut().ok_or(ExecError::InvalidContext)?;
+                    t.commit(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;
+                    m.retired();return Ok(probed);
+                }
             }
             Token::BranchIf(a,c) => {
                 if values[c].bits!=0 {
@@ -2077,7 +2115,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
                     if let Some((t,l,b))=pending_table{m.tables[t]=(l,b);}
                     if let Some((t,loaded))=pending_system{m.ldt_tr[t]=loaded;}
                     if !pending_resume{m.retired();}if pending_interrupt_shadow{m.sti_shadow=1;}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
-                    if let Some(t)=pending_transfer{t.commit(&mut cpu.regs,&mut cpu.eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}
+                    if let Some(t)=pending_transfer{t.commit(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}
                 }
                 return Ok(probed);
             }
@@ -2195,6 +2233,10 @@ fn instantiate(text: impl AsRef<str>, w: u8) -> String {
     text.as_ref().replace("$WRAP_GUARD","").replace("$HIGH_MASK","4294901760").replace("$FAR_TARGET","const target_value $W 0\nconst selector 16 0").replace("$TARGET","read_disp delta $W\nadd target_value return_offset delta").replace("$CLEANUP","0").replace("$FRAME",&(w/4).to_string()).replace("$SEG","3").replace("$A","16").replace("$S\n","16\n").replace("$S ","16 ").replace("$BYTES",&(w/8).to_string()).replace("$REG","0").replace("$DOUBLE",&(2*w as u16).to_string()).replace("$EXT",&(w+1).to_string()).replace("$SIGN",&(w-1).to_string()).replace("$W",&w.to_string())
 }
 fn emit_rust(p: &Program) -> String {
+    let mut out=emit_rust_support();
+    out.push_str(&emit_rust_functions(p));out
+}
+fn emit_rust_support() -> String {
     let mut out=String::from("// Generated from validated PIL tokens.\n");
     out.push_str(include_str!("flow.rs"));
     // The included module has an inner documentation comment; in the emitted
@@ -2206,18 +2248,35 @@ fn emit_rust(p: &Program) -> String {
     out.push_str("\n}\n");
     out.push_str("\npub mod privilege {\n");
     out.push_str(include_str!("privilege.rs").split("#[cfg(test)]").next().unwrap());
+    out.push_str("\n}\npub mod task {\n");
+    out.push_str(include_str!("task.rs").split("#[cfg(test)]").next().unwrap());
     out.push_str("\n}\n");
     out=out.lines().map(|line|line.strip_prefix("//!").map(|s|format!("//{s}")).unwrap_or_else(||line.to_owned())).collect::<Vec<_>>().join("\n");
-    out.push_str(&emit_rust_functions(p));out
+    out
 }
 // Shared support types can be supplied by a compiled guest runner instead of
 // duplicated in each generated instruction module.
-fn emit_rust_functions(p:&Program)->String {
-    let mut out=String::new();
+const MACHINE_WRAPPER:&str=r#"pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
+let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};
+if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
+ram.set_paging(machine.ram_paging());
+let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
+ram.set_paging(machine.ram_paging());
+if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
+result
+}
+"#;
+fn emit_rust_functions(p:&Program)->String {emit_rust_body(p,None)}
+/// One precompiled form (src/precompiled): `slots[n]` is the n-th `const`
+/// of the program; `Some` keeps a literal, `None` reads `k[n]` at run time.
+/// Only `execute_state` and the machine wrapper `execute_form` are emitted.
+fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {emit_rust_body(p,Some(slots))}
+fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
+    let mut out=String::new();let mut const_index=0usize;
     // A segment load may stage one more byte store: the descriptor's accessed bit.
     let stores=p.tokens.iter().filter(|t|matches!(t,Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)|Token::LoadSystem(..))).count().max(1);
     out.push_str(&format!(
-        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>, effective: Option<address::EffectiveAddress>) -> Result<(), ExecError> {{\n\
+        "\nfn execute_state(regs: &mut [u32;8], flags: &mut u32, undefined: &mut u32, eip: &mut u32, dst: (usize,u8), src: (usize,u8), context: FlowContext, mut ram: Option<&mut Ram>, address: u32, memory_context: Option<address::MemoryContext>, mut machine: Option<&mut address::SegmentState>, effective: Option<address::EffectiveAddress>{}) -> Result<(), ExecError> {{\n\
          let w = {}u8;\n\
          if dst.0 >= 8 || src.0 >= 8 || dst.1 as u16 + w as u16 > 32 || src.1 as u16 + {}u16 > 32 {{ return Err(ExecError::InvalidBinding); }}\n\
          context.validate(w,{})?;\n\
@@ -2235,8 +2294,11 @@ fn emit_rust_functions(p:&Program)->String {
          let mut pending_dst: Option<u64> = None;\n\
          let mut pending_src: Option<u64> = None;\n\
          let mut pending_registers: Vec<(usize,u8,u64)> = Vec::new();\n",
-        p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
-    for t in &p.tokens {
+        if slots.is_some(){", k: &[u64]"}else{""},p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
+    let mut carry_skip=0;
+    for (index,t) in p.tokens.iter().enumerate() {
+        if carry_skip>0{carry_skip-=1;continue;}
+        if let Some(code)=rust_codegen::carry_window(p,index){out.push_str(&code);carry_skip=3;continue;}
         let line = match *t {
             Token::CheckpointFlags=>"machine.as_deref().ok_or(ExecError::InvalidContext)?;".into(),
             Token::ReadFlags(o)=>format!("let v{o}:u64 = *flags as u64;"),
@@ -2244,9 +2306,10 @@ fn emit_rust_functions(p:&Program)->String {
             Token::RequireRing0=>"if machine.as_deref().ok_or(ExecError::InvalidContext)?.cpl()!=0 {return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}".into(),
             Token::RequireIopl=>"{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if !m.real_mode&&u32::from(m.cpl())>(*flags>>12)&3 {return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}}".into(),
             Token::CheckIo(a,n)=>format!("{{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;let e=*eip;m.io_permitted(*flags,v{a} as u16,{n},e,&mut |at|r.as_level(false,|r|r.load(at,MemWidth::Byte)).map(|v|v as u8).map_err(|f|f.error(e)))?;}}"),
-            Token::FarJump(a,b)=>format!("pending_transfer=Some(privilege::far_jump(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,v{a} as u16,v{b} as u32,*eip)?);"),
+            Token::FarJump(a,b)=>format!("pending_transfer=Some(privilege::far_jump(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,*flags,v{a} as u16,v{b} as u32,context.next_eip,*eip)?);"),
+            Token::TaskReturnIf(c)=>format!("if v{c}!=0{{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;let back=r.as_level(false,|r|r.load(m.ldt_tr[1].base,MemWidth::Word)).map_err(|f|f.error(*eip))? as u16;let t=task::switch(m,r,regs,*flags,context.next_eip,back,task::Entry::Return,None,0,*eip)?;let m=machine.as_deref_mut().ok_or(ExecError::InvalidContext)?;t.commit(regs,flags,undefined,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;m.retired();return Ok(());}}"),
             Token::FarReturn(a,b,c,w,n,v)=>format!("pending_transfer=Some(privilege::far_return(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,v{a} as u16,v{b} as u32,v{c} as u32,MemWidth::{w:?},{n},{},*eip)?);",v.map(|v|format!("v{v}!=0")).unwrap_or("false".into())),
-            Token::FarCall(a,b)=>format!("let mut direct=None;if let Some(t)=privilege::far_call(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,v{a} as u16,context.next_eip,*eip,&mut direct)?{{let m=machine.as_deref_mut().ok_or(ExecError::InvalidContext)?;t.commit(regs,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;m.retired();return Ok(());}}let (selector,cache,accessed)=direct.ok_or(ExecError::InvalidContext)?;if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}if let Some((at,v))=accessed{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;"),
+            Token::FarCall(a,b)=>format!("let mut direct=None;if let Some(t)=privilege::far_call(machine.as_deref().ok_or(ExecError::InvalidContext)?,ram.as_deref().ok_or(ExecError::InvalidContext)?,regs,*flags,v{a} as u16,context.next_eip,*eip,&mut direct)?{{let m=machine.as_deref_mut().ok_or(ExecError::InvalidContext)?;t.commit(regs,flags,undefined,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;m.retired();return Ok(());}}let (selector,cache,accessed)=direct.ok_or(ExecError::InvalidContext)?;if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}if let Some((at,v))=accessed{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;"),
             Token::InterruptShadowIf(c)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_interrupt_shadow=v{c}!=0;"),
             Token::Read(o,b,w) => {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
@@ -2284,7 +2347,10 @@ fn emit_rust_functions(p:&Program)->String {
             Token::CheckSegment(reg,a,n)=>format!("let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:m.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
             Token::FarBranch(a,b)=>format!("{}if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;",emit_segment_load("1",a)),
             Token::BranchIf(a,c) => format!("if v{c} != 0 {{ if v{a} as u32 > context.code_limit {{ return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}}); }} pending_eip = v{a} as u32; }}"),
-            Token::Const(o,x) => format!("let v{o}: u64 = {}u64;",x.bits),
+            Token::Const(o,x) => {
+                let n=const_index;const_index+=1;
+                match slots{Some(slots)=>match slots.get(n).copied().flatten(){Some(v)=>format!("let v{o}: u64 = {v}u64;"),None=>format!("let v{o}: u64 = k[{n}];")},None=>format!("let v{o}: u64 = {}u64;",x.bits)}
+            },
             Token::PreserveFlags(m) => format!("// Preserve flag mask {m:#x}, including undefined status."),
             Token::UndefFlag(f) => format!("pending_flags &= !{}u32; pending_undefined |= {}u32;",1u32<<f.bit(),1u32<<f.bit()),
             Token::Select(o,c,a,b) => format!("let v{o}: u64 = if v{c} != 0 {{ v{a} }} else {{ v{b} }};"),
@@ -2320,26 +2386,24 @@ fn emit_rust_functions(p:&Program)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|f.error(*eip))?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}if let Some(t)=pending_transfer{{t.commit(regs,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|f.error(*eip))?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}if let Some(t)=pending_transfer{{t.commit(regs,flags,undefined,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }
     out.push_str("}\n");
+    if slots.is_some(){
+        out.push_str(&MACHINE_WRAPPER.replace("CHECKPOINT",&p.checkpoint_flags.to_string())
+            .replace("pub fn execute_with_machine(","#[inline(never)] pub fn execute_form(")
+            .replace("machine:&mut address::SegmentState)->","machine:&mut address::SegmentState,k:&[u64])->")
+            .replace("address.map(|a|a.effective));","address.map(|a|a.effective),k);"));
+        return out;
+    }
     out.push_str("pub fn execute_with_flow(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext)->Result<(),ExecError>{\n");
     if p.uses_memory {out.push_str("Err(ExecError::InvalidContext)\n}\n");}
     else {out.push_str("execute_state(regs,flags,undefined,eip,dst,src,context,None,0,None,None,None)\n}\n");}
     out.push_str("pub fn execute_with_memory(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:u32)->Result<(),ExecError>{\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),address,None,None,None)\n}\n");
     out.push_str("pub fn execute_with_segments(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,address:address::AddressContext)->Result<(),ExecError>{\nlet (offset,memory_context)=address.resolve(regs)?;\nexecute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,Some(memory_context),None,Some(address.effective))\n}\n");
-    out.push_str(&r#"pub fn execute_with_machine(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState)->Result<(),ExecError>{
-let (offset,memory)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};
-if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
-ram.set_paging(machine.ram_paging());
-let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
-ram.set_paging(machine.ram_paging());
-if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
-result
-}
-"#.replace("CHECKPOINT",&p.checkpoint_flags.to_string()));
+    out.push_str(&MACHINE_WRAPPER.replace("CHECKPOINT",&p.checkpoint_flags.to_string()));
     out.push_str("pub fn execute_with_metadata(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,dst:(usize,u8),src:(usize,u8))->Result<(), &'static str> {\n");
     if p.uses_flow || p.uses_memory {out.push_str("Err(\"flow context required: use execute_with_flow\")\n");}
     else {out.push_str("let mut eip=0; let context=FlowContext{next_eip:0,displacement:0,displacement_bits:32,code_limit:u32::MAX};\nexecute_with_flow(regs,flags,undefined,&mut eip,dst,src,context).map_err(|_|\"invalid execution context\")\n");}
@@ -2349,9 +2413,19 @@ const CLI_HELP:&str = "PIL - Processor Instruction Language
 Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
 
 DOS and ROM:
+  --pildos [--tty|--window] [CONFIG]  PILdos setup screen: edit pildos.conf
+      (or CONFIG, or PILDOS_CONFIG) and start its program; F10 starts.
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
-  --dos-session [--config FILE] [--mount DIR] [--args TEXT] PROGRAM
+  --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
+  --dos-text [--plain] [OPTIONS] [PROGRAM]  Rust terminal; config startup if omitted
+  --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] [PROGRAM]
+      DOS session with its own keyboard and screen: the host terminal
+      (--tty, default except on Windows) or a window (--window, Windows).
+      Ctrl+] in a terminal ends it. Same OPTIONS as --dos-session, plus
+      --country 1|358 and --utc-offset SECONDS (default: host time zone).
+      Without PROGRAM, the configuration's program and args start; its
+      fpu, mouse, ansi and utc_offset apply unless options are given.
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
   --run-rom PATH [--steps N]          Run a 64 or 128 KiB ROM
   --dos-list [--all] IMAGE|ZIP        List container entries
@@ -2382,7 +2456,6 @@ Code generation and examples:
   --write-factorials PATH           Write a factorial example
   --write-loop PATH                 Write a loop example
   --write-dos-hello com|exe PATH     Write a DOS hello (new file only)
-  --emit-dos-backend INPUT OUTPUT    Profile a DOS COM/EXE and emit a partial Rust backend
   --demo-branch                     Show a conditional branch example
 
 Options (before COMMAND):
@@ -2395,17 +2468,6 @@ For a DOS window use: python tools/dos_terminal.py --help
 ";
 fn main() -> R<()> {
     let mut dos_args:Vec<_>=std::env::args().collect();
-    if dos_args.get(1).map(String::as_str)==Some("--emit-dos-backend"){
-        if dos_args.len()!=4{return Err("usage: pil --emit-dos-backend INPUT.COM|INPUT.EXE OUTPUT.rs".into());}
-        let path=std::path::Path::new(&dos_args[2]);
-        let name=path.file_name().and_then(|n|n.to_str()).ok_or("DOS program name must be Unicode")?;
-        let bytes=dos::read_file(path)?;
-        let (source,status)=dos_compile::emit(&bytes,name)?;
-        use std::io::Write;
-        let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
-        file.write_all(source.as_bytes()).map_err(|e|e.to_string())?;
-        println!("{status}; wrote {}",dos_args[3]);return Ok(());
-    }
     if dos_args.get(1).map(String::as_str)==Some("--pildos-startup"){
         if dos_args.len()>3{return Err("usage: pil --pildos-startup [CONFIG]".into());}
         let(program,args)=dos_config::startup(dos_args.get(2).map(String::as_str))?;
@@ -2467,14 +2529,33 @@ fn main() -> R<()> {
         f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
-        let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
-        let(mut mount,mut tail,mut config,mut rest)=(None,None,None,&dos_args[2..]);
+        let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        let(mut mount,mut tail,mut config,mut fpu,mut rest)=(None,None,None,None,&dos_args[2..]);
         while let[flag,value,more@..]=rest{
-            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),"--config" if config.is_none()=>config=Some(value.as_str()),_=>break}
+            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),"--config" if config.is_none()=>config=Some(value.as_str()),"--fpu" if fpu.is_none()&&matches!(value.as_str(),"none"|"80387")=>fpu=Some(value.as_str()),_=>break}
             rest=more;
         }
         let[program]=rest else{return Err(usage.into())};
-        return dos::session::serve(program,mount,tail,&stop_log,config).map_err(Into::into);
+        return dos::session::serve(program,mount,tail,&stop_log,config,fpu).map_err(Into::into);
+    }
+    if matches!(dos_args.get(1).map(String::as_str),Some("--dos-console"|"--dos-text")){
+        let code=dos_text_io::cli(&dos_args[2..],dos_args[1]=="--dos-text",&stop_log)?;
+        if code!=0{std::process::exit(code);}
+        return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--pildos"){
+        let usage="usage: pil --pildos [--tty|--window] [CONFIG]";
+        let mut window=cfg!(windows);let mut config=None;
+        for arg in &dos_args[2..]{
+            match arg.as_str(){
+                "--tty"=>window=false,
+                "--window"=>window=true,
+                a if a.starts_with("--")||config.is_some()=>return Err(usage.into()),
+                a=>config=Some(a),
+            }
+        }
+        println!("{}",dos::setup::run(config,window,&stop_log)?);
+        return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;
@@ -2575,6 +2656,10 @@ fn main() -> R<()> {
         execute_flow(&jb,&mut cpu,dst,src,FlowContext{next_eip:0x106,displacement:-4,displacement_bits:8,code_limit:u32::MAX}).map_err(|e|format!("{e:?}"))?;
         println!("CMP 10,20; JB -4: EIP=0x{:08x} (expected 0x00000102)",cpu.eip);
         return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--emit-precompiled-forms") {
+        let (path,check)=match args.len(){3=>(args[2].as_str(),false),4 if args[3]=="--check"=>(args[2].as_str(),true),_=>return Err("usage: pil --emit-precompiled-forms PATH [--check]".into())};
+        println!("{}",precompiled::emit(path,check)?);return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("--emit-rust") {
         let w = args.get(2).ok_or("usage: pil --emit-rust 8|16|32 [description]")?;

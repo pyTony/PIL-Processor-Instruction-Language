@@ -303,6 +303,32 @@ fn listing(d:&Drive,dir:&Dir)->Result<Vec<Entry>,u16>{
         _=>Ok(Vec::new()),
     }
 }
+/// Translate one literal host filename in the currently mounted host folder
+/// to the same stable-in-this-listing 8.3 spelling DOS services will use.
+/// The host filename itself is never renamed or copied. A missing entry,
+/// symlink, path with separators, or non-host drive is left unresolved.
+///
+/// The alias is advisory for the current directory snapshot. File creation,
+/// deletion or a new colliding host name can change dynamically generated
+/// BASIS~N aliases, so callers should not cache them across directory changes.
+impl Drives {
+    pub(crate) fn host_argument_alias(&self,host_name:&str)->Result<Option<String>,String>{
+        let Some(drive)=self.list.get(self.current)else{return Ok(None);};
+        let Source::Host(root)=&drive.source else{return Ok(None)};
+        if host_name.is_empty()||host_name=="."||host_name==".."||
+           host_name.contains('/')||host_name.contains('\\'){return Ok(None);}
+        let entries=host_listing(root).map_err(|code|format!("Dine host directory listing failed: DOS error {code}"))?;
+        for entry in entries {
+            if let Node::Host(path)=&entry.node{
+                if path.file_name().and_then(|n|n.to_str())==Some(host_name){
+                    return String::from_utf8(display(&entry.name))
+                        .map(Some).map_err(|e|format!("non-ASCII DOS alias: {e}"));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
 /// The drive (list index) and absolute 8.3 components of a guest path;
 /// `Err(3)` for a drive that does not exist or `..` above the root.
 fn components(d:&Drives,raw:&[u8])->Result<(usize,Vec<Name>),u16>{
@@ -440,7 +466,6 @@ fn open(p:&mut Loaded)->Result<(),String>{
     let(data,drive,loc,stamp)=if own{
         // The program's own file opens by its name from any directory.
         if mode!=0{return Err("opening the program file for writing is not modelled".into());}
-        if p.drive.files.iter().any(|f|Arc::ptr_eq(&f.data,&p.own_file)){return Err("a second open of the program file is not modelled".into());}
         (p.own_file.clone(),p.drive.letter(),None,(0,0x21))
     }else{
         if raw.is_empty(){fail(p,3);return Ok(());}
@@ -467,7 +492,7 @@ fn device(p:&mut Loaded,sft:u8)->Result<(),String>{
 /// returns the handle in AX; error 4 when either runs out.
 fn install(p:&mut Loaded,mut file:OpenFile)->Result<(),String>{
     let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
-    // FreeCOM redirects by closing handle 0 or 1 and opening: the file takes it.
+    // A shell redirects by closing handle 0 or 1 and opening: the file takes it.
     let Some(handle)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
     // System file numbers 0..5 are the devices; files take the lowest free one above.
     let Some(sft)=(NUL+1..=0xfeu8).find(|n|!p.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};

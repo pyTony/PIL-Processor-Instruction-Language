@@ -5,6 +5,8 @@
 //! word access, unsupported CMOS writes or unsupported PIT use stops the run.
 //! Channel 0 supports binary modes 2/3; channel 2 has timed binary modes
 //! 0/2/3 and latched reads. Port 3DAh (and 3BAh) reports video status.
+//! Writes to the AT coprocessor ports F0h (clear busy) and F1h (reset) are
+//! taken; reads from them stop.
 use super::*;
 #[path="dos_pit.rs"]
 mod pit;
@@ -104,7 +106,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
         return Ok(Some(length));
     }
-    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3c6..=0x3c9|0x3d9){
+    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3cd|0x3de|0x3df|0x3c6..=0x3c9|0x3d8|0x3d9){
         let word=first&1!=0;
         if word&&!matches!(port,0x3b4|0x3d4){return Err("VGA word access must start at CRTC index port 3B4h or 3D4h".into());}
         let mut device=p.vga.clone();
@@ -237,7 +239,18 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             0x80 | 0x190 => {
                 eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
             },
+            // Port E9h (the Bochs debug port): the ROM runner passes its bytes to
+            // stdout, so test386 built with OUT_PORT equ 0E9h prints its POST EEh
+            // results there; a DOS session ignores them.
+            0xe9 if p.rom_mode => {use std::io::Write;let _=std::io::stdout().write_all(&[value]);},
             0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
+            // AT coprocessor ports, any byte value. F0h clears the busy latch
+            // that the 287/387 ERROR# output sets and that raises IRQ13. This
+            // FPU finishes each instruction before the next one and stops on
+            // an unmasked exception, so the latch is never set and the write
+            // changes nothing, with or without a coprocessor. F1h resets it.
+            0xf0 => {},
+            0xf1 => p.fpu.reset(),
             _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         }
     }

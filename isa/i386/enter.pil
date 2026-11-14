@@ -2,8 +2,10 @@
 # [BP-k*n] (SS, stack-address width), push the new frame pointer when level is
 # above zero, point BP/EBP at the saved value and reserve the frame. SS address
 # size selects SP/BP or ESP/EBP for addressing; operand size selects the pushed
-# width. A 32-bit ENTER on a 16-bit stack writes all of EBP (upper half zero),
-# as the 386 does. The decoder expands the copy placeholder below into the
+# width. A 32-bit ENTER on a 16-bit stack pushes the frame pointer with the
+# upper half of ESP and writes all of EBP with it, as the 386 does
+# (SingleStepTests always has that half zero; test386 POST 1Ah checks a
+# nonzero one). The decoder expands the copy placeholder below into the
 # pushes after BP for the masked level: each copied pointer is read after the
 # earlier pushes are staged, so a chain that overlaps them reads the new bytes.
 require_width 16_or_32

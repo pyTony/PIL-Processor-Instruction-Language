@@ -1,6 +1,27 @@
-# PIL 0.37.0-alpha.2
+# PIL 0.38.0-alpha.1
 
-Runtime projection of dev source 86cc5dbc55d7a2b5959a37870b9bcb5833969a2d.
+- Refresh the runtime from current development, including the shared Rust DOS
+  console, shared precompiled instruction forms and subsequent CPU/DOS fixes.
+- Run DOS with `pil --dos-text`, using configured startup and BIOS keys without
+  Python. The existing screen/ANSI driver and Windows graphics window are reused.
+- Share terminal/transcript I/O with Dine. Typed lines reach DOS as CP437 keys;
+  redirected EOF and input limits are explicit, and guest exit status is returned.
+- Include the Rust `--pildos` configuration editor and launcher, using the same
+  parser as the console and preserving existing configuration formatting.
+- Add Python-free `--rust-text` shortcut routes. Legacy Python GUI/COM1 tools
+  remain optional; building/running the Rust executable does not invoke Python.
+- Remove local host paths from published examples and records. The development
+  tree checks portable paths in code and documentation on each CI run.
+- Local Windows validation: 833 Rust tests (2 existing ignored), 86 frontend
+  tests, 11 BIOS console fixtures, Dine C ABI checks and redirected I/O checks.
+  Hosted checks are reported on the linked source PR; pending checks are not
+  represented as completed release evidence.
+
+Transcript mode does not capture BIOS/direct-VRAM drawings or graphics. Custom
+fonts, blink, speaker sound and reliable held-key state remain limited. COM1-only
+and TCP console use the optional Python frontend. See [Rust DOS console](DOS_CONSOLE.md).
+
+# PIL 0.37.0-alpha.2
 
 - Fix Doom shutdown with BIOS RTC time/date reads (INT1A AH02/AH04), using
   one coherent session-clock sample and preserving unrelated state.
@@ -11,8 +32,6 @@ Runtime projection of dev source 86cc5dbc55d7a2b5959a37870b9bcb5833969a2d.
   frontend tests pass. Third-party game assets are not distributed.
 
 # PIL 0.37.0-alpha.1
-
-Runtime projection of dev source commit 21d114676ff783eb53ef52aafc5f75ad0e08d894.
 
 DOS Doom and Superscape 3DBench now render through the ordinary release
 interpreter. No shadow programs or game assets are included.
@@ -30,34 +49,6 @@ Local Windows release: changing Doom gameplay and an ESC-opened menu;
 3DBench renders its scene and displays a score. No completed Doom timedemo
 score, sound output, full test386 ROM pass or task switching is claimed.
 See [DOS games](DOS_GAMES.md) for reproduction and current limits.
-
-# PIL 0.36.0-alpha.1
-
-Runtime-only delivery of merged dev commit 29a78e8e21450c554d7337d337bc21ae7d8ddc97.
-This delivery is exported from committed source, not the working native-program experiment.
-
-## Guarded instruction blocks and code cache
-
-- Tag instruction capabilities and use RAM-free generated helpers for proven
-  register-only instructions. Follow guarded blocks for at most 256 instructions
-  per call, within the caller's remaining execution budget.
-- Accept ordinary real-mode relocation while retaining code-byte, segment-limit,
-  executable-window, paging, and interrupt scheduling guards.
-- The interpreter trusts untouched physical code pages and skips repeated byte
-  comparisons. The first write returns the affected page to byte validation.
-  Guest write permissions and self-modifying-code behavior are preserved.
-- Ordinary release builds do not scan shadow directories or include guest-specific
-  code. Native binary loading and the separate standalone DOS compiler are excluded.
-
-This runtime also includes the intervening committed dev CPU, DOS, interrupt,
-paging, and VGA changes since the previous main delivery. It is a complete runtime
-projection; it is not a cherry-pick of the cache changes onto the older runtime.
-
-Validation of the block increment on Windows: 667 Rust tests passed, 2 ignored,
-and four generated loop guard/state tests passed. A narrow local interpreter loop
-benchmark improved from 31.677 ms to 29.380 ms; this is not a general speed claim.
-Standalone delivery verification is recorded in the delivery pull request.
-No new DOS corpus, legacy hardware, ARM, or cross-platform run is claimed here.
 
 # PIL 0.35.0-alpha.1
 

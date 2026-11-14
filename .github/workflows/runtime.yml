@@ -17,6 +17,8 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --release --locked
       - run: cargo run --release --locked -- --selftest
+      - run: cargo run --release --locked -- --write-dos-hello com target/console-hello.com
+      - run: cargo run --release --locked -- --dos-text --plain target/console-hello.com
       - run: cargo run --release --locked -- --verify-backends
       - run: python tools/dos_terminal.py --help
       - run: python tools/pil_debugger.py --help

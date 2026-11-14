@@ -18,10 +18,11 @@
 //! as words or dwords by the gate size. A fault while delivering is itself
 //! delivered, as a double fault (#DF) where the 386 makes one, and a fault
 //! while delivering #DF is a shutdown (triple fault). A handler of a more
-//! privileged level runs on its stack from the TSS (privilege.rs). Task
-//! gates and virtual-8086 mode stop the run.
+//! privileged level runs on its stack from the TSS (privilege.rs). A task
+//! gate switches tasks (task.rs).
 use super::address::{MemoryContext,SegmentAccess,SegmentCache,SegmentRegister};
 use super::privilege::{self,read_descriptor,Frame};
+use super::task;
 use super::flow::ExecError;
 use super::guest::Image;
 use super::memory::{MemWidth,Ram};
@@ -125,10 +126,23 @@ fn protected_frame(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,event:&Event)->Res
     let v86=machine.v86();
     if v86&&event.software&&(cpu.eflags>>12)&3!=3{return Err(ExecError::GeneralProtection{eip,error_code:0});}
     ram.set_paging(machine.ram_paging());
+    let gate=machine.interrupt_gate(event.vector,event.software,eip,&mut |at|read_descriptor(ram,at,eip));
+    let gate=match gate{Ok(g)=>g,Err(e)=>{ram.set_paging(machine.ram_paging());return Err(e);}};
+    if gate.task{
+        // A task gate: the whole delivery is a task switch (task.rs), with
+        // the error code pushed on the new task's stack.
+        let ext=u16::from(!event.software);
+        let mut state=machine;
+        let transfer=task::switch(&machine,ram,&cpu.regs,cpu.eflags,event.return_eip,gate.selector,task::Entry::Interrupt,event.error_code,ext,eip)?;
+        transfer.commit(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,&mut state,ram)?;
+        image.set_segment_state(state);
+        image.retired();
+        ram.set_paging(image.segment_state().ram_paging());
+        return Ok(());
+    }
     let result=(||{
         let r:&Ram=ram;
         let mut read=|at:u32|read_descriptor(r,at,eip);
-        let gate=machine.interrupt_gate(event.vector,event.software,eip,&mut read)?;
         let (selector,cache,accessed)=machine.interrupt_target(gate.selector,event.software,eip,&mut read)?;
         let offset=if gate.big{gate.offset}else{gate.offset&0xffff};
         if offset>cache.limit{return Err(ExecError::GeneralProtection{eip,error_code:0});}

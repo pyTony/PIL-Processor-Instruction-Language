@@ -366,6 +366,23 @@ the transfer it returns is applied when the instruction retires.
   popped as dwords from OUTER, every segment register gets its V86 cache
   and EIP must be within FFFFh. The description sets VM itself
   (`flag VM`).
+- Task switches (src/task.rs, embedded next to privilege.rs): `far_jump`
+  and `far_call` to an available TSS descriptor or a task gate (DPL >= CPL
+  and >= RPL, else #GP(selector); a gate that is not present is #NP) switch
+  tasks instead of loading CS. The old task's EIP, EFLAGS, general
+  registers and selectors go to its TSS (386 or 286 layout); JMP clears
+  its busy bit, CALL writes the back link in the new TSS and sets NT; the
+  new task's registers, EFLAGS, EIP, LDTR, segment registers and (from a
+  386 TSS while paging is on) CR3 are loaded, TR takes the new TSS, which
+  is marked busy, and CR0.TS is set. Faults on the new TSS are #GP (busy
+  or not a TSS), #NP or #TS (limit below 67h or 2Bh, a bad LDT or segment
+  register of the new task).
+- `task_return_if PREDICATE` (iret_protected.pil) must precede every load
+  and effect. When the bv1 predicate is one (NT set) the whole instruction
+  is a return to the task in the current TSS's back link: that TSS must be
+  busy (#TS otherwise), the old one is stored with NT clear and marked
+  available, and nothing else in the description runs. When it is zero
+  nothing happens.
 - `require_iopl` (CLI, STI): #GP(0) in protected mode when CPL > IOPL
   (so in virtual-8086 mode, CPL 3, unless IOPL is 3).
 - `check_io PORT BYTES` (IN, OUT, INS, OUTS): in protected mode with CPL >
@@ -614,8 +631,12 @@ before reading; any second-field fault prevents both staged register effects.
 
 `read_control OUT REGISTER` reads bv32 CR0, CR2 or CR3. `write_control REGISTER
 VALUE` stages one bv32 control-register write until retirement. Registers are
-numbered 0, 2 and 3; other numbers and non-bv32 write values are rejected by
-the PIL compiler. Incoming state is read even after a staged write, matching
+numbered 0, 2 and 3 for CR0, CR2 and CR3, and 8-15 for the debug registers
+DR0-DR7 (MOV 0F21/0F23); other numbers and non-bv32 write values are rejected
+by the PIL compiler. DR4 and DR5 reach DR6 and DR7. Writing DR7 with a
+breakpoint enable (L0-G3) or GD set stops with UnsupportedControl, because
+breakpoints are not modelled; other debug-register values are stored as
+written. Both need CPL 0 (#GP(0) above it and in virtual-8086 mode). Incoming state is read even after a staged write, matching
 other PIL effects. Missing machine state is an InvalidContext diagnostic.
 
 The 80386 MOV forms 0F20/0F22 always transfer full 32-bit GPRs, independently

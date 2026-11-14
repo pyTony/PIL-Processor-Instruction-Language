@@ -65,6 +65,39 @@ impl Planar {
             if self.seq[2]>>n&1!=0{self.planes[n*PLANE+offset]=(data&mask)|(latch[n]&!mask);}
         }
     }
+    /// Sequencer (3C4h/3C5h) and graphics controller (3CEh/3CFh) access in
+    /// a 16-colour planar mode. A word OUT to an index port writes the index,
+    /// then the data. Every check precedes any change; returns the value read.
+    /// Only the planar addressing these modes use is accepted: no chain-4,
+    /// odd/even, shift modes or map changes, and no clocking/reset changes.
+    pub fn controller_io(&mut self,port:u16,input:bool,value:u16,word:bool)->Result<u16,String>{
+        if !matches!(port,0x3c4|0x3c5|0x3ce|0x3cf){return Err(format!("port {port:04X}h is not a VGA sequencer or graphics controller port"));}
+        if word&&!matches!(port,0x3c4|0x3ce){return Err("VGA word access must start at index port 3C4h or 3CEh".into());}
+        let sequencer=port<0x3ce;
+        let (mut seq,mut gc)=(self.seq,self.gc);
+        let mut index=if sequencer{self.seq_index}else{self.gc_index};
+        let mut access=|data:bool,value:u8|->Result<u8,String>{
+            if !data{if input{return Ok(index);}index=value;return Ok(0);}
+            let i=usize::from(index);
+            let regs:&mut [u8]=if sequencer{&mut seq}else{&mut gc};
+            // Unimplemented extension indices are absent on this plain VGA: reads
+            // stay FFh and writes have no effect, so vendor probes can fail normally.
+            let Some(old)=regs.get(i).copied() else{return Ok(if input{0xff}else{0});};
+            if input{return Ok(old);}
+            let allowed=match(sequencer,i){
+                (true,2)=>true,(true,4)=>value&0x0c==0x04,
+                (false,0..=4|7|8)=>true,(false,5)=>value&0x74==0,(false,6)=>value&0x0f==0x05,
+                _=>value==old,
+            };
+            if !allowed{return Err(format!("VGA {} register {i:02X}h value {value:02X}h is outside the planar profile",if sequencer{"sequencer"}else{"graphics controller"}));}
+            regs[i]=value;Ok(0)
+        };
+        let lo=access(port&1!=0,value as u8)?;
+        let hi=if word{access(true,(value>>8)as u8)?}else{0};
+        self.seq=seq;self.gc=gc;
+        if sequencer{self.seq_index=index;}else{self.gc_index=index;}
+        Ok(u16::from(lo)|u16::from(hi)<<8)
+    }
     /// The 4-bit colour of pixel `bit` (0 = leftmost) of byte `offset`.
     pub fn pixel(&self,offset:usize,bit:u32)->u8{
         (0..4).fold(0,|c,n|c|((self.planes[n*PLANE+offset]>>(7-bit)&1)<<n))
