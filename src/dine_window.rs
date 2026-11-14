@@ -433,7 +433,14 @@ mod windows {
             CLOSED.store(false,Ordering::Release);
             WINDOW.store(hwnd as isize,Ordering::Release);
             let _=ready.send(hwnd as isize);
-            let previous_visible=ShowWindow(hwnd,if interactive{SW_SHOWNORMAL}else{SW_SHOWNOACTIVATE});
+            let show=if interactive{SW_SHOWNORMAL}else{SW_SHOWNOACTIVATE};
+            let previous_visible=ShowWindow(hwnd,show);
+            // Windows replaces the first ShowWindow of a process with the
+            // launcher's STARTUPINFO show mode. A launcher that hides the
+            // console (PILdos.vbs: WshShell.Run with style 0) would hide
+            // this window too, so show it again; only the first call is
+            // replaced.
+            if IsWindowVisible(hwnd)==0{ShowWindow(hwnd,show);}
             let hwnd_topmost=(-1isize) as Handle;
             let hwnd_notopmost=(-2isize) as Handle;
             let swp_flags=0x0001u32|0x0002u32|0x0010u32; // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
