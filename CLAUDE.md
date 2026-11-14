@@ -1,3 +1,21 @@
+# MANDVGA computes every pixel of 640x480 — 14 November 2026
+
+Tony: "Now that VGA is so fast, maybe we should push it to full vga."
+MANDVGA.COM used to compute 320x240 points and draw each as a 2x2 block.
+It now computes all 640x480 pixels (step 21 = 3.25/640 in 4.12, same
+view) and writes each one through write mode 2 with a one-bit mask and a
+latch read. Still 8086 only, 4.12 fixed point and 30 iterations: in a
+sample of 30,000 pixels 4.12 differs from double precision on 0.9%, all
+at the set's edge, and the two pictures look the same, so wider fixed
+point was not needed. tools/verify_mandel_vga.py and the ignored Rust
+comparison test (dos_backend.rs) now check 640x464 individual pixels.
+
+Local Linux, release: 37.9M -> 150.8M guest instructions to the key
+wait; verify_mandel_vga.py passes (296,960 pixels, caption, key exit);
+the ignored comparison test passes, interpreter 10.25 s for the whole run
+(another engine run shared the machine).
+Expect about four times Tony's earlier 2.375 s.
+
 # PILdos.vbs window was hidden — 14 November 2026
 
 Tony: `.\PILdos.vbs` on Windows showed nothing. The launcher starts
