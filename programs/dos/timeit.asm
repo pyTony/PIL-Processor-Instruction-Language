@@ -1,5 +1,10 @@
 ; TIMEIT.COM - runs a command and prints its start time, end time and the
-; time it took:  TIMEIT command [arguments]
+; time it took:  TIMEIT [/K] command [arguments]
+; /K puts an Enter key in the BIOS keyboard buffer (INT 16h AH=05h) just
+; before the clock starts, so a program that waits for a key when it has
+; finished (a graphics demo showing its picture) ends at once and the time
+; does not include anyone's reaction. A program that reads or flushes the
+; keyboard earlier takes the key there instead.
 ; The summary repeats the command, so the four lines can be saved as a record.
 ; The command goes to COMMAND.COM /C (from COMSPEC), so programs on the PATH,
 ; batch files and internal commands such as DIR all work. Times come from
@@ -29,7 +34,27 @@
         dec cx
         jmp .blank
 .none:  jmp usage
-.tail:  cmp cx,126-4
+.tail:  cmp cx,2                ; /K (either case), alone or before a blank
+        jb .cmdline
+        cmp byte [si],'/'
+        jne .cmdline
+        mov al,[si+1]
+        or al,20h
+        cmp al,'k'
+        jne .cmdline
+        cmp cx,2
+        je .key
+        mov al,[si+2]
+        cmp al,' '
+        je .key
+        cmp al,9
+        jne .cmdline
+.key:   mov byte [auto_key],1
+        add si,2
+        sub cx,2
+        jmp .blank
+.cmdline:
+        cmp cx,126-4
         ja too_long
         mov word [tail+1],' /'
         mov word [tail+3],'C '
@@ -52,6 +77,12 @@
         mov al,[country+09h]
         mov [dec_sep],al
 .seps:
+        cmp byte [auto_key],0
+        je .clock
+        mov cx,1c0dh            ; Enter: scan code 1Ch, character 0Dh
+        mov ah,5
+        int 16h                 ; a full buffer (AL=1) leaves the keys there
+.clock:
         mov ah,2ch
         int 21h
         mov [start_cx],cx
@@ -284,12 +315,14 @@ exit:   mov ah,4ch
 name        db 'COMSPEC='
 time_sep    db ':'
 dec_sep     db '.'
+auto_key    db 0
 msg_command db 'Command  $'
 msg_start   db 'Start    $'
 msg_end     db 'End      $'
 msg_elapsed db 'Elapsed  $'
 msg_usage   db 'Runs a command and shows how long it took.',13,10
-            db 'TIMEIT command [arguments]',13,10,'$'
+            db 'TIMEIT [/K] command [arguments]',13,10
+            db '  /K  press Enter for the command, so a final key wait is not timed',13,10,'$'
 msg_long    db 'TIMEIT: the command line is too long',13,10,'$'
 msg_memory  db 'TIMEIT: cannot shrink its memory block',13,10,'$'
 msg_comspec db 'TIMEIT: COMSPEC is not set',13,10,'$'

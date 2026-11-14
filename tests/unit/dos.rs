@@ -1980,6 +1980,22 @@ fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
  // A command line that would not fit after " /C ".
  let (stop,text,_)=timeit(&[b'x';123],1,0);
  assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert_eq!(text,"TIMEIT: the command line is too long\r\n");
+ // /K alone is no command.
+ let (stop,text,_)=timeit(b" /k ",1,0);
+ assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert!(text.starts_with("Runs a command"),"{text}");
+ // A /K that is part of a word is the command, not the switch.
+ let (stop,text,_)=timeit(b" /KX",1,0);
+ assert!(matches!(stop,Stop::Exit(7)),"{stop:?}");assert!(text.starts_with(" /C /KX"),"{text}");
+ // A command that waits for a key (INT 16h AH=00h) and exits with its character.
+ std::fs::write(dir.join("command.com"),[0x32,0xe4,0xcd,0x16,0xb4,0x4c,0xcd,0x21]).unwrap();
+ let (stop,_,_)=timeit(b" MANDVGA",1,0);
+ assert_eq!(stop,Stop::WaitingForInput,"without /K the key wait is the user's");
+ // /K puts Enter in the buffer before the clock starts: no wait, and the times print.
+ for tail in [&b" /K MANDVGA"[..],b"/k\tMANDVGA"]{
+  let (stop,text,_)=timeit(tail,1,0);
+  assert!(matches!(stop,Stop::Exit(13)),"Enter reached the command: {stop:?}");
+  assert_eq!(text,"Command  MANDVGA\r\nStart    0:00:00.00\r\nEnd      0:00:00.05\r\nElapsed  0:00:00.05\r\n");
+ }
  std::fs::remove_file(dir.join("command.com")).unwrap();
  // COMSPEC names a file that is not there: the DOS error is reported.
  let (stop,text,_)=timeit(b" X",1,0);

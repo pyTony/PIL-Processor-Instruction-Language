@@ -1,3 +1,14 @@
+# TIMEIT /K: no key wait at the end — 14 November 2026
+
+Tony asked for a TIMEIT option that lets the timed program finish without a
+key press, for accurate timing. `TIMEIT /K command` puts Enter (scan code
+1Ch, character 0Dh) in the BIOS keyboard buffer with INT 16h AH=05h just
+before the start time is read, so MANDVGA, MANDCGA and other programs that
+wait for a key after drawing return at once. A program that reads or
+flushes the keyboard before its final wait takes the key there instead.
+`/K` is recognised only as the first word (either case); the usage text
+lists it.
+
 # Desktop launcher opens the Rust setup screen — 14 November 2026
 
 Tony asked that the desktop launcher use the new Rust PILdos screen.
