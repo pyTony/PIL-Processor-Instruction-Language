@@ -2097,6 +2097,26 @@ fn pit_nonzero_reload_and_latch_work_through_guest_ports(){
 }
 
 #[test]
+fn pit_reads_on_the_host_clock_never_repeat_a_count(){
+    // Latch and read channel 0 into BX, then again at once into CX; CLI; HLT.
+    // An AT bus I/O cycle outlasts one PIT clock, so the two counts differ.
+    let code=[0xb0,0x00,0xe6,0x43,0xe4,0x40,0x88,0xc3,0xe4,0x40,0x88,0xc7,
+        0xb0,0x00,0xe6,0x43,0xe4,0x40,0x88,0xc1,0xe4,0x40,0x88,0xc5,0xfa,0xf4];
+    for _ in 0..50{
+        let mut p=load(&code,"pit.com").unwrap();p.clock_offset=Some(0);
+        let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+        let(first,second)=(r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[1]&0xffff);
+        assert_ne!(first,second,"two latched counts in a row were equal");
+    }
+    // Port accesses closer together than one PIT clock still see a new clock.
+    let mut p=load(&[0xfa,0xf4],"pit.com").unwrap();
+    let mut last=p.speaker.pit_io(Some(0));
+    for _ in 0..1000{let now=p.speaker.pit_io(Some(0));assert!(now>last,"{now} after {last}");last=now;}
+    // Without a host clock time stays at zero, as before.
+    assert_eq!((p.speaker.pit_io(None),p.speaker.pit_io(None)),(0,0));
+}
+
+#[test]
 fn host_bios_clock_read_with_if_clear_keeps_undelivered_pit_ticks_out_of_bda(){
     let mut p=load(&[0xfa,0xf4],"clock.com").unwrap();p.clock_offset=Some(0);p.cpu.eflags=2;p.timer_ticks=123;
     p.ram.store(0x46c,MemWidth::Dword,123).unwrap();p.cpu.regs[0]=0;service(&mut p,0x1a,&mut vec![]).unwrap();

@@ -8,6 +8,37 @@ Before every commit/PR, review host-path examples and run
 `python tools/check_portable_paths.py --self-test`; repeat after edits. DOS guest
 paths and standard OS interfaces are separate from host checkout locations.
 
+# PIT reads never repeat a count; Landmark 6.00 CPU/FPU type — 14 November 2026
+
+Tony's Landmark System Speed Test 6.00 (dosbench MARKS\LM60, local only)
+showed "Intel 80386SX" and a garbage FPU type under --fpu 80387.
+- CPU: Landmark tells DX from SX by timing 300x32 ROR dword [SI] at SI=2
+  and SI=3 with PIT channel 0 (latch, read low/high); a difference above
+  100 counts means a 16-bit bus. It first waits for the counter to reload
+  by reading until a count is not below the previous one. On a fast host
+  two reads could see the same PIT clock, so that wait ended at once and
+  a measurement could span a reload (a local interpreter run measured -82
+  counts). Each guest access to ports 40h-43h and 61h now sees at least
+  one new PIT clock (838 ns), as an AT bus I/O cycle (about 1 us) does:
+  Dine waits on the host clock for at most one PIT clock. Without a host
+  clock (headless) time stays at zero, as before.
+- Still open: the measurement itself is host time, and host jitter of
+  more than 42 us (100 counts) in a ~3 ms loop still reports SX now and
+  then (local: 1 of 4 runs SX, before and after this change).
+- FPU: on a 386 with CR0.ET set, Landmark presets C3-C0 to 1 with FLDENV
+  and runs FYL2XP1 on ST0=0.4, ST1=1. It expects status 4F20h or CFA0h
+  (C1 still 1) for an Intel 387, 4D20h or CDA0h for ULSI/Cyrix, 0800h for
+  IIT. Our FYL2XP1 is correctly rounded (log2(1.4) is 0.25 ulp above the
+  truncated value) and clears C1, as the Intel SDM defines it, so it gets
+  4D20h; the ULSI/Cyrix follow-up (FSTP with 53-bit precision, 220h here)
+  matches neither and Landmark shows an index past its FPU name table.
+  Not changed: the real 387's result bits or C1 for this input are not
+  documented here, and no 387 reference was run.
+
+Local Linux, release: 843 Rust tests pass, 2 ignored (1 new: back-to-back
+PIT reads and pit_io on a host clock). LM60.EXE in a --dos-session with
+clock 7200 and --fpu 80387: 80386DX in 3 of 4 runs, FPU type unchanged.
+
 # PILdos setup screen: pil --pildos — 14 November 2026
 
 Tony asked for a PILdos GUI configuration screen and launcher, in Rust (the
