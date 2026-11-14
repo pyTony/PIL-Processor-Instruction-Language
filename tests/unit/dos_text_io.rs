@@ -66,3 +66,9 @@ fn backend_sessions_use_the_same_io_and_screen(){
 fn transcript_never_operates_the_host_terminal(){
     assert_eq!(transcript(b"\x1b]title\x07\r\n\x84"),"\\x1b]title\\x07\r\nä");
 }
+#[test]
+fn host_pointer_option_takes_only_its_three_values(){
+    let args=|v:&str|vec!["--host-pointer".to_string(),v.to_string()];
+    assert!(cli(&args("off"),false,"").unwrap_err().contains("auto, show or hide"));
+    assert!(cli(&["--host-pointer".to_string()],false,"").unwrap_err().contains("missing"));
+}

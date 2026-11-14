@@ -45,6 +45,7 @@ pub(crate) const FIELDS:&[Field]=&[
     field("mouse","Mouse",Kind::Bool,"Experimental INT 33h mouse driver.",false),
     field("ansi","ANSI driver",Kind::Bool,"ANSI.SYS-style console driver: ESC [ colours and cursor moves.",false),
     field("utc_offset","UTC offset",Kind::Text,"Hours of the DOS clock from UTC: 2, -5, 5.5 or +02:00. Empty: this computer's.",false),
+    field("host_pointer","Host pointer",Kind::Choice(&["auto","show","hide"]),"auto: hide the host arrow while the DOS mouse cursor shows. show/hide: always.",false),
     field("com1","COM1",Kind::Text,"console or tcp:PORT.",true),
     field("speaker_volume","Speaker volume",Kind::Text,"PC speaker click volume 0..100 (0 mutes; default 5).",true),
     field("headless","Headless",Kind::Bool,"Run without a window, through the terminal.",true),

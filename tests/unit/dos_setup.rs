@@ -16,7 +16,7 @@ fn typed(s:&mut Setup,text:&str){for c in text.chars(){s.key(Key::Char(c),NONE);
 #[test]
 fn every_documented_setting_has_a_field_and_the_screen_fits(){
     let keys:Vec<_>=FIELDS.iter().map(|f|f.key).collect();
-    for key in ["program","args","a","b","c","d","e","country","fpu","mouse","ansi","utc_offset","com1","speaker_volume","headless","shell","rust_graphics","engine"]{
+    for key in ["program","args","a","b","c","d","e","country","fpu","mouse","ansi","utc_offset","host_pointer","com1","speaker_volume","headless","shell","rust_graphics","engine"]{
         assert!(keys.contains(&key),"{key}");
     }
     assert!(FIRST_FIELD+FIELDS.len()<ROWS-3);
@@ -25,10 +25,12 @@ fn every_documented_setting_has_a_field_and_the_screen_fits(){
     assert_eq!(cells.len(),COLUMNS*ROWS*2);
     assert_eq!(cursor,None);
     assert!(row_text(&cells,0).contains("PILdos setup"));
+    assert!(row_text(&cells,0).contains("pildos.conf"));
     assert!(row_text(&cells,FIRST_FIELD).contains("images/FD.img::SHELL.EXE"));
     assert!(row_text(&cells,FIRST_FIELD+5).contains("driveD"));
     assert!(row_text(&cells,FIRST_FIELD+7).contains("358  Finland"));
     assert!(row_text(&cells,FIRST_FIELD+11).contains("this computer's time zone"));
+    assert!(row_text(&cells,FIRST_FIELD+12).contains("(default: auto)"));
     assert!(row_text(&cells,ROWS-1).contains("F10"));
 }
 
@@ -119,4 +121,17 @@ fn save_writes_only_text_the_parser_accepts(){
     assert_eq!(good.key(Key::F(10),NONE),Action::Start);
     assert_eq!(std::fs::read_to_string(&path).unwrap(),"\u{feff}program=A.COM\nansi=true\n");
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn host_pointer_cycles_through_its_choices(){
+    let mut s=setup(Some(EXAMPLE));
+    select(&mut s,"host_pointer");
+    for want in ["auto","show","hide","auto"]{
+        s.key(Key::Enter,NONE);
+        assert_eq!(s.doc.get("host_pointer").as_deref(),Some(want));
+    }
+    assert!(s.doc.text().ends_with("host_pointer=auto\r\n"),"{:?}",s.doc.text());
+    let (cells,_)=s.render();
+    assert!(row_text(&cells,FIRST_FIELD+12).contains("auto  hidden while the DOS cursor shows"));
 }

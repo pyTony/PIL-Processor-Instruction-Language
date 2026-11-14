@@ -63,13 +63,18 @@ pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool
 }
 pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,String>{
     let(mut config,mut mount,mut tail,mut fpu,mut program)=(None,None,None,None,None);
-    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None};
+    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default()};
     let mut plain=false;
+    let mut host_pointer=None;
     let mut at=0;
     while at<args.len(){
         match args[at].as_str(){
             "--tty"|"--rust-graphics"=>options.window=false,"--window"=>options.window=true,"--plain"=>{plain=true;options.window=false;},
             "--ansi"=>options.ansi=true,"--mouse"=>options.mouse=true,
+            "--host-pointer"=>{
+                let value=args.get(at+1).ok_or("missing DOS console option value")?;
+                host_pointer=Some(crate::dos_config::HostPointer::parse(value).ok_or("--host-pointer takes auto, show or hide")?);at+=1;
+            },
             "--config"|"--mount"|"--args"|"--fpu"|"--country"|"--utc-offset"=>{
                 let value=args.get(at+1).ok_or("missing DOS console option value")?.as_str();
                 match args[at].as_str(){"--config"=>config=Some(value),"--mount"=>mount=Some(value),"--args"=>tail=Some(value),"--fpu"=>fpu=Some(value),"--country"=>options.country=Some(value.parse().map_err(|_|"invalid country")?),_=>options.utc_offset=Some(value.parse().map_err(|_|"invalid UTC offset")?)}at+=1;
@@ -81,6 +86,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     let defaults=crate::dos_config::console_settings(config)?;
     options.ansi|=defaults.ansi;options.mouse|=defaults.mouse;
     options.utc_offset=options.utc_offset.or(defaults.utc_offset);
+    options.host_pointer=host_pointer.or(defaults.host_pointer).unwrap_or_default();
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
     let tail=tail.or_else(||startup.as_ref().and_then(|s|s.1.as_deref()));
