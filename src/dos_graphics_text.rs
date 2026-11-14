@@ -1,9 +1,12 @@
 //! Text in the graphics modes: CGA 04h/05h (320x200, 2 bits a pixel), CGA 06h
 //! (640x200, 1 bit), VGA 13h (320x200, 1 byte) and the EGA/VGA 16-colour
 //! planar modes 0Dh/0Eh/10h/12h (8-, 14- or 16-line cells). Like the IBM PC BIOS,
-//! characters are 8x8 cells drawn into the framebuffer: 00h-7Fh from the ROM
-//! font at F000:FA6E, 80h-FFh from the table the INT 1Fh vector points to
-//! (Dine's own table at C000:1000 until a program changes the vector).
+//! characters in 8-line cells are 8x8 glyphs drawn into the framebuffer:
+//! 00h-7Fh from the ROM font at F000:FA6E, 80h-FFh from the table the INT 1Fh
+//! vector points to (Dine's own table at C000:1000 until a program changes
+//! the vector). In the 14- and 16-line cells of modes 10h and 12h all 256
+//! glyphs come from the table INT 43h points to, as on an EGA/VGA BIOS; the
+//! mode set points it at the 8x14 or 8x16 font in the video BIOS area.
 //! Guest RAM stays authoritative. The font and the framebuffer are read from
 //! it, and every change is a planned write that the caller commits all or none.
 use super::*;
@@ -32,10 +35,6 @@ pub(in super::super) fn font()->Result<Vec<u8>,String>{
     Ok(bytes)
 }
 pub(super) fn is_graphics(mode:u32)->bool{matches!(mode,4|5|6|0x13)||super::super::planar::geometry(mode).is_some()}
-/// Glyph row shown on scanline `r` of a cell `cell` lines high. The 8x8 font
-/// is the only one, so 14- and 16-line cells repeat rows (14: rows 0 and 7
-/// once, 1-6 twice; 16: every row twice).
-fn glyph_row(cell:u32,r:u32)->usize{match cell{16=>(r/2)as usize,14=>(r.div_ceil(2)).min(7)as usize,_=>r as usize}}
 /// A copy of the framebuffer of a graphics mode; the plan diffs it at the end.
 /// Planar modes copy each plane's used bytes through the host plane alias.
 struct Frame{mode:u32,base:u32,old:Vec<u8>,bytes:Vec<u8>,columns:u32,rows:u32,cell:u32,plane_bytes:usize,page_offset:usize}
@@ -81,9 +80,9 @@ impl Frame{
     /// One character cell. Bit 7 of the colour XORs the glyph into the cell in
     /// the CGA and planar modes; otherwise set pixels take the colour and the
     /// rest 0.
-    fn draw(&mut self,row:u32,col:u32,glyph:[u8;8],color:u8){
+    fn draw(&mut self,row:u32,col:u32,glyph:&[u8],color:u8){
         let xor=self.mode!=0x13&&color&0x80!=0;let color=color&self.mask();
-        for r in 0..self.cell{let bits=glyph[glyph_row(self.cell,r)];for b in 0..8{
+        for r in 0..self.cell{let bits=glyph.get(r as usize).copied().unwrap_or(0);for b in 0..8{
             let(x,y)=(col*8+b,row*self.cell+r);let on=bits>>(7-b)&1!=0;
             if xor{if on{let old=self.get(x,y);self.set(x,y,old^color);}}
             else{self.set(x,y,if on{color}else{0});}
@@ -115,18 +114,24 @@ impl Frame{
 fn byte(p:&Loaded,at:u32)->Result<u32,String>{
     p.ram.load(at,MemWidth::Byte).map_err(|e|format!("BIOS graphics read: {e:?}"))
 }
-/// The glyph of `ch`. 80h-FFh come through INT 1Fh, which starts at Dine's
-/// own upper-half table. A program that sets the vector to 0 leaves no table;
-/// the call then stops instead of drawing whatever the interrupt table holds.
-fn glyph(p:&Loaded,ch:u32)->Result<[u8;8],String>{
+/// The glyph of `ch` for cells `cell` lines high, one byte a line. 14- and
+/// 16-line cells read the INT 43h table. In 8-line cells 80h-FFh come through
+/// INT 1Fh, which starts at Dine's own upper-half table. A program that sets
+/// either vector to 0 leaves no table; the call then stops instead of drawing
+/// whatever the interrupt table holds.
+fn glyph(p:&Loaded,cell:u32,ch:u32)->Result<Vec<u8>,String>{
+    if cell!=8{
+        let vector=p.ram.load(0x43*4,MemWidth::Dword).map_err(|e|format!("INT 43h vector read: {e:?}"))?;
+        if vector==0{return Err(format!("graphics-mode character {ch:02X}h needs an INT 43h font table; none is installed"));}
+        let at=((vector>>16)<<4).wrapping_add(vector&0xffff).wrapping_add(ch*cell);
+        return (0..cell).map(|n|byte(p,at+n).map(|b|b as u8)).collect();
+    }
     let at=if ch<0x80{FONT+ch*8}else{
         let vector=p.ram.load(0x1f*4,MemWidth::Dword).map_err(|e|format!("INT 1Fh vector read: {e:?}"))?;
         if vector==0{return Err(format!("graphics-mode character {ch:02X}h needs an INT 1Fh font table (as GRAFTABL installs); none is installed"));}
         ((vector>>16)<<4).wrapping_add(vector&0xffff).wrapping_add((ch-0x80)*8)
     };
-    let mut glyph=[0u8;8];
-    for(n,row)in glyph.iter_mut().enumerate(){*row=byte(p,at+n as u32)? as u8;}
-    Ok(glyph)
+    (0..8).map(|n|byte(p,at+n).map(|b|b as u8)).collect()
 }
 /// Cursor of `page`, the page `frame` was read from.
 fn cursor(p:&Loaded,frame:&Frame,page:u32)->Result<(u32,u32),String>{
@@ -157,7 +162,7 @@ pub(super) fn teletype(p:&Loaded,bytes:&[u8],color:u32,dos_tabs:bool)->Result<Wr
                 8=>col=col.saturating_sub(1),
                 10=>row+=1,
                 13=>col=0,
-                ch=>{frame.draw(row,col,glyph(p,u32::from(ch))?,color as u8);col+=1;if col==cols{col=0;row+=1;}},
+                ch=>{let shape=glyph(p,frame.cell,u32::from(ch))?;frame.draw(row,col,&shape,color as u8);col+=1;if col==cols{col=0;row+=1;}},
             }
             if row==frame.rows{let last=frame.rows-1;frame.scroll((0,0,last,cols-1),1,0,true);row=last;}
         }
@@ -173,21 +178,21 @@ pub(super) fn write_chars(p:&Loaded)->Result<Writes,String>{
     let(row,col)=cursor(p,&frame,page)?;
     let count=p.cpu.regs[1]&0xffff;let first=row*cols+col;
     if count>frame.rows*cols-first{return Err("BIOS repeated write exceeds the graphics screen".into());}
-    let shape=glyph(p,p.cpu.regs[0]&255)?;let color=p.cpu.regs[3]as u8;
-    for cell in first..first+count{frame.draw(cell/cols,cell%cols,shape,color);}
+    let shape=glyph(p,frame.cell,p.cpu.regs[0]&255)?;let color=p.cpu.regs[3]as u8;
+    for cell in first..first+count{frame.draw(cell/cols,cell%cols,&shape,color);}
     Ok(frame.writes())
 }
 /// AH08h: the character whose glyph matches the cell's lit pixels (any colour
-/// but 0), searching 00h-7Fh, then the INT 1Fh table when one is installed.
+/// but 0). 14- and 16-line cells search the INT 43h table; 8-line cells
+/// search 00h-7Fh, then the INT 1Fh table when one is installed.
 /// AL=0 when nothing matches; AH=0, as graphics cells have no attribute.
 pub(super) fn read_char(p:&Loaded)->Result<u32,String>{
     let page=bh_page(p)?;let frame=Frame::read(p,page)?;let(row,col)=cursor(p,&frame,page)?;
     let h=frame.cell;
     let cell:Vec<u8>=(0..h).map(|r|(0..8).fold(0u8,|bits,b|if frame.get(col*8+b,row*h+r)!=0{bits|0x80>>b}else{bits})).collect();
-    let upper=p.ram.load(0x1f*4,MemWidth::Dword).map_err(|e|format!("INT 1Fh vector read: {e:?}"))?!=0;
+    let upper=h!=8||p.ram.load(0x1f*4,MemWidth::Dword).map_err(|e|format!("INT 1Fh vector read: {e:?}"))?!=0;
     for ch in 0..if upper{256}else{128}{
-        let g=glyph(p,ch)?;
-        if (0..h).all(|r|g[glyph_row(h,r)]==cell[r as usize]){return Ok(ch);}
+        if glyph(p,h,ch)?==cell{return Ok(ch);}
     }
     Ok(0)
 }
@@ -200,4 +205,28 @@ pub(super) fn scroll(p:&Loaded,up:bool)->Result<Writes,String>{
     if top>bottom||left>right{return Ok(Vec::new());}
     frame.scroll((top,left,bottom,right),p.cpu.regs[0]&255,(p.cpu.regs[3]>>8)as u8,up);
     Ok(frame.writes())
+}
+/// The characters on the displayed page of a graphics mode, for copying
+/// text off the screen: (columns, rows, one CP437 byte a cell). Each cell is
+/// matched against the glyphs the BIOS would draw it with, taking lit pixels
+/// first as those not the cell's most common colour (the background, also
+/// when it is not colour 0), then as those not colour 0. A cell that matches no glyph,
+/// such as part of a picture, reads as a space, as does a cell of one
+/// colour (a full block cannot be told from a filled area).
+pub(in super::super) fn screen_text(p:&Loaded)->Result<(u32,u32,Vec<u8>),String>{
+    let frame=Frame::read(p,byte(p,0x462)?)?;let h=frame.cell;
+    let upper=h!=8||p.ram.load(0x1f*4,MemWidth::Dword).map_err(|e|format!("INT 1Fh vector read: {e:?}"))?!=0;
+    let mut known=std::collections::HashMap::new();
+    known.insert(vec![0u8;h as usize],0x20u8);
+    for ch in 0..if upper{256}else{128}{known.entry(glyph(p,h,ch)?).or_insert(ch as u8);}
+    let mut text=Vec::with_capacity((frame.rows*frame.columns)as usize);
+    for row in 0..frame.rows{for col in 0..frame.columns{
+        let pixels:Vec<u8>=(0..h*8).map(|i|frame.get(col*8+i%8,row*h+i/8)).collect();
+        let mut counts=[0u32;256];for &c in &pixels{counts[usize::from(c)]+=1;}
+        let common=(0..=255u8).max_by_key(|&c|(counts[usize::from(c)],std::cmp::Reverse(c))).unwrap_or(0);
+        let shape=|background:u8|->Vec<u8>{(0..h as usize).map(|r|(0..8).fold(0u8,|bits,b|if pixels[r*8+b]!=background{bits|0x80>>b}else{bits})).collect()};
+        let ch=if counts[usize::from(common)] as usize==pixels.len(){0x20}else{known.get(&shape(common)).or_else(||known.get(&shape(0))).copied().unwrap_or(0x20)};
+        text.push(ch);
+    }}
+    Ok((frame.columns,frame.rows,text))
 }

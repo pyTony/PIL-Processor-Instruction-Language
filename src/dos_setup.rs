@@ -354,7 +354,7 @@ pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<Strin
             let action=match event{
                 Event::Key(key,m)=>setup.key(key,m),
                 Event::Quit=>Action::Quit,
-                Event::Break|Event::Mouse{..}=>Action::Stay,
+                Event::Break|Event::Mouse{..}|Event::Copy|Event::Paste=>Action::Stay,
             };
             match action{
                 Action::Stay=>{},

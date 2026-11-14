@@ -90,7 +90,11 @@ them.
 
 Letters outside ASCII are entered as the host layout types them (for
 example ä, ö and å) and stored in code page 437. Ä, Ö and Å take the scan
-codes of the keys they sit on in the Nordic layouts.
+codes of the keys they sit on in the Nordic layouts. AltGr characters
+(@, \, |, {, [, ], } and $ on a Finnish keyboard) type plainly in both front
+ends; Windows reports AltGr as Ctrl+Alt with the character, and that is not
+taken as a Ctrl or Alt combination, so AltGr+9 gives ] rather than ending a
+terminal session.
 
 | Front end | Ctrl+Break | Ending the console |
 |---|---|---|
@@ -105,14 +109,34 @@ codes of the keys they sit on in the Nordic layouts.
 | `--window` | The page is drawn as a VGA shows it: 9x16 cells, 720x400 for 80 columns (40 columns are drawn 360 wide and doubled), with Dine's own 8x16 font (src/dos_font8x16.txt). The ninth column is the background, except that C0h-DFh repeat their eighth column so lines join. The window opens at the largest whole-number size that fits the desktop (1440x800 on a 1920x1080 screen); `DINE_WINDOW_SCALE=1`..`8` chooses it. A resized window keeps whole-number scaling with black borders, unless that would use less than 85% of the room; then the picture fills it with its proportions kept (a 640x480 graphics mode in a 1440x800 window is drawn 1066x800). The BIOS cursor blinks at its shape; the BIOS default 6-7 becomes lines 13-14, as the VGA BIOS scales it. | Drawn from the same scanout as the GDI preview: CGA 4/5/6, EGA/VGA 0Dh/0Eh/10h/12h and 13h. |
 
 Mouse motion and the three buttons scale to the program's virtual
-coordinates over the whole client area.
+coordinates over the picture.
+
+## Copy and paste (window)
+
+In the window a left drag selects character cells in reading order, shown
+inverted, and Ctrl+Shift+C copies the selection (the whole screen without
+one) to the Windows clipboard as Unicode text, lines ending in CR LF and
+without trailing blanks. Ctrl+Shift+V, Shift+Insert, or a right-click with
+no selection, types the clipboard: line ends become Enter, characters
+outside code page 437 are left out. A right-click on a selection copies it;
+a key clears it. Plain Ctrl+C and Ctrl+V still reach DOS.
+
+While the program has the mouse driver active (it called INT 33h AX=0000h
+with `--mouse`), the mouse belongs to the program; hold Shift to select.
+
+Graphics modes work too: each cell is matched against the glyphs the BIOS
+draws it with (the 8x8 font, or the 8x14/8x16 font of modes 10h/12h), so
+text the program wrote through the BIOS copies as text. Picture cells and
+cells of one colour copy as spaces. In a terminal (`--tty`) the terminal's
+own selection does this.
 
 ## Not done yet
 
 - No PC speaker sound. The Tk terminal plays it.
-- No drive menu, copy and paste, or key log.
-- A program's own font is not used: plane 2, INT 1Fh tables and AX=1100h
-  are ignored. The console draws with the ROM font.
+- No drive menu or key log.
+- A program's own text-mode font is not used: plane 2 and AX=1100h are
+  ignored, and the console draws text modes with Dine's 8x16 font.
+  Graphics modes draw what the program's INT 1Fh/43h tables hold.
 - The blink attribute bit is not shown as blinking.
 - Bytes the program sends to COM1 are dropped.
 
