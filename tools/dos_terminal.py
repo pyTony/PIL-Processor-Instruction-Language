@@ -1167,6 +1167,7 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
                 return {**reply, 'status': 'window_closed', 'detail': 'native graphics window closed'}
             graphics_active = (bool(reply.get('native_graphics')) or
                                any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar')))
+            was_tui_active = tui.active
             real_com1_out = bool(re.sub(rb'\x1b\[\d+G', b'', session.com1_out))
             if graphics_active:
                 tui.leave(com1)
@@ -1183,7 +1184,9 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
             if session.com1_out:
                 com1_seen = True
                 if not tui.active:
-                    com1.write(session.com1_out)
+                    out = re.sub(rb'\x1b\[\d+G', b'', session.com1_out) if was_tui_active else session.com1_out
+                    if out:
+                        com1.write(out)
                 session.com1_out = b''
             gfx.update(reply, session)
             graphics_active = (bool(reply.get('native_graphics')) or
