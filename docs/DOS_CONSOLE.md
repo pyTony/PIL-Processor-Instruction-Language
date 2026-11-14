@@ -8,11 +8,15 @@ and stop log. Nothing in it depends on which program runs.
 ```text
 pil --dos-console [--tty|--window] [--mouse] [--ansi] [--country 1|358]
                   [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER]
-                  [--args COMMAND_LINE] [--fpu none|80387] PROGRAM
+                  [--args COMMAND_LINE] [--fpu none|80387] [PROGRAM]
 ```
 
 PROGRAM is a .COM or .EXE file, or `IMAGE.img::INNER_PATH`, as in
-`--dos-session`.
+`--dos-session`. Without it, the configuration's `program` and `args` start
+(docs/DOS_CONFIG.md). The configuration's `fpu`, `mouse`, `ansi` and
+`utc_offset` apply in both cases unless an option overrides them. For a
+setup screen that edits the configuration and starts it, see `pil --pildos`
+in [DOS_CONFIG.md](DOS_CONFIG.md).
 
 | Option | Effect |
 |---|---|
