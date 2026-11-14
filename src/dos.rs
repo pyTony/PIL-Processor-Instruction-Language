@@ -152,6 +152,7 @@ impl Loaded{
         let selected=if present{super::fpu::Fpu::present()}else{super::fpu::Fpu::default()};
         let equipment=self.ram.load(0x410,MemWidth::Word).map_err(|e|format!("FPU BIOS equipment read: {e:?}"))? as u16;
         self.ram.store(0x410,MemWidth::Word,u32::from(selected.equipment(equipment))).map_err(|e|format!("FPU BIOS equipment write: {e:?}"))?;
+        if present { self.image.msw=(self.image.msw&!0x0004)|0x0012; } else { self.image.msw&=!0x0012; }
         self.fpu=selected;
         Ok(())
     }
