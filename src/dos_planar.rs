@@ -47,7 +47,7 @@ pub(super) fn set_mode(p:&mut Loaded,mode:u32,keep:bool)->Result<(),String>{
     let mut planar=Planar::new();
     if keep{if let Some(old)=p.ram.planar(){for n in 0..4{for (i,b) in old.plane(n).iter().enumerate(){planar.poke(n,i,*b);}}}}
     p.ram.set_planar(Some(planar));
-    p.vga.planar_palette(g.height==200);p.vga.select_color();
+    p.vga.bios_cga_mode(mode);p.vga.planar_palette(g.height==200);p.vga.select_color();
     Ok(())
 }
 /// Sequencer (3C4h/3C5h), graphics controller (3CEh/3CFh) and attribute
@@ -67,31 +67,9 @@ pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<
     // Outside the planar modes (where a text mode may still map its font
     // plane at A0000h) the controllers are the idle set.
     let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?;
-    let(true,Some(planar))=(geometry(mode).is_some(),p.ram.planar()) else{return idle_io(p,sequencer,port&1==0,input,value,word).map(Some);};
-    let mut next=planar.clone();
-    let mut index=if sequencer{next.seq_index}else{next.gc_index};
-    let mut access=|data:bool,value:u8|->Result<u8,String>{
-        if !data{if input{return Ok(index);}index=value;return Ok(0);}
-        let i=usize::from(index&0x1f);
-        let regs:&mut [u8]=if sequencer{&mut next.seq}else{&mut next.gc};
-        let Some(old)=regs.get(i).copied() else{return if input{Ok(0xff)}else{Err(format!("VGA {} register {i:02X}h is not modelled",if sequencer{"sequencer"}else{"graphics controller"}))}};
-        if input{return Ok(old);}
-        // Only the planar addressing these modes use: no chain-4, odd/even,
-        // shift modes or map changes, and no clocking/reset changes.
-        let allowed=match(sequencer,i){
-            (true,2)=>true,(true,4)=>value&0x0c==0x04,
-            (false,0..=4|7|8)=>true,(false,5)=>value&0x74==0,(false,6)=>value&0x0f==0x05,
-            _=>value==old,
-        };
-        if !allowed{return Err(format!("VGA {} register {i:02X}h value {value:02X}h is outside the planar profile",if sequencer{"sequencer"}else{"graphics controller"}));}
-        regs[i]=value;Ok(0)
-    };
-    let even=port&1==0;
-    let lo=access(!even,value as u8)?;
-    let hi=if word{access(true,(value>>8)as u8)?}else{0};
-    if sequencer{next.seq_index=index;}else{next.gc_index=index;}
-    *p.ram.planar_mut().unwrap()=next;
-    Ok(Some(u16::from(lo)|u16::from(hi)<<8))
+    let(true,Some(_))=(geometry(mode).is_some(),p.ram.planar()) else{return idle_io(p,sequencer,port&1==0,input,value,word).map(Some);};
+    // The register rules are shared with the native runtime (vga_planar).
+    p.ram.planar_mut().unwrap().controller_io(port,input,value,word).map(Some)
 }
 /// The same ports outside the planar modes (see dos_vga::Controllers):
 /// all checks precede any change.
@@ -100,9 +78,11 @@ fn idle_io(p:&mut Loaded,sequencer:bool,even:bool,input:bool,value:u16,word:bool
     let mut index=if sequencer{next.seq_index}else{next.gc_index};
     let mut access=|data:bool,value:u8|->Result<u8,String>{
         if !data{if input{return Ok(index);}index=value;return Ok(0);}
-        let i=usize::from(index&0x1f);
+        let i=usize::from(index);
         let regs:&[u8]=if sequencer{&next.seq}else{&next.gc};
-        let Some(old)=regs.get(i).copied() else{return if input{Ok(0xff)}else{Err(format!("VGA {} register {i:02X}h is not modelled",if sequencer{"sequencer"}else{"graphics controller"}))}};
+        // Unimplemented extension indices are absent on this plain VGA: reads
+        // stay FFh and writes have no effect, so vendor probes can fail normally.
+        let Some(old)=regs.get(i).copied() else{return Ok(if input{0xff}else{0});};
         if input{return Ok(old);}
         if !next.allowed(sequencer,i,value){return Err(format!("VGA {} register {i:02X}h value {value:02X}h outside the 16-colour planar modes is not modelled",if sequencer{"sequencer"}else{"graphics controller"}));}
         if sequencer{next.seq[i]=value;}else{next.gc[i]=value;}Ok(0)
@@ -148,7 +128,7 @@ pub(super) fn palette(p:&mut Loaded)->Result<(),String>{
         0x01=>p.vga.attr[17]=bh,
         0x02=>{let at=es_dx(p);let mut regs=[0u8;17];for(n,r)in regs.iter_mut().enumerate(){*r=get8(p,at+n as u32)?;}
             for n in 0..16{p.vga.attr[n]=regs[n]&0x3f;}p.vga.attr[17]=regs[16];},
-        0x03=>{if bl>1{return Err("AH=10h AL=03h BL must be 0 or 1".into());}p.vga.attr[16]=(p.vga.attr[16]&!8)|((bl as u8)<<3);},
+        0x03=>{if bl>1{return Err("AH=10h AL=03h BL must be 0 or 1".into());}p.vga.attr[16]=(p.vga.attr[16]&!8)|((bl as u8)<<3);let value=(p.vga.cga_mode()&!0x20)|((bl as u8)<<5);p.vga.io(0x3d8,false,value)?;},
         0x07=>{if bl>15{return Err("AH=10h AL=07h palette register above 0Fh".into());}let v=p.vga.attr[bl];set_bh(p,v);},
         0x08=>{let v=p.vga.attr[17];set_bh(p,v);},
         0x09=>{let at=es_dx(p);let mut writes:Vec<_>=(0..16).map(|n|(at+n,MemWidth::Byte,u32::from(p.vga.attr[n as usize]))).collect();
@@ -179,6 +159,7 @@ pub(super) fn palette(p:&mut Loaded)->Result<(),String>{
 /// AL) is not modelled.
 pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
+    if al==0{return super::vga_font::load_user_patterns(p);}
     if al!=0x30{return Err(format!("INT 10h AX=11{al:02X}h (font load) is not modelled"));}
     let bh=(p.cpu.regs[3]>>8)&255;
     let pointer=match bh{

@@ -93,8 +93,15 @@ def parse_container_listing(stdout: str):
     return entries
 
 
-def _verify_cputest_com_matches_manifest(com_path: Path, validated: list) -> bool:
-    """Verify that `CPUTEST.COM` was built from `validated` (`cases.json`)."""
+def has_case_manifest(path) -> bool:
+    """A COM file with a `cases.json` beside it may be a case program. The
+    file name does not matter: load_case_manifest authenticates the bytes."""
+    p = Path(path)
+    return p.suffix.lower() == '.com' and p.with_name('cases.json').is_file()
+
+
+def _verify_com_matches_manifest(com_path: Path, validated: list) -> bool:
+    """Verify that the COM file was built from `validated` (`cases.json`)."""
     try:
         size = com_path.stat().st_size
         if not (1 <= size <= 0xff00):
@@ -123,14 +130,14 @@ def _verify_cputest_com_matches_manifest(com_path: Path, validated: list) -> boo
 
 
 def load_case_manifest(path):
-    """Load and validate `cases.json` explicitly, or from an authenticated `CPUTEST.COM`."""
+    """Load and validate `cases.json` explicitly, or the one beside a COM file built from it."""
     if not path:
         return []
     p = Path(path)
     is_json = p.suffix.lower() == '.json'
     if is_json:
         candidate = p
-    elif p.name.upper() == 'CPUTEST.COM':
+    elif has_case_manifest(p):
         candidate = p.with_name('cases.json')
     else:
         return []
@@ -164,7 +171,7 @@ def load_case_manifest(path):
         entry['index'] = item.get('index') if u32(item.get('index')) and item.get('index') > 0 else idx
         entry['expected_ecx'] = item.get('expected_ecx') if u32(item.get('expected_ecx')) else item['ecx']
         validated.append(entry)
-    if not is_json and not _verify_cputest_com_matches_manifest(p, validated):
+    if not is_json and not _verify_com_matches_manifest(p, validated):
         return []
     return validated
 
@@ -749,7 +756,7 @@ def make_app(root, engine, raw_path=None):
                 self._pending_case_index = None
                 if raw_path:
                     p = Path(raw_path)
-                    if p.suffix.lower() == '.json' or p.name.upper() == 'CPUTEST.COM':
+                    if p.suffix.lower() == '.json' or has_case_manifest(p):
                         manifest = load_case_manifest(p)
                         if manifest:
                             self.set_case_manifest(manifest)
@@ -960,7 +967,7 @@ def make_app(root, engine, raw_path=None):
                     return
 
                 size = path.stat().st_size
-                if path.name.upper() == 'CPUTEST.COM':
+                if has_case_manifest(path):
                     manifest = load_case_manifest(path)
                     if manifest:
                         self.set_case_manifest(manifest)

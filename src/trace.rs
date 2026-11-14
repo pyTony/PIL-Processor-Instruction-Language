@@ -30,6 +30,7 @@ pub fn record_machine(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],fla
     for value in machine.controls {state.extend_from_slice(&value.to_le_bytes());}
     for t in machine.ldt_tr {state.extend_from_slice(&t.selector.to_le_bytes());state.extend_from_slice(&t.base.to_le_bytes());state.extend_from_slice(&t.limit.to_le_bytes());state.push(t.kind);}
     state.push(u8::from(machine.paging));
+    for value in machine.debug {state.extend_from_slice(&value.to_le_bytes());}
     record_state(out,case,status,regs,flags,undefined,eip,ram,rx,tx,&state);
 }
 fn record_state(out:&mut Vec<u8>,case:u32,status:[u32;5],regs:&[u32;8],flags:u32,undefined:u32,eip:u32,ram:&[u8],rx:&[u8],tx:&[u8],state:&[u8]){

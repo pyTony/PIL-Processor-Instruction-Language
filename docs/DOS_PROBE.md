@@ -1,3 +1,66 @@
+# Create Child PSP (INT 21h, AH=55h) — 10 November 2026
+
+Turbo Pascal IDE in-memory execution (Ctrl+F9) prepares child processes without
+invoking EXEC (AH=4Bh) by allocating a program block with AH=48h and creating
+a child PSP with INT 21h AH=55h.
+
+- `src/dos_exec.rs`: `create_child_psp` constructs the 256-byte child PSP at `DX`
+  with top-of-memory segment `SI` (DOS 3.0+). The child inherits the parent's
+  first 20 file handles, environment segment pointer (PSP:002Ch), default FCBs
+  (PSP:005Ch, 006Ch), and command tail (PSP:0080h). Termination, Ctrl-C, and
+  Critical Error vectors (INT 22h, 23h, 24h) are copied from the IVT. The parent
+  PSP segment is linked at PSP:0016h.
+- Block allocation & ownership: `DX` must fall within an allocated MCB block
+  owned by the caller (`owner == p.psp`). If `DX == header + 1` (exact block base),
+  the MCB header owner word is preflighted for writeability and ownership of the
+  block is transferred to the child (`p.arena.set_owner`). If `DX > header + 1`
+  (interior/borrowed PSP within the parent's block, as used by Turbo Pascal IDE
+  in-memory Ctrl+F9 runs), the PSP is created without fabricating an MCB or
+  calling `set_owner`, preserving the parent's MCB block ownership.
+- Boundary validation: The destination block must have at least 16 paragraphs
+  remaining from `DX` to the block end (`DX + 0x10 <= header + size + 1`).
+  Overlapping an MCB header (`DX == header`), too-near-end interior segments,
+  targeting free memory (`owner == 0`), foreign-owned memory, or segments outside
+  the tracked MCB arena are rejected before any memory writes occur.
+- SI allocation limit validation: In DOS 3.0+, `SI` specifies the allocation
+  limit (`DX:[0002h]`); it is validated against the actual allocation boundary:
+  `memory_end` must be `<= header + size + 1` and `>= DX + 0x10`. Any invalid `SI`
+  or insufficient remaining space is rejected without mutating memory.
+- Preflight & atomic commit: For exact MCB base allocations, `p.ram.check_write`
+  preflights the 2-byte MCB header owner word at `(DX-1)*16+1` before any PSP
+  bytes are written to RAM. `Arena::set_owner` writes the MCB owner word to RAM
+  before updating its internal owner state, ensuring an error cannot leave a
+  partially written PSP or an arena/RAM ownership mismatch.
+- Diagnostic logging: `[DOS AH=55h]` logs raw `DX`, `SI`, parent PSP, and matched
+  MCB header, size, owner, and `exact_base` to aid in debugging IDE regressions.
+- Segment boundaries & safety: `DX` segments inside the IVT/BDA (< 0050:0000),
+  beyond conventional RAM (>= A000:0000), targeting untracked conventional memory
+  outside the MCB arena, targeting the active PSP itself, or targeting
+  write-protected RAM are rejected with explicit errors.
+- Active PSP switch: `p.psp` switches to `DX`, `p.open_handles` reflects the
+  inherited JFT handles, `p.dta` resets to `(DX, 0080h)`, and AL is destroyed
+  (0F0h) while CF is preserved.
+- In-memory child termination (issue #151, 11 November 2026):
+  - AH55 keeps a separate PSP/parent-DTA/handle lifecycle, keyed by the active
+    PSP and AH4B nesting depth. Its child returns to the live PSP:000Ah INT22
+    target without restoring the CPU state captured at AH55 and without popping
+    Turbo's parent FreeCOM EXEC frame.
+  - The child's executable RAM is temporarily allowed as an instruction-fetch
+    region. On exit, its owned MCBs are released, the parent PSP/DTA/handles
+    and fetch windows are restored, and AH4Dh can read the termination code.
+    An interior/borrowed PSP does **not** free its parent's MCB.
+  - Synthetic guest tests cover direct Turbo-style launch and a simulated
+    FreeCOM -> AH4B Turbo -> AH55 child -> AH4Ch return, including two child runs.
+    These tests do not establish that the actual Turbo Pascal IDE succeeds.
+- Remaining Turbo Pascal IDE verification and blockers:
+  - The actual IDE Ctrl+F9 must compile/run a program, return to Turbo, and
+    allow DIR after exiting the IDE. Capture --keylog and PILdos-stops.jsonl.
+  - After any premature IDE exit, compare prompt keyboard echo with a clean
+    FreeCOM session; log IRQ1, INT09/08/1C, PIC state, raw_keyboard, idle_hint,
+    CS:IP, and video mode before changing the Tk key scheduling.
+  - Programs using unsupported 80387 operations may still stop until numerical
+    coprocessor execution is sufficiently implemented.
+
 # PIC reinitialization (ICW1-ICW4) for CWSDPMI — 8 November 2026
 
 Tony's DOS benchmark menu (driveD\dosbench, option e, Quake timedemo
@@ -515,7 +578,7 @@ gave 42 and a FOR loop printed 1 2 3.
 
 `--dos-session` takes `--args COMMAND_LINE` and puts it in the PSP command
 tail at 80h as COMMAND.COM passes one (count, leading space, text, CR;
-printable ASCII, at most 125 characters). `tools/dos_terminal.py --args`
+Unicode encoded as CP437, at most 125 DOS bytes). `tools/dos_terminal.py --args`
 passes it through, so `--args "/K D:\START.BAT"` has FreeCOM run a batch file
 from the mounted folder and then stay at the prompt. Without `--args` the
 tail stays empty, as before.

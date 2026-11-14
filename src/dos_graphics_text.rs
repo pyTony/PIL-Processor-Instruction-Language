@@ -139,7 +139,7 @@ fn cursor(p:&Loaded,frame:&Frame,page:u32)->Result<(u32,u32),String>{
 /// several pages, as the IBM EGA BIOS and SeaBIOS take it; the CGA modes and
 /// mode 13h have page 0 only, and their BIOSes ignore BH.
 fn bh_page(p:&Loaded)->Result<u32,String>{
-    if super::super::planar::geometry(byte(p,0x449)?).is_some(){Ok((p.cpu.regs[3]>>8)&255)}else{byte(p,0x462)}
+    if super::super::planar::geometry(byte(p,0x449)?).is_some(){Ok((p.cpu.regs[3]>>8)&255)}else{Ok(0)}
 }
 /// Teletype (AH0Eh, and DOS console output, which FreeDOS sends through
 /// INT 29h as AH0Eh with BX=0007h) in a graphics mode: BEL does nothing here,

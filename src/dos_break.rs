@@ -9,7 +9,7 @@
 use super::*;
 use crate::host_io::Output;
 /// Offsets in DOSDATA of Dine's default INT 23h handler (STC; RETF: abort the
-/// program, as COMMAND.COM and FreeCOM's handler for external programs do),
+/// program, as a command shell's handler for external programs does),
 /// and of the INT 23h instruction DOS calls handlers from. The handler returns
 /// to the byte after that instruction, which Dine watches.
 pub(super) const HANDLER:u16=0x0074;
@@ -46,7 +46,7 @@ pub(super) fn start(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     console::check(p,&writes)?;
     out.write_atomic(echo).map_err(|e|format!("DOS ^C echo provider: {e:?}"))?;
     console::store(p,&writes)?;
-    // A handler in a parent's block (COMMAND.COM's, inherited by a program it
+    // A handler in a parent's block (the shell's, inherited by a program it
     // started) runs there; the program's block comes back when it returns.
     let target=u32::from(segment)*16+offset;
     let image=&p.image;

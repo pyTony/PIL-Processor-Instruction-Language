@@ -179,23 +179,24 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         },
         (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
         (0x21,9)=>{
-            let offset=p.cpu.regs[2]&0xffff;let mut text=Vec::new();
             let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
-            for n in offset..=0xffff{
-                let addr=context.translate(n,MemWidth::Byte,false,p.cpu.eip).map_err(|e|format!("DOS string access: {e:?}"))?;
-                let b=p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))?as u8;
-                if b==b'$'{
-                    console::dos_break_check(p)?;
-                    if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
-                    let screen=console::dos_screen(p,&text)?;
-                    out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
-                    console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);
-                }
-                if text.len()>=out.remaining(){return Err("DOS output limit reached before string terminator".into());}
-                text.push(b);
-            }Err("DOS string has no $ terminator before segment end".into())
+            let text=dollar_string(&p.ram,context,p.cpu.regs[2]&0xffff,p.cpu.eip,out.remaining())?;
+            console::dos_break_check(p)?;
+            if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
+            let screen=console::dos_screen(p,&text)?;
+            out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
+            console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;Ok(None)
         },
         (0x10,ah @ (0x08|0x09|0x0a))=>{console::video(p,ah)?;Ok(None)},
+        // Everex/Trident installation query. This VGA BIOS has no Everex
+        // extension: retain AL=00, rather than returning the AL=70 signature.
+        // RBIL INT 10/AX=7000h/BX=0000h. Other AH70 functions stay unsupported.
+        (0x10,0x70) if p.cpu.regs[0]&0xffff==0x7000&&p.cpu.regs[3]&0xffff==0=>Ok(None),
+        // Video7 installation query: BX stays zero, not the 'V7' signature.
+        (0x10,0x6f) if p.cpu.regs[0]&0xffff==0x6f00&&p.cpu.regs[3]&0xffff==0=>Ok(None),
+        // Chips & Technologies / Realtek controller-information probe:
+        // retain AL=00 rather than claiming an AL=5Fh extension signature.
+        (0x10,0x5f) if p.cpu.regs[0]&0xffff==0x5f00&&p.cpu.regs[3]&0xffff==0=>Ok(None),
         (0x10,ah @ (0x00|0x05|0x06|0x07|0x0b|0x0c|0x0d|0x0e|0x0f))=>{console::display(p,ah)?;Ok(None)},
         (0x16,ah)=>{console::keyboard(p,ah)?;Ok(None)},
         (0x1c,_)=>Ok(None), // BIOS default timer user hook is an IRET.
@@ -207,7 +208,21 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         (0x10,0x02)=>{
             let page=(p.cpu.regs[3]>>8)&255;
             if page>=8{return Err("BIOS cursor page must be 0..7".into());}
-            p.ram.store(0x450+page*2,MemWidth::Word,p.cpu.regs[2]&0xffff).map_err(|e|format!("BIOS cursor position write: {e:?}"))?;
+            let pos=p.cpu.regs[2]&0xffff;
+            if p.com1.is_some()&&matches!(files::system_file(p,1),Ok(Some(3))){
+                let active=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("BIOS active page read: {e:?}"))?&7;
+                let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?&0x7f;
+                let prev=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?;
+                let(prev_row,prev_col)=((prev>>8)&255,prev&255);
+                let(new_row,new_col)=((pos>>8)&255,pos&255);
+                if page==active&&matches!(mode,0..=3|7)&&new_row==prev_row&&new_col!=prev_col{
+                    if let Some(s)=p.com1.as_mut(){
+                        s.tx.extend_from_slice(format!("\x1b[{}G",new_col+1).as_bytes());
+                        s.column=new_col as usize;
+                    }
+                }
+            }
+            p.ram.store(0x450+page*2,MemWidth::Word,pos).map_err(|e|format!("BIOS cursor position write: {e:?}"))?;
             Ok(None)
         },
         (0x10,0x03)=>{
@@ -267,13 +282,12 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
+        (0x33,_) if p.mouse.present()=>{mouse::service(p)?;Ok(None)},
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
-            // No mouse driver is loaded: the reset reports AX=0 (not installed)
-            // and BX=0 buttons, as MOUSE.COM-less DOS does where INT 33h points
-            // at an IRET and callers have zeroed AX.
-            p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;
-            Ok(None)
+            // Standalone probes keep the no-MOUSE.COM contract.
+            p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;Ok(None)
         },
+        (0x33,_)=>Ok(None), // absent driver: conventional no-op
         (0x1a,0x00)=>{
             let (ticks,rollover)=bios_ticks(p)?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|rollover;
@@ -318,6 +332,15 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             let signature=p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS PSP read: {e:?}"))?;
             if signature!=0x20cd{return Err(format!("DOS set PSP to {segment:04x}h, which holds no PSP, is not modelled"));}
             p.psp=segment;
+            let mut handles=0u32;
+            for h in 0..20u16{
+                if let Ok(addr)=jft(p,h){
+                    if let Ok(entry)=p.ram.load(addr,MemWidth::Byte){
+                        if entry as u8!=0xff{handles|=1<<h;}
+                    }
+                }
+            }
+            p.open_handles=handles;
             Ok(None)
         },
         (0x21,0x51|0x62)=>{
@@ -325,6 +348,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
             Ok(None)
         },
+        (0x21,0x55)=>{exec::create_child_psp(p)?;Ok(None)},
         (0x28|0x2a,_)=>{
             // DOS idle (28h) and the network hook (2Ah) end in the kernel's
             // IRET when nothing has hooked them (FreeDOS kernel.asm): no
@@ -657,12 +681,9 @@ fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
 /// AH02 (and AH06 output): capture and active-page screen change together.
 fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
     if to_file(p,&[byte])?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(byte);return Ok(());}
-    let count=if byte==9{8-out.column()%8}else{1};
-    if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
-    let value=if byte==9{b' '}else{byte};
-    let spaces=[b' ';8];let single=[byte];let bytes=if byte==9{&spaces[..count]}else{&single[..]};
-    let screen=console::dos_screen(p,bytes)?;
-    out.write_atomic(bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
+    let (bytes,value)=character_output(byte,out)?;
+    let screen=console::dos_screen(p,&bytes)?;
+    out.write_atomic(&bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
     console::store(p,&screen)?;
     p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
     Ok(())
@@ -954,4 +975,24 @@ fn divide_error(p:&mut Loaded)->Result<Option<u8>,String>{
     console::check(p,&writes)?;console::store(p,&writes)?;
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x4c7f;
     Ok(Some(0x7f))
+}
+
+/// AH09 validation: collect the whole string before any visible effects.
+pub(crate) fn dollar_string(ram:&Ram,context:MemoryContext,offset:u32,eip:u32,remaining:usize)->Result<Vec<u8>,String>{
+    let mut text=Vec::new();
+    for n in offset..=0xffff {
+        let at=context.translate(n,MemWidth::Byte,false,eip).map_err(|e|format!("DOS string access: {e:?}"))?;
+        let b=ram.load(at,MemWidth::Byte).map_err(|e|format!("DOS string RAM access: {e:?}"))? as u8;
+        if b==b'$'{return Ok(text);}
+        if text.len()>=remaining{return Err("DOS output limit reached before string terminator".into());}
+        text.push(b);
+    }
+    Err("DOS string has no $ terminator before segment end".into())
+}
+
+/// AH02 console-byte plan. Validate a complete tab before output or AL.
+pub(crate) fn character_output(byte:u8,out:&impl Output)->Result<(Vec<u8>,u8),String>{
+    let count=if byte==9{8-out.column()%8}else{1};
+    if count>out.remaining(){return Err("DOS output limit reached before character output".into());}
+    Ok((vec![if byte==9{b' '}else{byte};count],if byte==9{b' '}else{byte}))
 }

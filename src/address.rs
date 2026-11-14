@@ -114,16 +114,17 @@ impl Descriptor {
 /// An IDT interrupt or trap gate, or a call gate: target selector and
 /// offset, whether it is a trap gate (IF stays as it is), whether it is a
 /// 386 gate (32-bit frame and offset) rather than a 286 one, and for a call
-/// gate the number of stack parameters it copies to an inner level.
+/// gate the number of stack parameters it copies to an inner level. An IDT
+/// task gate has `task` set and names a TSS selector (task.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Gate { pub selector: u16, pub offset: u32, pub trap: bool, pub big: bool, pub count: u8 }
+pub struct Gate { pub selector: u16, pub offset: u32, pub trap: bool, pub big: bool, pub count: u8, pub task: bool }
 impl Gate {
     /// Decodes the gate fields of a raw 8-byte descriptor of a 386 (`big`)
     /// or 286 gate.
     pub fn decode(raw: u64, big: bool) -> Self {
         let low = (raw & 0xffff) as u32;
         let offset = if big { low | (((raw >> 48) as u32) << 16) } else { low };
-        Self { selector: (raw >> 16) as u16, offset, trap: (raw >> 40) & 1 != 0, big, count: ((raw >> 32) & 0x1f) as u8 }
+        Self { selector: (raw >> 16) as u16, offset, trap: (raw >> 40) & 1 != 0, big, count: ((raw >> 32) & 0x1f) as u8, task: false }
     }
 }
 /// A segment register load, ready to commit: the visible selector, the new
@@ -191,14 +192,31 @@ pub struct SegmentState {
     pub ldt_tr:[SystemSegment;2],
     /// CR0.PG.
     pub paging:bool,
+    /// Debug registers DR0-DR3, DR6 and DR7 (`DEBUG_RESET` after reset).
+    /// DR4 and DR5 are reserved on the 386; moves to and from them reach
+    /// DR6 and DR7, as on later processors. Breakpoints are not modelled.
+    pub debug:[u32;6],
 }
+/// DR0-DR3, DR6 and DR7 after reset (Intel SDM vol. 3 table 9-1; the 386
+/// manual gives no values).
+pub const DEBUG_RESET:[u32;6]=[0,0,0,0,0xffff_0ff0,0x0000_0400];
+/// TR after reset (Intel SDM vol. 3 table 9-1): selector 0, base 0, limit
+/// FFFFh, present. Its type is a busy 386 TSS, as Bochs has it, so a task
+/// switch before any LTR stores the old task at linear address 0, as the 386
+/// does, instead of faulting.
+pub const TR_RESET:SystemSegment=SystemSegment{selector:0,base:0,limit:0xffff,kind:0x0b};
+/// The debug register index (0-5 in `SegmentState::debug`) that MOV DRn
+/// reaches: DR4 and DR5 are DR6 and DR7.
+pub fn debug_index(n:usize)->usize{match n{0..=3=>n,4|6=>4,_=>5}}
 impl SegmentState {
     // The mode bit is coherent with the existing normalized mode state.
     pub fn machine_status(&self)->u16{(self.msw&!1)|u16::from(!self.real_mode)}
+    /// CR0, CR2, CR3 (`register` 0, 2, 3) or DR0-DR7 (8-15): CPL 0 only,
+    /// #GP(0) in virtual-8086 mode and above ring 0.
     pub fn read_control(&self,register:usize,flags:u32,eip:u32)->Result<u32,ExecError>{
         if flags&0x20000!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
         if self.cpl()!=0{return Err(ExecError::GeneralProtection{eip,error_code:0});}
-        match register{0=>Ok(u32::from(self.machine_status())|(u32::from(self.paging)<<31)),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),_=>Err(ExecError::InvalidContext)}
+        match register{0=>Ok(u32::from(self.machine_status())|(u32::from(self.paging)<<31)),2=>Ok(self.controls[0]),3=>Ok(self.controls[1]),8..=15=>Ok(self.debug[debug_index(register-8)]),_=>Err(ExecError::InvalidContext)}
     }
     pub fn validate_control(&self,register:usize,value:u32,flags:u32,eip:u32)->Result<(),ExecError>{
         self.read_control(register,flags,eip)?;
@@ -206,9 +224,13 @@ impl SegmentState {
         // PE and PG may be set or cleared (PG needs PE); CR0 bits the 386 does
         // not have stay unsupported, as do CR3's low bits (486 PCD/PWT).
         if (register==0&&value&!0x8000_001f!=0)||(register==3&&value&0xfff!=0){return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
+        // Registers 8-15 are DR0-DR7. DR7 with a breakpoint enabled (L0-G3)
+        // or general detect (GD) is not modelled, so it stops instead of
+        // being stored and never firing.
+        if register>=8&&debug_index(register-8)==5&&value&0x20ff!=0{return Err(ExecError::UnsupportedControl{eip,register:register as u8,value});}
         Ok(())
     }
-    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>{self.msw=value as u16;self.real_mode=value&1==0;self.paging=value>>31!=0;},2=>self.controls[0]=value,3=>self.controls[1]=value,_=>unreachable!()}}
+    pub fn commit_control(&mut self,register:usize,value:u32){match register{0=>{self.msw=value as u16;self.real_mode=value&1==0;self.paging=value>>31!=0;},2=>self.controls[0]=value,3=>self.controls[1]=value,8..=15=>self.debug[debug_index(register-8)]=value,_=>unreachable!()}}
     /// The RAM paging state these registers select: CR3's directory and
     /// CPL 3 for user-level accesses, while CR0.PG is set.
     pub fn ram_paging(&self)->Option<super::memory::Paging>{
@@ -254,9 +276,9 @@ impl SegmentState {
         let Some(at)=self.descriptor_address(selector) else{return Err(gp(code));};
         let d=Descriptor::decode(read(at)?);
         if !d.segment(){
-            // Call gates are read by privilege.rs before it gets here; task
-            // gates and TSS descriptors (task switches) are not modelled yet.
-            return Err(if reg==1{ExecError::InvalidContext}else{gp(code)});
+            // Call gates, task gates and TSS descriptors are read by
+            // privilege.rs before a far JMP or CALL gets here.
+            return Err(gp(code));
         }
         let (readable_or_writable,conforming)=(d.access&2!=0,d.access&4!=0);
         let mut visible=selector;
@@ -328,7 +350,8 @@ impl SegmentState {
     /// a 286 or 386 interrupt or trap gate, for INT n/INT3/INTO (`software`)
     /// a gate DPL of at least CPL, and the present bit. Faults name the IDT
     /// entry (vector*8+2) with EXT (bit 0) set when an exception or external
-    /// event is being delivered. Task gates are not modelled yet.
+    /// event is being delivered. A task gate comes back with `task` set
+    /// and its TSS selector, after the same DPL and present checks.
     pub fn interrupt_gate(&self,vector:u8,software:bool,eip:u32,read:&mut dyn FnMut(u32)->Result<u64,ExecError>)->Result<Gate,ExecError>{
         let code=u16::from(vector)*8+2+u16::from(!software);
         let gp=ExecError::GeneralProtection{eip,error_code:code};
@@ -337,10 +360,10 @@ impl SegmentState {
         if at+7>u32::from(limit){return Err(gp);}
         let raw=read(base.wrapping_add(at))?;
         let access=(raw>>40) as u8;
-        let big=match access&0x1f{0x06|0x07=>false,0x0e|0x0f=>true,0x05=>return Err(ExecError::InvalidContext),_=>return Err(gp)};
+        let (big,task)=match access&0x1f{0x06|0x07=>(false,false),0x0e|0x0f=>(true,false),0x05=>(false,true),_=>return Err(gp)};
         if software&&((access>>5)&3)<self.cpl(){return Err(gp);}
         if access&0x80==0{return Err(ExecError::SegmentNotPresent{eip,error_code:code});}
-        Ok(Gate{count:0,..Gate::decode(raw,big)})
+        Ok(Gate{count:0,task,..Gate::decode(raw,big)})
     }
     /// The code segment an interrupt gate names: a present code segment
     /// with DPL at most CPL. A conforming one runs at CPL; a nonconforming

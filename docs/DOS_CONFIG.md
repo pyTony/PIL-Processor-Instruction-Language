@@ -1,5 +1,10 @@
 # DOS environment configuration
 
+The Python-free Rust route is `pil --dos-text` (Windows:
+`.\target\release\pil.exe --dos-text`), or `PILdos.vbs --rust-text` /
+`sh PILdos.sh --rust-text`. It reads the same startup and drive configuration.
+See [Rust DOS console](DOS_CONSOLE.md) for options and redirected I/O behavior.
+
 ## Build once, start without parameters
 
 From the repository directory:
@@ -16,7 +21,10 @@ and `D:\AUTOEXEC.BAT`; the config file does not supply these files.
 Start with `python tools/dos_terminal.py`, `PILdos.vbs` on Windows, or
 `sh PILdos.sh` on Linux/Termux with a graphical display. `freedos.cmd` also
 connects COM1 to its launching console. For a headless terminal, run
-`python tools/dos_terminal.py --headless`.
+`python tools/dos_terminal.py --headless --shell` for a command shell such as
+COMMAND.COM (it starts with `/K CTTY COM1` and keeps running after Esc), or
+`--headless` alone for any other program (Esc ends the run). The terminal
+never guesses this from the program's name.
 
 Automatic engine discovery chooses the newest standard executable it finds,
 including `target/release/pil` and `target/debug/pil` (`.exe` on Windows).
@@ -39,6 +47,16 @@ country=358
 | `args` | DOS command tail. `/K D:\AUTOEXEC.BAT` runs that batch file in FreeCOM and keeps the shell open. Optional. |
 | `A` through `E` | Mount a host folder or FAT IMG/IMA image. A colon is allowed in the key, such as `D:`. |
 | `country` | `1` for USA or `358` for Finland. Optional; the engine defaults to USA. |
+| `fpu` | `none` (default) or `80387` to enable the optional 80387 FPU backend. |
+| `mouse` | Boolean (`true`/`false` or `1`/`0`). Enables the experimental INT 33h mouse driver. |
+| `ansi` | Boolean (`true`/`false` or `1`/`0`). Loads an ANSI.SYS-style console driver. |
+| `headless` | Boolean (`true`/`false` or `1`/`0`). Runs the frontend without a window, interacting through the terminal (opens a window only when graphics output is active). |
+| `rust_graphics` / `rust-graphics` | Boolean (`true`/`false` or `1`/`0`). Enables native Windows CGA/VGA graphics with `headless` and terminal BIOS keys. |
+| `shell` | Boolean (`true`/`false` or `1`/`0`). Marks the startup program as a command shell for `headless` mode (`/K CTTY COM1`, keeps running after Esc). |
+| `com1` | `console` or `tcp:PORT`. Connects COM1 to the console or a TCP port. |
+| `speaker_volume` / `speaker-volume` | PC speaker click volume `0..100` (`0` mutes; frontend default `5`). |
+| `utc_offset` / `utc-offset` | DOS clock UTC offset in seconds (`-50400..=50400`) for the engine; `tools/dos_terminal.py` also accepts hour forms such as `2`, `-5`, `5.5`, or `+02:00`. |
+| `engine` | Path to the `pil` executable (relative to the config file, or absolute). |
 
 Keys are case-insensitive and may appear once. Files are UTF-8, optionally with
 a leading BOM, and at most 32 KiB. Blank lines and lines starting with `#` or
@@ -54,8 +72,8 @@ not expanded. DOS arguments must be printable ASCII and at most 125 characters.
 Relative host paths are based on the config file's directory, including the
 image part of `program`. A config at `profiles/home.conf` uses
 `../images/FD14LITE.img` to reach the repository's images folder. Absolute paths
-are accepted. Windows targets translate WSL paths such as `/mnt/c/Users/...`
-to `C:\Users\...`; use paths accessible to the host running the engine.
+are accepted. Windows targets can translate WSL drive-mount paths to their Windows
+equivalents; use paths accessible to the host running the engine.
 
 Images are **read-only**. Folders are **writable**: DOS file creation, changes,
 renames and deletion affect that host folder. Programs can save configuration
@@ -77,6 +95,34 @@ Z is reserved for the session's RAM-backed temporary drive, with `TEMP=Z:\`.
 Its contents disappear when the session ends. If a standalone loaded program
 starts on the empty A drive and configuration supplies C, startup selects C and
 updates its initial COMSPEC and program path.
+
+## Experimental 80387 selection
+
+The default DOS session has **no numerical coprocessor**. To opt into the
+partial 80387 implementation, use one of these startup switches:
+
+```powershell
+python tools/dos_terminal.py --fpu 80387 programs/dos/HELLO.COM
+target/release/pil.exe --dos-session --fpu 80387 programs/dos/HELLO.COM
+```
+
+The session protocol also accepts `fpu 80387` or `fpu none` **before its first
+`run` command**. A later change is refused so the guest never sees a reset
+coprocessor halfway through execution. Snapshots report `fpu_present`, and
+BIOS INT 11h plus the BDA equipment word reflect the selected device.
+Without the switch, existing no-coprocessor behavior is unchanged.
+
+**This backend is incomplete.** It handles selected x87 register operations,
+IEEE memory load/store, and finite normalized *register* FADD, FADDP, FMUL,
+FMULP, FSUB, FSUBP, FSUBR and FSUBRP. Selected m32/m64 memory operands for
+FADD, FMUL, FSUB and FSUBR are supported too. Arithmetic uses an integer-only
+80-bit calculation with round-to-nearest-even at 64-bit significand precision.
+Masked inexact results set PE and C1 indicates upward rounding. Unmasked PE,
+unsupported precision/rounding modes, denormals, infinities, NaNs, exponent
+underflow/overflow, division, comparisons and complete x87
+exception delivery still stop explicitly. In particular, Turbo Pascal hardware
+floating-point (`{$N+}`) programs are **not yet supported**. This opt-in mode
+is intended for targeted tests, not full 80387 compatibility.
 
 ## Select a configuration
 
@@ -110,8 +156,11 @@ An explicit frontend program argument replaces the configured startup program;
 its arguments then come from `--args`, if supplied. When the program comes from
 configuration, `--args` overrides the configured args.
 
-Frontend `--country` and `--drive LETTER=PATH` are applied after configuration
-and override those settings. A legacy `--mount PATH` keeps the drive it supplies
+Frontend `--country`, `--drive LETTER=PATH`, `--fpu`, `--speaker-volume`,
+`--engine`, `--com1`, and `--utc-offset` are applied after configuration and
+override those settings. Boolean flags (`--headless`, `--rust-graphics`,
+`--mouse`, `--shell`, `--ansi`) enable the corresponding option even if it is
+`false` or omitted in the config file. A legacy `--mount PATH` keeps the drive it supplies
 instead of that config mount: normally D after loading from an image, or C for
 a standalone host program. Paths supplied directly on the command line are
 relative to the working directory.

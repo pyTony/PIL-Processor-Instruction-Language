@@ -32,7 +32,13 @@ const TIMER_CODE:&[u8]=&[0x66,0x50,0x1e,0xcd,0x1c,0x1f,0xb0,0x20,0xe6,0x20,0x66,
 // it, then EOI and return from IRQ1 through the frame already on the stack.
 const BREAK_OFFSET:u16=TIMER_OFFSET+TIMER_CODE.len() as u16;
 const BREAK_CODE:&[u8]=&[0x50,0xcd,0x1b,0xb0,0x20,0xe6,0x20,0x58,0xcf];
-pub(super) const END:u32=ENTRY_END+(TIMER_CODE.len()+BREAK_CODE.len()) as u32;
+// A private one-byte continuation reached only by a DOS mouse callback's
+// RETF. The runner catches it before decoding; HLT prevents silent execution
+// if a program returns here with no matching callback frame.
+pub(super) const MOUSE_RETURN:u32=ENTRY_END+(TIMER_CODE.len()+BREAK_CODE.len()) as u32;
+pub(super) const MOUSE_RETURN_SEGMENT:u16=SEGMENT;
+pub(super) const MOUSE_RETURN_OFFSET:u16=FIRST+(3*256+TIMER_CODE.len()+BREAK_CODE.len()) as u16;
+pub(super) const END:u32=MOUSE_RETURN+1;
 /// The far pointer of vector n's entry.
 pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::from(n))}
 /// Writes the entries (into the read-only BIOS area, before it is protected)
@@ -41,6 +47,7 @@ pub(super) fn install(ram:&mut Ram)->Result<(),String>{
     let mut code=vec![0u8;3*256];
     for n in 0..=255u8{code[3*usize::from(n)..][..3].copy_from_slice(&[0xcd,n,0xcf]);}
     code.extend_from_slice(TIMER_CODE);code.extend_from_slice(BREAK_CODE);
+    code.push(0xf4); // mouse callback continuation, never executed by the guest
     ram.write_bytes(ENTRIES,&code).map_err(|e|format!("interrupt entries: {e:?}"))?;
     for n in ANSWERED{ram.store(u32::from(n)*4,MemWidth::Dword,entry(n)).map_err(|e|format!("INT {n:02x}h vector: {e:?}"))?;}
     Ok(())

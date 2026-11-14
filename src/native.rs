@@ -437,6 +437,31 @@ pub fn cases()->Result<Vec<Case>,String> {
     let mut frame=Vec::new();for v in [0x10u32,0x10,0x0002_3202,0x100,0x60,0x70,0x70,0x70,0x70]{frame.extend(v.to_le_bytes());}
     let mut t=case("pm_v86",code)?;t.image.real_mode=false;t.image.msw=0x11;
     t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:0xffff,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:0}};t.regs[4]=0xe00;t.patch=Some((0xe00,frame));tests.push(t);
+    // Task switch in 32-bit code at CPL 0, task A's TSS at D00h (TR 28h):
+    // CALL FAR 0030:0 to the available 386 TSS at D80h (EIP 110h, EFLAGS
+    // 2, EAX 1234h, ESP E00h, flat CS 08h and SS/DS/ES/FS/GS 10h), which
+    // runs IRETD back to task A (NT set by the CALL), then HLT at 107h.
+    let mut tasks=vec![0u8;0x300];
+    for (n,d) in [0u64,0x00cf_9a00_0000_ffff,0x00cf_9300_0000_ffff,0,0,0x0000_8b00_0d00_0067,0x0000_8900_0d80_0067].iter().enumerate(){tasks[0x100+8*n..0x108+8*n].copy_from_slice(&d.to_le_bytes());}
+    for (offset,v) in [(0x20usize,0x110u32),(0x24,2),(0x28,0x1234),(0x38,0xe00)]{tasks[0x280+offset..0x284+offset].copy_from_slice(&v.to_le_bytes());}
+    for (i,s) in [0x10u16,0x08,0x10,0x10,0x10,0x10].iter().enumerate(){tasks[0x2c8+4*i..0x2ca+4*i].copy_from_slice(&s.to_le_bytes());}
+    let mut code=vec![0x9a,0,0,0,0,0x30,0,0xf4];code.resize(0x10,0x90);code.push(0xcf);
+    let mut t=case("pm_task",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x37,0xc00);
+    t.image.ldt_tr[1]=super::address::SystemSegment{selector:0x28,base:0xd00,limit:0x67,kind:0x0b};
+    t.image.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xf00;t.patch=Some((0xb00,tasks.clone()));tests.push(t);
+    // A task switch before any LTR: TR still has its reset state (base 0,
+    // limit FFFFh, busy 386 TSS), so JMP FAR 0030:0 to the available 386
+    // TSS at D80h stores the old task at linear 0-67h and runs HLT at 110h.
+    let mut code=vec![0xea,0,0,0,0,0x30,0];code.resize(0x10,0x90);code.push(0xf4);
+    let mut t=case("pm_task_reset_tr",code)?;t.image.real_mode=false;t.image.msw=0x11;t.image.tables[0]=(0x37,0xc00);
+    t.image.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
+    t.image.segments[1].access=super::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0};t.image.segments[2]=super::address::SegmentCache{base:0,limit:u32::MAX,access:super::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};t.regs[4]=0xf00;
+    let mut reset_tasks=tasks.clone();reset_tasks[0x128..0x130].fill(0);t.patch=Some((0xb00,reset_tasks));tests.push(t);
+    // Debug registers in real mode: MOV EAX,12345678h; MOV DR0,EAX; MOV
+    // EBX,DR0; MOV ECX,DR4 (DR6 at reset); MOV DR7,EDX (LE and GE only);
+    // MOV ESI,DR5 (DR7); MOV DR7,EAX enables breakpoints, which stops.
+    let mut t=case("debug_registers",vec![0x66,0xb8,0x78,0x56,0x34,0x12,0x0f,0x23,0xc0,0x0f,0x21,0xc3,0x0f,0x21,0xe1,0x0f,0x23,0xfa,0x0f,0x21,0xee,0x0f,0x23,0xf8,0xf4])?;t.regs[2]=0x300;tests.push(t);
     let mut t=case("double_shift_count17",vec![0x0f,0xa5,0xc2,0x0f,0xad,0xc2,0xf4])?;t.regs[0]=0x1234;t.regs[1]=17;t.regs[2]=0xabcd;tests.push(t);
     let mut t=case("loop_target_fault",vec![0xe2,0x7f])?;t.regs[1]=0x12340002;t.image.segments[SegmentRegister::Cs.index()].limit=0x101;tests.push(t);
     Ok(tests)
@@ -456,7 +481,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
         dispatch.push_str(&format!("{physical}=>{{if let Err(status)=guard(s,s.eip,&{bytes:?},s.machine.segments[1],{}){{return status;}}\n",case.image.end));
         match decoded.operation {
             Operation::Pil{program,dst,src,flow,address}=>{
-                code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {} }}\n",super::emit_rust_functions(&program)));
+                code.push_str(&format!("mod i{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege,task}}; {} }}\n",super::emit_rust_functions(&program)));
                 let dynamic_flow=format!("FlowContext{{next_eip:s.eip+{},code_limit:s.machine.segments[1].limit,..{flow:?}}}",decoded.length);
                 dispatch.push_str(&format!("let flow_context={dynamic_flow};\n"));
                 let args=format!("&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context",dst.register,dst.low,src.register,src.low);
@@ -465,7 +490,7 @@ fn emit_case(case:&Case,name:&str)->Result<String,String> {
                     let mut alternate=case.image.clone();let old_big=matches!(alternate.segments[2].access,super::address::SegmentAccess::Data{big:true,..});
                     if let super::address::SegmentAccess::Data{ref mut big,..}=alternate.segments[2].access{*big=!old_big;}
                     if let Operation::Pil{program:p,dst:d,src:r,flow:_,address:a}=alternate.decode(&ram,ip).map_err(|e|format!("alternate stack decode: {e:?}"))?.operation{
-                        code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege}}; {} }}\n",super::emit_rust_functions(&p)));
+                        code.push_str(&format!("mod alt{ip:x} {{use super::{{FlowContext,ExecError,Ram,MemWidth,address,privilege,task}}; {} }}\n",super::emit_rust_functions(&p)));
                         let alternate_call=format!("alt{ip:x}::execute_with_machine(&mut s.regs,&mut s.flags,&mut s.undefined,&mut s.eip,({},{}),({},{}),flow_context,&mut s.ram,{a:?},&mut s.machine)",d.register,d.low,r.register,r.low);
                         call=format!("if matches!(s.machine.segments[2].access,SegmentAccess::Data{{big:true,..}})=={old_big}{{{call}}}else{{{alternate_call}}}");
                     }
@@ -490,7 +515,7 @@ fn runner_source()->String {
     source.push_str("mod vga_planar {\n");source.push_str(include_str!("vga_planar.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod memory {\n");source.push_str(include_str!("memory.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
     source.push_str("mod address {\n");source.push_str(include_str!("address.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*,SegmentAccess::*};\n");
-    source.push_str("mod privilege {\n");source.push_str(include_str!("privilege.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
+    source.push_str("mod privilege {\n");source.push_str(include_str!("privilege.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");source.push_str("mod task {\n");source.push_str(include_str!("task.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod trace {\n");source.push_str(include_str!("trace.rs"));source.push_str("\n}\n");
     source.push_str(RUNNER);
     source

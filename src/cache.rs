@@ -4,9 +4,9 @@ use std::rc::Rc;
 use super::guest::{Decoded,GuestError,Image};
 use super::memory::Ram;
 
-/// Decoded instructions kept. GW-BASIC's interpreter and graphics run about
-/// 4,100 distinct instructions in a steady loop; with 256 the cache emptied
-/// itself every few hundred steps and nearly every step recompiled PIL.
+/// Decoded instructions kept. A large interpreter loop can run several
+/// thousand distinct instructions; with 256 the cache emptied itself every
+/// few hundred steps and nearly every step recompiled PIL.
 pub const CAPACITY:usize=8192;
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
 pub struct Stats {pub hits:u64,pub misses:u64,pub invalidations:u64,pub evictions:u64}

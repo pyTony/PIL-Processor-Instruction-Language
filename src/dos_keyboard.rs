@@ -1,6 +1,6 @@
 //! Keyboard IRQ1 for programs that own INT 09h. While INT 09h leads to Dine,
 //! keys go straight into the BIOS ring as before. Once a program has put its
-//! own handler there (GW-BASIC does, to see Ctrl+Break and ON KEY traps), each
+//! own handler there (to see Ctrl+Break or trap keys itself), each
 //! key arrives as an AT keyboard would deliver it: a scan code in port 60h,
 //! IRQ1 through the PIC, and INT 09h between instructions with IF=1. The
 //! program's handler reads port 60h and usually chains to the vector it
