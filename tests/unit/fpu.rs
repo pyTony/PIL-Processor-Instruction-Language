@@ -606,18 +606,76 @@ fn present_80387_invalid_tbyte_and_divide_by_zero_do_not_retire() {
     assert_eq!(stopped.loaded.cpu.eip,0x100);
     assert_eq!(stopped.loaded.fpu.state().unwrap().tag_word(),0xffff);
 
-    // FLDZ; FLD1; FDIV ST0,ST1 = 1/0, intentionally unsupported until
-    // full masked exception semantics exist.
-    let mut p=dos::load(&[0xd9,0xee,0xd9,0xe8,0xd8,0xf1,0xcd,0x20],
+    // FLDCW [0x200] (ZM=0); FLDZ; FLD1; FDIV ST0,ST1 = 1/0 (unmasked ZE)
+    // must not retire or mutate stack/status.
+    let mut p=dos::load(&[0xd9,0x2e,0x00,0x02,0xd9,0xee,0xd9,0xe8,0xd8,0xf1,0xcd,0x20],
                         "x87-divzero.com").unwrap();
     p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x037b).unwrap();
     let stopped=dos::run(p,8).unwrap();
     assert!(matches!(stopped.stop,dos::Stop::Fault(ref s) if s.contains("unsupported")));
-    assert_eq!(stopped.completed,2);
-    assert_eq!(stopped.loaded.cpu.eip,0x104);
+    assert_eq!(stopped.completed,3);
+    assert_eq!(stopped.loaded.cpu.eip,0x108);
     let state=stopped.loaded.fpu.state().unwrap();
     assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
     assert_eq!(state.st(1),Some(Extended80::default()));
+    assert_eq!(state.status&0x0004,0);
+}
+
+#[test]
+fn present_80387_affine_infinity_probe_fchs_fcompp_fnstsw_m16() {
+    // FNINIT; FLD1; FLDZ; FDIVP ST(1),ST(0); FLD ST(0); FCHS; FCOMPP;
+    // MOV BX, 0x200; FNSTSW [BX]; INT 20h
+    let code=[
+        0xdb,0xe3, 0xd9,0xe8, 0xd9,0xee, 0xde,0xf9,
+        0xd9,0xc0, 0xd9,0xe0, 0xde,0xd9,
+        0xbb,0x00,0x02, 0xdd,0x3f, 0xcd,0x20,
+    ];
+    let mut p=dos::load(&code,"x87-probe.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let stopped=dos::run(p,20).unwrap();
+    assert!(matches!(stopped.stop,dos::Stop::Exit(0)),"{:?}",stopped.stop);
+    let sw=stopped.loaded.ram.load(base+0x200,MemWidth::Word).unwrap() as u16;
+    // Affine infinity: -Inf < +Inf => C3=0, C2=0, C0=1 (0x0100); ZE=1 (bit 2); TOP=0.
+    assert_eq!(sw&0x4700,0x0100);
+    assert_ne!(sw&0x0004,0);
+    let state=stopped.loaded.fpu.state().unwrap();
+    assert_eq!(state.tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_fild_m16_and_m32_load_signed_integers() {
+    // FNINIT; FILD word [0x200]; FILD dword [0x204]; FILD word [0x208];
+    // FSTP tbyte [0x210]; FSTP tbyte [0x220]; FSTP tbyte [0x230]; INT 20h
+    let code=[
+        0xdb,0xe3,
+        0xdf,0x06,0x00,0x02,
+        0xdb,0x06,0x04,0x02,
+        0xdf,0x06,0x08,0x02,
+        0xdb,0x3e,0x10,0x02,
+        0xdb,0x3e,0x20,0x02,
+        0xdb,0x3e,0x30,0x02,
+        0xcd,0x20,
+    ];
+    let mut p=dos::load(&code,"x87-fild.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x8000).unwrap(); // -32768
+    p.ram.store(base+0x204,MemWidth::Dword,0x8000_0000).unwrap(); // i32::MIN
+    p.ram.store(base+0x208,MemWidth::Word,0x0000).unwrap(); // 0
+    let stopped=dos::run(p,20).unwrap();
+    assert!(matches!(stopped.stop,dos::Stop::Exit(0)),"{:?}",stopped.stop);
+    let ram=&stopped.loaded.ram;
+    // 0 -> +0.0
+    assert_eq!(ram.load(base+0x218,MemWidth::Word).unwrap(),0);
+    // i32::MIN = -2^31 -> sign=1, exp=16383+31=16414 (0x401e), sig=1<<63
+    assert_eq!(ram.load(base+0x224,MemWidth::Dword).unwrap(),0x8000_0000);
+    assert_eq!(ram.load(base+0x228,MemWidth::Word).unwrap(),0xc01e);
+    // -32768 = -2^15 -> sign=1, exp=16383+15=16398 (0x400e), sig=1<<63
+    assert_eq!(ram.load(base+0x234,MemWidth::Dword).unwrap(),0x8000_0000);
+    assert_eq!(ram.load(base+0x238,MemWidth::Word).unwrap(),0xc00e);
 }
 
 #[test]
@@ -721,21 +779,70 @@ fn present_80387_fnstcw_uses_ss_default_for_bp_and_supports_override() {
 
 #[test]
 fn present_80387_fldcw_does_not_silently_enable_unsupported_arithmetic_mode() {
-    // Loading PC=10 is legal. Subsequent FADD still explicitly refuses
+    // Loading reserved PC=01 is legal. Subsequent FADD still explicitly refuses
     // unsupported precision-control modes rather than computing wrong data.
     let code=[0xd9,0x2f, 0xd9,0xe8, 0xd9,0xe8, 0xd8,0xc1, 0xcd,0x20];
     let mut p=dos::load(&code,"x87-control-precision.com").unwrap();
     p.fpu=Fpu::present();
     p.cpu.regs[3]=0x200;
     let base=p.image.segments[3].base;
-    p.ram.store(base+0x200,MemWidth::Word,0x027f).unwrap();
+    p.ram.store(base+0x200,MemWidth::Word,0x017f).unwrap();
     let stopped=dos::run(p,16).unwrap();
     assert!(matches!(stopped.stop,dos::Stop::Fault(ref s)
         if s.contains("80387 unsupported")),"{:?}",stopped.stop);
     assert_eq!(stopped.completed,3);
     assert_eq!(stopped.loaded.cpu.eip,0x106);
     let state=stopped.loaded.fpu.state().unwrap();
-    assert_eq!(state.control,0x027f);
+    assert_eq!(state.control,0x017f);
     assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
     assert_eq!(state.st(1),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+}
+
+#[test]
+fn at_coprocessor_port_f0h_clears_nothing_with_or_without_80387() {
+    // FLD1, then XOR AL,AL; OUT F0h,AL (the busy-latch clear a runtime does
+    // before probing for a coprocessor and in its IRQ13 handler); INT 20h.
+    let mut p=dos::load(&[0xd9,0xe8,0x32,0xc0,0xe6,0xf0,0xcd,0x20],"x87-port-f0.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.tag_word()&0xc000,0,"OUT F0h must not empty the stack");
+    for present in [false, true] {
+        let mut p=dos::load(&[0x32,0xc0,0xe6,0xf0,0xcd,0x20],"x87-port-f0-only.com").unwrap();
+        if present { p.fpu=Fpu::present(); }
+        let result=dos::run(p,16).unwrap();
+        assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+        assert_eq!(result.completed,3);
+    }
+}
+
+#[test]
+fn at_coprocessor_port_f1h_resets_80387_to_fninit_state() {
+    // FLDCW [BX] (precision 53 bits), FLD1, OUT F1h,AL, INT 20h.
+    let mut p=dos::load(&[0xd9,0x2f,0xd9,0xe8,0xe6,0xf1,0xcd,0x20],"x87-port-f1.com").unwrap();
+    p.fpu=Fpu::present();
+    p.cpu.regs[3]=0x200;
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x027f).unwrap();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.control,0x037f);
+    assert_eq!(state.status,0);
+    assert_eq!(state.tag_word(),0xffff);
+    // With no coprocessor the reset reaches nothing and the run goes on.
+    let p=dos::load(&[0xe6,0xf1,0xcd,0x20],"x87-port-f1-absent.com").unwrap();
+    let result=dos::run(p,16).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+}
+
+#[test]
+fn at_coprocessor_port_reads_still_stop() {
+    for port in [0xf0u8, 0xf1] {
+        let p=dos::load(&[0xe4,port,0xcd,0x20],"x87-port-read.com").unwrap();
+        let result=dos::run(p,16).unwrap();
+        assert!(matches!(result.stop,dos::Stop::Service(ref s) if s.contains("coprocessor control")),"{:?}",result.stop);
+        assert_eq!(result.completed,0);
+    }
 }

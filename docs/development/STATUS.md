@@ -1,3 +1,120 @@
+# Debug registers and the reset TR — 14 November 2026
+
+Tony's stop log for a 3D benchmark in his dosbench menu (a DOS extender
+in 32-bit protected mode, CR0=13h) had two stops:
+- `0F 23 C0` (MOV DR0,EAX) at 0018:2B26 was #UD. MOV to and from DR0-DR7
+  (0F 21/0F 23) now decode, through the same read_control/write_control
+  PIL as MOV CRn, with debug registers numbered 8-15. They need CPL 0
+  (#GP(0) above it and in V86 mode), take register operands only and
+  leave the arithmetic flags undefined. Values are stored as written in
+  SegmentState::debug (DR0-DR3, DR6, DR7; DR4/DR5 reach DR6/DR7, as on
+  later CPUs, since the 386 calls them reserved). Reset values follow the
+  Intel SDM table 9-1 (DR6 FFFF0FF0h, DR7 400h). Breakpoints are not
+  modelled: DR7 with L0-G3 or GD set stops (UnsupportedControl, register
+  15) instead of being stored and never firing. The trace now includes
+  the debug registers.
+- `JMP FAR 0070:0000` to a TSS at 0018:3E93 gave #TS(0) 1,661 times and
+  then a triple fault. The extender never runs LTR, and Dine's TR was all
+  zero, which task.rs refused as an invalid old TSS. TR now starts as
+  after a 386 reset (Intel SDM table 9-1: selector 0, base 0, limit
+  FFFFh; type busy 386 TSS, as in Bochs), so the old task is stored at
+  linear 0-67h and the switch goes ahead, as on hardware. JMP and IRET
+  clear the old busy bit in the GDT entry TR's selector indexes without
+  checking it again (entry 0 after reset), as Bochs does. The repeats
+  came from the extender's own #TS handler returning to the JMP; the
+  delivery itself was as the 386 does it, so it is unchanged.
+
+Local Linux, release: 812 Rust tests pass, 2 ignored (2 new: debug
+register moves in tests/unit/protected_mode.rs, a switch before any LTR
+in tests/unit/task.rs). The generated-backend suite has 280 cases (2 new:
+debug_registers, pm_task_reset_tr). The benchmark itself (Tony's, local
+only) was not run here; test386 and SingleStepTests were not rerun.
+
+# DOS console in Rust: pil --dos-console — 13 November 2026
+
+Part 2 of #183. Tony chose "Rust window as the whole console" and asked
+that tty sessions keep full CLI editing. src/dos_host_console.rs runs a
+`--dos-session` Session in process (dos_session.rs `open` now builds it for
+both). Same options as --dos-session, plus --tty/--window, --mouse,
+--ansi, --country, --utc-offset (default: host time zone).
+- Keys become IBM AT BIOS words (Ctrl/Alt/Shift tables for F1-F12, arrows,
+  editing block, Tab/Enter/Backspace; CP437 and Nordic scan codes) and go
+  through the BIOS ring or IRQ1, as session keys do. So the program's own
+  editing works: FreeCOM history and cursor keys (the COM1 route of #178
+  lost them).
+- --tty (default off Windows): raw terminal (stty on Unix; console modes
+  and ReadConsoleInputW with scan codes on Windows), alternate screen,
+  changed rows redrawn in ANSI 16 colours with IBM glyphs, BIOS cursor.
+  Ctrl+] quits. On Windows graphics open the window too.
+- --window (Windows default): dine_window.rs takes keys (WM_CHAR/
+  WM_SYSCHAR, WM_KEYDOWN for untyped keys, AltGr), mouse and focus;
+  text drawn with the 8x8 ROM font doubled to 8x16 and a blinking BIOS
+  cursor; graphics through desktop_vga_frame.
+- Not yet: speaker, drive menu, copy/paste, program fonts, blink attribute,
+  COM1 output. docs/DOS_CONSOLE.md.
+
+Local Linux release: 815 Rust tests pass, 2 ignored (7 new in
+tests/unit/host_console.rs, including an EXEC child's mode 12h frame for
+#177). FreeCOM from FD14LITE.img in a pseudo-terminal: Up recalls, Left and
+insert edit, MANDVGA from D: shows the graphics note, a key returns to the
+prompt, Ctrl+] quits. Windows code type-checks for x86_64-pc-windows-gnu;
+not run on Windows.
+
+# Precompiled instruction forms and run-time blocks — 13 November 2026
+
+Tony asked to integrate native Rust compiling into the shared libraries
+(tracking issue #183). Step 1-3 of docs/development/BLOCK_COMPILER.md; one
+`pil` binary and the `dine` library, the same for every program.
+- `pil --emit-precompiled-forms src/precompiled/forms.rs [--check]`
+  enumerates the real-mode decoder and writes one Rust function per PIL
+  form (2,669 forms, 13.5 MB, committed, `linguist-generated`). Immediates
+  that varied between enumerated decodes are run-time slots; the rest are
+  literals checked at lookup. CI fails when the file is stale: regenerate
+  it after any decoder, ISA or emitter change.
+- src/block_compiler/engine.rs: the DOS loop plans blocks (at most 16
+  straight-line PIL instructions; ends after control transfer, store,
+  context write, interrupt shadow, TF/IF/IOPL/NT/VM write) and runs one per
+  loop iteration with entry guards (segment state, fetch window, unchanged
+  bytes). Port I/O, 80387, INT, HLT and 0000h-0FFFh, A0000h+ never join.
+  Probe instruction mixes are unchanged.
+- `PIL_PRECOMPILED=off` interpreter only; `verify` native and interpreter
+  in lockstep (copies RAM each step, slow). Protected-mode and 32-bit-stack
+  forms are not in the table yet (interpreter).
+
+Local Linux release: 808 Rust tests pass, 2 ignored (5 new in
+tests/unit/precompiled.rs: >10,000 sampled forms against the interpreter
+on full state, blocks against the interpreter per slice on 4 fixtures and a
+self-modifying loop, lockstep verify). GUI tests 77 run, 6 skipped. Probe
+1M steps, whole process, reports identical: MANDEL 143 -> 71 ms, MANDCGA
+240 -> 58 ms; verify_mandel_vga.py 9.5 s -> 2.6 s. Release build about
+1 m 40 s here, binary 8.5 MB.
+
+# AT coprocessor ports F0h and F1h — 13 November 2026
+
+Tony's 80387 Mandelbrot in Turbo Pascal 7.0 ({$N+} {$E-}) stopped on
+"OUT to port 00F0h (coprocessor control) is not modelled". The Turbo
+Pascal runtime writes 0 to port F0h before its coprocessor probe (FNINIT,
+FNSTCW) and again in its IRQ13 (INT 75h) handler, as AT software does.
+- OUT F0h (any byte) clears the AT busy latch that the 287/387 ERROR#
+  output sets and that raises IRQ13. This FPU finishes each instruction
+  before the next and stops on an unmasked exception, so the latch is
+  never set: the write changes nothing, with or without --fpu 80387.
+- OUT F1h resets the coprocessor: the 80387 goes to its FNINIT state
+  (Fpu::reset); with no coprocessor nothing receives it.
+- IN from F0h/F1h and word OUT still stop.
+- Next stop for the program with --fpu 80387 (local): DE F9, FDIVP
+  ST(1),ST computing 1/0 in the runtime's 287/387 test (FLD1, FLDZ,
+  FDIVP, FLD ST, FCHS, FCOMPP, FSTSW m16). That needs masked
+  divide-by-zero giving infinity, infinity compares, FCHS (draft #181)
+  and FSTSW m16, which are 80387 phase work. With --fpu none the
+  program prints "Numeric co-processor required" and exits, as on a
+  machine without one.
+
+Local Linux, release: 806 Rust tests pass, 2 ignored (3 new in
+tests/unit/fpu.rs). TPC.EXE 7.0 (Tony's, local only) under FreeCOM from
+FD14LITE.img compiles MANDELFP.PAS (93 lines); the EXE then runs past
+port F0h to the FDIVP above.
+
 # PIL and Dine are program-independent libraries — 13 November 2026
 
 Standing rules (Tony, 13 November 2026):

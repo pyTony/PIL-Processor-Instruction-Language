@@ -6,16 +6,26 @@ pub enum Operation {
     Finit,
     Fnclex,
     FnstswAx,
+    /// Store the 16-bit status word to a memory operand (DD /7).
+    FnstswM16,
     /// Load the 16-bit control word from a memory operand (D9 /5).
     Fldcw,
     /// Store the current 16-bit control word to a memory operand (D9 /7).
     Fnstcw,
+    /// Store the 14-byte (16-bit) or 28-byte (32-bit) x87 environment (D9 /6).
+    Fnstenv,
+    /// Load the 14-byte (16-bit) or 28-byte (32-bit) x87 environment (D9 /4).
+    Fldenv,
+    Fchs,
+    Fxam,
+    Frndint,
+    Fsin,
+    Fcos,
     Fld1,
     Fldz,
-    /// Change the sign bit of ST(0), including negative zero.
-    Fchs,
     /// Clear the sign bit of ST(0), including negative zero.
     Fabs,
+    Fyl2xp1,
     FldSt(u8),
     Fxch(u8),
     FstpSt(u8),
@@ -25,6 +35,11 @@ pub enum Operation {
     FstpM64,
     FldM80,
     FstpM80,
+    FildM16,
+    FildM32,
+    FildM64,
+    FistpM64,
+    FbstpM80,
     Compare { index: u8, pop: bool },
     ComparePop2,
     CompareMemory { bytes: u32, pop: bool },
@@ -50,10 +65,15 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xdb, 0xe3) => Some(Operation::Finit),
             (0xdb, 0xe2) => Some(Operation::Fnclex),
             (0xdf, 0xe0) => Some(Operation::FnstswAx),
+            (0xd9, 0xe0) => Some(Operation::Fchs),
+            (0xd9, 0xe5) => Some(Operation::Fxam),
+            (0xd9, 0xfc) => Some(Operation::Frndint),
+            (0xd9, 0xfe) => Some(Operation::Fsin),
+            (0xd9, 0xff) => Some(Operation::Fcos),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xee) => Some(Operation::Fldz),
-            (0xd9, 0xe0) => Some(Operation::Fchs),
             (0xd9, 0xe1) => Some(Operation::Fabs),
+            (0xd9, 0xf9) => Some(Operation::Fyl2xp1),
             (0xd9, 0xc0..=0xc7) => Some(Operation::FldSt(rm)),
             (0xd9, 0xc8..=0xcf) => Some(Operation::Fxch(rm)),
             (0xdd, 0xd8..=0xdf) => Some(Operation::FstpSt(rm)),
@@ -78,12 +98,20 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
         match (opcode, reg) {
             (0xd9, 0) => Some(Operation::FldM32),
             (0xd9, 3) => Some(Operation::FstpM32),
+            (0xd9, 4) => Some(Operation::Fldenv),
             (0xd9, 5) => Some(Operation::Fldcw),
+            (0xd9, 6) => Some(Operation::Fnstenv),
             (0xd9, 7) => Some(Operation::Fnstcw),
             (0xdd, 0) => Some(Operation::FldM64),
             (0xdd, 3) => Some(Operation::FstpM64),
+            (0xdd, 7) => Some(Operation::FnstswM16),
+            (0xdb, 0) => Some(Operation::FildM32),
             (0xdb, 5) => Some(Operation::FldM80),
             (0xdb, 7) => Some(Operation::FstpM80),
+            (0xdf, 0) => Some(Operation::FildM16),
+            (0xdf, 5) => Some(Operation::FildM64),
+            (0xdf, 6) => Some(Operation::FbstpM80),
+            (0xdf, 7) => Some(Operation::FistpM64),
             (0xd8 | 0xdc, 2) => Some(Operation::CompareMemory { bytes: if opcode == 0xd8 { 4 } else { 8 }, pop: false }),
             (0xd8 | 0xdc, 3) => Some(Operation::CompareMemory { bytes: if opcode == 0xd8 { 4 } else { 8 }, pop: true }),
             (0xd8, 0) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Add, bytes: 4 }),
@@ -111,9 +139,11 @@ mod tests {
         assert_eq!(classify(0xdf,0xe0),Ok(Operation::FnstswAx));
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
-        assert_eq!(classify(0xd9,0xe0),Ok(Operation::Fchs));
         assert_eq!(classify(0xd9,0xe1),Ok(Operation::Fabs));
+        assert_eq!(classify(0xd9,0xf9),Ok(Operation::Fyl2xp1));
+        assert_eq!(classify(0xd9,0x26),Ok(Operation::Fldenv)); // FLDENV [disp16]
         assert_eq!(classify(0xd9,0x2f),Ok(Operation::Fldcw)); // FLDCW [BX]
+        assert_eq!(classify(0xd9,0x36),Ok(Operation::Fnstenv)); // FNSTENV [disp16]
         assert_eq!(classify(0xd9,0x3f),Ok(Operation::Fnstcw)); // FNSTCW [BX]
         // /5 and /7 require memory operands, not ModR/M register mode.
         assert_eq!(classify(0xd9,0xef),Err(DecodeError::Unsupported{opcode:0xd9,modrm:0xef}));
@@ -182,6 +212,12 @@ mod tests {
     }
     #[test]
     fn unsupported_is_not_silent_success() {
+        assert_eq!(classify(0xd9,0xe0),Ok(Operation::Fchs));
+        assert_eq!(classify(0xd9,0xe5),Ok(Operation::Fxam));
+        assert_eq!(classify(0xd9,0xfc),Ok(Operation::Frndint));
+        assert_eq!(classify(0xd9,0xfe),Ok(Operation::Fsin));
+        assert_eq!(classify(0xd9,0xff),Ok(Operation::Fcos));
+        assert_eq!(classify(0xdd,0x3f),Ok(Operation::FnstswM16));
         for (op,modrm) in [(0xd9,0xe4),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
         }

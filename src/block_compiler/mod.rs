@@ -21,15 +21,19 @@
 //! - `recorder`: collects executed sites from any DOS session through the
 //!   `dos::InstructionBackend` hook, grouped by code segment base.
 //!
-//! The hook itself (`dos::InstructionBackend`, `dos::run_with_backend`,
-//! `Session::with_backend`) stays in Dine; with no backend the interpreter
-//! runs everything. None of this is wired into a command yet. Integration is
-//! the subject of docs/development/BLOCK_COMPILER.md.
+//! - `engine`: run-time blocks over the precompiled instruction forms
+//!   (src/precompiled), used by the shared DOS loop for every program.
+//!
+//! The hook (`dos::InstructionBackend`, `dos::run_with_backend`,
+//! `Session::with_backend`) stays in Dine; with no backend the DOS loop runs
+//! `engine` blocks, native forms, then the interpreter. See
+//! docs/development/BLOCK_COMPILER.md.
 #![allow(dead_code)]
 pub(crate) mod sites;
 pub(crate) mod codegen;
 pub(crate) mod guards;
 pub(crate) mod recorder;
+pub(crate) mod engine;
 
 #[cfg(test)]
 mod tests {

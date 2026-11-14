@@ -137,7 +137,10 @@ pub fn switch(machine:&SegmentState,ram:&Ram,regs:&[u32;8],eflags:u32,return_eip
     }
     // Busy bits and the back link.
     if matches!(entry,Entry::Jump|Entry::Return){
-        let old_at=machine.descriptor_address(old.selector).ok_or(ts(eip,old_code))?;
+        // The 386 does not check TR's selector again (LTR did): it
+        // addresses the GDT entry by index, so after reset (selector 0) it
+        // clears bit 1 of the null descriptor's access byte, as Bochs does.
+        let old_at=machine.tables[0].1.wrapping_add(u32::from(old.selector&0xfff8));
         let access=(read_descriptor(ram,old_at,eip)?>>40) as u8;
         stage(old_at.wrapping_add(5),MemWidth::Byte,u32::from(access&!2),&mut stores)?;
     }

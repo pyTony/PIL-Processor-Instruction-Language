@@ -1,12 +1,12 @@
 use super::*;
 #[test]
 fn parses_drives_country_and_rejects_ambiguous_entries(){
-    let c=parse("# drives\n#@program=images/FD14LITE.img::COMMAND.COM\n#@args=/K D:\\AUTOEXEC.BAT\nC=images/FD14LITE.img\nd: = drive D\ncountry=358\n",Path::new("base")).unwrap();
+    let c=parse("# drives\n#@program=images/FD14LITE.img::COMMAND.COM\n#@args=/K D:\\AUTOEXEC.BAT\nC=images/FD14LITE.img\nd: = drive D\ncountry=358\nheadless=true\nrust_graphics=true\nmouse=true\nfpu=80387\nshell=true\nengine=target/release/pil.exe\n",Path::new("base")).unwrap();
     assert_eq!(c.country,Some(358));
     assert_eq!(c.program,Some(format!("{}::COMMAND.COM",Path::new("base").join("images/FD14LITE.img").display())));
     assert_eq!(c.args.as_deref(),Some("/K D:\\AUTOEXEC.BAT"));
     assert_eq!(c.drives,vec![(b'C',PathBuf::from("base/images/FD14LITE.img")),(b'D',PathBuf::from("base/drive D"))]);
-    for text in ["C=one\nc=two", "Z=ram", "country=999", "country=1\ncountry=358", "C=", "other=x", "#@program=a\n#@program=b", "#@args=a\n#@args=b"]{
+    for text in ["C=one\nc=two", "Z=ram", "country=999", "country=1\ncountry=358", "C=", "other=x", "headless=maybe", "fpu=8087", "#@program=a\n#@program=b", "#@args=a\n#@args=b"]{
         assert!(parse(text,Path::new("base")).is_err(),"{text}");
     }
 }

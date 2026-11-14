@@ -670,8 +670,8 @@
       "mnemonics_or_area": [
         "MOV_DR"
       ],
-      "status": "planned",
-      "remaining": "386 debug state,breakpoint/trap timing and aliases",
+      "status": "partial",
+      "remaining": "MOV DR0-DR7 store and read back (DR4/DR5 alias DR6/DR7); breakpoints, DR6 status, GD and the TSS T bit are not modelled (DR7 enables stop)",
       "modern_user_mode_oracle": "privileged_or_os",
       "done_when": "Legal forms,defined/preserved/undefined outputs and fault/commit boundaries have independent tests and both-backend regression coverage"
     },

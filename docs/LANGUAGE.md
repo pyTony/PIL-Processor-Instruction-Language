@@ -631,8 +631,12 @@ before reading; any second-field fault prevents both staged register effects.
 
 `read_control OUT REGISTER` reads bv32 CR0, CR2 or CR3. `write_control REGISTER
 VALUE` stages one bv32 control-register write until retirement. Registers are
-numbered 0, 2 and 3; other numbers and non-bv32 write values are rejected by
-the PIL compiler. Incoming state is read even after a staged write, matching
+numbered 0, 2 and 3 for CR0, CR2 and CR3, and 8-15 for the debug registers
+DR0-DR7 (MOV 0F21/0F23); other numbers and non-bv32 write values are rejected
+by the PIL compiler. DR4 and DR5 reach DR6 and DR7. Writing DR7 with a
+breakpoint enable (L0-G3) or GD set stops with UnsupportedControl, because
+breakpoints are not modelled; other debug-register values are stored as
+written. Both need CPL 0 (#GP(0) above it and in virtual-8086 mode). Incoming state is read even after a staged write, matching
 other PIL effects. Missing machine state is an InvalidContext diagnostic.
 
 The 80386 MOV forms 0F20/0F22 always transfer full 32-bit GPRs, independently

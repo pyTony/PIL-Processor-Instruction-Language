@@ -208,7 +208,21 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         (0x10,0x02)=>{
             let page=(p.cpu.regs[3]>>8)&255;
             if page>=8{return Err("BIOS cursor page must be 0..7".into());}
-            p.ram.store(0x450+page*2,MemWidth::Word,p.cpu.regs[2]&0xffff).map_err(|e|format!("BIOS cursor position write: {e:?}"))?;
+            let pos=p.cpu.regs[2]&0xffff;
+            if p.com1.is_some()&&matches!(files::system_file(p,1),Ok(Some(3))){
+                let active=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("BIOS active page read: {e:?}"))?&7;
+                let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?&0x7f;
+                let prev=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?;
+                let(prev_row,prev_col)=((prev>>8)&255,prev&255);
+                let(new_row,new_col)=((pos>>8)&255,pos&255);
+                if page==active&&matches!(mode,0..=3|7)&&new_row==prev_row&&new_col!=prev_col{
+                    if let Some(s)=p.com1.as_mut(){
+                        s.tx.extend_from_slice(format!("\x1b[{}G",new_col+1).as_bytes());
+                        s.column=new_col as usize;
+                    }
+                }
+            }
+            p.ram.store(0x450+page*2,MemWidth::Word,pos).map_err(|e|format!("BIOS cursor position write: {e:?}"))?;
             Ok(None)
         },
         (0x10,0x03)=>{
