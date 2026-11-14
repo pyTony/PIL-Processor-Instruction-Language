@@ -38,6 +38,10 @@ impl Display {
     pub(crate) fn window_closed(&self)->bool{
         match self{Self::Window(window)=>window.closed(),_=>false}
     }
+    #[cfg(windows)]
+    pub(crate) fn drain_mouse_events(&self)->Vec<(u16,u16,u16)>{
+        match self{Self::Window(window)=>window.drain_mouse_events(),_=>Vec::new()}
+    }
     pub(crate) fn new() -> Self {
         let mode=std::env::var("DINE_VIDEO")
             .unwrap_or_default().to_ascii_lowercase();
@@ -70,6 +74,8 @@ impl Display {
             },
             #[cfg(windows)]
             Self::Window(window) => {
+                let (max_x,max_y,visible)=dos::mouse_state(p);
+                window.set_mouse_state(max_x,max_y,visible);
                 if let Some((width,height,pixels))=dos::desktop_vga_frame(p) {
                     window.present(crate::dine_window::Frame{width:width as i32,height:height as i32,pixels});
                 }else{

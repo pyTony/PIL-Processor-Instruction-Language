@@ -39,6 +39,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import threading
@@ -677,9 +678,11 @@ class ConsolePort:
             raise RuntimeError('--com1 console needs the terminal started from a console window')
         self.input = queue.Queue()
         self._terminal = None
+        self._win_old_mode = None
+        self._win_mouse_capture = None
         if sys.platform == 'win32':
             self._enable_vt()
-            self._pass_ctrl_c()
+            self._configure_win_input()
             reader = self._read_windows
         else:
             import atexit
@@ -690,6 +693,7 @@ class ConsolePort:
             atexit.register(self.close)
             tty.setraw(fd)
             reader = self._read_posix
+        self.mouse_events = queue.Queue()
         threading.Thread(target=reader, daemon=True).start()
 
     @staticmethod
@@ -701,8 +705,7 @@ class ConsolePort:
         if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
             kernel.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
 
-    @staticmethod
-    def _pass_ctrl_c():
+    def _configure_win_input(self):
         try:
             import atexit
             import ctypes
@@ -710,20 +713,80 @@ class ConsolePort:
             handle = kernel.GetStdHandle(-10)  # STD_INPUT_HANDLE
             mode = ctypes.c_uint32()
             if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
-                old = mode.value
-                kernel.SetConsoleMode(handle, old & ~0x0001)  # ENABLE_PROCESSED_INPUT off
-                atexit.register(lambda: kernel.SetConsoleMode(handle, old))
+                self._win_old_mode = mode.value
+                atexit.register(lambda: kernel.SetConsoleMode(handle, self._win_old_mode))
+                self.set_mouse_capture(False)
+        except Exception:
+            pass
+
+    def set_mouse_capture(self, enable):
+        if sys.platform != 'win32' or self._win_old_mode is None or enable == self._win_mouse_capture:
+            return
+        try:
+            import ctypes
+            kernel = ctypes.windll.kernel32
+            handle = kernel.GetStdHandle(-10)  # STD_INPUT_HANDLE
+            if enable:
+                # Raw Ctrl+C, mouse events, disable QuickEdit so clicks reach the DOS TUI.
+                mode = (self._win_old_mode & ~0x0041) | 0x0090
+            else:
+                # Raw Ctrl+C, QuickEdit enabled so mouse drag selects text for copy/paste.
+                mode = (self._win_old_mode & ~0x0011) | 0x00C0
+            kernel.SetConsoleMode(handle, mode)
+            self._win_mouse_capture = enable
         except Exception:
             pass
 
     def _read_windows(self):
-        import msvcrt
-        while True:
-            char = msvcrt.getwch()
-            if char in ('\x00', '\xe0'):
-                self.input.put((0, ord(msvcrt.getwch())))
+        import ctypes
+        import ctypes.wintypes as wt
+        class _Key(ctypes.Structure):
+            _fields_ = [('bKeyDown', wt.BOOL), ('wRepeatCount', wt.WORD), ('wVirtualKeyCode', wt.WORD),
+                        ('wVirtualScanCode', wt.WORD), ('UnicodeChar', wt.WCHAR), ('dwControlKeyState', wt.DWORD)]
+        class _Mouse(ctypes.Structure):
+            _fields_ = [('X', ctypes.c_int16), ('Y', ctypes.c_int16), ('dwButtonState', wt.DWORD),
+                        ('dwControlKeyState', wt.DWORD), ('dwEventFlags', wt.DWORD)]
+        class _Event(ctypes.Union):
+            _fields_ = [('KeyEvent', _Key), ('MouseEvent', _Mouse)]
+        class _Record(ctypes.Structure):
+            _fields_ = [('EventType', wt.WORD), ('Event', _Event)]
+        kernel = ctypes.windll.kernel32
+        handle = kernel.GetStdHandle(-10)
+        rec = _Record()
+        read_count = wt.DWORD()
+        while kernel.ReadConsoleInputW(handle, ctypes.byref(rec), 1, ctypes.byref(read_count)):
+            if not read_count.value:
+                continue
+            if rec.EventType == 2:  # MOUSE_EVENT
+                m = rec.Event.MouseEvent
+                self.mouse_events.put((max(0, m.X) * 8, max(0, m.Y) * 8, m.dwButtonState & 7))
+                continue
+            if rec.EventType != 1:
+                continue
+            k = rec.Event.KeyEvent
+            if not k.bKeyDown:
+                continue
+            if k.wVirtualKeyCode in (16, 17, 18, 20, 144, 145):  # Shift, Ctrl, Alt, Caps/Num/Scroll
+                continue
+            ctrl_state = k.dwControlKeyState
+            left_alt = bool(ctrl_state & 0x0002)
+            any_ctrl = bool(ctrl_state & 0x000C) and not bool(ctrl_state & 0x0001)
+            shift = bool(ctrl_state & 0x0010)
+            scan = k.wVirtualScanCode & 0xff
+            ch_val = ord(k.UnicodeChar) if k.UnicodeChar else 0
+            if left_alt and 59 <= scan <= 68:
+                self.input.put((0, scan + 45))
+            elif left_alt and scan:
+                self.input.put((0, scan))
+            elif any_ctrl and 59 <= scan <= 68:
+                self.input.put((0, scan + 35))
+            elif shift and 59 <= scan <= 68:
+                self.input.put((0, scan + 25))
+            elif ch_val == 0:
+                self.input.put((0, scan))
             else:
-                self.input.put(to_cp437(char))
+                encoded = to_cp437(chr(ch_val))
+                self.input.put(encoded)
 
     def _read_posix(self):
         import os
@@ -742,14 +805,24 @@ class ConsolePort:
 
     def write(self, data):
         # In raw mode a bare LF only moves down; DOS sends CR LF itself.
-        sys.stdout.write(from_cp437(data))
-        sys.stdout.flush()
+        self.write_text(from_cp437(data))
+
+    def write_text(self, text):
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except UnicodeEncodeError:
+            sys.stdout.buffer.write(to_cp437(text))
+            sys.stdout.flush()
 
     def read(self):
         data = b''
         while not self.input.empty():
             item = self.input.get_nowait()
-            if isinstance(item, bytes): data += item
+            if isinstance(item, bytes):
+                data += item
+            elif isinstance(item, tuple) and len(item) == 2 and item[0] == 0 and 0 < item[1] < 256:
+                data += bytes((0, item[1]))
         return data
 
     def read_bios(self):
@@ -758,6 +831,12 @@ class ConsolePort:
             item = self.input.get_nowait()
             codes.extend(bios_keys(item) if isinstance(item, bytes) else [item])
         return codes
+
+    def read_mouse(self):
+        events = []
+        while not self.mouse_events.empty():
+            events.append(self.mouse_events.get_nowait())
+        return events
 
     def close(self):
         if self._terminal is not None:
@@ -961,13 +1040,92 @@ class NativeRustGraphics:
     def close(self): pass
 
 
-def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False, rust_graphics=False):
+_ANSI_FG = (30, 34, 32, 36, 31, 35, 33, 37, 90, 94, 92, 96, 91, 95, 93, 97)
+_ANSI_BG = (40, 44, 42, 46, 41, 45, 43, 47, 100, 104, 102, 106, 101, 105, 103, 107)
+
+
+class HeadlessTui:
+    """Render the 80x25 B800 text screen to the host ANSI terminal when a full-screen TUI app runs."""
+
+    def __init__(self):
+        self.active = False
+        self._rows = None
+        self._cursor = None
+
+    def _format_row(self, text, attrs):
+        out = []
+        last = None
+        for ch, attr in zip(text, attrs):
+            if attr != last:
+                out.append(f'\x1b[{_ANSI_FG[attr & 15]};{_ANSI_BG[(attr >> 4) & 15]}m')
+                last = attr
+            out.append(ch if ord(ch) >= 32 else ' ')
+        return ''.join(out)
+
+    def enter(self, port, reply):
+        self.active = True
+        self._rows = None
+        self._cursor = None
+        port.write(b'\x1b[?1049h\x1b[2J')
+        self.update(port, reply)
+
+    def update(self, port, reply):
+        if not self.active or not reply.get('screen'):
+            return
+        rows = screen_rows(reply)
+        cursor = tuple(reply.get('cursor', (0, 0)))
+        if rows == self._rows and cursor == self._cursor:
+            return
+        chunks = ['\x1b[?25l']
+        for idx, row in enumerate(rows):
+            if self._rows is None or idx >= len(self._rows) or row != self._rows[idx]:
+                chunks.append(f'\x1b[{idx + 1};1H')
+                chunks.append(self._format_row(*row))
+        r, c = cursor
+        chunks.append(f'\x1b[{max(1, r + 1)};{max(1, c + 1)}H\x1b[?25h')
+        text = ''.join(chunks)
+        if hasattr(port, 'write_text'):
+            port.write_text(text)
+        else:
+            port.write(text.encode('cp437', errors='replace'))
+        self._rows = rows
+        self._cursor = cursor
+
+    def leave(self, port):
+        if not self.active:
+            return
+        self.active = False
+        self._rows = None
+        self._cursor = None
+        port.write(b'\x1b[0m\x1b[?25h\x1b[?1049l')
+
+
+def raw_key_sequence(ascii_code, scan):
+    """Expand a BIOS (ascii, scan) pair into raw set-1 (modifier, base) make/break steps."""
+    if ascii_code != 0:
+        return (None, ascii_code, scan)
+    if 16 <= scan <= 50:
+        return (56, 0, scan)          # Alt + letter
+    if 84 <= scan <= 93:
+        return (42, 0, scan - 25)     # Shift + F1..F10
+    if 94 <= scan <= 103:
+        return (29, 0, scan - 35)     # Ctrl + F1..F10
+    if 104 <= scan <= 113:
+        return (56, 0, scan - 45)     # Alt + F1..F10
+    if 120 <= scan <= 131:
+        return (56, 0, scan - 118)    # Alt + 1..0/-/=
+    return (None, 0, scan)
+
+
+def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphics_key=False, rust_graphics=False, mouse=False):
     """Route DOS input and output over COM1 before running the guest."""
     session.send(f'clock {offset}')
     if country:
         session.send(f'country {country}')
     reply = session.send('console com1')
     gfx = NativeRustGraphics() if rust_graphics else HeadlessGraphics()
+    tui = HeadlessTui()
+    baseline_screen = reply.get('screen')
     ctty_done = False
     com1_seen = False
     auto_key_sent = False
@@ -981,13 +1139,30 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
                     break
             if rust_graphics and reply.get('native_window_closed'):
                 return {**reply, 'status': 'window_closed', 'detail': 'native graphics window closed'}
-            if rust_graphics and reply.get('native_graphics'):
+            if (rust_graphics and reply.get('native_graphics')) or tui.active:
+                if tui.active and hasattr(com1, 'read_mouse'):
+                    for mx, my, mbtn in com1.read_mouse():
+                        session.send(f'mouse {mx} {my} {mbtn}')
                 codes = (com1.read_bios() if hasattr(com1, 'read_bios')
                          else bios_keys(com1.read()))
                 for ascii_code, scan in codes:
-                    session.send(f'key {ascii_code} {scan}')
+                    if reply.get('raw_keyboard'):
+                        mod, base_ascii, base_scan = raw_key_sequence(ascii_code, scan)
+                        if mod is not None:
+                            session.send(f'keydown 0 {mod}')
+                            reply = run_slice(session, SLICE)
+                        session.send(f'keydown {base_ascii} {base_scan}')
+                        reply = run_slice(session, SLICE)
+                        session.send(f'keyup {base_ascii} {base_scan}')
+                        if mod is not None:
+                            reply = run_slice(session, SLICE)
+                            session.send(f'keyup 0 {mod}')
+                    else:
+                        session.send(f'key {ascii_code} {scan}')
                 incoming = b''
             else:
+                if hasattr(com1, 'read_mouse'):
+                    com1.read_mouse()
                 incoming = com1.read()
                 for at in range(0, len(incoming), 100):
                     reply = session.send('com1 ' + incoming[at:at + 100].hex())
@@ -1001,9 +1176,28 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
             reply = refresh_frame(session, reply)
             if rust_graphics and reply.get('native_window_closed'):
                 return {**reply, 'status': 'window_closed', 'detail': 'native graphics window closed'}
+            graphics_active = (bool(reply.get('native_graphics')) or
+                               any(reply.get(k) is not None for k in ('graphics13', 'graphics_cga', 'graphics_planar')))
+            was_tui_active = tui.active
+            real_com1_out = bool(re.sub(rb'\x1b\[\d+G', b'', session.com1_out))
+            if graphics_active:
+                tui.leave(com1)
+            elif real_com1_out or reply.get('com1_wait'):
+                tui.leave(com1)
+                if reply.get('screen'):
+                    baseline_screen = reply.get('screen')
+            elif tui.active:
+                tui.update(com1, reply)
+            elif reply.get('screen') and reply['screen'] != baseline_screen:
+                tui.enter(com1, reply)
+            if hasattr(com1, 'set_mouse_capture'):
+                com1.set_mouse_capture(mouse and tui.active and bool(reply.get('mouse_active')))
             if session.com1_out:
                 com1_seen = True
-                com1.write(session.com1_out)
+                if not tui.active:
+                    out = re.sub(rb'\x1b\[\d+G', b'', session.com1_out) if was_tui_active else session.com1_out
+                    if out:
+                        com1.write(out)
                 session.com1_out = b''
             gfx.update(reply, session)
             graphics_active = (bool(reply.get('native_graphics')) or
@@ -1024,6 +1218,7 @@ def run_headless(session, com1, offset, country=None, is_shell=True, auto_graphi
                 time.sleep(0.01)
         return reply
     finally:
+        tui.leave(com1)
         gfx.close()
 
 
@@ -1462,6 +1657,44 @@ def configured_startup(engine, config=None):
         raise ValueError('invalid PILdos startup configuration response') from exc
 
 
+def configured_frontend(config=None):
+    """Read optional frontend options from --config, PILDOS_CONFIG, or pildos.conf."""
+    selected = config or os.environ.get('PILDOS_CONFIG')
+    path = Path(selected) if selected else Path('pildos.conf')
+    if not path.is_file():
+        return {}
+    opts = {}
+    base = path.parent
+    for raw in path.read_text(encoding='utf-8-sig', errors='replace').splitlines():
+        line = raw.strip()
+        if line.startswith('#@'):
+            line = line[2:].strip()
+        elif not line or line[0] in ('#', ';'):
+            continue
+        if '=' not in line:
+            continue
+        key, value = (part.strip() for part in line.split('=', 1))
+        k = key.lower().replace('-', '_')
+        v = value.lower()
+        if k in ('headless', 'rust_graphics', 'mouse', 'shell', 'ansi'):
+            if v in ('true', '1'):
+                opts[k] = True
+            elif v in ('false', '0'):
+                opts[k] = False
+        elif k == 'fpu' and v in ('none', '80387'):
+            opts['fpu'] = v
+        elif k == 'engine' and value:
+            p = Path(value)
+            opts['engine'] = str(p if p.is_absolute() else base / p)
+        elif k == 'com1' and value:
+            opts['com1'] = value
+        elif k == 'speaker_volume' and value:
+            opts['speaker_volume'] = speaker_volume(value)
+        elif k == 'utc_offset' and value:
+            opts['utc_offset'] = parse_offset(value)
+    return opts
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('program', nargs='?', help='DOS .COM/.EXE, or IMAGE.img::INNER_PATH; default from config')
@@ -1473,9 +1706,9 @@ def main(argv=None):
                         help='copy a FAT image to a new labelled drives/LETTER folder and mount it writable')
     parser.add_argument('--args', metavar='COMMAND_LINE',
                         help='command line for the program, e.g. "/K D:\\START.BAT" to have COMMAND.COM run a batch file first')
-    parser.add_argument('--speaker-volume', type=speaker_volume, default=5, metavar='0..100',
+    parser.add_argument('--speaker-volume', type=speaker_volume, default=None, metavar='0..100',
                         help='PC speaker click volume (default 5, 0 mutes; Windows or Linux with aplay)')
-    parser.add_argument('--fpu', choices=('none', '80387'), default='none',
+    parser.add_argument('--fpu', choices=('none', '80387'), default=None,
                         help='optional partial 80387 backend (default none; arithmetic is not yet implemented)')
     parser.add_argument('--ansi', action='store_true',
                         help='load an ANSI.SYS-style console driver, so ESC [ colour and cursor sequences draw on the DOS screen')
@@ -1504,6 +1737,20 @@ def main(argv=None):
     parser.add_argument('--utc-offset', type=parse_offset, metavar='HOURS',
                         help='time zone of the DOS clock, e.g. 2, -5, 5.5 or +02:00 (default: this computer\'s)')
     args = parser.parse_args(argv)
+    cfg = configured_frontend(args.config)
+    for flag in ('headless', 'rust_graphics', 'mouse', 'shell', 'ansi'):
+        if not getattr(args, flag) and cfg.get(flag):
+            setattr(args, flag, True)
+    if args.fpu is None:
+        args.fpu = cfg.get('fpu', 'none')
+    if args.speaker_volume is None:
+        args.speaker_volume = cfg.get('speaker_volume', 5)
+    if args.engine is None and 'engine' in cfg:
+        args.engine = cfg['engine']
+    if args.com1 is None and 'com1' in cfg:
+        args.com1 = cfg['com1']
+    if args.utc_offset is None and 'utc_offset' in cfg:
+        args.utc_offset = cfg['utc_offset']
     if args.rust_graphics and not args.headless:
         parser.error('--rust-graphics requires --headless (terminal keyboard via COM1/BIOS)')
     if args.rust_graphics and sys.platform != 'win32':
@@ -1531,7 +1778,7 @@ def main(argv=None):
         try:
             session = Session(find_dos_engine(args.engine), args.program, args.mount, args.args, profile=args.profile,
                               stop_log=args.stop_log, ignore_unassigned_out=args.ignore_unassigned_out, ansi=args.ansi, drives=args.drive, config=args.config, fpu=args.fpu, mouse=args.mouse, rust_graphics=args.rust_graphics)
-            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=args.shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics)
+            reply = run_headless(session, com1, local_offset() if args.utc_offset is None else args.utc_offset, args.country, is_shell=args.shell, auto_graphics_key=args.auto_graphics_key, rust_graphics=args.rust_graphics, mouse=args.mouse)
             if reply['status'] not in ('exit', 'window_closed'):
                 print(f"\nPIL stopped: {reply.get('detail', reply['status'])}", file=sys.stderr)
                 raise SystemExit(1)

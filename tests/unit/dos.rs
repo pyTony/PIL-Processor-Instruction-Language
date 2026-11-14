@@ -1202,6 +1202,34 @@ fn session_routes_console_to_com1_before_guest_execution(){
  s.command(3,"com1 78").unwrap();let(reply,_)=s.command(4,"run 100").unwrap();
  assert!(reply.contains("exit code 120")&&reply.contains("\"com1\":\"78\""),"{reply}");
 }
+#[test]
+fn session_com1_tracks_bda_cursor_and_emits_horizontal_bios_moves(){
+ // Print "C:\>ab" (6 chars), read cursor AH=03 (DX->BP), move AH=02 to (0,3),
+ // move AH=02 to (2,1), exit.
+ let code=[
+  0xb4,2,0xb2,b'C',0xcd,0x21,0xb2,b':',0xcd,0x21,0xb2,b'\\',0xcd,0x21,0xb2,b'>',0xcd,0x21,0xb2,b'a',0xcd,0x21,0xb2,b'b',0xcd,0x21,
+  0xb4,3,0x31,0xdb,0xcd,0x10,0x89,0xd5,
+  0xb4,2,0xba,3,0,0xcd,0x10,
+  0xb4,2,0xba,1,2,0xcd,0x10,
+  0xb4,0x4c,0xcd,0x21,
+ ];
+ let mut p=load(&code,"cursor_com1.com").unwrap();serial::attach(&mut p).unwrap();
+ let mut s=session::Session::new(p);s.command(1,"console com1").unwrap();
+ let(reply,_)=s.command(2,"run 500").unwrap();
+ assert!(reply.contains("\"status\":\"exit\"")&&reply.contains("\"cursor\":[2,1]"),"{reply}");
+ // "C:\>ab" (433a5c3e6162) + "\x1b[4G" (1b5b3447); no CSI G for row-changing move to (2,1).
+ assert!(reply.contains("\"com1\":\"433a5c3e61621b5b3447\""),"{reply}");
+ // BP captured DX from INT 10h AH=03h after 6 chars -> col 6, row 0.
+ assert_eq!(s.loaded().unwrap().cpu.regs[5]&0xffff,6);
+}
+#[test]
+fn second_read_only_open_of_program_file_succeeds(){
+ let mut p=load(&[0xc3,0x90],"self_open.com").unwrap();
+ let(h1,cf1)=call(&mut p,0x3d00,0,b"SELF_OPEN.COM");
+ let(h2,cf2)=call(&mut p,0x3d00,0,b"SELF_OPEN.COM");
+ assert_eq!((cf1,cf2),(0,0));
+ assert_ne!(h1,h2);
+}
 fn call(p:&mut Loaded,ax:u32,cx:u32,path:&[u8])->(u32,u32){
  let psp=u32::from(PSP)*16;let mut z=path.to_vec();z.push(0);p.ram.write_bytes(psp+0x200,&z).unwrap();
  p.cpu.regs[0]=ax;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x200;p.cpu.eflags=0x202;service(p,0x21,&mut vec![]).unwrap();

@@ -905,3 +905,52 @@ class KeyEdgesTests(unittest.TestCase):
         events.press('Up', (0, 72))
         self.assertEqual(events.release_all(), ['keyup 65 30', 'keyup 0 72'])
         self.assertEqual(events.release_all(), [])
+
+    def test_headless_tui_renders_alt_screen_diffs_and_restores_on_leave(self):
+        out = bytearray()
+        port = type('Port', (), {'write': lambda self, d: out.extend(d)})()
+        tui = term.HeadlessTui()
+        blank = '2007' * (80 * 25)
+        first = '411e' + blank[4:]
+        reply = {'columns': 80, 'cursor': [0, 1], 'screen': first}
+        tui.enter(port, reply)
+        self.assertTrue(tui.active)
+        self.assertIn(b'\x1b[?1049h\x1b[2J', out)
+        self.assertIn(b'\x1b[1;1H\x1b[93;44mA', out)
+        self.assertIn(b'\x1b[1;2H\x1b[?25h', out)
+        out.clear()
+        tui.update(port, reply)
+        self.assertEqual(bytes(out), b'')
+        tui.leave(port)
+        self.assertFalse(tui.active)
+        self.assertEqual(bytes(out), b'\x1b[0m\x1b[?25h\x1b[?1049l')
+
+    def test_configured_frontend_reads_terminal_flags_from_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            conf = Path(tmp) / 'pildos.conf'
+            conf.write_text('#@program=images/FD14LITE.img::COMMAND.COM\nheadless=true\nrust_graphics=true\nmouse=true\nfpu=80387\nshell=true\nengine=target/release/pil.exe\n', encoding='utf-8')
+            opts = term.configured_frontend(str(conf))
+            self.assertEqual(opts['headless'], True)
+            self.assertEqual(opts['rust_graphics'], True)
+            self.assertEqual(opts['mouse'], True)
+            self.assertEqual(opts['fpu'], '80387')
+            self.assertEqual(opts['shell'], True)
+            self.assertEqual(Path(opts['engine']), Path(tmp) / 'target/release/pil.exe')
+
+    def test_console_port_read_forwards_extended_key_tuples_to_com1(self):
+        import queue
+        port = term.ConsolePort.__new__(term.ConsolePort)
+        port.input = queue.Queue()
+        port.input.put(b'ab')
+        port.input.put((0, 75))
+        port.input.put(b'c')
+        self.assertEqual(port.read(), b'ab\x00Kc')
+
+    def test_raw_key_sequence_wraps_alt_ctrl_and_shift_combos(self):
+        self.assertEqual(term.raw_key_sequence(0, 33), (56, 0, 33))    # Alt+F
+        self.assertEqual(term.raw_key_sequence(0, 45), (56, 0, 45))    # Alt+X
+        self.assertEqual(term.raw_key_sequence(0, 102), (29, 0, 67))   # Ctrl+F9
+        self.assertEqual(term.raw_key_sequence(0, 112), (56, 0, 67))   # Alt+F9
+        self.assertEqual(term.raw_key_sequence(0, 84), (42, 0, 59))    # Shift+F1
+        self.assertEqual(term.raw_key_sequence(ord('a'), 30), (None, ord('a'), 30))

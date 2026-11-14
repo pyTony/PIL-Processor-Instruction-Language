@@ -156,6 +156,7 @@ impl Loaded{
         let selected=if present{super::fpu::Fpu::present()}else{super::fpu::Fpu::default()};
         let equipment=self.ram.load(0x410,MemWidth::Word).map_err(|e|format!("FPU BIOS equipment read: {e:?}"))? as u16;
         self.ram.store(0x410,MemWidth::Word,u32::from(selected.equipment(equipment))).map_err(|e|format!("FPU BIOS equipment write: {e:?}"))?;
+        if present { self.image.msw=(self.image.msw&!0x0004)|0x0012; } else { self.image.msw&=!0x0012; }
         self.fpu=selected;
         Ok(())
     }
@@ -496,7 +497,43 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
 /// All text drawn by BIOS in a graphics mode has already reached these pixels
 /// via dos_graphics_text, so the host renderer needs no duplicate font logic.
 /// The output never aliases guest RAM and cannot mutate VGA/CPU state.
+fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
+    let view=p.mouse.view();
+    if !view.visible{return;}
+    let Some((hx,hy,rows))=p.mouse.shape() else {return;};
+    let mx=i32::from(view.x)*(width as i32)/(i32::from(view.max_x)+1);
+    let my=i32::from(view.y)*(height as i32)/(i32::from(view.max_y)+1);
+    for dy in 0..16i32{
+        let py=my-i32::from(hy)+dy;
+        if !(0..height as i32).contains(&py){continue;}
+        let and_row=rows[dy as usize];
+        let xor_row=rows[16+dy as usize];
+        for dx in 0..16i32{
+            let px=mx-i32::from(hx)+dx;
+            if !(0..width as i32).contains(&px){continue;}
+            let bit=15-dx;
+            let and_bit=(and_row>>bit)&1!=0;
+            let xor_bit=(xor_row>>bit)&1!=0;
+            let idx=(py as usize)*width+(px as usize);
+            match (and_bit,xor_bit){
+                (false,false)=>pixels[idx]=0x000000,
+                (false,true)=>pixels[idx]=0xffffff,
+                (true,true)=>pixels[idx]^=0xffffff,
+                (true,false)=>{},
+            }
+        }
+    }
+}
+pub(crate) fn mouse_state(p:&Loaded)->(u16,u16,bool){
+    let view=p.mouse.view();
+    (view.max_x,view.max_y,view.visible)
+}
 pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
+    let (width,height,mut pixels)=desktop_vga_raw(p)?;
+    overlay_mouse_cursor(p,width,height,&mut pixels);
+    Some((width,height,pixels))
+}
+fn desktop_vga_raw(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
     let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
     if matches!(mode,4|5|6){return desktop_cga_frame(p,mode);}
     let color=|rgb:[u8;3]|u32::from(rgb[0])<<16|u32::from(rgb[1])<<8|u32::from(rgb[2]);
@@ -843,8 +880,11 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                         }
                     },
                     super::fpu::Outcome::Unsupported=>{
+                        let detail=p.fpu.state().map_or(String::new(),|s|format!(
+                            "; cw={:04x}; sw={:04x}; st0={:?}; st1={:?}",
+                            s.control,s.status,s.st(0),s.st(1)));
                         break Stop::Fault(format!(
-                            "80387 unsupported instruction; CS:IP={:04x}:{:08x}; bytes={}",
+                            "80387 unsupported instruction; CS:IP={:04x}:{:08x}; bytes={}{detail}",
                             p.selectors[1],p.cpu.eip,
                             instruction.bytes[..instruction.length as usize].iter()
                                 .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")));

@@ -40,6 +40,18 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
             if !matches!(country,1|358)||config.country.replace(country).is_some(){return Err(format!("invalid or duplicate country on config line {}",i+1));}
             continue;
         }
+        if matches!(key.to_ascii_lowercase().as_str(),"headless"|"rust_graphics"|"rust-graphics"|"mouse"|"shell"|"ansi"){
+            if !matches!(value.to_ascii_lowercase().as_str(),"true"|"false"|"1"|"0"){return Err(format!("invalid boolean for {key} on config line {}",i+1));}
+            continue;
+        }
+        if key.eq_ignore_ascii_case("fpu"){
+            if !matches!(value.to_ascii_lowercase().as_str(),"none"|"80387"){return Err(format!("invalid fpu on config line {}",i+1));}
+            continue;
+        }
+        if matches!(key.to_ascii_lowercase().as_str(),"engine"|"com1"|"speaker_volume"|"speaker-volume"|"utc_offset"|"utc-offset"){
+            if value.is_empty(){return Err(format!("empty {key} on config line {}",i+1));}
+            continue;
+        }
         let drive=key.trim_end_matches(':').as_bytes();
         if drive.len()!=1||!(b'A'..=b'E').contains(&drive[0].to_ascii_uppercase())||value.is_empty(){return Err(format!("invalid drive on config line {}",i+1));}
         let letter=drive[0].to_ascii_uppercase();
