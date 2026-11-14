@@ -13,6 +13,11 @@ DOCUMENTS={'README.md':'README.md','DEBUGGER.md':'docs/DEBUGGER.md',
            'RELEASE_NOTES.md':'docs/RELEASE_NOTES.md','FEATURE_MATRIX.md':'docs/FEATURE_MATRIX.md'}
 TEST_MODULE=re.compile(r'(?m)^#\[cfg\(test\)\]\n#\[path[^\n]*\]\nmod \w+;\n?')
 
+def runtime_rust(data):
+    # Git checkouts/editors may use CRLF on Windows. Strip development-only
+    # external test modules from either checkout format, before packaging.
+    return TEST_MODULE.sub('',data.decode().replace('\r\n','\n')).encode()
+
 def export(destination,source_ref):
     if destination.exists() and any(destination.iterdir()):
         raise SystemExit('destination must be empty; refusing to overwrite existing work')
@@ -23,7 +28,7 @@ def export(destination,source_ref):
         if not matched:raise SystemExit(f'missing runtime input: {pattern}')
         for path in matched:
             relative=path.relative_to(ROOT).as_posix();data=path.read_bytes()
-            if path.suffix=='.rs':data=TEST_MODULE.sub('',data.decode()).encode()
+            if path.suffix=='.rs':data=runtime_rust(data)
             files[relative]=data
     for source,target in DOCUMENTS.items():files[target]=(ROOT/'delivery/source'/source).read_bytes()
     files['docs/PIL_REFERENCE.md']=(ROOT/'docs/LANGUAGE.md').read_bytes()
