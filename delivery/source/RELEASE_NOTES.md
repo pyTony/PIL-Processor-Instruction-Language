@@ -1,3 +1,24 @@
+# PIL 0.38.0-alpha.1
+
+- Refresh the runtime from current development, including the shared Rust DOS
+  console, shared precompiled instruction forms and subsequent CPU/DOS fixes.
+- Run DOS with `pil --dos-text`, using configured startup and BIOS keys without
+  Python. The existing screen/ANSI driver and Windows graphics window are reused.
+- Share terminal/transcript I/O with Dine. Typed lines reach DOS as CP437 keys;
+  redirected EOF and input limits are explicit, and guest exit status is returned.
+- Add Python-free `--rust-text` shortcut routes. Legacy Python GUI/COM1 tools
+  remain optional; building/running the Rust executable does not invoke Python.
+- Remove local host paths from published examples and records. The development
+  tree checks portable paths in code and documentation on each CI run.
+- Local Windows validation: 833 Rust tests (2 existing ignored), 86 frontend
+  tests, 11 BIOS console fixtures, Dine C ABI checks and redirected I/O checks.
+  Hosted checks are reported on the linked source PR; pending checks are not
+  represented as completed release evidence.
+
+Transcript mode does not capture BIOS/direct-VRAM drawings or graphics. Custom
+fonts, blink, speaker sound and reliable held-key state remain limited. COM1-only
+and TCP console use the optional Python frontend. See [Rust DOS console](DOS_CONSOLE.md).
+
 # PIL 0.37.0-alpha.2
 
 - Fix Doom shutdown with BIOS RTC time/date reads (INT1A AH02/AH04), using
