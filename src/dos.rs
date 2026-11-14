@@ -923,7 +923,12 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 // at the top of the loop runs there.
                 let block_budget=(budget-execution_steps).min(256-execution_steps%256);
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if let Some((n,result))=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
+                // Blocks may follow one another without coming back here
+                // only while nothing waits for the checks at the top of
+                // the loop: a scan code or mouse event could become
+                // deliverable at any boundary.
+                let chain=!p.rom_mode&&!p.speaker.kbd.pending()&&!mouse::ready(&p);
+                if let Some((n,result))=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget,chain){
                     p.image.set_segment_state(machine);p.selectors=machine.selectors;
                     execution_steps+=n;completed+=n;pil_steps+=n;
                     if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
