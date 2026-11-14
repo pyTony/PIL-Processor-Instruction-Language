@@ -805,8 +805,15 @@ class ConsolePort:
 
     def write(self, data):
         # In raw mode a bare LF only moves down; DOS sends CR LF itself.
-        sys.stdout.write(from_cp437(data))
-        sys.stdout.flush()
+        self.write_text(from_cp437(data))
+
+    def write_text(self, text):
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except UnicodeEncodeError:
+            sys.stdout.buffer.write(to_cp437(text))
+            sys.stdout.flush()
 
     def read(self):
         data = b''
@@ -1076,7 +1083,11 @@ class HeadlessTui:
                 chunks.append(self._format_row(*row))
         r, c = cursor
         chunks.append(f'\x1b[{max(1, r + 1)};{max(1, c + 1)}H\x1b[?25h')
-        port.write(''.join(chunks).encode('cp437', errors='replace'))
+        text = ''.join(chunks)
+        if hasattr(port, 'write_text'):
+            port.write_text(text)
+        else:
+            port.write(text.encode('cp437', errors='replace'))
         self._rows = rows
         self._cursor = cursor
 
