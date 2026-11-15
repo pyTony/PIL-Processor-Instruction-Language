@@ -72,3 +72,9 @@ fn host_pointer_option_takes_only_its_three_values(){
     assert!(cli(&args("off"),false,"").unwrap_err().contains("auto, show or hide"));
     assert!(cli(&["--host-pointer".to_string()],false,"").unwrap_err().contains("missing"));
 }
+#[test]
+fn speaker_volume_option_takes_0_to_100(){
+    let args=|v:&str|vec!["--speaker-volume".to_string(),v.to_string()];
+    for v in ["101","-1","x"]{assert!(cli(&args(v),false,"").unwrap_err().contains("0..100"),"{v}");}
+    assert!(cli(&["--speaker-volume".to_string()],false,"").unwrap_err().contains("missing"));
+}

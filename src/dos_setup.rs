@@ -6,6 +6,10 @@
 //! its own format, keeping its lines as written (`dos_config::edit`). F10
 //! saves and starts the configured program in the same front end; when the
 //! program ends, the screen returns. Nothing here knows which program runs.
+//!
+//! When the file exists and names a program, `run` first shows a start page:
+//! Enter starts the program at once, S (or F2, Tab) opens the setup screen,
+//! and Esc on the setup screen comes back to it.
 use super::host_console::{self,Event,Front,Key,Mods,Options};
 use crate::dos_config::{self,edit::{self,Document,Kind,FIELDS}};
 use std::path::{Path,PathBuf};
@@ -48,6 +52,11 @@ pub(crate) struct Setup{
     status:(String,bool),
     /// Esc was pressed once with unsaved changes.
     quit_armed:bool,
+    /// The start page: `Some(text as saved)` once it exists, so that Esc on
+    /// the setup screen goes back to it (dropping unsaved changes).
+    front:Option<String>,
+    /// The start page is showing.
+    on_front:bool,
 }
 
 fn cp437(c:char)->u8{
@@ -80,7 +89,7 @@ impl Setup{
             (None,Some(t))=>(Document::parse(t),true,("New file from pildos.conf.example: F2 saves it.".to_string(),false)),
             (None,None)=>(Document::parse(""),true,("New file: F2 saves it.".to_string(),false)),
         };
-        let mut setup=Self{doc,path,selected:0,editing:None,dirty,status,quit_armed:false};
+        let mut setup=Self{doc,path,selected:0,editing:None,dirty,status,quit_armed:false,front:None,on_front:false};
         if let Err(e)=setup.doc.check(setup.parent()){setup.status=(e,true);}
         setup
     }
@@ -96,6 +105,18 @@ impl Setup{
         let template=std::fs::read_to_string(parent.join("pildos.conf.example")).ok();
         Ok(Self::new(path,None,template.as_deref()))
     }
+    /// Show the start page first, when the file is saved, valid and names a
+    /// program; otherwise the setup screen stays. True if it is shown.
+    pub(crate) fn open_front(&mut self)->bool{
+        let ready=!self.dirty&&self.path.exists()&&self.program().is_some()&&self.doc.check(self.parent()).is_ok();
+        if ready{self.front=Some(self.doc.text());self.on_front=true;}
+        ready
+    }
+    /// After a run: the start page again, if there is one.
+    pub(crate) fn back_to_front(&mut self){self.on_front=self.front.is_some();}
+    #[cfg(test)]
+    pub(crate) fn on_front(&self)->bool{self.on_front}
+    fn program(&self)->Option<String>{self.doc.get("program").filter(|p|!p.is_empty())}
     fn parent(&self)->&Path{
         self.path.parent().filter(|p|!p.as_os_str().is_empty()).unwrap_or(Path::new("."))
     }
@@ -128,8 +149,35 @@ impl Setup{
         }
     }
 
+    /// The start page: what will run, and the keys.
+    fn render_front(&self)->Vec<u8>{
+        let mut cells=vec![0u8;COLUMNS*ROWS*2];
+        for row in 0..ROWS{put(&mut cells,row,0,COLUMNS,"",SCREEN);}
+        let title=format!(" PILdos   File: {}",tail(&self.path.display().to_string(),COLUMNS-17));
+        put(&mut cells,0,0,COLUMNS,&title,TITLE);
+        let line:String=std::iter::repeat('\u{2500}').take(COLUMNS).collect();
+        put(&mut cells,1,0,COLUMNS,&line,SCREEN);
+        let mut rows:Vec<(&str,String)>=vec![("Program",self.program().unwrap_or_default())];
+        if let Some(args)=self.doc.get("args").filter(|a|!a.is_empty()){rows.push(("Command line",args));}
+        for (key,label) in [("a","Drive A:"),("b","Drive B:"),("c","Drive C:"),("d","Drive D:"),("e","Drive E:")]{
+            if let Some(v)=self.doc.get(key).filter(|v|!v.is_empty()){rows.push((label,v));}
+        }
+        let mut row=4;
+        for (label,value) in rows{
+            put(&mut cells,row,LABEL_COLUMN,VALUE_COLUMN-LABEL_COLUMN-1,label,SCREEN);
+            put(&mut cells,row,VALUE_COLUMN,VALUE_WIDTH,&format!(" {}",tail(&value,VALUE_WIDTH-1)),VALUE);
+            row+=1;
+        }
+        let prompt="Press Enter to start.";
+        put(&mut cells,row+2,(COLUMNS-prompt.len())/2,prompt.len(),prompt,LABEL_SELECTED);
+        let (status,error)=&self.status;
+        put(&mut cells,ROWS-2,0,COLUMNS,&format!(" {}",tail(status,COLUMNS-1)),if *error{STATUS_ERROR}else{STATUS_OK});
+        put(&mut cells,ROWS-1,0,COLUMNS," Enter Start   S Setup   Esc Quit",KEYS);
+        cells
+    }
     /// The screen: character/attribute cells and the cursor (row, column).
     pub(crate) fn render(&self)->(Vec<u8>,Option<(u32,u32)>){
+        if self.on_front{return (self.render_front(),None);}
         let mut cells=vec![0u8;COLUMNS*ROWS*2];
         for row in 0..ROWS{put(&mut cells,row,0,COLUMNS,"",SCREEN);}
         // Title and file share the top row, so every field fits above the help.
@@ -165,6 +213,7 @@ impl Setup{
         let (status,error)=&self.status;
         put(&mut cells,ROWS-2,0,COLUMNS,&format!(" {}",tail(status,COLUMNS-1)),if *error{STATUS_ERROR}else{STATUS_OK});
         let keys=if self.editing.is_some(){" Enter Accept   Esc Cancel   Left/Right Home/End Move   Backspace/Del Erase"}
+            else if self.front.is_some(){" \u{18}\u{19} Select  Enter Edit  Del Clear  F2 Save  F10 Save and start  Esc Back"}
             else{" \u{18}\u{19} Select  Enter Edit  Del Clear  F2 Save  F10 Save and start  Esc Quit"};
         put(&mut cells,ROWS-1,0,COLUMNS,keys,KEYS);
         (cells,cursor)
@@ -227,7 +276,11 @@ impl Setup{
     pub(crate) fn save(&mut self)->bool{
         if let Err(e)=self.doc.check(self.parent()){self.status=(e,true);return false;}
         match std::fs::write(&self.path,self.doc.text()){
-            Ok(())=>{self.dirty=false;self.quit_armed=false;self.status=(format!("Saved {}.",self.path.display()),false);true},
+            Ok(())=>{
+                self.dirty=false;self.quit_armed=false;self.status=(format!("Saved {}.",self.path.display()),false);
+                if self.front.is_some(){self.front=Some(self.doc.text());}
+                true
+            },
             Err(e)=>{self.status=(format!("cannot write {}: {e}",self.path.display()),true);false},
         }
     }
@@ -238,6 +291,17 @@ impl Setup{
 
     /// One key on the screen.
     pub(crate) fn key(&mut self,key:Key,m:Mods)->Action{
+        if self.on_front{
+            match key{
+                Key::Enter|Key::F(10)=>return self.start(),
+                Key::Escape=>return Action::Quit,
+                Key::F(2)|Key::Tab=>self.on_front=false,
+                Key::Char('s'|'S') if !m.ctrl&&!m.alt=>self.on_front=false,
+                _=>{},
+            }
+            if !self.on_front{self.status=(String::new(),false);}
+            return Action::Stay;
+        }
         if let Some(e)=self.editing.as_mut(){
             match key{
                 Key::Char(c) if !m.ctrl&&!m.alt&&!c.is_control()=>{e.text.insert(e.cursor,c);e.cursor+=1;},
@@ -279,9 +343,19 @@ impl Setup{
             Key::F(2)=>{self.save();},
             Key::F(10)=>return self.start(),
             Key::Escape=>{
+                if let Some(saved)=self.front.as_ref().filter(|_|!self.dirty||self.quit_armed){
+                    // Back to the start page, with the file as saved.
+                    let discarded=self.dirty;
+                    self.doc=Document::parse(saved);
+                    self.dirty=false;self.quit_armed=false;self.on_front=true;
+                    self.status=(if discarded{"Changes not saved."}else{""}.into(),false);
+                    if self.program().is_none(){return Action::Quit;}
+                    return Action::Stay;
+                }
                 if !self.dirty||self.quit_armed{return Action::Quit;}
                 self.quit_armed=true;
-                self.status=("Unsaved changes: F2 saves them, Esc again quits without saving.".into(),true);
+                let then=if self.front.is_some(){"goes back"}else{"quits"};
+                self.status=(format!("Unsaved changes: F2 saves them, Esc again {then} without saving."),true);
             },
             _=>{},
         }
@@ -305,7 +379,7 @@ fn launch(path:&Path,window:bool,stop_log:&str,front:&mut Front,rx:&mpsc::Receiv
     let fpu=settings.fpu.map(|on|if on{"80387"}else{"none"});
     let mut session=super::session::open(&program,None,args.as_deref(),Some(config),fpu)?;
     let mut logger=super::stoplog::Logger::new(stop_log,&program);
-    let options=Options{window,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default()};
+    let options=Options{window,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(super::host_console::speaker::DEFAULT_VOLUME)};
     let result=host_console::run_on(&mut session,&options,front,rx);
     session.log_stop(&mut logger);
     let line=match &result{Ok(line)=>line.clone(),Err(e)=>e.clone()};
@@ -337,6 +411,7 @@ fn pause(session:&super::session::Session,line:&str,front:&mut Front,rx:&mpsc::R
 pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<String,String>{
     let (path,_)=dos_config::selected_path(explicit);
     let mut setup=Setup::load(path)?;
+    setup.open_front();
     // The project's own programs on the drive follow programs/dos.
     if let Some(config)=setup.path().to_str().filter(|_|setup.path().exists()){
         match dos_config::refresh_own_programs(Some(config)){
@@ -374,6 +449,7 @@ pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<Strin
                     // Keys typed for the program stay with it.
                     while rx.try_recv().is_ok(){}
                     setup.report(text,error);
+                    setup.back_to_front();
                     front.reset();
                     break;
                 },

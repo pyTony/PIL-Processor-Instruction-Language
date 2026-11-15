@@ -135,3 +135,56 @@ fn host_pointer_cycles_through_its_choices(){
     let (cells,_)=s.render();
     assert!(row_text(&cells,FIRST_FIELD+12).contains("auto  hidden while the DOS cursor shows"));
 }
+
+#[test]
+fn start_page_starts_with_enter_and_setup_comes_back_to_it(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let root=std::env::temp_dir().join(format!("pil-front-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path=root.join("pildos.conf");
+    // No file yet, or no program: the setup screen opens directly.
+    assert!(!Setup::load(path.clone()).unwrap().open_front());
+    std::fs::write(&path,"country=358\n").unwrap();
+    assert!(!Setup::load(path.clone()).unwrap().open_front());
+    // A program: the start page shows it, and Enter starts at once.
+    std::fs::write(&path,"program=A.COM\nargs=/K X\nD=driveD\n").unwrap();
+    let mut s=Setup::load(path.clone()).unwrap();
+    assert!(s.open_front());
+    let (cells,cursor)=s.render();
+    assert_eq!(cursor,None);
+    let screen:Vec<String>=(0..ROWS).map(|r|row_text(&cells,r)).collect();
+    assert!(screen[0].contains("PILdos")&&!screen[0].contains("setup"));
+    assert!(screen.iter().any(|r|r.contains("Program")&&r.contains("A.COM")));
+    assert!(screen.iter().any(|r|r.contains("Command line")&&r.contains("/K X")));
+    assert!(screen.iter().any(|r|r.contains("Drive D:")&&r.contains("driveD")));
+    assert!(screen.iter().any(|r|r.contains("Press Enter to start.")));
+    assert!(screen[ROWS-1].contains("Enter Start")&&screen[ROWS-1].contains("Esc Quit"));
+    assert_eq!(s.key(Key::Enter,NONE),Action::Start);
+    // Other keys do nothing there; S opens setup, Esc there goes back.
+    s.key(Key::Down,NONE);s.key(Key::Char('x'),NONE);
+    assert!(s.on_front());
+    s.key(Key::Char('s'),NONE);
+    assert!(!s.on_front());
+    assert!(row_text(&s.render().0,ROWS-1).contains("Esc Back"));
+    assert_eq!(s.key(Key::Escape,NONE),Action::Stay);
+    assert!(s.on_front());
+    // Unsaved changes: Esc warns, then drops them and goes back.
+    s.key(Key::F(2),NONE);
+    assert!(!s.on_front());
+    select(&mut s,"mouse");s.key(Key::Enter,NONE);
+    assert_eq!(s.key(Key::Escape,NONE),Action::Stay);
+    assert!(!s.on_front()&&s.status().contains("goes back"));
+    assert_eq!(s.key(Key::Escape,NONE),Action::Stay);
+    assert!(s.on_front()&&!s.dirty());
+    assert_eq!(s.doc.get("mouse"),None);
+    // Saved changes stay; after a run the start page returns; Esc quits.
+    s.key(Key::Tab,NONE);
+    select(&mut s,"mouse");s.key(Key::Enter,NONE);
+    assert_eq!(s.key(Key::F(10),NONE),Action::Start);
+    s.back_to_front();
+    assert!(s.on_front());
+    assert_eq!(s.doc.get("mouse").as_deref(),Some("true"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(),"program=A.COM\nargs=/K X\nD=driveD\nmouse=true\n");
+    assert_eq!(s.key(Key::Escape,NONE),Action::Quit);
+    std::fs::remove_dir_all(root).unwrap();
+}

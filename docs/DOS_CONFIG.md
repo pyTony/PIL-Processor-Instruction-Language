@@ -22,7 +22,8 @@ before starting. The example requires your local FreeDOS image, `driveD` folder
 and `D:\AUTOEXEC.BAT`; the config file does not supply these files.
 
 `PILdos.vbs` on Windows and `sh PILdos.sh` on Linux/Termux open the Rust
-setup screen below (`pil --pildos`); F10 starts the configured program. The
+PILdos start page below (`pil --pildos`): Enter starts the configured
+program, S opens the setup screen. The
 older Python/Tk terminal is `python tools/dos_terminal.py`, or
 `PILdos.vbs --python` / `sh PILdos.sh --python` (Linux/Termux needs a
 graphical display for it). `freedos.cmd` also uses the Python terminal and
@@ -58,6 +59,18 @@ The file is chosen as for the frontend (CONFIG, then `PILDOS_CONFIG`, then
 `pildos.conf`). When it does not exist yet, the screen starts from
 `pildos.conf.example` in the same folder, and F2 writes the new file.
 
+When the file exists, is valid and names a `program`, a start page comes
+first. It shows the program, its command line and the drives, and the
+result of the last run.
+
+| Key on the start page | Effect |
+| --- | --- |
+| Enter (or F10) | Start the program; a key after it ends returns to the start page |
+| S, F2 or Tab | Open the setup screen |
+| Esc | Quit |
+
+Without a file or a program the setup screen opens directly.
+
 | Key | Effect |
 | --- | --- |
 | Up, Down, Tab | Select a setting |
@@ -65,8 +78,8 @@ The file is chosen as for the frontend (CONFIG, then `PILDOS_CONFIG`, then
 | Enter, Space, Left, Right | Change a choice (country, fpu, host_pointer, own_programs) or turn a switch on or off |
 | Del | Remove the setting (its default applies) |
 | F2 | Save |
-| F10 | Save and start the program; a key after it ends returns to the screen |
-| Esc | Quit (twice when there are unsaved changes) |
+| F10 | Save and start the program; a key after it ends returns to the start page (or this screen, when there is none) |
+| Esc | Back to the start page, or quit when there is none (twice when there are unsaved changes; the second Esc drops them) |
 
 Saving keeps the file as written: comments, blank lines, the order of the
 settings, how each key is spelled (`D:`, `#@program=`, `utc-offset`), the
