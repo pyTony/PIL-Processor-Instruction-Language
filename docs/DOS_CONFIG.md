@@ -59,7 +59,7 @@ The file is chosen as for the frontend (CONFIG, then `PILDOS_CONFIG`, then
 | --- | --- |
 | Up, Down, Tab | Select a setting |
 | Enter, or typing | Edit a text setting; Enter accepts, Esc cancels |
-| Enter, Space, Left, Right | Change a choice (country, fpu, host_pointer) or turn a switch on or off |
+| Enter, Space, Left, Right | Change a choice (country, fpu, host_pointer, own_programs) or turn a switch on or off |
 | Del | Remove the setting (its default applies) |
 | F2 | Save |
 | F10 | Save and start the program; a key after it ends returns to the screen |
@@ -110,6 +110,7 @@ country=358
 | `com1` | `console` or `tcp:PORT`. Connects COM1 to the console or a TCP port. |
 | `speaker_volume` / `speaker-volume` | PC speaker click volume `0..100` (`0` mutes; frontend default `5`). |
 | `host_pointer` / `host-pointer` | `auto` (default), `show` or `hide`: the Windows pointer over the `pil --dos-console`/`--pildos` window. `auto` hides it while the program's INT 33h cursor is on screen, so only one arrow shows; `show` keeps it for programs that draw their own pointer without the driver's; `hide` always hides it over the window. The Python terminal ignores it. |
+| `own_programs` / `own-programs` | Drive letter `A`..`E` (default `D`) or `none`. At every start (`pil --pildos` screen, F10, `pil --dos-console`, `--dos-session`, the Python terminal with this file), when that drive is a host folder, the files in `programs/dos` next to this file are copied into it: a missing file is added, and a file of the same name is replaced only when it is an earlier version of ours (its SHA-256 is in `programs/dos/versions.sha256`). Anything else is kept, and nothing is deleted. The setup screen's status line says what changed. See `docs/DRIVE_D.md` on dev. |
 | `utc_offset` / `utc-offset` | Time zone of the DOS clock: hours such as `2`, `-5`, `5.5`, or `+02:00`, within -12:00..+14:00. (The engine's own `--utc-offset` and session `clock` take seconds.) |
 | `engine` | Path to the `pil` executable (relative to the config file, or absolute). |
 

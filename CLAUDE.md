@@ -7,6 +7,24 @@ increments 1-8 are marked done with their PRs (#104 ... #175, follow-ups
 (XMS) is not started. The handoff lists the recorded protected-mode program
 runs (Doom, 3DBench, Tony's dosbench 3D benchmark, Quake) and the remaining
 gaps. Documentation only; nothing was rerun.
+# Own DOS programs on D: follow programs/dos — 15 November 2026
+
+Tony's D: (git-ignored driveD) kept old MANDVGA.COM, TIMEIT.COM and
+MANDEL.COM after pulls. New pildos.conf key `own_programs` (A..E or none,
+default D; setup screen field "Own programs"). Every start that reads the
+configuration (dos_config::apply: --pildos, --dos-console, --dos-session,
+the Python terminal) copies each file directly in programs/dos next to the
+configuration into that drive's host folder (src/dos_own_programs.rs):
+missing files are added, a same-named file (any case) is replaced only when
+its SHA-256 is listed for that name in programs/dos/versions.sha256 (every
+committed version from git history, also former driveD/ ones, plus CRLF
+variants of text files and one hand-listed pre-git MANDEL.COM). Other files
+are kept and named on the setup screen's status line; nothing is deleted.
+A legacy --mount for that letter turns it off; freedos.cmd without a config
+copies nothing. tools/dos_program_versions.py rewrites the list (needs full
+history); CI runs it with --check. Added programs/dos/MANDELG.PAS (the
+Turbo Pascal mode 13h Mandelbrot from driveD/TP/PIL); MANDASP.COM and the
+old mode 13h MANDEL.COM were superseded tests (Tony) and stay out.
 # Documentation-only changes skip the Rust CI — 15 November 2026
 
 Tony agreed that a PR or push to dev changing only Markdown should not

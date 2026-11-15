@@ -34,7 +34,30 @@ ISO/CD-ROM images are not supported by this option.
 that is `driveD` in the checkout. Git ignores this folder, so its contents are
 yours: GW-BASIC, Turbo Pascal, benchmarks, BASIC files and so on. Third-party
 programs never go into the repository. The project's own DOS programs
-(FACTOR, MANDEL, MANDBBC, MANDCGA, MANDVGA, TIMEIT) are in `programs/dos`.
+(FACTOR, MANDEL, MANDBBC, MANDCGA, MANDVGA, TIMEIT and the rest) are in
+`programs/dos`.
+
+## The project's programs on D: stay current
+
+Since the folder is ignored, a pull used to leave old copies of our
+programs on D:. Now every start that reads `pildos.conf` (`PILdos.vbs`,
+`sh PILdos.sh`, `pil --pildos`, `pil --dos-console`, the Python terminal)
+copies `programs/dos` into the drive named by `own_programs` (default D:):
+
+- a file missing on D: is added;
+- a file of the same name (any letter case) is replaced only when it is an
+  earlier version of ours: its SHA-256 is listed in
+  `programs/dos/versions.sha256`;
+- any other file of that name is yours and is kept (the setup screen says
+  "kept your own ..."); files with other names are never touched, and
+  nothing is deleted.
+
+`own_programs=none` turns this off. Starts without a configuration
+(`freedos.cmd`, `--mount` on its own) do not copy anything.
+
+After changing a file in `programs/dos`, run
+`python tools/dos_program_versions.py` (with full git history) so the new
+version is listed; CI runs it with `--check`.
 
 Because the folder is ignored, `git stash -u`, `git checkout` between branches
 that do not track it, and `git clean -fd` leave it alone. Only `git clean -x`

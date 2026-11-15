@@ -6,3 +6,5 @@ args=/K D:\AUTOEXEC.BAT
 C=images/FD14LITE.img
 D=driveD
 country=358
+# Copies of programs/dos on this drive are kept current at start (none: off).
+own_programs=D

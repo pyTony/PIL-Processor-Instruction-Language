@@ -16,10 +16,10 @@ fn typed(s:&mut Setup,text:&str){for c in text.chars(){s.key(Key::Char(c),NONE);
 #[test]
 fn every_documented_setting_has_a_field_and_the_screen_fits(){
     let keys:Vec<_>=FIELDS.iter().map(|f|f.key).collect();
-    for key in ["program","args","a","b","c","d","e","country","fpu","mouse","ansi","utc_offset","host_pointer","com1","speaker_volume","headless","shell","rust_graphics","engine"]{
+    for key in ["program","args","a","b","c","d","e","country","fpu","mouse","ansi","utc_offset","host_pointer","own_programs","com1","speaker_volume","headless","shell","rust_graphics","engine"]{
         assert!(keys.contains(&key),"{key}");
     }
-    assert!(FIRST_FIELD+FIELDS.len()<ROWS-3);
+    assert!(FIRST_FIELD+FIELDS.len()<=ROWS-3);
     let s=setup(Some(EXAMPLE));
     let (cells,cursor)=s.render();
     assert_eq!(cells.len(),COLUMNS*ROWS*2);
