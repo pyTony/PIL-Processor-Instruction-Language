@@ -1,3 +1,18 @@
+# Fewer merge conflicts between PRs — 15 November 2026
+
+Tony: every merge left the other open PRs conflicting, always in CLAUDE.md
+(each PR adds its note at the top).
+- .gitattributes: `CLAUDE.md merge=union`. Git keeps both sides' new
+  lines instead of a conflict (local merges and the workflow below; GitHub's
+  own web merge and its conflict check do not use merge drivers).
+- .github/workflows/update-prs.yml: after each push to dev, merges dev into
+  every open same-repo PR branch that targets dev and pushes it. Pushes by
+  GITHUB_TOKEN start no workflows, so Check is not rerun on each PR; the
+  merged result is tested when the PR lands on dev. A branch with a
+  conflict outside CLAUDE.md is left alone and named in the job log.
+- Sessions working on a PR branch: fetch before pushing, the workflow may
+  have added a merge commit.
+
 # Block chains through CALL/RET; code stamps per 64-byte line — 14 November 2026
 
 Tony asked whether a subroutine could become one block (MANDCGA averaged

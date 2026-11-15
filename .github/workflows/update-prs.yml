@@ -1,0 +1,58 @@
+name: Update open PRs
+# After every push to dev (a merged PR), merge dev into each open PR branch
+# that targets dev, so the PRs stay mergeable. CLAUDE.md merges with the
+# union driver (both new notes are kept). A branch with any other conflict is
+# left as it is and listed in the log.
+#
+# Pushes made with GITHUB_TOKEN do not start other workflows, so this does not
+# rerun the Check workflow on every PR. The merged result is tested by Check
+# when the PR is merged into dev (push to dev), or when someone pushes to the
+# branch again.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: read
+concurrency:
+  group: update-prs
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Merge dev into open PR branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Applies whatever .gitattributes the PR branch has.
+          echo "CLAUDE.md merge=union" >> .git/info/attributes
+          git fetch -q origin dev
+          gh pr list --base dev --state open --limit 100 \
+            --json number,headRefName,isCrossRepository \
+            --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.headRefName)"' |
+          while read -r number branch; do
+            echo "::group::#$number $branch"
+            if ! git fetch -q origin "refs/heads/$branch"; then
+              echo "fetch failed"; echo "::endgroup::"; continue
+            fi
+            git checkout -q -B update FETCH_HEAD
+            if git merge-base --is-ancestor origin/dev HEAD; then
+              echo "already up to date"
+            elif git merge -q --no-edit -m "Merge dev into $branch" origin/dev; then
+              git push -q origin "HEAD:refs/heads/$branch" \
+                && echo "merged dev and pushed" \
+                || echo "push refused (branch moved); next push to dev retries"
+            else
+              echo "::warning::#$number has conflicts outside CLAUDE.md:"
+              git diff --name-only --diff-filter=U
+              git merge --abort
+            fi
+            echo "::endgroup::"
+          done
