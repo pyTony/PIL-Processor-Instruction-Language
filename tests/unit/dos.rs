@@ -2631,9 +2631,11 @@ fn generic_dos_dispatch_history_is_opt_in_bounded_and_survives_slices(){
     let json=result.loaded.history.json();
     let ip=format!(r#""location":"{:04X}:0103""#,result.loaded.selectors[1]);
     assert!(json.contains(&ip),"{json}");
-    assert!(json.contains(r#""instruction_bytes":"6C CD 20""#),"{json}");
+    // History captures up to eight bytes, including bytes after the tested opcode.
+    assert!(json.contains(r#""instruction_bytes":"6C CD 20"#),"{json}");
     assert!(json.contains("21614"),"DX must be captured: {json}");
-    assert!(!json.contains(r#""location":"1010:0100""#),"oldest must be evicted: {json}");
+    let evicted=format!(r#""location":"{:04X}:0100""#,result.loaded.selectors[1]);
+    assert!(!json.contains(&evicted),"oldest must be evicted: {json}");
     assert_eq!(json.matches(r#""sequence":"#).count(),3);
 }
 
