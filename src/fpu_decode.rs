@@ -258,8 +258,8 @@ mod tests {
                 }
             }
             // Register forms of DA/DE are not these memory instructions.
-            assert_eq!(classify(opcode, 0xf6),
-                Err(DecodeError::Unsupported { opcode, modrm: 0xf6 }));
+            assert_eq!(classify(opcode, 0xd6),
+                Err(DecodeError::Unsupported { opcode, modrm: 0xd6 }));
         }
         // The actual general CS-relative FIDIV m32int encoding.
         assert_eq!(classify(0xda, 0x36), Ok(Operation::IntegerMemoryArithmetic {
