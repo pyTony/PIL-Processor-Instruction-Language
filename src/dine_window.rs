@@ -18,6 +18,7 @@ pub(crate) enum Input{
     Char{ch:char,shift:bool,ctrl:bool,alt:bool},
     Key{vk:u16,shift:bool,ctrl:bool,alt:bool},
     Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16,shift:bool},
+    Menu{id:u16},
 }
 
 #[cfg(windows)]
@@ -109,6 +110,9 @@ mod windows {
     /// Set for a window that takes keyboard and mouse input (the DOS console).
     static INPUT:OnceLock<Mutex<Option<mpsc::Sender<Input>>>>=OnceLock::new();
     static TITLE:OnceLock<Mutex<String>>=OnceLock::new();
+    type MenuGroups=Vec<(String,Vec<(u16,String)>)>;
+    static HOST_MENU:OnceLock<Mutex<MenuGroups>>=OnceLock::new();
+    const WM_HOST_MENU:u32=0x8001;
     const WM_KEYDOWN:u32=0x100;
     const WM_CHAR:u32=0x102;
     const WM_SYSKEYDOWN:u32=0x104;
@@ -206,6 +210,12 @@ mod windows {
         fn GetClipboardData(format:u32)->Handle;
         fn SetCapture(window:Handle)->Handle;
         fn ReleaseCapture()->i32;
+        fn CreatePopupMenu()->Handle;
+        fn AppendMenuW(menu:Handle,flags:u32,id:usize,text:*const u16)->i32;
+        fn TrackPopupMenu(menu:Handle,flags:u32,x:i32,y:i32,reserved:i32,owner:Handle,area:*const Rect)->u32;
+        fn DestroyMenu(menu:Handle)->i32;
+        fn GetCursorPos(point:*mut Point)->i32;
+        fn SetWindowTextW(window:Handle,text:*const u16)->i32;
     }
     const CF_UNICODETEXT:u32=13;
     const GMEM_MOVEABLE:u32=0x0002;
@@ -274,6 +284,26 @@ mod windows {
 
     unsafe extern "system" fn wndproc(hwnd:Handle,msg:u32,w:usize,l:isize)->isize{
         match msg{
+            WM_HOST_MENU=>{
+                let menu=CreatePopupMenu();
+                if menu.is_null(){send(Input::Menu{id:0});return 0;}
+                if let Some(groups)=HOST_MENU.get().and_then(|m|m.lock().ok()){
+                    for (title,items) in groups.iter(){
+                        let sub=CreatePopupMenu();
+                        if sub.is_null(){continue;}
+                        for (id,label) in items{
+                            let text:Vec<u16>=label.encode_utf16().chain(Some(0)).collect();
+                            AppendMenuW(sub,0,usize::from(*id),text.as_ptr());
+                        }
+                        let title:Vec<u16>=title.encode_utf16().chain(Some(0)).collect();
+                        AppendMenuW(menu,0x10,sub as usize,title.as_ptr());
+                    }
+                }
+                let mut point=Point::default();GetCursorPos(&mut point);
+                SetCursor(LoadCursorW(ptr::null_mut(),32512));
+                let id=TrackPopupMenu(menu,0x100|0x2,point.x,point.y,0,hwnd,ptr::null());
+                DestroyMenu(menu);send(Input::Menu{id:id as u16});0
+            },
             WM_PAINT=>{
                 let mut paint=Paint::default();
                 let dc=BeginPaint(hwnd,&mut paint);
@@ -498,6 +528,19 @@ mod windows {
         /// Hide the host pointer over the client area, or show the arrow
         /// again. Takes effect at the pointer's next move over the window.
         pub(crate) fn hide_pointer(&self,hidden:bool){HIDE_POINTER.store(hidden,Ordering::Release);}
+        /// Display a host popup on the UI thread; IDs belong to the caller.
+        pub(crate) fn popup(&self,groups:MenuGroups){
+            if let Ok(mut slot)=HOST_MENU.get_or_init(||Mutex::new(Vec::new())).lock(){*slot=groups;}
+            let hwnd=WINDOW.load(Ordering::Acquire);
+            if hwnd==0{send(Input::Menu{id:0});return;}
+            unsafe{PostMessageW(hwnd as Handle,WM_HOST_MENU,0,0);}
+        }
+        pub(crate) fn title(&self,text:&str){
+            if let Ok(mut slot)=TITLE.get_or_init(||Mutex::new(String::new())).lock(){*slot=text.into();}
+            let text:Vec<u16>=text.encode_utf16().chain(Some(0)).collect();
+            let hwnd=WINDOW.load(Ordering::Acquire);
+            if hwnd!=0{unsafe{SetWindowTextW(hwnd as Handle,text.as_ptr());}}
+        }
         pub(crate) fn drain_mouse_events(&self)->Vec<(u16,u16,u16)>{
             let Some(queue)=MOUSE_EVENTS.get() else {return Vec::new();};
             queue.lock().map_or_else(|_|Vec::new(),|mut guard|guard.drain(..).collect())

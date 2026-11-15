@@ -2417,6 +2417,7 @@ DOS and ROM:
       it opens on a start page: Enter starts, S opens the setup screen.
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
+  --dos-media SHELL_PROGRAM [IMAGE_OR_DISK_SET]  Native Windows media browser
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
   --dos-text [--plain] [OPTIONS] [PROGRAM]  Rust terminal; config startup if omitted
   --dos-console [--tty|--window] [--mouse] [--ansi] [--host-pointer auto|show|hide] [OPTIONS] [PROGRAM]
@@ -2533,6 +2534,15 @@ pub fn main() -> R<()> {
         use std::io::Write;
         let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(&dos_args[3]).map_err(|e|e.to_string())?;
         f.write_all(&bytes).map_err(|e|e.to_string())?;println!("wrote original DOS hello {} ({} bytes)",dos_args[3],bytes.len());return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-catalog"){
+        if dos_args.len()!=4{return Err("usage: pil --dos-catalog SHELL_PROGRAM CATALOG_TSV".into());}
+        return dos::host_console::catalog::run(&dos_args[2],&dos_args[3]).map_err(Into::into);
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--dos-media"){
+        let usage="usage: pil --dos-media SHELL_PROGRAM [IMAGE_OR_DISK_SET]";
+        if !(3..=4).contains(&dos_args.len()){return Err(usage.into());}
+        return dos::host_console::media_launch::run(&dos_args[2],dos_args.get(3).map(String::as_str),&stop_log).map_err(Into::into);
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
         let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";

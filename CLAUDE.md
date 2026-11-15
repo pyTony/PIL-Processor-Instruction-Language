@@ -1,3 +1,22 @@
+# Tony's local media and FPU work merged up — 15 November 2026
+
+Tony's uncommitted checkout (branch local/media-fpu-2026-11-15) brought to
+a PR, as #126 did: install media catalog and disk sets (PILmedia, PILimages,
+PILbuild, InstallRetroShortcut.vbs, src/dos_catalog*.rs, dos_disk_set.rs,
+dos_media_*.rs, docs/DOS_INSTALL_MEDIA.md), FPU FTST, FXTRACT (normal
+finite values) and FBLD, frontend test isolation, and
+docs/development/PROJECT_REVIEW_2026-11-15.md. retro.zip and driveD stay out.
+- Merging dev: the catalog and media launches now pass speaker_volume
+  (#207); DiskSet::numbered and Session::floppy_media are cfg(any(windows,
+  test)) (only Windows code calls them, so Linux release warned).
+- export_runtime.py exports docs/DOS_INSTALL_MEDIA.md (DOS_CONFIG.md links it).
+- Overlaps open #209 (same test files) and #210 (DB E4 is FSETPM there,
+  unsupported in this branch's test): whichever lands second needs a merge.
+
+Local Linux, release: 875 Rust tests pass, 2 ignored; GUI tests 94 run, 6
+skipped; 0 rustc warnings (release, dine-library); x86_64-pc-windows-gnu
+cargo check (release, dine-library, tests) clean. Not run on Windows.
+
 # PILdos start page: Enter starts DOS — 15 November 2026
 
 Tony found F10 on the setup screen clumsy for every launch. `pil --pildos`

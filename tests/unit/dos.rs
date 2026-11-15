@@ -431,7 +431,8 @@ fn cursor_shape_roundtrip_uses_bda_and_faults_atomically(){
  service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu.regs[1],0x12342000);assert_eq!(p.cpu.regs[2],0x98761827);
  p.cpu.regs[0]=0x0100;p.ram.protect(0x461,1).unwrap();let old=p.clone();
  assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
- p.cpu.regs[0]=0x0300;p.cpu.regs[3]=0x0800;let old=p.cpu.clone();assert!(service(&mut p,0x10,&mut out).is_err());assert_eq!(p.cpu,old);
+ p.cpu.regs[0]=0x0300;p.cpu.regs[3]=0x0800;let mut expected=p.cpu.clone();expected.regs[2]&=0xffff0000;
+ service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu,expected);
 }
 #[test]
 fn bios_screen_reads_guest_vram_and_writes_last_cell_without_moving_cursor(){
@@ -2674,6 +2675,19 @@ fn session_mounts_and_unmounts_fat12_floppy_and_host_folders_live(){
  let (reply,_)=s.command(5,"mount Zinvalid /tmp").unwrap();
  assert!(reply.contains("\"ok\":false"),"{reply}");
  std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn cursor_query_outside_the_bios_table_is_bounded_and_preserves_state(){
+ for page in [8u32,127,170,255]{
+  let mut p=load(&[0xcd,0x10],"query.com").unwrap();
+  p.cpu.regs=[0x12340302,0xabcd1111,0xbeef2222,0x56780055|(page<<8),0xfffe,1,2,3];
+  p.ram.store(0x460,MemWidth::Word,0x0607).unwrap();
+  let ram=p.ram.clone();let before=p.cpu.clone();
+  service(&mut p,0x10,&mut vec![]).unwrap();
+  let mut want=before;want.regs[1]=0xabcd0607;want.regs[2]=0xbeef0000;
+  assert_eq!(p.cpu,want);assert_eq!(p.ram,ram);
+ }
 }
 
 #[test]

@@ -279,6 +279,35 @@ fn altgr_characters_type_plainly_in_the_terminal(){
     assert_eq!(typed_mods('x',ALT),ALT);
 }
 
+#[test]
+fn catalog_launch_inherits_normal_configured_drives_and_ram_drive(){
+    let nonce=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root=std::env::temp_dir().join(format!("pil-catalog-{}-{nonce}",std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    for folder in ["cdrive","ddrive","edrive"]{
+        std::fs::create_dir(root.join(folder)).unwrap();std::fs::write(root.join(folder).join("NOTE.TXT"),folder.as_bytes()).unwrap();
+    }
+    let program=root.join("sample.com");std::fs::write(&program,[0xf4]).unwrap();
+    let config=root.join("normal.conf");std::fs::write(&config,"C=cdrive\nD=ddrive\nE=edrive\ncountry=358\nfpu=80387\n").unwrap();
+    let session=catalog::open_program(program.to_str().unwrap(),None,Some(config.to_str().unwrap())).unwrap();
+    let p=session.machine().unwrap();
+    for (drive,expected) in [("C:\\NOTE.TXT","cdrive"),("D:\\NOTE.TXT","ddrive"),("E:\\NOTE.TXT","edrive")]{
+        assert_eq!(&crate::dos::files::program(p,drive.as_bytes()).unwrap().unwrap().0[..],expected.as_bytes());
+    }
+    assert_eq!(p.drive.memory_letter(),Some(b'Z'));assert_eq!(p.country,358);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn host_media_shortcut_never_becomes_a_guest_enter(){
+    use crate::dine_window::Input;
+    assert_eq!(window_event(Input::Char{ch:'\r',shift:true,ctrl:true,alt:false}),Some(Event::HostMenu));
+    assert_eq!(window_event(Input::Char{ch:'\r',shift:false,ctrl:false,alt:false}),Some(Event::Key(Key::Enter,Mods::default())));
+    assert_eq!(window_event(Input::Menu{id:104}),Some(Event::HostCommand(104)));
+    assert_eq!(window_event(Input::Char{ch:'\u{1b}',shift:false,ctrl:false,alt:false}),Some(Event::Key(Key::Escape,Mods::default())));
+}
+
 #[derive(Default)]
 struct Recorder{plays:Vec<usize>}
 impl speaker::Player for Recorder{fn play(&mut self,wav:&std::sync::Arc<Vec<u8>>){self.plays.push(wav.len());}}
