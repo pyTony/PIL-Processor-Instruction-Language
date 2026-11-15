@@ -52,6 +52,10 @@ pub enum Operation {
     Arithmetic { kind: Arithmetic, index: u8, pop: bool },
     /// ST(0) op IEEE m32/m64, source is read only.
     MemoryArithmetic { kind: Arithmetic, bytes: u32 },
+    /// ST(0) op signed m16int/m32int; convert the integer to exact x87 format.
+    IntegerMemoryArithmetic { kind: Arithmetic, bytes: u32 },
+    /// FICOM/FICOMP: compare ST(0) to a signed m16int/m32int, optionally pop.
+    IntegerCompareMemory { bytes: u32, pop: bool },
 }
 /// Order is explicit: Subtract is destination-source, ReverseSubtract is source-destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +127,15 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xdf, 4) => Some(Operation::FbldM80),
             (0xdf, 6) => Some(Operation::FbstpM80),
             (0xdf, 7) => Some(Operation::FistpM64),
+            // Integer arithmetic and comparison have the same register-field
+            // layout as real-memory arithmetic, but DA uses m32int and DE m16int.
+            (0xda | 0xde, 0) => Some(Operation::IntegerMemoryArithmetic { kind: Arithmetic::Add, bytes: if opcode == 0xda { 4 } else { 2 } }),
+            (0xda | 0xde, 1) => Some(Operation::IntegerMemoryArithmetic { kind: Arithmetic::Multiply, bytes: if opcode == 0xda { 4 } else { 2 } }),
+            (0xda | 0xde, 2 | 3) => Some(Operation::IntegerCompareMemory { bytes: if opcode == 0xda { 4 } else { 2 }, pop: reg == 3 }),
+            (0xda | 0xde, 4) => Some(Operation::IntegerMemoryArithmetic { kind: Arithmetic::Subtract, bytes: if opcode == 0xda { 4 } else { 2 } }),
+            (0xda | 0xde, 5) => Some(Operation::IntegerMemoryArithmetic { kind: Arithmetic::ReverseSubtract, bytes: if opcode == 0xda { 4 } else { 2 } }),
+            (0xda | 0xde, 6) => Some(Operation::IntegerMemoryArithmetic { kind: Arithmetic::Divide, bytes: if opcode == 0xda { 4 } else { 2 } }),
+            (0xda | 0xde, 7) => Some(Operation::IntegerMemoryArithmetic { kind: Arithmetic::ReverseDivide, bytes: if opcode == 0xda { 4 } else { 2 } }),
             (0xd8 | 0xdc, 2) => Some(Operation::CompareMemory { bytes: if opcode == 0xd8 { 4 } else { 8 }, pop: false }),
             (0xd8 | 0xdc, 3) => Some(Operation::CompareMemory { bytes: if opcode == 0xd8 { 4 } else { 8 }, pop: true }),
             (0xd8, 0) => Some(Operation::MemoryArithmetic { kind: Arithmetic::Add, bytes: 4 }),
@@ -223,6 +236,35 @@ mod tests {
             assert_eq!(classify(0xd8,0xd8+i), Ok(Operation::Compare{index:i,pop:true}));
         }
         assert_eq!(classify(0xde,0xd9),Ok(Operation::ComparePop2));
+    }
+    #[test]
+    fn signed_integer_arithmetic_and_comparison_cover_m16_and_m32() {
+        let kinds = [
+            (0, Arithmetic::Add), (1, Arithmetic::Multiply),
+            (4, Arithmetic::Subtract), (5, Arithmetic::ReverseSubtract),
+            (6, Arithmetic::Divide), (7, Arithmetic::ReverseDivide),
+        ];
+        for (opcode, width) in [(0xda, 4), (0xde, 2)] {
+            for mode in 0..3u8 {
+                for (reg, kind) in kinds {
+                    let modrm = (mode << 6) | (reg << 3) | 6;
+                    assert_eq!(classify(opcode, modrm),
+                        Ok(Operation::IntegerMemoryArithmetic { kind, bytes: width }));
+                }
+                for (reg, pop) in [(2, false), (3, true)] {
+                    let modrm = (mode << 6) | (reg << 3) | 6;
+                    assert_eq!(classify(opcode, modrm),
+                        Ok(Operation::IntegerCompareMemory { bytes: width, pop }));
+                }
+            }
+            // Register forms of DA/DE are not these memory instructions.
+            assert_eq!(classify(opcode, 0xd6),
+                Err(DecodeError::Unsupported { opcode, modrm: 0xd6 }));
+        }
+        // The actual general CS-relative FIDIV m32int encoding.
+        assert_eq!(classify(0xda, 0x36), Ok(Operation::IntegerMemoryArithmetic {
+            kind: Arithmetic::Divide, bytes: 4
+        }));
     }
     #[test]
     fn unsupported_is_not_silent_success() {
