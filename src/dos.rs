@@ -419,6 +419,7 @@ pub fn run_with_output(p:Loaded,budget:usize,output:&mut impl crate::host_io::Ou
 /// they wait for keyboard input in a 16-colour planar VGA mode. This is a
 /// console preview, not a full VGA graphics frontend. It samples the actual
 /// shared VGA planar framebuffer, without reinterpreting guest code.
+#[cfg(windows)]
 pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
     let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
     let geometry=planar::geometry(mode)?;
@@ -451,6 +452,7 @@ pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
 // Match the EGA/CGA 16-colour host palette already used by the PILdos
 // Python frontend. The CGA colour-select register 3D9h selects entries in
 // this palette; it is not the VGA 256-entry DAC.
+#[cfg(any(windows,test))]
 const CGA_RGB:[u32;16]=[
     0x000000,0x0000aa,0x00aa00,0x00aaaa,
     0xaa0000,0xaa00aa,0xaa5500,0xaaaaaa,
@@ -459,6 +461,7 @@ const CGA_RGB:[u32;16]=[
 ];
 /// CGA even/odd banks, the 3D9h background/palette/intensity latch, and
 /// 320x200 four-colour / 640x200 two-colour scanout.
+#[cfg(any(windows,test))]
 fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
     let width=if mode==6{640}else{320};
     let height=200usize;
@@ -505,6 +508,7 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
 /// All text drawn by BIOS in a graphics mode has already reached these pixels
 /// via dos_graphics_text, so the host renderer needs no duplicate font logic.
 /// The output never aliases guest RAM and cannot mutate VGA/CPU state.
+#[cfg(any(windows,test))]
 fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
     let view=p.mouse.view();
     if !view.visible{return;}
@@ -532,15 +536,18 @@ fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
         }
     }
 }
+#[cfg(windows)]
 pub(crate) fn mouse_state(p:&Loaded)->(u16,u16,bool){
     let view=p.mouse.view();
     (view.max_x,view.max_y,view.visible)
 }
+#[cfg(any(windows,test))]
 pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
     let (width,height,mut pixels)=desktop_vga_raw(p)?;
     overlay_mouse_cursor(p,width,height,&mut pixels);
     Some((width,height,pixels))
 }
+#[cfg(any(windows,test))]
 fn desktop_vga_raw(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
     let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
     if matches!(mode,4|5|6){return desktop_cga_frame(p,mode);}

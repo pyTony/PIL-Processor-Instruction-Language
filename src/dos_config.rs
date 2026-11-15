@@ -26,6 +26,7 @@ impl HostPointer{
     }
     /// Whether to hide the host pointer, given whether the driver's cursor
     /// is on screen.
+    #[cfg(any(windows,test))]
     pub(crate) fn hides(self,guest_cursor_visible:bool)->bool{
         match self{Self::Auto=>guest_cursor_visible,Self::Show=>false,Self::Hide=>true}
     }

@@ -1,3 +1,31 @@
+# Release build warnings — 14 November 2026
+
+Tony saw a mass of warnings from `cargo build --release --locked`. Not stale
+code: Cargo.toml builds src/main.rs twice, as the `pil` executable and as the
+`dine` cdylib. In the library `fn main` was private and unused, so rustc
+called every item only main reaches "never used": 281 warnings on Linux,
+427 on Windows (dine_window, dos_host_console, containers, dos_setup and
+others the executable does use).
+- `pub fn main` makes main a root in the library too; the library-only
+  `allow(dead_code)` under dine-library is gone, so that build is checked
+  as well.
+- The rest were real: dine_display and dos.rs's window frames and ANSI
+  preview are reached only from Windows code (now `cfg(windows)`, the frame
+  functions also `cfg(test)`); host_argument_alias only from dine_ffi
+  (`cfg(feature = "dine-library")`); precompiled::forms only from tests.
+  Behaviour unchanged. The ANSI graphics preview in dine_display was already
+  unreachable off Windows (dos_session builds Display only on Windows).
+- CI: tools/check_build_warnings.py replaces the release build step, for
+  the default build and `--lib --features dine-library`, on both hosts.
+- Cargo's note that src/main.rs is in multiple build targets stays (it is
+  not a rustc warning). `cargo build --release --bin pil` builds only the
+  executable, about half the time.
+
+Local Linux, release: 848 Rust tests pass, 2 ignored; 0 rustc warnings for
+the release build, the dine-library build and `cargo check --tests`.
+x86_64-pc-windows-gnu `cargo check` (release, dine-library, tests): 0
+warnings. verify_dine_library.py passes.
+
 # Host pointer over the Dine window — 14 November 2026
 
 Tony saw two arrows over LINES.EXE in the console window: the DOS mouse
