@@ -3237,3 +3237,159 @@ fn graphics_screen_text_is_read_back_from_the_glyphs(){
  for y in 0..8u32{for x in 0..8u32{let v=if glyph[(y*8+x)as usize]!=0{15}else{1};p.ram.store(0xa0000+y*320+x+8,MemWidth::Byte,v).unwrap();}}
  let(_,_,text)=console::graphics_text::screen_text(&p).unwrap();assert_eq!(&text[..2],b"OO");
 }
+
+
+/// Build a real DOS EXEC parameter block in the caller's PSP for AL=01h.
+/// The caller must have released memory before a child can be allocated.
+fn load_only_fixture(dir:&std::path::Path,name:&[u8])->Loaded{
+    let mut p=load_with_drives(&[0xcd,0x21,0xfa,0xf4],"PARENT.COM",
+        vec![Source::Host(dir.to_path_buf())],None).unwrap();
+    p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x0100;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.eflags&1,0);
+    p.image.end=0x1000; // The child must gain its own executable fetch window.
+    let base=u32::from(PSP)*16;
+    p.ram.write_bytes(base+0x200,name).unwrap();
+    p.ram.write_bytes(base+0x280,b"\x03 hi\r").unwrap();
+    p.ram.store(base+0x240,MemWidth::Word,0).unwrap();
+    for (at,offset) in [(2u32,0x280u32),(6,0x5c),(10,0x6c)]{
+        p.ram.store(base+0x240+at,MemWidth::Dword,
+            (u32::from(PSP)<<16)|offset).unwrap();
+    }
+    p.cpu.regs[0]=0x4b01;
+    p.cpu.regs[2]=0x200;p.cpu.regs[3]=0x240;
+    p
+}
+
+#[test]
+fn exec_4b01_loads_com_without_running_and_releases_by_mcb(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let folder=std::env::temp_dir().join(format!("pil-exec-only-com-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("LOADED.COM"),[0xb8,0x2a,0x4c,0xcd,0x21]).unwrap();
+    let mut p=load_only_fixture(&folder,b"LOADED.COM\0");
+    let before=p.cpu.clone();let parent_image=p.image.clone();
+    let free=p.arena.free();
+    p.cpu.eflags|=1;p.cpu.undefined_flags|=1;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    let child=p.psp;
+    assert_ne!(child,PSP);
+    assert_eq!(p.cpu.regs,before.regs);
+    assert_eq!(p.cpu.eip,before.eip);
+    assert_eq!((p.cpu.eflags&1,p.cpu.undefined_flags&1),(0,0));
+    assert_eq!(p.selectors,parent_image.selectors);
+    assert_eq!(p.image.fetch_base,parent_image.fetch_base);
+    assert_eq!(p.exec.len(),0,"the caller must not be suspended");
+    assert_eq!(p.load_only.len(),1);
+    let slot=p.load_only[0].fetch_slot.expect("separate child fetch window");
+    let base=u32::from(child)*16;
+    assert_eq!(p.image.system[slot],(base,u32::from(child+free)*16));
+    assert_eq!(p.ram.load(base,MemWidth::Word).unwrap(),0x20cd);
+    assert_eq!(p.ram.load(base+0x16,MemWidth::Word).unwrap(),u32::from(PSP));
+    assert_eq!(p.ram.load(base+0x100,MemWidth::Word).unwrap(),0x2ab8);
+    assert_eq!(p.ram.load(base+0xfffe,MemWidth::Word).unwrap(),0);
+    assert_eq!(p.ram.load(base+0x80,MemWidth::Byte).unwrap(),3);
+    let params=u32::from(PSP)*16+0x240;
+    assert_eq!(p.ram.load(params+0x0e,MemWidth::Dword).unwrap(),
+        (u32::from(child)<<16)|0xfffe);
+    assert_eq!(p.ram.load(params+0x12,MemWidth::Dword).unwrap(),
+        (u32::from(child)<<16)|0x100);
+    assert_eq!(p.arena.block_owner(child),Some(child));
+    let env=p.ram.load(base+0x2c,MemWidth::Word).unwrap()as u16;
+    assert_eq!(p.arena.block_owner(env),Some(child));
+    p.cpu.regs[0]=0x6200;service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.regs[3]&0xffff,u32::from(child),"AH62 must report loaded PSP");
+    p.cpu.regs[0]=0x5000;p.cpu.regs[3]=u32::from(PSP);
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.psp,PSP);
+    // AH49 frees the child PSP and invalidates its executable fetch window.
+    for segment in [child,env]{
+        p.cpu.regs[0]=0x4900;
+        p.selectors[0]=segment;p.image.selectors[0]=segment;
+        p.image.segments[0]=SegmentCache::real_mode(segment);
+        service(&mut p,0x21,&mut vec![]).unwrap();
+        assert_eq!(p.cpu.eflags&1,0);
+    }
+    assert!(p.load_only.is_empty());
+    assert_eq!(p.image.system[slot],(0,0));
+    assert_eq!(p.arena.block_owner(child),Some(0));
+    assert_eq!(p.arena.free(),free);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn exec_4b01_loads_relocated_mz_and_returns_its_header_entry_and_stack(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let folder=std::env::temp_dir().join(format!("pil-exec-only-mz-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut exe_bytes=exe(&[0xb8,0,0,0xf4,0x90],&[(1,0)]);
+    put_word(&mut exe_bytes,10,0x10);put_word(&mut exe_bytes,12,0x20);
+    put_word(&mut exe_bytes,14,2);put_word(&mut exe_bytes,16,0x40);
+    put_word(&mut exe_bytes,20,3);put_word(&mut exe_bytes,22,1);
+    std::fs::write(folder.join("RELOC.EXE"),exe_bytes).unwrap();
+    let mut p=load_only_fixture(&folder,b"RELOC.EXE\0");
+    let parent=p.cpu.clone();
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    let child=p.psp;let load=child+0x10;
+    assert_eq!(p.cpu,parent,"a load-only EXEC must not change CPU registers");
+    assert_eq!(p.exec.len(),0);
+    let block=u32::from(PSP)*16+0x240;
+    assert_eq!(p.ram.load(block+0x0e,MemWidth::Dword).unwrap(),
+        (u32::from(load+2)<<16)|0x40);
+    assert_eq!(p.ram.load(block+0x12,MemWidth::Dword).unwrap(),
+        (u32::from(load+1)<<16)|3);
+    assert_eq!(p.ram.load(u32::from(load)*16+1,MemWidth::Word).unwrap(),
+        u32::from(load),"EXE relocation must use the module's load segment");
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn exec_4b01_later_child_termination_returns_to_caller_int22(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let folder=std::env::temp_dir().join(format!("pil-exec-only-run-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("LATER.COM"),[0xb8,0x2a,0x4c,0xcd,0x21]).unwrap();
+    let mut p=load_only_fixture(&folder,b"LATER.COM\0");
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    let child=p.psp;let slot=p.load_only[0].fetch_slot.unwrap();
+    p.selectors[1]=child;p.image.selectors[1]=child;
+    p.image.segments[1]=SegmentCache::real_mode(child);
+    p.cpu.eip=0x100;
+    let r=run(p,20).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.return_code,0x2a);
+    assert_eq!(r.loaded.psp,PSP);
+    assert_eq!(r.loaded.exec.len(),0);
+    assert!(r.loaded.load_only.is_empty());
+    assert_eq!(r.loaded.image.system[slot],(0,0));
+    assert_eq!(r.loaded.selectors[1],PSP);
+    assert_eq!(r.loaded.arena.block_owner(child),Some(0));
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn exec_4b01_bad_parameter_destination_and_missing_file_do_not_allocate(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let folder=std::env::temp_dir().join(format!("pil-exec-only-fault-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("GOOD.COM"),[0xf4]).unwrap();
+    let mut p=load_only_fixture(&folder,b"GOOD.COM\0");
+    let output=u32::from(PSP)*16+0x240+0x14;
+    p.ram.protect(output,1).unwrap();
+    let old=p.clone();
+    assert!(service(&mut p,0x21,&mut vec![]).is_err());
+    assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
+    assert_eq!(p.arena,old.arena);assert_eq!(p.psp,PSP);
+    assert!(p.load_only.is_empty());
+    let mut p=load_only_fixture(&folder,b"UNKNOWN.COM\0");
+    let before=p.arena.clone();let ram=p.ram.clone();
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.eflags&1),(2,1));
+    assert_eq!(p.arena,before);assert_eq!(p.ram,ram);
+    assert_eq!(p.psp,PSP);
+    std::fs::remove_dir_all(folder).unwrap();
+}
