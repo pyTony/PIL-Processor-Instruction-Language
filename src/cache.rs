@@ -41,7 +41,13 @@ impl DecodeCache {
                 if entry.unchanged(image,ram,eip){self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));}
                 if let Ok(signature)=image.fetch_signature(ram,eip,entry.decoded.length) {
                     if signature==entry.signature {
-                        self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));
+                        // A write reached the instruction's line but left
+                        // its bytes: trust them again from here.
+                        let decoded=Rc::clone(&entry.decoded);let length=entry.decoded.length as usize;
+                        let stamp=if image.paging{None}else{image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,length))};
+                        if let Some((_,entry))=&mut self.fast[slot]{entry.code_stamp=stamp;}
+                        if let Some(entry)=self.entries.get_mut(&eip){entry.code_stamp=stamp;}
+                        self.stats.hits+=1;return Ok(decoded);
                     }
                 }
             }
@@ -51,10 +57,13 @@ impl DecodeCache {
                 if entry.unchanged(image,ram,eip){
                     self.fast[slot]=Some((eip,entry.clone()));self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));
                 }
-                // Once a watched code page is written, retain the original
-                // byte checks permanently for that page.
+                // A write reached the instruction's line: compare its bytes,
+                // and trust them again from here if they are the same.
                 match image.fetch_signature(ram,eip,entry.decoded.length) {
                     Ok(signature) if signature==entry.signature=>{
+                        let stamp=if image.paging{None}else{image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,entry.decoded.length as usize))};
+                        let mut entry=entry.clone();entry.code_stamp=stamp;
+                        self.entries.insert(eip,entry.clone());
                         self.fast[slot]=Some((eip,entry.clone()));
                         self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));
                     }

@@ -38,11 +38,31 @@ struct Block {
     steps:Vec<Rc<Decoded>>,
     /// runs[n]: entries that retired exactly n instructions.
     runs:Vec<u64>,
+    /// The last instruction leaves segments, control state and the flags
+    /// the DOS loop watches as they were, so another block may follow.
+    chains:bool,
+    /// Blocks that followed this one in a chain: (EIP, slot, slot version).
+    /// A link only saves the table lookup and the segment and window
+    /// comparison, which a chain cannot change; the code guard of the next
+    /// block is still checked every time.
+    links:[Option<(u32,usize,u64)>;2],
 }
+
+/// A multiplicative hash for linear addresses (the table is host-only).
+#[derive(Default,Clone,Copy)]
+struct LinearHash(u64);
+impl std::hash::Hasher for LinearHash {
+    fn finish(&self)->u64{self.0}
+    fn write(&mut self,bytes:&[u8]){for &b in bytes{self.0=(self.0.rotate_left(8)^u64::from(b)).wrapping_mul(0x9e37_79b9_7f4a_7c15);}}
+    fn write_u32(&mut self,n:u32){self.0=(u64::from(n)^self.0).wrapping_mul(0x9e37_79b9_7f4a_7c15);}
+}
+type Map=HashMap<u32,usize,std::hash::BuildHasherDefault<LinearHash>>;
 
 #[derive(Default)]
 pub(crate) struct Blocks {
-    map:HashMap<u32,Block>,
+    /// Linear address to slot.
+    map:Map,
+    slots:Vec<(u64,Block)>,
     /// Retired counts by mnemonic from blocks that were replaced or evicted
     /// before `report`.
     pending:BTreeMap<String,usize>,
@@ -51,6 +71,10 @@ pub(crate) struct Blocks {
     /// Block entries and instructions retired in blocks, for diagnostics.
     pub(crate) blocks:u64,
     pub(crate) instructions:u64,
+    /// Returns to the DOS loop with at least one instruction retired (a
+    /// chain of blocks counts once).
+    pub(crate) runs:u64,
+    next_version:u64,
 }
 impl Clone for Blocks { fn clone(&self)->Self{Self::default()} }
 
@@ -81,8 +105,25 @@ fn boundary(p:&crate::Program)->bool{
     })
 }
 
+/// Does `p` change what the DOS loop or a block's entry guard depends on:
+/// segments, descriptor tables, control registers, the TSS, the interrupt
+/// shadow, a flag checkpoint, I/O permission, or IF, TF, IOPL, NT, VM?
+/// A near jump, CALL, RET or store does not.
+fn context(p:&crate::Program)->bool{
+    p.partial||p.tokens.iter().any(|t|match t{
+        Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::LoadSystem(..)|Token::FarBranch(..)|
+        Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::TaskReturnIf(..)|Token::InterruptShadowIf(..)|
+        Token::CheckIo(..)|Token::CheckpointFlags|Token::ResumeIf(..)=>true,
+        Token::Flag(f,_)|Token::FlagIf(f,..)=>matches!(f,Flag::TF|Flag::IF|Flag::IOPL0|Flag::IOPL1|Flag::NT|Flag::VM),
+        _=>false,
+    })
+}
+
 impl Blocks {
-    pub(crate) fn clear(&mut self){self.map.clear();}
+    pub(crate) fn clear(&mut self){
+        for (_,b) in self.slots.drain(..){count(&b,&mut self.pending);}
+        self.map.clear();
+    }
 
     fn plan(cache:&mut DecodeCache,image:&Image,ram:&Ram,eip:u32)->Option<Block>{
         if image.paging||!image.real_mode{return None;}
@@ -105,26 +146,89 @@ impl Blocks {
         }
         if steps.is_empty(){return None;}
         let stamp=ram.watch_code(linear,bytes.len());
-        Some(Block{eip,machine:image.segment_state(),window:window(image),linear,bytes,stamp,runs:vec![0;steps.len()+1],steps})
+        let chains=steps.last().is_some_and(|d|matches!(&d.operation,Operation::Pil{program,..} if !context(program)));
+        Some(Block{eip,machine:image.segment_state(),window:window(image),linear,bytes,stamp,runs:vec![0;steps.len()+1],steps,chains,links:[None;2]})
     }
 
-    /// Run the block at `cpu.eip`, at most `budget` instructions of it.
-    /// One block per call: the DOS loop checks timer, keyboard, mouse and
-    /// break events between blocks, as it does between instructions, and
-    /// nothing inside a block can make one of them due (see `boundary`).
+    /// Run blocks from `cpu.eip`, at most `budget` instructions in all.
+    /// Nothing inside a block can make a timer, keyboard, mouse or break
+    /// event due (see `boundary`), and the caller bounds `budget` by the
+    /// next timer poll, so the DOS loop sees events at the same instruction
+    /// boundaries as the interpreter.
+    ///
+    /// With `chain`, a block that ended on a near transfer of control (a
+    /// jump, CALL, RET, LOOP) or a store goes straight on to the block at the
+    /// new CS:IP, with that block's full entry guard, instead of returning to
+    /// the DOS loop first. The caller sets `chain` only when the loop has no
+    /// pending keyboard or mouse event to look at between instructions; a
+    /// block that changed segments, control registers, IF, TF, IOPL, NT, VM
+    /// or an interrupt shadow, or that faulted, always returns to the loop.
     /// None: no block applies here; the caller interprets.
-    pub(crate) fn run(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize)->Option<(usize,Result<(),ExecError>)>{
-        if budget==0||cpu.eflags&0x100!=0||machine.ss_shadow!=0||machine.sti_shadow!=0{return None;}
-        let linear=machine.segments[1].base.checked_add(cpu.eip)?;
-        let valid=self.map.get(&linear).is_some_and(|b|b.eip==cpu.eip&&b.machine==*machine&&b.window==window(image)&&
-            (b.stamp.is_some_and(|s|ram.code_unchanged(s,b.linear,b.bytes.len()))||ram.contiguous_slice(b.linear,b.bytes.len()).is_some_and(|s|s==b.bytes)));
-        if !valid{
-            if self.map.len()>=CAPACITY{for (_,b) in self.map.drain(){count(&b,&mut self.pending);}}
-            let planned=Self::plan(cache,image,ram,cpu.eip);
-            if let Some(old)=self.map.remove(&linear){count(&old,&mut self.pending);}
-            self.map.insert(linear,planned?);
+    pub(crate) fn run(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,chain:bool)->Option<(usize,Result<(),ExecError>)>{
+        let mut total=0usize;let mut from=None;
+        loop {
+            let Some((slot,n,result,more))=self.enter(cache,image,cpu,ram,machine,budget-total,from)else{
+                if total>0{self.runs+=1;}
+                return (total>0).then_some((total,Ok(())));
+            };
+            total+=n;
+            if result.is_err()||!more||!chain||total==budget{
+                self.runs+=1;
+                return Some((total,result));
+            }
+            from=Some(slot);
         }
-        let block=self.map.get_mut(&linear).expect("planned block");
+    }
+
+    /// The slot of a valid block for CS:IP, planning one if needed.
+    /// `from`: the block that just ran to its end in the same chain, so the
+    /// segment state and window are the ones it was entered with.
+    fn find(&mut self,cache:&mut DecodeCache,image:&Image,ram:&Ram,machine:&SegmentState,eip:u32,from:Option<usize>)->Option<usize>{
+        let linear=machine.segments[1].base.checked_add(eip)?;
+        let linked=from.and_then(|f|self.slots[f].1.links.iter().flatten().find(|l|l.0==eip).copied())
+            .filter(|&(_,slot,version)|self.slots.get(slot).is_some_and(|s|s.0==version));
+        let slot=match linked{
+            Some((_,slot,_))=>Some(slot),
+            None=>self.map.get(&linear).copied().filter(|&i|{let b=&self.slots[i].1;b.eip==eip&&b.machine==*machine&&b.window==window(image)}),
+        };
+        if let Some(i)=slot{
+            let b=&mut self.slots[i].1;
+            let same=b.stamp.is_some_and(|s|ram.code_unchanged(s,b.linear,b.bytes.len()))||
+                // A write reached the block's lines: compare its bytes, and
+                // trust them again from here if they are the same.
+                ram.contiguous_slice(b.linear,b.bytes.len()).is_some_and(|s|s==b.bytes)&&{b.stamp=ram.watch_code(b.linear,b.bytes.len());true};
+            if same{
+                if linked.is_none(){self.link(from,eip,i);}
+                return Some(i);
+            }
+        }
+        // Plan anew. A replaced block keeps its slot under a new version,
+        // so links to the old one stop matching.
+        let mut from=from;
+        if self.slots.len()>=CAPACITY{self.clear();from=None;}
+        let planned=Self::plan(cache,image,ram,eip)?;
+        let i=match self.map.get(&linear).copied(){
+            Some(i)=>{let (version,old)=&mut self.slots[i];count(old,&mut self.pending);*old=planned;*version+=1;i},
+            None=>{self.slots.push((self.next_version,planned));self.next_version+=1;self.map.insert(linear,self.slots.len()-1);self.slots.len()-1},
+        };
+        self.link(from,eip,i);
+        Some(i)
+    }
+    fn link(&mut self,from:Option<usize>,eip:u32,to:usize){
+        let Some(f)=from else{return};
+        let version=self.slots[to].0;
+        let links=&mut self.slots[f].1.links;
+        if links[0].is_some_and(|l|l.0!=eip){links[1]=links[0];}
+        links[0]=Some((eip,to,version));
+    }
+
+    /// One block: its slot, retired instructions, the result, and whether
+    /// the block ran to its end on an instruction after which another block
+    /// may follow at once.
+    fn enter(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,from:Option<usize>)->Option<(usize,usize,Result<(),ExecError>,bool)>{
+        if budget==0||cpu.eflags&0x100!=0||machine.ss_shadow!=0||machine.sti_shadow!=0{return None;}
+        let slot=self.find(cache,image,ram,machine,cpu.eip,from)?;
+        let block=&mut self.slots[slot].1;
         let mut n=0usize;let mut failure=None;
         for decoded in block.steps.iter().take(budget){
             let Operation::Pil{program,dst,src,flow,address}=&decoded.operation else{unreachable!("blocks hold PIL operations")};
@@ -136,13 +240,14 @@ impl Blocks {
             n+=1;
         }
         block.runs[n]+=1;self.blocks+=1;self.instructions+=n as u64;
-        Some((n,failure.map_or(Ok(()),Err)))
+        let more=n==block.steps.len()&&block.chains;
+        Some((slot,n,failure.map_or(Ok(()),Err),more))
     }
 
     /// Move the per-mnemonic counts of retired block instructions into the
     /// probe's instruction mix, keyed as the interpreter keys them.
     pub(crate) fn report(&mut self,mix:&mut BTreeMap<String,usize>){
-        for block in self.map.values_mut(){count(block,mix);block.runs.fill(0);}
+        for (_,block) in self.slots.iter_mut(){count(block,mix);block.runs.fill(0);}
         for (k,n) in std::mem::take(&mut self.pending){*mix.entry(k).or_insert(0)+=n;}
     }
 }

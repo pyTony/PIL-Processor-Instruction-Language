@@ -119,7 +119,7 @@ IOPL, NT or VM. Instructions the loop answers itself never join a block
 (port I/O, INS/OUTS, 80387 escapes and WAIT, INT n, HLT), nor does code
 outside 0400h-9FFFFh. A block runs only with no interrupt shadow and TF
 clear, when the segment state and fetch window equal the planned ones and
-its bytes are unchanged (code-page stamp, else a byte compare); otherwise it
+its bytes are unchanged (code stamp, else a byte compare); otherwise it
 is planned again. The DOS loop runs one block per iteration, never past a
 multiple of 256 steps (its timer check), and checks timer, keyboard, mouse
 and Ctrl-C events between blocks as it does between instructions; nothing
@@ -145,6 +145,42 @@ MANDEL 143 -> 71 ms, MANDANSI 153 -> 74 ms, MANDBBC 166 -> 96 ms, MANDCGA
 240 -> 58 ms. `tools/verify_mandel_vga.py` (a full MANDVGA session through
 the terminal protocol, 296,960 pixels checked): 9.5 s -> 2.6 s.
 
-Not yet: the shadow design's longer regions (stores inside blocks with a
-code-page check), protected-mode and 32-bit-stack forms, a smaller emitter
-for the table.
+**Chains through CALL, RET, jumps and loops** (14 November 2026). Blocks
+still end after a control transfer or a store, but a block whose last
+instruction is a near JMP, Jcc, LOOP, CALL, RET or a store no longer goes
+back to the DOS loop: `Blocks::run` goes straight on to the block at the
+new CS:IP, until the step budget (never past the 256-step timer check) is
+used up or a block changes segments, control or descriptor-table
+registers, the TSS, an interrupt shadow, a flag checkpoint, or IF, TF,
+IOPL, NT or VM, or faults. Every block in a chain checks its own entry
+guard; there is no prediction, so a RET to a different return address
+simply finds (or plans) the block there. Each block keeps links to the
+two blocks that last followed it: a link skips the table lookup and the
+segment and window comparison (which a chain cannot change, and a link
+is dropped when its block is planned again), never the code check. The
+DOS loop chains only while it has no scan code or mouse event to look at
+between instructions, so IRQ1, mouse callbacks, the timer and Ctrl-C come
+at the same instruction boundaries as with the interpreter.
+
+Code stamps (src/memory.rs `CodeWatch`, also used by the decode cache)
+now count writes per 64-byte line instead of marking 4 KB pages dirty for
+good. A write elsewhere in the page (data kept next to code, as small COM
+programs do) keeps the code trusted; a write into its lines makes the next
+entry compare bytes, and a match takes a new stamp.
+
+Local Linux release, a full session through the terminal protocol to the
+key wait (3 runs each, base = dev at 3919bd8): MANDCGA 1.91-2.06 s ->
+0.87-0.91 s, MANDVGA 2.58-2.86 s -> 1.44-1.64 s, with the same 31.6M and
+37.9M block instructions. Instructions per block are unchanged (3.8 and
+3.9); instructions per return to the DOS loop are now 256 and 169 (one
+block before). MANDBBC and MANDEL end in under 0.1 s either way (start-up
+dominates). Checks: CALL/RET with a callee that rewrites the caller's next
+instruction, #DE in a callee inside a chain (default INT 0 handler, exit
+127), and MANDCGA and MANDVGA slice by slice against the interpreter.
+`native_block_runs` in the session snapshot counts returns to the loop.
+
+Not yet: instructions after a branch or store inside one block (side
+exits), protected-mode and 32-bit-stack forms, a smaller emitter for the
+table. Callgrind on 1M MANDCGA steps showed the remaining time in the
+native forms and the per-block code check; CALL's form also allocates a
+Vec per call.

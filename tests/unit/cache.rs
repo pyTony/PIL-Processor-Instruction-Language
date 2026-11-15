@@ -3,20 +3,28 @@ use super::super::guest::ENTRY;
 use super::super::address::{SegmentAccess,SegmentRegister};
 
 #[test]
-fn untouched_code_is_trusted_until_first_write_and_then_stays_checked(){
+fn code_is_trusted_until_a_write_reaches_its_line_and_again_after_a_byte_check(){
     let (image,_)=Image::load(&[0x40,0xf4]).unwrap();let mut ram=Ram::new(0x4000);
     ram.write_bytes(ENTRY,&[0x40,0xf4]).unwrap();let mut cache=DecodeCache::default();
     let old=cache.fetch(&image,&ram,ENTRY).unwrap();
     let stamp=cache.entries[&ENTRY].code_stamp.unwrap();
     assert!(ram.code_unchanged(stamp,ENTRY,1));
-    // Writes to another physical page do not change the code's tag.
+    // Writes to another page, or to another 64-byte line of the same page
+    // (data kept next to code), do not change the code's tag.
     ram.store(0x3000,super::super::MemWidth::Dword,42).unwrap();
+    ram.store(ENTRY+0x40,super::super::MemWidth::Word,7).unwrap();
     assert!(ram.code_unchanged(stamp,ENTRY,1));
     assert!(Rc::ptr_eq(&old,&cache.fetch(&image,&ram,ENTRY).unwrap()));
+    // A write to the same line that leaves the byte: compared, then trusted
+    // again under a new stamp.
+    ram.store(ENTRY+1,super::super::MemWidth::Byte,0xf4).unwrap();
+    assert!(!ram.code_unchanged(stamp,ENTRY,1));
+    assert!(Rc::ptr_eq(&old,&cache.fetch(&image,&ram,ENTRY).unwrap()));
+    let stamp=cache.entries[&ENTRY].code_stamp.unwrap();
+    assert!(ram.code_unchanged(stamp,ENTRY,1));
     // An aliased guest write is still an ordinary successful RAM write.
     ram.store(ENTRY,super::super::MemWidth::Byte,0x41).unwrap();
     assert!(!ram.code_unchanged(stamp,ENTRY,1));
-    assert!(ram.watch_code(ENTRY,1).is_none());
     assert_eq!(cache.fetch(&image,&ram,ENTRY).unwrap().label,"INC CX");
     ram.write_bytes(ENTRY,&[0x42]).unwrap();
     assert_eq!(cache.fetch(&image,&ram,ENTRY).unwrap().label,"INC DX");

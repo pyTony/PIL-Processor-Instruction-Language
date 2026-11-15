@@ -124,3 +124,44 @@ fn verify_mode_runs_both_backends_in_lockstep(){
     let r=dos::run_with_backend(load_with(include_bytes!("../../programs/dos/FACTOR.COM"),"FACTOR.COM",Mode::Verify),2_000,&mut out,None).unwrap();
     assert!(r.pil_steps>100);
 }
+
+/// MOV CX,40; again: CALL sub; ADD AX,0000h (the callee rewrites this
+/// immediate); ADD BX,AX; LOOP again; MOV AX,4C00h; INT 21h.
+/// sub: MOV AX,CX; MOV [0107h],CL; RET.
+const CALL_SMC:[u8;25]=[0xb9,40,0,0xe8,0x0c,0,0x05,0,0,0x01,0xc3,0xe2,0xf6,0xb8,0,0x4c,0xcd,0x21,0x89,0xc8,0x88,0x0e,0x07,0x01,0xc3];
+
+#[test]
+fn chained_blocks_follow_call_and_ret_and_see_code_the_callee_rewrites(){
+    for mode in [Mode::Off,Mode::On]{
+        let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let r=dos::run_with_backend(load_with(&CALL_SMC,"CALLSMC.COM",mode),10_000,&mut out,None).unwrap();
+        assert_eq!(r.stop,Stop::Exit(0),"{mode:?}");
+        // Each pass adds CX twice: from AX=CX and from the rewritten immediate.
+        assert_eq!(r.loaded.cpu.regs[3]&0xffff,2*(1..=40).sum::<u32>(),"{mode:?}");
+        if mode==Mode::On{
+            let b=&r.loaded.blocks;
+            assert!(b.instructions>150,"blocks ran {} instructions",b.instructions);
+            assert!(b.runs*4<b.blocks,"blocks chained: {} entries in {} runs",b.blocks,b.runs);
+        }
+    }
+    same_run(&CALL_SMC,"CALLSMC.COM",60);
+}
+
+#[test]
+fn a_fault_inside_a_chain_is_taken_where_the_interpreter_takes_it(){
+    // MOV CX,5; again: CALL sub; LOOP again; MOV AX,4C00h; INT 21h.
+    // sub: XOR DX,DX; MOV AX,100; MOV BX,CX; SUB BX,3; DIV BX; RET.
+    // The third call divides by zero: the default INT 0 handler reports it
+    // and ends the program with errorlevel 127.
+    let bytes=[0xb9,5,0,0xe8,7,0,0xe2,0xfb,0xb8,0,0x4c,0xcd,0x21,0x31,0xd2,0xb8,100,0,0x89,0xcb,0x83,0xeb,3,0xf7,0xf3,0xc3];
+    let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let r=dos::run_with_backend(load_with(&bytes,"DIVCHAIN.COM",Mode::On),10_000,&mut out,None).unwrap();
+    assert_eq!(r.stop,Stop::Exit(127));
+    same_run(&bytes,"DIVCHAIN.COM",60);
+}
+
+#[test]
+fn chained_blocks_match_the_interpreter_on_the_graphics_fixtures(){
+    same_run(include_bytes!("../../programs/dos/MANDCGA.COM"),"MANDCGA.COM",300);
+    same_run(include_bytes!("../../programs/dos/MANDVGA.COM"),"MANDVGA.COM",300);
+}
