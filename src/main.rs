@@ -28,6 +28,7 @@ mod dos_text_io;
 mod rust_codegen;
 mod pil_opt;
 mod dos_config;
+mod dos_own_programs;
 mod fpu;
 mod containers;
 mod inflate;

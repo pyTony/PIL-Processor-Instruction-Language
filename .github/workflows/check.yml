@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v5
       - run: python tools/check_portable_paths.py --self-test
       - run: python tools/check_program_specific.py --self-test
+      - run: python tools/dos_program_versions.py --check
       - run: cargo test --locked -- --show-output
       - run: cargo run --locked -- --selftest
       - run: python -m unittest discover -s tests/gui -v

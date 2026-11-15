@@ -115,10 +115,10 @@ impl Setup{
                 (format!("[{}] {}",if on{'X'}else{' '},if on{"on"}else{"off"}),value.is_some())
             },
             Kind::Choice(_)=>{
-                let name=|v:&str|match (f.key,v){("country","1")=>"USA",("country","358")=>"Finland",("fpu","none")=>"no coprocessor",("fpu","80387")=>"partial 80387",("host_pointer","auto")=>"hidden while the DOS cursor shows",("host_pointer","show")=>"always shown",("host_pointer","hide")=>"always hidden",_=>""};
+                let name=|v:&str|match (f.key,v){("country","1")=>"USA",("country","358")=>"Finland",("fpu","none")=>"no coprocessor",("fpu","80387")=>"partial 80387",("host_pointer","auto")=>"hidden while the DOS cursor shows",("host_pointer","show")=>"always shown",("host_pointer","hide")=>"always hidden",("own_programs","none")=>"never updated",("own_programs",_)=>"updated from programs/dos",_=>""};
                 match value{
                     Some(v)=>{let n=name(&v);(if n.is_empty(){v}else{format!("{v}  {n}")},true)},
-                    None=>(match f.key{"country"=>"(default: 1 USA)","fpu"=>"(default: none)","host_pointer"=>"(default: auto)",_=>"(default)"}.to_string(),false),
+                    None=>(match f.key{"country"=>"(default: 1 USA)","fpu"=>"(default: none)","host_pointer"=>"(default: auto)","own_programs"=>"(default: D)",_=>"(default)"}.to_string(),false),
                 }
             },
             Kind::Text=>match value{
@@ -138,7 +138,8 @@ impl Setup{
         put(&mut cells,0,0,COLUMNS,&title,TITLE);
         let line:String=std::iter::repeat('\u{2500}').take(COLUMNS).collect();
         put(&mut cells,1,0,COLUMNS,&line,SCREEN);
-        put(&mut cells,FIRST_FIELD+FIELDS.len(),0,COLUMNS,&line,SCREEN);
+        // The rule under the fields, when it does not take the help row.
+        if FIRST_FIELD+FIELDS.len()<ROWS-3{put(&mut cells,FIRST_FIELD+FIELDS.len(),0,COLUMNS,&line,SCREEN);}
         let mut cursor=None;
         for (i,f) in FIELDS.iter().enumerate(){
             let row=FIRST_FIELD+i;
@@ -336,6 +337,13 @@ fn pause(session:&super::session::Session,line:&str,front:&mut Front,rx:&mpsc::R
 pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<String,String>{
     let (path,_)=dos_config::selected_path(explicit);
     let mut setup=Setup::load(path)?;
+    // The project's own programs on the drive follow programs/dos.
+    if let Some(config)=setup.path().to_str().filter(|_|setup.path().exists()){
+        match dos_config::refresh_own_programs(Some(config)){
+            Ok(Some(line))=>{let error=line.contains("could not");setup.report(line,error);},
+            Ok(None)|Err(_)=>{},
+        }
+    }
     let (tx,rx)=mpsc::channel();
     let mut front=Front::open(window,tx)?;
     front.reset();

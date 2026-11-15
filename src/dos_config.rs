@@ -4,7 +4,11 @@ use std::path::{Path,PathBuf};
 
 #[derive(Debug,Default)]
 struct Config{drives:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,
-    fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>,host_pointer:Option<HostPointer>}
+    fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>,host_pointer:Option<HostPointer>,
+    /// `own_programs`: Some(None) for none, Some(Some(letter)) for a drive.
+    own_programs:Option<Option<u8>>,
+    /// The folder of the configuration file.
+    base:PathBuf}
 
 /// Whether the console window shows the host's own mouse pointer over the
 /// picture (`host_pointer` in the configuration, `--host-pointer`).
@@ -72,7 +76,7 @@ pub(crate) fn host_path(text:&str)->PathBuf{
     PathBuf::from(text)
 }
 fn parse(text:&str,parent:&Path)->Result<Config,String>{
-    let mut config=Config::default();
+    let mut config=Config{base:parent.to_path_buf(),..Config::default()};
     for (i,line) in text.trim_start_matches('\u{feff}').lines().enumerate(){
         let line=line.trim();
         let line=if let Some(setting)=line.strip_prefix("#@"){setting.trim()}else{
@@ -116,6 +120,16 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
             "host_pointer"=>{
                 once(config.host_pointer.is_some())?;
                 config.host_pointer=Some(HostPointer::parse(value).ok_or_else(||format!("host_pointer must be auto, show or hide on config line {}",i+1))?);
+                continue;
+            },
+            "own_programs"=>{
+                once(config.own_programs.is_some())?;
+                let v=value.trim_end_matches(':').to_ascii_uppercase();
+                config.own_programs=Some(match v.as_bytes(){
+                    b"NONE"=>None,
+                    [l] if (b'A'..=b'E').contains(l)=>Some(*l),
+                    _=>return Err(format!("own_programs must be a drive letter A..E or none on config line {}",i+1)),
+                });
                 continue;
             },
             "speaker_volume"=>{
@@ -170,8 +184,24 @@ pub(crate) fn console_settings(explicit:Option<&str>)->Result<ConsoleSettings,St
     let Some(config)=load(explicit)? else{return Ok(ConsoleSettings::default())};
     Ok(ConsoleSettings{fpu:config.fpu,mouse:config.mouse==Some(true),ansi:config.ansi==Some(true),utc_offset:config.utc_offset,host_pointer:config.host_pointer})
 }
+/// The drive `own_programs` names (default D:) and the report of copying
+/// programs/dos next to the configuration into its host folder.
+fn refresh(config:&Config,skip:Option<u8>)->Option<(u8,crate::dos_own_programs::Report)>{
+    let letter=config.own_programs.unwrap_or(Some(b'D'))?;
+    if Some(letter)==skip{return None;}
+    let (_,folder)=config.drives.iter().find(|(d,_)|*d==letter)?;
+    if !folder.is_dir(){return None;}
+    Some((letter,crate::dos_own_programs::refresh(&config.base.join("programs").join("dos"),folder)))
+}
+/// Bring the project's own programs on the `own_programs` drive up to date
+/// now; a line saying what changed, if anything did.
+pub(crate) fn refresh_own_programs(explicit:Option<&str>)->Result<Option<String>,String>{
+    let Some(config)=load(explicit)? else{return Ok(None)};
+    Ok(refresh(&config,None).and_then(|(letter,report)|report.summary(letter)))
+}
 pub(crate) fn apply(p:&mut Loaded,explicit:Option<&str>,skip:Option<u8>)->Result<(),String>{
     let Some(config)=load(explicit)? else{return Ok(())};
+    refresh(&config,skip);
     let mut mounts=Vec::new();
     for (letter,path) in config.drives{
         if Some(letter)==skip{continue;}
