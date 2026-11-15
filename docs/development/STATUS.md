@@ -1,3 +1,13 @@
+# Protected-mode plan brought up to date — 15 November 2026
+
+Tony asked to keep docs/development/PROTECTED_MODE_PLAN.md current. CPU
+increments 1-8 are marked done with their PRs (#104 ... #175, follow-ups
+#129, #131, #132, #186); increment 9 (memory above 1 MiB) is partly done by
+#138 (16 MiB, AH=88h, CMOS, A20; E801h refused, AH=87h stops); increment 10
+(XMS) is not started. The handoff lists the recorded protected-mode program
+runs (Doom, 3DBench, Tony's dosbench 3D benchmark, Quake) and the remaining
+gaps. Documentation only; nothing was rerun.
+
 # Debug registers and the reset TR — 14 November 2026
 
 Tony's stop log for a 3D benchmark in his dosbench menu (a DOS extender

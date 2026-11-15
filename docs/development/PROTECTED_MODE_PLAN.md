@@ -1,11 +1,12 @@
-# 80386 protected mode plan — 7 November 2026 (status 13 November 2026)
+# 80386 protected mode plan — 7 November 2026 (status 15 November 2026)
 
 Tony set protected mode as the priority, ahead of the x87 FPU. The plan is
 eight CPU increments and two Dine increments, each a PR against dev with
 expected-state, fault and size-combination tests and green Windows/Linux CI.
-Increments 1-6 are merged; increment 7 (task switching) is in review. The section
-"Current state and handoff" below is written so that another assistant can
-pick the work up from this file alone.
+CPU increments 1-8 are merged (test386 runs every POST to FFh); increment 9
+(Dine memory above 1 MiB) is partly done and increment 10 (XMS) is not
+started. The section "Current state and handoff" below is written so that
+another assistant can pick the work up from this file alone.
 
 ## Yardstick: test386.asm
 
@@ -36,10 +37,10 @@ protected, unreal and V86 sets are announced but not published.
 | 4 | Protected-mode exceptions and interrupts: IDT gates, error codes, #DF, triple fault as shutdown | 11h-1Ch | done, #123 |
 | 5 | Privilege levels: call gates, conforming code, inter-level transfers, IOPL, I/O bitmap | 20h | done, #124 |
 | 6 | V86 mode | 21h | done, #128; follow-ups #129 (ARPL `store_if`) and #131 (128 KB ROM) |
-| 7 | Task switching | 22h (128 KB ROM) | in review (src/task.rs) |
-| 8 | Remaining test386 (E0h, EEh) | FFh | reached locally: every POST to FFh, EEh output matches the reference (follow-up to #172) |
-| 9 | Dine: memory above 1 MiB (INT 15h 88h/E801h/87h, CMOS) | — | open |
-| 10 | Dine: XMS 3.0 driver (INT 2Fh 4300h/4310h) | — | open |
+| 7 | Task switching | 22h (128 KB ROM) | done, #172; follow-up #186 (TR in its reset state, MOV DRn) |
+| 8 | Remaining test386 (E0h, EEh) | FFh | done, #175: both ROMs run every POST to FFh, EEh output matches the reference (local Linux) |
+| 9 | Dine: memory above 1 MiB (INT 15h 88h/E801h/87h, CMOS) | — | partly done, #138: 16 MiB RAM, AH=88h, CMOS 17h/18h/30h/31h, A20 through port 92h and the 8042; E801h refused, 87h not implemented |
+| 10 | Dine: XMS 3.0 driver (INT 2Fh 4300h/4310h) | — | not started (AX=4300h returns unchanged: no XMS driver) |
 
 DPMI, VCPI and EMS are not Dine services at first: DOS extenders (CWSDPMI,
 DOS/4GW, PMODE/W) bring their own DPMI host or run raw, and JEMM386 provides
@@ -192,7 +193,7 @@ and #132 (SMSW r32 keeps PG). Increment 7, on the same branch:
   286 and 386, JMP/CALL/IRET/INT, and its V86 task) and then runs POST
   0Bh-19h, stopping in POST 1Ah like the 64 KB ROM.
 
-## Current state and handoff — 13 November 2026
+## Current state and handoff — 15 November 2026
 
 Where test386 stands (local Linux, release build, `--steps 100000000`;
 a full run takes about 76 million instructions):
@@ -213,8 +214,41 @@ in its reset state (base 0, limit FFFFh, busy 386 TSS), so a task switch
 before any LTR saves the old task at linear 0, as a DOS extender in
 Tony's dosbench expects. Generated-backend suite: 280 cases.
 
-Next: Dine's memory above 1 MiB (increment 9) and XMS (10). test386 does
-not cover the parts listed as not modelled under increment 7.
+Merged since the plan was written (dev, 15 November 2026): increments 1-8
+(#104, #116, #117, #122, #123, #124, #128, #172, #175) with follow-ups #129,
+#131, #132 and #186; and, outside the plan's order, #115 (PIC
+reinitialization for CWSDPMI) and #138/#144 (16 MiB RAM, protected-mode
+IRQ0/IRQ1 through the IDT, unchained mode 13h: DOS Doom and 3DBench).
+
+Protected-mode programs, as far as runs are recorded:
+- DOS/4GW Doom v1.9 and Superscape 3DBench 1.0 render and take keys (local
+  release runs for #138, Tony's files; no timedemo result).
+- Tony's 3D benchmark in his dosbench menu (a DOS extender, CR0=13h)
+  stopped on MOV DR0,EAX and then a task switch before any LTR (Tony's stop
+  log, 14 November). #186 fixes both; the benchmark has not been rerun here,
+  and no rerun by Tony is recorded yet.
+- Quake (CWSDPMI): the last recorded stop (8 November, local) was the PE
+  switch in MOV CR0, before increment 2. No later run is recorded; it also
+  needs the 80387, which is being built separately (#181 and earlier).
+
+Remaining blockers and gaps:
+- Dine increment 9: INT 15h E801h returns CF=1, AH=86h (unsupported), and
+  AH=87h (block move) stops as an unimplemented service.
+- Dine increment 10: no XMS driver (INT 2Fh 4300h finds none, 4310h is not
+  answered). DPMI, VCPI and EMS stay with the guest's extender or JEMM386.
+- Not modelled, listed under increment 7: task-switch faults after the
+  commit point, new-task descriptor reads with the old CR3, the TSS T bit.
+  Debug breakpoints: DR7 with L0-G3 or GD set stops (UnsupportedControl).
+- Port 92h and 8042 CPU reset stop instead of resetting (the reset-and-
+  resume route some 286-style extenders use).
+- Speed: precompiled forms and run-time blocks (#185, #199) cover real-mode
+  16-bit code only; protected-mode and 32-bit-stack code runs in the
+  interpreter.
+- SingleStepTests/80386 still publishes no protected, unreal or V86 data,
+  so test386 and own fixtures are the only protected-mode references.
+
+Next: finish increment 9 (E801h, AH=87h), then XMS (10), unless a program
+Tony runs stops elsewhere first.
 
 Key files:
 - src/address.rs: SegmentState (caches, CPL, GDT/LDT/IDT/TR, CR0-CR3,
@@ -265,6 +299,9 @@ diff --strip-trailing-cr ee.txt ../test386.asm/test386-EE-reference.txt
 
 
 ## DOS games increment, 10 November 2026
+
+(Historical note from #138. Its test386 remarks are out of date: #172 and
+#175 since took test386 through task switching to POST FFh.)
 
 Dine now supplies 16 MiB physical RAM, with the original 640 KiB DOS MCB
 arena unchanged. AH=88h and CMOS 17h/18h/30h/31h report the same 15 MiB
