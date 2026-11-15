@@ -10,6 +10,9 @@
 use super::*;
 #[path="dos_pit.rs"]
 mod pit;
+#[path="dos_string_io.rs"]
+mod string_io;
+pub(super) use string_io::{access as string_access,io as string_io,Error as StringError};
 #[path="dos_pic.rs"]
 pub(super) mod pic;
 /// PIT input clock in Hz.
@@ -109,16 +112,25 @@ fn instruction(p:&Loaded)->Option<(u8,u16,u32,u8)>{
     let width=if first&1==0{1}else if p.image.segments[1].default_32()^operand{4}else{2};
     Some((first,port,at,width))
 }
-pub(super) fn access(p:&Loaded)->Option<(u16,u8)>{instruction(p).map(|(_,port,_,width)|(port,width))}
+pub(super) fn access(p:&Loaded)->Option<(u16,u8)>{
+    string_access(p).or_else(||instruction(p).map(|(_,port,_,width)|(port,width)))
+}
 pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
     let Some((first,port,length,width))=instruction(p)else{return Ok(None)};
+    transfer(p,first,port,width)?;
+    Ok(Some(length))
+}
+/// The hardware-device logic shared by scalar and string port instructions.
+/// FIRST is the effective scalar IN/OUT opcode and WIDTH is the operand
+/// size in bytes.  The caller handles its own guest instruction retirement.
+pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),String>{
     if width==4{return Err(format!("dword I/O at port {port:04x}h is not modelled in Dine"));}
     let input=first&2==0;
     if matches!(port,0x3c0|0x3c1|0x3c4|0x3c5|0x3ce|0x3cf){
         let word=first&1!=0;
         let value=super::planar::io(p,port,input,p.cpu.regs[0]as u16,word)?.unwrap();
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
-        return Ok(Some(length));
+        return Ok(());
     }
     if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3cd|0x3de|0x3df|0x3c6..=0x3c9|0x3d8|0x3d9){
         let word=first&1!=0;
@@ -128,19 +140,19 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
         let hi=if word{device.io(port+1,input,(p.cpu.regs[0]>>8)as u8)?.unwrap()}else{0};
         p.vga=device;
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|u32::from(lo)|(u32::from(hi)<<8);}
-        return Ok(Some(length));
+        return Ok(());
     }
     let word=first&1!=0;
     let assigned=device(port).or_else(||if word{device(port.wrapping_add(1))}else{None});
     // Only truly unassigned writes qualify; normal device handlers still run.
     if !input&&assigned.is_none()&&!matches!(port,0xe9|0x190)&&IGNORE_UNASSIGNED_OUT.load(std::sync::atomic::Ordering::Relaxed){
         if p.speaker.ignored_out.insert(port){eprintln!("Ignored unassigned OUT port {port:04X}h, width {}, value {:04X}, CS:IP={:04X}:{:04X}",if word{16}else{8},p.cpu.regs[0]&if word{65535}else{255},p.selectors[1],p.cpu.eip);}
-        return Ok(Some(length));
+        return Ok(());
     }
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
     if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
-        return Ok(Some(length));
+        return Ok(());
     }
     if port==0x71{
         if !input{
@@ -151,17 +163,17 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 0x09|0x32=>p.rtc.write_year(p.clock_offset,p.cmos_index,p.cpu.regs[0]as u8)?,
                 _=>return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index)),
             }
-            return Ok(Some(length));
+            return Ok(());
         }
         let value=cmos(p,p.cmos_index)?;
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
-        return Ok(Some(length));
+        return Ok(());
     }
     if port==0x70{
         if input{return Err("IN from port 70h is not modelled (the index register is write-only)".into());}
         // Bit 7 masks NMI, which nothing raises here; the index is 6 bits.
         p.cmos_index=p.cpu.regs[0]as u8&0x3f;
-        return Ok(Some(length));
+        return Ok(());
     }
     if matches!(port,0x20|0x21|0xa0|0xa1){
         if input{
@@ -173,7 +185,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             }
             let value=p.speaker.pic.read(port);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
         }else{p.speaker.pic.write(port,p.cpu.regs[0]as u8)?;}
-        return Ok(Some(length));
+        return Ok(());
     }
     // Bounded AT keyboard-controller output-port interface and fast A20 gate.
     // CPU reset requests remain explicit stops rather than being ignored.
@@ -203,11 +215,11 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
                 _=>return Err("OUT 60h without a keyboard-controller output-port command is not modelled".into()),
             }
         }
-        return Ok(Some(length));
+        return Ok(());
     }
     // DOS benchmarks turn off diskette motors while measuring. This does
     // not issue a disk command; controller/data accesses remain unsupported.
-    if port==0x3f2&&!input&&p.cpu.regs[0]&0xf0==0{return Ok(Some(length));}
+    if port==0x3f2&&!input&&p.cpu.regs[0]&0xf0==0{return Ok(());}
     let s=&mut p.speaker;
     if input{
         let value=match port{
@@ -268,7 +280,7 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
             _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         }
     }
-    Ok(Some(length))
+    Ok(())
 }
 /// One CMOS byte as an AT with no diskette or hard disk, 640 KiB base memory
 /// and no extended memory would hold it. The clock registers are BCD in 24-hour

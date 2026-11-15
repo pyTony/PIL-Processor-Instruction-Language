@@ -2614,12 +2614,22 @@ fn planar_text_uses_tall_cells_and_scrolls_them(){
  assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x1d00);
 }
 #[test]
-fn port_accesses_dine_does_not_answer_stop_instead_of_reading_open_bus(){
- // Dine answers unprefixed IN/OUT itself; a prefixed IN, INS or OUTS reaches the decoder's
- // open bus, which Dine must not use for its devices.
- for bytes in [vec![0x66,0xe5,0x60],vec![0x6c],vec![0xf3,0x6f]]{
-  let r=run(load(&bytes,"port.com").unwrap(),10).unwrap();
-  assert!(matches!(r.stop,Stop::Service(ref m)if m.contains("not modelled in Dine")),"{bytes:02x?} {:?}",r.stop);assert_eq!(r.loaded.cpu.eip,0x100);
+fn unsupported_scalar_and_string_port_accesses_stop_without_committing(){
+ // INS/OUTS now reach actual PC device handlers, rather than the decoder's
+ // open bus. Devices or widths with no implementation still stop explicitly.
+ for (bytes,port,diagnostic) in [
+  (vec![0x66,0xe5,0x60],0x60u32,"dword I/O"), // IN EAX,60h
+  (vec![0x6c],0x226u32,"not modelled"),        // INSB, Sound Blaster absent
+  (vec![0xf3,0x6f],0x226u32,"word OUT"),      // REP OUTSW, unsupported DSP width
+ ]{
+  let mut p=load(&bytes,"port.com").unwrap();
+  p.cpu.regs[2]=port;p.cpu.regs[1]=1;p.cpu.regs[6]=0x200;p.cpu.regs[7]=0x200;
+  let old=p.clone();
+  let r=run(p,10).unwrap();
+  assert!(matches!(r.stop,Stop::Service(ref m)if m.contains(diagnostic)),"{bytes:02x?} {:?}",r.stop);
+  assert_eq!(r.loaded.cpu,old.cpu,"{bytes:02x?}");
+  assert_eq!(r.loaded.ram,old.ram,"{bytes:02x?}");
+  assert_eq!(r.loaded.cpu.eip,0x100);
  }
 }
 #[test]
