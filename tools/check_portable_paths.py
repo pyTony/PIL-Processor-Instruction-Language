@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 URL = re.compile(r"https?://[^\s<>\"']+", re.I)
@@ -129,7 +130,12 @@ def check(full=False):
     if failures:
         print("\n".join(failures))
         raise SystemExit("Replace personal/checkout paths with relative paths or runtime configuration.")
-    stamp_file.write_text(json.dumps({"head": head, "script_sha256": digest}) + "\n", encoding="utf-8")
+    try:
+        stamp_file.write_text(json.dumps({"head": head, "script_sha256": digest}) + "\n", encoding="utf-8")
+    except OSError:
+        # The cache is an optimization, not part of the validation result.
+        # Keep an older stamp: future runs will still scan changes since it.
+        print("Portability scan cache was not updated (git metadata is not writable).", file=sys.stderr)
     print(f"No machine-specific home/checkout paths in {checked} {mode} project text files (including documentation).")
 
 
