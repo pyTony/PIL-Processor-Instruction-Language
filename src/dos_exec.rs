@@ -239,14 +239,22 @@ pub(super) fn has_parent(p:&Loaded)->bool{
 /// child must never pop the older AH4B frame that launched its parent.
 pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
     let in_memory=p.in_memory.last().is_some_and(|f|f.child==p.psp&&f.exec_depth==p.exec.len());
+    // A load-only child can be started later by a debugger. Unlike an AH55
+    // child, these records are indexed by PSP, not by nesting order.
+    let load_only=if in_memory{None}else{
+        p.load_only.iter().position(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
+    };
     let base=u32::from(p.psp)*16;
     // Read the exit target before changing the MCB, IVT, or execution context.
-    let exit=if in_memory{
-        let frame=p.in_memory.last().unwrap();
-        let parent=word(&p.ram,base+0x16)?;
-        if parent!=frame.parent{return Err(format!("AH55 child PSP {:04x} has unexpected parent {:04x}, expected {:04x}",p.psp,parent,frame.parent));}
-        let target=p.ram.load(base+0x0a,MemWidth::Dword).map_err(|e|format!("AH55 child INT22 read: {e:?}"))?;
-        if target==0{return Err("AH55 child has no INT22 termination continuation".into());}
+    let parent=if in_memory{Some(p.in_memory.last().unwrap().parent)}
+        else{load_only.map(|i|p.load_only[i].parent)};
+    let exit=if let Some(expected)=parent{
+        let actual=word(&p.ram,base+0x16)?;
+        if actual!=expected{return Err(format!(
+            "loaded child PSP {:04x} has unexpected parent {actual:04x}, expected {expected:04x}",p.psp));}
+        let target=p.ram.load(base+0x0a,MemWidth::Dword)
+            .map_err(|e|format!("loaded child INT22 read: {e:?}"))?;
+        if target==0{return Err("loaded child has no INT22 termination continuation".into());}
         Some(target)
     }else{None};
     // Return the INT22/23/24 vectors saved in the terminating PSP.
@@ -259,18 +267,24 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
     p.arena.release(&mut p.ram,p.psp,keep)?;
     p.return_code=u16::from(kind)<<8|u16::from(code);
     if let Some(target)=exit{
-        let frame=p.in_memory.pop().unwrap();
-        // Preserve the child's live register/stack state; its PSP INT22 target
-        // is the explicit continuation established by the parent at run time.
-        // The DOS service loop has already retired the terminating INT.
+        // Preserve the running child's CPU state, but return to the caller's
+        // INT22 continuation with its PSP, handles and DTA restored.
+        let (parent,open_handles,dta)=if in_memory{
+            let frame=p.in_memory.pop().unwrap();
+            p.image.system=frame.system;
+            (frame.parent,frame.open_handles,frame.dta)
+        }else{
+            let frame=p.load_only.remove(load_only.expect("loaded child recorded"));
+            if let Some(slot)=frame.fetch_slot{p.image.system[slot]=(0,0);}
+            (frame.parent,frame.open_handles,frame.dta)
+        };
         let cs=(target>>16)as u16;
         let ip=target as u16;
         let index=SegmentRegister::Cs.index();
         p.selectors[index]=cs;p.image.selectors[index]=cs;
         p.image.segments[index]=SegmentCache::real_mode(cs);
         p.cpu.eip=u32::from(ip);
-        p.image.system=frame.system;
-        p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.parent;
+        p.open_handles=open_handles;p.dta=dta;p.psp=parent;
         return files::drop_unreferenced(p);
     }
     let frame=p.exec.pop().ok_or("terminate without a parent")?;
@@ -282,11 +296,22 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
     p.in_memory.retain(|f|f.exec_depth<p.exec.len()+1);
     files::drop_unreferenced(p)
 }
-/// The running PSP, AH55 parents, and waiting AH4B EXEC parents retain SFT references.
+/// The active PSP, waiting parents, and all still-loaded children retain SFT references.
 pub(super) fn chain(p:&Loaded)->Vec<(u16,u32)>{
     std::iter::once((p.psp,p.open_handles))
         .chain(p.in_memory.iter().rev().map(|f|(f.parent,f.open_handles)))
+        .chain(p.load_only.iter().map(|f|(f.child,f.open_handles)))
         .chain(p.exec.iter().rev().map(|f|(f.psp,f.open_handles))).collect()
+}
+
+/// Releasing the load-only child's PSP block with AH=49h invalidates its
+/// deferred execution context. The caller is responsible for freeing its
+/// separate environment block, as with ordinary DOS allocations.
+pub(super) fn forget_loaded(p:&mut Loaded,segment:u16){
+    if let Some(index)=p.load_only.iter().position(|f|f.child==segment){
+        let child=p.load_only.remove(index);
+        if let Some(slot)=child.fetch_slot{p.image.system[slot]=(0,0);}
+    }
 }
 /// INT 21h AH=55h: Create Child PSP at DX with memory size SI (DOS 3.0+).
 /// The child PSP inherits parent's handles, environment, FCBs, and command tail,
