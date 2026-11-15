@@ -86,21 +86,34 @@ class FrontendTests(unittest.TestCase):
     def test_async_job_runner_does_not_block_caller_and_drains_on_poll(self):
         runner = front.AsyncJobRunner()
         gate = threading.Event()
+        submitted = threading.Event()
+        started = threading.Event()
+        accepted = []
         delivered = []
 
         def slow_work():
-            gate.wait(timeout=2.0)
+            started.set()
+            gate.wait()
             return [('FDOS/BIN/MEM.EXE', 47551, 'EXE')]
 
-        t0 = time.monotonic()
-        accepted = runner.submit(slow_work, lambda res, err: delivered.append((res, err)))
-        elapsed = time.monotonic() - t0
-        self.assertTrue(accepted)
-        self.assertLess(elapsed, 0.05)  # returns immediately on UI thread
-        self.assertFalse(runner.submit(lambda: None, lambda r, e: None))  # single active job guard
-        self.assertEqual(runner.drain(), 0)
-        gate.set()
-        deadline = time.monotonic() + 2.0
+        def submit():
+            accepted.append(runner.submit(slow_work, lambda res, err: delivered.append((res, err))))
+            submitted.set()
+
+        caller = threading.Thread(target=submit, daemon=True)
+        caller.start()
+        try:
+            # Submission must finish while the worker is still blocked, regardless
+            # of host scheduling speed. The timeout detects a deadlock only.
+            self.assertTrue(started.wait(5.0))
+            self.assertTrue(submitted.wait(5.0))
+            self.assertEqual(accepted, [True])
+            self.assertFalse(runner.submit(lambda: None, lambda r, e: None))
+            self.assertEqual(runner.drain(), 0)
+        finally:
+            gate.set()
+            caller.join(timeout=5.0)
+        deadline = time.monotonic() + 5.0
         while not delivered and time.monotonic() < deadline:
             runner.drain()
             time.sleep(0.005)
