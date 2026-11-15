@@ -12,7 +12,7 @@ WshShell.CurrentDirectory = dir
 
 engine = WshShell.Environment("PROCESS")("PILDOS_ENGINE")
 If Len(engine) = 0 Then
-    For Each candidate In Array(dir & "\pil.exe", dir & "\target\release\pil.exe", dir & "\target\debug\pil.exe")
+    For Each candidate In Array(dir & "\target\release\pil.exe", dir & "\target\debug\pil.exe", dir & "\pil.exe")
         If Len(engine) = 0 And fso.FileExists(candidate) Then engine = candidate
     Next
 End If

@@ -10,7 +10,7 @@ cd "$(dirname "$0")" || exit 1
 
 engine=${PILDOS_ENGINE:-}
 if [ -z "$engine" ]; then
-    for candidate in ./pil ./target/release/pil ./target/debug/pil; do
+    for candidate in ./target/release/pil ./target/debug/pil ./pil; do
         if [ -x "$candidate" ]; then engine=$candidate; break; fi
     done
 fi
