@@ -1,6 +1,87 @@
 use super::*;
 use crate::{dos, memory::MemWidth};
 
+#[test]
+fn present_80387_fxtract_preserves_exact_significand_and_pushes_exponent(){
+ for (significand,sign_exp,exponent) in [(0x8000000000000000,0x3fff,0),(0xc000000000000001,0xc002,3),(0x8000000000000001,0x0001,-16382),(0xffffffffffffffff,0x7ffe,16383)]{
+  let p=dos::load(&[0xd9,0xf4],"extract.com").unwrap();let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+  let mut fpu=PresentFpu::default();fpu.state.push(Extended80::from_bits(significand,sign_exp)).unwrap();
+  assert_eq!(fpu.execute(&instruction(&[0xd9,0xf4]),&mut cpu,&mut ram,&p.image),Outcome::Completed);
+  assert_eq!(fpu.state.st(0),Some(Extended80::from_bits(significand,(sign_exp&0x8000)|0x3fff)));
+  assert_eq!(fpu.state.st(1),Some(convert::from_i32(exponent)));assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
+ }
+}
+
+#[test]
+fn present_80387_fxtract_overflow_does_not_replace_the_source(){
+ let p=dos::load(&[0xd9,0xf4],"extract-full.com").unwrap();let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();let mut fpu=PresentFpu::default();
+ let one=Extended80::from_bits(1<<63,0x3fff);for _ in 0..8{fpu.state.push(one).unwrap();}
+ let before=fpu.state.clone();assert!(matches!(fpu.execute(&instruction(&[0xd9,0xf4]),&mut cpu,&mut ram,&p.image),Outcome::StackFault(_)));
+ assert_eq!(fpu.state.status,before.status);assert_eq!(fpu.state.tag_word(),before.tag_word());for i in 0..8{assert_eq!(fpu.state.st(i),before.st(i));}
+}
+
+#[test]
+fn present_80387_ftst_sets_comparison_codes_without_popping_or_changing_cpu(){
+ for (value,codes) in [
+  (Extended80::from_bits(1u64<<63,0x3fff),0),
+  (Extended80::from_bits(1u64<<63,0xbfff),0x0100),
+  (Extended80::default(),0x4000),
+  (Extended80::from_bits(0,0x8000),0x4000),
+  (Extended80::from_bits(1u64<<63,0x7fff),0),
+  (Extended80::from_bits(1u64<<63,0xffff),0x0100),
+ ]{
+  let p=dos::load(&[0xd9,0xe4],"zero-test.com").unwrap();
+  let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();let before_cpu=cpu.clone();
+  let mut fpu=PresentFpu::default();fpu.state.push(value).unwrap();fpu.state.status|=0x4700|0x20;
+  let before=fpu.state.clone();
+  assert_eq!(fpu.execute(&instruction(&[0xd9,0xe4]),&mut cpu,&mut ram,&p.image),Outcome::Completed);
+  assert_eq!(fpu.state.status,(before.status&!0x4700)|codes);
+  assert_eq!(fpu.state.st(0),Some(value));assert_eq!(fpu.state.tag_word(),before.tag_word());
+  assert_eq!(cpu,before_cpu);assert_eq!(ram,p.ram);
+ }
+}
+
+#[test]
+fn present_80387_ftst_empty_and_nan_leave_the_stack_and_status_unchanged(){
+ for value in [None,Some(Extended80::from_bits(0xc000000000000001,0x7fff))]{
+  let p=dos::load(&[0xd9,0xe4],"zero-invalid.com").unwrap();let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+  let mut fpu=PresentFpu::default();if let Some(value)=value{fpu.state.push(value).unwrap();}
+  fpu.state.status|=0x4700;let before=fpu.state.clone();
+  let result=fpu.execute(&instruction(&[0xd9,0xe4]),&mut cpu,&mut ram,&p.image);
+  assert_eq!(result,if value.is_some(){Outcome::Unsupported}else{Outcome::StackFault(StackError::Underflow)});
+  assert_eq!(fpu.state.status,before.status);assert_eq!(fpu.state.st(0),before.st(0));assert_eq!(fpu.state.tag_word(),before.tag_word());
+ }
+}
+
+#[test]
+fn present_80387_fbld_exact_digits_sign_zero_and_padding(){
+ for magnitude in [0i64,1,42,123456789012345678,999999999999999999]{
+  for negative in [false,true]{
+   let mut raw=[0u8;10];let mut digits=magnitude;
+   for byte in &mut raw[..9]{*byte=(digits%10)as u8;digits/=10;*byte|=((digits%10)as u8)<<4;digits/=10;}
+   raw[9]=if negative{0xff}else{0x7f};
+   let mut p=dos::load(&[0xdf,0x26,0,2,0xcd,0x20],"decimal.com").unwrap();p.fpu=Fpu::present();
+   let base=p.image.segments[3].base;p.ram.write_bytes(base+0x200,&raw).unwrap();
+   let ram=p.ram.clone();let result=dos::run(p,8).unwrap();
+   assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+   let mut expected=convert::from_i64(magnitude);if negative{expected.sign_exponent|=0x8000;}
+   assert_eq!(result.loaded.fpu.state().unwrap().st(0),Some(expected));assert_eq!(result.loaded.ram,ram);
+  }
+ }
+}
+
+#[test]
+fn present_80387_fbld_invalid_and_cross_segment_read_do_not_push(){
+ for (offset,invalid) in [(0x200u16,true),(0xfff8,false)]{
+  let [lo,hi]=offset.to_le_bytes();let mut p=dos::load(&[0xdf,0x26,lo,hi,0xcd,0x20],"decimal-fault.com").unwrap();
+  p.fpu=Fpu::present();let base=p.image.segments[3].base;
+  if invalid{p.ram.write_bytes(base+u32::from(offset),&[0xfa,0,0,0,0,0,0,0,0,0]).unwrap();}
+  let ram=p.ram.clone();let result=dos::run(p,8).unwrap();
+  assert!(matches!(result.stop,dos::Stop::Fault(_)));assert_eq!(result.completed,0);
+  assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);assert_eq!(result.loaded.ram,ram);
+ }
+}
+
 fn instruction(bytes: &[u8]) -> Instruction {
     decode(|at| bytes.get(at as usize).copied().ok_or(())).unwrap().unwrap()
 }
@@ -275,13 +356,13 @@ fn present_80387_sign_ops_on_empty_stack_do_not_retire() {
 }
 
 #[test]
-fn present_80387_rejects_unimplemented_ftst_without_retiring() {
+fn present_80387_ftst_empty_stack_does_not_retire() {
     let mut p=dos::load(&[0xdb,0xe3,0xd9,0xe4,0xcd,0x20],"x87-ftst-unsupported.com").unwrap();
     p.fpu=Fpu::present();
     let result=dos::run(p,20).unwrap();
     match result.stop {
         dos::Stop::Fault(message)=>{
-            assert!(message.contains("80387 unsupported instruction"),"{message}");
+            assert!(message.contains("stack fault (Underflow)"),"{message}");
             assert!(message.contains("d9 e4"),"{message}");
         },
         other=>panic!("{other:?}"),

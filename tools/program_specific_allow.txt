@@ -1,6 +1,7 @@
 # Allowed program or file names in general files: PATH | TEXT | REASON
 # Checked by tools/check_program_specific.py. Each entry must name an
 # interface or DOS convention, never a guest program's behaviour.
+src/dos_media_launch.rs | "7-Zip/7z.exe" | Host archive-extractor interface for any large disk image; no guest program or per-program engine selection
 src/dos.rs | COMSPEC={drive}:\\COMMAND.COM | DOS convention: COMSPEC names the command shell in every environment block
 src/dos.rs | COMSPEC=A:\\COMMAND.COM | Same COMSPEC string, used to size the environment
 src/dos_services.rs | DOS/4GW | RBIL INT 15h BFxxh: the DOS/16M interface that DOS extenders answer; reported as absent

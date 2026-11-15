@@ -227,9 +227,11 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         },
         (0x10,0x03)=>{
             let page=(p.cpu.regs[3]>>8)&255;
-            if page>=8{return Err("BIOS cursor page must be 0..7".into());}
             let shape=p.ram.load(0x460,MemWidth::Word).map_err(|e|format!("BIOS cursor shape read: {e:?}"))?;
-            let position=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?;
+            // Bounded VGA compatibility policy for out-of-range query pages:
+            // return origin and the current shape, without reading past the
+            // eight-entry BIOS cursor table or changing the supplied page.
+            let position=if page<8{p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?}else{0};
             p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|shape;
             p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|position;
             Ok(None)
