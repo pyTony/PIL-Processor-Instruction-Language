@@ -8,10 +8,9 @@ name: Update open PRs
 # would change a file under .github/workflows (GITHUB_TOKEN may not push
 # those; GitHub refuses the push).
 #
-# Pushes made with GITHUB_TOKEN do not start other workflows, so this does not
-# rerun the Check workflow on every PR. The merged result is tested by Check
-# when the PR is merged into dev (push to dev), or when someone pushes to the
-# branch again.
+# GITHUB_TOKEN pushes do not start other workflows, so after successfully
+# updating a PR branch explicitly dispatch Check for that new revision.
+# Branches with workflow-file conflicts still require a manual merge.
 on:
   push:
     branches: [dev]
@@ -19,6 +18,7 @@ on:
 permissions:
   contents: write
   pull-requests: read
+  actions: write
 concurrency:
   group: update-prs
   cancel-in-progress: false
@@ -38,6 +38,7 @@ jobs:
           # Applies whatever .gitattributes the PR branch has.
           echo "CLAUDE.md merge=union" >> .git/info/attributes
           git fetch -q origin dev
+          dispatch_failures=$(mktemp)
           gh pr list --base dev --state open --limit 100 \
             --json number,headRefName,isCrossRepository \
             --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.headRefName)"' |
@@ -62,6 +63,14 @@ jobs:
                 echo "$workflows"
               elif git push -q origin "HEAD:refs/heads/$branch"; then
                 echo "merged dev and pushed"
+                # GITHUB_TOKEN pushes do not trigger push/pull_request checks.
+                # workflow_dispatch is an allowed exception.
+                if gh workflow run check.yml --ref "$branch"; then
+                  echo "dispatched Check for updated PR #$number ($branch)"
+                else
+                  echo "::error::#$number updated but Check dispatch failed: $branch"
+                  echo "$number $branch" >> "$dispatch_failures"
+                fi
               else
                 echo "::warning::#$number push refused (see the message above); next push to dev retries"
               fi
@@ -72,3 +81,8 @@ jobs:
             fi
             echo "::endgroup::"
           done
+          if [ -s "$dispatch_failures" ]; then
+            echo "::error::Some updated PR revisions did not receive Check:"
+            cat "$dispatch_failures"
+            exit 1
+          fi
