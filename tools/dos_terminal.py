@@ -1603,6 +1603,22 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         root.title(f"PIL DOS — {program} ({reply.get('text', '')})")
         draw(reply)
 
+    def disk_set(letter):
+        from tkinter import filedialog
+        chosen = filedialog.askopenfilename(
+            parent=root, title=f'Open ordered disk set on {letter}:',
+            filetypes=[('Disk-set manifests', '*.lst *.txt'), ('All files', '*.*')])
+        if chosen:
+            command = mount_command(letter, chosen).replace('mount ', 'diskset ', 1)
+            reply = session.send(command)
+            root.title(f"PIL DOS - {reply.get('text', '')}")
+            draw(reply)
+
+    def select_disk(letter, selection=''):
+        reply = session.send(f'disk {letter}' + (f' {selection}' if selection else ''))
+        root.title(f"PIL DOS - {reply.get('text', '')}")
+        draw(reply)
+
     root.bind('<Key>', on_key)
     root.bind('<KeyRelease>', on_release)
     root.bind('<FocusOut>', lost_focus)
@@ -1623,9 +1639,18 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         sub = tk.Menu(drives_menu, tearoff=0)
         sub.add_command(label=f'Mount Floppy / Image (.img/.ima) on {drv}:...', command=lambda d=drv: mount_image(d))
         sub.add_command(label=f'Mount Host Folder on {drv}:...', command=lambda d=drv: mount_folder(d))
+        if drv in ('A', 'B'):
+            sub.add_command(label='Open disk set...', command=lambda d=drv: disk_set(d))
+            sub.add_command(label='Next disk', command=lambda d=drv: select_disk(d, 'next'))
+            sub.add_command(label='Previous disk', command=lambda d=drv: select_disk(d, 'prev'))
+            sub.add_command(label='Current disk', command=lambda d=drv: select_disk(d))
         sub.add_command(label=f'Unmount {drv}:', command=lambda d=drv: unmount_drive(d))
         drives_menu.add_cascade(label=f'Drive {drv}:', menu=sub)
     menu.add_cascade(label='Drives', menu=drives_menu)
+    def host_menu(event):
+        menu.tk_popup(event.x_root, event.y_root)
+        return 'break'
+    root.bind('<Control-Shift-M>', host_menu)
     def right_click(event):
         # Mouse-enabled DOS applications receive the right button. The host
         # popup remains available with Shift+right-click or on the status bar.

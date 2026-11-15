@@ -156,6 +156,22 @@ impl PresentFpu {
                 return self.execute_arithmetic_memory(kind, bytes, instruction, cpu, ram, image),
             Operation::Compare { index, pop } =>
                 return self.compare_register(index, if pop {1}else{0}),
+            Operation::Ftst => {
+                let Some(value)=self.state.st(0) else{return Outcome::StackFault(StackError::Underflow);};
+                return self.commit_compare(value,Extended80::default(),0);
+            },
+            Operation::Fxtract => {
+                let Some(value)=self.state.st(0) else{return Outcome::StackFault(StackError::Underflow);};
+                let exponent=value.sign_exponent&0x7fff;
+                // Zero needs divide-by-zero exception handling; denormals
+                // and exceptional operands remain outside this finite subset.
+                if exponent==0||exponent==0x7fff||value.significand>>63==0{return Outcome::Unsupported;}
+                let significand=Extended80::from_bits(value.significand,(value.sign_exponent&0x8000)|0x3fff);
+                let exponent=convert::from_i32(i32::from(exponent)-16383);
+                let mut next=self.state.clone();next.store(0,exponent);
+                if let Err(e)=next.push(significand){return Outcome::StackFault(e);}
+                next.status&=!0x0200;self.state=next;return Outcome::Completed;
+            },
             Operation::ComparePop2 =>
                 return self.compare_register(1, 2),
             Operation::CompareMemory { bytes, pop } =>
@@ -163,7 +179,7 @@ impl PresentFpu {
             Operation::FldM32 | Operation::FstpM32 |
             Operation::FldM64 | Operation::FstpM64 |
             Operation::FldM80 | Operation::FstpM80 |
-            Operation::FildM16 | Operation::FildM32 | Operation::FildM64 | Operation::FistpM64 | Operation::FbstpM80 =>
+            Operation::FildM16 | Operation::FildM32 | Operation::FildM64 | Operation::FistpM64 | Operation::FbstpM80 | Operation::FbldM80 =>
                 return self.execute_memory(operation,instruction,cpu,ram,image),
         };
         match result {
@@ -420,7 +436,7 @@ impl PresentFpu {
             Operation::FildM16=>2,
             Operation::FldM32|Operation::FstpM32|Operation::FildM32=>4,
             Operation::FldM64|Operation::FstpM64|Operation::FildM64|Operation::FistpM64=>8,
-            Operation::FldM80|Operation::FstpM80|Operation::FbstpM80=>10,
+            Operation::FldM80|Operation::FstpM80|Operation::FbstpM80|Operation::FbldM80=>10,
             _=>return Outcome::Unsupported,
         };
         let Ok((offset,context))=address::resolve(instruction,cpu,image) else {
@@ -452,7 +468,11 @@ impl PresentFpu {
                 let Ok(se)=ram.load(top,MemWidth::Word) else {
                     return Outcome::MemoryFault;
                 };
-                let value=Extended80::from_bits(u64::from(lo)|(u64::from(hi)<<32),se as u16);
+                let value=if operation==Operation::FbldM80{
+                    let mut raw=[0u8;10];raw[..4].copy_from_slice(&lo.to_le_bytes());
+                    raw[4..8].copy_from_slice(&hi.to_le_bytes());raw[8..].copy_from_slice(&(se as u16).to_le_bytes());
+                    let Ok(value)=convert::from_bcd80(raw) else{return Outcome::Unsupported;};value
+                }else{Extended80::from_bits(u64::from(lo)|(u64::from(hi)<<32),se as u16)};
                 if !supported_m80(value){return Outcome::Unsupported;}
                 return match self.state.push(value) {
                     Ok(())=>Outcome::Completed,

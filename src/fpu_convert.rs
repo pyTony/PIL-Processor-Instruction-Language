@@ -53,6 +53,20 @@ pub fn from_i64(value:i64)->Extended80{
     Extended80::from_bits(significand,exp|if negative{0x8000}else{0})
 }
 
+/// Load 18 packed decimal digits exactly. Invalid nibbles stay unsupported;
+/// sign-byte padding is ignored and negative zero is preserved.
+pub fn from_bcd80(bytes:[u8;10])->Result<Extended80,()> {
+    let mut magnitude=0i64;
+    for byte in bytes[..9].iter().rev(){
+        let (high,low)=(byte>>4,byte&15);
+        if high>9||low>9{return Err(());}
+        magnitude=magnitude*100+i64::from(high)*10+i64::from(low);
+    }
+    let mut value=from_i64(magnitude);
+    if bytes[9]&0x80!=0{value.sign_exponent|=0x8000;}
+    Ok(value)
+}
+
 /// Convert a finite normalized x87 value to 18-digit packed BCD (FBSTP).
 pub fn to_bcd80(value:Extended80,control:u16)->Result<([u8;10],bool,bool),()>{
     let rounded=super::math::frndint(value,control).map_err(|_|())?;

@@ -18,6 +18,8 @@ pub enum Operation {
     Fldenv,
     Fchs,
     Fxam,
+    Ftst,
+    Fxtract,
     Frndint,
     Fsin,
     Fcos,
@@ -40,6 +42,7 @@ pub enum Operation {
     FildM64,
     FistpM64,
     FbstpM80,
+    FbldM80,
     Compare { index: u8, pop: bool },
     ComparePop2,
     CompareMemory { bytes: u32, pop: bool },
@@ -67,6 +70,8 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xdf, 0xe0) => Some(Operation::FnstswAx),
             (0xd9, 0xe0) => Some(Operation::Fchs),
             (0xd9, 0xe5) => Some(Operation::Fxam),
+            (0xd9, 0xe4) => Some(Operation::Ftst),
+            (0xd9, 0xf4) => Some(Operation::Fxtract),
             (0xd9, 0xfc) => Some(Operation::Frndint),
             (0xd9, 0xfe) => Some(Operation::Fsin),
             (0xd9, 0xff) => Some(Operation::Fcos),
@@ -110,6 +115,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xdb, 7) => Some(Operation::FstpM80),
             (0xdf, 0) => Some(Operation::FildM16),
             (0xdf, 5) => Some(Operation::FildM64),
+            (0xdf, 4) => Some(Operation::FbldM80),
             (0xdf, 6) => Some(Operation::FbstpM80),
             (0xdf, 7) => Some(Operation::FistpM64),
             (0xd8 | 0xdc, 2) => Some(Operation::CompareMemory { bytes: if opcode == 0xd8 { 4 } else { 8 }, pop: false }),
@@ -218,7 +224,8 @@ mod tests {
         assert_eq!(classify(0xd9,0xfe),Ok(Operation::Fsin));
         assert_eq!(classify(0xd9,0xff),Ok(Operation::Fcos));
         assert_eq!(classify(0xdd,0x3f),Ok(Operation::FnstswM16));
-        for (op,modrm) in [(0xd9,0xe4),(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
+        assert_eq!(classify(0xd9,0xe4),Ok(Operation::Ftst));
+        for (op,modrm) in [(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
         }
     }

@@ -20,6 +20,16 @@ TAIL = bytes([0xb4, 0x40, 0xbb, 0x01, 0x00, 0x32, 0xed, 0x8a, 0x0e, 0x80, 0x00, 
 
 class DosTerminalTests(unittest.TestCase):
 
+    def setUp(self):
+        # Both the frontend and engine must ignore the checkout/user defaults.
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.empty_config = Path(directory.name) / 'empty.conf'
+        self.empty_config.write_text('', encoding='utf-8')
+        environment = patch.dict(term.os.environ, {'PILDOS_CONFIG': str(self.empty_config)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_native_graphics_child_environment(self):
         frames = [dict(protocol=1, seq=0, ok=True, native_graphics=True)]
         def process():
@@ -80,8 +90,11 @@ class DosTerminalTests(unittest.TestCase):
                                             rust_graphics=True)['status'], 'window_closed')
 
     def test_rust_graphics_option_requires_headless(self):
-        with self.assertRaises(SystemExit):
-            term.main(['--rust-graphics', 'program.com'])
+        with patch.object(term.subprocess, 'Popen') as popen:
+            with self.assertRaises(SystemExit) as error:
+                term.main(['--rust-graphics', 'program.com'])
+            self.assertEqual(error.exception.code, 2)
+            popen.assert_not_called()
 
 
     def test_mouse_opt_in_sends_command_before_guest_execution(self):
@@ -342,6 +355,23 @@ class DosTerminalTests(unittest.TestCase):
         self.assertEqual(reply['status'], 'exit')
         self.assertEqual(session.commands[:4], ['clock 7200', 'country 358', 'console com1', 'com1 580d'])
         port.write.assert_called_once_with(b'Hello\r\n')
+
+    def test_main_explicit_config_overrides_environment_and_cli_overrides_values(self):
+        self.empty_config.write_text('headless=true\nshell=true\nfpu=80387\n', encoding='utf-8')
+        explicit = self.empty_config.with_name('explicit.conf')
+        explicit.write_text('headless=true\nshell=false\nfpu=80387\n', encoding='utf-8')
+        with patch.object(term, 'open_com1'), \
+             patch.object(term, 'find_dos_engine', return_value='engine'), \
+             patch.object(term, 'Session') as session, \
+             patch.object(term, 'run_headless', return_value={'status': 'exit'}) as run:
+            term.main(['--config', str(explicit), '--fpu', 'none', 'program.com'])
+            self.assertIsNone(session.call_args[0][3])
+            self.assertEqual(session.call_args.kwargs['fpu'], 'none')
+            self.assertFalse(run.call_args.kwargs['is_shell'])
+            term.main(['program.com'])
+            self.assertEqual(session.call_args[0][3], '/K CTTY COM1')
+            self.assertEqual(session.call_args.kwargs['fpu'], '80387')
+            self.assertTrue(run.call_args.kwargs['is_shell'])
 
     def test_headless_defaults_com1_and_ctty_args(self):
         with patch.object(term, 'open_com1') as mock_open, \

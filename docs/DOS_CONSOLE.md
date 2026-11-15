@@ -117,10 +117,13 @@ coordinates over the picture.
 In the window a left drag selects character cells in reading order, shown
 inverted, and Ctrl+Shift+C copies the selection (the whole screen without
 one) to the Windows clipboard as Unicode text, lines ending in CR LF and
-without trailing blanks. Ctrl+Shift+V, Shift+Insert, or a right-click with
-no selection, types the clipboard: line ends become Enter, characters
-outside code page 437 are left out. A right-click on a selection copies it;
-a key clears it. Plain Ctrl+C and Ctrl+V still reach DOS.
+without trailing blanks. Ctrl+Shift+V or Shift+Insert types the clipboard:
+line ends become Enter, characters outside code page 437 are left out.
+A key clears the selection. Plain Ctrl+C and Ctrl+V still reach DOS.
+Right-click opens the host menu when the guest mouse is inactive;
+Shift+right-click or Ctrl+Shift+M opens it even with a DOS mouse driver.
+The menu includes clipboard commands and drive/media controls; see
+[multi-disk installation media](DOS_INSTALL_MEDIA.md).
 
 While the program has the mouse driver active (it called INT 33h AX=0000h
 with `--mouse`), the mouse belongs to the program; hold Shift to select.
