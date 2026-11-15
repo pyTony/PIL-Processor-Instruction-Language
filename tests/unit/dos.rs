@@ -1984,6 +1984,15 @@ fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
  // /K alone is no command.
  let (stop,text,_)=timeit(b" /k ",1,0);
  assert!(matches!(stop,Stop::Exit(1)),"{stop:?}");assert!(text.starts_with("Runs a command"),"{text}");
+ // /? asks for the help: it lists /K, and the exit code is 0.
+ for tail in [&b" /?"[..],b"/? FACTOR"]{
+  let (stop,text,_)=timeit(tail,1,0);
+  assert!(matches!(stop,Stop::Exit(0)),"{stop:?}");
+  assert!(text.starts_with("Runs a command")&&text.contains("TIMEIT [/K] command [arguments]\r\n")&&text.contains("  /K  ")&&text.contains("  /?  "),"{text}");
+ }
+ // A /? that is part of a word goes to the command.
+ let (stop,text,_)=timeit(b" /?X",1,0);
+ assert!(matches!(stop,Stop::Exit(7)),"{stop:?}");assert!(text.starts_with(" /C /?X"),"{text}");
  // A /K that is part of a word is the command, not the switch.
  let (stop,text,_)=timeit(b" /KX",1,0);
  assert!(matches!(stop,Stop::Exit(7)),"{stop:?}");assert!(text.starts_with(" /C /KX"),"{text}");

@@ -1,3 +1,13 @@
+# TIMEIT /? and full usage — 15 November 2026
+
+Tony's `timeit` on D: printed a usage without /K: driveD\TIMEIT.COM was
+the 2 November build (869 bytes), never refreshed from programs/dos.
+TIMEIT now takes `/?` (help, exit code 0; with no command it is still
+exit code 1), and the help lists /K and /?, COMSPEC /C and the exit
+code. `/?X` still goes to the command, as `/KX` does.
+
+Local Linux, release: the TIMEIT unit test passes (3 new cases). Not
+run on Windows.
 # docs/SHA256SUMS conflicts; workflow-file merges skipped — 15 November 2026
 
 Tony saw #202 conflict in docs/SHA256SUMS (every PR rewrites lines of this

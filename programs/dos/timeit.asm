@@ -1,5 +1,5 @@
 ; TIMEIT.COM - runs a command and prints its start time, end time and the
-; time it took:  TIMEIT [/K] command [arguments]
+; time it took:  TIMEIT [/K] command [arguments]   (TIMEIT /? for help)
 ; /K puts an Enter key in the BIOS keyboard buffer (INT 16h AH=05h) just
 ; before the clock starts, so a program that waits for a key when it has
 ; finished (a graphics demo showing its picture) ends at once and the time
@@ -34,22 +34,25 @@
         dec cx
         jmp .blank
 .none:  jmp usage
-.tail:  cmp cx,2                ; /K (either case), alone or before a blank
+.tail:  cmp cx,2                ; /K or /? (either case), alone or before a blank
         jb .cmdline
         cmp byte [si],'/'
         jne .cmdline
+        cmp cx,2
+        je .switch
+        mov al,[si+2]
+        cmp al,' '
+        je .switch
+        cmp al,9
+        jne .cmdline
+.switch:
         mov al,[si+1]
+        cmp al,'?'
+        je help
         or al,20h
         cmp al,'k'
         jne .cmdline
-        cmp cx,2
-        je .key
-        mov al,[si+2]
-        cmp al,' '
-        je .key
-        cmp al,9
-        jne .cmdline
-.key:   mov byte [auto_key],1
+        mov byte [auto_key],1
         add si,2
         sub cx,2
         jmp .blank
@@ -282,6 +285,11 @@ find_comspec:
 .bad:   stc
         ret
 
+help:   mov dx,msg_usage        ; asked for: exit code 0
+        mov ah,9
+        int 21h
+        mov al,0
+        jmp exit
 usage:  mov dx,msg_usage
         jmp fail
 too_long:
@@ -320,9 +328,15 @@ msg_command db 'Command  $'
 msg_start   db 'Start    $'
 msg_end     db 'End      $'
 msg_elapsed db 'Elapsed  $'
-msg_usage   db 'Runs a command and shows how long it took.',13,10
+msg_usage   db 'Runs a command and shows how long it took.',13,10,13,10
             db 'TIMEIT [/K] command [arguments]',13,10
-            db '  /K  press Enter for the command, so a final key wait is not timed',13,10,'$'
+            db 'TIMEIT /?',13,10,13,10
+            db '  /K  Put Enter in the keyboard buffer first, so a program that',13,10
+            db '      waits for a key at its end finishes without one.',13,10
+            db '  /?  Show this help.',13,10,13,10
+            db 'The command runs through COMSPEC /C, so DIR and batch files work.',13,10
+            db 'Prints the command, start, end and elapsed time; the exit code',13,10
+            db 'is the command',39,'s, for IF ERRORLEVEL.',13,10,'$'
 msg_long    db 'TIMEIT: the command line is too long',13,10,'$'
 msg_memory  db 'TIMEIT: cannot shrink its memory block',13,10,'$'
 msg_comspec db 'TIMEIT: COMSPEC is not set',13,10,'$'
