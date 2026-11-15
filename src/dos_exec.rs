@@ -1,4 +1,4 @@
-//! INT 21 AH4B EXEC (load and execute, AL=00h; load overlay, AL=03h) and returning to the parent
+//! INT 21 AH4B EXEC (load/execute 00h, load-only 01h, overlay 03h) and returning to the parent
 //! when the child terminates, after FreeDOS task.c: the child gets its own
 //! environment and program blocks, a PSP with the parent's handles, command
 //! tail and FCBs, and the parent resumes after its INT 21 with CF=0.
@@ -6,6 +6,14 @@ use super::*;
 /// What the parent needs back when its child ends.
 #[derive(Clone,Debug)]
 pub struct Frame{cpu:Cpu,selectors:[u16;6],pub(super) image:Image,open_handles:u32,dta:(u16,u16),psp:u16}
+/// AL=01h allocates a complete, relocatable child but does not suspend its
+/// caller. Its PSP, memory and optional executable fetch window remain valid
+/// until the child exits or the PSP memory block is explicitly released.
+#[derive(Clone,Debug)]
+pub struct LoadedChild {
+    child:u16,parent:u16,exec_depth:usize,open_handles:u32,dta:(u16,u16),
+    fetch_slot:Option<usize>,
+}
 /// AH=55h installs a PSP without suspending its caller. In particular the
 /// CPU at the AH55 call is NOT the continuation after the child exits.
 /// DOS uses the child PSP's INT22 vector for that return.
@@ -82,18 +90,28 @@ fn overlay(p:&mut Loaded,file:&[u8])->Result<(),String>{
 }
 pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]as u8;
-    if !matches!(al,0|3){return Err(format!("EXEC AL={al:02x}h (load without running) is not modelled"));}
+    if !matches!(al,0|1|3){return Err(format!("EXEC AL={al:02x}h is not modelled"));}
     if al==3{
         let raw=files::asciiz(p,p.cpu.regs[2]&0xffff)?;
         let(file,_)=match files::program(p,&raw)?{Ok(found)=>found,Err(code)=>{fail(p,u32::from(code));return Ok(())}};
         return overlay(p,&file);
     }
-    if p.exec.len()>=MAX_DEPTH{fail(p,8);return Ok(());}
+    if p.exec.len()+p.in_memory.len()+p.load_only.len()>=MAX_DEPTH{fail(p,8);return Ok(());}
     let raw=files::asciiz(p,p.cpu.regs[2]&0xffff)?;
     let(file,path)=match files::program(p,&raw)?{Ok(found)=>found,Err(code)=>{fail(p,u32::from(code));return Ok(())}};
     let Some(program)=parse(&file)else{fail(p,11);return Ok(())};
     let block=u32::from(p.image.selectors[SegmentRegister::Es.index()])*16+(p.cpu.regs[3]&0xffff);
     let ram=&p.ram;
+    // AL=01h writes two far pointers into the caller\'s EXEC parameter block.
+    // Reject a segment-crossing or protected destination before allocating any
+    // child memory. A failed load must not leave an unreturned process behind.
+    if al==1 {
+        if p.cpu.regs[3]&0xffff>0xffea { fail(p,10);return Ok(()); }
+        for i in 0x0e..0x16u32 {
+            p.ram.check_write(block+i,MemWidth::Byte)
+                .map_err(|e|format!("EXEC load-only parameter block: {e:?}"))?;
+        }
+    }
     let env_seg=word(ram,block)?;let tail=far(ram,block+2)?;let fcb1=far(ram,block+6)?;let fcb2=far(ram,block+10)?;
     let parent=u32::from(p.psp)*16;
     // Environment: the given block or the parent's, its strings up to the
@@ -148,12 +166,8 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
         module[at..at+2].copy_from_slice(&value.wrapping_add(load).to_le_bytes());
     }
     p.ram.write_bytes(u32::from(load)*16,&module).map_err(|e|format!("EXEC module: {e:?}"))?;
-    // Save the parent, then enter the child with DS=ES=PSP.
-    let parent_window=(p.image.fetch_base+p.image.start,p.image.fetch_base+p.image.end);
-    p.exec.push(Frame{cpu:p.cpu.clone(),selectors:p.selectors,image:p.image.clone(),open_handles:p.open_handles,dta:p.dta,psp:p.psp});
-    let mut system=p.image.system;
-    if let Some(slot)=system.iter_mut().find(|(s,e)|*s==0&&*e==0){*slot=parent_window;}
-    p.image.system=system;
+    // Both EXEC forms initialize the same entry and stack. Only AL=00h
+    // enters the child immediately; AL=01h returns them to the caller.
     let(cs,ip,ss,sp)=match program.entry{
         Some((cs,ip,ss,sp))=>(load.wrapping_add(cs),ip,load.wrapping_add(ss),sp),
         None=>{
@@ -162,6 +176,48 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
             (child,0x100,child,sp)
         },
     };
+    if al==1 {
+        // DOS 5+ returns offset-first far pointers in the EXEC block:
+        // +0Eh = SP:SS, +12h = IP:CS. The current PSP changes to the new
+        // process; the caller resumes at the next instruction and can use
+        // AH=62h/AH=50h to inspect and restore its former PSP.
+        let mut result=[0u8;8];
+        result[..2].copy_from_slice(&sp.to_le_bytes());
+        result[2..4].copy_from_slice(&ss.to_le_bytes());
+        result[4..6].copy_from_slice(&ip.to_le_bytes());
+        result[6..8].copy_from_slice(&cs.to_le_bytes());
+
+        // The caller must continue fetching its own code, but a debugger
+        // may also fetch instructions from this loaded child's address space.
+        let window=(base,u32::from(end)*16);
+        let covered=(p.image.fetch_base+p.image.start<=window.0
+            && p.image.fetch_base+p.image.end>=window.1)
+            ||p.image.system.iter().any(|&(a,b)|a<=window.0&&b>=window.1&&a<b);
+        let fetch_slot=if covered{None}else{
+            match p.image.system.iter().position(|&(a,b)|a==0&&b==0){
+                Some(slot)=>Some(slot),
+                None=>{
+                    p.arena.release(&mut p.ram,child,None)?;
+                    fail(p,8);
+                    return Ok(());
+                },
+            }
+        };
+        p.ram.write_bytes(block+0x0e,&result)
+            .map_err(|e|format!("EXEC load-only return pointers: {e:?}"))?;
+        if let Some(slot)=fetch_slot{p.image.system[slot]=window;}
+        p.load_only.push(LoadedChild{child,parent:p.psp,exec_depth:p.exec.len(),
+            open_handles:p.open_handles,dta:p.dta,fetch_slot});
+        p.psp=child;p.open_handles=handles;p.dta=(child,0x80);
+        p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+        return Ok(());
+    }
+    // AL=00h suspends the parent and transfers control to the child's entry.
+    let parent_window=(p.image.fetch_base+p.image.start,p.image.fetch_base+p.image.end);
+    p.exec.push(Frame{cpu:p.cpu.clone(),selectors:p.selectors,image:p.image.clone(),open_handles:p.open_handles,dta:p.dta,psp:p.psp});
+    let mut system=p.image.system;
+    if let Some(slot)=system.iter_mut().find(|(s,e)|*s==0&&*e==0){*slot=parent_window;}
+    p.image.system=system;
     let mut selectors=[child;6];selectors[SegmentRegister::Cs.index()]=cs;selectors[SegmentRegister::Ss.index()]=ss;
     p.selectors=selectors;p.image.selectors=selectors;p.image.segments=selectors.map(SegmentCache::real_mode);
     p.image.fetch_base=base;p.image.start=0;p.image.end=u32::from(end)*16-base;
@@ -175,7 +231,9 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
 /// owned, close its files and resume the parent after its INT 21.
 /// Whether termination has a real waiting parent (AH4B or AH55).
 pub(super) fn has_parent(p:&Loaded)->bool{
-    !p.exec.is_empty() || p.in_memory.last().is_some_and(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
+    !p.exec.is_empty()
+        || p.in_memory.last().is_some_and(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
+        || p.load_only.iter().any(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
 }
 /// Dispatch termination by the active PSP and EXEC nesting depth. An AH55
 /// child must never pop the older AH4B frame that launched its parent.
