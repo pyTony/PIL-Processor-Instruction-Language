@@ -2413,7 +2413,8 @@ Usage: pil [OPTIONS] COMMAND [ARGUMENTS]
 
 DOS and ROM:
   --pildos [--tty|--window] [CONFIG]  PILdos setup screen: edit pildos.conf
-      (or CONFIG, or PILDOS_CONFIG) and start its program; F10 starts.
+      (or CONFIG, or PILDOS_CONFIG) and start its program. With a program set
+      it opens on a start page: Enter starts, S opens the setup screen.
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
