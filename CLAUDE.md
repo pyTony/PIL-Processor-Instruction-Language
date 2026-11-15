@@ -1,3 +1,15 @@
+# Update open PRs: workflow-file merges are skipped — 15 November 2026
+
+Tony saw #203 still conflicting in CLAUDE.md after #204 merged. The
+update-prs job had merged dev into it cleanly, but GitHub refused the push:
+the merge brought dev's .github/workflows/check.yml changes, and a
+GITHUB_TOKEN push may not change workflow files (no `workflows` permission).
+The log said "branch moved", which was wrong. The job now checks for
+workflow-file changes first and skips such a branch with a warning that
+names the files; that branch needs a hand merge of dev. Every other push
+failure is shown as a warning. Bot pushes still create pull_request Check
+runs marked "action_required" (awaiting approval); they need no action.
+
 # Protected-mode plan brought up to date — 15 November 2026
 
 Tony asked to keep docs/development/PROTECTED_MODE_PLAN.md current. CPU
