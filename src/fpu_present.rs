@@ -157,6 +157,10 @@ impl PresentFpu {
                 return self.execute_arithmetic(kind, index, pop),
             Operation::MemoryArithmetic { kind, bytes } =>
                 return self.execute_arithmetic_memory(kind, bytes, instruction, cpu, ram, image),
+            Operation::IntegerMemoryArithmetic { kind, bytes } =>
+                return self.execute_integer_arithmetic_memory(kind, bytes, instruction, cpu, ram, image),
+            Operation::IntegerCompareMemory { bytes, pop } =>
+                return self.compare_integer_memory(bytes, pop, instruction, cpu, ram, image),
             Operation::Compare { index, pop } =>
                 return self.compare_register(index, if pop {1}else{0}),
             Operation::Ftst => {
@@ -346,6 +350,57 @@ impl PresentFpu {
         };
         let Ok(rhs) = rhs else { return Outcome::Unsupported; };
         self.commit_arithmetic(kind, lhs, rhs, 0, false)
+    }
+
+    /// Read a signed integer x87 memory operand without changing any CPU,
+    /// coprocessor or RAM state. All integer ESC instructions share segment
+    /// selection, effective-address decoding and protection checks.
+    fn integer_memory_operand(bytes:u32, instruction:&Instruction, cpu:&Cpu,
+                              ram:&Ram, image:&Image) -> Result<Extended80,Outcome> {
+        let width=match bytes {
+            2=>MemWidth::Word,
+            4=>MemWidth::Dword,
+            _=>return Err(Outcome::Unsupported),
+        };
+        let (offset,context)=address::resolve(instruction,cpu,image)
+            .map_err(|_|Outcome::MemoryFault)?;
+        let linear=context.translate_span(u64::from(offset),bytes,false,cpu.eip)
+            .map_err(|_|Outcome::MemoryFault)?;
+        let raw=ram.load(linear,width).map_err(|_|Outcome::MemoryFault)?;
+        let value=if bytes==2 { i32::from(raw as u16 as i16) } else { raw as i32 };
+        // Every m16int/m32int is representable exactly in x87 extended precision.
+        Ok(convert::from_i32(value))
+    }
+
+    /// DA /0,/1,/4-/7 and DE equivalents use the same precision,
+    /// exception-mask and atomic-commit rules as real-memory arithmetic.
+    fn execute_integer_arithmetic_memory(&mut self,kind:Arithmetic,bytes:u32,
+                                         instruction:&Instruction,cpu:&Cpu,
+                                         ram:&Ram,image:&Image)->Outcome {
+        let Some(lhs)=self.state.st(0) else {
+            return Outcome::StackFault(StackError::Underflow);
+        };
+        let rhs=match Self::integer_memory_operand(bytes,instruction,cpu,ram,image){
+            Ok(value)=>value,
+            Err(stop)=>return stop,
+        };
+        self.commit_arithmetic(kind,lhs,rhs,0,false)
+    }
+
+    /// DA/DE /2 and /3 share the ordinary x87 condition codes and only
+    /// FICOMP pops. Failed reads, unordered operands and empty registers
+    /// must not pop or alter the status word.
+    fn compare_integer_memory(&mut self,bytes:u32,pop:bool,
+                              instruction:&Instruction,cpu:&Cpu,
+                              ram:&Ram,image:&Image)->Outcome {
+        let Some(lhs)=self.state.st(0) else {
+            return Outcome::StackFault(StackError::Underflow);
+        };
+        let rhs=match Self::integer_memory_operand(bytes,instruction,cpu,ram,image){
+            Ok(value)=>value,
+            Err(stop)=>return stop,
+        };
+        self.commit_compare(lhs,rhs,u8::from(pop))
     }
 
     /// Atomic retirement shared by register and memory arithmetic. For an
