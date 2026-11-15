@@ -92,9 +92,9 @@ files there, so make the same copy before switching to an old branch.
 ## Desktop shortcut
 
 `python tools/makeshortcut.py` makes a "PIL DOS" shortcut that opens the
-PILdos setup screen (`pil --pildos`, Rust): it edits `pildos.conf` (starting
-from `pildos.conf.example` when there is none yet) and F10 starts the
-configured program, for example FreeCOM with drive D: and `D:\AUTOEXEC.BAT`.
+PILdos (`pil --pildos`, Rust): Enter on its start page starts the configured
+program, and S opens the setup screen that edits `pildos.conf` (starting
+from `pildos.conf.example` when there is none yet; F10 there starts it), for example FreeCOM with drive D: and `D:\AUTOEXEC.BAT`.
 Build first (`cargo build --release --locked`); only the shortcut creator
 itself uses Python.
 
