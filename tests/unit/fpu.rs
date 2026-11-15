@@ -967,3 +967,138 @@ fn at_coprocessor_port_reads_still_stop() {
         assert_eq!(result.completed,0);
     }
 }
+
+#[test]
+fn present_80387_fidiv_m32_reads_cs_override_and_leaves_ds_alone() {
+    // The generic opcode encoding 2E DA /6 disp16 selects CS, not DS.
+    let code=[0x2e,0xda,0x36,0xb0,0x33,0xcd,0x20];
+    let mut p=dos::load(&code,"x87-fi-segment.com").unwrap();
+    p.fpu=Fpu::present();
+    if let Fpu::Present(ref mut backend)=p.fpu {
+        backend.state.push(convert::from_i32(12)).unwrap();
+    }
+    let cs=p.image.segments[1].base;
+    p.image.segments[3].base=cs+0x1000;
+    p.ram.store(cs+0x33b0,MemWidth::Dword,3).unwrap();
+    p.ram.store(cs+0x1000+0x33b0,MemWidth::Dword,9).unwrap();
+    let before=p.ram.clone();
+    let r=dos::run(p,12).unwrap();
+    assert!(matches!(r.stop,dos::Stop::Exit(0)),"{:?}",r.stop);
+    assert_eq!(r.loaded.fpu.state().unwrap().st(0),Some(convert::from_i32(4)));
+    assert_eq!(r.loaded.ram,before,"FIDIV must read the CS integer, not alter memory");
+}
+
+#[test]
+fn present_80387_fi_arithmetic_all_m16_m32_operations_are_signed() {
+    // FIADD, FIMUL, FISUB, FISUBR, FIDIV, FIDIVR.
+    // The reverse division 3/12 is exactly 0.25 in extended precision.
+    for (opcode,bytes) in [(0xdau8,4u32),(0xde,2)] {
+        for (reg,answer) in [(0u8,15i32),(1,36),(4,9),(5,-9),(6,4),(7,0)] {
+            let code=[opcode,(reg<<3)|6,0,2,0xcd,0x20];
+            let mut p=dos::load(&code,"x87-fi-family.com").unwrap();
+            p.fpu=Fpu::present();
+            if let Fpu::Present(ref mut backend)=p.fpu {
+                backend.state.push(convert::from_i32(12)).unwrap();
+            }
+            let base=p.image.segments[3].base;
+            p.ram.store(base+0x200,
+                if bytes==2{MemWidth::Word}else{MemWidth::Dword},3).unwrap();
+            let before=p.ram.clone();
+            let r=dos::run(p,12).unwrap();
+            assert!(matches!(r.stop,dos::Stop::Exit(0)),
+                    "opcode={opcode:02x} /{reg}: {:?}",r.stop);
+            let expected=if reg==7 {
+                Extended80::from_bits(1u64<<63,0x3ffd)
+            }else{
+                convert::from_i32(answer)
+            };
+            assert_eq!(r.loaded.fpu.state().unwrap().st(0),Some(expected),
+                       "opcode={opcode:02x} /{reg}");
+            assert_eq!(r.loaded.ram,before);
+        }
+        // Two's-complement m16/m32 is signed; -3 must not become 65533/2^32-3.
+        let code=[opcode,0x26,0,2,0xcd,0x20]; // FISUB [0200h]
+        let mut p=dos::load(&code,"x87-fi-negative.com").unwrap();
+        p.fpu=Fpu::present();
+        if let Fpu::Present(ref mut backend)=p.fpu {
+            backend.state.push(convert::from_i32(12)).unwrap();
+        }
+        let base=p.image.segments[3].base;
+        p.ram.store(base+0x200,
+            if bytes==2{MemWidth::Word}else{MemWidth::Dword},
+            if bytes==2{0xfffdu32}else{0xfffffffdu32}).unwrap();
+        let r=dos::run(p,12).unwrap();
+        assert!(matches!(r.stop,dos::Stop::Exit(0)),"{:?}",r.stop);
+        assert_eq!(r.loaded.fpu.state().unwrap().st(0),Some(convert::from_i32(15)));
+    }
+}
+
+#[test]
+fn present_80387_ficom_ficomp_integer_memory_status_and_pop() {
+    for (opcode,width) in [(0xdau8,MemWidth::Dword),(0xde,MemWidth::Word)] {
+        for (source,codes) in [(12i32,0x4000u16),(15,0x0100),(-5,0)] {
+            for (reg,pop) in [(2u8,false),(3,true)] {
+                let code=[opcode,(reg<<3)|6,0,2,0xcd,0x20];
+                let mut p=dos::load(&code,"x87-fi-compare.com").unwrap();
+                p.fpu=Fpu::present();
+                if let Fpu::Present(ref mut backend)=p.fpu {
+                    backend.state.push(convert::from_i32(12)).unwrap();
+                }
+                let base=p.image.segments[3].base;
+                p.ram.store(base+0x200,width,source as u32).unwrap();
+                let before=p.ram.clone();
+                let r=dos::run(p,12).unwrap();
+                assert!(matches!(r.stop,dos::Stop::Exit(0)),"{:?}",r.stop);
+                let state=r.loaded.fpu.state().unwrap();
+                assert_eq!(state.status&0x4700,codes);
+                assert_eq!(state.st(0),
+                    if pop{None}else{Some(convert::from_i32(12))});
+                assert_eq!(r.loaded.ram,before);
+            }
+        }
+    }
+}
+
+#[test]
+fn present_80387_fi_memory_fault_and_unmasked_zero_divide_are_atomic() {
+    for opcode in [0xdau8,0xde] {
+        for reg in [3u8,6u8] {
+            let code=[opcode,(reg<<3)|6,0,2,0xcd,0x20];
+            let mut p=dos::load(&code,"x87-fi-fault.com").unwrap();
+            p.fpu=Fpu::present();
+            if let Fpu::Present(ref mut backend)=p.fpu {
+                backend.state.push(convert::from_i32(12)).unwrap();
+            }
+            p.image.segments[3].limit=0x200;
+            let snapshot=p.fpu.state().unwrap().clone();
+            let cpu=p.cpu.clone();let ram=p.ram.clone();
+            let r=dos::run(p,12).unwrap();
+            assert!(matches!(r.stop,dos::Stop::Fault(ref msg)
+                if msg.contains("80387 memory operand")),"{:?}",r.stop);
+            assert_eq!(r.completed,0);
+            assert_eq!(r.loaded.cpu,cpu);
+            assert_eq!(r.loaded.ram,ram);
+            assert_eq!(r.loaded.fpu.state().unwrap(),&snapshot);
+        }
+    }
+    for (opcode,width) in [(0xdau8,MemWidth::Dword),(0xde,MemWidth::Word)] {
+        let code=[opcode,0x36,0,2,0xcd,0x20];
+        let mut p=dos::load(&code,"x87-fi-zero.com").unwrap();
+        p.fpu=Fpu::present();
+        if let Fpu::Present(ref mut backend)=p.fpu {
+            backend.state.push(convert::from_i32(12)).unwrap();
+            backend.state.control &= !0x0004; // ZE unmasked
+        }
+        let base=p.image.segments[3].base;
+        p.ram.store(base+0x200,width,0).unwrap();
+        let snapshot=p.fpu.state().unwrap().clone();
+        let cpu=p.cpu.clone();let ram=p.ram.clone();
+        let r=dos::run(p,12).unwrap();
+        assert!(matches!(r.stop,dos::Stop::Fault(ref msg)
+            if msg.contains("80387 unsupported")),"{:?}",r.stop);
+        assert_eq!(r.completed,0);
+        assert_eq!(r.loaded.cpu,cpu);
+        assert_eq!(r.loaded.ram,ram);
+        assert_eq!(r.loaded.fpu.state().unwrap(),&snapshot);
+    }
+}
