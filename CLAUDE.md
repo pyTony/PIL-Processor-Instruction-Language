@@ -1,3 +1,18 @@
+# PILdos start page: Enter starts DOS — 15 November 2026
+
+Tony found F10 on the setup screen clumsy for every launch. `pil --pildos`
+(PILdos.vbs, PILdos.sh, the desktop shortcut) now opens on a start page
+when pildos.conf exists, passes the parser and names a program: it shows
+the program, command line and drives and the last run's result. Enter (or
+F10) starts the program, S/F2/Tab open the setup screen, Esc quits. On the
+setup screen Esc goes back to the start page (twice with unsaved changes,
+the second dropping them); after a run the start page returns. Without a
+file or a program the setup screen opens as before. pildos.conf unchanged.
+
+Local Linux, release: 7 setup tests pass (1 new). In a pseudo-terminal
+(--tty): start page, Enter ran FACTOR.COM, a key returned to the start
+page, S opened setup, Esc back, Esc quit. Window not run on Windows.
+
 # PC speaker clicks in pil --pildos and --dos-console — 15 November 2026
 
 Tony stopped hearing Landmark's speaker ticks. Not a core regression: Dine
