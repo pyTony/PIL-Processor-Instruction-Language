@@ -630,7 +630,18 @@ fn window_event(input:crate::dine_window::Input)->Option<Event>{
         Input::Char{ch:'\r',shift:true,ctrl:true,alt:false}=>Some(Event::HostMenu),
         Input::Char{ch:'\u{1b}',shift,ctrl,alt}=>Some(Event::Key(Key::Escape,Mods{shift,ctrl,alt})),
         Input::Key{vk:0x2d,shift:true,ctrl:false,alt:false}=>Some(Event::Paste),
-        Input::Char{ch,shift,ctrl,alt}=>Some(Event::Key(Key::Char(ch),Mods{shift,ctrl,alt})),
+        // Win32 delivers these keys via WM_CHAR, not untyped WM_KEYDOWN.
+        // Normalize them for both PILdos setup and guest BIOS keyboard input.
+        Input::Char{ch,shift,ctrl,alt}=>{
+            let key=match ch{
+                '\r'|'\n'=>Key::Enter,
+                '\t'=>Key::Tab,
+                '\u{1b}'=>Key::Escape,
+                '\u{8}'=>Key::Backspace,
+                _=>Key::Char(ch),
+            };
+            Some(Event::Key(key,Mods{shift,ctrl,alt}))
+        },
         Input::Key{vk,shift,ctrl,alt}=>windows_key(vk).map(|k|if k==Event::Break{k}else if let Event::Key(k,_)=k{Event::Key(k,Mods{shift,ctrl,alt})}else{k}),
         Input::Mouse{x,y,width,height,buttons,shift}=>Some(Event::Mouse{x,y,width,height,buttons,shift}),
         Input::Menu{id}=>Some(Event::HostCommand(id)),

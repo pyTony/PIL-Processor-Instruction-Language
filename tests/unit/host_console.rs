@@ -14,6 +14,30 @@ const CTRL:Mods=Mods{shift:false,ctrl:true,alt:false};
 const ALT:Mods=Mods{shift:false,ctrl:false,alt:true};
 const SHIFT:Mods=Mods{shift:true,ctrl:false,alt:false};
 
+#[cfg(windows)]
+#[test]
+fn windows_control_characters_become_native_dos_keys(){
+    use crate::dine_window::Input;
+    for (ch,key,bios) in [
+        ('\r',Key::Enter,0x1c0d),
+        ('\n',Key::Enter,0x1c0d),
+        ('\t',Key::Tab,0x0f09),
+        ('\u{1b}',Key::Escape,0x011b),
+        ('\u{8}',Key::Backspace,0x0e08),
+    ] {
+        let mapped=window_event(Input::Char{ch,shift:false,ctrl:false,alt:false});
+        assert_eq!(mapped,Some(Event::Key(key,NONE)),"char {ch:?}");
+        if let Some(Event::Key(mapped_key,mods))=mapped {
+            assert_eq!(bios_word(mapped_key,mods),Some(bios),"char {ch:?}");
+        }
+    }
+    // Preserve ordinary typed characters and function-key routing.
+    assert_eq!(window_event(Input::Char{ch:'S',shift:true,ctrl:false,alt:false}),
+        Some(Event::Key(Key::Char('S'),SHIFT)));
+    assert_eq!(window_event(Input::Key{vk:0x79,shift:false,ctrl:false,alt:false}),
+        Some(Event::Key(Key::F(10),NONE)));
+}
+
 #[test]
 fn bios_words_follow_the_at_bios_tables(){
     assert_eq!(bios_word(Key::Char('a'),NONE),Some(0x1e61));
