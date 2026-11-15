@@ -33,10 +33,12 @@ COMMAND.COM (it starts with `/K CTTY COM1` and keeps running after Esc), or
 `--headless` alone for any other program (Esc ends the run). The terminal
 never guesses this from the program's name.
 
-Automatic engine discovery chooses the newest standard executable it finds,
-including `target/release/pil` and `target/debug/pil` (`.exe` on Windows).
-It no longer prefers `programs/compiled/pil-engine-v2.exe`. Use `--engine PATH`
-to choose a particular build. Restart a running session to use a rebuilt engine.
+The `PILdos.vbs` and `PILdos.sh` desktop launchers prefer `target/release/pil`,
+then `target/debug/pil`, and only use a root-level `pil` as a fallback (`.exe`
+on Windows). Thus a stale root executable cannot shadow a newly built Cargo
+release. `PILDOS_ENGINE` overrides this order when set. The Python debugger
+and Python/Tk terminal use the most recently modified standard build, or an
+explicit `--engine PATH`. Restart a running session to use a rebuilt engine.
 
 ## Setup screen: `pil --pildos`
 
