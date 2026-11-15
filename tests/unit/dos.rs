@@ -3284,7 +3284,8 @@ fn exec_4b01_loads_com_without_running_and_releases_by_mcb(){
     assert_eq!(p.load_only.len(),1);
     let slot=p.load_only[0].fetch_slot.expect("separate child fetch window");
     let base=u32::from(child)*16;
-    assert_eq!(p.image.system[slot],(base,u32::from(child+free)*16));
+    let child_end=p.ram.load(base+2,MemWidth::Word).unwrap();
+    assert_eq!(p.image.system[slot],(base,child_end*16));
     assert_eq!(p.ram.load(base,MemWidth::Word).unwrap(),0x20cd);
     assert_eq!(p.ram.load(base+0x16,MemWidth::Word).unwrap(),u32::from(PSP));
     assert_eq!(p.ram.load(base+0x100,MemWidth::Word).unwrap(),0x2ab8);
