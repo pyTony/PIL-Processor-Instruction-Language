@@ -177,7 +177,12 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             if let Some(port)=p.com1.as_mut(){port.info=p.cpu.regs[2]as u8|0x80;}
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
-        (0x21,ah @ (0x48|0x49|0x4a))=>{memory_service(p,ah)?;Ok(None)},
+        (0x21,ah @ (0x48|0x49|0x4a))=>{
+            let freed=p.image.selectors[SegmentRegister::Es.index()];
+            memory_service(p,ah)?;
+            if ah==0x49&&p.cpu.eflags&1==0{exec::forget_loaded(p,freed);}
+            Ok(None)
+        },
         (0x21,9)=>{
             let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
             let text=dollar_string(&p.ram,context,p.cpu.regs[2]&0xffff,p.cpu.eip,out.remaining())?;
