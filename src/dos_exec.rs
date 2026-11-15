@@ -12,7 +12,7 @@ pub struct Frame{cpu:Cpu,selectors:[u16;6],pub(super) image:Image,open_handles:u
 #[derive(Clone,Debug)]
 pub struct LoadedChild {
     child:u16,parent:u16,exec_depth:usize,open_handles:u32,dta:(u16,u16),
-    fetch_slot:Option<usize>,
+    pub(super) fetch_slot:Option<usize>,
 }
 /// AH=55h installs a PSP without suspending its caller. In particular the
 /// CPU at the AH55 call is NOT the continuation after the child exits.
