@@ -13,6 +13,7 @@
 //! therefore the program's own: a shell's arrows, command recall and
 //! Ctrl+C work as they would on a PC. Nothing here knows which program runs.
 use super::session::Session;
+pub(crate) use crate::dos_config::HostPointer;
 use super::*;
 use std::sync::mpsc;
 use std::time::{Duration,Instant};
@@ -267,7 +268,9 @@ pub(crate) fn graphics_mode(p:&Loaded)->bool{
 }
 
 /// Options of `pil --dos-console`.
-pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) country:Option<u16>,pub(crate) utc_offset:Option<i64>}
+pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) country:Option<u16>,pub(crate) utc_offset:Option<i64>,
+    /// The host pointer over the window (Windows); the terminal ignores it.
+    pub(crate) host_pointer:HostPointer}
 
 /// Run the session until the program ends, it stops, or the user quits.
 /// Returns the closing line for the host terminal.
@@ -292,6 +295,7 @@ pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String
 pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&mpsc::Receiver<Event>)->Result<String,String>{
     configure(session,options)?;
     front.reset();
+    front.host_pointer=options.host_pointer;
     let result=drive(session,front,rx);
     front.reset();
     result
@@ -378,6 +382,9 @@ pub(crate) struct Front{
     /// was made on.
     selecting:select::Selecting,
     grid:(u32,u32),
+    /// Whether the window hides the host pointer; the setup screen and
+    /// `reset` go back to Show (the screen has no DOS cursor).
+    host_pointer:HostPointer,
 }
 impl Front{
     pub(crate) fn open(window:bool,tx:mpsc::Sender<Event>)->Result<Self,String>{
@@ -388,7 +395,7 @@ impl Front{
         let (window,window_tx)=if window{(Some(WindowFront::new(tx)),None)}else{(None,Some(tx))};
         #[cfg(not(windows))]
         let _=tx;
-        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false,selecting:select::Selecting::default(),grid:(0,0)})
+        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false,selecting:select::Selecting::default(),grid:(0,0),host_pointer:HostPointer::Show})
     }
     pub(crate) fn poll(&mut self,events:&mut Vec<Event>)->Result<(),String>{
         events.splice(0..0,self.held.drain(..));
@@ -399,8 +406,9 @@ impl Front{
     /// Forget what is on the host screen, so the next frame draws it all.
     pub(crate) fn reset(&mut self){
         self.previous=None;self.previous_cursor=None;self.graphics_note=false;self.held.clear();self.selecting.clear();
+        self.host_pointer=HostPointer::Show;
         #[cfg(windows)]
-        if let Some(w)=self.window.as_mut(){w.last=None;}
+        if let Some(w)=self.window.as_mut(){w.last=None;w.window.hide_pointer(false);}
         if let Some(t)=self.tty.as_ref(){let _=t.write("\x1b[0m\x1b[2J");}
     }
     /// Show a text page that is not a DOS session's (the setup screen):
@@ -464,7 +472,10 @@ impl Front{
             let grid=grid(p)?;
             if grid!=self.grid{self.selecting.clear();self.grid=grid;}
             let selection=self.selecting.selection.map(|s|(s,grid.0,grid.1));
-            if let Some(w)=self.window.as_mut(){w.present(session,selection)?;}
+            if let Some(w)=self.window.as_mut(){
+                w.window.hide_pointer(self.host_pointer.hides(p.mouse.view().visible));
+                w.present(session,selection)?;
+            }
         }
         if let Some(t)=self.tty.as_mut(){
             if graphics{
