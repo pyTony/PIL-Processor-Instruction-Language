@@ -14,7 +14,8 @@ impl Logger{
     pub fn record(&mut self,p:&Loaded,status:&str,detail:&str,steps:usize,exceptions:&[ExceptionSite],exception_count:usize){
         if self.path.is_empty(){return;}
         let sites=exceptions.iter().map(|s|format!("{{\"vector\":{},\"detail\":{},{}}}",s.vector,quote(&s.detail),s.diagnostic)).collect::<Vec<_>>().join(",");
-        let body=format!("\"status\":{},\"detail\":{},\"steps\":{steps},\"program\":{},{},\"exception_count\":{exception_count},\"exceptions\":[{sites}]",quote(status),quote(detail),quote(&self.program),diagnostic(p));
+        let recent=if p.history.enabled(){format!(r#","recent_dispatches":{}"#,p.history.json())}else{String::new()};
+        let body=format!("\"status\":{},\"detail\":{},\"steps\":{steps},\"program\":{},{},\"exception_count\":{exception_count},\"exceptions\":[{sites}]{recent}",quote(status),quote(detail),quote(&self.program),diagnostic(p));
         if self.last.as_ref()==Some(&body){return;}
         self.last=Some(body.clone());
         let time=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
