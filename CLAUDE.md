@@ -1,3 +1,14 @@
+# TIMEIT /? and full usage — 15 November 2026
+
+Tony's `timeit` on D: printed a usage without /K: driveD\TIMEIT.COM was
+the 2 November build (869 bytes), never refreshed from programs/dos.
+TIMEIT now takes `/?` (help, exit code 0; with no command it is still
+exit code 1), and the help lists /K and /?, COMSPEC /C and the exit
+code. `/?X` still goes to the command, as `/KX` does.
+
+Local Linux, release: the TIMEIT unit test passes (3 new cases). Not
+run on Windows.
+
 # Fewer merge conflicts between PRs — 15 November 2026
 
 Tony: every merge left the other open PRs conflicting, always in CLAUDE.md
