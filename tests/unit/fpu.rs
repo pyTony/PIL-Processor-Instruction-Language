@@ -134,6 +134,46 @@ fn fpu_backend_survives_session_slices_and_reports_absence_in_bios() {
 
 
 #[test]
+fn present_80387_legacy_control_nops_preserve_exact_machine_state() {
+    // Intel 80387: FENI (DB E0), FDISI (DB E1), FSETPM (DB E4)
+    // are all FNOP. They must not secretly FNINIT, FNCLEX, or pop ST(0).
+    let (image,mut ram)=Image::load(&[0x90]).unwrap();
+    let mut cpu=Cpu::default();
+    cpu.regs=[0xa55a_3cc3;8];
+    cpu.eflags=0x0000_0ad7;
+    let mut fpu=PresentFpu::default();
+    fpu.state.push(Extended80::from_bits(0x8000_0000_0000_0000,0xbfff)).unwrap();
+    fpu.state.control=0x027f;
+    fpu.state.status|=0x0220;
+    let state_before=fpu.state.clone();
+    let cpu_before=cpu.clone();
+    let ram_before=ram.clone();
+    for modrm in [0xe0,0xe1,0xe4] {
+        assert_eq!(fpu.execute(&instruction(&[0xdb,modrm]),&mut cpu,&mut ram,&image),
+                   Outcome::Completed);
+        assert_eq!(fpu.state,state_before);
+        assert_eq!(cpu,cpu_before);
+        assert_eq!(ram,ram_before);
+    }
+}
+
+#[test]
+fn present_80387_fnsetpm_with_empty_stack_runs_dos_program() {
+    // Regression for a protected-mode runtime probe that executes DB E4
+    // before loading any x87 registers. The 80387 state stays initialized.
+    let code=[0xdb,0xe4,0xdb,0xe0,0xdb,0xe1,0xcd,0x20];
+    let mut p=dos::load(&code,"x87-legacy-nops.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,12).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)), "{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.top(),0);
+    assert_eq!(state.tag_word(),0xffff);
+    assert_eq!(state.control,0x037f);
+    assert_eq!(state.status,0);
+}
+
+#[test]
 fn present_80387_executes_register_stack_com_program() {
     // FNINIT; FLD1; FLDZ; FXCH ST(1); FSTP ST(1); FNSTSW AX; INT 20h.
     let bytes=[0xdb,0xe3, 0xd9,0xe8, 0xd9,0xee, 0xd9,0xc9,
