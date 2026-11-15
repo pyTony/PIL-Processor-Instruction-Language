@@ -8,7 +8,7 @@ fn parses_drives_country_and_rejects_ambiguous_entries(){
     assert_eq!(c.program,Some(format!("{}::COMMAND.COM",Path::new("base").join("images/FD14LITE.img").display())));
     assert_eq!(c.args.as_deref(),Some("/K D:\\AUTOEXEC.BAT"));
     assert_eq!(c.drives,vec![(b'C',PathBuf::from("base/images/FD14LITE.img")),(b'D',PathBuf::from("base/drive D"))]);
-    for text in ["C=one\nc=two", "Z=ram", "country=999", "country=1\ncountry=358", "C=", "other=x", "headless=maybe", "fpu=8087", "#@program=a\n#@program=b", "#@args=a\n#@args=b"]{
+    for text in ["C=one\nc=two", "Z=ram", "country=999", "country=1\ncountry=358", "C=", "other=x", "headless=maybe", "fpu=8087", "#@program=a\n#@program=b", "#@args=a\n#@args=b", "own_programs=Z", "own_programs=DD", "own_programs=D\nown_programs=none"]{
         assert!(parse(text,Path::new("base")).is_err(),"{text}");
     }
 }
@@ -33,6 +33,35 @@ fn config_mounts_selects_c_and_updates_the_startup_environment(){
     assert!(z.ram.bytes()[ze..ze+100].windows(9).any(|v|v==b"TEMP=Z:\\\0"));
     let mut q=dos::load(&dos::hello("com").unwrap(),"HELLO.COM").unwrap();
     apply(&mut q,path.to_str(),Some(b'C')).unwrap();assert_eq!(q.drive.letter(),b'A');
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn starts_update_the_own_programs_drive_from_programs_dos(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let root=std::env::temp_dir().join(format!("pil-own-config-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let source=root.join("programs").join("dos");
+    std::fs::create_dir_all(&source).unwrap();std::fs::create_dir(root.join("ddrive")).unwrap();std::fs::create_dir(root.join("edrive")).unwrap();
+    std::fs::write(source.join("DEMO.COM"),b"demo").unwrap();
+    assert_eq!(parse("own_programs=e:",&root).unwrap().own_programs,Some(Some(b'E')));
+    assert_eq!(parse("own-programs=None",&root).unwrap().own_programs,Some(None));
+    let path=root.join("pildos.conf");
+    // Off: nothing is copied.
+    std::fs::write(&path,"D=ddrive\nown_programs=none\n").unwrap();
+    assert_eq!(refresh_own_programs(path.to_str()).unwrap(),None);
+    assert!(!root.join("ddrive/DEMO.COM").exists());
+    // Another drive, then the default D: as a session start does it.
+    std::fs::write(&path,"D=ddrive\nE=edrive\nown_programs=E\n").unwrap();
+    assert_eq!(refresh_own_programs(path.to_str()).unwrap().as_deref(),Some("E: from programs/dos: added DEMO.COM."));
+    assert!(!root.join("ddrive/DEMO.COM").exists());
+    std::fs::write(&path,"D=ddrive\n").unwrap();
+    let mut p=dos::load(&dos::hello("com").unwrap(),"HELLO.COM").unwrap();
+    apply(&mut p,path.to_str(),None).unwrap();
+    assert_eq!(std::fs::read(root.join("ddrive/DEMO.COM")).unwrap(),b"demo");
+    // A legacy --mount for D: replaces the configured folder: left alone.
+    std::fs::remove_file(root.join("ddrive/DEMO.COM")).unwrap();
+    let mut q=dos::load(&dos::hello("com").unwrap(),"HELLO.COM").unwrap();
+    apply(&mut q,path.to_str(),Some(b'D')).unwrap();
+    assert!(!root.join("ddrive/DEMO.COM").exists());
     std::fs::remove_dir_all(root).unwrap();
 }
 #[cfg(windows)]
