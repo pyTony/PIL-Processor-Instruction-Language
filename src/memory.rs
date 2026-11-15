@@ -33,24 +33,31 @@ impl AccessFault {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Paging {pub directory:u32,pub user:bool}
 
-// Host cache metadata, never guest write protection. A page is trusted until
-// its first write after being watched, then permanently uses byte validation.
+// Host cache metadata, never guest write protection. Every write to RAM
+// counts in its 64-byte line; a stamp holds the sum of the counts over the
+// lines its code covers, so code stays trusted until a write lands in one of
+// those lines, however close other writes come (data next to code, as small
+// programs keep it). After such a write the owner compares bytes, and may
+// take a new stamp once they match.
+pub(crate) const CODE_LINE:usize=64;
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct CodeStamp {owner:u64,address:u32,bytes:usize,a20:bool}
-struct CodeWatch {owner:u64,pages:Vec<std::cell::Cell<u8>>}
+pub(crate) struct CodeStamp {owner:u64,address:u32,bytes:usize,a20:bool,writes:u64}
+struct CodeWatch {owner:u64,lines:Vec<std::cell::Cell<u64>>}
 impl CodeWatch {
     fn new(bytes:usize)->Self{
         static NEXT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
-        Self{owner:NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed),pages:(0..bytes.div_ceil(4096)).map(|_|std::cell::Cell::new(0)).collect()}
+        Self{owner:NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed),lines:(0..bytes.div_ceil(CODE_LINE)).map(|_|std::cell::Cell::new(0)).collect()}
     }
+    #[inline]
     fn write(&self,start:usize,bytes:usize){
         if bytes==0{return;}
-        for page in start/4096..=(start+bytes-1)/4096 {
-            if let Some(state)=self.pages.get(page){if state.get()==1{state.set(2);}}
+        for line in start/CODE_LINE..=(start+bytes-1)/CODE_LINE {
+            if let Some(count)=self.lines.get(line){count.set(count.get()+1);}
         }
     }
+    fn writes(&self,lines:std::ops::RangeInclusive<usize>)->u64{lines.map(|i|self.lines[i].get()).sum()}
 }
-impl Clone for CodeWatch {fn clone(&self)->Self{let mut copy=Self::new(0);copy.pages=self.pages.clone();copy}}
+impl Clone for CodeWatch {fn clone(&self)->Self{let mut copy=Self::new(0);copy.lines=self.lines.clone();copy}}
 // Cache bookkeeping is not architectural RAM state.
 impl PartialEq for CodeWatch {fn eq(&self,_:&Self)->bool{true}}
 impl Eq for CodeWatch {}
@@ -82,17 +89,18 @@ impl Ram {
         self.contiguous_slice(address,bytes)?;
         let start=self.physical_address(address)as usize;let end=start+bytes;
         if self.planar.is_some()&&start<0xb0000&&end>0xa0000{return None;}
-        Some(start/4096..=(end-1)/4096)
+        Some(start/CODE_LINE..=(end-1)/CODE_LINE)
     }
+    /// A stamp for code at `address`: valid until a write reaches one of
+    /// its lines (or A20 or the RAM object changes). The caller must have
+    /// read the bytes it trusts after the last such write.
     pub(crate) fn watch_code(&self,address:u32,bytes:usize)->Option<CodeStamp>{
-        let pages=self.code_pages(address,bytes)?;
-        if pages.clone().any(|i|self.code_watch.pages[i].get()==2){return None;}
-        for i in pages{self.code_watch.pages[i].set(1);}
-        Some(CodeStamp{owner:self.code_watch.owner,address,bytes,a20:self.a20_enabled})
+        let lines=self.code_pages(address,bytes)?;
+        Some(CodeStamp{owner:self.code_watch.owner,address,bytes,a20:self.a20_enabled,writes:self.code_watch.writes(lines)})
     }
     pub(crate) fn code_unchanged(&self,stamp:CodeStamp,address:u32,bytes:usize)->bool{
         stamp.owner==self.code_watch.owner&&stamp.address==address&&stamp.bytes==bytes&&stamp.a20==self.a20_enabled&&
-            self.code_pages(address,bytes).is_some_and(|mut pages|pages.all(|i|self.code_watch.pages[i].get()==1))
+            self.code_pages(address,bytes).is_some_and(|lines|self.code_watch.writes(lines)==stamp.writes)
     }
     /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
     /// modelled: every access walks the tables as they are in memory.

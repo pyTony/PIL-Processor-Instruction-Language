@@ -13,6 +13,27 @@ Tony: every merge left the other open PRs conflicting, always in CLAUDE.md
 - Sessions working on a PR branch: fetch before pushing, the workflow may
   have added a merge commit.
 
+# Block chains through CALL/RET; code stamps per 64-byte line — 14 November 2026
+
+Tony asked whether a subroutine could become one block (MANDCGA averaged
+3.8 instructions per native block, and the DOS loop ran between every
+block). src/block_compiler/engine.rs: a block ending in a near jump, Jcc,
+LOOP, CALL, RET or store now goes straight on to the block at the new
+CS:IP, each with its own entry guard (no return-address prediction: RET
+finds whatever block is at its target), until the budget (timer check
+every 256 steps), a context change (segments, CRn, tables, TSS, shadows,
+flag checkpoint, IF/TF/IOPL/NT/VM) or a fault. Links to the last two
+successors skip the lookup and segment/window comparison, never the code
+check. The DOS loop chains only with no scan code or mouse event pending.
+src/memory.rs CodeWatch counts writes per 64-byte line (was: a 4 KB page
+dirty for good), and the decode cache and blocks take a new stamp after a
+matching byte compare. Session snapshots gain native_block_runs.
+
+Local Linux, release: 852 Rust tests pass, 2 ignored (3 new in
+tests/unit/precompiled.rs; the cache stamp test rewritten for lines).
+Full sessions to the key wait, 3 runs each against dev 3919bd8: MANDCGA
+about 2.0 s -> 0.9 s, MANDVGA 2.7 s -> 1.5 s; instructions per return to
+the DOS loop 3.8 -> 256 (MANDCGA). Not run on Windows.
 # Release build warnings — 14 November 2026
 
 Tony saw a mass of warnings from `cargo build --release --locked`. Not stale
