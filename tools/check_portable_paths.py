@@ -7,7 +7,9 @@ OS paths and synthetic path-validation fixtures are not personal locations.
 Review other host-path examples for relative/configurable paths as well.
 """
 import argparse
+import hashlib
 import html
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -64,13 +66,51 @@ def self_test():
     print("check_portable_paths self-test passed")
 
 
-def check():
-    names = subprocess.check_output(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT
-    ).decode("utf-8").split("\0")
+def git_lines(*args):
+    return subprocess.check_output(["git", *args], cwd=ROOT).decode("utf-8").split("\0")
+
+
+def stamp_path():
+    git_dir = subprocess.check_output(["git", "rev-parse", "--git-dir"], cwd=ROOT).decode("utf-8").strip()
+    path = Path(git_dir)
+    return path if path.is_absolute() else ROOT / path
+
+
+def script_digest():
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def files_to_check(full=False):
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode("utf-8").strip()
+    digest = script_digest()
+    stamp_file = stamp_path() / "portable_paths_checked"
+    if not full and stamp_file.is_file():
+        try:
+            stamp = json.loads(stamp_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            stamp = None
+        if isinstance(stamp, dict) and stamp.get("script_sha256") == digest:
+            base = stamp.get("head", "")
+            valid_base = bool(base) and subprocess.run(
+                ["git", "cat-file", "-e", f"{base}^{{commit}}"],
+                cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode == 0
+            if valid_base:
+                names = set()
+                if base != head:
+                    names.update(git_lines("diff", "--name-only", "-z", base, head))
+                names.update(git_lines("diff", "--name-only", "-z", "HEAD"))
+                names.update(git_lines("ls-files", "-z", "--others", "--exclude-standard"))
+                return sorted(filter(None, names)), "incremental", head, digest, stamp_file
+    names = git_lines("ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    return sorted(set(filter(None, names))), "full", head, digest, stamp_file
+
+
+def check(full=False):
+    names, mode, head, digest, stamp_file = files_to_check(full=full)
     failures = []
     checked = 0
-    for name in sorted(set(filter(None, names))):
+    for name in names:
         path = ROOT / name
         if not path.is_file() or path.is_symlink():
             continue
@@ -89,13 +129,15 @@ def check():
     if failures:
         print("\n".join(failures))
         raise SystemExit("Replace personal/checkout paths with relative paths or runtime configuration.")
-    print(f"No machine-specific home/checkout paths in {checked} project text files (including documentation).")
+    stamp_file.write_text(json.dumps({"head": head, "script_sha256": digest}) + "\n", encoding="utf-8")
+    print(f"No machine-specific home/checkout paths in {checked} {mode} project text files (including documentation).")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--full", action="store_true", help="Scan all tracked and untracked non-ignored files.")
     args = parser.parse_args()
     if args.self_test:
         self_test()
-    check()
+    check(full=args.full)
