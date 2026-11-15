@@ -101,7 +101,8 @@ mod windows {
     static MOUSE_EVENTS:OnceLock<Mutex<VecDeque<(u16,u16,u16)>>>=OnceLock::new();
     static MOUSE_MAX_X:AtomicU16=AtomicU16::new(639);
     static MOUSE_MAX_Y:AtomicU16=AtomicU16::new(199);
-    static MOUSE_VISIBLE:AtomicBool=AtomicBool::new(false);
+    /// Hide the host pointer over the client area (the guest draws its own).
+    static HIDE_POINTER:AtomicBool=AtomicBool::new(false);
     static WINDOW:AtomicIsize=AtomicIsize::new(0);
     static CLOSED:AtomicBool=AtomicBool::new(false);
     static PAINT_REPORTED:AtomicBool=AtomicBool::new(false);
@@ -361,7 +362,7 @@ mod windows {
             },
             WM_SETCURSOR=>{
                 if (l as usize&0xffff)==1 {
-                    let cursor=if MOUSE_VISIBLE.load(Ordering::Acquire){ptr::null_mut()}else{LoadCursorW(ptr::null_mut(),32512)};
+                    let cursor=if HIDE_POINTER.load(Ordering::Acquire){ptr::null_mut()}else{LoadCursorW(ptr::null_mut(),32512)};
                     SetCursor(cursor);
                     1
                 } else {
@@ -492,8 +493,11 @@ mod windows {
         pub(crate) fn set_mouse_state(&self,max_x:u16,max_y:u16,visible:bool){
             MOUSE_MAX_X.store(max_x,Ordering::Relaxed);
             MOUSE_MAX_Y.store(max_y,Ordering::Relaxed);
-            MOUSE_VISIBLE.store(visible,Ordering::Release);
+            HIDE_POINTER.store(visible,Ordering::Release);
         }
+        /// Hide the host pointer over the client area, or show the arrow
+        /// again. Takes effect at the pointer's next move over the window.
+        pub(crate) fn hide_pointer(&self,hidden:bool){HIDE_POINTER.store(hidden,Ordering::Release);}
         pub(crate) fn drain_mouse_events(&self)->Vec<(u16,u16,u16)>{
             let Some(queue)=MOUSE_EVENTS.get() else {return Vec::new();};
             queue.lock().map_or_else(|_|Vec::new(),|mut guard|guard.drain(..).collect())

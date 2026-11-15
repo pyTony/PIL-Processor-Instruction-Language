@@ -1,3 +1,22 @@
+# Host pointer over the Dine window — 14 November 2026
+
+Tony saw two arrows over LINES.EXE in the console window: the DOS mouse
+cursor (bigger) and the Windows pointer. The console window never hid the
+host arrow (only the old separate graphics window did). New setting
+`host_pointer=auto|show|hide` in pildos.conf, `--host-pointer` for
+`pil --dos-console`, and a "Host pointer" field on the `pil --pildos`
+screen (title and file now share the top row so 19 fields fit).
+- auto (default): hidden over the window while the INT 33h cursor is shown
+  (driver view `visible`); show: never hidden; hide: always hidden. The
+  change takes effect at the pointer's next move (WM_SETCURSOR).
+- The setup screen and the end of a program show the arrow again. The
+  Python terminal ignores the key, as it ignores other unknown keys.
+
+Local Linux, release: 852 Rust tests pass, 2 ignored (4 new: config
+parsing, setup field cycling, --host-pointer refusal; 1 render test
+updated). Windows code type-checks for x86_64-pc-windows-gnu; the window
+was not run on Windows.
+
 # MANDVGA computes every pixel of 640x480 — 14 November 2026
 
 Tony: "Now that VGA is so fast, maybe we should push it to full vga."

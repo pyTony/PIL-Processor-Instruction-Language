@@ -4,12 +4,37 @@ use std::path::{Path,PathBuf};
 
 #[derive(Debug,Default)]
 struct Config{drives:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,
-    fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>}
+    fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>,host_pointer:Option<HostPointer>}
+
+/// Whether the console window shows the host's own mouse pointer over the
+/// picture (`host_pointer` in the configuration, `--host-pointer`).
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub(crate) enum HostPointer{
+    /// Hidden while the program's INT 33h driver shows its cursor, so only
+    /// one arrow is seen; shown otherwise.
+    #[default]
+    Auto,
+    /// Always shown, for programs that draw their own pointer without the
+    /// driver's cursor, or when the host arrow is easier to follow.
+    Show,
+    /// Always hidden over the window's picture.
+    Hide,
+}
+impl HostPointer{
+    pub(crate) fn parse(text:&str)->Option<Self>{
+        match text.trim().to_ascii_lowercase().as_str(){"auto"=>Some(Self::Auto),"show"=>Some(Self::Show),"hide"=>Some(Self::Hide),_=>None}
+    }
+    /// Whether to hide the host pointer, given whether the driver's cursor
+    /// is on screen.
+    pub(crate) fn hides(self,guest_cursor_visible:bool)->bool{
+        match self{Self::Auto=>guest_cursor_visible,Self::Show=>false,Self::Hide=>true}
+    }
+}
 
 /// The settings `pil --dos-console` takes from a configuration besides the
 /// drives and country (which `apply` loads into the machine).
 #[derive(Debug,Default,PartialEq,Eq)]
-pub(crate) struct ConsoleSettings{pub(crate) fpu:Option<bool>,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) utc_offset:Option<i64>}
+pub(crate) struct ConsoleSettings{pub(crate) fpu:Option<bool>,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) utc_offset:Option<i64>,pub(crate) host_pointer:Option<HostPointer>}
 
 /// A UTC offset as the frontends write it: hours ("2", "-5", "5.5") or
 /// "+HH:MM", in seconds; -12:00..+14:00.
@@ -87,6 +112,11 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
                 config.utc_offset=Some(parse_offset(value).map_err(|e|format!("{e} on config line {}",i+1))?);
                 continue;
             },
+            "host_pointer"=>{
+                once(config.host_pointer.is_some())?;
+                config.host_pointer=Some(HostPointer::parse(value).ok_or_else(||format!("host_pointer must be auto, show or hide on config line {}",i+1))?);
+                continue;
+            },
             "speaker_volume"=>{
                 if !value.parse::<u8>().is_ok_and(|v|v<=100){return Err(format!("speaker volume must be 0..100 on config line {}",i+1));}
                 continue;
@@ -134,10 +164,10 @@ pub(crate) fn startup_optional(explicit:Option<&str>)->Result<Option<(String,Opt
     let Some(config)=load(explicit)? else{return Ok(None)};
     Ok(config.program.map(|p|(p,config.args)))
 }
-/// FPU, mouse, ANSI driver and clock offset for `pil --dos-console`.
+/// FPU, mouse, ANSI driver, clock offset and host pointer for `pil --dos-console`.
 pub(crate) fn console_settings(explicit:Option<&str>)->Result<ConsoleSettings,String>{
     let Some(config)=load(explicit)? else{return Ok(ConsoleSettings::default())};
-    Ok(ConsoleSettings{fpu:config.fpu,mouse:config.mouse==Some(true),ansi:config.ansi==Some(true),utc_offset:config.utc_offset})
+    Ok(ConsoleSettings{fpu:config.fpu,mouse:config.mouse==Some(true),ansi:config.ansi==Some(true),utc_offset:config.utc_offset,host_pointer:config.host_pointer})
 }
 pub(crate) fn apply(p:&mut Loaded,explicit:Option<&str>,skip:Option<u8>)->Result<(),String>{
     let Some(config)=load(explicit)? else{return Ok(())};
