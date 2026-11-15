@@ -2,7 +2,9 @@ name: Update open PRs
 # After every push to dev (a merged PR), merge dev into each open PR branch
 # that targets dev, so the PRs stay mergeable. CLAUDE.md merges with the
 # union driver (both new notes are kept). A branch with any other conflict is
-# left as it is and listed in the log, and so is a branch where the merge
+# left as it is and listed in the log; docs/SHA256SUMS (a list of every
+# tracked file's hash) is regenerated from the merged tree when it is the
+# only other conflict. Also left alone and logged is a branch where the merge
 # would change a file under .github/workflows (GITHUB_TOKEN may not push
 # those; GitHub refuses the push).
 #
@@ -47,7 +49,11 @@ jobs:
             git checkout -q -B update FETCH_HEAD
             if git merge-base --is-ancestor origin/dev HEAD; then
               echo "already up to date"
-            elif git merge -q --no-edit -m "Merge dev into $branch" origin/dev; then
+            elif git merge -q --no-edit -m "Merge dev into $branch" origin/dev \
+                || { [ "$(git diff --name-only --diff-filter=U)" = "docs/SHA256SUMS" ] \
+                     && python3 tools/update_sha256sums.py \
+                     && git add docs/SHA256SUMS \
+                     && git commit -q --no-edit; }; then
               # GitHub refuses a GITHUB_TOKEN push that changes a workflow
               # file, so such a merge has to be done by hand (or by a session).
               workflows=$(git diff --name-only FETCH_HEAD HEAD -- .github/workflows)

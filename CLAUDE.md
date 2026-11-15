@@ -1,4 +1,13 @@
-# Update open PRs: workflow-file merges are skipped — 15 November 2026
+# docs/SHA256SUMS conflicts; workflow-file merges skipped — 15 November 2026
+
+Tony saw #202 conflict in docs/SHA256SUMS (every PR rewrites lines of this
+whole-tree hash list, so any two PRs clash there, as with CLAUDE.md).
+- tools/update_sha256sums.py rewrites docs/SHA256SUMS from `git ls-files`
+  (same format as before; `--check` only reports). It was 30 files out of
+  date on dev; regenerated here.
+- update-prs.yml: when docs/SHA256SUMS is the only conflict besides the
+  union-merged CLAUDE.md, the job regenerates it on the merged tree and
+  commits the merge. After a local merge: `python tools/update_sha256sums.py`.
 
 Tony saw #203 still conflicting in CLAUDE.md after #204 merged. The
 update-prs job had merged dev into it cleanly, but GitHub refused the push:

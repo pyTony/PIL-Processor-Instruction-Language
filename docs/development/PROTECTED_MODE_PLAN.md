@@ -273,9 +273,9 @@ Conventions for each PR:
   Windows reserved device names (CON, NUL, COM1, ...) in branch names.
 - Each delivery adds a top entry to CLAUDE.md and
   docs/development/STATUS.md, updates this plan and docs/LANGUAGE.md for
-  new tokens, then regenerates docs/SHA256SUMS: after `git add -A`, hash
-  every file in `git ls-files` except docs/SHA256SUMS itself, sorted, one
-  line `"{sha256}  {path}"` each.
+  new tokens, then regenerates docs/SHA256SUMS after `git add -A` with
+  `python tools/update_sha256sums.py` (every file in `git ls-files` except
+  docs/SHA256SUMS itself, sorted, one line `"{sha256}  {path}"` each).
 - test386 (GPL), FD14LITE.img and third-party programs stay out of the
   repository.
 
