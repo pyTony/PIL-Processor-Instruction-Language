@@ -7,6 +7,21 @@ increments 1-8 are marked done with their PRs (#104 ... #175, follow-ups
 (XMS) is not started. The handoff lists the recorded protected-mode program
 runs (Doom, 3DBench, Tony's dosbench 3D benchmark, Quake) and the remaining
 gaps. Documentation only; nothing was rerun.
+# Documentation-only changes skip the Rust CI — 15 November 2026
+
+Tony agreed that a PR or push to dev changing only Markdown should not
+run the full Windows and Linux build and tests.
+- .github/workflows/check.yml: a new `changes` job (Linux) diffs the PR
+  from its merge base to its head (the whole PR, not the last push), or a
+  push from `before` to the new commit. When every changed file ends in
+  .md, the `rust` matrix is skipped; otherwise, or when the range cannot
+  be diffed (new branch, rewritten history), everything runs as before.
+- The `changes` job always runs the checks that read documentation:
+  check_portable_paths, check_program_specific and export_runtime without
+  --verify (the runtime tree's Markdown links), about 5 s together.
+- dev has no branch protection or rulesets, so no check is required; a
+  job skipped by `if` reports success anyway. update-prs.yml is unchanged:
+  its pushes start no workflows, as before.
 
 # Fewer merge conflicts between PRs — 15 November 2026
 

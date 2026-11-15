@@ -1799,7 +1799,8 @@ fn host_clock_gives_the_local_date_and_time_of_day(){
  // AH2C: hours and minutes of the local time of day (within a minute of now).
  p.cpu.regs[0]=0x2c00;service(&mut p,0x21,&mut vec![]).unwrap();
  let got=((p.cpu.regs[1]>>8)&255)*60+(p.cpu.regs[1]&255);let want=(now%86400/60)as u32;
- assert!(got==want||(got+1)%1440==want,"{got} vs {want}");
+ // `now` is read before the call, so the minute may have turned in between.
+ assert!(got==want||got==(want+1)%1440||(got+1)%1440==want,"{got} vs {want}");
  // The deterministic clock stays at midnight on 1 January 1980.
  let mut p=load(&[0xcd,0x21],"clock.com").unwrap();p.cpu.regs[0]=0x2a00;service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.cpu.regs[0]&255),(1980,0x0101,2));

@@ -7,7 +7,51 @@ on:
 permissions:
   contents: read
 jobs:
+  # Decides whether the Rust jobs run: a push or PR that changes only
+  # Markdown files (*.md anywhere: CLAUDE.md, STATUS.md, docs/...) skips them.
+  # Anything else, or a diff that cannot be worked out, runs everything.
+  # The cheap checks that read documentation run here every time.
+  # A job skipped by `if` reports success, so it never blocks a merge.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            # The whole PR (merge base to head), not only the latest push.
+            range="$PR_BASE...$PR_HEAD"
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          code=true
+          if files=$(git diff --name-only "$range" 2>/dev/null); then
+            echo "Changed files ($range):"; echo "$files"
+            if [ -n "$files" ] && ! echo "$files" | grep -qv '\.md$'; then
+              code=false
+            fi
+          else
+            echo "Cannot diff $range (new branch or rewritten history): full run."
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Run Rust jobs: $code"
+      - run: python tools/check_portable_paths.py --self-test
+      - run: python tools/check_program_specific.py --self-test
+      # Exports the runtime tree and checks its Markdown links (no build).
+      - run: python tools/export_runtime.py target/runtime-links
   rust:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
