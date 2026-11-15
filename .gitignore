@@ -27,3 +27,7 @@ __pycache__/
 
 # Stop log written by Dine sessions (PILdos).
 /PILdos-stops.jsonl
+
+# Local generated HTML / scratch DOS binary.
+/docs/DOS_CONFIG.html
+/programs/dos/MOUSETEST.COM
