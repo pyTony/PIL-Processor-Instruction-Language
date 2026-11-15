@@ -2417,13 +2417,15 @@ DOS and ROM:
   --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
   --dos-text [--plain] [OPTIONS] [PROGRAM]  Rust terminal; config startup if omitted
-  --dos-console [--tty|--window] [--mouse] [--ansi] [OPTIONS] [PROGRAM]
+  --dos-console [--tty|--window] [--mouse] [--ansi] [--host-pointer auto|show|hide] [OPTIONS] [PROGRAM]
       DOS session with its own keyboard and screen: the host terminal
       (--tty, default except on Windows) or a window (--window, Windows).
       Ctrl+] in a terminal ends it. Same OPTIONS as --dos-session, plus
       --country 1|358 and --utc-offset SECONDS (default: host time zone).
       Without PROGRAM, the configuration's program and args start; its
-      fpu, mouse, ansi and utc_offset apply unless options are given.
+      fpu, mouse, ansi, utc_offset and host_pointer apply unless options
+      are given. --host-pointer: the window's own arrow is hidden while the
+      DOS mouse cursor shows (auto, default), never (show) or always (hide).
   --dos-probe [--steps N] PROGRAM...   Bounded DOS compatibility probe
   --run-rom PATH [--steps N]          Run a 64 or 128 KiB ROM
   --dos-list [--all] IMAGE|ZIP        List container entries

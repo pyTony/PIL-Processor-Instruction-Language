@@ -59,7 +59,7 @@ The file is chosen as for the frontend (CONFIG, then `PILDOS_CONFIG`, then
 | --- | --- |
 | Up, Down, Tab | Select a setting |
 | Enter, or typing | Edit a text setting; Enter accepts, Esc cancels |
-| Enter, Space, Left, Right | Change a choice (country, fpu) or turn a switch on or off |
+| Enter, Space, Left, Right | Change a choice (country, fpu, host_pointer) or turn a switch on or off |
 | Del | Remove the setting (its default applies) |
 | F2 | Save |
 | F10 | Save and start the program; a key after it ends returns to the screen |
@@ -77,11 +77,12 @@ terminal; the screen keeps and edits them, but `pil --dos-console` does not
 use them.
 
 F10 runs the program in the same window or terminal as `pil --dos-console`
-does, with the configuration's drives, country, fpu, mouse, ansi and
-utc_offset. Ctrl+] ends the program and returns to the screen.
+does, with the configuration's drives, country, fpu, mouse, ansi,
+utc_offset and host_pointer. Ctrl+] ends the program and returns to the screen.
 
 `pil --dos-console` without PROGRAM also starts the configured program and
-args, and with or without it takes fpu, mouse, ansi and utc_offset from the
+args, and with or without it takes fpu, mouse, ansi, utc_offset and
+host_pointer from the
 configuration; its own options override them.
 
 ## Example and settings
@@ -108,6 +109,7 @@ country=358
 | `shell` | Boolean (`true`/`false` or `1`/`0`). Marks the startup program as a command shell for `headless` mode (`/K CTTY COM1`, keeps running after Esc). |
 | `com1` | `console` or `tcp:PORT`. Connects COM1 to the console or a TCP port. |
 | `speaker_volume` / `speaker-volume` | PC speaker click volume `0..100` (`0` mutes; frontend default `5`). |
+| `host_pointer` / `host-pointer` | `auto` (default), `show` or `hide`: the Windows pointer over the `pil --dos-console`/`--pildos` window. `auto` hides it while the program's INT 33h cursor is on screen, so only one arrow shows; `show` keeps it for programs that draw their own pointer without the driver's; `hide` always hides it over the window. The Python terminal ignores it. |
 | `utc_offset` / `utc-offset` | Time zone of the DOS clock: hours such as `2`, `-5`, `5.5`, or `+02:00`, within -12:00..+14:00. (The engine's own `--utc-offset` and session `clock` take seconds.) |
 | `engine` | Path to the `pil` executable (relative to the config file, or absolute). |
 

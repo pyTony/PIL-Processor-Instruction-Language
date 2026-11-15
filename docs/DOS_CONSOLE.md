@@ -53,15 +53,15 @@ as `--dos-session`: the same drives, `--config`, `--mount`, `--args`, `--fpu`
 and stop log. Nothing in it depends on which program runs.
 
 ```text
-pil --dos-console [--tty|--window] [--mouse] [--ansi] [--country 1|358]
+pil --dos-console [--tty|--window] [--mouse] [--ansi] [--host-pointer auto|show|hide] [--country 1|358]
                   [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER]
                   [--args COMMAND_LINE] [--fpu none|80387] [PROGRAM]
 ```
 
 PROGRAM is a .COM or .EXE file, or `IMAGE.img::INNER_PATH`, as in
 `--dos-session`. Without it, the configuration's `program` and `args` start
-(docs/DOS_CONFIG.md). The configuration's `fpu`, `mouse`, `ansi` and
-`utc_offset` apply in both cases unless an option overrides them. For a
+(docs/DOS_CONFIG.md). The configuration's `fpu`, `mouse`, `ansi`,
+`utc_offset` and `host_pointer` apply in both cases unless an option overrides them. For a
 setup screen that edits the configuration and starts it, see `pil --pildos`
 in [DOS_CONFIG.md](DOS_CONFIG.md).
 
@@ -70,6 +70,7 @@ in [DOS_CONFIG.md](DOS_CONFIG.md).
 | `--tty` | Use the host terminal. This is the default except on Windows. |
 | `--window` | Use a Win32 window. This is the default on Windows, and it works only there. |
 | `--mouse` | Install the INT 33h driver, like `mouse on` in a session. Without it no mouse is offered. |
+| `--host-pointer` | The Windows pointer over the window: `auto` (default) hides it while the program's INT 33h cursor is shown, `show` never hides it, `hide` always does. It changes at the pointer's next move. |
 | `--ansi` | Load the ANSI.SYS-style CON driver. |
 | `--country` | Set the DOS country: 1 or 358 (Finland). |
 | `--utc-offset` | Set the DOS clock's offset from UTC, in seconds. The default is the host's time zone. |
@@ -123,6 +124,10 @@ a key clears it. Plain Ctrl+C and Ctrl+V still reach DOS.
 
 While the program has the mouse driver active (it called INT 33h AX=0000h
 with `--mouse`), the mouse belongs to the program; hold Shift to select.
+With `--host-pointer auto` the Windows arrow disappears over the window
+while the driver's cursor is shown (AX=0001h), so the program's arrow is
+the only one; a program that hides the driver's cursor and draws its own
+needs `--host-pointer hide` for the same effect.
 
 Graphics modes work too: each cell is matched against the glyphs the BIOS
 draws it with (the 8x8 font, or the 8x14/8x16 font of modes 10h/12h), so

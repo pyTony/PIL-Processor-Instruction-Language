@@ -26,6 +26,43 @@ the release build, the dine-library build and `cargo check --tests`.
 x86_64-pc-windows-gnu `cargo check` (release, dine-library, tests): 0
 warnings. verify_dine_library.py passes.
 
+# Host pointer over the Dine window — 14 November 2026
+
+Tony saw two arrows over LINES.EXE in the console window: the DOS mouse
+cursor (bigger) and the Windows pointer. The console window never hid the
+host arrow (only the old separate graphics window did). New setting
+`host_pointer=auto|show|hide` in pildos.conf, `--host-pointer` for
+`pil --dos-console`, and a "Host pointer" field on the `pil --pildos`
+screen (title and file now share the top row so 19 fields fit).
+- auto (default): hidden over the window while the INT 33h cursor is shown
+  (driver view `visible`); show: never hidden; hide: always hidden. The
+  change takes effect at the pointer's next move (WM_SETCURSOR).
+- The setup screen and the end of a program show the arrow again. The
+  Python terminal ignores the key, as it ignores other unknown keys.
+
+Local Linux, release: 852 Rust tests pass, 2 ignored (4 new: config
+parsing, setup field cycling, --host-pointer refusal; 1 render test
+updated). Windows code type-checks for x86_64-pc-windows-gnu; the window
+was not run on Windows.
+
+# MANDVGA computes every pixel of 640x480 — 14 November 2026
+
+Tony: "Now that VGA is so fast, maybe we should push it to full vga."
+MANDVGA.COM used to compute 320x240 points and draw each as a 2x2 block.
+It now computes all 640x480 pixels (step 21 = 3.25/640 in 4.12, same
+view) and writes each one through write mode 2 with a one-bit mask and a
+latch read. Still 8086 only, 4.12 fixed point and 30 iterations: in a
+sample of 30,000 pixels 4.12 differs from double precision on 0.9%, all
+at the set's edge, and the two pictures look the same, so wider fixed
+point was not needed. tools/verify_mandel_vga.py and the ignored Rust
+comparison test (dos_backend.rs) now check 640x464 individual pixels.
+
+Local Linux, release: 37.9M -> 150.8M guest instructions to the key
+wait; verify_mandel_vga.py passes (296,960 pixels, caption, key exit);
+the ignored comparison test passes, interpreter 10.25 s for the whole run
+(another engine run shared the machine).
+Expect about four times Tony's earlier 2.375 s.
+
 # PILdos.vbs window was hidden — 14 November 2026
 
 Tony: `.\PILdos.vbs` on Windows showed nothing. The launcher starts

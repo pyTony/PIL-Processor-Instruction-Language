@@ -14,7 +14,7 @@ use std::time::Duration;
 
 pub(crate) const COLUMNS:usize=80;
 pub(crate) const ROWS:usize=25;
-const FIRST_FIELD:usize=3;
+const FIRST_FIELD:usize=2;
 const LABEL_COLUMN:usize=2;
 const VALUE_COLUMN:usize=21;
 const VALUE_WIDTH:usize=COLUMNS-VALUE_COLUMN-1;
@@ -115,10 +115,10 @@ impl Setup{
                 (format!("[{}] {}",if on{'X'}else{' '},if on{"on"}else{"off"}),value.is_some())
             },
             Kind::Choice(_)=>{
-                let name=|v:&str|match (f.key,v){("country","1")=>"USA",("country","358")=>"Finland",("fpu","none")=>"no coprocessor",("fpu","80387")=>"partial 80387",_=>""};
+                let name=|v:&str|match (f.key,v){("country","1")=>"USA",("country","358")=>"Finland",("fpu","none")=>"no coprocessor",("fpu","80387")=>"partial 80387",("host_pointer","auto")=>"hidden while the DOS cursor shows",("host_pointer","show")=>"always shown",("host_pointer","hide")=>"always hidden",_=>""};
                 match value{
                     Some(v)=>{let n=name(&v);(if n.is_empty(){v}else{format!("{v}  {n}")},true)},
-                    None=>(match f.key{"country"=>"(default: 1 USA)","fpu"=>"(default: none)",_=>"(default)"}.to_string(),false),
+                    None=>(match f.key{"country"=>"(default: 1 USA)","fpu"=>"(default: none)","host_pointer"=>"(default: auto)",_=>"(default)"}.to_string(),false),
                 }
             },
             Kind::Text=>match value{
@@ -132,13 +132,12 @@ impl Setup{
     pub(crate) fn render(&self)->(Vec<u8>,Option<(u32,u32)>){
         let mut cells=vec![0u8;COLUMNS*ROWS*2];
         for row in 0..ROWS{put(&mut cells,row,0,COLUMNS,"",SCREEN);}
-        let title=" PILdos setup ";
-        put(&mut cells,0,0,COLUMNS,"",TITLE);
-        put(&mut cells,0,(COLUMNS-title.len())/2,title.len(),title,TITLE);
-        let file=format!(" File: {}{}",tail(&self.path.display().to_string(),COLUMNS-20),if self.dirty{"  (changed)"}else{""});
-        put(&mut cells,1,0,COLUMNS,&file,SCREEN);
+        // Title and file share the top row, so every field fits above the help.
+        let changed=if self.dirty{"  (changed)"}else{""};
+        let title=format!(" PILdos setup   File: {}{changed}",tail(&self.path.display().to_string(),COLUMNS-35));
+        put(&mut cells,0,0,COLUMNS,&title,TITLE);
         let line:String=std::iter::repeat('\u{2500}').take(COLUMNS).collect();
-        put(&mut cells,2,0,COLUMNS,&line,SCREEN);
+        put(&mut cells,1,0,COLUMNS,&line,SCREEN);
         put(&mut cells,FIRST_FIELD+FIELDS.len(),0,COLUMNS,&line,SCREEN);
         let mut cursor=None;
         for (i,f) in FIELDS.iter().enumerate(){
@@ -305,7 +304,7 @@ fn launch(path:&Path,window:bool,stop_log:&str,front:&mut Front,rx:&mpsc::Receiv
     let fpu=settings.fpu.map(|on|if on{"80387"}else{"none"});
     let mut session=super::session::open(&program,None,args.as_deref(),Some(config),fpu)?;
     let mut logger=super::stoplog::Logger::new(stop_log,&program);
-    let options=Options{window,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset};
+    let options=Options{window,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default()};
     let result=host_console::run_on(&mut session,&options,front,rx);
     session.log_stop(&mut logger);
     let line=match &result{Ok(line)=>line.clone(),Err(e)=>e.clone()};

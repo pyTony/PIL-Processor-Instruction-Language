@@ -68,3 +68,19 @@ fn the_editor_keeps_lines_spelling_and_line_ends(){
     let mut empty=Document::parse("");empty.set("program",Some("x.com"));
     assert_eq!(empty.text(),"program=x.com\n");
 }
+#[test]
+fn host_pointer_setting_parses_and_decides_when_to_hide(){
+    assert_eq!(parse("mouse=1\n",Path::new("base")).unwrap().host_pointer,None);
+    for (text,want) in [("auto",HostPointer::Auto),("Show",HostPointer::Show),(" HIDE ",HostPointer::Hide)]{
+        assert_eq!(parse(&format!("host_pointer={text}\n"),Path::new("base")).unwrap().host_pointer,Some(want),"{text}");
+    }
+    assert_eq!(parse("host-pointer=hide\n",Path::new("base")).unwrap().host_pointer,Some(HostPointer::Hide));
+    for text in ["host_pointer=","host_pointer=off","host_pointer=auto\nhost_pointer=show"]{
+        assert!(parse(text,Path::new("base")).is_err(),"{text}");
+    }
+    assert_eq!(HostPointer::default(),HostPointer::Auto);
+    // Auto follows the INT 33h cursor; show and hide ignore it.
+    assert_eq!([false,true].map(|v|HostPointer::Auto.hides(v)),[false,true]);
+    assert_eq!([false,true].map(|v|HostPointer::Show.hides(v)),[false,false]);
+    assert_eq!([false,true].map(|v|HostPointer::Hide.hides(v)),[true,true]);
+}

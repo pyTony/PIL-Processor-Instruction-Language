@@ -74,8 +74,8 @@ fn rust_mandelbrot_uses_dine_vga_and_matches_the_dos_program() {
     planar::set_mode(&mut direct,0x12,false).unwrap();
     planar::io(&mut direct,0x3ce,false,0x0205,true).unwrap();
     let start=std::time::Instant::now();
-    for y in 0..232i32 { for x in 0..320i32 {
-        let (cx,cy)=(-9216+42*x,-5040+42*y);
+    for y in 0..480i32 { for x in 0..640i32 {
+        let (cx,cy)=(-9216+21*x,-5040+21*y);
         let (mut zr,mut zi,mut color)=(0i32,0i32,0u8);
         for k in 0..30u8 {
             if zr<=-8192||zr>=8192||zi<=-8192||zi>=8192 {color=1+k%15;break;}
@@ -83,13 +83,11 @@ fn rust_mandelbrot_uses_dine_vga_and_matches_the_dos_program() {
             if a+b>16384 {color=1+k%15;break;}
             (zr,zi)=(a-b+cx,((zr*zi)>>12)*2+cy);
         }
-        let mask=0xc0u16>>((x%4)*2);
+        let mask=0x80u16>>(x%8);
         planar::io(&mut direct,0x3ce,false,(mask<<8)|8,true).unwrap();
-        let offset=(y as u32)*160+(x as u32)/4;
-        for a in [0xa0000+offset,0xa0000+offset+80] {
-            direct.ram.load(a,MemWidth::Byte).unwrap();
-            direct.ram.store(a,MemWidth::Byte,u32::from(color)).unwrap();
-        }
+        let a=0xa0000+(y as u32)*80+(x as u32)/8;
+        direct.ram.load(a,MemWidth::Byte).unwrap();
+        direct.ram.store(a,MemWidth::Byte,u32::from(color)).unwrap();
     }}
     let elapsed=start.elapsed();
     for n in 0..4 {
