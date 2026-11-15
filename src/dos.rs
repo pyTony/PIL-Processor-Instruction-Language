@@ -847,6 +847,35 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 }
             }
         }}
+        // The 386 decoder already recognizes INS/OUTS, but its generic PIL
+        // mode uses an open bus. Dine must route each element to the actual
+        // device, retaining EIP across REP elements for interruptibility.
+        match ports::string_io(&mut p){
+            Ok(Some((length,partial)))=>{
+                let wrap=if p.image.segments[1].default_32(){u32::MAX}else{0xffff};
+                p.cpu.eip=p.cpu.eip.wrapping_add(length)&wrap;
+                if !partial{p.image.retired();completed+=1;}
+                execution_steps+=1;
+                *instructions.entry(if partial{"string I/O elements".into()}else{"INS/OUTS".into()}).or_insert(0)+=1;
+                continue;
+            },
+            Ok(None)=>{},
+            Err(ports::StringError::Device(message))=>break Stop::Service(message),
+            Err(ports::StringError::Fault(e))=>{
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                match exception(&mut p,&e,&mut lazy){
+                    Some(Ok(site))=>{
+                        exception_count+=1;
+                        *instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;
+                        if exceptions.len()<64{exceptions.push(site);}
+                        execution_steps+=1;
+                        continue;
+                    },
+                    Some(Err(message))=>break Stop::Fault(message),
+                    None=>break Stop::Fault(format!("{e:?}")),
+                }
+            },
+        }
         match ports::io(&mut p){
             Ok(Some(length))=>{
                 let wrap=if p.image.segments[1].default_32(){u32::MAX}else{0xffff};

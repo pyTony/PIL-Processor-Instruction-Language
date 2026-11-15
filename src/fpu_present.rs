@@ -42,6 +42,9 @@ impl PresentFpu {
         let result: Result<(), StackError> = match operation {
             Operation::Finit => { self.state.finit(); Ok(()) },
             Operation::Fnclex => { self.state.fnclex(); Ok(()) },
+            // These control instructions are genuine no-ops on 80387, even
+            // with an empty register stack. #NM has already been checked.
+            Operation::LegacyControlNop => Ok(()),
             Operation::FnstswAx => {
                 cpu.regs[0] = (cpu.regs[0] & 0xffff_0000) | u32::from(self.state.status);
                 Ok(())

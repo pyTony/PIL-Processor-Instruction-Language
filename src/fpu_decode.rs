@@ -5,6 +5,8 @@
 pub enum Operation {
     Finit,
     Fnclex,
+    /// Old 8087/80287 controls (FENI, FDISI, FSETPM) are FNOP on 80387.
+    LegacyControlNop,
     FnstswAx,
     /// Store the 16-bit status word to a memory operand (DD /7).
     FnstswM16,
@@ -67,6 +69,9 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
         match (opcode, modrm) {
             (0xdb, 0xe3) => Some(Operation::Finit),
             (0xdb, 0xe2) => Some(Operation::Fnclex),
+            // 80387 Programmer's Reference Manual, Appendix A/C:
+            // 8087 FENI/FDISI and 80287 FSETPM are all ignored on 80387.
+            (0xdb, 0xe0 | 0xe1 | 0xe4) => Some(Operation::LegacyControlNop),
             (0xdf, 0xe0) => Some(Operation::FnstswAx),
             (0xd9, 0xe0) => Some(Operation::Fchs),
             (0xd9, 0xe5) => Some(Operation::Fxam),
@@ -142,6 +147,9 @@ mod tests {
     fn control_and_constant_instructions() {
         assert_eq!(classify(0xdb,0xe3),Ok(Operation::Finit));
         assert_eq!(classify(0xdb,0xe2),Ok(Operation::Fnclex));
+        for opcode in [0xe0, 0xe1, 0xe4] {
+            assert_eq!(classify(0xdb, opcode), Ok(Operation::LegacyControlNop));
+        }
         assert_eq!(classify(0xdf,0xe0),Ok(Operation::FnstswAx));
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
@@ -225,7 +233,7 @@ mod tests {
         assert_eq!(classify(0xd9,0xff),Ok(Operation::Fcos));
         assert_eq!(classify(0xdd,0x3f),Ok(Operation::FnstswM16));
         assert_eq!(classify(0xd9,0xe4),Ok(Operation::Ftst));
-        for (op,modrm) in [(0xdb,0xe4),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
+        for (op,modrm) in [(0xdb,0xe5),(0xdf,0xe1),(0xd9,0x08),(0xdd,0x10)] {
             assert_eq!(classify(op,modrm),Err(DecodeError::Unsupported{opcode:op,modrm}));
         }
     }
