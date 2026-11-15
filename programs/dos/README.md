@@ -15,6 +15,12 @@ use 8086 instructions and DOS output only (AH02/AH09), and end with AH4C.
 | `MANDANSI.COM` | Draws the original 79x24 fixed-point Mandelbrot with ANSI colours. Requires a 386 and ANSI terminal (or ANSI.SYS in DOS). Also compiles to a standalone native executable through PIL. |
 | `TIMEIT.COM [/K] command [arguments]` | Runs the command through `COMMAND.COM /C` (from COMSPEC), then prints the command with its start time, end time and elapsed time from the DOS clock (INT 21h AH=2Ch, 1/18.2 s steps), with the country's separators (`14.27.05,32` for 358). Ends with the command's exit code, so `IF ERRORLEVEL` still works. `/K` puts Enter in the BIOS keyboard buffer just before the clock starts, so a program that waits for a key when it is done (`TIMEIT /K MANDVGA`) ends by itself and the wait is not timed; a program that reads or flushes the keyboard earlier gets the key there instead. |
 | `MANDBBC.COM` | Draws the classic BBC BASIC benchmark Mandelbrot (79x25, 16 iterations, shades `.,'~=+:;*%&$OXB#@`) with the same characters as its floating-point version, using 32-bit integers with 20 fraction bits. Needs a 386. |
+| `MANDELG.PAS` | Turbo Pascal 7.0 source ({$N+}, 80387): a 320x200 mode 13h Mandelbrot with a 256-colour palette and INT 33h mouse zoom. Compile it with your own Turbo Pascal (not in the repository). |
+
+`versions.sha256` lists every version of each file here; the launchers use
+it to update the copies on your D: drive without touching your own files
+(see docs/DRIVE_D.md). After changing a file here, run
+`python tools/dos_program_versions.py`.
 
 The `.COM` files are built from the `.asm` sources with NASM:
 
