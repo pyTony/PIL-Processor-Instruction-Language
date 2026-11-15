@@ -4,6 +4,7 @@ on:
     branches: [dev]
   pull_request:
     branches: [dev]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -28,6 +29,11 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            echo "Explicit dispatch after automated PR refresh: run full suite."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$EVENT" = pull_request ]; then
             # The whole PR (merge base to head), not only the latest push.
             range="$PR_BASE...$PR_HEAD"
