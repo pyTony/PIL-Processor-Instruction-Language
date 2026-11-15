@@ -60,6 +60,7 @@ fn table()->&'static HashMap<u128,usize>{
     TABLE.get_or_init(||forms::FORMS.iter().enumerate().map(|(i,(k,_,_))|(*k,i)).collect())
 }
 /// Number of forms compiled into this build.
+#[cfg(test)]
 pub(crate) fn forms()->usize{forms::FORMS.len()}
 
 /// The native form of `p`, if this build has one and every fixed constant
