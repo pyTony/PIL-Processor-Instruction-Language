@@ -2605,6 +2605,43 @@ fn planar_text_uses_tall_cells_and_scrolls_them(){
  assert_eq!(p.ram.planar().unwrap().peek(1,4*80+5),0x81);assert_eq!(p.ram.planar().unwrap().peek(1,20*80+5),0);
  assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x1d00);
 }
+
+#[test]
+fn generic_dos_dispatch_history_is_opt_in_bounded_and_survives_slices(){
+    let mut p=load(&[0x90,0x90,0x90,0x6c,0xcd,0x20],"history.com").unwrap();
+    assert!(!p.history.enabled());
+    p.history=history::History::new(3);
+    p.cpu.regs[2]=0x546e;
+    let first=run(p,2).unwrap();
+    assert!(matches!(first.stop,Stop::Budget));
+    assert_eq!(first.loaded.history.len(),2);
+    let result=run(first.loaded,6).unwrap();
+    assert!(matches!(&result.stop,Stop::Service(s) if s.contains("INSB")),"{:?}",result.stop);
+    assert_eq!(result.loaded.cpu.eip,0x103);
+    assert_eq!(result.loaded.history.len(),3);
+    let json=result.loaded.history.json();
+    let ip=format!(r#""location":"{:04X}:0103""#,result.loaded.selectors[1]);
+    assert!(json.contains(&ip),"{json}");
+    assert!(json.contains(r#""instruction_bytes":"6C CD 20""#),"{json}");
+    assert!(json.contains("21614"),"DX must be captured: {json}");
+    assert!(!json.contains(r#""location":"1010:0100""#),"oldest must be evicted: {json}");
+    assert_eq!(json.matches(r#""sequence":"#).count(),3);
+}
+
+#[test]
+fn generic_dos_dispatch_history_does_not_change_results(){
+    let code=[0xb8,0x34,0x12,0x90,0x90,0xcd,0x20];
+    let baseline=run(load(&code,"comparison.com").unwrap(),20).unwrap();
+    let mut p=load(&code,"comparison.com").unwrap();
+    p.history=history::History::new(64);
+    let traced=run(p,20).unwrap();
+    assert_eq!(baseline.stop,traced.stop);
+    assert_eq!(baseline.completed,traced.completed);
+    assert_eq!(baseline.loaded.cpu,traced.loaded.cpu);
+    assert_eq!(baseline.loaded.ram,traced.loaded.ram);
+    assert!(traced.loaded.history.len()>0);
+}
+
 #[test]
 fn port_accesses_dine_does_not_answer_stop_instead_of_reading_open_bus(){
  // Dine answers unprefixed IN/OUT itself; a prefixed IN, INS or OUTS reaches the decoder's
