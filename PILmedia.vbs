@@ -16,6 +16,7 @@ End If
 builtAt = files.GetFile(engine).DateLastModified
 stale = files.FolderExists(root & "\target\pil-build-in-progress")
 If Not stale Then stale = NewerSources(files.GetFolder(root & "\src"), builtAt)
+If Not stale Then stale = NewerSources(files.GetFolder(root & "\isa"), builtAt)
 If Not stale Then stale = NewerFile(root & "\Cargo.toml", builtAt)
 If Not stale Then stale = NewerFile(root & "\Cargo.lock", builtAt)
 If stale Then

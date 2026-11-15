@@ -74,7 +74,7 @@ pub(crate) fn run(shell:&str,catalog:&str)->Result<(),String>{
                 Ok(mut session)=>{
                     front.reset();
                     let settings=crate::dos_config::console_settings(None)?;
-                    let options=Options{window:cfg!(windows),mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(5)};
+                    let options=Options{window:cfg!(windows),mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(speaker::DEFAULT_VOLUME)};
                     notice=run_on(&mut session,&options,&mut front,&rx).unwrap_or_else(|e|e);
                     session.log_stop(&mut crate::dos::stoplog::Logger::new("PILdos-stops.jsonl",shell));
                     if front.closed(){return Ok(());}front.reset();
