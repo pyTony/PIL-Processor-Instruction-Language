@@ -20,9 +20,48 @@ pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
     if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
     Err(format!("mount {path} is not a folder or .img/.ima image"))
 }
-pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,native_video:bool,backend:Option<Box<dyn InstructionBackend>>}
+#[path="dos_disk_set.rs"]
+mod disk_set;
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,native_video:bool,backend:Option<Box<dyn InstructionBackend>>,disk_sets:BTreeMap<u8,disk_set::DiskSet>}
 impl Session{
-    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None}}
+    pub(crate) fn mount_media(&mut self,letter:u8,path:&str)->Result<String,String>{
+        let source=open_mount_source(path)?;
+        self.loaded.as_mut().ok_or("session state lost")?.drive.mount(letter,source)?;
+        self.disk_sets.remove(&letter);Ok(format!("{}: {path}",char::from(letter)))
+    }
+    pub(crate) fn unmount_media(&mut self,letter:u8)->Result<String,String>{
+        self.loaded.as_mut().ok_or("session state lost")?.drive.unmount(letter)?;
+        self.disk_sets.remove(&letter);Ok(format!("{}: unmounted",char::from(letter)))
+    }
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None,disk_sets:BTreeMap::new()}}
+    /// Install disk one only after the manifest and media have been checked.
+    pub(crate) fn disk_set(&mut self,letter:u8,manifest:&Path)->Result<String,String>{
+        if !matches!(letter,b'A'|b'B'){return Err("disk sets use floppy drive A: or B:".into());}
+        let set=disk_set::DiskSet::read(manifest)?;
+        self.insert_set(letter,set)
+    }
+    /// Native browsing can infer numbered neighbouring images without a manifest.
+    pub(crate) fn floppy_media(&mut self,letter:u8,image:&Path)->Result<String,String>{
+        if !matches!(letter,b'A'|b'B'){return Err("disk sets use floppy drive A: or B:".into());}
+        if let Some(set)=disk_set::DiskSet::numbered(image)?{return self.insert_set(letter,set);}
+        self.mount_media(letter,image.to_str().ok_or("media path is not Unicode")?)
+    }
+    fn insert_set(&mut self,letter:u8,set:disk_set::DiskSet)->Result<String,String>{
+        let path=set.images[0].to_str().ok_or("disk-set path is not Unicode")?;
+        let source=open_mount_source(path)?;
+        self.loaded.as_mut().ok_or("session state lost")?.drive.mount(letter,source)?;
+        let text=set.description(letter);self.disk_sets.insert(letter,set);Ok(text)
+    }
+    /// A failed read or busy-drive refusal leaves both media and index intact.
+    pub(crate) fn disk(&mut self,letter:u8,selection:Option<&str>)->Result<String,String>{
+        let set=self.disk_sets.get(&letter).ok_or("no disk set on this drive")?;
+        let Some(selection)=selection else{return Ok(set.description(letter))};
+        let index=set.select(selection)?;
+        let path=set.images[index].to_str().ok_or("disk-set path is not Unicode")?;
+        let source=open_mount_source(path)?;
+        self.loaded.as_mut().ok_or("session state lost")?.drive.mount(letter,source)?;
+        let set=self.disk_sets.get_mut(&letter).unwrap();set.current=index;Ok(set.description(letter))
+    }
     /// Keep the executor for the whole session, including across frontend slices.
     #[allow(dead_code)]
     pub(crate) fn with_backend(loaded:Loaded,backend:Box<dyn InstructionBackend>)->Self{
@@ -277,14 +316,27 @@ impl Session{
                 p.com1.as_mut().unwrap().info|=0x23;
                 (true,String::new(),false)
             },
+            // Media selection is a host operation; it does not run the guest.
+            ["diskset",drive,..]=>{
+                let path=line.trim_start().strip_prefix("diskset").unwrap_or("").trim_start().strip_prefix(drive).unwrap_or("").trim();
+                let result=match parse_drive_letter(drive){
+                    Some(letter) if !path.is_empty()=>self.disk_set(letter,&crate::dos_config::host_path(path)),
+                    _=>Err("diskset needs A or B and a manifest path".into()),
+                };
+                match result{Ok(text)=>(true,text,false),Err(e)=>(false,e,false)}
+            },
+            ["disk",drive]|["disk",drive,_]=>{
+                let selection=line.split_whitespace().nth(2);
+                let result=match parse_drive_letter(drive){Some(letter)=>self.disk(letter,selection),None=>Err("disk needs A or B and optionally next, prev or a disk number".into())};
+                match result{Ok(text)=>(true,text,false),Err(e)=>(false,e,false)}
+            },
             // `mount DRIVE PATH`: mount or replace drive A..E with a host folder or .img/.ima image.
             ["mount",drive,..]=>{
                 let path=line.trim_start().strip_prefix("mount").unwrap_or("").trim_start().strip_prefix(drive).unwrap_or("").trim();
                 match parse_drive_letter(drive){
                     Some(letter) if !path.is_empty()=>{
-                        let p=self.loaded.as_mut().ok_or("session state lost")?;
-                        match open_mount_source(path).and_then(|src|p.drive.mount(letter,src)){
-                            Ok(())=>(true,format!("{}: {path}",char::from(letter)),false),
+                        match self.mount_media(letter,path){
+                            Ok(text)=>(true,text,false),
                             Err(e)=>(false,e,false),
                         }
                     },
@@ -295,9 +347,8 @@ impl Session{
             // `unmount DRIVE`: detach drive A..E when no files are open on it.
             ["unmount",drive]=>match parse_drive_letter(drive){
                 Some(letter)=>{
-                    let p=self.loaded.as_mut().ok_or("session state lost")?;
-                    match p.drive.unmount(letter){
-                        Ok(())=>(true,format!("{}: unmounted",char::from(letter)),false),
+                    match self.unmount_media(letter){
+                        Ok(text)=>(true,text,false),
                         Err(e)=>(false,e,false),
                     }
                 },
@@ -365,7 +416,9 @@ pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<
     }
     if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
     serial::attach(&mut loaded)?;
-    Ok(Session::new(loaded))
+    let mut session=Session::new(loaded);
+    for (letter,manifest) in crate::dos_config::disk_sets(config)?{session.disk_set(letter,&manifest)?;}
+    Ok(session)
 }
 fn serve_session(session:&mut Session,logger:&mut stoplog::Logger)->Result<(),String>{
     // The normal interpreted pil.exe owns opt-in Win32 graphics, not Python.

@@ -1,5 +1,13 @@
 use super::*;
 #[test]
+fn disk_set_config_paths_and_drive_conflicts(){
+    let c=parse("diskset_a=media/install.lst\ndiskset_B=other.lst\nD=programs",Path::new("base")).unwrap();
+    assert_eq!(c.disk_sets,vec![(b'A',PathBuf::from("base/media/install.lst")),(b'B',PathBuf::from("base/other.lst"))]);
+    for text in ["diskset_c=set.lst","diskset_a=","diskset_a=x\ndiskset_A=y","A=disk.img\ndiskset_a=x","diskset_b=x\nB=disk.img"]{
+        assert!(parse(text,Path::new("base")).is_err(),"{text}");
+    }
+}
+#[test]
 fn parses_drives_country_and_rejects_ambiguous_entries(){
     let c=parse("# drives\n#@program=images/FD14LITE.img::COMMAND.COM\n#@args=/K D:\\AUTOEXEC.BAT\nC=images/FD14LITE.img\nd: = drive D\ncountry=358\nheadless=true\nrust_graphics=true\nmouse=true\nfpu=80387\nshell=true\nengine=target/release/pil.exe\n",Path::new("base")).unwrap();
     assert_eq!(c.country,Some(358));

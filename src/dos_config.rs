@@ -3,7 +3,7 @@ use crate::dos::{self,Loaded};
 use std::path::{Path,PathBuf};
 
 #[derive(Debug,Default)]
-struct Config{drives:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,
+struct Config{drives:Vec<(u8,PathBuf)>,disk_sets:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,
     fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>,host_pointer:Option<HostPointer>,speaker_volume:Option<u8>,
     /// `own_programs`: Some(None) for none, Some(Some(letter)) for a drive.
     own_programs:Option<Option<u8>>,
@@ -142,12 +142,21 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
             },
             _=>{},
         }
+        if let Some(drive)=lower.strip_prefix("diskset_"){
+            let letter=match drive{"a"=>b'A',"b"=>b'B',_=>return Err(format!("disk set needs drive A or B on config line {}",i+1))};
+            if value.is_empty()||config.disk_sets.iter().any(|(d,_)|*d==letter){return Err(format!("empty or duplicate disk set on config line {}",i+1));}
+            let path=host_path(value);let path=if path.is_absolute(){path}else{parent.join(path)};
+            config.disk_sets.push((letter,path));continue;
+        }
         let drive=key.trim_end_matches(':').as_bytes();
         if drive.len()!=1||!(b'A'..=b'E').contains(&drive[0].to_ascii_uppercase())||value.is_empty(){return Err(format!("invalid drive on config line {}",i+1));}
         let letter=drive[0].to_ascii_uppercase();
         if config.drives.iter().any(|(d,_)|*d==letter){return Err(format!("duplicate drive on config line {}",i+1));}
         let path=host_path(value);let path=if path.is_absolute(){path}else{parent.join(path)};
         config.drives.push((letter,path));
+    }
+    if config.disk_sets.iter().any(|(letter,_)|config.drives.iter().any(|(d,_)|d==letter)){
+        return Err("a drive cannot have both a mount and a disk set".into());
     }
     Ok(config)
 }
@@ -213,6 +222,10 @@ pub(crate) fn apply(p:&mut Loaded,explicit:Option<&str>,skip:Option<u8>)->Result
     if choose_c{dos::select_startup_drive(p,b'C')?;}
     if let Some(country)=config.country{p.country=country;}
     Ok(())
+}
+/// Ordered installation media used by the persistent Dine session.
+pub(crate) fn disk_sets(explicit:Option<&str>)->Result<Vec<(u8,PathBuf)>,String>{
+    Ok(load(explicit)?.map_or_else(Vec::new,|config|config.disk_sets))
 }
 
 /// Line-preserving editing of a configuration file, for `pil --pildos`.

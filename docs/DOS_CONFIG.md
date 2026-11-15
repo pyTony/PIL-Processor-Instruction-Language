@@ -1,5 +1,8 @@
 # DOS environment configuration
 
+For ordered floppy sets and the Rust window's **Ctrl+Shift+M** host drive
+menu, see [multi-disk installation media](DOS_INSTALL_MEDIA.md).
+
 The Python-free Rust route is `pil --dos-text` (Windows:
 `.\target\release\pil.exe --dos-text`), or `PILdos.vbs --rust-text` /
 `sh PILdos.sh --rust-text`. It reads the same startup and drive configuration.

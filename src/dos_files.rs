@@ -108,6 +108,9 @@ impl Drives{
     pub fn letter(&self)->u8{self.list[self.current].letter}
     /// The first drive's letter, which Dine reports as the boot drive.
     pub fn first_letter(&self)->u8{self.list[0].letter}
+    pub(crate) fn is_mounted(&self,letter:u8)->bool{
+        self.list.iter().any(|d|d.letter==letter&&!matches!(d.source,Source::Empty))
+    }
     /// Select a mounted default drive before guest execution starts.
     pub(crate) fn select_default(&mut self,letter:u8)->Result<(),String>{
         self.current=self.list.iter().position(|d|d.letter==letter).ok_or("default drive is not mounted")?;Ok(())

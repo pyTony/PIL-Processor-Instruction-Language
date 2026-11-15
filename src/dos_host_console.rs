@@ -38,6 +38,8 @@ pub(crate) enum Event{
     Copy,
     /// Ctrl+Shift+V or Shift+Insert: type the host clipboard.
     Paste,
+    HostMenu,
+    HostCommand(u16),
     Quit,
 }
 
@@ -310,6 +312,8 @@ fn drive<P:speaker::Player>(session:&mut Session,front:&mut Front,rx:&mpsc::Rece
     let mut pending=std::collections::VecDeque::<u16>::new();
     let mut last_present=Instant::now()-Duration::from_secs(1);
     let mut note=None::<String>;
+    let mut host_menu_open=false;
+    let mut right_down=false;
     loop{
         // Input first: keys wait while the BIOS ring is full.
         let mut events:Vec<Event>=rx.try_iter().collect();
@@ -318,11 +322,24 @@ fn drive<P:speaker::Player>(session:&mut Session,front:&mut Front,rx:&mpsc::Rece
             match event{
                 Event::Quit=>return Ok("DOS console closed by the user".into()),
                 Event::Break=>{if let Err(refused)=session.ctrl_break()?{note=Some(refused);}},
+                Event::Key(Key::F(n @ 1..=4),mods) if mods.ctrl&&mods.shift&&!mods.alt=>{
+                    let letter=if n%2==1{b'A'}else{b'B'};
+                    note=Some(session.disk(letter,Some(if n<=2{"next"}else{"prev"})).unwrap_or_else(|e|e));
+                },
                 Event::Key(key,mods)=>{front.clear_selection();if let Some(word)=bios_word(key,mods){pending.push_back(word);}},
                 Event::Copy=>front.copy(session)?,
                 Event::Paste=>pending.extend(front.paste()),
+                Event::HostMenu=>{host_menu_open=front.media_menu();},
+                Event::HostCommand(id)=>{
+                    host_menu_open=false;
+                    if id==1{front.copy(session)?;}
+                    else if id==2{pending.extend(front.paste());}
+                    else if id!=0{note=front.media_command(session,id);}
+                },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
+                    let pressed=buttons&2!=0&&!right_down;right_down=buttons&2!=0;
                     let active=session.machine().is_some_and(|p|p.mouse.view().active);
+                    if pressed&&(shift||!active){host_menu_open=front.media_menu();continue;}
                     if front.selects(active,shift){
                         match front.select(session,x,y,width,height,buttons)?{
                             select::Gesture::Copy=>front.copy(session)?,
@@ -338,6 +355,7 @@ fn drive<P:speaker::Player>(session:&mut Session,front:&mut Front,rx:&mpsc::Rece
                 },
             }
         }
+        if host_menu_open{std::thread::sleep(Duration::from_millis(10));continue;}
         while let Some(&word)=pending.front(){
             if session.key(word as u8,(word>>8) as u8)?{pending.pop_front();}else{break;}
         }
@@ -393,6 +411,52 @@ pub(crate) struct Front{
     host_pointer:HostPointer,
 }
 impl Front{
+    pub(crate) fn title(&self,title:&str){
+        #[cfg(windows)]
+        if let Some(window)=self.window.as_ref(){window.window.title(title);}
+        let _=title;
+    }
+    fn media_menu(&self)->bool{
+        #[cfg(windows)]
+        if let Some(w)=self.window.as_ref(){
+            let mut groups=vec![("Clipboard".into(),vec![(1,"Copy".into()),(2,"Paste".into())])];
+            for (index,drive) in ['A','B','D','E'].iter().enumerate(){
+                let base=100+index as u16*10;
+                let mut items=vec![(base+1,"Mount image...".into()),(base+2,"Mount folder...".into())];
+                if index<2{items.extend([(base+3,"Open disk set...".into()),(base+4,"Next disk".into()),(base+5,"Previous disk".into()),(base+6,"Current disk".into())]);}
+                items.push((base+7,"Unmount".into()));groups.push((format!("Drive {drive}:"),items));
+            }
+            w.window.popup(groups);return true;
+        }
+        false
+    }
+    fn media_command(&mut self,session:&mut Session,id:u16)->Option<String>{
+        #[cfg(windows)]
+        {
+            let drive=*b"ABDE".get(usize::from(id.saturating_sub(100)/10))?;
+            let action=id%10;
+            let result=match action{
+                1..=3=>{
+                    let chosen=if action==2{media_dialog::folder()}else{media_dialog::file(action==3)};
+                    match chosen{
+                        Ok(Some(path))=>{
+                            if action==3{session.disk_set(drive,&path)}else if action==1&&matches!(drive,b'A'|b'B'){
+                                session.floppy_media(drive,&path)
+                            }else{
+                                path.to_str().ok_or_else(||"mount path is not Unicode".to_string()).and_then(|path|session.mount_media(drive,path))
+                            }
+                        },
+                        Ok(None)=>return None,Err(e)=>Err(e),
+                    }
+                },
+                4=>session.disk(drive,Some("next")),5=>session.disk(drive,Some("prev")),6=>session.disk(drive,None),
+                7=>session.unmount_media(drive),_=>return None,
+            };
+            Some(result.unwrap_or_else(|e|e))
+        }
+        #[cfg(not(windows))]
+        {let _=(session,id);None}
+    }
     pub(crate) fn open(window:bool,tx:mpsc::Sender<Event>)->Result<Self,String>{
         #[cfg(not(windows))]
         if window{return Err("the DOS console window needs Windows; use --tty".into());}
@@ -479,6 +543,7 @@ impl Front{
             if grid!=self.grid{self.selecting.clear();self.grid=grid;}
             let selection=self.selecting.selection.map(|s|(s,grid.0,grid.1));
             if let Some(w)=self.window.as_mut(){
+                if let Some(ref note)=note{w.window.title(&format!("Dine DOS console - {note}"));}
                 w.window.hide_pointer(self.host_pointer.hides(p.mouse.view().visible));
                 w.present(session,selection)?;
             }
@@ -562,6 +627,8 @@ fn window_event(input:crate::dine_window::Input)->Option<Event>{
     match input{
         Input::Char{ch:'\u{3}',shift:true,ctrl:true,alt:false}=>Some(Event::Copy),
         Input::Char{ch:'\u{16}',shift:true,ctrl:true,alt:false}=>Some(Event::Paste),
+        Input::Char{ch:'\r',shift:true,ctrl:true,alt:false}=>Some(Event::HostMenu),
+        Input::Char{ch:'\u{1b}',shift,ctrl,alt}=>Some(Event::Key(Key::Escape,Mods{shift,ctrl,alt})),
         Input::Key{vk:0x2d,shift:true,ctrl:false,alt:false}=>Some(Event::Paste),
         // Win32 delivers these keys via WM_CHAR, not untyped WM_KEYDOWN.
         // Normalize them for both PILdos setup and guest BIOS keyboard input.
@@ -577,6 +644,7 @@ fn window_event(input:crate::dine_window::Input)->Option<Event>{
         },
         Input::Key{vk,shift,ctrl,alt}=>windows_key(vk).map(|k|if k==Event::Break{k}else if let Event::Key(k,_)=k{Event::Key(k,Mods{shift,ctrl,alt})}else{k}),
         Input::Mouse{x,y,width,height,buttons,shift}=>Some(Event::Mouse{x,y,width,height,buttons,shift}),
+        Input::Menu{id}=>Some(Event::HostCommand(id)),
     }
 }
 /// Windows virtual-key codes of the keys that type nothing.
@@ -626,6 +694,13 @@ mod tty;
 pub(crate) mod speaker;
 #[path="dos_console_select.rs"]
 pub(crate) mod select;
+#[cfg(windows)]
+#[path="dos_media_dialog.rs"]
+mod media_dialog;
+#[path="dos_media_launch.rs"]
+pub(crate) mod media_launch;
+#[path="dos_catalog.rs"]
+pub(crate) mod catalog;
 
 /// The character grid of the screen shown now: (columns, rows).
 fn grid(p:&Loaded)->Result<(u32,u32),String>{
