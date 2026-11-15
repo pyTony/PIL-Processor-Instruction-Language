@@ -73,6 +73,9 @@ fn wsl_paths_convert_for_windows_targets(){
 fn console_settings_and_offsets_follow_the_frontend_rules(){
     let c=parse("program=A.COM\nfpu=80387\nmouse=1\nansi=false\nutc-offset=5.5\nspeaker_volume=100\n",Path::new("base")).unwrap();
     assert_eq!((c.fpu,c.mouse,c.ansi,c.utc_offset),(Some(true),Some(true),Some(false),Some(19800)));
+    assert_eq!(c.speaker_volume,Some(100));
+    assert_eq!(parse("speaker-volume=0\nspeaker_volume=7\n",Path::new("base")).unwrap().speaker_volume,Some(7));
+    assert_eq!(parse("mouse=1\n",Path::new("base")).unwrap().speaker_volume,None);
     for (text,seconds) in [("2",7200),("-5",-18000),("+02:00",7200),("-3:30",-12600),("14",50400),("-12",-43200),("0",0)]{
         assert_eq!(parse_offset(text),Ok(seconds),"{text}");
     }

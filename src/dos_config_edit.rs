@@ -48,7 +48,7 @@ pub(crate) const FIELDS:&[Field]=&[
     field("host_pointer","Host pointer",Kind::Choice(&["auto","show","hide"]),"auto: hide the host arrow while the DOS mouse cursor shows. show/hide: always.",false),
     field("own_programs","Own programs",Kind::Choice(&["A","B","C","D","E","none"]),"Drive that gets new copies of programs/dos at start (default D); none: never.",false),
     field("com1","COM1",Kind::Text,"console or tcp:PORT.",true),
-    field("speaker_volume","Speaker volume",Kind::Text,"PC speaker click volume 0..100 (0 mutes; default 5).",true),
+    field("speaker_volume","Speaker volume",Kind::Text,"PC speaker click volume 0..100 (0 mutes; default 5).",false),
     field("headless","Headless",Kind::Bool,"Run without a window, through the terminal.",true),
     field("shell","Shell",Kind::Bool,"The program is a command shell (for headless: /K CTTY COM1).",true),
     field("rust_graphics","Rust graphics",Kind::Bool,"Native Windows CGA/VGA with headless.",true),

@@ -50,7 +50,7 @@ fn interpreted(guest: &[u8], name: &str, tail: &str) -> Result<i32, String> {
     let translated=dos_tail(&loaded,tail)?;
     crate::dos::set_command_tail(&mut loaded,&translated)?;
     let mut session = crate::dos::session::Session::new(loaded);
-    let options=crate::dos::host_console::Options{window:false,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default()};
+    let options=crate::dos::host_console::Options{window:false,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:crate::dos::host_console::speaker::DEFAULT_VOLUME};
     crate::dos_text_io::run(&mut session,&options,false)
 }
 

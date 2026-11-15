@@ -13,6 +13,28 @@ Local Linux, release: 7 setup tests pass (1 new). In a pseudo-terminal
 (--tty): start page, Enter ran FACTOR.COM, a key returned to the start
 page, S opened setup, Esc back, Esc quit. Window not run on Windows.
 
+# PC speaker clicks in pil --pildos and --dos-console — 15 November 2026
+
+Tony stopped hearing Landmark's speaker ticks. Not a core regression: Dine
+still counts port 61h switch-ons (a 5-tick COM gives beeps 5 with blocks
+and with PIL_PRECOMPILED=off). Since #190 the desktop shortcut opens
+`pil --pildos`, and the Rust console never played the speaker; only the
+Tk terminal did.
+- src/dos_host_speaker.rs: each new count plays the Tk terminal's click
+  (10 ms, 1200 Hz WAV, at most one per 0.2 s), checked after every
+  20,000-step slice. Windows: winmm PlaySoundA, memory, async. Elsewhere:
+  `aplay -q` in a thread when on PATH, else silent.
+- `speaker_volume` (0..100, default 5) now applies to the Rust console too
+  (setup screen field no longer Python only); `--speaker-volume` for
+  `pil --dos-console`. A repeated key keeps the last value, as before.
+- Still clicks, not tones: no PIT channel 2 waveform, no BEL beep from
+  teletype (07h is ignored), no AdLib/Sound Blaster.
+
+Local Linux, release: Rust tests pass (see PR); in a pseudo-terminal with
+a stand-in aplay, a 5-tick program gave 1 click (throttle), 0 with
+--speaker-volume 0. Windows code type-checks for x86_64-pc-windows-gnu;
+no sound was heard here (no audio device).
+
 # TIMEIT /? and full usage — 15 November 2026
 
 Tony's `timeit` on D: printed a usage without /K: driveD\TIMEIT.COM was

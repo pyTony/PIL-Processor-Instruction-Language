@@ -254,3 +254,33 @@ fn altgr_characters_type_plainly_in_the_terminal(){
     assert_eq!(typed_mods(']',CTRL),CTRL);
     assert_eq!(typed_mods('x',ALT),ALT);
 }
+
+#[derive(Default)]
+struct Recorder{plays:Vec<usize>}
+impl speaker::Player for Recorder{fn play(&mut self,wav:&std::sync::Arc<Vec<u8>>){self.plays.push(wav.len());}}
+#[test]
+fn speaker_clicks_follow_new_counts_at_most_five_a_second(){
+    let t0=Instant::now();let at=|ms:u64|t0+Duration::from_millis(ms);
+    let mut c=speaker::Clicks::new(5,3,Recorder::default());
+    c.observe(3,at(0));assert!(c.player().plays.is_empty(),"the count at start is not a click");
+    c.observe(4,at(0));assert_eq!(c.player().plays,vec![44+440]);
+    c.observe(9,at(150));assert_eq!(c.player().plays.len(),1,"within 0.2 s");
+    c.observe(9,at(300));assert_eq!(c.player().plays.len(),1,"no new count");
+    c.observe(10,at(300));assert_eq!(c.player().plays.len(),2);
+    // A new program counts from zero again.
+    c.observe(0,at(600));c.observe(1,at(600));assert_eq!(c.player().plays.len(),3);
+    let mut muted=speaker::Clicks::new(0,0,Recorder::default());
+    muted.observe(5,at(0));assert!(muted.player().plays.is_empty());
+}
+#[test]
+fn speaker_click_is_a_short_quiet_wav(){
+    let wav=speaker::click(5);
+    assert_eq!((&wav[0..4],&wav[8..16],&wav[36..40]),(&b"RIFF"[..],&b"WAVEfmt "[..],&b"data"[..]));
+    assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()),22050);
+    let samples:Vec<i16>=wav[44..].chunks(2).map(|b|i16::from_le_bytes([b[0],b[1]])).collect();
+    assert_eq!(samples.len(),220);
+    let peak=samples.iter().map(|s|s.unsigned_abs()).max().unwrap();
+    assert!((1500..=1640).contains(&peak),"5% of full scale, got {peak}");
+    assert_eq!((samples[0],samples[219]),(0,0));
+    assert!(speaker::click(100).iter().zip(&wav).any(|(a,b)|a!=b));
+}
