@@ -63,9 +63,10 @@ pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool
 }
 pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,String>{
     let(mut config,mut mount,mut tail,mut fpu,mut program)=(None,None,None,None,None);
-    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default()};
+    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME};
     let mut plain=false;
     let mut host_pointer=None;
+    let mut speaker_volume=None;
     let mut at=0;
     while at<args.len(){
         match args[at].as_str(){
@@ -74,6 +75,10 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
             "--host-pointer"=>{
                 let value=args.get(at+1).ok_or("missing DOS console option value")?;
                 host_pointer=Some(crate::dos_config::HostPointer::parse(value).ok_or("--host-pointer takes auto, show or hide")?);at+=1;
+            },
+            "--speaker-volume"=>{
+                let value=args.get(at+1).ok_or("missing DOS console option value")?;
+                speaker_volume=Some(value.parse::<u8>().ok().filter(|v|*v<=100).ok_or("--speaker-volume takes 0..100")?);at+=1;
             },
             "--config"|"--mount"|"--args"|"--fpu"|"--country"|"--utc-offset"=>{
                 let value=args.get(at+1).ok_or("missing DOS console option value")?.as_str();
@@ -87,6 +92,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     options.ansi|=defaults.ansi;options.mouse|=defaults.mouse;
     options.utc_offset=options.utc_offset.or(defaults.utc_offset);
     options.host_pointer=host_pointer.or(defaults.host_pointer).unwrap_or_default();
+    options.speaker_volume=speaker_volume.or(defaults.speaker_volume).unwrap_or(host_console::speaker::DEFAULT_VOLUME);
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
     let tail=tail.or_else(||startup.as_ref().and_then(|s|s.1.as_deref()));
