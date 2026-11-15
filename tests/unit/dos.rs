@@ -1288,9 +1288,9 @@ fn mounted_folder_is_drive_c_for_find_chdir_and_reading_files(){
  for d in [&b"."[..],b"..",b"\\"]{assert_eq!(call(&mut p,0x4300,0,d),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x10);}
  assert_eq!(call(&mut p,0x3b00,0,b"..").1,0);assert_eq!(call(&mut p,0x4300,0,b"."),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x10);
  assert_eq!(call(&mut p,0x4300,0,b".."),(3,1));assert_eq!(call(&mut p,0x4300,0,b""),(3,1));
- // AH36: no free clusters reported; three 512-byte clusters hold the files.
+ // AH36: three 512-byte clusters hold the files; the writable host folder reports 0xffff total and 0xffff - 3 free.
  p.cpu.regs[2]=0;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();
- assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(1,0,512,3));
+ assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(1,0xffff-3,512,0xffff));
  p.cpu.regs[2]=1;p.cpu.regs[0]=0x3600;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0xffff);
  // Without a mount, A: is an empty drive.
  let mut empty=load(&[0xcd,0x21],"x.com").unwrap();assert_eq!(call(&mut empty,0x4e00,0x10,b"*.*"),(0x12,1));assert_eq!(call(&mut empty,0x1900,0,b"").0&255,0);

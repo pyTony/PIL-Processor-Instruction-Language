@@ -815,14 +815,12 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
         0x19=>p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.drive.letter()-b'A'),
         0x36=>{
             let Some(drive)=p.drive.number(dl)else{set_ax(p,0xffff);return Ok(())};
-            // The image is read-only and the host's free space is not read
-            // (Dine has no statvfs), so neither reports a free cluster. An
-            // image reports its own geometry; a host folder 512-byte clusters
-            // for the files it holds; the memory drive 2 KiB clusters, free
-            // as its files leave room.
+            // The image is read-only, so it reports 0 free clusters. A host
+            // folder is writable (Dine has no statvfs, so report at least 16 MiB
+            // free in 512-byte clusters); the memory drive uses 2 KiB clusters.
             let(per_cluster,clusters,free)=match &p.drive.list[drive].source{
                 Source::Image(tree)=>(u32::from(tree.sectors_per_cluster),u32::from(tree.clusters),0),
-                Source::Host(root)=>(1,used_clusters(root),0),Source::Empty=>(1,0,0),
+                Source::Host(root)=>(1,0xffff,0xffff-used_clusters(root).min(0x7fff)),Source::Empty=>(1,0,0),
                 Source::Memory(m)=>{let total=MEMORY_BYTES/MEMORY_CLUSTER;(MEMORY_CLUSTER/512,total,total.saturating_sub(m.clusters()))},
             };
             set_ax(p,per_cluster);p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|free;p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|512;p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|clusters;
