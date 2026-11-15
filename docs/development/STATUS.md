@@ -60,7 +60,7 @@ both). Same options as --dos-session, plus --tty/--window, --mouse,
   WM_SYSCHAR, WM_KEYDOWN for untyped keys, AltGr), mouse and focus;
   text drawn with the 8x8 ROM font doubled to 8x16 and a blinking BIOS
   cursor; graphics through desktop_vga_frame.
-- Not yet: speaker, drive menu, copy/paste, program fonts, blink attribute,
+- Not yet: speaker (added 15 November 2026), drive menu, copy/paste, program fonts, blink attribute,
   COM1 output. docs/DOS_CONSOLE.md.
 
 Local Linux release: 815 Rust tests pass, 2 ignored (7 new in

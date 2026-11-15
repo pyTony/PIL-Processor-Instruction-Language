@@ -20,7 +20,7 @@ is involved. `PILdos.vbs --rust-text` and `sh PILdos.sh --rust-text` use this ro
 forwarding remaining options. `PILDOS_ENGINE` selects another executable;
 otherwise the shortcuts use `target/release/pil`. Ordinary shortcut launches
 retain the existing Python/COM1 behavior. Existing `headless`, `com1`, `shell`,
-`engine`, `speaker_volume` and `rust_graphics` config flags belong to the Python
+`engine` and `rust_graphics` config flags belong to the Python
 frontend; Rust text mode already supplies a terminal and native Windows graphics.
 
 When terminal-mode stdin or stdout is redirected, the Rust console uses a
@@ -43,7 +43,7 @@ no second guest ANSI parser or per-program runtime is generated. Both
 interpreter and backend sessions use the same boundary.
 
 Physical held-key/modifier state and Ctrl+Break delivery depend on what the host
-terminal reports. Blink, custom fonts/palettes, speaker sound and COM1-only/TCP
+terminal reports. Blink, custom fonts/palettes and COM1-only/TCP
 console routing retain the limitations listed below. The Python serial frontend
 remains available for COM1/CTTY COM1 applications.
 
@@ -53,7 +53,7 @@ as `--dos-session`: the same drives, `--config`, `--mount`, `--args`, `--fpu`
 and stop log. Nothing in it depends on which program runs.
 
 ```text
-pil --dos-console [--tty|--window] [--mouse] [--ansi] [--host-pointer auto|show|hide] [--country 1|358]
+pil --dos-console [--tty|--window] [--mouse] [--ansi] [--host-pointer auto|show|hide] [--speaker-volume 0..100] [--country 1|358]
                   [--utc-offset SECONDS] [--config FILE] [--mount HOST_FOLDER]
                   [--args COMMAND_LINE] [--fpu none|80387] [PROGRAM]
 ```
@@ -71,6 +71,7 @@ in [DOS_CONFIG.md](DOS_CONFIG.md).
 | `--window` | Use a Win32 window. This is the default on Windows, and it works only there. |
 | `--mouse` | Install the INT 33h driver, like `mouse on` in a session. Without it no mouse is offered. |
 | `--host-pointer` | The Windows pointer over the window: `auto` (default) hides it while the program's INT 33h cursor is shown, `show` never hides it, `hide` always does. It changes at the pointer's next move. |
+| `--speaker-volume` | PC speaker click volume `0..100`, `0` silent; default `speaker_volume` from the configuration, else 5. |
 | `--ansi` | Load the ANSI.SYS-style CON driver. |
 | `--country` | Set the DOS country: 1 or 358 (Finland). |
 | `--utc-offset` | Set the DOS clock's offset from UTC, in seconds. The default is the host's time zone. |
@@ -135,9 +136,19 @@ text the program wrote through the BIOS copies as text. Picture cells and
 cells of one colour copy as spaces. In a terminal (`--tty`) the terminal's
 own selection does this.
 
+## PC speaker
+
+Each time a program switches the speaker on through port 61h (a beep,
+Landmark's ticks), the console plays one short, quiet click, at most five a
+second, as the Tk terminal does. The session counts switch-ons only, so
+the click is not the program's tone or length. Windows plays it through
+winmm; Linux and Termux pipe it to `aplay` when that is on PATH, otherwise
+nothing sounds. `speaker_volume` in pildos.conf (the setup screen's
+"Speaker volume") or `--speaker-volume` sets the level.
+
 ## Not done yet
 
-- No PC speaker sound. The Tk terminal plays it.
+- The speaker plays clicks, not tones: see PC speaker above.
 - No drive menu or key log.
 - A program's own text-mode font is not used: plane 2 and AX=1100h are
   ignored, and the console draws text modes with Dine's 8x16 font.
