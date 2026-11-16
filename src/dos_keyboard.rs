@@ -37,6 +37,10 @@ impl Keyboard{
     pub(super) fn read(&mut self)->u8{self.unread=false;self.latch.map_or(0,|c|c.raw)}
     /// Port 64h bit 0: the output buffer holds a code.
     pub(super) fn full(&self)->bool{self.unread}
+    /// Non-destructive state for host diagnostics. Never consume port 60h.
+    pub(super) fn diagnostic(&self)->(usize,bool,Option<u8>){
+        (self.queue.len(),self.unread,self.latch.map(|c|c.raw))
+    }
 }
 /// Whether keys go through IRQ1 to a program's INT 09h handler. A handler
 /// left behind in memory Dine cannot run (a resident program's) is passed

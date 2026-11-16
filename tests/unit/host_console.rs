@@ -340,6 +340,8 @@ fn host_media_shortcut_never_becomes_a_guest_enter(){
     assert_eq!(window_event(Input::Char{ch:'\r',shift:true,ctrl:true,alt:false}),Some(Event::HostMenu));
     assert_eq!(window_event(Input::Char{ch:'\r',shift:false,ctrl:false,alt:false}),Some(Event::Key(Key::Enter,Mods::default())));
     assert_eq!(window_event(Input::Menu{id:104}),Some(Event::HostCommand(104)));
+    assert_eq!(window_event(Input::Menu{id:3}),Some(Event::HostCommand(3)));
+    assert_eq!(window_event(Input::Menu{id:4}),Some(Event::HostCommand(4)));
     assert_eq!(window_event(Input::Char{ch:'\u{1b}',shift:false,ctrl:false,alt:false}),Some(Event::Key(Key::Escape,Mods::default())));
 }
 

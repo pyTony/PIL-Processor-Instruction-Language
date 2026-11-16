@@ -25,6 +25,12 @@ impl History{
     pub(crate) fn json(&self)->String{
         format!("[{}]",self.entries.iter().map(Dispatch::json).collect::<Vec<_>>().join(","))
     }
+    pub(crate) fn capacity(&self)->usize{self.capacity}
+    /// Most recent dispatches, chronological and capped at the requested size.
+    pub(crate) fn recent_json(&self,count:usize)->String{
+        let skip=self.entries.len().saturating_sub(count);
+        format!("[{}]",self.entries.iter().skip(skip).map(Dispatch::json).collect::<Vec<_>>().join(","))
+    }
     #[cfg(test)]
     pub(crate) fn len(&self)->usize{self.entries.len()}
 }
@@ -48,7 +54,7 @@ impl Dispatch{
              bytes,length,registers:p.cpu.regs,selectors:p.selectors,
              eflags:p.cpu.eflags,msw:p.image.msw}
     }
-    fn json(&self)->String{
+    pub(super) fn json(&self)->String{
         let bytes=self.bytes[..self.length].iter()
             .map(|v|format!("{v:02X}")).collect::<Vec<_>>().join(" ");
         format!(r#"{{"sequence":{},"location":"{:04X}:{:04X}","instruction_bytes":{},"registers":{:?},"selectors":{:?},"eflags":{},"msw":{}}}"#,

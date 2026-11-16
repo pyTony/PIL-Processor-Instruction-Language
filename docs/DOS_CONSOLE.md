@@ -136,6 +136,44 @@ Shift+right-click or Ctrl+Shift+M opens it even with a DOS mouse driver.
 The menu includes clipboard commands and drive/media controls; see
 [multi-disk installation media](DOS_INSTALL_MEDIA.md).
 
+### Live guest diagnostics (Windows host menu)
+
+If a DOS program shows a black screen or stops responding but the Dine host
+menu still opens, use **Diagnostics > Save live guest snapshot**. The menu is
+available with right-click when the guest mouse is inactive, or with
+Shift+right-click or Ctrl+Shift+M. It does not require the guest to exit or
+raise an exception.
+
+Each capture appends one single-line JSON object to
+`PILdos-snapshots.jsonl` **in the emulator's current working directory**
+(usually the repository root if PILdos.vbs was started there). The record
+contains current CS:IP and instruction bytes, CPU registers, step count,
+original executable name, best-effort active DOS executable path read
+from the current PSP environment, PSP/EXEC nesting, VGA BIOS mode and
+sequencer/graphics-controller registers, BIOS keyboard ring pointers, IRQ1
+keyboard queue, and host keystrokes awaiting delivery. The initial
+executable name may still be COMMAND.COM when it launched a DOS child;
+active path lookup is bounded and may report null if guest data is absent.
+
+The **first capture enables a 32-entry pre-dispatch history ring** if history
+was disabled. Give the DOS program a moment to run, then capture again.
+The subsequent record includes the 16 most recent pre-dispatch addresses
+and their bytes; repeated addresses help identify a polling loop. An
+existing `PIL_DOS_HISTORY` setting is preserved. While dispatch
+history is enabled, native blocks are bypassed, so execution can slow down.
+Use **Diagnostics > Disable instruction history** when finished.
+
+From PowerShell after taking two samples:
+
+```powershell
+Get-Content .\PILdos-snapshots.jsonl -Tail 2
+```
+
+This is a separate file from `PILdos-stops.jsonl`; an unchanged
+stop log does not mean the guest is idle. Snapshots are read-only with
+respect to guest CPU, keyboard and VGA state, apart from enabling or
+disabling the host-side tracing facility.
+
 While the program has the mouse driver active (it called INT 33h AX=0000h
 with `--mouse`), the mouse belongs to the program; hold Shift to select.
 With `--host-pointer auto` the Windows arrow disappears over the window
