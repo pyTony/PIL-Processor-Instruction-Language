@@ -11,6 +11,35 @@ fn bda(p:&Loaded,address:u32,width:MemWidth)->Option<u32>{
 fn number(value:Option<u32>)->String{
     value.map_or_else(||"null".into(),|v|v.to_string())
 }
+/// Standard DOS PSP:2Ch points to the environment. After its double NUL,
+/// Dine's EXEC loader writes a count word (1) and the child's full path.
+/// Treat this as best-effort, untrusted guest data: bound both scans.
+fn current_program(p:&Loaded)->Option<String>{
+    let psp=u32::from(p.psp)*16;
+    let segment=bda(p,psp+0x2c,MemWidth::Word)?;
+    if segment==0{return None;}
+    let base=segment.checked_mul(16)?;
+    let mut previous_zero=false;
+    for i in 0..0x8000u32{
+        let value=bda(p,base.checked_add(i)?,MemWidth::Byte)? as u8;
+        if value==0&&previous_zero{
+            let count=bda(p,base.checked_add(i+1)?,MemWidth::Word)?;
+            if count!=1{return None;}
+            let start=base.checked_add(i+3)?;
+            let mut bytes=Vec::new();
+            for n in 0..260u32{
+                let value=bda(p,start.checked_add(n)?,MemWidth::Byte)? as u8;
+                if value==0{
+                    return (!bytes.is_empty()).then(||String::from_utf8_lossy(&bytes).into_owned());
+                }
+                bytes.push(value);
+            }
+            return None;
+        }
+        previous_zero=value==0;
+    }
+    None
+}
 /// One JSON object, with no embedded newlines, for the append-only log.
 /// The initial executable name belongs to the session; PSP and EXEC depth
 /// distinguish a running child from the original COMMAND.COM loader.
@@ -41,8 +70,9 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
     let pc=history::Dispatch::capture(p).json();
     let recent=p.history.recent_json(16);
     let program=stoplog::quote(&String::from_utf8_lossy(&p.own_name));
+    let active=current_program(p).map_or_else(||"null".into(),|s|stoplog::quote(&s));
     format!(
-        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"keyboard":{keyboard}}}"#,
+        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"keyboard":{keyboard}}}"#,
         stoplog::quote(status),p.psp,p.exec.len(),p.history.enabled(),p.history.capacity()
     )
 }
@@ -62,6 +92,8 @@ mod tests{
         assert!(first.contains(r#""history_enabled":true"#));
         assert!(first.contains(r#""host_pending":3"#));
         assert!(first.contains(r#""current_psp":"#));
+        assert!(first.contains(r#""active_executable":"#));
+        assert!(current_program(session.machine().unwrap()).unwrap().to_ascii_uppercase().ends_with("SPIN.COM"));
         assert!(first.contains(r#""bios_mode":3"#));
         assert!(first.contains(r#""recent_dispatches":[]"#));
         assert!(!first.contains('\n'));
