@@ -382,6 +382,33 @@ fn multiplex_checks_for_4dos_windows_mscdex_and_append_leave_registers(){
     }
 }
 #[test]
+fn borland_tdx_installation_check_preserves_state_when_debugger_is_absent(){
+    // RBIL INT 2Fh/AX=FB43h/BX=0100h: TDX answers BX=FB43h
+    // when installed. This DOS instance has no resident TDX handler.
+    let mut p=load(&[0xcd,0x2f],"tdx.com").unwrap();
+    p.cpu.regs[0]=0x7654_fb43;p.cpu.regs[3]=0xabcd_0100;
+    p.cpu.regs[1]=0x12345678;p.cpu.regs[2]=0x87654321;p.cpu.eflags=0x203;
+    let old=p.cpu.clone();let old_ram=p.ram.clone();let mut output=vec![65];
+    assert_eq!(super::super::service(&mut p,0x2f,&mut output).unwrap(),None);
+    assert_eq!(p.cpu,old,"unclaimed multiplex check must preserve all registers and flags");
+    assert_eq!(p.ram,old_ram);assert_eq!(output,vec![65]);
+
+    // MOV AX,FB43h; MOV BX,0100h; INT 2Fh; CLI; HLT.
+    let code=[0xb8,0x43,0xfb,0xbb,0x00,0x01,0xcd,0x2f,0xfa,0xf4];
+    let r=run(load(&code,"tdx-check.com").unwrap(),24).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu.regs[0]&0xffff,0xfb43);
+    assert_eq!(r.loaded.cpu.regs[3]&0xffff,0x0100,"must not report TDX installed");
+
+    // A different TDX/DPMILOAD subfunction is not silently accepted.
+    for (ax,bx) in [(0xfb43,0x000f),(0xfb43,0x0101),(0xfb42,0x0100)]{
+        let mut p=load(&[0xcd,0x2f],"unknown-borland.com").unwrap();
+        p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;let old=p.cpu.clone();
+        assert!(super::super::service(&mut p,0x2f,&mut Vec::new()).is_err(),"{ax:04x}/{bx:04x}");
+        assert_eq!(p.cpu,old);
+    }
+}
+#[test]
 fn ascii_adjust_instructions_match_the_sdm_and_aam_zero_faults(){
     // AX=02FBh: AAA -> 0401h (CF=AF=1); AAS -> 02FBh-106h=01F5h&FF0Fh=0105h
     // (CF=AF=1); AAM 10 -> AL=5: 0005h; AAD 10 -> 5; AAM 7 -> 0005h; AAD 7.
