@@ -20,41 +20,60 @@ fn sha256_matches_the_fips_examples(){
 #[test]
 fn refresh_adds_updates_old_versions_and_keeps_other_files(){
     let root=folder("refresh");
-    let source=root.join("programs");let target=root.join("drive");
+    let source=root.join("programs");let drive=root.join("drive");let target=drive.join(FOLDER);
     std::fs::create_dir_all(&source).unwrap();std::fs::create_dir_all(&target).unwrap();
     std::fs::write(source.join("NEW.COM"),b"new program").unwrap();
     std::fs::write(source.join("OLD.COM"),b"version 2").unwrap();
     std::fs::write(source.join("MINE.COM"),b"ours").unwrap();
-    std::fs::write(source.join("SAME.TXT"),b"same").unwrap();
+    std::fs::write(source.join("SAME.BAS"),b"same").unwrap();
     std::fs::write(source.join("prog.asm"),b"; version 2").unwrap();
+    std::fs::write(source.join("NOTES.TXT"),b"notes").unwrap();
     let manifest=format!("# comment\n{}  OLD.COM\n{}  OLD.COM\n{}  PROG.ASM\n",
         hex(&sha256(b"version 1")),hex(&sha256(b"version 2")),hex(&sha256(b"; version 1")));
     std::fs::write(source.join(MANIFEST),manifest).unwrap();
-    // On the drive: an earlier version, the user's own file under one of our
-    // names, an identical copy, an old version in other letter case, and a
-    // file of the user's that is not ours at all.
+    // In the folder: an earlier version, the user's own file under one of
+    // our names, an identical copy and a file of the user's that is not ours.
     std::fs::write(target.join("OLD.COM"),b"version 1").unwrap();
     std::fs::write(target.join("MINE.COM"),b"the user's own").unwrap();
-    std::fs::write(target.join("SAME.TXT"),b"same").unwrap();
-    std::fs::write(target.join("PROG.ASM"),b"; version 1").unwrap();
+    std::fs::write(target.join("SAME.BAS"),b"same").unwrap();
     std::fs::write(target.join("OTHER.EXE"),b"third party").unwrap();
+    // In the drive's root, as earlier starts left it: our old copies (one in
+    // other letter case, one a source) and the user's own files.
+    std::fs::write(drive.join("old.com"),b"version 1").unwrap();
+    std::fs::write(drive.join("PROG.ASM"),b"; version 1").unwrap();
+    std::fs::write(drive.join("MINE.COM"),b"the user's own").unwrap();
+    std::fs::write(drive.join("GAME.EXE"),b"third party").unwrap();
 
-    let report=refresh(&source,&target);
-    assert_eq!(report,Report{added:vec!["NEW.COM".into()],updated:vec!["OLD.COM".into(),"prog.asm".into()],kept:vec!["MINE.COM".into()],failed:vec![]});
+    let report=refresh(&source,&drive);
+    assert_eq!(report,Report{added:vec!["NEW.COM".into()],updated:vec!["OLD.COM".into()],kept:vec!["MINE.COM".into()],
+        failed:vec![],removed:vec!["OLD.COM".into(),"prog.asm".into()]});
     assert_eq!(std::fs::read(target.join("NEW.COM")).unwrap(),b"new program");
     assert_eq!(std::fs::read(target.join("OLD.COM")).unwrap(),b"version 2");
-    assert_eq!(std::fs::read(target.join("PROG.ASM")).unwrap(),b"; version 2");
     assert_eq!(std::fs::read(target.join("MINE.COM")).unwrap(),b"the user's own");
     assert_eq!(std::fs::read(target.join("OTHER.EXE")).unwrap(),b"third party");
-    assert!(!target.join(MANIFEST).exists());
-    let mut names:Vec<_>=std::fs::read_dir(&target).unwrap().map(|e|e.unwrap().file_name().into_string().unwrap()).collect();
-    names.sort();
-    assert_eq!(names,["MINE.COM","NEW.COM","OLD.COM","OTHER.EXE","PROG.ASM","SAME.TXT"]);
-    assert_eq!(report.summary(b'D').unwrap(),"D: from programs/dos: updated OLD.COM, prog.asm; added NEW.COM; kept your own MINE.COM.");
+    let list=|d:&Path|{let mut n:Vec<_>=std::fs::read_dir(d).unwrap().map(|e|e.unwrap().file_name().into_string().unwrap()).collect();n.sort();n};
+    // Programs only: no sources, notes or the version list.
+    assert_eq!(list(&target),["MINE.COM","NEW.COM","OLD.COM","OTHER.EXE","SAME.BAS"]);
+    assert_eq!(list(&drive),["GAME.EXE","MINE.COM",FOLDER]);
+    assert_eq!(report.summary(b'D').unwrap(),"D:\\PIL from programs/dos: updated OLD.COM; added NEW.COM; kept your own MINE.COM; removed the old copies in D:\\ of OLD.COM, prog.asm.");
 
     // A second start changes nothing and says nothing new but the kept file.
-    let again=refresh(&source,&target);
+    let again=refresh(&source,&drive);
     assert_eq!(again,Report{kept:vec!["MINE.COM".into()],..Report::default()});
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn refresh_creates_the_folder_or_uses_one_in_other_case(){
+    let root=folder("create");
+    let source=root.join("programs");let drive=root.join("drive");
+    std::fs::create_dir_all(&source).unwrap();std::fs::create_dir_all(&drive).unwrap();
+    std::fs::write(source.join("A.COM"),b"a").unwrap();
+    assert_eq!(refresh(&source,&drive).added,["A.COM"]);
+    assert_eq!(std::fs::read(drive.join(FOLDER).join("A.COM")).unwrap(),b"a");
+    let other=root.join("other");std::fs::create_dir_all(other.join("pil")).unwrap();
+    assert_eq!(refresh(&source,&other).added,["A.COM"]);
+    assert!(other.join("pil").join("A.COM").is_file());
     std::fs::remove_dir_all(&root).unwrap();
 }
 

@@ -220,6 +220,11 @@ pub(crate) fn apply(p:&mut Loaded,explicit:Option<&str>,skip:Option<u8>)->Result
     let choose_c=p.drive.letter()==b'A'&&mounts.iter().any(|(d,_)|*d==b'C');
     for (letter,source) in mounts{p.drive.mount(letter,source)?;}
     if choose_c{dos::select_startup_drive(p,b'C')?;}
+    // The own programs' folder on PATH (after the startup drive, which
+    // edits the environment at fixed places).
+    if let Some(letter)=config.own_programs.unwrap_or(Some(b'D')).filter(|&l|p.drive.is_mounted(l)){
+        dos::set_environment_path(p,&format!("{}:\\{}",char::from(letter),crate::dos_own_programs::FOLDER))?;
+    }
     if let Some(country)=config.country{p.country=country;}
     Ok(())
 }

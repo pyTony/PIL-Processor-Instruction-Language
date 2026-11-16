@@ -57,7 +57,8 @@ pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool
         host_console::configure(session,options)?;
         stream(session,&mut io::stdin().lock(),&mut io::stdout().lock())
     }else{
-        host_console::run(session,options)?;
+        // The window or alternate screen has closed: say how the program ended.
+        println!("{}",host_console::run(session,options)?);
         match session.status().0{"exit"=>Ok(exit_code(session).unwrap_or(0)),"running"|"waiting_input"=>Ok(0),_=>Err(format!("DOS stopped: {}",session.status().1))}
     }
 }

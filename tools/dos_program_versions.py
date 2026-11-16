@@ -1,10 +1,12 @@
 """Keep programs/dos/versions.sha256 current.
 
-The launchers copy the project's own DOS programs (every file directly in
-programs/dos) into the drive folder chosen by `own_programs` in pildos.conf
-(default D:), so a pull reaches what DOS runs there. They replace a file
-already in that folder only when its SHA-256 is listed here for that name:
-an earlier version of ours. Anything else with the same name is kept.
+The launchers copy the project's own DOS programs (the COM, EXE, BAT and BAS
+files directly in programs/dos) into the PIL folder of the drive chosen by
+`own_programs` in pildos.conf (default D:\\PIL, on PATH), so a pull reaches
+what DOS runs there. They replace a file already in that folder only when
+its SHA-256 is listed here for that name: an earlier version of ours.
+Anything else with the same name is kept. Copies of ours that earlier
+launchers left in the drive's root (any listed version) are removed.
 
 This file lists, per name, the SHA-256 of the current file and of every
 version git history has of programs/dos/NAME (and of the same name directly

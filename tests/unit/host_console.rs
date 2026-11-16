@@ -261,6 +261,18 @@ fn window_selection_follows_the_pointer_in_reading_order(){
 }
 
 #[test]
+fn closing_text_repeats_the_last_screen_lines(){
+    // Four columns, five rows: a blank row inside is kept, blank rows
+    // before the first kept line and after the last one are not.
+    let text=[&b"one two thr four"[..],&[b' ';12]].concat();
+    assert_eq!(last_lines(&text,4,2),"thr\nfour");
+    assert_eq!(last_lines(&text,4,9),"one\ntwo\nthr\nfour");
+    let text=b"    a       b   ";
+    assert_eq!(last_lines(text,4,3),"a\n\nb");
+    assert_eq!(last_lines(&[b' ';8],4,4),"");
+}
+
+#[test]
 fn copied_text_trims_lines_and_pasted_text_becomes_keys(){
     use select::*;
     // Four columns, three rows; CP437 bytes come out as host characters.

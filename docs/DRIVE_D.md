@@ -42,15 +42,24 @@ programs never go into the repository. The project's own DOS programs
 Since the folder is ignored, a pull used to leave old copies of our
 programs on D:. Now every start that reads `pildos.conf` (`PILdos.vbs`,
 `sh PILdos.sh`, `pil --pildos`, `pil --dos-console`, the Python terminal)
-copies `programs/dos` into the drive named by `own_programs` (default D:):
+copies the programs of `programs/dos` (COM, EXE, BAT and BAS files, not the
+sources or notes) into the folder `PIL` on the drive named by `own_programs`
+(default D:, so `driveD\PIL` on the host), and puts that folder on PATH:
 
-- a file missing on D: is added;
+- a program missing in D:\PIL is added (the folder is created when needed);
 - a file of the same name (any letter case) is replaced only when it is an
   earlier version of ours: its SHA-256 is listed in
   `programs/dos/versions.sha256`;
 - any other file of that name is yours and is kept (the setup screen says
-  "kept your own ..."); files with other names are never touched, and
-  nothing is deleted.
+  "kept your own ..."); files with other names are never touched;
+- copies of ours that earlier starts put in the root of D: (programs and
+  sources, any listed version) are removed. Your own files in the root,
+  even with one of our names, stay.
+
+The first program's environment gets `PATH=D:\PIL` whenever that drive
+is mounted, so FreeCOM (which passes its environment on) finds `MANDVGA`,
+`TIMEIT` and the rest from any directory. Run directly with
+`pil --dos-console`, use the host path `driveD\PIL\TIMEIT.COM`.
 
 `own_programs=none` turns this off. Starts without a configuration
 (`freedos.cmd`, `--mount` on its own) do not copy anything.
