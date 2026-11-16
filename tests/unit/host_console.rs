@@ -309,6 +309,18 @@ fn catalog_launch_inherits_normal_configured_drives_and_ram_drive(){
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn catalog_parse_reports_the_line_and_accepts_crlf_bom_and_comments(){
+    let text="\u{feff}# group\ttitle\tdescription\tfolder\tlauncher\treserved\r\n\r\nTools\tEditor\tA text editor.\tD:\\APP\tD:\\MENUS\\R1.BAT\t\r\n";
+    let entries=catalog::parse(text).unwrap();
+    assert_eq!(entries,vec![vec!["Tools","Editor","A text editor.","D:\\APP","D:\\MENUS\\R1.BAT",""]]);
+    // A trimmed trailing tab leaves five fields; the reserved sixth becomes empty.
+    assert_eq!(catalog::parse("A\tB\tC\tD\tE\n").unwrap(),vec![vec!["A","B","C","D","E",""]]);
+    assert_eq!(catalog::parse("# only a comment\n").unwrap_err(),"no entries (only blank or # lines)");
+    let err=catalog::parse("# header\nTools\tEditor\tA text editor.\n").unwrap_err();
+    assert_eq!(err,"line 2: 3 tab-separated fields, a catalog entry needs 6");
+}
+
 #[cfg(windows)]
 #[test]
 fn host_media_shortcut_never_becomes_a_guest_enter(){

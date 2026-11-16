@@ -1,3 +1,19 @@
+# PIL Retro shortcut: catalog lookup and named errors — 16 November 2026
+
+Tony's "PIL Retro" shortcut said "The runtime or catalog is missing": his
+catalog.tsv (his own file, nothing in the repo writes it) sat in
+images\retro\img, beside the extracted image, while PILmedia.vbs read only
+images\retro\catalog.tsv. PILmedia.vbs now takes PIL_RETRO_CATALOG, else
+images\retro\catalog.tsv, else catalog.tsv one folder below images\retro,
+and names what is missing: the runtime, images\FD14LITE.img or the catalog
+(with the places it looked). `pil --dos-catalog` reports the catalog path
+and the line of a bad entry, accepts CRLF, a BOM and a missing sixth
+(reserved) field, and checks the file before the one-browser lock. The
+catalog format is now in docs/DOS_INSTALL_MEDIA.md.
+
+Local Linux, release: the catalog tests pass (1 new). PILmedia.vbs was not
+run (no Windows here).
+
 # PC speaker tones and BEL beeps in pil --pildos / --dos-console — 16 November 2026
 
 Tony asked about Sound Blaster; real speaker tones came first, and GW-BASIC's

@@ -32,6 +32,38 @@ own engine copy and must be restarted to use an update. If a build is
 interrupted, remove the empty `target/pil-build-in-progress` folder only
 after confirming no build is running.
 
+### Catalog file
+
+`PILmedia.vbs` (and the "PIL Retro" desktop shortcut) reads the first of:
+
+1. the file named by the `PIL_RETRO_CATALOG` environment variable;
+2. `images/retro/catalog.tsv`;
+3. `catalog.tsv` in a folder directly below `images/retro`, such as
+   `images/retro/img/catalog.tsv` beside an extracted image.
+
+Nothing in the repository writes this file: it lists your own software, so
+you write it (images/ is git-ignored). A missing file, runtime or
+`images/FD14LITE.img` is reported by name. UTF-8 text, one entry per line,
+six fields separated by tabs (the sixth is reserved and may be left out); blank lines and lines starting with `#` are
+skipped; at most 200 entries:
+
+```text
+# group	title	description	folder shown	DOS launcher	reserved (empty)
+Tools	My editor	Full-screen text editor.	D:\APPS\EDIT	D:\MENUS\EDIT.BAT	
+```
+
+The launcher must be a `D:\...BAT` file; the browser runs it with
+`COMMAND.COM /C`. To see a parse error with its line number, run the engine
+in a terminal:
+
+```powershell
+target\release\pil.exe --dos-catalog images/FD14LITE.img::COMMAND.COM images/retro/catalog.tsv
+```
+
+```sh
+target/release/pil --dos-catalog images/FD14LITE.img::COMMAND.COM images/retro/catalog.tsv
+```
+
 For installation images run **`PILimages.cmd`** from the project root. Its native file
 chooser starts in `images/`. Select an image or an ordered `.lst` manifest;
 the launcher starts the normal shared Rust runtime with a writable D:.
