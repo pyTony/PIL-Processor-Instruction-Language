@@ -3418,3 +3418,22 @@ fn exec_4b01_bad_parameter_destination_and_missing_file_do_not_allocate(){
     assert_eq!(p.psp,PSP);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+#[test]
+fn path_is_added_to_or_replaced_in_the_environment(){
+    let block=|text:&[u8]|{let mut b=text.to_vec();b.resize(64,0);b};
+    let env=block(b"COMSPEC=C:\\COMMAND.COM\0TEMP=Z:\\\0\0\x01\0C:\\T.COM\0");
+    assert_eq!(with_path(&env,b"D:\\PIL").unwrap(),block(b"COMSPEC=C:\\COMMAND.COM\0TEMP=Z:\\\0PATH=D:\\PIL\0\0\x01\0C:\\T.COM\0"));
+    // An existing PATH (any case) is replaced where it was.
+    let env=block(b"path=A:\\\0X=1\0\0\x01\0A:\\B.EXE\0");
+    assert_eq!(with_path(&env,b"E:\\PIL").unwrap(),block(b"PATH=E:\\PIL\0X=1\0\0\x01\0A:\\B.EXE\0"));
+    // No room, or not an environment: None.
+    assert_eq!(with_path(&env,&[b'x';60]),None);
+    assert_eq!(with_path(&[b'x';16],b"D:\\PIL"),None);
+    // The first program's environment gets it through the PSP.
+    let mut p=load(&[0xcd,0x20],"T.COM").unwrap();
+    set_environment_path(&mut p,"D:\\PIL").unwrap();
+    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).unwrap()*16;
+    let bytes:Vec<u8>=(0..48).map(|i|p.ram.load(env+i,MemWidth::Byte).unwrap() as u8).collect();
+    assert!(bytes.windows(12).any(|w|w==b"PATH=D:\\PIL\0"),"{bytes:?}");
+}

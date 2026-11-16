@@ -25,6 +25,18 @@ rising sweep, then its four last lines and the exit line. Tony on Windows
   shown). Through FreeCOM it works: `--args "/C D:\TIMEIT /K D:\MANDVGA
   >D:\TIMING.TXT" images/FD14LITE.img::COMMAND.COM` wrote the timing to
   D:\TIMING.TXT here (local tty run, 5.4 s with terminal graphics).
+- Tony (PR comment): own programs belong in a subdirectory on PATH, without
+  sources. dos_own_programs.rs now copies only COM, EXE, BAT and BAS files
+  from programs/dos to `PIL` on the own_programs drive (D:\PIL, created when
+  missing, an existing folder in any case reused), with the same
+  replace-only-our-versions rule; copies of ours that earlier starts left
+  in the drive's root (programs and sources, any listed version) are
+  removed, the user's own files stay. dos_config::apply sets PATH=D:\PIL
+  (that drive's letter) in the first program's environment whenever that
+  drive is mounted (also with a legacy --mount; dos::set_environment_path
+  rewrites the block in place). Local: FreeCOM from FD14LITE.img with
+  `/C TIMEIT /K MANDVGA >D:\TIMING.TXT` from C: found both through PATH;
+  old root TIMEIT.COM and mandel.asm were removed, OWN.TXT kept.
 
 # PC speaker tones and BEL beeps in pil --pildos / --dos-console — 16 November 2026
 
