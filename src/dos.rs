@@ -415,6 +415,8 @@ pub struct Probe{
 pub(super) mod stoplog;
 #[path="dos_history.rs"]
 pub(crate) mod history;
+#[path="dos_live_diagnostics.rs"]
+mod live_diagnostics;
 #[derive(Clone,Debug)]
 pub struct ExceptionSite{pub vector:u8,pub detail:String,pub diagnostic:String,pub cs:u16,pub eip:u32}
 impl ExceptionSite{
