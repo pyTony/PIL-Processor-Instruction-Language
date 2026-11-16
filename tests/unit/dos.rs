@@ -1074,9 +1074,11 @@ fn bios_rom_identity_and_hlt_idle(){
  // Empty bus FFh at F000:FFEA (no "COMPAQ"), date at F000:FFF5, model FCh.
  assert_eq!(p.ram.load(0xfffea,MemWidth::Byte).unwrap(),0xff);assert_eq!(p.ram.load(0xc0000,MemWidth::Word).unwrap(),0xffff);
  assert_eq!(&p.ram.bytes()[0xffff5..0xffffd],b"01/10/84");assert_eq!(p.ram.load(0xffffe,MemWidth::Byte).unwrap(),0xfc);
- // MOV AX,F000; MOV ES,AX; MOV AL,ES:[FFFE]; MOV ES:[FFFE],AL faults: the ROM is read-only.
- let r=run(load(&[0xb8,0x00,0xf0,0x8e,0xc0,0x26,0xa0,0xfe,0xff,0x26,0xa2,0xfe,0xff,0xf4],"romw.com").unwrap(),10).unwrap();
- assert_eq!(r.loaded.cpu.regs[0]&255,0xfc);assert!(matches!(r.stop,Stop::Fault(_)),"{:?}",r.stop);
+ // MOV AX,F000; MOV ES,AX; MOV AL,12; MOV ES:[FFFE],AL; MOV AL,ES:[FFFE]: a write to
+ // the ROM is ignored, as on an AT, without a fault; byte and word stores alike.
+ let r=run(load(&[0xb8,0x00,0xf0,0x8e,0xc0,0xb0,0x12,0x26,0xa2,0xfe,0xff,0x26,0xc7,0x06,0x00,0x00,0x34,0x12,0x26,0xa0,0xfe,0xff,0xfa,0xf4],"romw.com").unwrap(),10).unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu.regs[0]&255,0xfc);
+ assert_eq!(r.loaded.ram.load(0xf0000,MemWidth::Word).unwrap(),p.ram.load(0xf0000,MemWidth::Word).unwrap());
  // With IF=1 (as loaded), HLT; HLT; INT 1A AH=00 sees two idle ticks, then MOV AH,4C; INT 21.
  let r=run(load(&[0xf4,0xf4,0xb4,0x00,0xcd,0x1a,0xb4,0x4c,0xcd,0x21],"idle.com").unwrap(),10).unwrap();
  assert!(matches!(r.stop,Stop::Exit(_)),"{:?}",r.stop);assert_eq!(r.loaded.cpu.regs[2]&0xffff,2);assert_eq!(r.instructions.get("HLT (idle tick)"),Some(&2));
@@ -1403,7 +1405,10 @@ fn exec_overlay_loads_relocates_and_executes_without_a_child(){
  // A protected destination fails before any of the overlay is written.
  p.ram.write_bytes(base+0x200,b"CODE.OVL\0").unwrap();p.ram.protect(0x30004,1).unwrap();let before=p.ram.clone();p.cpu.regs[0]=0x4b03;assert!(service(&mut p,0x21,&mut vec![]).is_err());assert_eq!(p.ram,before);
  std::fs::write(dir.join("BIG.OVL"),vec![0x90;0x10020]).unwrap();p.ram.set_a20_enabled(true);p.ram.write_bytes(base+0x200,b"BIG.OVL\0").unwrap();p.ram.write_bytes(base+0x240,&[0xff,0xff,0,0]).unwrap();
- let before=p.ram.clone();p.cpu.regs[0]=0x4b03;assert!(service(&mut p,0x21,&mut vec![]).is_err());assert_eq!(p.ram,before);
+ // At FFFF:0 it covers the end of the BIOS ROM, which keeps its bytes,
+ // and goes on above 1 MiB with A20 enabled.
+ let rom=p.ram.load(0xffff0,MemWidth::Dword).unwrap();p.cpu.regs[0]=0x4b03;service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!(p.ram.load(0xffff0,MemWidth::Dword).unwrap(),rom);assert_eq!(p.ram.load(0x100000,MemWidth::Byte).unwrap(),0x90);
  std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
@@ -2324,14 +2329,15 @@ fn two_bit(bits:u8,color:u32)->[u32;2]{
 }
 #[test]
 fn rom_font_sits_read_only_at_f000_fa6e_and_has_every_low_glyph(){
- let p=load(&[0xf4],"font.com").unwrap();
+ let mut p=load(&[0xf4],"font.com").unwrap();
  for ch in 0..128u8{for(r,row)in glyph_rows(ch).into_iter().enumerate(){
   assert_eq!(p.ram.load(0xffa6e+u32::from(ch)*8+r as u32,MemWidth::Byte).unwrap(),u32::from(row),"glyph {ch:02X} row {r}");
  }}
  assert_eq!(glyph_rows(b' '),[0;8]);assert_ne!(glyph_rows(b'A'),[0;8]);
  // Printable glyphs are distinct, so AH08h can tell them apart.
  let shapes:std::collections::BTreeSet<[u8;8]>=(0x21..0x7f).map(glyph_rows).collect();assert_eq!(shapes.len(),0x7f-0x21);
- assert!(p.ram.check_write(0xffa6e,MemWidth::Byte).is_err());
+ let glyph=p.ram.load(0xffa6e,MemWidth::Byte).unwrap();p.ram.store(0xffa6e,MemWidth::Byte,!glyph&255).unwrap();
+ assert_eq!(p.ram.load(0xffa6e,MemWidth::Byte).unwrap(),glyph,"the ROM ignores the write");
  assert_eq!(p.ram.load(0xffff5,MemWidth::Byte).unwrap(),u32::from(b'0'));
 }
 #[test]
@@ -2425,7 +2431,8 @@ fn upper_half_characters_come_from_the_int_1f_table(){
  for ch in 0x80..=0xffu8{for(r,row)in glyph_rows(ch).into_iter().enumerate(){
   assert_eq!(p.ram.load(0xc1000+u32::from(ch-0x80)*8+r as u32,MemWidth::Byte).unwrap(),u32::from(row),"glyph {ch:02X} row {r}");
  }}
- assert!(p.ram.check_write(0xc1000,MemWidth::Byte).is_err());
+ let glyph=p.ram.load(0xc1000,MemWidth::Byte).unwrap();p.ram.store(0xc1000,MemWidth::Byte,!glyph&255).unwrap();
+ assert_eq!(p.ram.load(0xc1000,MemWidth::Byte).unwrap(),glyph,"the ROM ignores the write");
  let shapes:std::collections::BTreeSet<[u8;8]>=(0x21..0xff).filter(|&c|c!=0x7f).map(glyph_rows).collect();assert_eq!(shapes.len(),0xff-0x21-1,"printable glyphs are distinct");
  int10(&mut p,0x0e94,1,0,0);
  for(r,v)in glyph_rows(0x94).iter().enumerate(){assert_eq!(p.ram.load(cga_line(r as u32,0),MemWidth::Byte).unwrap(),u32::from(*v));}
@@ -3417,4 +3424,71 @@ fn exec_4b01_bad_parameter_destination_and_missing_file_do_not_allocate(){
     assert_eq!(p.arena,before);assert_eq!(p.ram,ram);
     assert_eq!(p.psp,PSP);
     std::fs::remove_dir_all(folder).unwrap();
+}
+#[test]
+fn kbc_pulse_commands_leave_the_output_port_or_stop_on_reset(){
+ // OUT 64h,FFh pulses no line (software sends it to wait for the 8042), and
+ // F3h pulses only A20 briefly: neither changes the A20 gate the 8042 holds.
+ for value in [0xff,0xfd,0xf3]{
+  let code=[0xb0,value,0xe6,0x64,0xe4,0x64,0x88,0xc3,0xfa,0xf4];
+  let r=run(load(&code,"pulse.com").unwrap(),10).unwrap();
+  assert!(matches!(r.stop,Stop::Monitor(_)),"{value:02x}: {:?}",r.stop);assert_eq!(r.loaded.cpu.regs[3]&255,0,"no reply byte");
+ }
+ // Bit 0 clear pulses the CPU reset line: still an explicit stop.
+ for value in [0xfe,0xf0]{
+  let r=run(load(&[0xb0,value,0xe6,0x64,0xfa,0xf4],"reset.com").unwrap(),10).unwrap();
+  assert!(matches!(r.stop,Stop::Service(_)),"{value:02x}: {:?}",r.stop);assert_eq!(r.loaded.cpu.eip,0x102);
+ }
+}
+#[test]
+fn no_pci_bios_and_rtc_set_services(){
+ // INT 1Ah AX=B101h on an ISA machine: CF=1, AH=86h, no 'PCI ' in EDX.
+ let mut p=load(&[0xcd,0x1a],"pci.com").unwrap();
+ p.cpu.regs[0]=0x1234_b101;p.cpu.regs[2]=0x5555_aaaa;p.cpu.eflags&=!1;
+ service(&mut p,0x1a,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[0],p.cpu.regs[2],p.cpu.eflags&1),(0x1234_8601,0x5555_aaaa,1));
+ // AH=03h then AH=02h, AH=05h then AH=04h: the session RTC takes the values.
+ let mut p=load(&[0xcd,0x1a],"rtc.com").unwrap();
+ p.cpu.regs[0]=0x0300;p.cpu.regs[1]=0x2359;p.cpu.regs[2]=0x0500;p.cpu.eflags|=1;
+ service(&mut p,0x1a,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&1,0);
+ p.cpu.regs[0]=0x0500;p.cpu.regs[1]=0x1999;p.cpu.regs[2]=0x1231;
+ service(&mut p,0x1a,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&1,0);
+ p.cpu.regs[0]=0x0200;service(&mut p,0x1a,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xff00),(0x2359,0x0500));
+ p.cpu.regs[0]=0x0400;service(&mut p,0x1a,&mut vec![]).unwrap();
+ assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(0x1999,0x1231));
+ // Bad BCD, an impossible date and the daylight-saving flag stop; nothing changes.
+ for (ah,cx,dx) in [(3,0x2460,0),(3,0x1200,1),(5,0x2025,0x0229)]{
+  p.cpu.regs[0]=ah<<8;p.cpu.regs[1]=cx;p.cpu.regs[2]=dx;let before=p.rtc.clone();
+  assert!(service(&mut p,0x1a,&mut vec![]).is_err());assert_eq!(p.rtc,before);
+ }
+}
+#[test]
+fn services_returning_segments_keep_an_unreal_limit(){
+ // After a protected-mode load, ES has a 4 GiB limit. INT 21h AH=35h returns
+ // ES as a real-mode MOV ES would: the base changes and the limit stays.
+ let mut p=load(&[0xcd,0x21],"unreal.com").unwrap();
+ let es=SegmentRegister::Es.index();
+ p.image.segments[es].limit=0xffff_ffff;
+ p.ram.store(0x21*4,MemWidth::Dword,0x1234_5678).unwrap();p.cpu.regs[0]=0x3521;
+ service(&mut p,0x21,&mut vec![]).unwrap();
+ assert_eq!((p.selectors[es],p.image.segments[es].base,p.image.segments[es].limit),(0x1234,0x12340,0xffff_ffff));
+ assert_eq!(p.cpu.regs[3]&0xffff,0x5678);
+ // Without such a load the cache stays the ordinary real-mode one.
+ let mut p=load(&[0xcd,0x21],"real.com").unwrap();p.cpu.regs[0]=0x3521;
+ service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.image.segments[es],SegmentCache::real_mode(p.selectors[es]));
+}
+#[test]
+fn absent_ata_and_pnp_cards_float_high(){
+ // IN AL,DX at 1F7h and 3EEh-6 = 1EEh, IN AX,DX at 170h, OUT 3F6h, OUT EDh.
+ let code=[0xba,0xf7,0x01,0xec,0x88,0xc3,0xba,0xee,0x01,0xec,0x88,0xc7,0xba,0x70,0x01,0xed,0x89,0xc1,
+  0xba,0xf6,0x03,0xb0,0x08,0xee,0xe6,0xed,
+  // ISA PnP: register 00h (Set RD_DATA) through 279h, A79h=80h puts the port at 203h.
+  0xba,0x79,0x02,0xb0,0x00,0xee,0xba,0x79,0x0a,0xb0,0x80,0xee,0xba,0x03,0x02,0xec,0x88,0xc6,0xfa,0xf4];
+ let r=run(load(&code,"ata.com").unwrap(),40).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[1]&0xffff,r.loaded.cpu.regs[2]>>8&255),(0xffff,0xffff,0xff));
+ // Register 00h with 82h puts it at 20Bh; another unassigned port still stops.
+ let code=[0xba,0x79,0x02,0xb0,0x00,0xee,0xba,0x79,0x0a,0xb0,0x82,0xee,0xba,0x0b,0x02,0xec,0xba,0x13,0x02,0xec,0xfa,0xf4];
+ let r=run(load(&code,"pnp.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ assert_eq!((r.loaded.cpu.eip,r.loaded.cpu.regs[0]&255),(0x113,0xff));
 }

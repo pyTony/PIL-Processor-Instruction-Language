@@ -8,7 +8,7 @@ fn code_at(bytes:&[(usize,&[u8])])->Vec<u8>{
 }
 #[test]
 fn answered_vectors_start_at_read_only_entries_and_others_keep_their_values(){
-    let p=load(&[0xcd,0x20],"v.com").unwrap();
+    let mut p=load(&[0xcd,0x20],"v.com").unwrap();
     for n in ANSWERED{
         assert_eq!(p.ram.load(u32::from(n)*4,MemWidth::Dword).unwrap(),0xf000_0000|(0xf000+3*u32::from(n)),"INT {n:02x}h");
         assert!(answered(&p,n).unwrap());
@@ -17,7 +17,8 @@ fn answered_vectors_start_at_read_only_entries_and_others_keep_their_values(){
         let at=ENTRIES+3*u32::from(n);
         let b:Vec<u32>=(0..3).map(|i|p.ram.load(at+i,MemWidth::Byte).unwrap()).collect();
         assert_eq!(b,vec![0xcd,u32::from(n),0xcf]);
-        assert!(p.ram.check_write(at,MemWidth::Byte).is_err(),"entries are in the read-only BIOS area");
+        p.ram.store(at,MemWidth::Byte,0x90).unwrap();
+        assert_eq!(p.ram.load(at,MemWidth::Byte).unwrap(),0xcd,"entries are in the BIOS ROM, which ignores writes");
     }
     // INT 1Fh points to the upper half of the BIOS graphics font.
     assert_eq!(p.ram.load(0x1f*4,MemWidth::Dword).unwrap(),super::super::console::graphics_text::UPPER_FONT);

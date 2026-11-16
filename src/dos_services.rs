@@ -49,7 +49,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|(pointer&0xffff);
             let es=SegmentRegister::Es.index();
             p.image.selectors[es]=selector;p.selectors[es]=selector;
-            p.image.segments[es]=SegmentCache::real_mode(selector);
+            p.image.segments[es]=p.image.segments[es].real_mode_reload(selector);
             Ok(None)
         },
         (0x21,0x1a)=>{
@@ -62,7 +62,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(offset);
             let es=SegmentRegister::Es.index();
             p.selectors[es]=segment;p.image.selectors[es]=segment;
-            p.image.segments[es]=SegmentCache::real_mode(segment);
+            p.image.segments[es]=p.image.segments[es].real_mode_reload(segment);
             Ok(None)
         },
         (0x21,0x30)=>{
@@ -124,7 +124,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // ES:BX -> InDOS byte (critical-error byte just before it) or the
             // list of lists, in Dine's DOS data segment.
             let es=SegmentRegister::Es.index();
-            p.selectors[es]=DOSDATA;p.image.selectors[es]=DOSDATA;p.image.segments[es]=SegmentCache::real_mode(DOSDATA);
+            p.selectors[es]=DOSDATA;p.image.selectors[es]=DOSDATA;p.image.segments[es]=p.image.segments[es].real_mode_reload(DOSDATA);
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(if ah==0x34{INDOS}else{SYSVARS});
             Ok(None)
         },
@@ -302,6 +302,29 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|(ticks&0xffff);
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
+        },
+        (0x1a,ah @ (0x03|0x05))=>{
+            // Set the RTC time (CH:CL:DH, BCD) or date (CH century, CL year,
+            // DH month, DL day), as the IBM AT BIOS does: CF clear, the RTC
+            // runs on from the new value. Only the session-local RTC moves;
+            // DOS's clock and the BIOS tick count stay (DOS reads the RTC at
+            // boot only). For AH=03h DL is the daylight-saving flag, which
+            // this RTC does not keep, so only DL=0 is accepted.
+            let (cx,dx)=(p.cpu.regs[1]as u16,p.cpu.regs[2]as u16);
+            let [ch,cl,dh,dl]=[(cx>>8)as u8,cx as u8,(dx>>8)as u8,dx as u8];
+            if ah==3{
+                if dl!=0{return Err(format!("INT 1Ah AH=03h daylight-saving flag DL={dl:02X}h is not modelled"));}
+                p.rtc.set_bios_time(p.clock_offset,ch,cl,dh)?;
+            }else{p.rtc.set_bios_date(p.clock_offset,ch,cl,dh,dl)?;}
+            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
+        (0x1a,0xb1)=>{
+            // PCI BIOS functions. The machine is an ISA AT with no PCI bus,
+            // so the BIOS answers as one without a PCI BIOS (SeaBIOS
+            // set_unimplemented): CF=1, AH=86h, and EDX does not receive
+            // the 'PCI ' signature of the B101h installation check.
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x1a,ah @ (0x02|0x04))=>{
             let [century,year,month,day,hour,minute,second]=p.rtc.bios(p.clock_offset);

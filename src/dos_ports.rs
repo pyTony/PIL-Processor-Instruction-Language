@@ -25,7 +25,7 @@ fn device(port:u16)->Option<&'static str>{Some(match port{
     0x20..=0x21|0xa0..=0xa1=>"interrupt controller",
     0x40..=0x43=>"PIT timer",0x60..=0x64=>"keyboard/system control",
     0x70..=0x71=>"CMOS/RTC",0x92=>"system control/A20",
-    0xf0..=0xf1=>"coprocessor control",0x170..=0x177|0x1f0..=0x1f7|0x376|0x3f6=>"ATA disk controller",
+    0xf0..=0xf1=>"coprocessor control",0x168..=0x177|0x1e8..=0x1f7|0x36e|0x376|0x3f6=>"ATA disk controller",
     0x200..=0x207=>"game/joystick port",0x220..=0x22f=>"Sound Blaster",
     0x278..=0x27f|0x378..=0x37f|0x3bc..=0x3bf=>"parallel port",
     0x2e8..=0x2ef|0x2f8..=0x2ff|0x3e8..=0x3ef|0x3f8..=0x3ff=>"serial port",
@@ -66,6 +66,10 @@ pub struct Speaker{
     retrace:u32,
     ignored_out:std::collections::BTreeSet<u16>,
     fast_a20:u8,kbc_a20:bool,kbc_write_output:bool,kbc_reply:Option<u8>,
+    /// ISA Plug and Play: the register last selected through the address
+    /// port 279h, and the read-data port software placed with register 00h
+    /// (Set RD_DATA Port). No PnP card is fitted, so that port reads FFh.
+    pnp_register:u8,pnp_read_port:Option<u16>,
     /// Scan codes on their way to port 60h and IRQ1.
     pub(super) kbd:keyboard::Keyboard,
 }
@@ -179,6 +183,17 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         return Ok(());
     }
     let word=first&1!=0;
+    // ATA task-file and device-control ports at the primary (1F0h/3F6h),
+    // secondary (170h/376h), third (1E8h/3EEh) and fourth (168h/36Eh)
+    // addresses. This AT has no hard-disk controller (CMOS register 12h says
+    // no hard disk; drives are DOS-level) and no COM3 card at 3E8h, so
+    // nothing answers on the bus: reads float high, as on an ISA bus with no
+    // card at the address, and writes reach nothing. A driver that polls the
+    // status for BSY clear or DRDY sees FFh and gives up.
+    if matches!(port,0x168..=0x16f|0x170..=0x177|0x1e8..=0x1ef|0x1f0..=0x1f7|0x36e|0x376|0x3ee|0x3f6){
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]|=mask;}
+        return Ok(());
+    }
     let assigned=device(port).or_else(||if word{device(port.wrapping_add(1))}else{None});
     // Only truly unassigned writes qualify; normal device handlers still run.
     if !input&&assigned.is_none()&&!matches!(port,0xe9|0x190)&&IGNORE_UNASSIGNED_OUT.load(std::sync::atomic::Ordering::Relaxed){
@@ -243,6 +258,15 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 0x64=>match value{
                     0xd0=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(1|u8::from(s.kbc_a20)<<1);},
                     0xd1=>s.kbc_write_output=true,
+                    // F0h-FFh pulse the output-port lines whose bits 3-0 are
+                    // clear low for about 6 us. Bit 0 is the CPU reset line,
+                    // which stays an explicit stop. A pulse of the A20 line
+                    // (bit 1) ends before the next guest access, and bits 2-3
+                    // are not wired on an AT, so the other values leave the
+                    // output port as it was. FFh pulses nothing: software
+                    // sends it to wait until the 8042 has taken a command.
+                    0xf0..=0xff if value&1==0=>return Err("keyboard-controller CPU reset (pulse command) is not modelled".into()),
+                    0xf0..=0xff=>{},
                     _=>return Err(format!("keyboard-controller command {value:02x}h is not modelled")),
                 },
                 0x60 if s.kbc_write_output=>{if value&1==0{return Err("keyboard-controller CPU reset is not modelled".into());}s.kbc_write_output=false;s.kbc_a20=value&2!=0;s.update_a20(&mut p.ram);},
@@ -260,7 +284,10 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
     if input{
         let value=match port{
             0x00..=0x0f=>0xff,
-            0x201=>0xff, // no game adapter: open bus
+            0x200..=0x207=>0xff, // no game adapter decodes them: open bus
+            // The ISA PnP read-data port the program placed: no card drives
+            // it, so isolation and register reads float high.
+            port if Some(port)==s.pnp_read_port=>0xff,
             0x81..=0x8f=>0xff,
             0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
             0x3da|0x3ba if !p.vga.status_active(port)=>0xff,
@@ -281,7 +308,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         let value=p.cpu.regs[0]as u8;
         match port{
             0x00..=0x0f=>{},
-            0x201=>{}, // no game adapter to receive the write
+            0x200..=0x207=>{}, // no game adapter to receive the write
             0x81..=0x8f=>{},
             0x61=>{
                 let was=s.tone()!=0;let now=s.pit_io(p.clock_offset);s.counter2.gate(value&1!=0,now);s.control=value&0x0f;
@@ -307,7 +334,18 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             // stdout, so test386 built with OUT_PORT equ 0E9h prints its POST EEh
             // results there; a DOS session ignores them.
             0xe9 if p.rom_mode => {use std::io::Write;let _=std::io::stdout().write_all(&[value]);},
+            // 279h is also the ISA Plug and Play address port; the register
+            // it selects matters only for a write to A79h below.
+            0x279 => s.pnp_register=value,
             0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
+            // Port EDh is unassigned on the AT; software writes to it as an
+            // I/O delay (one bus cycle), like port 80h. Nothing receives it.
+            0xed => {},
+            // ISA Plug and Play write-data port. No PnP card is on this bus,
+            // so the initiation key and commands reach nothing; register 00h
+            // (Set RD_DATA Port) still places the port the software reads
+            // next, at (value << 2) | 3, inside 203h-3FFh.
+            0xa79 => if s.pnp_register==0{s.pnp_read_port=Some(u16::from(value)<<2|3);},
             // AT coprocessor ports, any byte value. F0h clears the busy latch
             // that the 287/387 ERROR# output sets and that raises IRQ13. This
             // FPU finishes each instruction before the next one and stops on

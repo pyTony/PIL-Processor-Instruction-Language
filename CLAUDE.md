@@ -1,3 +1,36 @@
+# Speedsys 4.78 reaches its main screen — 16 November 2026
+
+Tony's dosbench option n (Speedsys 4.78, local only, SHA256 84b9c04d...)
+stopped on OUT 64h,FFh. Run here (copied from his driveD, not in the
+repo), it met these stops in turn:
+- 8042 commands F0h-FFh pulse output-port lines (bits 3-0 clear) for ~6 us.
+  Odd values (FFh pulses nothing) change nothing; even ones pulse CPU
+  reset and still stop.
+- INT 1Ah AH=B1h (PCI BIOS): CF=1, AH=86h, no 'PCI ' in EDX (ISA AT).
+- Its 4 MB REP MOVSD above 1 MiB in unreal mode faulted: AH=35h, 2Fh,
+  34h/52h, INT 10h AX=1130h and INT 33h returned ES (and the mouse
+  callback DS) with a fresh real-mode cache. They now change only the base
+  (SegmentCache::real_mode_reload), as a real-mode MOV ES does on a 386.
+- No ATA controller: ports 1F0h-1F7h, 170h-177h, 1E8h-1EFh, 168h-16Fh,
+  3F6h, 376h, 3EEh, 36Eh read FFh/FFFFh and ignore writes; OUT EDh (delay)
+  is ignored. 200h-207h (no game adapter) all read FFh.
+- INT 1Ah AH=03h/05h set the session RTC time/date (BCD checked; DL=1
+  daylight saving stops); DOS's clock and the tick count stay.
+- ISA Plug and Play: writes to A79h go nowhere; register 00h through 279h
+  places the read-data port ((value<<2)|3), which reads FFh (no cards).
+- ROM writes: C0000h-FFFFFh is now ROM in Memory (Ram::rom): stores and
+  write_bytes are accepted and leave its bytes, as on an AT (was a fault).
+  Ram::protect (debugger/test read-only faults) is unchanged.
+After that Speedsys draws its 640x480 screen (80386DX, 16 MB, about
+900 MB/s here, NPU: No) and keeps running its tests: no stop in 3 billion
+guest instructions, but the screen did not get further in that time.
+Also: needs_extraction in dos_media_launch.rs is cfg(any(windows,test))
+(Linux release warned since #228).
+
+Local Linux, release: 907 Rust tests pass, 2 ignored (4 new tests, 1 new
+RTC unit test; 5 tests that expected a ROM write fault updated); 0 rustc
+warnings. Not run on Windows; Speedsys was run only via --dos-session.
+
 # PC speaker tones and BEL beeps in pil --pildos / --dos-console — 16 November 2026
 
 Tony asked about Sound Blaster; real speaker tones came first, and GW-BASIC's

@@ -254,7 +254,7 @@ pub(super) fn service(p:&mut Loaded)->Result<(),String>{
     let es=p.selectors[SegmentRegister::Es.index()];
     if let Some(es)=p.mouse.call(&mut p.cpu.regs,mode,es,page)?{
         let i=SegmentRegister::Es.index();
-        p.selectors[i]=es;p.image.selectors[i]=es;p.image.segments[i]=SegmentCache::real_mode(es);
+        p.selectors[i]=es;p.image.selectors[i]=es;p.image.segments[i]=p.image.segments[i].real_mode_reload(es);
     }
     Ok(())
 }
@@ -305,7 +305,7 @@ pub(super) fn deliver(p:&mut Loaded)->Result<bool,String>{
     low(&mut p.cpu.regs[7],event.my);
     let ds=SegmentRegister::Ds.index();
     p.selectors[ds]=DOSDATA;p.image.selectors[ds]=DOSDATA;
-    p.image.segments[ds]=SegmentCache::real_mode(DOSDATA);
+    p.image.segments[ds]=p.image.segments[ds].real_mode_reload(DOSDATA);
     let cs=SegmentRegister::Cs.index();
     p.selectors[cs]=handler.segment;p.image.selectors[cs]=handler.segment;
     p.image.segments[cs]=SegmentCache::real_mode(handler.segment);

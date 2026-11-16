@@ -179,7 +179,7 @@ pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let height=p.ram.load(0x485,MemWidth::Word).map_err(|e|format!("{e:?}"))?;
     let rows=p.ram.load(0x484,MemWidth::Byte).map_err(|e|format!("{e:?}"))?;
     let es=SegmentRegister::Es.index();let segment=(pointer>>16)as u16;
-    p.selectors[es]=segment;p.image.selectors[es]=segment;p.image.segments[es]=SegmentCache::real_mode(segment);
+    p.selectors[es]=segment;p.image.selectors[es]=segment;p.image.segments[es]=p.image.segments[es].real_mode_reload(segment);
     p.cpu.regs[5]=(p.cpu.regs[5]&0xffff0000)|(pointer&0xffff);
     p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|height;
     p.cpu.regs[2]=(p.cpu.regs[2]&0xffff_ff00)|rows;
