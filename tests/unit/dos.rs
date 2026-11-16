@@ -2684,7 +2684,7 @@ fn unsupported_scalar_and_string_port_accesses_stop_without_committing(){
  // open bus. Devices or widths with no implementation still stop explicitly.
  for (bytes,port,diagnostic) in [
   (vec![0x66,0xe5,0x60],0x60u32,"dword I/O"), // IN EAX,60h
-  (vec![0x6c],0x226u32,"not modelled"),        // INSB, Sound Blaster absent
+  (vec![0x6c],0x228u32,"not modelled"),        // INSB, unsupported SB reserved port
   (vec![0xf3,0x6f],0x226u32,"word OUT"),      // REP OUTSW, unsupported DSP width
  ]{
   let mut p=load(&bytes,"port.com").unwrap();
@@ -3435,6 +3435,6 @@ fn path_is_added_to_or_replaced_in_the_environment(){
     let mut p=load(&[0xcd,0x20],"T.COM").unwrap();
     set_environment_path(&mut p,"D:\\PIL").unwrap();
     let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).unwrap()*16;
-    let bytes:Vec<u8>=(0..48).map(|i|p.ram.load(env+i,MemWidth::Byte).unwrap() as u8).collect();
+    let bytes:Vec<u8>=(0..96).map(|i|p.ram.load(env+i,MemWidth::Byte).unwrap() as u8).collect();
     assert!(bytes.windows(12).any(|w|w==b"PATH=D:\\PIL\0"),"{bytes:?}");
 }
