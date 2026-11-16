@@ -111,6 +111,17 @@ a DOS command line.
   When the program is still displaying VGA, **Text view** shows its current
   text-page memory for diagnosis; **Graphics view** restores the picture.
   Switching views never changes the guest's actual video mode.
+- **Media:** expand **Drives and ANSI.SYS** to mount an existing Termux
+  folder or FAT disk image (.img/.ima) onto A: through E:, or unmount it.
+  Paths are resolved on the *Termux host*, not through the browser's file
+  picker. A relative path such as `driveD` is relative to the directory
+  from which `tools/termux_web.py` was launched. The DOS engine rejects
+  replacing media that has open DOS files and protects the boot drive from
+  unmounting. After mounting, switch DOS to the new drive (e.g. `D:`).
+- **ANSI.SYS:** **Enable ANSI.SYS** sends the existing `ansi on`
+  session command; ANSI colours and cursor controls are rendered using
+  normal DOS video RAM. No duplicate browser ANSI parser is used. This
+  one-way installation lasts until the DOS session is restarted.
 - **CPU:** the web page sends bounded run N buffered commands and fetches
   snapshots. Pause/resume changes only how frequently the host runs the guest.
 - **Stop:** Ctrl+C in the Termux process closes the server and guest engine.

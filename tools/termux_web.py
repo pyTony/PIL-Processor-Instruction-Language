@@ -93,6 +93,37 @@ class WebBackend:
         with self.lock:
             return self._queue_keys(keys)
 
+    def ansi_on(self):
+        # DOS has an install command but no uninstall command. Enabling it
+        # affects the existing guest session without restarting the program.
+        with self.lock:
+            return self.session.send("ansi on")
+
+    def media(self, action, drive, path=None):
+        if action not in ("mount", "unmount"):
+            raise ValueError("media action must be mount or unmount")
+        if not isinstance(drive, str) or drive.upper() not in ("A", "B", "C", "D", "E"):
+            raise ValueError("drive must be A through E")
+        letter = drive.upper()
+        if action == "mount":
+            if not isinstance(path, str) or not path.strip() or len(path) > 768:
+                raise ValueError("mount path must be 1..768 characters")
+            # The engine protocol is line-based: never allow a browser path
+            # to inject a second command (or hidden control characters).
+            if any(ord(char) < 32 or ord(char) == 127 for char in path):
+                raise ValueError("mount path contains a control character")
+            resolved = Path(path.strip()).expanduser()
+            if not resolved.is_absolute():
+                resolved = Path.cwd() / resolved
+            if not (resolved.is_dir() or (resolved.is_file()
+                    and resolved.suffix.lower() in (".img", ".ima"))):
+                raise ValueError("mount source must be an existing directory or .img/.ima file on Termux")
+            command = "mount %s %s" % (letter, resolved)
+        else:
+            command = "unmount %s" % letter
+        with self.lock:
+            return self.session.send(command)
+
     def stop(self):
         with self.lock:
             return self.session.send("break")
@@ -172,6 +203,10 @@ def make_handler(backend, html=HTML):
                     reply = backend.mouse(body.get("x"), body.get("y"), body.get("buttons"))
                 elif path == "/api/break":
                     reply = backend.stop()
+                elif path == "/api/ansi":
+                    reply = backend.ansi_on()
+                elif path == "/api/media":
+                    reply = backend.media(body.get("action"), body.get("drive"), body.get("path"))
                 else:
                     return self.send_json(404, {"error": "not found"})
                 self.send_json(200, reply)
