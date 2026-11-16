@@ -187,10 +187,15 @@ fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,St
 fn teletype(p:&mut Loaded)->Result<(),String>{
     // In graphics modes BL is the foreground colour.
     if graphics_text::is_graphics(byte(p,0x449)?){
-        let writes=graphics_text::teletype(p,&[p.cpu.regs[0]as u8],p.cpu.regs[3]&255,false)?;return commit(p,&writes);
+        let writes=graphics_text::teletype(p,&[p.cpu.regs[0]as u8],p.cpu.regs[3]&255,false)?;commit(p,&writes)?;bells(p,&[p.cpu.regs[0]as u8]);return Ok(());
     }
     let writes=teletype_plan(p,active_page(p)?,&[p.cpu.regs[0]as u8],false)?;
-    commit(p,&writes)
+    commit(p,&writes)?;bells(p,&[p.cpu.regs[0]as u8]);Ok(())
+}
+/// BEL among bytes shown on the screen beeps the speaker, as the BIOS
+/// teletype does (and so DOS console output through it).
+pub(super) fn bells(p:&mut Loaded,bytes:&[u8]){
+    for _ in bytes.iter().filter(|&&b|b==7){p.speaker.bell(p.clock_offset);}
 }
 /// INT 10h AH=0Eh for several bytes on the active page, as a DOS kernel
 /// prints with it; `color` is BL, the foreground in graphics modes.

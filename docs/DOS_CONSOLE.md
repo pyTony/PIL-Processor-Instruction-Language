@@ -74,7 +74,7 @@ in [DOS_CONFIG.md](DOS_CONFIG.md).
 | `--window` | Use a Win32 window. This is the default on Windows, and it works only there. |
 | `--mouse` | Install the INT 33h driver, like `mouse on` in a session. Without it no mouse is offered. |
 | `--host-pointer` | The Windows pointer over the window: `auto` (default) hides it while the program's INT 33h cursor is shown, `show` never hides it, `hide` always does. It changes at the pointer's next move. |
-| `--speaker-volume` | PC speaker click volume `0..100`, `0` silent; default `speaker_volume` from the configuration, else 5. |
+| `--speaker-volume` | PC speaker volume `0..100`, `0` silent; default `speaker_volume` from the configuration, else 5. |
 | `--ansi` | Load the ANSI.SYS-style CON driver. |
 | `--country` | Set the DOS country: 1 or 358 (Finland). |
 | `--utc-offset` | Set the DOS clock's offset from UTC, in seconds. The default is the host's time zone. |
@@ -157,17 +157,34 @@ For a clearer picture, use Termux's landscape orientation and reduce terminal fo
 
 ## PC speaker
 
-Each time a program switches the speaker on through port 61h (a beep,
-Landmark's ticks), the console plays one short, quiet click, at most five a
-second, as the Tk terminal does. The session counts switch-ons only, so
-the click is not the program's tone or length. Windows plays it through
-winmm; Linux and Termux pipe it to `aplay` when that is on PATH, otherwise
-nothing sounds. `speaker_volume` in pildos.conf (the setup screen's
-"Speaker volume") or `--speaker-volume` sets the level.
+The console plays what the program sends to the speaker: the tone of PIT
+channel 2 for as long as port 61h bits 0 and 1 let it through, so `SOUND`,
+`PLAY` and `BEEP` in GW-BASIC, game music and benchmark ticks sound at
+their own pitch and length. The speaker signal (port 61h bit 1 AND channel
+2's output; square wave in mode 3, a one-clock pulse in mode 2, low until
+the count runs out in mode 0, high with the gate low) is recorded with the
+PIT clock of each change and synthesised at 22,050 Hz about 50 ms behind
+the program, averaged over each sample and through a high-pass filter as a
+speaker cone moves: a lone switch-on is a click, a square wave a tone. A
+sound shorter than 1 ms after at least 10 ms of silence is held for 1 ms,
+so ticks that a fast host makes a microsecond long are still heard.
+
+BEL (07h) printed to the console (DOS output, INT 29h, BIOS teletype)
+beeps as the IBM AT BIOS does: 896 Hz for 31/64 s; several BELs follow one
+another (at most 2 s waiting).
+
+Windows plays the sound through winmm waveOut. Linux and Termux pipe raw
+samples to `aplay`, else `pacat` (PulseAudio), whichever is on PATH;
+without either nothing sounds. The output opens at the first sound and
+closes after a second of silence. `speaker_volume` in pildos.conf (the
+setup screen's "Speaker volume") or `--speaker-volume` sets the level
+(0 starts no sound at all). The Tk terminal (`--python`) still plays one
+click per switch-on.
 
 ## Not done yet
 
-- The speaker plays clicks, not tones: see PC speaker above.
+- No Sound Blaster or AdLib (ports 220h-22Fh and 388h stop as not
+  modelled); PC speaker only.
 - No drive menu or key log.
 - A program's own text-mode font is not used: plane 2 and AX=1100h are
   ignored, and the console draws text modes with Dine's 8x16 font.

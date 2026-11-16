@@ -190,7 +190,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             if to_file(p,&text)?{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;return Ok(None);}
             let screen=console::dos_screen(p,&text)?;
             out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
-            console::store(p,&screen)?;p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;Ok(None)
+            console::store(p,&screen)?;console::bells(p,&text);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;Ok(None)
         },
         (0x10,ah @ (0x08|0x09|0x0a))=>{console::video(p,ah)?;Ok(None)},
         // Everex/Trident installation query. This VGA BIOS has no Everex
@@ -672,7 +672,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     }
     console::dos_break_check(p)?;let screen=console::dos_screen(p,&text)?;
     out.write_atomic(&text).map_err(|e|format!("DOS handle output provider: {e:?}"))?;
-    console::store(p,&screen)?;
+    console::store(p,&screen)?;console::bells(p,&text);
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|count;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     Ok(())
 }
@@ -691,7 +691,7 @@ fn put_char(p:&mut Loaded,out:&mut impl Output,byte:u8)->Result<(),String>{
     let (bytes,value)=character_output(byte,out)?;
     let screen=console::dos_screen(p,&bytes)?;
     out.write_atomic(&bytes).map_err(|e|format!("DOS character output provider: {e:?}"))?;
-    console::store(p,&screen)?;
+    console::store(p,&screen)?;console::bells(p,&bytes);
     p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
     Ok(())
 }
@@ -752,7 +752,7 @@ fn echo(p:&mut Loaded,out:&mut impl Output,bytes:&[u8],mut writes:Vec<(u32,MemWi
     if bytes.len()>out.remaining(){return Err("DOS output limit reached during line input".into());}
     writes.extend(console::dos_screen(p,bytes)?);console::check(p,&writes)?;
     out.write_atomic(bytes).map_err(|e|format!("DOS line echo provider: {e:?}"))?;
-    console::store(p,&writes)
+    console::store(p,&writes)?;console::bells(p,bytes);Ok(())
 }
 /// AH0A buffered input at DS:DX (max, count, bytes), after FreeDOS read_line.
 /// Keys are consumed and echoed as they arrive; with none left before CR the
