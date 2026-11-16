@@ -90,6 +90,23 @@ impl Pair{
     pub fn acknowledge_keyboard(&mut self){self.master.acknowledge(2);}
     /// The BIOS handler's specific EOI for IRQ1.
     pub fn end_keyboard(&mut self){self.master.in_service&=!2;}
+    /// SB2 uses IRQ5 or IRQ7 on the master PIC. Preserve all higher-priority
+    /// requests/ISRs, the programmed mask and ICW2 vector remapping.
+    pub fn soundblaster_vector(&self,irq:u8)->u8{self.master.base|irq}
+    pub fn raise_soundblaster(&mut self,irq:u8){
+        if matches!(irq,5|7){self.master.request|=1<<irq;}
+    }
+    pub fn soundblaster_ready(&self,irq:u8)->bool{
+        if !matches!(irq,5|7)||!self.ready(){return false;}
+        let bit=1u8<<irq;
+        let higher=(u16::from(bit)-1) as u8;
+        self.master.request&bit!=0&&self.master.mask&bit==0
+            &&self.master.in_service&(higher|bit)==0
+            &&self.master.request&!self.master.mask&higher==0
+    }
+    pub fn acknowledge_soundblaster(&mut self,irq:u8){
+        if matches!(irq,5|7){self.master.acknowledge(1<<irq);}
+    }
     fn ready(&self)->bool{self.master.init==Init::Ready}
 }
 #[cfg(test)]
