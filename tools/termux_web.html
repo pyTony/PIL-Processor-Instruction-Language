@@ -24,7 +24,11 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
 .keys { display:grid; grid-template-columns:repeat(auto-fit,minmax(65px,1fr)); gap:7px; margin:10px 0; }
 .keys button { font-weight:bold; }
 .type { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-.type input { flex:1 1 200px; }
+.type input { flex:1 1 200px; min-width:0; }
+.type { padding:8px 0; }
+#keyboard { flex:0 0 auto; }
+#type { font-size:16px; }
+#type:focus { border-color:var(--accent); }
 #log { white-space:pre-wrap; max-height:110px; overflow:auto; color:#b3d7af; font:12px ui-monospace,monospace; }
 details { color:var(--muted); margin-top:14px; }
 footer { color:var(--muted); font-size:12px; margin-top:20px; }
@@ -41,9 +45,12 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <canvas id="display" width="720" height="400" tabindex="0" aria-label="DOS screen. Tap for mouse or press a key."></canvas>
 </section>
 <div id="status" role="status">Connecting to PILdos...</div>
+<div id="interrupt-status" role="status" aria-live="polite"></div>
+<form class="type" id="typeform"><input id="type" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tap to type DOS command" aria-label="DOS command input"><button type="submit">Type + ↵</button><button id="typeonly" type="button">Type</button><button id="keyboard" type="button">⌨ Keyboard</button></form>
 <div class="controls">
 <label>CPU slice <select id="budget"><option value="5000">5k</option><option value="20000" selected>20k</option><option value="50000">50k</option></select></label>
 <button id="break">Ctrl+Break</button>
+<button id="view" aria-pressed="false">Text view</button>
 <button id="refresh">Refresh</button>
 </div>
 <section class="keys" aria-label="On-screen DOS keyboard">
@@ -68,7 +75,6 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <button data-ascii="0" data-scan="73">PgUp</button>
 <button data-ascii="0" data-scan="81">PgDn</button>
 </section>
-<form class="type" id="typeform"><input id="type" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Android keyboard: type DOS text" aria-label="Text for DOS keyboard"><button type="submit">Type</button><button id="typeenter" type="button">Type + ↵</button></form>
 <details><summary>Console output</summary><pre id="log"></pre></details>
 <footer>Uses the existing general-purpose PIL DOS session. Text, CGA, EGA and VGA are drawn from guest video memory. Tap the screen for an opt-in DOS mouse.</footer>
 </main>
@@ -76,6 +82,8 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 "use strict";
 const canvas=document.getElementById("display"), ctx=canvas.getContext("2d",{alpha:false});
 const status=document.getElementById("status"), log=document.getElementById("log");
+const interruptStatus=document.getElementById("interrupt-status");
+let forceTextView=false;
 let glyphs=[], colors=[], latest=null, running=true, inLoop=false, terminated=false;
 let buttons=0, imageMouse=false;
 const waits={normal:60,idle:180};
@@ -153,7 +161,10 @@ function planar(reply){
 }
 function paint(reply){
   latest=reply;
-  if(reply.graphics13)mode13(reply);
+  const graphics=!!(reply.graphics13||reply.graphics_cga||reply.graphics_planar);
+  document.getElementById("view").hidden=!graphics;
+  if(forceTextView&&reply.screen)textFrame(reply);
+  else if(reply.graphics13)mode13(reply);
   else if(reply.graphics_cga)cga(reply);
   else if(reply.graphics_planar)planar(reply);
   else if(reply.screen)textFrame(reply);
@@ -215,20 +226,60 @@ document.addEventListener("keydown",e=>{
   }else if(e.key===" "){e.preventDefault();key(32,57);}
 });
 const field=document.getElementById("type");
+let sending=false;
 async function typeText(addEnter=false){
-  const text=field.value+(addEnter?"\n":"");field.value="";
+  if(sending)return;
+  const text=field.value+(addEnter?"\n":"");
   if(!text)return;
-  try{await api("/api/type",{text});}catch(e){error(e);}
+  sending=true;
+  try {
+    await api("/api/type",{text});
+    field.value="";
+  } catch(e){error(e);}
+  finally {sending=false;}
 }
-document.getElementById("typeform").addEventListener("submit",e=>{e.preventDefault();typeText();});
-document.getElementById("typeenter").addEventListener("click",()=>typeText(true));
+// Enter on Android's soft keyboard and the form's submit button both send
+// the DOS Enter key. "Type" is the explicit choice to send without Enter.
+document.getElementById("typeform").addEventListener("submit",e=>{
+  e.preventDefault();
+  if(!e.isComposing)typeText(true);
+});
+field.addEventListener("keydown",e=>{
+  if(e.isComposing||e.keyCode===229)return;
+  if(e.key==="Enter"){e.preventDefault();typeText(true);}
+  // Once a line has been submitted the browser input is empty, but DOS may
+  // still be editing that line. Forward Backspace to the guest then.
+  if(e.key==="Backspace"&&!field.value){
+    e.preventDefault();key(8,14);
+  }
+});
+document.getElementById("typeonly").addEventListener("click",()=>typeText(false));
+document.getElementById("keyboard").addEventListener("click",()=>field.focus());
 document.getElementById("toggle").addEventListener("click",()=>{
   running=!running;
   document.getElementById("toggle").textContent=running?"Pause":"Resume";
   document.getElementById("toggle").setAttribute("aria-pressed",String(running));
   if(running)loop();
 });
-document.getElementById("break").addEventListener("click",async()=>{try{paint(await api("/api/break",{}));}catch(e){error(e);}});
+document.getElementById("break").addEventListener("click",async()=>{
+  try{
+    const reply=await api("/api/break",{});
+    if(!reply.ok){
+      interruptStatus.textContent="Ctrl+Break refused: "+(reply.text||reply.detail||"DOS did not accept the interrupt");
+    }else{
+      interruptStatus.textContent="Ctrl+Break delivered. DOS may act on it at the next break check; graphics mode is not automatically reset.";
+    }
+    // An interrupt can change guest status or screen without a run slice.
+    paint(await api("/api/state"));
+  }catch(e){interruptStatus.textContent="Ctrl+Break failed: "+String(e.message||e);}
+});
+document.getElementById("view").addEventListener("click",()=>{
+  forceTextView=!forceTextView;
+  const button=document.getElementById("view");
+  button.textContent=forceTextView?"Graphics view":"Text view";
+  button.setAttribute("aria-pressed",String(forceTextView));
+  if(latest)paint(latest);
+});
 document.getElementById("refresh").addEventListener("click",refresh);
 function mousePosition(e){
   const rect=canvas.getBoundingClientRect(),maxX=latest?.mouse_max_x??639,maxY=latest?.mouse_max_y??199;
@@ -241,7 +292,13 @@ async function mouse(e,down){
   const [x,y]=mousePosition(e);buttons=down?1:0;
   try{await api("/api/mouse",{x,y,buttons});}catch(err){error(err);}
 }
-canvas.addEventListener("pointerdown",e=>{e.preventDefault();mouse(e,true);});
+// A canvas is not an editable element, so focusing it cannot open Android's
+// software keyboard. A tap on the DOS screen instead focuses the real input
+// unless the guest has explicitly enabled its DOS mouse.
+canvas.addEventListener("pointerdown",e=>{
+  if(!latest?.mouse_present){document.getElementById("type").focus();return;}
+  e.preventDefault();mouse(e,true);
+});
 canvas.addEventListener("pointerup",e=>{e.preventDefault();mouse(e,false);});
 canvas.addEventListener("pointercancel",e=>mouse(e,false));
 (async()=>{
