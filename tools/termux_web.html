@@ -49,6 +49,14 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
 @media (max-width:330px) { .keyboard-layout { grid-template-columns:1fr; } }
 .type { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .type input { flex:1 1 200px; min-width:0; }
+.media-controls { border:1px solid #364557; border-radius:9px; padding:9px; margin:10px 0; }
+.media-controls summary { cursor:pointer; font-weight:600; }
+.media-controls form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+.media-controls input { flex:1 1 180px; min-width:0; font-size:16px; }
+.media-controls select { min-width:70px; }
+#media-status { color:var(--muted); overflow-wrap:anywhere; min-height:1.3em; font-size:13px; }
+#ansi-on[aria-pressed="true"] { border-color:var(--accent); }
+
 .type { padding:8px 0; }
 #keyboard { flex:0 0 auto; }
 #type { font-size:16px; }
@@ -94,6 +102,25 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <button id="view" aria-pressed="false">Text view</button>
 <button id="refresh">Refresh</button>
 </div>
+<details class="media-controls">
+<summary>Drives and ANSI.SYS</summary>
+<div class="controls">
+<button type="button" id="ansi-on" aria-pressed="false">Enable ANSI.SYS</button>
+<small>ANSI can be enabled for this DOS session; turning it off requires restarting the session.</small>
+</div>
+<form id="media-form">
+<label for="media-drive">DOS drive</label>
+<select id="media-drive" aria-label="DOS drive">
+<option value="A">A:</option><option value="B">B:</option><option value="C">C:</option>
+<option value="D" selected>D:</option><option value="E">E:</option>
+</select>
+<input id="media-path" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Termux folder or .img/.ima path" aria-label="Termux mount path">
+<button type="submit">Mount</button>
+<button type="button" id="unmount">Unmount</button>
+</form>
+<div id="media-status" role="status" aria-live="polite"></div>
+<small>Paths are on the Termux device, not Chrome's downloads. Example: driveD or images/FD14LITE.img. Avoid replacing a drive with open DOS files.</small>
+</details>
 <section class="keyboard-layout" aria-label="On-screen DOS keyboard">
 <div class="keygroup">
 <h2>Commands and editing</h2>
@@ -401,6 +428,35 @@ document.getElementById("view").addEventListener("click",()=>{
   button.textContent=forceTextView?"Graphics view":"Text view";
   button.setAttribute("aria-pressed",String(forceTextView));
   if(latest)paint(latest);
+});
+const mediaStatus=document.getElementById("media-status");
+const ansiButton=document.getElementById("ansi-on");
+function mediaFeedback(message){mediaStatus.textContent=message;}
+async function mediaRequest(action){
+  const drive=document.getElementById("media-drive").value;
+  const path=document.getElementById("media-path").value.trim();
+  if(action==="mount"&&!path){mediaFeedback("Enter a Termux directory or disk image path.");return;}
+  try{
+    const reply=await api("/api/media",{action,drive,path});
+    if(reply.ok){
+      mediaFeedback(reply.text||drive+": "+(action==="mount"?"mounted":"unmounted"));
+      await refresh();
+    }else mediaFeedback(reply.text||reply.error||"DOS refused the media change");
+  }catch(e){mediaFeedback("Media change failed: "+String(e.message||e));}
+}
+document.getElementById("media-form").addEventListener("submit",e=>{e.preventDefault();mediaRequest("mount");});
+document.getElementById("unmount").addEventListener("click",()=>mediaRequest("unmount"));
+ansiButton.addEventListener("click",async()=>{
+  if(ansiButton.getAttribute("aria-pressed")==="true")return;
+  try{
+    const reply=await api("/api/ansi",{});
+    if(reply.ok){
+      ansiButton.textContent="ANSI.SYS enabled";
+      ansiButton.setAttribute("aria-pressed","true");
+      ansiButton.disabled=true;
+      mediaFeedback("ANSI.SYS enabled for the current DOS session.");
+    }else mediaFeedback(reply.text||"DOS refused ANSI.SYS");
+  }catch(e){mediaFeedback("ANSI.SYS failed: "+String(e.message||e));}
 });
 document.getElementById("refresh").addEventListener("click",refresh);
 function mousePosition(e){
