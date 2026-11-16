@@ -372,7 +372,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             Ok(None)
         },
         (0x2f,_) if p.cpu.regs[0]&0xffff==0xfb43 && p.cpu.regs[3]&0xffff==0x0100=>{
-            // Borland TDX installation check (RBIL INT 2F/AX=FB43h/BX=0100h).
+            // TDX debugger presence probe (RBIL INT 2F/AX=FB43h/BX=0100h).
             // TDX returns BX=FB43h when installed. With no resident TDX
             // handler, the multiplex chain's IRET preserves BX=0100h.
             // Do not claim the DPMILOAD/TDX protected-mode API is installed.
