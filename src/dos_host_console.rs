@@ -316,14 +316,15 @@ pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&
     front.reset();
     front.host_pointer=options.host_pointer;
     // Changes from before this run (a setup screen, an earlier program) are not sounded.
-    if let Some(p)=session.machine_mut(){p.speaker.take_sound();}
+    if let Some(p)=session.machine_mut(){p.speaker.take_sound();p.sb.take_pcm();}
     let mut sound=speaker::Sound::host(options.speaker_volume);
-    let result=drive(session,front,rx,&mut sound);
+    let mut sb_sound=sb_audio::Sound::host(options.speaker_volume);
+    let result=drive(session,front,rx,&mut sound,&mut sb_sound);
     front.reset();
     result
 }
 
-fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound)->Result<String,String>{
+fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound,sb_sound:&mut sb_audio::Sound)->Result<String,String>{
     const SLICE:usize=20_000;
     let mut pending=std::collections::VecDeque::<u16>::new();
     let mut last_present=Instant::now()-Duration::from_secs(1);
@@ -379,8 +380,8 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
         let until=Instant::now()+Duration::from_millis(15);
         loop{
             session.run(SLICE)?;
-            // Speaker changes go to the audio thread after every slice.
-            if let Some(p)=session.machine_mut(){sound.take(&mut p.speaker);}
+            // Both PC speaker and Sound Blaster PCM follow guest execution.
+            if let Some(p)=session.machine_mut(){sound.take(&mut p.speaker);sb_sound.take(&mut p.sb);}
             if session.status().0!="running"||Instant::now()>=until{break;}
         }
         if let Some(p)=session.machine_mut(){if let Some(com1)=p.com1.as_mut(){com1.tx.clear();}}
@@ -760,6 +761,8 @@ mod tty;
 mod terminal_graphics;
 #[path="dos_host_speaker.rs"]
 pub(crate) mod speaker;
+#[path="dos_host_sb.rs"]
+mod sb_audio;
 #[path="dos_host_audio.rs"]
 pub(crate) mod audio;
 #[path="dos_console_select.rs"]

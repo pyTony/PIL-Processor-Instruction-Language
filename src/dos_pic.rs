@@ -1,6 +1,6 @@
 //! Bounded AT interrupt-controller state: a master 8259A at ports 20h/21h
-//! with a slave at A0h/A1h on its IR2. The PIT's IRQ0 and the keyboard's
-//! IRQ1 are wired to devices; other request lines remain inactive.
+//! with a slave at A0h/A1h on its IR2. The PIT's IRQ0, keyboard's
+//! IRQ1 and Sound Blaster's IRQ5/IRQ7 are wired to devices.
 //!
 //! Reinitialization (ICW1-ICW4) is modelled for the AT wiring: ICW1 with
 //! edge triggering, cascade mode and ICW4 to follow; ICW2 moves the vector
@@ -90,11 +90,45 @@ impl Pair{
     pub fn acknowledge_keyboard(&mut self){self.master.acknowledge(2);}
     /// The BIOS handler's specific EOI for IRQ1.
     pub fn end_keyboard(&mut self){self.master.in_service&=!2;}
+    /// SB2 uses IRQ5 or IRQ7 on the master PIC. Preserve all higher-priority
+    /// requests/ISRs, the programmed mask and ICW2 vector remapping.
+    pub fn soundblaster_vector(&self,irq:u8)->u8{self.master.base|irq}
+    pub fn raise_soundblaster(&mut self,irq:u8){
+        if matches!(irq,5|7){self.master.request|=1<<irq;}
+    }
+    pub fn soundblaster_ready(&self,irq:u8)->bool{
+        if !matches!(irq,5|7)||!self.ready(){return false;}
+        let bit=1u8<<irq;
+        let higher=(u16::from(bit)-1) as u8;
+        self.master.request&bit!=0&&self.master.mask&bit==0
+            &&self.master.in_service&(higher|bit)==0
+            &&self.master.request&!self.master.mask&higher==0
+    }
+    pub fn acknowledge_soundblaster(&mut self,irq:u8){
+        if matches!(irq,5|7){self.master.acknowledge(1<<irq);}
+    }
     fn ready(&self)->bool{self.master.init==Init::Ready}
 }
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn soundblaster_irq_mask_priority_and_eoi(){
+        let mut p=Pair::default();
+        assert_eq!(p.soundblaster_vector(5),0x0d);
+        p.write(0x21,1<<5).unwrap();p.raise_soundblaster(5);
+        assert!(!p.soundblaster_ready(5));
+        p.write(0x21,0).unwrap();assert!(p.soundblaster_ready(5));
+        p.raise_timer();assert!(!p.soundblaster_ready(5));
+        p.acknowledge_timer();p.write(0x20,0x20).unwrap();
+        assert!(p.soundblaster_ready(5));
+        p.acknowledge_soundblaster(5);assert!(!p.soundblaster_ready(5));
+        p.write(0x20,0x65).unwrap();
+        p.raise_soundblaster(5);assert!(p.soundblaster_ready(5));
+        p.write(0x20,0x11).unwrap();p.write(0x21,0x30).unwrap();
+        p.write(0x21,0x04).unwrap();p.write(0x21,0x01).unwrap();
+        assert_eq!(p.soundblaster_vector(5),0x35);
+        assert!(!p.soundblaster_ready(5)); // ICW1 dropped old IRR
+    }
     #[test]fn masks_selection_and_eoi_are_independent_and_persistent(){
         let mut p=Pair::default();p.write(0x21,0xa5).unwrap();p.write(0xa1,0x5a).unwrap();assert_eq!((p.read(0x21),p.read(0xa1)),(0xa5,0x5a));
         p.raise_timer();assert_eq!(p.read(0x20),1);assert!(!p.timer_ready());p.write(0x21,0xa4).unwrap();assert!(p.timer_ready());

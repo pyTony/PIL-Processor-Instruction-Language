@@ -1,3 +1,4 @@
+//! DOS ISA port devices: PC speaker, Sound Blaster PCM and AT peripherals.
 //! The PC speaker ports, answered on the host as INT services are: PIT
 //! channel 2 (count at 42h, mode at 43h) sets the tone and port 61h bits 0
 //! and 1 gate it to the speaker. The CMOS clock and setup bytes read through
@@ -189,6 +190,17 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
     if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
         return Ok(());
+    }
+    // Digital audio card and its ISA channel-1 DMA controller. Route
+    // only the documented DMA registers; other channels keep their current
+    // compatibility behaviour until their devices are implemented.
+    if matches!(port,0x02|0x03|0x08|0x0a|0x0b|0x0c|0x0d|0x0e|0x0f|0x83|0x220..=0x22f){
+        let now=p.clock_offset.map(|_|p.speaker.pit_now(p.clock_offset));
+        p.sb.tick(now,&p.ram,&mut p.speaker.pic)?;
+        if let Some(value)=p.sb.io(port,input,p.cpu.regs[0]as u8,&p.ram,&mut p.speaker.pic)?{
+            if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
+            return Ok(());
+        }
     }
     if port==0x71{
         if !input{
