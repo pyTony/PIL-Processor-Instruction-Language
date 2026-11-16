@@ -75,6 +75,17 @@ impl SegmentCache {
         Self { base: u32::from(selector) << 4, limit: 0xffff,
             access: SegmentAccess::Data { writable: true, expand_down: false, big: false, dpl: 0 } }
     }
+    /// The cache a real-mode MOV or POP to DS, ES, FS, GS or SS makes from
+    /// this one: only the base changes, so a limit and attributes loaded in
+    /// protected mode stay ("unreal mode"), as on the 386. Dine's BIOS and
+    /// DOS services use it for the segment registers they return, as the
+    /// MOV ES/POP DS of a real BIOS or kernel would. A cache marked unusable
+    /// (a null selector loaded in protected mode) gets the full real-mode
+    /// cache, as `SegmentState::load_segment` gives it.
+    pub fn real_mode_reload(self, selector: u16) -> Self {
+        if self.access==SegmentAccess::Unusable{return Self::real_mode(selector);}
+        Self { base: u32::from(selector) << 4, ..self }
+    }
     /// The cache a segment load makes in virtual-8086 mode: as in real mode,
     /// but at privilege level 3. A CS cache of this kind is how the machine
     /// state marks virtual-8086 mode (`SegmentState::v86`), together with

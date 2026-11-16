@@ -126,7 +126,7 @@ impl SoundBlaster{
     /// Poll completion and make a *single edge* of IRQ5/IRQ7 for each
     /// completed DMA block. Automatic initialization reuses the DMA base
     /// and count, but never queues unbounded audio when a frontend stalls.
-    pub(crate) fn tick(&mut self,clock:Option<u64>,ram:&Ram,pic:&mut Pair)->Result<(),String>{
+    pub(in crate::dos) fn tick(&mut self,clock:Option<u64>,ram:&Ram,pic:&mut Pair)->Result<(),String>{
         self.now=match clock{Some(t)=>self.now.max(t),None=>self.now.saturating_add(1024)};
         for _ in 0..8{
             let Some(play)=self.playback.as_ref() else{break};

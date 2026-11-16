@@ -1,5 +1,6 @@
 //! Session-local CMOS clock. Calendar-year writes never change the host clock.
-//! Other RTC write modes, interrupt generation and SET/freeze remain unsupported.
+//! INT 1Ah AH=03h/05h set its time and date the same way. Other RTC write
+//! modes, interrupt generation and SET/freeze remain unsupported.
 use std::time::{SystemTime,UNIX_EPOCH};
 #[derive(Clone,Debug,Default,PartialEq,Eq)]
 pub(super) struct Rtc{adjust_seconds:i64,weekday_adjust:i64}
@@ -22,6 +23,7 @@ fn valid(year:i64,month:i64,day:i64)->bool{
     let limit=match month{1|3|5|7|8|10|12=>31,4|6|9|11=>30,2 if leap=>29,2=>28,_=>0};
     (1..=9999).contains(&year)&&day>=1&&day<=limit
 }
+fn bcd(value:u8)->Option<i64>{(value&15<10&&value>>4<10).then(||i64::from(value>>4)*10+i64::from(value&15))}
 fn base(offset:Option<i64>)->i64{
     match offset{Some(offset)=>SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|t|t.as_secs()as i64)+offset,None=>315_532_800}
 }
@@ -60,6 +62,26 @@ impl Rtc{
         self.adjust_seconds+=(after-before)*86400;self.weekday_adjust=(self.weekday_adjust+before-after).rem_euclid(7);Ok(())
     }
     pub fn write_year(&mut self,offset:Option<i64>,index:u8,value:u8)->Result<(),String>{self.write_year_at(base(offset),index,value)}
+    /// INT 1Ah AH=03h: set the RTC's time of day (BCD hour, minute, second)
+    /// and keep its date; the session-local clock then runs on from there.
+    /// DOS's own clock and the BIOS tick count are separate and unchanged.
+    pub fn set_bios_time(&mut self,offset:Option<i64>,hour:u8,minute:u8,second:u8)->Result<(),String>{self.set_bios_time_at(base(offset),hour,minute,second)}
+    fn set_bios_time_at(&mut self,now:i64,hour:u8,minute:u8,second:u8)->Result<(),String>{
+        let [h,m,s]=[hour,minute,second].map(bcd);
+        match (h,m,s){(Some(h),Some(m),Some(s)) if h<24&&m<60&&s<60=>{
+            let d=self.date_at(now);self.adjust_seconds+=(h*60+m)*60+s-d.seconds;Ok(())
+        },_=>Err(format!("RTC time {hour:02X}:{minute:02X}:{second:02X} is not a valid BCD time"))}
+    }
+    /// INT 1Ah AH=05h: set the RTC's date (BCD century, year, month, day)
+    /// and keep its time of day; the day of the week follows the new date.
+    pub fn set_bios_date(&mut self,offset:Option<i64>,century:u8,year:u8,month:u8,day:u8)->Result<(),String>{self.set_bios_date_at(base(offset),century,year,month,day)}
+    fn set_bios_date_at(&mut self,now:i64,century:u8,year:u8,month:u8,day:u8)->Result<(),String>{
+        let [c,y,m,dd]=[century,year,month,day].map(bcd);
+        let (Some(c),Some(y),Some(m),Some(dd))=(c,y,m,dd) else{return Err(format!("RTC date {century:02X}{year:02X}-{month:02X}-{day:02X} is not valid BCD"));};
+        if !valid(c*100+y,m,dd){return Err(format!("RTC date {century:02X}{year:02X}-{month:02X}-{day:02X} is not a valid date"));}
+        let d=self.date_at(now);
+        self.adjust_seconds+=(days(c*100+y,m,dd)-days(d.year,d.month,d.day))*86400;self.weekday_adjust=0;Ok(())
+    }
     /// Set the RTC and DOS calendar date, preserving their time of day.
     pub fn set_dos_date(&mut self,offset:Option<i64>,adjust:i64,year:u32,month:u32,day:u32)->i64{
         let now=base(offset);let d=self.date_at(now);let before=days(d.year,d.month,d.day);let after=days(i64::from(year),i64::from(month),i64::from(day));
@@ -79,6 +101,20 @@ mod tests{
         assert_eq!(r.bios_at(last),[0x20,0x24,0x02,0x29,0x23,0x59,0x59]);
         assert_eq!(r.bios_at(last+1),[0x20,0x24,0x03,0x01,0,0,0]);
         assert_eq!(r.bios_at(days(1999,12,31)*86400+86400),[0x20,0,1,1,0,0,0]);
+    }
+    #[test]fn bios_time_and_date_sets_move_only_the_rtc_fields_they_name(){
+        let now=days(2026,11,16)*86400+12345;let mut r=Rtc::default();
+        r.set_bios_time_at(now,0x23,0x59,0x59).unwrap();
+        assert_eq!(r.bios_at(now),[0x20,0x26,0x11,0x16,0x23,0x59,0x59]);
+        assert_eq!(r.bios_at(now+1),[0x20,0x26,0x11,0x17,0,0,0],"the date rolls over a second later");
+        r.set_bios_date_at(now,0x19,0x99,0x12,0x31).unwrap();
+        assert_eq!(r.bios_at(now),[0x19,0x99,0x12,0x31,0x23,0x59,0x59]);
+        assert_eq!(r.bios_at(now+1),[0x20,0,1,1,0,0,0]);
+        assert_eq!(r.date_at(now).weekday,6,"31 December 1999 was a Friday (Sunday=1)");
+        let old=r.clone();
+        assert!(r.set_bios_time_at(now,0x24,0,0).is_err());assert!(r.set_bios_time_at(now,0x1a,0,0).is_err());
+        assert!(r.set_bios_date_at(now,0x20,0x25,0x02,0x29).is_err());assert!(r.set_bios_date_at(now,0x20,0x26,0x0a,1).is_err());
+        assert_eq!(r,old);
     }
     #[test]fn calendar_year_writes_preserve_other_fields_and_advance_at_the_new_rate(){
         let now=days(2026,11,7)*86400+12345;let mut r=Rtc::default();let old=r.date_at(now);

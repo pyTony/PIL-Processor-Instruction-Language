@@ -67,6 +67,9 @@ impl std::fmt::Debug for CodeWatch {fn fmt(&self,f:&mut std::fmt::Formatter<'_>)
 pub struct Ram {
     data:Vec<u8>,
     readonly:Vec<std::ops::Range<usize>>,
+    /// ROM: writes pass every check and change nothing, as a write to a
+    /// ROM chip on the bus does. Unlike `readonly`, no fault is raised.
+    rom:Vec<std::ops::Range<usize>>,
     a20_enabled:bool,
     planar:Option<Box<super::vga_planar::Planar>>,
     /// A Cell so that `as_level` can make one access supervisor-level (a
@@ -83,7 +86,7 @@ pub struct Ram {
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes)}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes)}}
     fn code_pages(&self,address:u32,bytes:usize)->Option<std::ops::RangeInclusive<usize>>{
         if bytes==0{return None;}
         self.contiguous_slice(address,bytes)?;
@@ -204,6 +207,15 @@ impl Ram {
         if !range.is_empty() {self.readonly.push(range);}
         Ok(())
     }
+    /// Marks physical bytes as ROM: later stores to them are accepted and
+    /// dropped. Load the contents first (with `write_bytes`).
+    pub fn rom(&mut self,address:u32,bytes:usize)->Result<(),AccessFault> {
+        self.settle();
+        let range=self.range(address,bytes,false)?;
+        if !range.is_empty() {self.rom.push(range);}
+        Ok(())
+    }
+    fn in_rom(&self,index:usize)->bool{self.rom.iter().any(|r|r.contains(&index))}
     pub fn check_write(&self,address:u32,width:MemWidth)->Result<(),AccessFault> {
         self.check_bus(address,width.bytes()as usize,true)
     }
@@ -274,7 +286,7 @@ impl Ram {
         if self.paging.get().is_some(){
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
-                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
+                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
             }
             self.settle();
             return Ok(());
@@ -286,7 +298,7 @@ impl Ram {
         }
         for shift in 0..bytes {
             let index=self.physical_address(address+shift as u32)as usize;let byte=(value>>(shift*8)) as u8;
-            match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
+            match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
         }
         Ok(())
     }
@@ -295,11 +307,14 @@ impl Ram {
         self.settle();
         self.check_bus(address,data.len(),true)?;
         if self.paging.get().is_some(){
-            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;self.code_watch.write(index,1);self.data[index]=b;}
+            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;if !self.in_rom(index){self.code_watch.write(index,1);self.data[index]=b;}}
             self.settle();
             return Ok(());
         }
-        let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.code_watch.write(start,chunk);self.data[start..start+chunk].copy_from_slice(&data[done..done+chunk]);done+=chunk;}Ok(())
+        let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.code_watch.write(start,chunk);
+            // ROM bytes stay as they are, as for `store`.
+            for i in 0..chunk{if !self.in_rom(start+i){self.data[start+i]=data[done+i];}}
+            done+=chunk;}Ok(())
     }
 }
 
