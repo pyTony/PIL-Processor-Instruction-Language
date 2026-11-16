@@ -97,6 +97,41 @@ class TermuxWebTests(unittest.TestCase):
         self.assertIn('if(e.key==="Backspace"&&!field.value)', html)
         self.assertLess(html.index('id="typeform"'), html.index('class="controls"'))
 
+    def test_mount_and_ansi_controls_call_existing_dos_protocol(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            code, body = self.request("POST", "/api/media",
+                                      {"action": "mount", "drive": "d", "path": folder})
+            self.assertEqual(code, 200)
+            self.assertEqual(self.session.commands[-1], "mount D " + folder)
+            code, body = self.request("POST", "/api/media",
+                                      {"action": "unmount", "drive": "D"})
+            self.assertEqual(code, 200)
+            self.assertEqual(self.session.commands[-1], "unmount D")
+        code, body = self.request("POST", "/api/ansi", {})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.session.commands[-1], "ansi on")
+
+    def test_media_rejects_invalid_drives_sources_and_command_injection(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            for drive in ["F", "", "A B", None]:
+                self.assertEqual(self.request("POST", "/api/media",
+                    {"action": "mount", "drive": drive, "path": folder})[0], 400)
+            for value in ["", "missing-folder-for-pildos-test", folder + "\\nquit"]:
+                self.assertEqual(self.request("POST", "/api/media",
+                    {"action": "mount", "drive": "D", "path": value})[0], 400)
+            self.assertEqual(self.request("POST", "/api/media",
+                {"action": "erase", "drive": "D", "path": folder})[0], 400)
+        self.assertFalse(any(cmd.startswith("mount ") for cmd in self.session.commands))
+
+    def test_media_controls_render_in_web_page(self):
+        code, body = self.request("GET", "/")
+        self.assertEqual(code, 200)
+        for marker in [b'/api/media', b'/api/ansi', b'id="media-drive"',
+                       b'id="media-path"', b'id="ansi-on"', b'id="unmount"']:
+            self.assertIn(marker, body)
+
     def test_android_keyboard_groups_and_screen_controls(self):
         html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
         self.assertIn('class="arrowpad"', html)
