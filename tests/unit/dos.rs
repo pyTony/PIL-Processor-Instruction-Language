@@ -1685,10 +1685,34 @@ fn speaker_ports_take_watcoms_sound_and_nosound(){
  let code=[0xba,0x61,0x00,0xec,0x0c,0x03,0xee,0xb0,0xb6,0xba,0x43,0x00,0xee,0xba,0x42,0x00,0xb0,0x2d,0xee,0xb0,0x05,0xee,0xfa,0xf4];
  let r=run(load(&code,"sound.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!((r.loaded.speaker.tone(),r.loaded.speaker.beeps),(900,1));
+ // The speaker signal: the BIOS count (65536) as soon as port 61h opens
+ // both gates, then 052Dh once its high byte is written; no beep.
+ use crate::dos::ports::wave::Wave;
+ let mut loaded=r.loaded;let(changes,bells)=loaded.speaker.take_sound();
+ assert_eq!(changes.iter().map(|c|c.1).collect::<Vec<_>>(),vec![Wave::Periodic{period:65536,high:32768},Wave::Periodic{period:0x52d,high:0x297}]);
+ assert!(bells.is_empty());assert_eq!(loaded.speaker.take_sound(),(vec![],vec![]),"taken once");
  // nosound(): IN AL,61h; AND AL,FCh; OUT 61h,AL. Bit 4 toggles on each read.
  let code=[0xe4,0x61,0x88,0xc3,0xe4,0x61,0x24,0xfc,0xe6,0x61,0xe4,0x61,0xfa,0xf4];
  let r=run(load(&code,"nosound.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!((r.loaded.cpu.regs[3]&255,r.loaded.cpu.regs[0]&255,r.loaded.speaker.tone()),(0x10,0x10,0));
+ let mut loaded=r.loaded;assert_eq!(loaded.speaker.take_sound().0.iter().map(|c|c.1).collect::<Vec<_>>(),vec![Wave::Level(false)]);
+ // Bit 1 alone with the gate low: OUT is high, the cone is pushed out (a click).
+ let code=[0xb0,0x02,0xe6,0x61,0xb0,0x00,0xe6,0x61,0xfa,0xf4];
+ let mut r=run(load(&code,"click.com").unwrap(),20).unwrap();
+ assert_eq!(r.loaded.speaker.take_sound().0.iter().map(|c|c.1).collect::<Vec<_>>(),vec![Wave::Level(true),Wave::Level(false)]);
+ // Mode 0 (RealSound-style): low until the count runs out.
+ let code=[0xb0,0xb0,0xe6,0x43,0xb0,0x03,0xe6,0x61,0xb0,0x40,0xe6,0x42,0xb0,0x00,0xe6,0x42,0xfa,0xf4];
+ let mut r=run(load(&code,"oneshot.com").unwrap(),20).unwrap();
+ let waves:Vec<Wave>=r.loaded.speaker.take_sound().0.iter().map(|c|c.1).collect();
+ assert!(matches!(waves.last(),Some(Wave::OneShot{low:0x40})),"{waves:?}");
+}
+#[test]
+fn bel_on_the_console_beeps_the_speaker(){
+ // INT 21h AH=02h DL=07h, AH=09h "a<BEL>$", INT 10h AH=0Eh AL=07h, then AH=02h 'x'.
+ let code=[0xb4,0x02,0xb2,0x07,0xcd,0x21, 0xb4,0x09,0xba,0x1e,0x01,0xcd,0x21, 0xb8,0x07,0x0e,0xbb,0x07,0x00,0xcd,0x10, 0xb4,0x02,0xb2,b'x',0xcd,0x21, 0xfa,0xf4, 0x90, b'a',0x07,b'$'];
+ let mut r=run(load(&code,"bell.com").unwrap(),40).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ let (changes,bells)=r.loaded.speaker.take_sound();
+ assert!(changes.is_empty());assert_eq!(bells.len(),3);
 }
 #[test]
 fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
