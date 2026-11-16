@@ -53,7 +53,8 @@ mod tests{
     #[test]
     fn live_snapshot_traces_after_first_capture_and_can_be_disabled(){
         // Infinite guest loop. The host is able to inspect it without a stop.
-        let p=load(&[0xeb,0xfe],"SPIN.COM").unwrap();
+        let mut p=load(&[0xeb,0xfe],"SPIN.COM").unwrap();
+        p.history=history::History::default(); // independent of the test runner environment
         let mut session=session::Session::new(p);
         let before=session.machine().unwrap().cpu.eip;
         let (first,started)=session.live_snapshot(3).unwrap();
@@ -70,6 +71,8 @@ mod tests{
         assert!(!started);
         assert!(second.contains(r#""recent_dispatches":[{"sequence":"#));
         assert!(second.contains(r#""steps":24"#));
+        let recent=second.split(r#""recent_dispatches":"#).nth(1).unwrap().split(r#","video":"#).next().unwrap();
+        assert_eq!(recent.matches(r#""sequence":"#).count(),16);
         assert!(!second.contains('\n'));
         session.disable_live_trace().unwrap();
         assert!(!session.machine().unwrap().history.enabled());
