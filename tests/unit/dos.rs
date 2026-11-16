@@ -1346,7 +1346,7 @@ fn image_is_drive_c_with_its_label_and_the_host_folder_is_drive_d(){
  let dir=std::env::temp_dir().join(format!("pil-drives-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
  std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("factor.com"),b"F").unwrap();
  let mut p=load_with_drives(&[0xcd,0x21],"img::FREEDOS/COMMAND.COM",vec![Source::Image(Arc::new(tree)),Source::Host(dir.clone())],Some("FREEDOS/COMMAND.COM")).unwrap();
- let env:Vec<u8>=(0..56).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();
+ let env:Vec<u8>=(0..96).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();
  assert!(env.starts_with(b"COMSPEC=C:\\COMMAND.COM\0BLASTER=A220 I5 D1 T3\0\0\x01\0C:\\FREEDOS\\COMMAND.COM\0"),"{env:?}");
  // Label search, then files: hidden/system KERNEL.SYS only with those bits asked for.
  assert_eq!(call(&mut p,0x4e00,0x08,b"C:\\*.*").1,0);assert_eq!(dta_name(&p),(0x08,0,b"FD14-LIT.E".to_vec()));
