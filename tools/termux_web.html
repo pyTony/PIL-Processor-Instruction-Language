@@ -45,10 +45,12 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <canvas id="display" width="720" height="400" tabindex="0" aria-label="DOS screen. Tap for mouse or press a key."></canvas>
 </section>
 <div id="status" role="status">Connecting to PILdos...</div>
+<div id="interrupt-status" role="status" aria-live="polite"></div>
 <form class="type" id="typeform"><input id="type" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tap to type DOS command" aria-label="DOS command input"><button type="submit">Type + ↵</button><button id="typeonly" type="button">Type</button><button id="keyboard" type="button">⌨ Keyboard</button></form>
 <div class="controls">
 <label>CPU slice <select id="budget"><option value="5000">5k</option><option value="20000" selected>20k</option><option value="50000">50k</option></select></label>
 <button id="break">Ctrl+Break</button>
+<button id="view" aria-pressed="false">Text view</button>
 <button id="refresh">Refresh</button>
 </div>
 <section class="keys" aria-label="On-screen DOS keyboard">
@@ -80,6 +82,8 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 "use strict";
 const canvas=document.getElementById("display"), ctx=canvas.getContext("2d",{alpha:false});
 const status=document.getElementById("status"), log=document.getElementById("log");
+const interruptStatus=document.getElementById("interrupt-status");
+let forceTextView=false;
 let glyphs=[], colors=[], latest=null, running=true, inLoop=false, terminated=false;
 let buttons=0, imageMouse=false;
 const waits={normal:60,idle:180};
@@ -157,7 +161,10 @@ function planar(reply){
 }
 function paint(reply){
   latest=reply;
-  if(reply.graphics13)mode13(reply);
+  const graphics=!!(reply.graphics13||reply.graphics_cga||reply.graphics_planar);
+  document.getElementById("view").hidden=!graphics;
+  if(forceTextView&&reply.screen)textFrame(reply);
+  else if(reply.graphics13)mode13(reply);
   else if(reply.graphics_cga)cga(reply);
   else if(reply.graphics_planar)planar(reply);
   else if(reply.screen)textFrame(reply);
@@ -254,7 +261,25 @@ document.getElementById("toggle").addEventListener("click",()=>{
   document.getElementById("toggle").setAttribute("aria-pressed",String(running));
   if(running)loop();
 });
-document.getElementById("break").addEventListener("click",async()=>{try{paint(await api("/api/break",{}));}catch(e){error(e);}});
+document.getElementById("break").addEventListener("click",async()=>{
+  try{
+    const reply=await api("/api/break",{});
+    if(!reply.ok){
+      interruptStatus.textContent="Ctrl+Break refused: "+(reply.text||reply.detail||"DOS did not accept the interrupt");
+    }else{
+      interruptStatus.textContent="Ctrl+Break delivered. DOS may act on it at the next break check; graphics mode is not automatically reset.";
+    }
+    // An interrupt can change guest status or screen without a run slice.
+    paint(await api("/api/state"));
+  }catch(e){interruptStatus.textContent="Ctrl+Break failed: "+String(e.message||e);}
+});
+document.getElementById("view").addEventListener("click",()=>{
+  forceTextView=!forceTextView;
+  const button=document.getElementById("view");
+  button.textContent=forceTextView?"Graphics view":"Text view";
+  button.setAttribute("aria-pressed",String(forceTextView));
+  if(latest)paint(latest);
+});
 document.getElementById("refresh").addEventListener("click",refresh);
 function mousePosition(e){
   const rect=canvas.getBoundingClientRect(),maxX=latest?.mouse_max_x??639,maxY=latest?.mouse_max_y??199;
