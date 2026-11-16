@@ -64,6 +64,7 @@ FreeDOS mouse driver (its documentation and source, not copied).
 | 0022h / 0023h | Message language: ignored / BX=0 (English), as a US driver |
 | 0024h | Version 7.05 in BX (CuteMouse's), CH=4 PS/2 type, CL=0 |
 | 0026h | BX = disabled flag, CX/DX = maximum virtual coordinates |
+| 53C0h-53C3h | Logitech SWIFT (CyberMan) extension: not supported, so every register stays as it was and no buffer is written; a program that checks for AX=0001h after 53C1h finds no SWIFT support |
 
 Any other AX stops the session with "INT 33h mouse AX=....h is not
 implemented" rather than returning a guess. Not implemented: 0011h (wheel),
