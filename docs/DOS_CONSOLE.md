@@ -110,7 +110,7 @@ terminal session.
 
 | Front end | Text modes | Graphics modes |
 |---|---|---|
-| `--tty` | Each changed row is redrawn on the terminal's alternate screen, in the 16 CGA colours, with the IBM PC glyphs (CP437 and the symbols for 00h-1Fh). The cursor follows the BIOS cursor and hides when the BIOS cursor is off. | On Windows a window opens. It shows the same frames as `--window` and also takes keys. Elsewhere the terminal shows a one-line note; keys still reach the program. |
+| `--tty` | Each changed row is redrawn on the terminal's alternate screen, in the 16 CGA colours, with the IBM PC glyphs (CP437 and the symbols for 00h-1Fh). The cursor follows the BIOS cursor and hides when the BIOS cursor is off. | On Windows a window opens. It shows the same frames as `--window` and also takes keys. On Linux/Termux the existing CGA/EGA/VGA framebuffer is sampled into ANSI true-colour Unicode half-blocks (`▀`) in the terminal; keyboard input remains available there. This is a reduced-resolution preview, not a separate X11 window. |
 | `--window` | The page is drawn as a VGA shows it: 9x16 cells, 720x400 for 80 columns (40 columns are drawn 360 wide and doubled), with Dine's own 8x16 font (src/dos_font8x16.txt). The ninth column is the background, except that C0h-DFh repeat their eighth column so lines join. The window opens at the largest whole-number size that fits the desktop (1440x800 on a 1920x1080 screen); `DINE_WINDOW_SCALE=1`..`8` chooses it. A resized window keeps whole-number scaling with black borders, unless that would use less than 85% of the room; then the picture fills it with its proportions kept (a 640x480 graphics mode in a 1440x800 window is drawn 1066x800). The BIOS cursor blinks at its shape; the BIOS default 6-7 becomes lines 13-14, as the VGA BIOS scales it. | Drawn from the same scanout as the GDI preview: CGA 4/5/6, EGA/VGA 0Dh/0Eh/10h/12h and 13h. |
 
 Mouse motion and the three buttons scale to the program's virtual
@@ -141,6 +141,19 @@ draws it with (the 8x8 font, or the 8x14/8x16 font of modes 10h/12h), so
 text the program wrote through the BIOS copies as text. Picture cells and
 cells of one colour copy as spaces. In a terminal (`--tty`) the terminal's
 own selection does this.
+
+## Termux graphics preview
+
+Build the Rust frontend and start it in a Termux terminal with true-colour Unicode support:
+
+```sh
+cargo build --release --locked
+./target/release/pil --dos-text
+```
+
+When a DOS program changes to a supported graphics mode (CGA 4/5/6, EGA/VGA planar, or VGA 13h), the framebuffer appears as coloured half-block characters fitted to the current terminal dimensions. The final terminal column and row are reserved to avoid wrapping. The renderer does not need Termux:X11 and does not modify guest framebuffer contents. When the program restores text mode the DOS text page is drawn again. Ctrl+] still quits. `DISPLAY`/Termux:X11 by themselves do not open a PILdos graphics window; a separate Linux X11 frontend is not implemented by this change.
+
+For a clearer picture, use Termux's landscape orientation and reduce terminal font size. This is a preview: scaling, aspect ratio, and 24-bit ANSI colour support depend on the host terminal.
 
 ## PC speaker
 
