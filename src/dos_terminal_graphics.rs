@@ -17,7 +17,7 @@ pub(super) fn half_block_frame(frame:&(usize,usize,Vec<u32>),columns:u16,rows:u1
         for col in 0..cols{
             let x=(col*(*width)/cols).min(*width-1);
             let upper=((2*row)*(*height)/(2*lines)).min(*height-1);
-            let lower=((2*row+1)*height/(2*lines)).min(height-1);
+            let lower=((2*row+1)*(*height)/(2*lines)).min(*height-1);
             let top=pixels[upper*(*width)+x]&0xffffff;
             let bottom=pixels[lower*(*width)+x]&0xffffff;
             let colors=(top,bottom);
