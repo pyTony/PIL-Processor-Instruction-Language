@@ -16,6 +16,17 @@ const SHIFT:Mods=Mods{shift:true,ctrl:false,alt:false};
 
 #[cfg(windows)]
 #[test]
+fn windows_menu_key_opens_host_media_controls(){
+    use crate::dine_window::Input;
+    for (vk,shift) in [(0x5d,false),(0x79,true)] {
+        assert_eq!(window_event(Input::Key{vk,shift,ctrl:false,alt:false}),Some(Event::HostMenu));
+    }
+    assert_eq!(window_event(Input::Key{vk:0x79,shift:false,ctrl:false,alt:false}),
+        Some(Event::Key(Key::F(10),Mods::default())));
+}
+
+#[cfg(windows)]
+#[test]
 fn windows_control_characters_become_native_dos_keys(){
     use crate::dine_window::Input;
     for (ch,key,bios) in [

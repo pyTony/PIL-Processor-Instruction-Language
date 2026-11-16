@@ -130,7 +130,7 @@ mod windows {
     fn held(vk:i32)->bool{unsafe{GetKeyState(vk)<0}}
     /// Keys that type no character reach WM_KEYDOWN only: arrows, the editing
     /// block, F1-F12 and Ctrl+Break.
-    fn untyped(vk:usize)->bool{matches!(vk,0x03|0x21..=0x28|0x2d|0x2e|0x70..=0x7b)}
+    fn untyped(vk:usize)->bool{matches!(vk,0x03|0x21..=0x28|0x2d|0x2e|0x5d|0x70..=0x7b)}
 
     #[repr(C)]
     #[derive(Default,Clone,Copy)]

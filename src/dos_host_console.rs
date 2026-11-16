@@ -675,6 +675,10 @@ fn window_event(input:crate::dine_window::Input)->Option<Event>{
         Input::Char{ch:'\r',shift:true,ctrl:true,alt:false}=>Some(Event::HostMenu),
         Input::Char{ch:'\u{1b}',shift,ctrl,alt}=>Some(Event::Key(Key::Escape,Mods{shift,ctrl,alt})),
         Input::Key{vk:0x2d,shift:true,ctrl:false,alt:false}=>Some(Event::Paste),
+        // Windows context-menu key (VK_APPS), and its standard Shift+F10
+        // equivalent, open the host drive controls instead of reaching DOS.
+        Input::Key{vk:0x5d,..}=>Some(Event::HostMenu),
+        Input::Key{vk:0x79,shift:true,ctrl:false,alt:false}=>Some(Event::HostMenu),
         // Win32 delivers these keys via WM_CHAR, not untyped WM_KEYDOWN.
         // Normalize them for both PILdos setup and guest BIOS keyboard input.
         Input::Char{ch,shift,ctrl,alt}=>{
