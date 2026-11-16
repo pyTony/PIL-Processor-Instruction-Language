@@ -83,6 +83,26 @@ in `pildos.conf` before starting the catalog if mounting must persist across
 selected programs. Images are read-only and must be supported FAT media;
 ZIP/ISO archives need extracting or another supported mounting mechanism.
 
+**Images larger than 64 MiB:** the normal in-memory FAT reader refuses these to
+bound RAM use. On Windows the host drive menu now automatically uses the
+existing 7-Zip extraction route for oversized `.img`/`.ima` files. The image
+remains unchanged; the extracted directory is placed under `drives/media/`
+and mounted on the selected DOS drive. You need 7-Zip installed. The extraction
+is not a raw disk mount and can take some time, depending on the image.
+
+The `E=...` configuration entry **does not perform extraction**. For a
+persistent E: mount, first extract the original image and then point the
+configuration at its extracted host directory, e.g.:
+
+```ini
+E=drives/media/my-original-dos
+```
+
+You can also start the root `PILimages.cmd` launcher with the full original
+image path. That launcher already extracts large images before mounting them
+on E:, alongside the normal D: writable drive. Do not point the configuration
+directly to a greater-than-64-MiB image.
+
 With a loaded set, Ctrl+Shift+F1 advances A:, Ctrl+Shift+F2 advances B:;
 Ctrl+Shift+F3/F4 select the previous disk on A:/B:. These shortcuts also work
 in a host terminal that reports their modifiers. They never type a guest key.
