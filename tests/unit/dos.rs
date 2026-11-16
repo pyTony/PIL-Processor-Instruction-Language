@@ -2109,6 +2109,38 @@ fn a_128k_rom_maps_its_lower_half_at_e0000(){
 }
 
 #[test]
+fn sound_blaster_mixer_word_io_uses_two_adjacent_byte_ports(){
+    // SB mixer at 224h/225h is an 8-bit ISA device. An AT word I/O is
+    // split into index (low byte) and data (high byte) accesses.
+    // CLI; MOV DX,0224h; MOV AX,0880h; OUT DX,AX; IN AX,DX; HLT.
+    let mut p=load(&[0xfa,0xba,0x24,0x02,0xb8,0x80,0x08,0xef,0xed,0xf4],
+        "sb-mixer.com").unwrap();
+    p.cpu.regs[0]=0xabcd_0000;
+    let r=run(p,20).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu.regs[0],0xabcd_0880);
+    assert_eq!(r.loaded.sb.irq(),7,"high byte must reach mixer data port");
+}
+#[test]
+fn sound_blaster_mixer_word_failure_is_atomic_and_other_ports_remain_byte_only(){
+    // The high byte would select an unsupported mixer IRQ mask. Neither
+    // the index latch nor the PIC nor the guest CPU must be committed.
+    let mut p=load(&[0xef],"sb-bad.com").unwrap();
+    p.cpu.regs[2]=0x224;p.cpu.regs[0]=0x1234_8080;
+    let cpu=p.cpu.clone();let sb=format!("{:?}",p.sb);let pic=p.speaker.pic.clone();
+    let r=run(p,1).unwrap();
+    assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu,cpu);assert_eq!(format!("{:?}",r.loaded.sb),sb);
+    assert_eq!(r.loaded.speaker.pic,pic);
+
+    // A word read of the DSP write/status port is not a mixer pair.
+    let mut p=load(&[0xed],"sb-bad.com").unwrap();
+    p.cpu.regs[2]=0x22c;let cpu=p.cpu.clone();
+    let r=run(p,1).unwrap();
+    assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.cpu,cpu);
+}
+#[test]
 fn vga_word_io_roundtrips_and_direct_display_start_is_visible(){
     // MOV DX,3D4; MOV AX,010D; OUT DX,AX; IN AX,DX; HLT
     let mut p=load(&[0xba,0xd4,3,0xb8,0x0d,1,0xef,0xed,0xf4],"crtc.com").unwrap();
