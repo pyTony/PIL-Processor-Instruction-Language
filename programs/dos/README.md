@@ -71,6 +71,12 @@ and this is not yet a complete GW-BASIC compatibility claim.
 load the LF-only file. Copy it without converting line endings, then run
 `GWBASIC CUBE2.BAS` from the directory containing it.
 
+`SPEAKER.BAS` checks the PC speaker: GW-BASIC's BEEP, SOUND 440,9, PLAY
+"C D E F G" and a SOUND sweep, each named on the screen, then SYSTEM back to
+DOS. Like `CUBE2.BAS` it is stored with CRLF line endings and the BASIC
+interpreter is not included. From D: run `GWBASIC SPEAKER.BAS`, or directly
+`pil --dos-console --mount driveD --args SPEAKER.BAS driveD/GWBASIC.EXE`.
+
 Run the CGA demo from the prompt (`D:` then `MANDCGA`) or directly with:
 
     python tools/dos_terminal.py programs/dos/MANDCGA.COM

@@ -26,6 +26,13 @@ retain the existing Python/COM1 behavior. Existing `headless`, `com1`, `shell`,
 `engine` and `rust_graphics` config flags belong to the Python
 frontend; Rust text mode already supplies a terminal and native Windows graphics.
 
+When the program ends or the session stops, the window (or the terminal's
+alternate screen) closes and the console prints the program's last four
+screen lines with text, then `DOS program ended: exit code N` (or the stop
+reason), on standard output (so `> file` keeps it). So a program that ends at once, such as GW-BASIC
+given a file it cannot find, still shows its message ("File not found").
+Closing the window or Ctrl+] prints only the closing line.
+
 When terminal-mode stdin or stdout is redirected, the Rust console uses a
 UTF-8 transcript and line-buffered input. `--plain` or `DINE_TEXT=headless`
 forces this mode. Typed text becomes CP437 BIOS keys, CRLF/LF becomes Enter,

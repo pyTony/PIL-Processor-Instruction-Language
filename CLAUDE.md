@@ -1,3 +1,31 @@
+# pil --dos-console says how the program ended; SPEAKER.BAS — 16 November 2026
+
+Tony ran GW-BASIC with `--args T.BAS` (T.BAS was only on the cloud test
+drive, not his D:) and got nothing: GW-BASIC printed "File not found" and
+returned to DOS, the window closed, and dos_text_io printed nothing for exit
+code 0. host_console::run now returns the program's last four screen lines
+with text plus "DOS program ended: exit code N" (or the stop reason) after an
+exit or stop, and `--dos-console` prints that in window and --tty
+mode (stdout, so `> file` keeps it). A user quit prints only its line. The setup screen and catalog
+(run_on) are unchanged: their start page already shows the result.
+- programs/dos/SPEAKER.BAS (CRLF, as CUBE2.BAS): BEEP, SOUND 440,9, PLAY
+  "MF T120 O3 L4 C D E F G", a SOUND sweep 200-2000 Hz, each named on the
+  screen, then SYSTEM. versions.sha256 lists it, so own_programs copies it
+  to D:.
+
+Local Linux, release: Rust tests pass (1 new). Tony's GW-BASIC (local only)
+in `pil --dos-console --tty` with a recording stand-in aplay: NOPE.BAS
+prints "File not found" and "DOS program ended: exit code 0" after the
+screen closes; SPEAKER.BAS gave 800 Hz, 440 Hz, 520/590/660/700/780 Hz and a
+rising sweep, then its four last lines and the exit line. Tony on Windows
+(his T.BAS, before this change): BEEP, SOUND and PLAY C D E played.
+- Tony's `--args "/k mandvga" driveD\TIMEIT.COM` also flashed and ended:
+  TIMEIT runs its command through COMSPEC, and a program started directly
+  has no shell ("TIMEIT: cannot run COMSPEC, DOS error 2", exit code 1, now
+  shown). Through FreeCOM it works: `--args "/C D:\TIMEIT /K D:\MANDVGA
+  >D:\TIMING.TXT" images/FD14LITE.img::COMMAND.COM` wrote the timing to
+  D:\TIMING.TXT here (local tty run, 5.4 s with terminal graphics).
+
 # PC speaker tones and BEL beeps in pil --pildos / --dos-console — 16 November 2026
 
 Tony asked about Sound Blaster; real speaker tones came first, and GW-BASIC's
