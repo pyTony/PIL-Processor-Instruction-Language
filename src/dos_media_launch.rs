@@ -25,6 +25,23 @@ pub(crate) fn run(shell:&str,media:Option<&str>,log_path:&str)->Result<(),String
     println!("{}",result?);Ok(())
 }
 
+/// Native media menus accept large hard-disk images via the same bounded
+/// host-side extraction already used by --dos-media. This mounts an extracted
+/// *folder*, not a raw writable block device, and never changes guest I/O.
+#[cfg(windows)]
+pub(super) fn mount_path(session:&mut super::Session,drive:u8,path:&std::path::Path)->Result<String,String>{
+    let large_image=path.extension().and_then(|s|s.to_str()).is_some_and(|s|
+        s.eq_ignore_ascii_case("img")||s.eq_ignore_ascii_case("ima"))
+        &&std::fs::metadata(path).map_err(|e|format!("media image {}: {e}",path.display()))?.len()
+            >64*1024*1024;
+    let selected=if large_image{expand_hard_disk(path)?}else{path.to_path_buf()};
+    let text=selected.to_str().ok_or("mount path is not Unicode")?;
+    let result=session.mount_media(drive,text)?;
+    if large_image{
+        Ok(format!("{result} (extracted from {}; original unchanged)",path.display()))
+    }else{Ok(result)}
+}
+
 #[cfg(windows)]
 fn expand_hard_disk(image:&std::path::Path)->Result<std::path::PathBuf,String>{
     use std::{path::PathBuf,os::windows::process::CommandExt};
