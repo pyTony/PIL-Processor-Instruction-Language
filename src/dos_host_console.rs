@@ -462,7 +462,7 @@ impl Front{
                             if action==3{session.disk_set(drive,&path)}else if action==1&&matches!(drive,b'A'|b'B'){
                                 session.floppy_media(drive,&path)
                             }else{
-                                path.to_str().ok_or_else(||"mount path is not Unicode".to_string()).and_then(|path|session.mount_media(drive,path))
+                                media_launch::mount_path(session,drive,&path)
                             }
                         },
                         Ok(None)=>return None,Err(e)=>Err(e),
@@ -477,7 +477,7 @@ impl Front{
                             .is_some_and(|s|s.eq_ignore_ascii_case("img")||s.eq_ignore_ascii_case("ima"));
                         if matches!(drive,b'A'|b'B')&&is_image{
                             session.floppy_media(drive,std::path::Path::new(path))
-                        }else{session.mount_media(drive,path)}
+                        }else{media_launch::mount_path(session,drive,std::path::Path::new(path))}
                     }),
                 _=>return None,
             };
