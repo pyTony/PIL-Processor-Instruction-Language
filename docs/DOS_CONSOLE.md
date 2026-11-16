@@ -148,11 +148,12 @@ Each capture appends one single-line JSON object to
 `PILdos-snapshots.jsonl` **in the emulator's current working directory**
 (usually the repository root if PILdos.vbs was started there). The record
 contains current CS:IP and instruction bytes, CPU registers, step count,
-original executable name, current PSP/EXEC nesting, VGA BIOS mode and
+original executable name, best-effort active DOS executable path read
+from the current PSP environment, PSP/EXEC nesting, VGA BIOS mode and
 sequencer/graphics-controller registers, BIOS keyboard ring pointers, IRQ1
-keyboard queue, and host keystrokes awaiting delivery. The original
-executable name may still be COMMAND.COM when it launched a DOS child; use
-the PSP and EXEC depth to distinguish the current execution context.
+keyboard queue, and host keystrokes awaiting delivery. The initial
+executable name may still be COMMAND.COM when it launched a DOS child;
+active path lookup is bounded and may report null if guest data is absent.
 
 The **first capture enables a 32-entry pre-dispatch history ring** if history
 was disabled. Give the DOS program a moment to run, then capture again.
@@ -172,7 +173,6 @@ This is a separate file from `PILdos-stops.jsonl`; an unchanged
 stop log does not mean the guest is idle. Snapshots are read-only with
 respect to guest CPU, keyboard and VGA state, apart from enabling or
 disabling the host-side tracing facility.
-
 
 While the program has the mouse driver active (it called INT 33h AX=0000h
 with `--mouse`), the mouse belongs to the program; hold Shift to select.
