@@ -1,5 +1,6 @@
 //! Bounded binary PIT channel 0. Supplied input clocks make device tests exact.
-//! GATE is tied high. The same live divisor may be rewritten; other reloads stop.
+//! GATE is tied high. A count written without a control word loads at the
+//! end of the current period.
 /// Channel 2 starts with the conventional BIOS square-wave configuration and
 /// its gate low. Binary modes 0, 2 and 3 are timed; other speaker modes can still be written
 /// for audio but cannot be read as though they were modelled.
@@ -21,6 +22,23 @@ impl Counter2{
         if self.gate&&!gate{self.frozen=self.count_full(now);}
         if !self.gate&&gate{self.epoch=if self.mode==0{now}else{now.saturating_add(1)};}
         self.gate=gate;
+    }
+    /// The channel's OUT signal from `now` on, for the speaker. With the
+    /// gate low, modes 2 and 3 hold OUT high (and mode 0 is taken as high
+    /// too); with it high, mode 3 is a square wave, mode 2 low for one clock
+    /// per period, mode 0 low until the count runs out. Other modes are high.
+    pub fn wave(&self,now:u64)->super::wave::Wave{
+        use super::wave::Wave;
+        if !self.gate{return Wave::Level(true);}
+        match self.mode{
+            3=>Wave::Periodic{period:self.reload,high:self.reload.div_ceil(2)},
+            2=>Wave::Periodic{period:self.reload,high:self.reload-1},
+            0=>{
+                let elapsed=now.saturating_sub(self.epoch);
+                if elapsed>=u64::from(self.frozen){Wave::Level(true)}else{Wave::OneShot{low:(u64::from(self.frozen)-elapsed)as u32}}
+            },
+            _=>Wave::Level(true),
+        }
     }
     pub fn command(&mut self,value:u8,now:u64)->Result<(),String>{
         if value&0x30==0{
@@ -45,41 +63,62 @@ impl Counter2{
     }
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub(super) struct Counter0{mode:u8,access:u8,reload:u32,epoch:u64,irq_base:u64,running:bool,frozen:u16,frozen_irqs:u64,armed:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>}
-impl Default for Counter0{fn default()->Self{Self{mode:3,access:3,reload:65536,epoch:0,irq_base:0,running:true,frozen:0,frozen_irqs:0,armed:false,low:None,read_high:false,latch:None}}}
+pub(super) struct Counter0{mode:u8,access:u8,reload:u32,epoch:u64,irq_base:u64,running:bool,frozen:u16,frozen_irqs:u64,armed:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>,
+    /// A count written while the counter runs, and the PIT clock where the
+    /// current period ends and the counter loads it.
+    next:Option<(u64,u32)>}
+impl Default for Counter0{fn default()->Self{Self{mode:3,access:3,reload:65536,epoch:0,irq_base:0,running:true,frozen:0,frozen_irqs:0,armed:false,low:None,read_high:false,latch:None,next:None}}}
 impl Counter0{
+    /// Epoch, divisor and edge total in force at `now`, with a pending count
+    /// loaded once its period boundary has passed.
+    fn view(&self,now:u64)->(u64,u32,u64){
+        match self.next{
+            Some((at,reload)) if now>=at=>(at,reload,self.irq_base+(at-self.epoch)/u64::from(self.reload)),
+            _=>(self.epoch,self.reload,self.irq_base),
+        }
+    }
+    fn settle(&mut self,now:u64){
+        if self.next.is_some_and(|(at,_)|now>=at){(self.epoch,self.reload,self.irq_base)=self.view(now);self.next=None;}
+    }
     pub fn count(&self,now:u64)->u16{
         if !self.running{return self.frozen;}
-        let phase=now.saturating_sub(self.epoch)%u64::from(self.reload);
-        let count=if self.mode==2{u64::from(self.reload)-phase}else{
-            let high=u64::from(self.reload).div_ceil(2);let at=if phase<high{phase}else{phase-high};
-            u64::from(self.reload&!1).saturating_sub(2*at)
+        let(epoch,reload,_)=self.view(now);
+        let phase=now.saturating_sub(epoch)%u64::from(reload);
+        let count=if self.mode==2{u64::from(reload)-phase}else{
+            let high=u64::from(reload).div_ceil(2);let at=if phase<high{phase}else{phase-high};
+            u64::from(reload&!1).saturating_sub(2*at)
         };count as u16
     }
-    pub fn interrupts(&self,now:u64)->u64{if self.running{self.irq_base+now.saturating_sub(self.epoch)/u64::from(self.reload)}else{self.frozen_irqs}}
+    pub fn interrupts(&self,now:u64)->u64{if self.running{let(epoch,reload,base)=self.view(now);base+now.saturating_sub(epoch)/u64::from(reload)}else{self.frozen_irqs}}
     pub fn command(&mut self,value:u8,now:u64)->Result<(),String>{
         if value>>6!=0{return Err("PIT channel 0 command selects another channel".into());}
         if value&0x30==0{if self.latch.is_none(){self.latch=Some((self.count(now),self.read_high));}return Ok(());}
         let mode=(value>>1&7)&3;
         if value&1!=0||!matches!(value>>1&7,2|3|6|7){return Err(format!("PIT channel 0 command {value:02X}h: binary modes 2/3 only"));}
-        self.frozen=self.count(now);self.frozen_irqs=self.interrupts(now);self.running=false;
+        self.settle(now);self.frozen=self.count(now);self.frozen_irqs=self.interrupts(now);self.running=false;self.next=None;
         self.mode=mode;self.access=value>>4&3;self.armed=true;self.low=None;self.read_high=false;self.latch=None;Ok(())
     }
     pub fn write(&mut self,value:u8,now:u64)->Result<(),String>{
-        // Rewriting the currently running divisor leaves the mode-2/3 phase
-        // unchanged: the same value is loaded at the next period boundary.
-        // Other live changes remain an explicit unsupported operation.
-        if !self.armed && self.access != 3{return Err("PIT channel 0 live reload requires a new control word in this profile".into());}
+        self.settle(now);
         let raw=match self.access{1=>u16::from(value),2=>u16::from(value)<<8,_=>match self.low{None=>{self.low=Some(value);return Ok(())},Some(lo)=>u16::from_le_bytes([lo,value])}};
         let reload=if raw==0{65536}else{u32::from(raw)};
         if reload<2{return Err("PIT modes 2/3 require a count of at least two (zero means 65536)".into());}
+        self.low=None;
         if !self.armed{
-            if reload!=self.reload{return Err("PIT channel 0 live reload requires a new control word in this profile".into());}
-            self.low=None;return Ok(());
+            // A new count without a control word (a program speeding up its
+            // timer for music): the 8254 loads it when the current
+            // period ends (mode 3: half-cycle; here the whole period, so the
+            // edge count stays whole). The same count leaves the phase alone.
+            self.next=(reload!=self.reload).then(||{
+                let periods=now.saturating_sub(self.epoch)/u64::from(self.reload);
+                (self.epoch+(periods+1)*u64::from(self.reload),reload)
+            });
+            return Ok(());
         }
-        self.reload=reload;self.epoch=now.saturating_add(1);self.irq_base=self.frozen_irqs;self.running=true;self.armed=false;self.low=None;Ok(())
+        self.reload=reload;self.epoch=now.saturating_add(1);self.irq_base=self.frozen_irqs;self.running=true;self.armed=false;self.next=None;Ok(())
     }
     pub fn read(&mut self,now:u64)->u8{
+        self.settle(now);
         let (count,high)=self.latch.unwrap_or((self.count(now),self.read_high));
         let value=if self.access==2||self.access==3&&high{(count>>8)as u8}else{count as u8};
         let finished=self.access!=3||high;
@@ -145,10 +184,24 @@ mod tests{
             }
         }
     }
-    #[test]fn invalid_commands_counts_and_live_reload_stop_without_mutation(){
+    #[test]fn invalid_commands_and_counts_stop_without_mutation(){
         let mut p=start(0x34,20,0);
         for cmd in [0x35,0x30,0x32,0x76,0xc2]{let old=p.clone();assert!(p.command(cmd,100).is_err());assert_eq!(p,old);}
-        p.write(0,100).unwrap();let old=p.clone();assert!(p.write(0,100).is_err());assert_eq!(p,old);
         p.command(0x34,100).unwrap();p.write(1,100).unwrap();let old=p.clone();assert!(p.write(0,100).is_err());assert_eq!(p,old);p.write(1,100).unwrap();assert_eq!(p.count(101),257);
+    }
+    #[test]fn live_reload_takes_effect_at_the_end_of_the_period(){
+        // Mode 2, divisor 100 from clock 1: edges at 101, 201, 301...
+        let mut p=start(0x34,100,0);
+        assert_eq!(p.interrupts(250),2);
+        p.write(10,250).unwrap();p.write(0,250).unwrap();
+        // Still 100 until 301, then 10 per edge.
+        assert_eq!(p.count(300),1);assert_eq!(p.interrupts(300),2);
+        assert_eq!(p.interrupts(301),3);assert_eq!(p.count(301),10);assert_eq!(p.interrupts(311),4);assert_eq!(p.interrupts(401),13);
+        // Another rewrite of the same count changes nothing; a read settles it.
+        p.write(10,405).unwrap();p.write(0,405).unwrap();assert_eq!(p.interrupts(411),14);
+        let before=p.interrupts(500);p.read(450);assert_eq!(p.interrupts(500),before);
+        // A control word cancels a count still waiting.
+        let mut q=start(0x36,100,0);q.write(50,10).unwrap();q.write(0,10).unwrap();
+        q.command(0x36,20).unwrap();q.write(30,20).unwrap();q.write(0,20).unwrap();assert_eq!(q.interrupts(21+30*3),q.interrupts(21)+3);
     }
 }
