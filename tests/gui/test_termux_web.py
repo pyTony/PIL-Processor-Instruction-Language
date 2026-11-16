@@ -53,6 +53,29 @@ class TermuxWebTests(unittest.TestCase):
         finally:
             client.close()
 
+    def test_abandoned_vga_response_does_not_retry_or_log_broken_pipe(self):
+        # Test the HTTP response boundary independently of the DOS engine.
+        # Both a failed header flush and a failed body write are common when
+        # Chrome switches tabs while a graphics snapshot is in flight.
+        handler_type = web.make_handler(self.backend)
+        for fail_headers in (False, True):
+            handler = object.__new__(handler_type)
+            handler.close_connection = False
+            handler.send_response = lambda *_args: None
+            handler.send_header = lambda *_args: None
+
+            def end_headers():
+                if fail_headers:
+                    raise BrokenPipeError(32, "broken pipe")
+            handler.end_headers = end_headers
+
+            class AbandonedStream:
+                def write(self, data):
+                    raise BrokenPipeError(32, "broken pipe")
+            handler.wfile = AbandonedStream()
+            handler.send_json(200, {"graphics_planar": "00" * 32})
+            self.assertTrue(handler.close_connection)
+
     def test_index_and_meta_do_not_require_x11(self):
         code, body = self.request("GET", "/")
         self.assertEqual(code, 200)
@@ -97,7 +120,7 @@ class TermuxWebTests(unittest.TestCase):
             return original_send(command)
 
         self.session.send = congested_send
-        code, response = self.request("POST", "/api/type", {"text": "DIR\\n"})
+        code, response = self.request("POST", "/api/type", {"text": "DIR\n"})
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(response)["queued"], 4)
         self.assertEqual(len(self.backend.pending_keys), 4)
