@@ -46,7 +46,7 @@ pub(crate) const FIELDS:&[Field]=&[
     field("ansi","ANSI driver",Kind::Bool,"ANSI.SYS-style console driver: ESC [ colours and cursor moves.",false),
     field("utc_offset","UTC offset",Kind::Text,"Hours of the DOS clock from UTC: 2, -5, 5.5 or +02:00. Empty: this computer's.",false),
     field("host_pointer","Host pointer",Kind::Choice(&["auto","show","hide"]),"auto: hide the host arrow while the DOS mouse cursor shows. show/hide: always.",false),
-    field("own_programs","Own programs",Kind::Choice(&["A","B","C","D","E","none"]),"Drive that gets new copies of programs/dos at start (default D); none: never.",false),
+    field("own_programs","Own programs",Kind::Choice(&["A","B","C","D","E","none"]),"Drive whose \\PIL folder (on PATH) gets the programs of programs/dos at start (default D); none: never.",false),
     field("com1","COM1",Kind::Text,"console or tcp:PORT.",true),
     field("speaker_volume","Speaker volume",Kind::Text,"PC speaker volume 0..100 (0 mutes; default 5).",false),
     field("headless","Headless",Kind::Bool,"Run without a window, through the terminal.",true),

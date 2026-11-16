@@ -3,17 +3,25 @@
 //! The configuration's `own_programs` drive (default D:) is a host folder
 //! the user also fills with programs of their own, and git does not track
 //! it, so a pull never reached the copies of programs/dos placed there.
-//! At start, every file directly in programs/dos (next to the configuration)
-//! is copied to that folder when it is missing there, and replaces a file
-//! of the same name (any letter case) only when that file's SHA-256 is
-//! listed for the name in programs/dos/versions.sha256: an earlier version
-//! of ours. Any other file is left as it is, and nothing is ever deleted.
+//! At start, the programs directly in programs/dos (next to the
+//! configuration: COM, EXE, BAT and BAS files, not sources or notes) are
+//! copied to the subdirectory [`FOLDER`] of that folder, which the session
+//! puts on PATH. A program is added when it is missing there, and replaces
+//! a file of the same name (any letter case) only when that file's SHA-256
+//! is listed for the name in programs/dos/versions.sha256: an earlier
+//! version of ours. Any other file is left as it is. Copies of ours that
+//! earlier starts put in the drive's root (programs and sources, any
+//! listed version) are removed; nothing else is ever deleted.
 //! Nothing here knows which programs exist: the folder and its list decide.
 use std::collections::{HashMap,HashSet};
 use std::path::{Path,PathBuf};
 
 /// The list of known versions inside the source folder.
 pub(crate) const MANIFEST:&str="versions.sha256";
+/// The subdirectory of the drive that holds the programs, on PATH.
+pub(crate) const FOLDER:&str="PIL";
+/// Extensions of the files that are programs (the rest are sources and notes).
+const PROGRAMS:[&str;4]=["COM","EXE","BAT","BAS"];
 /// Larger files are not copied (the folder holds small DOS programs).
 const LARGEST:u64=16<<20;
 
@@ -28,6 +36,8 @@ pub(crate) struct Report{
     pub(crate) kept:Vec<String>,
     /// Could not be read or written, with the reason.
     pub(crate) failed:Vec<String>,
+    /// Our copies an earlier start left in the drive's root, removed.
+    pub(crate) removed:Vec<String>,
 }
 impl Report{
     /// One line for a status bar, or None when nothing changed or stood out.
@@ -38,8 +48,9 @@ impl Report{
         if !self.added.is_empty(){parts.push(format!("added {}",list(&self.added)));}
         if !self.kept.is_empty(){parts.push(format!("kept your own {}",list(&self.kept)));}
         if !self.failed.is_empty(){parts.push(format!("could not copy {}",list(&self.failed)));}
+        if !self.removed.is_empty(){parts.push(format!("removed the old copies in {}:\\ of {}",char::from(letter),list(&self.removed)));}
         if parts.is_empty(){return None;}
-        Some(format!("{}: from programs/dos: {}.",char::from(letter),parts.join("; ")))
+        Some(format!("{}:\\{FOLDER} from programs/dos: {}.",char::from(letter),parts.join("; ")))
     }
 }
 
@@ -107,12 +118,24 @@ fn replace(path:&Path,data:&[u8])->std::io::Result<()>{
     std::fs::rename(&temporary,path).inspect_err(|_|{let _=std::fs::remove_file(&temporary);})
 }
 
-/// Copy the files of `source` (programs/dos) into `target` as described
-/// above. A missing `source` or `target` is not an error: nothing happens.
-pub(crate) fn refresh(source:&Path,target:&Path)->Report{
+/// Whether `name` is a program to copy (by its extension).
+fn is_program(name:&str)->bool{
+    name.rsplit_once('.').is_some_and(|(_,ext)|PROGRAMS.iter().any(|p|p.eq_ignore_ascii_case(ext)))
+}
+/// Files directly in `folder` by upper-case name, as DOS sees them.
+fn names(folder:&Path)->HashMap<String,PathBuf>{
+    std::fs::read_dir(folder).map(|d|d.flatten()
+        .filter_map(|e|Some((e.file_name().into_string().ok()?.to_ascii_uppercase(),e.path()))).collect()).unwrap_or_default()
+}
+
+/// Copy the programs of `source` (programs/dos) into `root`'s [`FOLDER`]
+/// as described above. A missing `source` or `root` is not an error:
+/// nothing happens.
+pub(crate) fn refresh(source:&Path,root:&Path)->Report{
     let mut report=Report::default();
-    if !source.is_dir()||!target.is_dir(){return report;}
+    if !source.is_dir()||!root.is_dir(){return report;}
     let known=std::fs::read_to_string(source.join(MANIFEST)).map(|t|known_versions(&t)).unwrap_or_default();
+    let ours=|upper:&str,data:&[u8]|known.get(upper).is_some_and(|k|k.contains(&hex(&sha256(data))));
     let Ok(entries)=std::fs::read_dir(source) else{return report};
     let mut files:Vec<(String,PathBuf)>=entries.flatten()
         .filter(|e|e.file_type().is_ok_and(|t|t.is_file()))
@@ -120,10 +143,22 @@ pub(crate) fn refresh(source:&Path,target:&Path)->Report{
         .filter(|(n,_)|n!=MANIFEST&&!n.starts_with('.')&&!n.ends_with(".pil-new"))
         .collect();
     files.sort();
-    // Existing names on the drive, by upper case, as DOS sees them.
-    let present:HashMap<String,PathBuf>=std::fs::read_dir(target).map(|d|d.flatten()
-        .filter_map(|e|Some((e.file_name().into_string().ok()?.to_ascii_uppercase(),e.path()))).collect()).unwrap_or_default();
-    for (name,path) in files{
+    // Earlier starts copied every file to the root: remove those that are
+    // still one of our versions. The user's own files stay.
+    let in_root=names(root);
+    for (name,_) in &files{
+        let upper=name.to_ascii_uppercase();
+        let Some(old)=in_root.get(&upper) else{continue};
+        if !old.is_file()||!std::fs::read(old).is_ok_and(|d|ours(&upper,&d)){continue;}
+        match std::fs::remove_file(old){Ok(())=>report.removed.push(name.clone()),Err(e)=>report.failed.push(format!("{name} ({e})"))}
+    }
+    // The programs folder, in whatever letter case it already has.
+    let target=in_root.get(FOLDER).filter(|p|p.is_dir()).cloned().unwrap_or_else(||root.join(FOLDER));
+    if !target.is_dir(){
+        if let Some(e)=std::fs::create_dir(&target).err(){report.failed.push(format!("{FOLDER} ({e})"));return report;}
+    }
+    let present=names(&target);
+    for (name,path) in files.into_iter().filter(|(n,_)|is_program(n)){
         let fail=|r:&mut Report,e:&dyn std::fmt::Display|r.failed.push(format!("{name} ({e})"));
         if std::fs::metadata(&path).is_ok_and(|m|m.len()>LARGEST){continue;}
         let data=match std::fs::read(&path){Ok(d)=>d,Err(e)=>{fail(&mut report,&e);continue;}};
@@ -135,7 +170,7 @@ pub(crate) fn refresh(source:&Path,target:&Path)->Report{
         if !existing.is_file(){report.kept.push(name);continue;}
         let old=match std::fs::read(existing){Ok(d)=>d,Err(e)=>{fail(&mut report,&e);continue;}};
         if old==data{continue;}
-        if !known.get(&upper).is_some_and(|k|k.contains(&hex(&sha256(&old)))){report.kept.push(name);continue;}
+        if !ours(&upper,&old){report.kept.push(name);continue;}
         match replace(existing,&data){Ok(())=>report.updated.push(name),Err(e)=>fail(&mut report,&e)}
     }
     report

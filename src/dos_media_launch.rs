@@ -28,6 +28,7 @@ pub(crate) fn run(shell:&str,media:Option<&str>,log_path:&str)->Result<(),String
 /// The bounded FAT reader takes at most 64 MiB; large IMG/IMA files
 /// must use the separate host-side extraction path. Folders and other
 /// file types are never treated as disk images because of their size alone.
+#[cfg(any(windows,test))]
 fn needs_extraction(path:&std::path::Path,bytes:u64)->bool{
     bytes>64*1024*1024
         &&path.extension().and_then(|s|s.to_str()).is_some_and(|s|

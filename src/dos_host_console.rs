@@ -277,13 +277,28 @@ pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate
     pub(crate) speaker_volume:u8}
 
 /// Run the session until the program ends, it stops, or the user quits.
-/// Returns the closing line for the host terminal.
+/// Returns the closing text for the host terminal: when the program ended
+/// or stopped, the last lines it left on the screen (the window or the
+/// terminal's alternate screen is gone by then), then the closing line.
 pub(crate) fn run(session:&mut Session,options:&Options)->Result<String,String>{
     let (tx,rx)=mpsc::channel();
     let mut front=Front::open(options.window,tx)?;
     let result=run_on(session,options,&mut front,&rx);
     drop(front);
-    result
+    let line=result?;
+    if matches!(session.status().0,"running"|"waiting_input"){return Ok(line);}
+    let tail=select::screen_text(session).map(|(columns,_,text)|last_lines(&text,columns,CLOSING_LINES)).unwrap_or_default();
+    Ok(if tail.is_empty(){line}else{format!("{tail}\n{line}")})
+}
+/// Screen lines repeated on the host terminal when a program ends.
+const CLOSING_LINES:usize=4;
+/// The last `count` lines of a text grid with text on them, as host
+/// text (trailing blanks and blank lines at the end left out).
+pub(crate) fn last_lines(text:&[u8],columns:u32,count:usize)->String{
+    let all=select::copy_text(text,columns,None);
+    let lines:Vec<&str>=all.split("\r\n").collect();
+    let first=lines.len().saturating_sub(count);
+    lines[first..].iter().skip_while(|l|l.is_empty()).copied().collect::<Vec<_>>().join("\n")
 }
 /// Apply the same console settings to interactive and redirected sessions.
 pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String>{

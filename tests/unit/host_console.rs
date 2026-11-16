@@ -261,6 +261,18 @@ fn window_selection_follows_the_pointer_in_reading_order(){
 }
 
 #[test]
+fn closing_text_repeats_the_last_screen_lines(){
+    // Four columns, five rows: a blank row inside is kept, blank rows
+    // before the first kept line and after the last one are not.
+    let text=[&b"one two thr four"[..],&[b' ';12]].concat();
+    assert_eq!(last_lines(&text,4,2),"thr\nfour");
+    assert_eq!(last_lines(&text,4,9),"one\ntwo\nthr\nfour");
+    let text=b"    a       b   ";
+    assert_eq!(last_lines(text,4,3),"a\n\nb");
+    assert_eq!(last_lines(&[b' ';8],4,4),"");
+}
+
+#[test]
 fn copied_text_trims_lines_and_pasted_text_becomes_keys(){
     use select::*;
     // Four columns, three rows; CP437 bytes come out as host characters.
@@ -307,6 +319,18 @@ fn catalog_launch_inherits_normal_configured_drives_and_ram_drive(){
     }
     assert_eq!(p.drive.memory_letter(),Some(b'Z'));assert_eq!(p.country,358);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn catalog_parse_reports_the_line_and_accepts_crlf_bom_and_comments(){
+    let text="\u{feff}# group\ttitle\tdescription\tfolder\tlauncher\treserved\r\n\r\nTools\tEditor\tA text editor.\tD:\\APP\tD:\\MENUS\\R1.BAT\t\r\n";
+    let entries=catalog::parse(text).unwrap();
+    assert_eq!(entries,vec![vec!["Tools","Editor","A text editor.","D:\\APP","D:\\MENUS\\R1.BAT",""]]);
+    // A trimmed trailing tab leaves five fields; the reserved sixth becomes empty.
+    assert_eq!(catalog::parse("A\tB\tC\tD\tE\n").unwrap(),vec![vec!["A","B","C","D","E",""]]);
+    assert_eq!(catalog::parse("# only a comment\n").unwrap_err(),"no entries (only blank or # lines)");
+    let err=catalog::parse("# header\nTools\tEditor\tA text editor.\n").unwrap_err();
+    assert_eq!(err,"line 2: 3 tab-separated fields, a catalog entry needs 6");
 }
 
 #[cfg(windows)]

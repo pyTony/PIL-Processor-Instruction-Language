@@ -15,6 +15,60 @@ the mouse on prints "Mouse: detected", "CyberMan: Wrong mouse driver - no
 SWIFT", then plays its demos: 800 million guest steps, 536 distinct mode
 13h frames, no service stop. No input was sent and no sound card was
 tried. Not run on Windows.
+# PIL Retro shortcut: catalog lookup and named errors — 16 November 2026
+
+Tony's "PIL Retro" shortcut said "The runtime or catalog is missing": his
+catalog.tsv (his own file, nothing in the repo writes it) sat in
+images\retro\img, beside the extracted image, while PILmedia.vbs read only
+images\retro\catalog.tsv. PILmedia.vbs now takes PIL_RETRO_CATALOG, else
+images\retro\catalog.tsv, else catalog.tsv one folder below images\retro,
+and names what is missing: the runtime, images\FD14LITE.img or the catalog
+(with the places it looked). `pil --dos-catalog` reports the catalog path
+and the line of a bad entry, accepts CRLF, a BOM and a missing sixth
+(reserved) field, and checks the file before the one-browser lock. The
+catalog format is now in docs/DOS_INSTALL_MEDIA.md.
+
+Local Linux, release: the catalog tests pass (1 new). PILmedia.vbs was not
+run (no Windows here).
+# pil --dos-console says how the program ended; SPEAKER.BAS — 16 November 2026
+
+Tony ran GW-BASIC with `--args T.BAS` (T.BAS was only on the cloud test
+drive, not his D:) and got nothing: GW-BASIC printed "File not found" and
+returned to DOS, the window closed, and dos_text_io printed nothing for exit
+code 0. host_console::run now returns the program's last four screen lines
+with text plus "DOS program ended: exit code N" (or the stop reason) after an
+exit or stop, and `--dos-console` prints that in window and --tty
+mode (stdout, so `> file` keeps it). A user quit prints only its line. The setup screen and catalog
+(run_on) are unchanged: their start page already shows the result.
+- programs/dos/SPEAKER.BAS (CRLF, as CUBE2.BAS): BEEP, SOUND 440,9, PLAY
+  "MF T120 O3 L4 C D E F G", a SOUND sweep 200-2000 Hz, each named on the
+  screen, then SYSTEM. versions.sha256 lists it, so own_programs copies it
+  to D:.
+
+Local Linux, release: Rust tests pass (1 new). Tony's GW-BASIC (local only)
+in `pil --dos-console --tty` with a recording stand-in aplay: NOPE.BAS
+prints "File not found" and "DOS program ended: exit code 0" after the
+screen closes; SPEAKER.BAS gave 800 Hz, 440 Hz, 520/590/660/700/780 Hz and a
+rising sweep, then its four last lines and the exit line. Tony on Windows
+(his T.BAS, before this change): BEEP, SOUND and PLAY C D E played.
+- Tony's `--args "/k mandvga" driveD\TIMEIT.COM` also flashed and ended:
+  TIMEIT runs its command through COMSPEC, and a program started directly
+  has no shell ("TIMEIT: cannot run COMSPEC, DOS error 2", exit code 1, now
+  shown). Through FreeCOM it works: `--args "/C D:\TIMEIT /K D:\MANDVGA
+  >D:\TIMING.TXT" images/FD14LITE.img::COMMAND.COM` wrote the timing to
+  D:\TIMING.TXT here (local tty run, 5.4 s with terminal graphics).
+- Tony (PR comment): own programs belong in a subdirectory on PATH, without
+  sources. dos_own_programs.rs now copies only COM, EXE, BAT and BAS files
+  from programs/dos to `PIL` on the own_programs drive (D:\PIL, created when
+  missing, an existing folder in any case reused), with the same
+  replace-only-our-versions rule; copies of ours that earlier starts left
+  in the drive's root (programs and sources, any listed version) are
+  removed, the user's own files stay. dos_config::apply sets PATH=D:\PIL
+  (that drive's letter) in the first program's environment whenever that
+  drive is mounted (also with a legacy --mount; dos::set_environment_path
+  rewrites the block in place). Local: FreeCOM from FD14LITE.img with
+  `/C TIMEIT /K MANDVGA >D:\TIMING.TXT` from C: found both through PATH;
+  old root TIMEIT.COM and mandel.asm were removed, OWN.TXT kept.
 
 # PC speaker tones and BEL beeps in pil --pildos / --dos-console — 16 November 2026
 
