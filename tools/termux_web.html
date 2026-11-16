@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>PILdos on Android</title>
 <style>
@@ -21,8 +21,32 @@ button { cursor:pointer; user-select:none; touch-action:manipulation; }
 button:active { background:#48637c; }
 button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
 #status { color:var(--muted); overflow-wrap:anywhere; margin:6px 0 12px; min-height:2em; }
-.keys { display:grid; grid-template-columns:repeat(auto-fit,minmax(65px,1fr)); gap:7px; margin:10px 0; }
-.keys button { font-weight:bold; }
+.keyboard-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(155px,1fr); gap:12px; margin:12px 0; }
+.keygroup { border:1px solid #364557; border-radius:9px; padding:8px; min-width:0; }
+.keygroup h2 { font-size:13px; margin:0 0 8px; color:var(--muted); font-weight:600; }
+.keyrow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.keyrow button, .arrowpad button, .function-keys button { width:100%; min-width:0; font-weight:600; padding:8px 3px; }
+.arrowpad { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.arrowpad .up { grid-column:2; }
+.arrowpad .left { grid-column:1; grid-row:2; }
+.arrowpad .down { grid-column:2; grid-row:2; }
+.arrowpad .right { grid-column:3; grid-row:2; }
+.extra-keys { margin:8px 0 12px; }
+.extra-keys summary { cursor:pointer; padding:8px; }
+.function-keys { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px; }
+.viewer { position:relative; background:var(--bg); }
+.viewer-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:6px 0; }
+.viewer-toolbar button { min-height:40px; padding:7px 11px; }
+#zoom-level { min-width:48px; text-align:center; font-variant-numeric:tabular-nums; }
+.viewer .screen { overflow:auto; overscroll-behavior:contain; }
+.viewer:fullscreen, .viewer.expanded { display:flex; flex-direction:column; position:fixed; inset:0; width:100%; height:100%; height:100dvh; padding:max(6px,env(safe-area-inset-top)) max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left)); z-index:1000; background:var(--bg); }
+.viewer:fullscreen .screen, .viewer.expanded .screen { flex:1; min-height:0; display:flex; align-items:flex-start; justify-content:flex-start; }
+.viewer:fullscreen canvas, .viewer.expanded canvas { flex:none; }
+.viewer-keys { display:none; grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; padding:6px 0; }
+.viewer:fullscreen .viewer-keys, .viewer.expanded .viewer-keys { display:grid; }
+.viewer-keys button { min-height:42px; padding:6px 0; }
+@media (max-width:420px) { .keyboard-layout { gap:6px; } .keygroup { padding:5px; } .keyrow button, .arrowpad button { font-size:14px; } }
+@media (max-width:330px) { .keyboard-layout { grid-template-columns:1fr; } }
 .type { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .type input { flex:1 1 200px; min-width:0; }
 .type { padding:8px 0; }
@@ -32,7 +56,7 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
 #log { white-space:pre-wrap; max-height:110px; overflow:auto; color:#b3d7af; font:12px ui-monospace,monospace; }
 details { color:var(--muted); margin-top:14px; }
 footer { color:var(--muted); font-size:12px; margin-top:20px; }
-@media (max-width:420px) { body { padding:6px; } h1 { font-size:17px; } .keys { grid-template-columns:repeat(5,1fr); } .keys button { padding:8px 1px; font-size:13px; } }
+@media (max-width:420px) { body { padding:6px; } h1 { font-size:17px; } }
 </style>
 </head>
 <body>
@@ -41,8 +65,25 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <button id="toggle" aria-pressed="true">Pause</button>
 </header>
 <main>
-<section class="screen" aria-label="DOS graphics and text screen">
+<section id="viewer" class="viewer" aria-label="DOS display and zoom controls">
+<div class="viewer-toolbar">
+<button type="button" id="fullscreen" aria-pressed="false">⛶ Full screen</button>
+<button type="button" id="zoomout" aria-label="Zoom out">−</button>
+<output id="zoom-level" aria-live="polite">Fit</output>
+<button type="button" id="zoomin" aria-label="Zoom in">+</button>
+<button type="button" id="zoomfit">Fit</button>
+</div>
+<div class="screen" id="screen" aria-label="DOS graphics and text screen">
 <canvas id="display" width="720" height="400" tabindex="0" aria-label="DOS screen. Tap for mouse or press a key."></canvas>
+</div>
+<div class="viewer-keys" aria-label="Fullscreen DOS keyboard">
+<button data-ascii="27" data-scan="1">Esc</button>
+<button data-ascii="0" data-scan="75">←</button>
+<button data-ascii="0" data-scan="72">↑</button>
+<button data-ascii="0" data-scan="80">↓</button>
+<button data-ascii="0" data-scan="77">→</button>
+<button data-ascii="13" data-scan="28">Enter</button>
+</div>
 </section>
 <div id="status" role="status">Connecting to PILdos...</div>
 <div id="interrupt-status" role="status" aria-live="polite"></div>
@@ -53,15 +94,30 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <button id="view" aria-pressed="false">Text view</button>
 <button id="refresh">Refresh</button>
 </div>
-<section class="keys" aria-label="On-screen DOS keyboard">
+<section class="keyboard-layout" aria-label="On-screen DOS keyboard">
+<div class="keygroup">
+<h2>Commands and editing</h2>
+<div class="keyrow">
 <button data-ascii="27" data-scan="1">Esc</button>
-<button data-ascii="0" data-scan="72">↑</button>
-<button data-ascii="13" data-scan="28">Enter</button>
-<button data-ascii="0" data-scan="75">←</button>
-<button data-ascii="0" data-scan="77">→</button>
-<button data-ascii="0" data-scan="80">↓</button>
-<button data-ascii="8" data-scan="14">Bksp</button>
+<button data-ascii="13" data-scan="28">Enter ↵</button>
+<button data-ascii="8" data-scan="14">⌫</button>
 <button data-ascii="9" data-scan="15">Tab</button>
+<button data-ascii="0" data-scan="71">Home</button>
+<button data-ascii="0" data-scan="79">End</button>
+</div>
+</div>
+<div class="keygroup">
+<h2>Navigation</h2>
+<div class="arrowpad">
+<button class="up" data-ascii="0" data-scan="72">↑</button>
+<button class="left" data-ascii="0" data-scan="75">←</button>
+<button class="down" data-ascii="0" data-scan="80">↓</button>
+<button class="right" data-ascii="0" data-scan="77">→</button>
+</div>
+</div>
+</section>
+<details class="extra-keys"><summary>Function keys and page navigation</summary>
+<div class="function-keys">
 <button data-ascii="0" data-scan="59">F1</button>
 <button data-ascii="0" data-scan="60">F2</button>
 <button data-ascii="0" data-scan="61">F3</button>
@@ -74,13 +130,78 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <button data-ascii="0" data-scan="68">F10</button>
 <button data-ascii="0" data-scan="73">PgUp</button>
 <button data-ascii="0" data-scan="81">PgDn</button>
-</section>
+<button data-ascii="0" data-scan="82">Ins</button>
+<button data-ascii="0" data-scan="83">Del</button>
+</div></details>
 <details><summary>Console output</summary><pre id="log"></pre></details>
 <footer>Uses the existing general-purpose PIL DOS session. Text, CGA, EGA and VGA are drawn from guest video memory. Tap the screen for an opt-in DOS mouse.</footer>
 </main>
 <script>
 "use strict";
 const canvas=document.getElementById("display"), ctx=canvas.getContext("2d",{alpha:false});
+const viewer=document.getElementById("viewer"), screen=document.getElementById("screen");
+const zoomLabel=document.getElementById("zoom-level");
+const zoomSteps=[1,1.25,1.5,2,3,4];
+let zoomIndex=0;
+function isExpanded(){return document.fullscreenElement===viewer||viewer.classList.contains("expanded");}
+function updateZoom(){
+  // A fitted image must use *both* viewport dimensions. Portrait prioritizes
+  // width, landscape often prioritizes height; larger zoom factors scroll.
+  const ratio=4/3;
+  const availableWidth=Math.max(1,screen.clientWidth);
+  const availableHeight=isExpanded()?Math.max(1,screen.clientHeight):Number.POSITIVE_INFINITY;
+  const fitted=Math.min(availableWidth,availableHeight*ratio);
+  canvas.style.width=Math.max(1,Math.round(fitted*zoomSteps[zoomIndex]))+"px";
+  zoomLabel.textContent=zoomIndex===0?"Fit":Math.round(zoomSteps[zoomIndex]*100)+"%";
+}
+// Chrome Android may change the visual viewport (address bar or IME) without
+// dispatching a window resize. Coalesce those events after CSS layout.
+let pendingFit=false;
+function scheduleFit(){
+  if(pendingFit)return;
+  pendingFit=true;
+  requestAnimationFrame(()=>{pendingFit=false;updateZoom();});
+}
+function updateFullscreen(){
+  const expanded=isExpanded();
+  const button=document.getElementById("fullscreen");
+  button.textContent=expanded?"✕ Exit full screen":"⛶ Full screen";
+  button.setAttribute("aria-pressed",String(expanded));
+  updateZoom();
+}
+async function toggleFullscreen(){
+  if(isExpanded()){
+    if(document.fullscreenElement===viewer&&document.exitFullscreen){
+      try{await document.exitFullscreen();}catch(_){}
+    }
+    viewer.classList.remove("expanded");
+  }else{
+    if(viewer.requestFullscreen){
+      try{await viewer.requestFullscreen();}catch(_){viewer.classList.add("expanded");}
+    }else{viewer.classList.add("expanded");}
+  }
+  updateFullscreen();
+}
+document.getElementById("fullscreen").addEventListener("click",toggleFullscreen);
+document.getElementById("zoomin").addEventListener("click",()=>{zoomIndex=Math.min(zoomIndex+1,zoomSteps.length-1);updateZoom();});
+document.getElementById("zoomout").addEventListener("click",()=>{zoomIndex=Math.max(zoomIndex-1,0);updateZoom();});
+document.getElementById("zoomfit").addEventListener("click",()=>{zoomIndex=0;screen.scrollTo(0,0);updateZoom();});
+document.addEventListener("fullscreenchange",updateFullscreen);
+window.addEventListener("resize",scheduleFit);
+window.addEventListener("orientationchange",()=>{
+  scheduleFit();
+  // Android browser controls can settle one frame after orientationchange.
+  setTimeout(scheduleFit,180);
+});
+if(window.visualViewport)window.visualViewport.addEventListener("resize",scheduleFit);
+if(window.screen.orientation?.addEventListener){
+  window.screen.orientation.addEventListener("change",scheduleFit);
+}
+if(window.ResizeObserver){
+  const observer=new ResizeObserver(scheduleFit);
+  observer.observe(screen);
+}
+scheduleFit();
 const status=document.getElementById("status"), log=document.getElementById("log");
 const interruptStatus=document.getElementById("interrupt-status");
 let forceTextView=false;
@@ -97,6 +218,7 @@ function resize(w,h){
   if(canvas.width!==w||canvas.height!==h){ canvas.width=w;canvas.height=h; }
   canvas.style.aspectRatio="4 / 3";
   ctx.imageSmoothingEnabled=false;
+  updateZoom();
 }
 function textFrame(reply){
   const data=bytes(reply.screen||"");

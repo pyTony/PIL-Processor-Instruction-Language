@@ -97,6 +97,29 @@ class TermuxWebTests(unittest.TestCase):
         self.assertIn('if(e.key==="Backspace"&&!field.value)', html)
         self.assertLess(html.index('id="typeform"'), html.index('class="controls"'))
 
+    def test_android_keyboard_groups_and_screen_controls(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn('class="arrowpad"', html)
+        self.assertIn('class="function-keys"', html)
+        self.assertIn('id="fullscreen"', html)
+        self.assertIn('id="zoomin"', html)
+        self.assertIn('id="zoomout"', html)
+        self.assertIn('id="zoomfit"', html)
+        self.assertIn('class="viewer-keys"', html)
+        self.assertIn('id="typeform"', html)
+        self.assertIn('data-ascii="13" data-scan="28"', html)
+
+    def test_orientation_and_keyboard_viewport_changes_recalculate_fit(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn('window.addEventListener("orientationchange"', html)
+        self.assertIn('window.visualViewport.addEventListener("resize",scheduleFit)', html)
+        self.assertIn('window.addEventListener("resize",scheduleFit)', html)
+        self.assertIn('new ResizeObserver(scheduleFit)', html)
+        self.assertIn('height:100dvh', html)
+        self.assertIn('env(safe-area-inset-top)', html)
+        self.assertIn('Math.min(availableWidth,availableHeight*ratio)', html)
+        self.assertIn('requestAnimationFrame', html)
+
     def test_ctrl_break_feedback_and_text_view_controls_exist(self):
         html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
         self.assertIn('id="interrupt-status"', html)
