@@ -53,15 +53,16 @@ FM music is not implemented and should be disabled separately:
 
 ```powershell
 cargo build --release --locked
-python tools/dos_terminal.py --engine target/release/pil.exe --mount games/doom --args '-nomusic' games/doom/DOOM.EXE
+.\\target\\release\\pil.exe --dos-console --window --speaker-volume 15 --mount games/doom --args '-nomusic' games/doom/DOOM.EXE
 ```
 
 The DOS guest can also use `BLASTER` automatically. This is a compatibility
 target, **not** a claim that Doom-with-sound has been validated in a real
-game run. The sample command uses the separate Python terminal/session
-frontend; that frontend currently does not forward PCM to the host. To hear
-the implemented output use the Rust-hosted `--dos-console` or `--pildos`
-path, with the same DOS program and mount.
+game run. The example deliberately uses Rust's `--dos-console` for sound.
+The separate Python `tools/dos_terminal.py` frontend currently runs a
+session protocol that does not forward PCM to the host; it can exercise guest
+DMA/IRQ logic but will not play it. The Rust-hosted `--pildos` path also
+receives PCM.
 
 ## Current limits and next tests
 
