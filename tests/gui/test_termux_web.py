@@ -66,6 +66,35 @@ class TermuxWebTests(unittest.TestCase):
         self.assertEqual(len(meta["colors"]), 16)
         self.assertNotIn("snapshot", self.session.commands)
 
+    def test_android_soft_keyboard_has_visible_focus_and_dos_enter(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn('id="keyboard"', html)
+        self.assertIn('enterkeyhint="send"', html)
+        self.assertIn('typeText(true)', html)
+        self.assertIn('if(e.key==="Backspace"&&!field.value)', html)
+        self.assertLess(html.index('id="typeform"'), html.index('class="controls"'))
+
+    def test_input_waits_for_bios_buffer_space_instead_of_losing_enter(self):
+        original_send = self.session.send
+        blocked = [True]
+
+        def congested_send(command):
+            if command.startswith("key ") and blocked[0]:
+                self.session.commands.append(command)
+                return {"ok": False, "text": "BIOS keyboard buffer full"}
+            return original_send(command)
+
+        self.session.send = congested_send
+        code, response = self.request("POST", "/api/type", {"text": "DIR\\n"})
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(response)["queued"], 4)
+        self.assertEqual(len(self.backend.pending_keys), 4)
+        blocked[0] = False
+        code, _ = self.request("POST", "/api/run", {"budget": 1000})
+        self.assertEqual(code, 200)
+        self.assertEqual(list(self.backend.pending_keys), [])
+        self.assertIn("key 13 28", self.session.commands)
+
     def test_run_and_snapshot_reuse_existing_engine_protocol(self):
         code, body = self.request("POST", "/api/run", {"budget": 20000})
         state = json.loads(body)
