@@ -96,6 +96,23 @@ impl Session{
     pub(crate) fn exit_code(&self)->Option<u8>{match self.stop{Stop::Exit(code)=>Some(code),_=>None}}
     pub(crate) fn machine_mut(&mut self)->Option<&mut Loaded>{self.loaded.as_mut()}
     pub(crate) fn steps(&self)->usize{self.steps}
+    /// Read a consistent snapshot between instruction slices. The first call
+    /// turns on a small dispatch ring, so a second capture can show the loop
+    /// the guest is executing. Existing PIL_DOS_HISTORY settings are retained.
+    pub(crate) fn live_snapshot(&mut self,host_pending:usize)->Result<(String,bool),String>{
+        let steps=self.steps;
+        let status=self.status().0;
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        let started=!p.history.enabled();
+        if started{p.history=history::History::new(32);}
+        Ok((super::live_diagnostics::capture(p,steps,host_pending,status),started))
+    }
+    /// Restore the normal execution pipeline when tracing is no longer needed.
+    pub(crate) fn disable_live_trace(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.history=history::History::default();
+        Ok(())
+    }
     /// Record a stop in the stop log, as `--dos-session` does.
     pub(crate) fn log_stop(&self,logger:&mut stoplog::Logger){
         if self.status().0=="stopped"{if let Some(p)=self.loaded.as_ref(){logger.record(p,"stopped",&self.status().1,self.steps,&self.exceptions,self.exception_count);}}
