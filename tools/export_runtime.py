@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 # Explicit run/build inputs only. Tests and development documents cannot leak
 # through a broad repository copy. These patterns are intentionally narrow.
 PATTERNS=('src/*.rs','src/block_compiler/*.rs','src/precompiled/*.rs','src/dos_font8x8.txt','src/dos_font8x16.txt','isa/i386/*.pil','programs/selftest.hex','programs/selftest.lst','programs/hello.hex','programs/hello.lst','programs/factorials.hex','programs/factorials.lst','programs/loop.hex','programs/loop.lst',
-          'Cargo.toml','Cargo.lock','.gitattributes','pildos.conf.example','PILdos.vbs','PILdos.sh','PILdos.ico','PILdos.png','PILmedia.vbs','PILmedia.cmd','PILimages.cmd','PILbuild.cmd','InstallRetroShortcut.vbs','programs/dos/*','tools/dos_terminal.py','tools/makeshortcut.py','tools/pil_debugger.py','tools/build.sh','tools/build.ps1',
+          'Cargo.toml','Cargo.lock','.gitattributes','pildos.conf.example','PILdos.vbs','PILdos.sh','PILdos.ico','PILdos.png','PILmedia.vbs','PILmedia.cmd','PILimages.cmd','PILbuild.cmd','InstallRetroShortcut.vbs','programs/dos/*','tools/dos_terminal.py','tools/termux_web.py','tools/termux_web.html','tools/build_termux.sh','tools/makeshortcut.py','tools/pil_debugger.py','tools/build.sh','tools/build.ps1',
           'tools/debug.sh','tools/debug.ps1','tools/bench.sh','tools/bench.ps1','tools/compare.sh','tools/compare.ps1','tools/mandelbrot.sh','tools/mandelbrot.ps1')
 DOCUMENTS={'README.md':'README.md','DEBUGGER.md':'docs/DEBUGGER.md',
            'REFERENCES_AND_CREDITS.md':'docs/REFERENCES_AND_CREDITS.md',
@@ -37,6 +37,7 @@ def export(destination,source_ref):
     files['docs/DOS_CONFIG.md']=(ROOT/'docs/DOS_CONFIG.md').read_bytes()
     files['docs/DOS_CONSOLE.md']=(ROOT/'docs/DOS_CONSOLE.md').read_bytes()
     files['docs/DOS_INSTALL_MEDIA.md']=(ROOT/'docs/DOS_INSTALL_MEDIA.md').read_bytes()
+    files['docs/TERMUX_WEB.md']=(ROOT/'docs/TERMUX_WEB.md').read_bytes()
     files['docs/DOS_GAMES.md']=(ROOT/'docs/development/DOS_GAMES.md').read_bytes()
     files['.gitignore']=b'/target/\n/images/\n'
     version=re.search(r'^version = "([^"]+)"',(ROOT/'Cargo.toml').read_text(),re.M)[1]
