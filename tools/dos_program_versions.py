@@ -2,7 +2,7 @@
 
 The launchers copy the project's own DOS programs (the COM, EXE, BAT and BAS
 files directly in programs/dos) into the PIL folder of the drive chosen by
-`own_programs` in pildos.conf (default D:\PIL, on PATH), so a pull reaches
+`own_programs` in pildos.conf (default D:\\PIL, on PATH), so a pull reaches
 what DOS runs there. They replace a file already in that folder only when
 its SHA-256 is listed here for that name: an earlier version of ours.
 Anything else with the same name is kept. Copies of ours that earlier
