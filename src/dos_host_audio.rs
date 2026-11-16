@@ -1,5 +1,5 @@
-//! A stream of 16-bit mono PCM to the host's sound output, for the PC
-//! speaker (dos_host_speaker.rs).
+//! Streams 16-bit mono PCM to the host's sound output. Shared by the PC
+//! speaker (dos_host_speaker.rs) and Sound Blaster (dos_host_sb.rs).
 //!
 //! Windows: winmm waveOut, buffers queued as they are made. Other hosts:
 //! `aplay` (ALSA), else `pacat` (PulseAudio, as Termux has it), reading raw
