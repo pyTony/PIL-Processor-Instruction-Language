@@ -337,3 +337,14 @@ fn speaker_click_is_a_short_quiet_wav(){
     assert_eq!((samples[0],samples[219]),(0,0));
     assert!(speaker::click(100).iter().zip(&wav).any(|(a,b)|a!=b));
 }
+
+#[test]
+fn clipboard_mount_path_accepts_windows_explorer_quotes_and_rejects_bad_input(){
+    assert_eq!(clipboard_mount_path(r#"  "C:\\DOS Images\\Prince 1.3.img"  "#).unwrap(),
+        r"C:\DOS Images\Prince 1.3.img");
+    assert_eq!(clipboard_mount_path(r"X:\\retro\\source").unwrap(),r"X:\\retro\\source");
+    assert_eq!(clipboard_mount_path(" images/prince.img ").unwrap(),"images/prince.img");
+    for bad in ["", "   ", "\"" , "C:\\games\\bad\npath", "one\r\ntwo", "\0"] {
+        assert!(clipboard_mount_path(bad).is_err(),"bad clipboard contents: {bad:?}");
+    }
+}
