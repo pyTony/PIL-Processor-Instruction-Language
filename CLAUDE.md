@@ -1,3 +1,40 @@
+# PC speaker tones and BEL beeps in pil --pildos / --dos-console — 16 November 2026
+
+Tony asked about Sound Blaster; real speaker tones came first, and GW-BASIC's
+BEEP, SOUND and PLAY had to work.
+- GW-BASIC stopped on its first sound: it writes a new PIT channel 0 count
+  without a control word (music timer). dos_pit.rs Counter0 now takes a
+  live count and loads it when the current period ends (the 8254 does so
+  at the half-cycle in mode 3; here the whole period, so edge totals stay
+  whole). Before, only rewriting the same count was accepted.
+- The speaker signal, port 61h bit 1 AND channel 2 OUT (gate bit 0; mode 3
+  square, mode 2 one-clock pulse, mode 0 low until terminal count, high
+  with the gate low), is recorded with its PIT clock on each OUT to 42h,
+  43h (channel 2) and 61h (dos_ports.rs Speaker::take_sound, at most 4096
+  waiting). BEL in DOS output, INT 29h and BIOS teletype records a BIOS
+  beep (896 Hz, 31/64 s, IBM AT BIOS values; queued, 2 s at most).
+- src/dos_speaker_wave.rs synthesises 22,050 Hz PCM: box-filter average
+  per sample, 20 Hz high-pass (a lone switch-on is a click), a sound under
+  1 ms after 10 ms of silence held to 1 ms so microsecond ticks are heard.
+  src/dos_host_speaker.rs runs it on an audio thread 50 ms behind the
+  guest; src/dos_host_audio.rs streams to winmm waveOut (Windows) or
+  `aplay`, else `pacat` (Linux/Termux). Opens at the first sound, closes
+  after 1 s of silence; at exit up to 1 s more plays out. speaker_volume 0
+  starts nothing. Replaces the fixed click of #207; the Tk terminal and the
+  session protocol (beeps, tone) are unchanged.
+- Sound Blaster/AdLib next would need: DSP reset/version at 22xh, 8-bit
+  single-cycle DMA on channel 1 (8237 page/address/count ports, now
+  ignored writes) with IRQ 5/7 through the PIC, a mixer, and an OPL2 FM
+  model at 388h; streaming through the same audio thread.
+
+Local Linux, release: 900 Rust tests pass, 2 ignored (7 new, the 2
+click tests removed). GW-BASIC
+(Tony's copy, local only) in `pil --dos-console --tty` with a stand-in
+aplay that saved the samples: BEEP 800 Hz 0.25 s, SOUND 440,9 0.5 s, PLAY
+"T120 O3 C D E" 523/587/659 Hz, 0.5 s each; PRINT CHR$(7) is GW-BASIC's own
+800 Hz beep. x86_64-pc-windows-gnu cargo check (release, dine-library,
+tests) clean; nothing was heard here (no audio device), not run on Windows.
+
 # Tony's local media and FPU work merged up — 15 November 2026
 
 Tony's uncommitted checkout (branch local/media-fpu-2026-11-15) brought to

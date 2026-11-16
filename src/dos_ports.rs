@@ -15,6 +15,8 @@ mod string_io;
 pub(super) use string_io::{access as string_access,io as string_io,Error as StringError};
 #[path="dos_pic.rs"]
 pub(super) mod pic;
+#[path="dos_speaker_wave.rs"]
+pub(crate) mod wave;
 /// PIT input clock in Hz.
 pub(crate) static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 /// Conventional PC assignments, not an exhaustive list of expansion hardware.
@@ -32,6 +34,8 @@ fn device(port:u16)->Option<&'static str>{Some(match port{
     _=>return None,
 })}
 pub(super) const PIT_HZ:u32=1_193_182;
+/// Speaker changes kept for a frontend that has not taken them.
+const MAX_CHANGES:usize=4096;
 #[derive(Clone,Debug,Default)]
 pub struct Speaker{
     /// Port 61h bits 0..3 as last written; bit 4 toggles on each read as
@@ -47,6 +51,12 @@ pub struct Speaker{
     pub(super) irq_edges:Option<u32>,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
+    /// The speaker signal now, and its changes (PIT clock, signal) not yet
+    /// taken by a frontend.
+    signal:Option<wave::Wave>,
+    changes:Vec<(u64,wave::Wave)>,
+    /// BIOS beeps (BEL on the console) not yet taken, at their PIT clocks.
+    bells:Vec<u64>,
     pit:pit::Counter0,
     pit_clock:Option<(std::time::Instant,u64)>,
     /// The PIT clock at the last guest access to ports 40h-43h or 61h.
@@ -86,6 +96,32 @@ impl Speaker{
         now
     }
     pub fn pit_interrupts(&mut self,clock:Option<i64>)->u64{let now=self.pit_now(clock);self.pit.interrupts(now)}
+    /// Record the speaker signal after a write to port 61h, 42h or 43h:
+    /// port 61h bit 1 AND channel 2's OUT, whose gate is bit 0.
+    fn sound(&mut self,now:u64){
+        let signal=if self.control&2==0{wave::Wave::Level(false)}else{self.counter2.wave(now)};
+        if self.signal==Some(signal){return;}
+        self.signal=Some(signal);
+        // A program that never lets a frontend look keeps only recent changes.
+        if self.changes.len()>=MAX_CHANGES{self.changes.drain(..MAX_CHANGES/2);}
+        self.changes.push((now,signal));
+    }
+    /// A BIOS beep (BEL written to the console).
+    pub(super) fn bell(&mut self,clock:Option<i64>){
+        let now=self.pit_now(clock);
+        if self.bells.len()<16{self.bells.push(now);}
+    }
+    /// The speaker changes and BIOS beeps since the last call, for a frontend.
+    pub(crate) fn take_sound(&mut self)->(Vec<(u64,wave::Wave)>,Vec<u64>){
+        (std::mem::take(&mut self.changes),std::mem::take(&mut self.bells))
+    }
+    /// The host time of a PIT clock this speaker recorded, once a host
+    /// clock was sampled.
+    pub(crate) fn host_time(&self,clock:u64)->Option<std::time::Instant>{
+        let (start,initial)=self.pit_clock?;
+        let ahead=clock.checked_sub(initial)?;
+        Some(start+std::time::Duration::from_nanos((u128::from(ahead)*1_000_000_000/u128::from(PIT_HZ)) as u64))
+    }
     /// The tone the speaker plays now in Hz, or 0 when it is off.
     pub fn tone(&self)->u32{
         if self.control&3!=3{return 0;}
@@ -250,9 +286,10 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             0x61=>{
                 let was=s.tone()!=0;let now=s.pit_io(p.clock_offset);s.counter2.gate(value&1!=0,now);s.control=value&0x0f;
                 if !was&&s.tone()!=0{s.beeps+=1;}
+                s.sound(now);
             },
             // Channel 2 mode: access in bits 5..4; the counting mode is not timed.
-            0x43 if value>>6==2=>{let now=s.pit_io(p.clock_offset);s.counter2.command(value,now)?;if value&0x30!=0{s.access=value>>4&3;s.high_next=s.access==2;}},
+            0x43 if value>>6==2=>{let now=s.pit_io(p.clock_offset);s.counter2.command(value,now)?;if value&0x30!=0{s.access=value>>4&3;s.high_next=s.access==2;}s.sound(now);},
             0x43 if value>>6==0=>{let now=s.pit_io(p.clock_offset);s.pit.command(value,now)?;},
             0x43=>return Err(format!("PIT command {value:02x}h is not modelled")),
             0x40=>{let now=s.pit_io(p.clock_offset);s.pit.write(value,now)?;},
@@ -261,6 +298,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 let now=s.pit_io(p.clock_offset);s.counter2.write(value,now);
                 if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
                 if s.access==3{s.high_next=!s.high_next;}
+                s.sound(now);
             },
             0x80 | 0x190 => {
                 eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);

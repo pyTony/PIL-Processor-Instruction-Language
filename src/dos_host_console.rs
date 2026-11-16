@@ -273,7 +273,7 @@ pub(crate) fn graphics_mode(p:&Loaded)->bool{
 pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) country:Option<u16>,pub(crate) utc_offset:Option<i64>,
     /// The host pointer over the window (Windows); the terminal ignores it.
     pub(crate) host_pointer:HostPointer,
-    /// PC speaker click volume 0..100, 0 silent (`speaker_volume`).
+    /// PC speaker volume 0..100, 0 silent (`speaker_volume`).
     pub(crate) speaker_volume:u8}
 
 /// Run the session until the program ends, it stops, or the user quits.
@@ -300,14 +300,15 @@ pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&
     configure(session,options)?;
     front.reset();
     front.host_pointer=options.host_pointer;
-    let initial=session.machine().map_or(0,|p|p.speaker.beeps);
-    let mut clicks=speaker::Clicks::new(options.speaker_volume,initial,speaker::HostPlayer::default());
-    let result=drive(session,front,rx,&mut clicks);
+    // Changes from before this run (a setup screen, an earlier program) are not sounded.
+    if let Some(p)=session.machine_mut(){p.speaker.take_sound();}
+    let mut sound=speaker::Sound::host(options.speaker_volume);
+    let result=drive(session,front,rx,&mut sound);
     front.reset();
     result
 }
 
-fn drive<P:speaker::Player>(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,clicks:&mut speaker::Clicks<P>)->Result<String,String>{
+fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound)->Result<String,String>{
     const SLICE:usize=20_000;
     let mut pending=std::collections::VecDeque::<u16>::new();
     let mut last_present=Instant::now()-Duration::from_secs(1);
@@ -363,8 +364,8 @@ fn drive<P:speaker::Player>(session:&mut Session,front:&mut Front,rx:&mpsc::Rece
         let until=Instant::now()+Duration::from_millis(15);
         loop{
             session.run(SLICE)?;
-            // Port 61h ticks sound as they happen, not once per frame.
-            if let Some(p)=session.machine(){clicks.observe(p.speaker.beeps,Instant::now());}
+            // Speaker changes go to the audio thread after every slice.
+            if let Some(p)=session.machine_mut(){sound.take(&mut p.speaker);}
             if session.status().0!="running"||Instant::now()>=until{break;}
         }
         if let Some(p)=session.machine_mut(){if let Some(com1)=p.com1.as_mut(){com1.tx.clear();}}
@@ -707,10 +708,14 @@ fn local_utc_offset()->i64{
 
 #[path="dos_host_terminal.rs"]
 mod tty;
+// Only the Unix terminal draws graphics in text cells.
+#[cfg(any(not(windows),test))]
 #[path="dos_terminal_graphics.rs"]
 mod terminal_graphics;
 #[path="dos_host_speaker.rs"]
 pub(crate) mod speaker;
+#[path="dos_host_audio.rs"]
+pub(crate) mod audio;
 #[path="dos_console_select.rs"]
 pub(crate) mod select;
 #[cfg(windows)]
