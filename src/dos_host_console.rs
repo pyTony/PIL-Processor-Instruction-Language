@@ -413,6 +413,22 @@ pub(crate) struct Front{
     /// `reset` go back to Show (the screen has no DOS cursor).
     host_pointer:HostPointer,
 }
+/// A Windows Explorer "Copy as path" value may be quoted to preserve spaces.
+/// Keep the exact underlying path; no guest-file parsing or command execution.
+#[cfg(any(windows,test))]
+fn clipboard_mount_path(text:&str)->Result<&str,String>{
+    let text=text.trim();
+    let path=if text.starts_with('"')||text.ends_with('"'){
+        text.strip_prefix('"').and_then(|s|s.strip_suffix('"'))
+            .ok_or("clipboard path has unmatched quotation marks")?
+    }else{text};
+    let path=path.trim();
+    if path.is_empty()||path.chars().any(char::is_control){
+        return Err("clipboard must contain one existing host folder or .img/.ima path".into());
+    }
+    Ok(path)
+}
+
 impl Front{
     pub(crate) fn title(&self,title:&str){
         #[cfg(windows)]
@@ -427,6 +443,7 @@ impl Front{
                 let base=100+index as u16*10;
                 let mut items=vec![(base+1,"Mount image...".into()),(base+2,"Mount folder...".into())];
                 if index<2{items.extend([(base+3,"Open disk set...".into()),(base+4,"Next disk".into()),(base+5,"Previous disk".into()),(base+6,"Current disk".into())]);}
+                items.push((base+8,"Mount clipboard path".into()));
                 items.push((base+7,"Unmount".into()));groups.push((format!("Drive {drive}:"),items));
             }
             w.window.popup(groups);return true;
@@ -446,14 +463,24 @@ impl Front{
                             if action==3{session.disk_set(drive,&path)}else if action==1&&matches!(drive,b'A'|b'B'){
                                 session.floppy_media(drive,&path)
                             }else{
-                                path.to_str().ok_or_else(||"mount path is not Unicode".to_string()).and_then(|path|session.mount_media(drive,path))
+                                media_launch::mount_path(session,drive,&path)
                             }
                         },
                         Ok(None)=>return None,Err(e)=>Err(e),
                     }
                 },
                 4=>session.disk(drive,Some("next")),5=>session.disk(drive,Some("prev")),6=>session.disk(drive,None),
-                7=>session.unmount_media(drive),_=>return None,
+                7=>session.unmount_media(drive),
+                8=>crate::dine_window::clipboard().ok_or_else(||"clipboard has no text path; use Explorer's Copy as path".to_string())
+                    .and_then(|text|{
+                        let path=clipboard_mount_path(&text)?;
+                        let is_image=std::path::Path::new(path).extension().and_then(|s|s.to_str())
+                            .is_some_and(|s|s.eq_ignore_ascii_case("img")||s.eq_ignore_ascii_case("ima"));
+                        if matches!(drive,b'A'|b'B')&&is_image{
+                            session.floppy_media(drive,std::path::Path::new(path))
+                        }else{media_launch::mount_path(session,drive,std::path::Path::new(path))}
+                    }),
+                _=>return None,
             };
             Some(result.unwrap_or_else(|e|e))
         }
