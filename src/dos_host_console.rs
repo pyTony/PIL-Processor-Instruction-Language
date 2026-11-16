@@ -402,6 +402,8 @@ pub(crate) struct Front{
     /// The cursor `present_text` last drew, to skip unchanged frames.
     previous_cursor:Option<(u32,u32)>,
     graphics_note:bool,
+    /// Last ANSI graphics picture, to avoid repainting unchanged frames.
+    graphics_cache:Option<String>,
     /// Host text selection in the window, and the (columns, rows) grid it
     /// was made on.
     selecting:select::Selecting,
@@ -465,7 +467,7 @@ impl Front{
         let (window,window_tx)=if window{(Some(WindowFront::new(tx)),None)}else{(None,Some(tx))};
         #[cfg(not(windows))]
         let _=tx;
-        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false,selecting:select::Selecting::default(),grid:(0,0),host_pointer:HostPointer::Show})
+        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false,graphics_cache:None,selecting:select::Selecting::default(),grid:(0,0),host_pointer:HostPointer::Show})
     }
     pub(crate) fn poll(&mut self,events:&mut Vec<Event>)->Result<(),String>{
         events.splice(0..0,self.held.drain(..));
@@ -475,7 +477,7 @@ impl Front{
     fn unpoll(&mut self,event:Event){self.held.push(event);}
     /// Forget what is on the host screen, so the next frame draws it all.
     pub(crate) fn reset(&mut self){
-        self.previous=None;self.previous_cursor=None;self.graphics_note=false;self.held.clear();self.selecting.clear();
+        self.previous=None;self.previous_cursor=None;self.graphics_note=false;self.graphics_cache=None;self.held.clear();self.selecting.clear();
         self.host_pointer=HostPointer::Show;
         #[cfg(windows)]
         if let Some(w)=self.window.as_mut(){w.last=None;w.window.hide_pointer(false);}
@@ -550,17 +552,32 @@ impl Front{
         }
         if let Some(t)=self.tty.as_mut(){
             if graphics{
+                #[cfg(not(windows))]
+                {
+                    if let Some(frame)=desktop_vga_frame(p){
+                        let (cols,rows)=crossterm::terminal::size().unwrap_or((80,25));
+                        let picture=terminal_graphics::half_block_frame(&frame,cols,rows);
+                        if !self.graphics_note || self.graphics_cache.as_deref()!=Some(picture.as_str()){
+                            if !self.graphics_note{t.write("\x1b[0m\x1b[2J")?;}
+                            t.write(&picture)?;
+                            self.graphics_cache=Some(picture);
+                        }
+                        self.graphics_note=true;
+                    }else if !self.graphics_note{
+                        let mode=p.ram.load(0x449,MemWidth::Byte).unwrap_or(0);
+                        t.write(&format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: scanout unavailable; keys still reach DOS."))?;
+                        self.graphics_note=true;
+                    }
+                }
+                #[cfg(windows)]
                 if !self.graphics_note{
                     self.graphics_note=true;self.previous=None;
                     let mode=p.ram.load(0x449,MemWidth::Byte).unwrap_or(0);
-                    #[cfg(windows)]
-                    let text=format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: shown in the Dine window; keys work there and here.");
-                    #[cfg(not(windows))]
-                    let text=format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: this terminal shows text modes only; keys still reach the program.");
-                    t.write(&text)?;
+                    t.write(&format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: shown in the Dine window; keys work there and here."))?;
                 }
             }else{
-                self.graphics_note=false;
+                if self.graphics_note{t.write("\x1b[0m\x1b[2J")?;self.previous=None;}
+                self.graphics_note=false;self.graphics_cache=None;
                 let (cells,columns,cursor)=session.screen()?;
                 let visible=cursor_shape(p).is_some();
                 let text=ansi_frame(&cells,columns,cursor,visible,self.previous.as_deref());
@@ -690,6 +707,8 @@ fn local_utc_offset()->i64{
 
 #[path="dos_host_terminal.rs"]
 mod tty;
+#[path="dos_terminal_graphics.rs"]
+mod terminal_graphics;
 #[path="dos_host_speaker.rs"]
 pub(crate) mod speaker;
 #[path="dos_console_select.rs"]
