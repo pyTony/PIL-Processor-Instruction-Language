@@ -1,3 +1,4 @@
+//! DOS ISA port devices: PC speaker, Sound Blaster PCM and AT peripherals.
 //! The PC speaker ports, answered on the host as INT services are: PIT
 //! channel 2 (count at 42h, mode at 43h) sets the tone and port 61h bits 0
 //! and 1 gate it to the speaker. The CMOS clock and setup bytes read through
