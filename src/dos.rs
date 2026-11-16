@@ -253,6 +253,43 @@ pub(crate) fn select_startup_drive(p:&mut Loaded,letter:u8)->Result<(),String>{
     Ok(())
 }
 use nls::COUNTRIES;
+/// Set PATH in the first program's environment (added, or replaced when
+/// there is one), keeping the other strings and the program path after
+/// them. The whole block must still fit the environment's paragraphs.
+pub(crate) fn set_environment_path(p:&mut Loaded,value:&str)->Result<(),String>{
+    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let size=usize::from(ENV_PARAS)*16;
+    let mut block=vec![0u8;size];
+    for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
+    let block=with_path(&block,value.as_bytes()).ok_or("DOS environment: no room for PATH")?;
+    for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
+}
+/// `block` (an environment: strings, an empty one, count word, program
+/// path) with PATH=`value`, the same size, or None when it does not fit
+/// or the block is not an environment.
+fn with_path(block:&[u8],value:&[u8])->Option<Vec<u8>>{
+    let mut strings=Vec::new();let mut at=0;
+    loop{
+        let end=at+block.get(at..)?.iter().position(|&b|b==0)?;
+        if end==at{break;}
+        strings.push(&block[at..end]);at=end+1;
+    }
+    let rest=block.get(at+1..)?;
+    let count=u16::from_le_bytes([*rest.first()?,*rest.get(1)?]);
+    let tail=if count==0{&rest[..2]}else{let n=2+rest[2..].iter().position(|&b|b==0)?+1;&rest[..n]};
+    let mut path=b"PATH=".to_vec();path.extend(value);
+    let mut out=Vec::new();let mut placed=false;
+    for string in strings{
+        if string.len()>=5&&string[..5].eq_ignore_ascii_case(b"PATH="){if !placed{out.extend(&path);out.push(0);placed=true;}continue;}
+        out.extend(string);out.push(0);
+    }
+    if !placed{out.extend(&path);out.push(0);}
+    out.push(0);out.extend(tail);
+    if out.len()>block.len(){return None;}
+    out.resize(block.len(),0);
+    Some(out)
+}
 /// DOS PSP tail format: count, leading space, CP437 text, CR.
 pub(crate) fn command_tail(ram:&mut Ram,psp_base:u32,text:&str)->Result<(),String>{
     let encoded=crate::dos_encoding::command_line(text)?;
