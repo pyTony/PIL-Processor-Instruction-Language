@@ -118,8 +118,14 @@ def make_handler(backend, html=HTML):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-            self.end_headers()
-            self.wfile.write(body)
+            # Browsers can abandon a large VGA snapshot when a tab is hidden
+            # or refreshed. The client has gone: do not try to send a second
+            # (503) response on the same broken connection.
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.close_connection = True
 
         def send_json(self, status, value):
             self.send_bytes(status, json.dumps(value, ensure_ascii=False).encode("utf-8"),
@@ -171,7 +177,7 @@ def make_handler(backend, html=HTML):
                 self.send_json(200, reply)
             except (ValueError, TypeError) as error:
                 self.send_json(400, {"error": str(error)})
-            except (OSError, RuntimeError, BrokenPipeError) as error:
+            except (OSError, RuntimeError) as error:
                 self.send_json(503, {"error": str(error)})
 
     return Handler
