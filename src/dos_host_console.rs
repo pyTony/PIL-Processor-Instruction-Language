@@ -431,9 +431,7 @@ pub(crate) struct Front{
     /// `reset` go back to Show (the screen has no DOS cursor).
     host_pointer:HostPointer,
 }
-/// A Windows Explorer "Copy as path" value may be quoted to preserve spaces.
-/// Keep the exact underlying path; no guest-file parsing or command execution.
-/// Append one atomic guest-state sample; never stop or step the guest here.
+/// Append one consistent guest-state sample; never stop or step the guest here.
 /// The host input event loop invokes this between its bounded run slices.
 fn save_live_snapshot(session:&mut Session,host_pending:usize)->Result<String,String>{
     use std::io::Write as _;
