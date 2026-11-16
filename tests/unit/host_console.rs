@@ -408,3 +408,14 @@ fn audio_thread_streams_a_programs_tone(){
     let mut p=crate::dos::load(&code,"tone.com").unwrap();p.clock_offset=Some(0);let mut r=crate::dos::run(p,20).unwrap();
     muted.take(&mut r.loaded.speaker);drop(muted);assert_eq!(o2.load(Ordering::SeqCst),0);
 }
+
+#[test]
+fn clipboard_mount_path_accepts_windows_explorer_quotes_and_rejects_bad_input(){
+    assert_eq!(clipboard_mount_path(r#"  "C:\DOS Images\Prince 1.3.img"  "#).unwrap(),
+        r"C:\DOS Images\Prince 1.3.img");
+    assert_eq!(clipboard_mount_path(r"X:\retro\source").unwrap(),r"X:\retro\source");
+    assert_eq!(clipboard_mount_path(" images/prince.img ").unwrap(),"images/prince.img");
+    for bad in ["", "   ", "\"" , "C:\\games\\bad\npath", "one\r\ntwo", "\0"] {
+        assert!(clipboard_mount_path(bad).is_err(),"bad clipboard contents: {bad:?}");
+    }
+}

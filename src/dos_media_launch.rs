@@ -25,6 +25,33 @@ pub(crate) fn run(shell:&str,media:Option<&str>,log_path:&str)->Result<(),String
     println!("{}",result?);Ok(())
 }
 
+/// The bounded FAT reader takes at most 64 MiB; large IMG/IMA files
+/// must use the separate host-side extraction path. Folders and other
+/// file types are never treated as disk images because of their size alone.
+fn needs_extraction(path:&std::path::Path,bytes:u64)->bool{
+    bytes>64*1024*1024
+        &&path.extension().and_then(|s|s.to_str()).is_some_and(|s|
+            s.eq_ignore_ascii_case("img")||s.eq_ignore_ascii_case("ima"))
+}
+
+/// Native media menus accept large hard-disk images via the same bounded
+/// host-side extraction already used by --dos-media. This mounts an extracted
+/// *folder*, not a raw writable block device, and never changes guest I/O.
+#[cfg(windows)]
+pub(super) fn mount_path(session:&mut super::Session,drive:u8,path:&std::path::Path)->Result<String,String>{
+    let large_image=if path.extension().and_then(|s|s.to_str()).is_some_and(|s|
+        s.eq_ignore_ascii_case("img")||s.eq_ignore_ascii_case("ima")){
+        needs_extraction(path,std::fs::metadata(path)
+            .map_err(|e|format!("media image {}: {e}",path.display()))?.len())
+    }else{false};
+    let selected=if large_image{expand_hard_disk(path)?}else{path.to_path_buf()};
+    let text=selected.to_str().ok_or("mount path is not Unicode")?;
+    let result=session.mount_media(drive,text)?;
+    if large_image{
+        Ok(format!("{result} (extracted from {}; original unchanged)",path.display()))
+    }else{Ok(result)}
+}
+
 #[cfg(windows)]
 fn expand_hard_disk(image:&std::path::Path)->Result<std::path::PathBuf,String>{
     use std::{path::PathBuf,os::windows::process::CommandExt};
@@ -44,4 +71,19 @@ fn expand_hard_disk(image:&std::path::Path)->Result<std::path::PathBuf,String>{
 #[cfg(not(windows))]
 pub(crate) fn run(_shell:&str,_media:Option<&str>,_log_path:&str)->Result<(),String>{
     Err("the native media browser needs Windows; use diskset/disk in --dos-session on this platform".into())
+}
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    fn only_oversized_dos_images_use_external_extraction(){
+        let max=64*1024*1024;
+        assert!(!needs_extraction(std::path::Path::new("disk.img"),max));
+        assert!(!needs_extraction(std::path::Path::new("disk.IMA"),max-1));
+        assert!(needs_extraction(std::path::Path::new("disk.img"),max+1));
+        assert!(needs_extraction(std::path::Path::new("disk.IMA"),max+1));
+        assert!(!needs_extraction(std::path::Path::new("archive.zip"),max+1));
+        assert!(!needs_extraction(std::path::Path::new("folder"),max+1));
+    }
 }

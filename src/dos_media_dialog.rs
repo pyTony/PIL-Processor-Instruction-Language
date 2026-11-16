@@ -48,7 +48,8 @@ pub(super) fn folder()->Result<Option<PathBuf>,String>{
     if result<0{return Err(format!("folder dialog initialization failed: {result:08X}"));}
     let mut display=vec![0u16;260];let mut buffer=vec![0u16;260];
     let title:Vec<u16>="Mount writable DOS folder\0".encode_utf16().collect();
-    let info=Browse{owner:ptr::null_mut(),root:ptr::null(),display:display.as_mut_ptr(),title:title.as_ptr(),flags:0x1|0x40,callback:0,data:0,image:0};
+    // BIF_EDITBOX (10h) makes it possible to paste a host-folder path.
+    let info=Browse{owner:ptr::null_mut(),root:ptr::null(),display:display.as_mut_ptr(),title:title.as_ptr(),flags:0x1|0x10|0x40,callback:0,data:0,image:0};
     let id=unsafe{SHBrowseForFolderW(&info)};
     let chosen=if id.is_null(){Ok(None)}else{
         let ok=unsafe{SHGetPathFromIDListW(id,buffer.as_mut_ptr())};

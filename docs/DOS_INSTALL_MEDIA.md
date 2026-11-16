@@ -66,9 +66,42 @@ DOS applications. The popup and native file/folder dialogs are host controls.
 
 The Drive A:/B: submenus provide Mount image, Mount folder, Open disk set,
 Next disk, Previous disk, Current disk and Unmount. D:/E: support mounting and
-unmounting. Clipboard commands are also available. Media results and errors
-appear in the Rust window title. Dine pauses guest execution while the host
-menu or a file dialog is open. Cancelling leaves the inserted disk unchanged.
+unmounting. Each drive menu also has **Mount clipboard path**, which accepts
+a full host-folder or supported FAT .img/.ima file path. In Windows Explorer,
+right-click the original file or folder and choose **Copy as path** (or use
+Shift+right-click), then in the *running DOS window* select
+**Ctrl+Shift+M → Drive E: → Mount clipboard path**. Quoted paths containing
+spaces work. The native folder picker also has an editable path field.
+This is the **Windows host path**, not the virtual DOS path `D:\RETRO\...`.
+
+Clipboard Copy/Paste commands for DOS text are independent of mounting.
+Media results and errors appear in the Rust window title. Dine pauses guest
+execution while the host menu or a file dialog is open. Cancelling leaves
+the inserted disk unchanged. The Retro catalog itself is not a running DOS
+session and does not offer drive menus; configure `E=path/to/image.img`
+in `pildos.conf` before starting the catalog if mounting must persist across
+selected programs. Images are read-only and must be supported FAT media;
+ZIP/ISO archives need extracting or another supported mounting mechanism.
+
+**Images larger than 64 MiB:** the normal in-memory FAT reader refuses these to
+bound RAM use. On Windows the host drive menu now automatically uses the
+existing 7-Zip extraction route for oversized `.img`/`.ima` files. The image
+remains unchanged; the extracted directory is placed under `drives/media/`
+and mounted on the selected DOS drive. You need 7-Zip installed. The extraction
+is not a raw disk mount and can take some time, depending on the image.
+
+The `E=...` configuration entry **does not perform extraction**. For a
+persistent E: mount, first extract the original image and then point the
+configuration at its extracted host directory, e.g.:
+
+```ini
+E=drives/media/my-original-dos
+```
+
+You can also start the root `PILimages.cmd` launcher with the full original
+image path. That launcher already extracts large images before mounting them
+on E:, alongside the normal D: writable drive. Do not point the configuration
+directly to a greater-than-64-MiB image.
 
 With a loaded set, Ctrl+Shift+F1 advances A:, Ctrl+Shift+F2 advances B:;
 Ctrl+Shift+F3/F4 select the previous disk on A:/B:. These shortcuts also work
