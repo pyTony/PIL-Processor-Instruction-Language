@@ -93,6 +93,13 @@ a DOS command line.
 - **Mouse:** --mouse opts into Dine's INT 33h driver. Touch sends its
   existing virtual coordinates and button state; without --mouse, taps
   do not modify guest input.
+- **Ctrl+Break:** the browser reports whether the guest DOS session accepted
+  or refused the interrupt. An accepted interrupt is not an unconditional
+  process-kill request: DOS programs may not check for breaks until their next
+  DOS call, and the BIOS does not automatically reset the VGA video mode.
+  When the program is still displaying VGA, **Text view** shows its current
+  text-page memory for diagnosis; **Graphics view** restores the picture.
+  Switching views never changes the guest's actual video mode.
 - **CPU:** the web page sends bounded run N buffered commands and fetches
   snapshots. Pause/resume changes only how frequently the host runs the guest.
 - **Stop:** Ctrl+C in the Termux process closes the server and guest engine.
