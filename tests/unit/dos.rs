@@ -1110,7 +1110,7 @@ fn environment_block_names_comspec_and_the_program_and_can_be_freed(){
  // MOV ES,[002C]; MOV AH,49; INT 21; CLI; HLT
  let r=run(load(&[0x8e,0x06,0x2c,0x00,0xb4,0x49,0xcd,0x21,0xfa,0xf4],"images/FD.img::BIN/Self.com").unwrap(),10).unwrap();
  let psp=u32::from(PSP)*16;assert_eq!(r.loaded.ram.load(psp+0x2c,MemWidth::Word).unwrap(),u32::from(ENV));
- let want=b"COMSPEC=A:\\COMMAND.COM\0\0\x01\0A:\\SELF.COM\0";
+ let want=b"COMSPEC=A:\\COMMAND.COM\0BLASTER=A220 I5 D1 T3\0\0\x01\0A:\\SELF.COM\0";
  let got:Vec<u8>=(0..want.len()as u32).map(|i|r.loaded.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(got,want);
  // The environment has its own MCB owned by the PSP, so AH49 frees it.
  assert_eq!(r.loaded.cpu.eflags&1,0);assert_eq!(r.loaded.ram.load(u32::from(ENV-1)*16+1,MemWidth::Word).unwrap(),0);
@@ -1347,7 +1347,7 @@ fn image_is_drive_c_with_its_label_and_the_host_folder_is_drive_d(){
  std::fs::create_dir_all(&dir).unwrap();std::fs::write(dir.join("factor.com"),b"F").unwrap();
  let mut p=load_with_drives(&[0xcd,0x21],"img::FREEDOS/COMMAND.COM",vec![Source::Image(Arc::new(tree)),Source::Host(dir.clone())],Some("FREEDOS/COMMAND.COM")).unwrap();
  let env:Vec<u8>=(0..56).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();
- assert!(env.starts_with(b"COMSPEC=C:\\COMMAND.COM\0\0\x01\0C:\\FREEDOS\\COMMAND.COM\0"),"{env:?}");
+ assert!(env.starts_with(b"COMSPEC=C:\\COMMAND.COM\0BLASTER=A220 I5 D1 T3\0\0\x01\0C:\\FREEDOS\\COMMAND.COM\0"),"{env:?}");
  // Label search, then files: hidden/system KERNEL.SYS only with those bits asked for.
  assert_eq!(call(&mut p,0x4e00,0x08,b"C:\\*.*").1,0);assert_eq!(dta_name(&p),(0x08,0,b"FD14-LIT.E".to_vec()));
  let mut names=Vec::new();let mut r=call(&mut p,0x4e00,0x10,b"*.*");while r.1==0{names.push(dta_name(&p).2);r=call(&mut p,0x4f00,0,b"");}
@@ -1756,7 +1756,8 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
 #[test]
 fn memory_drive_is_z_with_temp_and_keeps_files_for_the_session(){
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Memory(MemDir::default())],None).unwrap();let psp=u32::from(PSP)*16;
- let env:Vec<u8>=(0..33).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(env,b"COMSPEC=A:\\COMMAND.COM\0TEMP=Z:\\\0\0");
+ let expected=b"COMSPEC=A:\\COMMAND.COM\0TEMP=Z:\\\0BLASTER=A220 I5 D1 T3\0\0";
+ let env:Vec<u8>=(0..expected.len()as u32).map(|i|p.ram.load(u32::from(ENV)*16+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(env,expected);
  let svc=|p:&mut Loaded,ax:u32,bx:u32,cx:u32,data:&[u8]|->(u32,u32){p.ram.write_bytes(psp+0x400,data).unwrap();p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=0x400;service(p,0x21,&mut vec![]).unwrap();(p.cpu.regs[0]&0xffff,p.cpu.eflags&1)};
  // Create, write, close, reopen and read back; seek and truncate.
  let (h,cf)=call(&mut p,0x3c00,0,b"Z:\\PIPE.TMP");assert_eq!(cf,0);assert_eq!(svc(&mut p,0x4000,h,5,b"hello"),(5,0));assert_eq!(svc(&mut p,0x3e00,h,0,b"").1,0);
