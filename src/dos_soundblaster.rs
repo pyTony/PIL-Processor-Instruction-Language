@@ -83,7 +83,7 @@ impl Dma1{
 struct Playback{deadline:u64,remaining:Option<u64>,auto:bool}
 /// State of an optional SB2 digital audio card (no OPL/FM synthesizer).
 #[derive(Clone,Debug)]
-pub(super) struct SoundBlaster{
+pub(crate) struct SoundBlaster{
     dma:Dma1,reset_high:bool,reply:VecDeque<u8>,
     pending:Option<(u8,Vec<u8>,usize)>,
     speaker_on:bool,rate:u32,block_length:u16,
