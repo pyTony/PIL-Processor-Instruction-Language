@@ -315,13 +315,15 @@ fn save_and_restore_driver_state_round_trip_and_reject_foreign_buffers(){
     assert_eq!(p.mouse,before);
 }
 #[test]
-fn save_state_into_a_buffer_that_runs_into_rom_writes_nothing(){
+fn save_state_into_a_buffer_that_runs_into_rom_keeps_the_rom(){
+    // The buffer starts in RAM below C0000h and runs into the video ROM:
+    // the RAM part takes the state, the ROM part ignores the writes.
     let mut p=ready_mouse(3);
     set_es(&mut p,0xbff0);
-    let first=0xbff0*16+0xa0;
-    let before=p.ram.load(first,MemWidth::Dword).unwrap();
-    assert!(call(&mut p,0x16,0,0,0xa0).unwrap_err().contains("buffer"));
-    assert_eq!(p.ram.load(first,MemWidth::Dword).unwrap(),before);
+    let rom=p.ram.load(0xc0000,MemWidth::Dword).unwrap();
+    call(&mut p,0x16,0,0,0xa0).unwrap();
+    assert_eq!(p.ram.load(0xbff0*16+0xa0,MemWidth::Word).unwrap(),u32::from(STATE_SIGNATURE));
+    assert_eq!(p.ram.load(0xc0000,MemWidth::Dword).unwrap(),rom);
 }
 #[test]
 fn update_region_hides_the_cursor_inside_until_show(){

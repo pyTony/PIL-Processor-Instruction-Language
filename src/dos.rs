@@ -212,7 +212,8 @@ fn rom(ram:&mut Ram)->Result<(),String>{
     // INT 43h starts at the 8x8 graphics font, as after an EGA/VGA BIOS POST.
     ram.store(0x43*4,MemWidth::Dword,0xf000_0000|(console::graphics_text::FONT&0xffff)).map_err(|e|format!("INT 43h vector: {e:?}"))?;
     ram.store(0x1f*4,MemWidth::Dword,upper).map_err(|e|format!("INT 1Fh vector: {e:?}"))?;
-    ram.protect(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
+    // A write to the BIOS or video ROM is ignored, as on an AT: no fault.
+    ram.rom(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
 }
 pub fn hello(format:&str)->Result<Vec<u8>,String>{
     // Both original examples address their string relative to the initial PSP DS.
