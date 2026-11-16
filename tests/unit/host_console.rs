@@ -308,34 +308,94 @@ fn host_media_shortcut_never_becomes_a_guest_enter(){
     assert_eq!(window_event(Input::Char{ch:'\u{1b}',shift:false,ctrl:false,alt:false}),Some(Event::Key(Key::Escape,Mods::default())));
 }
 
-#[derive(Default)]
-struct Recorder{plays:Vec<usize>}
-impl speaker::Player for Recorder{fn play(&mut self,wav:&std::sync::Arc<Vec<u8>>){self.plays.push(wav.len());}}
-#[test]
-fn speaker_clicks_follow_new_counts_at_most_five_a_second(){
-    let t0=Instant::now();let at=|ms:u64|t0+Duration::from_millis(ms);
-    let mut c=speaker::Clicks::new(5,3,Recorder::default());
-    c.observe(3,at(0));assert!(c.player().plays.is_empty(),"the count at start is not a click");
-    c.observe(4,at(0));assert_eq!(c.player().plays,vec![44+440]);
-    c.observe(9,at(150));assert_eq!(c.player().plays.len(),1,"within 0.2 s");
-    c.observe(9,at(300));assert_eq!(c.player().plays.len(),1,"no new count");
-    c.observe(10,at(300));assert_eq!(c.player().plays.len(),2);
-    // A new program counts from zero again.
-    c.observe(0,at(600));c.observe(1,at(600));assert_eq!(c.player().plays.len(),3);
-    let mut muted=speaker::Clicks::new(0,0,Recorder::default());
-    muted.observe(5,at(0));assert!(muted.player().plays.is_empty());
+use crate::dos::ports::wave::{Synth,Wave,PIT_HZ,BELL_CLOCKS,MIN_PULSE};
+/// Samples of `wave` from PIT clock 1000 for `ms`, at 22050 Hz and full volume.
+fn synth_samples(waves:&[(u64,Wave)],ms:u64)->Vec<i16>{
+    let mut s=Synth::new(22050,100,0);for &(at,w) in waves{s.wave(at,w);}
+    let mut out=Vec::new();s.render(PIT_HZ*ms/1000,&mut out);out
+}
+/// Rising zero crossings per second over the last half of `samples`.
+fn pitch(samples:&[i16])->f64{
+    let half=&samples[samples.len()/2..];
+    let rises=half.windows(2).filter(|w|w[0]<0&&w[1]>=0).count();
+    rises as f64*22050.0/half.len() as f64
 }
 #[test]
-fn speaker_click_is_a_short_quiet_wav(){
-    let wav=speaker::click(5);
-    assert_eq!((&wav[0..4],&wav[8..16],&wav[36..40]),(&b"RIFF"[..],&b"WAVEfmt "[..],&b"data"[..]));
-    assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()),22050);
-    let samples:Vec<i16>=wav[44..].chunks(2).map(|b|i16::from_le_bytes([b[0],b[1]])).collect();
-    assert_eq!(samples.len(),220);
-    let peak=samples.iter().map(|s|s.unsigned_abs()).max().unwrap();
-    assert!((1500..=1640).contains(&peak),"5% of full scale, got {peak}");
-    assert_eq!((samples[0],samples[219]),(0,0));
-    assert!(speaker::click(100).iter().zip(&wav).any(|(a,b)|a!=b));
+fn speaker_square_wave_sounds_at_the_pit_frequency(){
+    // Count 1193: 1000 Hz; count 2712: 440 Hz.
+    for (count,hz) in [(1193u32,1000.0),(2712,440.0)]{
+        let out=synth_samples(&[(1000,Wave::Periodic{period:count,high:count.div_ceil(2)})],500);
+        assert_eq!(out.len(),11025);
+        let f=pitch(&out);assert!((f-hz).abs()<hz*0.02,"count {count}: {f} Hz");
+        // A square wave from 0 to 1 through the high-pass filter swings about +-0.5.
+        let peak=out[5000..].iter().map(|s|s.unsigned_abs()).max().unwrap();
+        assert!((14000..=20000).contains(&peak),"peak {peak}");
+    }
+    // Count 2 (596 kHz), as GW-BASIC leaves between notes: far above hearing,
+    // averaged to a steady level, so only the switch-on is heard.
+    let out=synth_samples(&[(1000,Wave::Periodic{period:2,high:1})],500);
+    assert!(out[2000..].iter().all(|s|s.unsigned_abs()<200),"ultrasonic count is quiet");
+}
+#[test]
+fn speaker_volume_scales_and_silence_ends_quiet(){
+    let mut s=Synth::new(22050,5,0);s.wave(0,Wave::Periodic{period:1193,high:597});s.wave(PIT_HZ/4,Wave::Level(false));
+    let mut out=Vec::new();s.render(PIT_HZ/5,&mut out);
+    let peak=out[1000..].iter().map(|s|s.unsigned_abs()).max().unwrap();
+    assert!((700..=1000).contains(&peak),"5% of full scale for a +-0.5 swing, got {peak}");
+    assert!(!s.quiet());
+    s.render(PIT_HZ,&mut out);assert!(s.quiet(),"the step decays");
+    let silent=Synth::new(22050,0,0);assert!(silent.quiet());
+}
+#[test]
+fn speaker_lone_tick_is_held_to_a_millisecond(){
+    // On for 2 PIT clocks after silence: held to MIN_PULSE, so a click is heard.
+    let out=synth_samples(&[(PIT_HZ/10,Wave::Level(true)),(PIT_HZ/10+2,Wave::Level(false))],200);
+    let peak=out.iter().map(|s|s.unsigned_abs()).max().unwrap();
+    assert!(peak>10000,"tick peak {peak}");
+    // Back to back changes after the first (a tone) are not held.
+    let mut s=Synth::new(22050,100,0);
+    s.wave(PIT_HZ/10,Wave::Periodic{period:1193,high:597});s.wave(PIT_HZ/10+MIN_PULSE*5,Wave::Periodic{period:2386,high:1193});
+    s.wave(PIT_HZ/10+MIN_PULSE*5+10,Wave::Level(false));
+    let mut out=Vec::new();s.render(PIT_HZ/10+MIN_PULSE*5+MIN_PULSE/2,&mut out);
+    let tail=&out[out.len()-5..];assert!(tail.iter().all(|v|v.unsigned_abs()<20000));
+}
+#[test]
+fn bios_beep_is_896_hz_for_31_64_second_and_queues(){
+    let mut s=Synth::new(22050,100,0);s.bell(1000);s.bell(1000);
+    let mut out=Vec::new();s.render(1000+2*BELL_CLOCKS+PIT_HZ/10,&mut out);
+    let first=&out[..(22050*31/64) as usize];
+    let f=pitch(first);assert!((f-896.0).abs()<20.0,"{f} Hz");
+    // The second beep follows the first; then silence.
+    let second=&out[(22050*31/64) as usize+200..(22050*62/64) as usize];assert!(second.iter().any(|v|v.unsigned_abs()>10000));
+    let after=&out[(22050*62/64) as usize+1500..];assert!(after.iter().all(|v|v.unsigned_abs()<500));
+    assert!(s.quiet());
+}
+/// A test output that records what the audio thread sends.
+struct Recorded(std::sync::Arc<std::sync::Mutex<Vec<i16>>>);
+impl audio::Output for Recorded{fn write(&mut self,samples:&[i16])->bool{self.0.lock().unwrap().extend_from_slice(samples);true}}
+#[test]
+fn audio_thread_streams_a_programs_tone(){
+    use std::sync::{Arc,Mutex,atomic::{AtomicUsize,Ordering}};
+    let got=Arc::new(Mutex::new(Vec::new()));let opened=Arc::new(AtomicUsize::new(0));
+    let (g,o)=(got.clone(),opened.clone());
+    let mut sound=speaker::Sound::new(50,Box::new(move|rate|{assert_eq!(rate,speaker::RATE);o.fetch_add(1,Ordering::SeqCst);Some(Box::new(Recorded(g.clone())) as Box<dyn audio::Output>)}));
+    // MOV AL,B6h; OUT 43h; count 04A9h (1000 Hz); OUT 61h,3; CLI; HLT.
+    let code=[0xb0,0xb6,0xe6,0x43,0xb0,0xa9,0xe6,0x42,0xb0,0x04,0xe6,0x42,0xb0,0x03,0xe6,0x61,0xfa,0xf4];
+    let mut p=crate::dos::load(&code,"tone.com").unwrap();p.clock_offset=Some(0);
+    let mut r=crate::dos::run(p,20).unwrap();
+    sound.take(&mut r.loaded.speaker);
+    std::thread::sleep(Duration::from_millis(300));
+    drop(sound);
+    assert_eq!(opened.load(Ordering::SeqCst),1);
+    let samples=got.lock().unwrap().clone();
+    assert!(samples.len()>22050/10,"{} samples",samples.len());
+    let loud:Vec<i16>=samples.iter().copied().skip_while(|v|*v==0).collect();
+    assert!(loud.len()>1000);let f=pitch(&loud[..loud.len().min(4000)]);assert!((f-1000.0).abs()<50.0,"{f} Hz");
+    // Volume 0 starts no thread and opens nothing.
+    let o2=Arc::new(AtomicUsize::new(0));let o3=o2.clone();
+    let mut muted=speaker::Sound::new(0,Box::new(move|_|{o3.fetch_add(1,Ordering::SeqCst);None}));
+    let mut p=crate::dos::load(&code,"tone.com").unwrap();p.clock_offset=Some(0);let mut r=crate::dos::run(p,20).unwrap();
+    muted.take(&mut r.loaded.speaker);drop(muted);assert_eq!(o2.load(Ordering::SeqCst),0);
 }
 
 #[test]
