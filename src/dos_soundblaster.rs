@@ -86,14 +86,14 @@ struct Playback{deadline:u64,remaining:Option<u64>,auto:bool}
 pub(super) struct SoundBlaster{
     dma:Dma1,reset_high:bool,reply:VecDeque<u8>,
     pending:Option<(u8,Vec<u8>,usize)>,
-    speaker_on:bool,time_constant:u8,rate:u32,block_length:u16,
+    speaker_on:bool,rate:u32,block_length:u16,
     mixer_index:u8,irq:u8,irq_pending:bool,test_byte:u8,
     playback:Option<Playback>,pcm:VecDeque<(u32,Vec<i16>)>,now:u64,
 }
 impl Default for SoundBlaster{
     fn default()->Self{Self{
         dma:Dma1::default(),reset_high:false,reply:VecDeque::new(),pending:None,
-        speaker_on:false,time_constant:0xa5,rate:11_025,block_length:0,
+        speaker_on:false,rate:11_025,block_length:0,
         mixer_index:0,irq:5,irq_pending:false,test_byte:0,
         playback:None,pcm:VecDeque::new(),now:0,
     }}
@@ -149,7 +149,6 @@ impl SoundBlaster{
             0x1c=>self.start(ram,usize::from(self.block_length)+1,true,self.now)?,
             0x20=>self.answer(0x80), // silent/unconnected ADC
             0x40=>{
-                self.time_constant=args[0];
                 self.rate=(1_000_000/(256-u32::from(args[0]))).clamp(4_000,44_100);
             },
             0x41=>{
