@@ -383,3 +383,18 @@ fn disable_enable_and_software_reset(){
     call(&mut p,0x1f,0,0,0).unwrap();call(&mut p,0x21,0,0,0).unwrap();assert!(!p.mouse.view().active,"21h keeps it disabled");
     call(&mut p,0,0,0,0).unwrap();assert!(p.mouse.view().active,"00h enables it again");
 }
+#[test]
+fn swift_extension_calls_find_no_support_and_change_nothing(){
+    let mut p=ready_mouse(3);
+    set_es(&mut p,0x2000);
+    for i in 0..64{p.ram.store(0x20200+i,MemWidth::Byte,0xa5).unwrap();}
+    let before=p.mouse.clone();
+    for f in 0x53c0..=0x53c3{
+        call(&mut p,f,0x1111,0x2222,0x0200).unwrap();
+        assert_eq!(regs(&p),(f,0x1111,0x2222,0x0200),"AX={f:04x}h: no SWIFT support, AX not 0001h");
+        assert_eq!(p.selectors[SegmentRegister::Es.index()],0x2000);
+    }
+    for i in 0..64{assert_eq!(p.ram.load(0x20200+i,MemWidth::Byte).unwrap(),0xa5,"buffer byte {i} not written");}
+    assert_eq!(p.mouse,before);
+    assert!(call(&mut p,0x53c4,0,0,0).unwrap_err().contains("not implemented"));
+}

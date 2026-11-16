@@ -394,6 +394,13 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // No Quarterdeck RPCI handler claims this signed scan.
             Ok(None)
         },
+        (0x2f,_) if p.cpu.regs[0]&0xffff==0xfb43 && p.cpu.regs[3]&0xffff==0x0100=>{
+            // TDX debugger presence probe (RBIL INT 2F/AX=FB43h/BX=0100h).
+            // TDX returns BX=FB43h when installed. With no resident TDX
+            // handler, the multiplex chain's IRET preserves BX=0100h.
+            // Do not claim the DPMILOAD/TDX protected-mode API is installed.
+            Ok(None)
+        },
         (0x2f,_) if p.cpu.regs[0]&0xffff==0x4b02=>{
             // The default multiplex handler leaves the caller's state unchanged.
             Ok(None)

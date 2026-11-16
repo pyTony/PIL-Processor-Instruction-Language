@@ -55,6 +55,8 @@ mod nls;
 mod exec;
 #[path="dos_ports.rs"]
 pub(crate) mod ports;
+#[path="dos_soundblaster.rs"]
+mod soundblaster;
 #[path="dos_rtc.rs"]
 mod rtc;
 #[path="dos_vga.rs"]
@@ -106,6 +108,8 @@ pub struct Loaded{
     load_only:Vec<exec::LoadedChild>,pub return_code:u16,con_pending:Vec<u8>,
     /// The PC speaker behind ports 42h, 43h and 61h.
     pub speaker:ports::Speaker,
+    /// ISA Sound Blaster 2.0 DSP, DMA1 and PCM queue.
+    pub(crate) sb:soundblaster::SoundBlaster,
     /// The host's local time, as seconds east of UTC, for the clock (INT 1Ah
     /// AH00, AH2A, AH2C); None keeps the deterministic clock from midnight
     /// on 1 January 1980.
@@ -142,7 +146,7 @@ impl Clone for Loaded{
         open_handles:self.open_handles,dos_error:self.dos_error,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
         input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
         own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),load_only:self.load_only.clone(),return_code:self.return_code,
-        con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
+        con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
         mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),
     }}
@@ -240,6 +244,7 @@ fn environment(path:&[u8],drive:u8,temp:Option<u8>)->Vec<u8>{
     let drive=char::from(drive);
     let mut env=format!("COMSPEC={drive}:\\COMMAND.COM\0").into_bytes();
     if let Some(temp)=temp{env.extend(format!("TEMP={}:\\\0",char::from(temp)).bytes());}
+    env.extend_from_slice(b"BLASTER=A220 I5 D1 T3\0");
     env.extend(format!("\0\x01\0{drive}:\\").bytes());env.extend(path);env.push(0);
     env
 }
@@ -247,13 +252,50 @@ pub use files::{MemDir,Source};
 /// Adjust the initial environment when configuration supplies the DOS drive.
 pub(crate) fn select_startup_drive(p:&mut Loaded,letter:u8)->Result<(),String>{
     let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
-    let tail=b"COMSPEC=A:\\COMMAND.COM\0".len()+if p.drive.memory_letter().is_some(){b"TEMP=Z:\\\0".len()}else{0}+3;
+    let tail=b"COMSPEC=A:\\COMMAND.COM\0".len()+if p.drive.memory_letter().is_some(){b"TEMP=Z:\\\0".len()}else{0}+b"BLASTER=A220 I5 D1 T3\0".len()+3;
     for at in [env+8,env+tail as u32]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
     p.drive.select_default(letter)?;
     for at in [env+8,env+tail as u32]{p.ram.store(at,MemWidth::Byte,u32::from(letter)).map_err(|e|format!("DOS environment: {e:?}"))?;}
     Ok(())
 }
 use nls::COUNTRIES;
+/// Set PATH in the first program's environment (added, or replaced when
+/// there is one), keeping the other strings and the program path after
+/// them. The whole block must still fit the environment's paragraphs.
+pub(crate) fn set_environment_path(p:&mut Loaded,value:&str)->Result<(),String>{
+    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let size=usize::from(ENV_PARAS)*16;
+    let mut block=vec![0u8;size];
+    for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
+    let block=with_path(&block,value.as_bytes()).ok_or("DOS environment: no room for PATH")?;
+    for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
+}
+/// `block` (an environment: strings, an empty one, count word, program
+/// path) with PATH=`value`, the same size, or None when it does not fit
+/// or the block is not an environment.
+fn with_path(block:&[u8],value:&[u8])->Option<Vec<u8>>{
+    let mut strings=Vec::new();let mut at=0;
+    loop{
+        let end=at+block.get(at..)?.iter().position(|&b|b==0)?;
+        if end==at{break;}
+        strings.push(&block[at..end]);at=end+1;
+    }
+    let rest=block.get(at+1..)?;
+    let count=u16::from_le_bytes([*rest.first()?,*rest.get(1)?]);
+    let tail=if count==0{&rest[..2]}else{let n=2+rest[2..].iter().position(|&b|b==0)?+1;&rest[..n]};
+    let mut path=b"PATH=".to_vec();path.extend(value);
+    let mut out=Vec::new();let mut placed=false;
+    for string in strings{
+        if string.len()>=5&&string[..5].eq_ignore_ascii_case(b"PATH="){if !placed{out.extend(&path);out.push(0);placed=true;}continue;}
+        out.extend(string);out.push(0);
+    }
+    if !placed{out.extend(&path);out.push(0);}
+    out.push(0);out.extend(tail);
+    if out.len()>block.len(){return None;}
+    out.resize(block.len(),0);
+    Some(out)
+}
 /// DOS PSP tail format: count, leading space, CP437 text, CR.
 pub(crate) fn command_tail(ram:&mut Ram,psp_base:u32,text:&str)->Result<(),String>{
     let encoded=crate::dos_encoding::command_line(text)?;
@@ -360,7 +402,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -755,6 +797,10 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             // An asynchronous hook observes the flags of the interrupted instruction.
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}
+            // Poll DSP DMA at a bounded cadence. Without a host clock,
+            // deterministic guest progress advances the device by one slice.
+            let now=p.clock_offset.map(|_|p.speaker.pit_now(p.clock_offset));
+            if let Err(message)=p.sb.tick(now,&p.ram,&mut p.speaker.pic){break Stop::Service(message);}
         }
         // A scan code waiting for a program's INT 09h handler (IRQ1).
         if p.speaker.kbd.pending(){
@@ -763,6 +809,29 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 Ok(true)=>{execution_steps+=1;*instructions.entry("IRQ1 to INT 09h".into()).or_insert(0)+=1;continue;},
                 Ok(false)=>{},
                 Err(message)=>break Stop::Service(message),
+            }
+        }
+        // IRQ5/IRQ7 from the Sound Blaster DSP. A DOS game installs its own
+        // handler and sends EOI to the PIC; reading DSP port 22Eh clears
+        // the DSP's interrupt latch, independently of PIC EOI.
+        if p.sb.pending_irq()&&p.cpu.eflags&0x200!=0
+            &&p.image.sti_shadow==0&&p.image.ss_shadow==0{
+            let irq=p.sb.irq();
+            let vector=p.speaker.pic.soundblaster_vector(irq);
+            if p.speaker.pic.soundblaster_ready(irq){
+                let installed=if p.image.real_mode{vectors::reachable(&p,vector)}else{Ok(true)};
+                match installed{
+                    Ok(true)=>{
+                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                        match vectors::deliver_irq(&mut p,vector){
+                            Ok(())=>{p.speaker.pic.acknowledge_soundblaster(irq);execution_steps+=1;
+                                *instructions.entry(format!("Sound Blaster IRQ{irq} to INT {vector:02X}h")).or_insert(0)+=1;continue;},
+                            Err(message)=>break Stop::Service(message),
+                        }
+                    },
+                    Ok(false)=>{}, // no guest handler: preserve IRR for polling
+                    Err(message)=>break Stop::Service(message),
+                }
             }
         }
         // Mouse callbacks behave as asynchronous far calls, not hardware IRQ12.
