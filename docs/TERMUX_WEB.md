@@ -82,9 +82,14 @@ a DOS command line.
   and planar EGA/VGA 0Dh/0Eh/10h/12h from the existing session snapshots.
   Scaling uses the display's 4:3 aspect ratio. This is host-only rendering.
 - **Keyboard:** hardware keys, F1–F10, arrows and Esc work through the
-  existing BIOS scan-code interface. The on-screen key strip and the text
-  field work on touchscreens. Submit short text chunks to avoid filling a
-  guest's BIOS keyboard buffer.
+  existing BIOS scan-code interface. Tap the DOS canvas (without the DOS
+  mouse enabled) or the **⌨ Keyboard** button to focus the Android text
+  input. Press the soft keyboard's **Enter** or **Type + ↵** to submit text
+  followed by a DOS Return. **Type** sends text without Return. When the
+  input field is empty, its Backspace key deletes the last DOS character
+  provided the guest has not already accepted Enter. The on-screen Enter
+  and Bksp buttons also work. Browser keystrokes are queued when the BIOS
+  keyboard ring fills, rather than silently discarding the final Enter.
 - **Mouse:** --mouse opts into Dine's INT 33h driver. Touch sends its
   existing virtual coordinates and button state; without --mouse, taps
   do not modify guest input.
