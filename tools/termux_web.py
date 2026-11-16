@@ -5,6 +5,7 @@ The browser paints DOS screen snapshots. All guest execution, BIOS, DOS,
 keyboard and VGA semantics remain in the existing pil --dos-session engine.
 """
 import argparse
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 MAX_REQUEST = 4096
 MAX_RUN = 100000
+MAX_QUEUED_KEYS = 512
 HTML = Path(__file__).with_suffix(".html")
 
 
@@ -28,6 +30,29 @@ class WebBackend:
     def __init__(self, session):
         self.session = session
         self.lock = threading.Lock()
+        # BIOS has a small keyboard ring. Keep browser keys on the host until
+        # the guest has actually accepted them; a burst of pasted text must
+        # never silently lose its final Enter or Backspace.
+        self.pending_keys = deque()
+
+    def _drain_keys(self):
+        while self.pending_keys:
+            ascii_code, scan = self.pending_keys[0]
+            reply = self.session.send("key %d %d" % (ascii_code, scan))
+            if not reply.get("ok", False):
+                if "buffer full" in str(reply.get("text", "")).lower():
+                    break
+                if "buffer full" in str(reply.get("error", "")).lower():
+                    break
+                raise RuntimeError("DOS key rejected: %s" % reply)
+            self.pending_keys.popleft()
+
+    def _queue_keys(self, keys):
+        if len(self.pending_keys) + len(keys) > MAX_QUEUED_KEYS:
+            raise ValueError("DOS input queue full; wait for the program to read keys")
+        self.pending_keys.extend(keys)
+        self._drain_keys()
+        return {"ok": True, "queued": len(self.pending_keys)}
 
     def snapshot(self):
         with self.lock:
@@ -37,7 +62,9 @@ class WebBackend:
         if not isinstance(budget, int) or isinstance(budget, bool) or not 1 <= budget <= MAX_RUN:
             raise ValueError("run budget must be 1..100000")
         with self.lock:
+            self._drain_keys()
             previous = self.session.send("run %d buffered" % budget)
+            self._drain_keys()
             frame = self.session.send("snapshot")
             if previous.get("output"):
                 frame["output"] = previous["output"]
@@ -49,7 +76,7 @@ class WebBackend:
                 or isinstance(scan, bool) or not 0 <= scan <= 255):
             raise ValueError("key requires BIOS ASCII and scan-code bytes")
         with self.lock:
-            return self.session.send("key %d %d" % (ascii_code, scan))
+            return self._queue_keys([(ascii_code, scan)])
 
     def mouse(self, x, y, buttons):
         if not all(isinstance(v, int) and not isinstance(v, bool) for v in (x, y, buttons)):
@@ -64,12 +91,7 @@ class WebBackend:
             raise ValueError("text must have at most 256 characters")
         keys = paste_keys(message)
         with self.lock:
-            reply = None
-            for ascii_code, scan in keys:
-                reply = self.session.send("key %d %d" % (ascii_code, scan))
-                if not reply.get("ok", False):
-                    break
-            return reply if reply is not None else self.session.send("snapshot")
+            return self._queue_keys(keys)
 
     def stop(self):
         with self.lock:
@@ -96,8 +118,14 @@ def make_handler(backend, html=HTML):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-            self.end_headers()
-            self.wfile.write(body)
+            # Browsers can abandon a large VGA snapshot when a tab is hidden
+            # or refreshed. The client has gone: do not try to send a second
+            # (503) response on the same broken connection.
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.close_connection = True
 
         def send_json(self, status, value):
             self.send_bytes(status, json.dumps(value, ensure_ascii=False).encode("utf-8"),
@@ -149,7 +177,7 @@ def make_handler(backend, html=HTML):
                 self.send_json(200, reply)
             except (ValueError, TypeError) as error:
                 self.send_json(400, {"error": str(error)})
-            except (OSError, RuntimeError, BrokenPipeError) as error:
+            except (OSError, RuntimeError) as error:
                 self.send_json(503, {"error": str(error)})
 
     return Handler
