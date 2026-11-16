@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>PILdos on Android</title>
 <style>
@@ -39,7 +39,7 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
 .viewer-toolbar button { min-height:40px; padding:7px 11px; }
 #zoom-level { min-width:48px; text-align:center; font-variant-numeric:tabular-nums; }
 .viewer .screen { overflow:auto; overscroll-behavior:contain; }
-.viewer:fullscreen, .viewer.expanded { display:flex; flex-direction:column; position:fixed; inset:0; width:100%; height:100%; height:100dvh; padding:6px; z-index:1000; background:var(--bg); }
+.viewer:fullscreen, .viewer.expanded { display:flex; flex-direction:column; position:fixed; inset:0; width:100%; height:100%; height:100dvh; padding:max(6px,env(safe-area-inset-top)) max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left)); z-index:1000; background:var(--bg); }
 .viewer:fullscreen .screen, .viewer.expanded .screen { flex:1; min-height:0; display:flex; align-items:flex-start; justify-content:flex-start; }
 .viewer:fullscreen canvas, .viewer.expanded canvas { flex:none; }
 .viewer-keys { display:none; grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; padding:6px 0; }
@@ -145,13 +145,22 @@ const zoomSteps=[1,1.25,1.5,2,3,4];
 let zoomIndex=0;
 function isExpanded(){return document.fullscreenElement===viewer||viewer.classList.contains("expanded");}
 function updateZoom(){
-  // Base width is fitted to the viewport; larger zoom factors scroll inside
-  // the display only, preserving touch-to-DOS coordinate conversion.
+  // A fitted image must use *both* viewport dimensions. Portrait prioritizes
+  // width, landscape often prioritizes height; larger zoom factors scroll.
   const ratio=4/3;
-  const available=screen.clientWidth;
-  const fitted=isExpanded()?Math.min(available,Math.max(1,screen.clientHeight)*ratio):available;
+  const availableWidth=Math.max(1,screen.clientWidth);
+  const availableHeight=isExpanded()?Math.max(1,screen.clientHeight):Number.POSITIVE_INFINITY;
+  const fitted=Math.min(availableWidth,availableHeight*ratio);
   canvas.style.width=Math.max(1,Math.round(fitted*zoomSteps[zoomIndex]))+"px";
   zoomLabel.textContent=zoomIndex===0?"Fit":Math.round(zoomSteps[zoomIndex]*100)+"%";
+}
+// Chrome Android may change the visual viewport (address bar or IME) without
+// dispatching a window resize. Coalesce those events after CSS layout.
+let pendingFit=false;
+function scheduleFit(){
+  if(pendingFit)return;
+  pendingFit=true;
+  requestAnimationFrame(()=>{pendingFit=false;updateZoom();});
 }
 function updateFullscreen(){
   const expanded=isExpanded();
@@ -178,7 +187,21 @@ document.getElementById("zoomin").addEventListener("click",()=>{zoomIndex=Math.m
 document.getElementById("zoomout").addEventListener("click",()=>{zoomIndex=Math.max(zoomIndex-1,0);updateZoom();});
 document.getElementById("zoomfit").addEventListener("click",()=>{zoomIndex=0;screen.scrollTo(0,0);updateZoom();});
 document.addEventListener("fullscreenchange",updateFullscreen);
-window.addEventListener("resize",updateZoom);
+window.addEventListener("resize",scheduleFit);
+window.addEventListener("orientationchange",()=>{
+  scheduleFit();
+  // Android browser controls can settle one frame after orientationchange.
+  setTimeout(scheduleFit,180);
+});
+if(window.visualViewport)window.visualViewport.addEventListener("resize",scheduleFit);
+if(window.screen.orientation?.addEventListener){
+  window.screen.orientation.addEventListener("change",scheduleFit);
+}
+if(window.ResizeObserver){
+  const observer=new ResizeObserver(scheduleFit);
+  observer.observe(screen);
+}
+scheduleFit();
 const status=document.getElementById("status"), log=document.getElementById("log");
 const interruptStatus=document.getElementById("interrupt-status");
 let forceTextView=false;
