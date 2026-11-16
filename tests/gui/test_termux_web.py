@@ -74,6 +74,18 @@ class TermuxWebTests(unittest.TestCase):
         self.assertIn('if(e.key==="Backspace"&&!field.value)', html)
         self.assertLess(html.index('id="typeform"'), html.index('class="controls"'))
 
+    def test_ctrl_break_feedback_and_text_view_controls_exist(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn('id="interrupt-status"', html)
+        self.assertIn('id="view"', html)
+        self.assertIn("Ctrl+Break refused:", html)
+        self.assertIn("Ctrl+Break delivered.", html)
+        self.assertIn("if(forceTextView&&reply.screen)textFrame(reply)", html)
+        code, data = self.request("POST", "/api/break", {})
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(data)["ok"])
+        self.assertEqual(self.session.commands[-1], "break")
+
     def test_input_waits_for_bios_buffer_space_instead_of_losing_enter(self):
         original_send = self.session.send
         blocked = [True]
