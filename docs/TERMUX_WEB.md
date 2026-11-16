@@ -90,6 +90,17 @@ a DOS command line.
   provided the guest has not already accepted Enter. The on-screen Enter
   and Bksp buttons also work. Browser keystrokes are queued when the BIOS
   keyboard ring fills, rather than silently discarding the final Enter.
+- **Layout:** navigation arrows sit in a directional pad; editing and
+  command keys have their own group. Less frequently used F1-F10 and page
+  keys are in an expandable section.
+- **Viewing and rotation:** **Full screen** expands the DOS canvas and
+  provides a compact in-view keyboard. **+**, **-** and **Fit** adjust screen
+  magnification. Zoomed images scroll inside the viewer, not the DOS guest.
+  Rotate between portrait and landscape at any time: the viewer refits to
+  the available width and height, including Android browser toolbar/keyboard
+  changes. Fullscreen retains the selected zoom factor after rotation.
+  If the browser disallows the Fullscreen API, an in-page expanded view is
+  used. This never changes emulated VGA resolution or guest execution.
 - **Mouse:** --mouse opts into Dine's INT 33h driver. Touch sends its
   existing virtual coordinates and button state; without --mouse, taps
   do not modify guest input.
