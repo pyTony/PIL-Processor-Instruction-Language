@@ -1,5 +1,8 @@
 # DOS console in Rust: `pil --dos-console`
 
+For Android/Termux touch graphics without X11 or Tk, use the
+[loopback browser interface](TERMUX_WEB.md) with the same DOS session backend.
+
 ## Startup, shortcuts and redirected input
 
 `pil --dos-text` selects the Rust terminal console (`--dos-console --tty`).
