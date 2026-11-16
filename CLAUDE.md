@@ -1,3 +1,20 @@
+# Doom past INT 33h 53C1h (Logitech SWIFT check) — 16 November 2026
+
+Tony's Doom from the retro image (Games > Doom, Ultimate Doom v1.9,
+DOS/4GW) stopped on "INT 33h mouse AX=53c1h is not implemented" once the
+mouse driver was on (the earlier Doom runs had no mouse). 53C1h is the
+Logitech SWIFT "get static device data" call that Doom's CyberMan startup
+makes; a program expects AX=0001h when the driver has SWIFT. Dine's driver
+(like CuteMouse) has no SWIFT, so 53C0h-53C3h now leave every register and
+the ES:DX buffer unchanged, as a driver without the extension does. Other
+unknown functions still stop.
+
+Local Linux, release: 903 Rust tests pass, 2 ignored (1 new).
+Doom (Tony's files, local only; DOOM.EXE SHA256 4970b0d1...05b38d4) with
+the mouse on prints "Mouse: detected", "CyberMan: Wrong mouse driver - no
+SWIFT", then plays its demos: 800 million guest steps, 536 distinct mode
+13h frames, no service stop. No input was sent and no sound card was
+tried. Not run on Windows.
 # PIL Retro shortcut: catalog lookup and named errors — 16 November 2026
 
 Tony's "PIL Retro" shortcut said "The runtime or catalog is missing": his

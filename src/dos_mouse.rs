@@ -206,6 +206,13 @@ impl Mouse{
             0x23=>low(&mut r[3],0),
             0x24=>{low(&mut r[3],VERSION);low(&mut r[1],0x0400);},
             0x26=>{low(&mut r[3],u16::from(self.disabled));low(&mut r[1],self.screen_x);low(&mut r[2],self.screen_y);},
+            // Logitech SWIFT/CyberMan extension (53C0h 3D position, 53C1h
+            // static device data, 53C2h dynamic device data, 53C3h tactile
+            // feedback). This driver has no SWIFT support, so it answers as
+            // a driver without the extension does: every register is left
+            // unchanged and the ES:DX buffer is not written. A program checks
+            // for AX=0001h after 53C1h and finds 53C1h still there.
+            0x53c0..=0x53c3=>{},
             _=>return Err(format!("INT 33h mouse AX={f:04x}h is not implemented")),
         }
         Ok(None)
