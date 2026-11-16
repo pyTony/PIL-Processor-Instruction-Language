@@ -13,17 +13,31 @@ pub(super) fn open_program(shell:&str,tail:Option<&str>,config:Option<&str>)->Re
     Ok(session)
 }
 
-pub(crate) fn run(shell:&str,catalog:&str)->Result<(),String>{
-    let Some(_instance)=instance::Instance::acquire()? else{return Ok(())};
-    let text=std::fs::read_to_string(catalog).map_err(|e|format!("catalog: {e}"))?;
+/// Parse a catalog: one entry per line, six tab-separated fields
+/// (group, title, description, folder, D:\...BAT launcher, reserved).
+/// Blank lines and lines starting with `#` are skipped.
+pub(super) fn parse(text:&str)->Result<Vec<Vec<&str>>,String>{
+    let text=text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut entries=Vec::new();
-    for line in text.lines().filter(|s|!s.is_empty()&&!s.starts_with('#')){
-        let fields:Vec<_>=line.split('\t').collect();
-        if fields.len()!=6||fields.iter().any(|s|s.chars().any(|c|c.is_control())){return Err("catalog needs six tab-separated fields per entry".into());}
-        if entries.len()>=200{return Err("catalog exceeds 200 entries".into());}
+    for (number,line) in text.lines().enumerate(){
+        let line=line.strip_suffix('\r').unwrap_or(line);
+        if line.trim().is_empty()||line.starts_with('#'){continue;}
+        let mut fields:Vec<_>=line.split('\t').collect();
+        // The sixth field is reserved; an editor that trims the trailing tab leaves five.
+        if fields.len()==5{fields.push("");}
+        if fields.len()!=6{return Err(format!("line {}: {} tab-separated fields, a catalog entry needs 6",number+1,fields.len()));}
+        if fields.iter().any(|s|s.chars().any(|c|c.is_control())){return Err(format!("line {}: control character in a field",number+1));}
+        if entries.len()>=200{return Err(format!("line {}: more than 200 entries",number+1));}
         entries.push(fields);
     }
-    if entries.is_empty(){return Err("catalog is empty".into());}
+    if entries.is_empty(){return Err("no entries (only blank or # lines)".into());}
+    Ok(entries)
+}
+
+pub(crate) fn run(shell:&str,catalog:&str)->Result<(),String>{
+    let text=std::fs::read_to_string(catalog).map_err(|e|format!("catalog {catalog}: {e}"))?;
+    let entries=parse(&text).map_err(|e|format!("catalog {catalog}: {e}"))?;
+    let Some(_instance)=instance::Instance::acquire()? else{return Ok(())};
     let (tx,rx)=mpsc::channel();let mut front=Front::open(cfg!(windows),tx)?;
     let mut selected=0usize;let mut notice=String::new();
     loop{
