@@ -131,6 +131,11 @@ sh tools/build.sh
 sh tools/debug.sh
 ```
 
+For Android/Termux phones with limited RAM, use `sh tools/build_termux.sh`
+and launch the no-X11 [browser graphics frontend](docs/TERMUX_WEB.md) with
+`python tools/termux_web.py --open`. It uses an existing engine binary,
+not another Cargo build.
+
 On Windows PowerShell:
 
 ```powershell

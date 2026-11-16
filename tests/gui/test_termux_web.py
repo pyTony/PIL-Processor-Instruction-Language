@@ -1,0 +1,114 @@
+"""HTTP and low-memory build regressions for the no-X11 Termux frontend."""
+import http.client
+import importlib.util
+import json
+from pathlib import Path
+import threading
+import unittest
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+spec = importlib.util.spec_from_file_location("termux_web", ROOT / "tools/termux_web.py")
+web = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(web)
+
+
+class FakeSession:
+    def __init__(self):
+        self.commands = []
+
+    def send(self, command):
+        self.commands.append(command)
+        if command.startswith("run "):
+            return {"ok": True, "output": "hello", "status": "running"}
+        return {
+            "ok": True, "status": "running", "screen": "2007" * 2000,
+            "columns": 80, "cursor": [0, 0], "steps": 123,
+        }
+
+
+class TermuxWebTests(unittest.TestCase):
+    def setUp(self):
+        self.session = FakeSession()
+        self.backend = web.WebBackend(self.session)
+        self.server = web.create_server(self.backend, 0)
+        self.assertEqual(self.server.server_address[0], "127.0.0.1")
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.thread.join, 2)
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def request(self, method, path, data=None, headers=None):
+        headers = headers or {}
+        if data is not None:
+            headers.setdefault("Content-Type", "application/json")
+            data = json.dumps(data)
+        client = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=4)
+        try:
+            client.request(method, path, body=data, headers=headers)
+            reply = client.getresponse()
+            return reply.status, reply.read()
+        finally:
+            client.close()
+
+    def test_index_and_meta_do_not_require_x11(self):
+        code, body = self.request("GET", "/")
+        self.assertEqual(code, 200)
+        self.assertIn(b"<canvas", body)
+        self.assertIn(b"graphics_planar", body)
+        self.assertIn(b"/api/key", body)
+        code, body = self.request("GET", "/api/meta")
+        meta = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(meta["glyphs"]), 256)
+        self.assertEqual(len(meta["colors"]), 16)
+        self.assertNotIn("snapshot", self.session.commands)
+
+    def test_run_and_snapshot_reuse_existing_engine_protocol(self):
+        code, body = self.request("POST", "/api/run", {"budget": 20000})
+        state = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertEqual(state["status"], "running")
+        self.assertEqual(state["output"], "hello")
+        self.assertEqual(self.session.commands, ["run 20000 buffered", "snapshot"])
+        code, body = self.request("GET", "/api/state")
+        self.assertEqual((code, json.loads(body)["steps"]), (200, 123))
+
+    def test_keys_text_and_mouse_use_guest_bios_protocol(self):
+        code, body = self.request("POST", "/api/key", {"ascii": 65, "scan": 30})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.session.commands[-1], "key 65 30")
+        code, body = self.request("POST", "/api/type", {"text": "Hi\n"})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.session.commands[-3:], ["key 72 35", "key 105 23", "key 13 28"])
+        code, body = self.request("POST", "/api/mouse", {"x": 320, "y": 100, "buttons": 1})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.session.commands[-1], "mouse 320 100 1")
+
+    def test_rejects_invalid_input_and_foreign_origins(self):
+        self.assertEqual(self.request("POST", "/api/run", {"budget": 1000001})[0], 400)
+        self.assertEqual(self.request("POST", "/api/run", {"budget": True})[0], 400)
+        self.assertEqual(self.request("POST", "/api/key", {"ascii": -1, "scan": 0})[0], 400)
+        self.assertEqual(self.request("POST", "/api/type", {"text": "x" * 257})[0], 400)
+        self.assertEqual(self.request("POST", "/api/mouse", {"x": 0, "y": 0, "buttons": 8})[0], 400)
+        code, body = self.request("POST", "/api/run", {"budget": 4},
+                                  {"Origin": "https://unrelated.example"})
+        self.assertEqual(code, 403)
+        self.assertEqual(self.request("POST", "/api/run", {"budget": 4},
+                                      {"Content-Type": "text/plain"})[0], 415)
+        self.assertEqual(self.request("GET", "/../file")[0], 404)
+        self.assertEqual(self.session.commands, [])
+
+    def test_build_script_serial_and_no_cargo_run(self):
+        script = (ROOT / "tools/build_termux.sh").read_text(encoding="utf-8")
+        self.assertIn("CARGO_BUILD_JOBS=1", script)
+        self.assertIn("CARGO_INCREMENTAL=0", script)
+        self.assertIn("CARGO_PROFILE_DEV_DEBUG=0", script)
+        self.assertIn("cargo build --locked --bin pil -j 1", script)
+        self.assertNotIn("\ncargo run ", script)
+
+
+if __name__ == "__main__":
+    unittest.main()
