@@ -53,6 +53,29 @@ class TermuxWebTests(unittest.TestCase):
         finally:
             client.close()
 
+    def test_abandoned_vga_response_does_not_retry_or_log_broken_pipe(self):
+        # Test the HTTP response boundary independently of the DOS engine.
+        # Both a failed header flush and a failed body write are common when
+        # Chrome switches tabs while a graphics snapshot is in flight.
+        handler_type = web.make_handler(self.backend)
+        for fail_headers in (False, True):
+            handler = object.__new__(handler_type)
+            handler.close_connection = False
+            handler.send_response = lambda *_args: None
+            handler.send_header = lambda *_args: None
+
+            def end_headers():
+                if fail_headers:
+                    raise BrokenPipeError(32, "broken pipe")
+            handler.end_headers = end_headers
+
+            class AbandonedStream:
+                def write(self, data):
+                    raise BrokenPipeError(32, "broken pipe")
+            handler.wfile = AbandonedStream()
+            handler.send_json(200, {"graphics_planar": "00" * 32})
+            self.assertTrue(handler.close_connection)
+
     def test_index_and_meta_do_not_require_x11(self):
         code, body = self.request("GET", "/")
         self.assertEqual(code, 200)
@@ -65,6 +88,47 @@ class TermuxWebTests(unittest.TestCase):
         self.assertEqual(len(meta["glyphs"]), 256)
         self.assertEqual(len(meta["colors"]), 16)
         self.assertNotIn("snapshot", self.session.commands)
+
+    def test_android_soft_keyboard_has_visible_focus_and_dos_enter(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn('id="keyboard"', html)
+        self.assertIn('enterkeyhint="send"', html)
+        self.assertIn('typeText(true)', html)
+        self.assertIn('if(e.key==="Backspace"&&!field.value)', html)
+        self.assertLess(html.index('id="typeform"'), html.index('class="controls"'))
+
+    def test_ctrl_break_feedback_and_text_view_controls_exist(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn('id="interrupt-status"', html)
+        self.assertIn('id="view"', html)
+        self.assertIn("Ctrl+Break refused:", html)
+        self.assertIn("Ctrl+Break delivered.", html)
+        self.assertIn("if(forceTextView&&reply.screen)textFrame(reply)", html)
+        code, data = self.request("POST", "/api/break", {})
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(data)["ok"])
+        self.assertEqual(self.session.commands[-1], "break")
+
+    def test_input_waits_for_bios_buffer_space_instead_of_losing_enter(self):
+        original_send = self.session.send
+        blocked = [True]
+
+        def congested_send(command):
+            if command.startswith("key ") and blocked[0]:
+                self.session.commands.append(command)
+                return {"ok": False, "text": "BIOS keyboard buffer full"}
+            return original_send(command)
+
+        self.session.send = congested_send
+        code, response = self.request("POST", "/api/type", {"text": "DIR\n"})
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(response)["queued"], 4)
+        self.assertEqual(len(self.backend.pending_keys), 4)
+        blocked[0] = False
+        code, _ = self.request("POST", "/api/run", {"budget": 1000})
+        self.assertEqual(code, 200)
+        self.assertEqual(list(self.backend.pending_keys), [])
+        self.assertIn("key 13 28", self.session.commands)
 
     def test_run_and_snapshot_reuse_existing_engine_protocol(self):
         code, body = self.request("POST", "/api/run", {"budget": 20000})
