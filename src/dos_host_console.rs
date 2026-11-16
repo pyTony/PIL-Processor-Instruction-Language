@@ -351,6 +351,8 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     host_menu_open=false;
                     if id==1{front.copy(session)?;}
                     else if id==2{pending.extend(front.paste());}
+                    else if id==3{note=Some(save_live_snapshot(session,pending.len()).unwrap_or_else(|e|e));}
+                    else if id==4{note=Some(session.disable_live_trace().map(|_|"Dispatch history disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id!=0{note=front.media_command(session,id);}
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
@@ -432,6 +434,21 @@ pub(crate) struct Front{
 /// A Windows Explorer "Copy as path" value may be quoted to preserve spaces.
 /// Keep the exact underlying path; no guest-file parsing or command execution.
 #[cfg(any(windows,test))]
+/// Append one atomic guest-state sample; never stop or step the guest here.
+/// The host input event loop invokes this between its bounded run slices.
+fn save_live_snapshot(session:&mut Session,host_pending:usize)->Result<String,String>{
+    use std::io::Write as _;
+    let (json,started)=session.live_snapshot(host_pending)?;
+    let path="PILdos-snapshots.jsonl";
+    let mut file=std::fs::OpenOptions::new().append(true).create(true).open(path)
+        .map_err(|e|format!("cannot open {path}: {e}"))?;
+    writeln!(file,"{json}").map_err(|e|format!("cannot write {path}: {e}"))?;
+    Ok(if started{
+        format!("Saved {path}; 32-entry trace enabled (capture again)")
+    }else{format!("Saved {path}")})
+}
+/// A Windows Explorer path, possibly quoted by Copy as path.
+#[cfg(any(windows,test))]
 fn clipboard_mount_path(text:&str)->Result<&str,String>{
     let text=text.trim();
     let path=if text.starts_with('"')||text.ends_with('"'){
@@ -462,6 +479,10 @@ impl Front{
                 items.push((base+8,"Mount clipboard path".into()));
                 items.push((base+7,"Unmount".into()));groups.push((format!("Drive {drive}:"),items));
             }
+            groups.push(("Diagnostics".into(),vec![
+                (3,"Save live guest snapshot".into()),
+                (4,"Disable instruction history".into()),
+            ]));
             w.window.popup(groups);return true;
         }
         false
