@@ -1,3 +1,25 @@
+#[test]
+fn optional_fm_expansion_ports_float_high_without_an_installed_synth(){
+    // Sound detection must not stop DOS when an optional FM device is absent.
+    for port in [0x380u32,0x381,0x387,0x388,0x389,0x38a,0x38b]{
+        let mut p=load(&[0xec],"fm-probe.com").unwrap();
+        p.cpu.regs[2]=port;
+        p.cpu.regs[0]=0x1234_5600;
+        assert_eq!(ports::io(&mut p).unwrap(),Some(1));
+        assert_eq!(p.cpu.regs[0],0x1234_56ff,"port {port:04x}");
+        let mut p=load(&[0xee],"fm-probe.com").unwrap();
+        p.cpu.regs[2]=port;
+        p.cpu.regs[0]=0x1234_5678;
+        assert_eq!(ports::io(&mut p).unwrap(),Some(1));
+        assert_eq!(p.cpu.regs[0],0x1234_5678,"port {port:04x}");
+    }
+}
+#[test]
+fn optional_fm_probe_does_not_hide_unrelated_unassigned_ports(){
+    let mut p=load(&[0xec],"fm-probe.com").unwrap();
+    p.cpu.regs[2]=0x390;
+    assert!(ports::io(&mut p).unwrap_err().contains("0390h"));
+}
 use super::*;
 #[test]
 fn cga_mode_control_out_retains_latch_without_touching_bios_shadow(){
