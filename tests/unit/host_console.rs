@@ -49,6 +49,51 @@ fn native_focus_loss_releases_simultaneous_keys_once_and_discards_late_text(){
     assert!(keys.input(text(0x1e,'a',NONE)).is_empty());
 }
 #[test]
+fn native_alt_f_reaches_edit_even_without_syschar_and_does_not_duplicate(){
+    // Windows may consume WM_SYSCHAR on the host. Physical Alt+F still needs
+    // the IBM BIOS key word 2100h for FreeDOS EDIT's File menu.
+    let mut keys=host_keys::WindowKeys::default();
+    let alt=Mods{alt:true,..NONE};
+    assert_eq!(keys.input(physical(0x12,0x38,false,true,alt)),
+        [native(0x38,false,true,None)]);
+    let press=keys.input(physical(0x46,0x21,false,true,alt));
+    assert_eq!(press,[native(0x21,false,true,Some((Key::Char('F'),alt)))]);
+    assert_eq!(native_bios_word(0x21,Some((Key::Char('F'),alt))),Some(0x2100));
+    // If Win32 also sends WM_SYSCHAR, suppress it rather than enqueueing
+    // the same Alt+F action twice.
+    assert!(keys.input(text(0x21,'f',alt)).is_empty());
+    assert_eq!(keys.input(physical(0x46,0x21,false,false,alt)),
+        [native(0x21,false,false,None)]);
+    assert_eq!(keys.input(physical(0x12,0x38,false,false,NONE)),
+        [native(0x38,false,false,None)]);
+    assert!(keys.input(Input::FocusLost).is_empty());
+}
+
+#[test]
+fn native_alt_f_key_repeats_focus_and_layout_scan_are_consistent(){
+    let mut keys=host_keys::WindowKeys::default();
+    let alt=Mods{alt:true,..NONE};
+    let mut repeat=physical(0x46,0x21,false,true,alt);
+    if let Input::Physical{ref mut repeat,..}=repeat{*repeat=3;}
+    assert_eq!(keys.input(repeat),vec![
+        native(0x21,false,true,Some((Key::Char('F'),alt)));3]);
+    assert_eq!(keys.input(Input::FocusLost),
+        [native(0x21,false,false,None)]);
+    assert!(keys.input(text(0x21,'f',alt)).is_empty());
+    // BIOS Alt+letter word uses the physical scan even when the layout
+    // reports a different letter on that key position.
+    assert_eq!(native_bios_word(0x21,Some((Key::Char('g'),alt))),Some(0x2100));
+    assert_eq!(native_bios_word(0x1e,Some((Key::Char('a'),NONE))),Some(0x1e61));
+    // Right-Alt/AltGr is Ctrl+Alt and must type the layout-translated symbol,
+    // never turn into the left-Alt menu shortcut.
+    let altgr=Mods{ctrl:true,alt:true,..NONE};
+    let mut keys=host_keys::WindowKeys::default();
+    assert!(keys.input(physical(0x51,0x10,false,true,altgr)).is_empty());
+    assert_eq!(keys.input(text(0x10,'@',NONE)),
+        [native(0x10,false,true,Some((Key::Char('@'),NONE)))]);
+}
+
+#[test]
 fn native_text_controls_altgr_and_host_shortcuts_keep_their_bios_mapping(){
     let mut keys=host_keys::WindowKeys::default();
     for (vk,scan,ch,key) in [(0x0d,0x1c,'\r',Key::Enter),(9,0x0f,'\t',Key::Tab),(8,0x0e,'\u{8}',Key::Backspace)]{
