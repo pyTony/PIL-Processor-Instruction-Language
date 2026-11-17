@@ -2130,7 +2130,17 @@ fn sound_blaster_mixer_word_failure_is_atomic_and_other_ports_remain_byte_only()
     let cpu=p.cpu.clone();let sb=format!("{:?}",p.sb);let pic=p.speaker.pic.clone();
     let r=run(p,1).unwrap();
     assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
-    assert_eq!(r.loaded.cpu,cpu);assert_eq!(format!("{:?}",r.loaded.sb),sb);
+    assert_eq!(r.loaded.cpu,cpu);
+    // The executor polls Sound Blaster timing at step zero before attempting
+    // the OUT instruction. That deterministic 1024-clock tick is independent
+    // of the rejected mixer write and must not be treated as an I/O mutation.
+    // Compare all remaining DSP/DMA/mixer state, retaining strict PIC/CPU checks.
+    let after=format!("{:?}",r.loaded.sb);
+    let (before_state,before_clock)=sb.rsplit_once(", now: ").unwrap();
+    let (after_state,after_clock)=after.rsplit_once(", now: ").unwrap();
+    assert_eq!(before_state,after_state,"rejected mixer write changed SB state");
+    assert_eq!(before_clock,"0 }");
+    assert_eq!(after_clock,"1024 }","unexpected synthetic clock progression");
     assert_eq!(r.loaded.speaker.pic,pic);
 
     // A word read of the DSP write/status port is not a mixer pair.
