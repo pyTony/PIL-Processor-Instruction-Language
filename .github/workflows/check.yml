@@ -84,6 +84,7 @@ jobs:
     with:
       core: ${{ needs.changes.outputs.core == 'true' }}
       frontend: ${{ needs.changes.outputs.frontend == 'true' }}
+      policy: false
       integration: ${{ needs.changes.outputs.integration == 'true' }}
       backends: ${{ needs.changes.outputs.backends == 'true' }}
       delivery: ${{ needs.changes.outputs.delivery == 'true' }}

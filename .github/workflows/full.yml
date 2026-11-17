@@ -4,6 +4,10 @@ name: Full CI
   - cron: 23 1 * * *
   workflow_dispatch:
     inputs:
+      policy:
+        description: Run repository policy checks
+        type: boolean
+        default: true
       core:
         description: Run core checks
         type: boolean
@@ -30,6 +34,9 @@ name: Full CI
         default: true
   workflow_call:
     inputs:
+      policy:
+        type: boolean
+        default: true
       core:
         type: boolean
         default: true
@@ -268,6 +275,7 @@ jobs:
     - run: python tools/build_recursive_fib.py --check
     - run: python tools/build_mz_demo.py --check
   policy:
+    if: github.event_name == 'schedule' || inputs.policy
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
