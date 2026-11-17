@@ -142,7 +142,6 @@ pub(crate) fn bios_word(key:Key,m:Mods)->Option<u16>{
 /// A physical Alt+letter is identified by its actual set-1 scan code,
 /// not by a US layout lookup. DOS INT 16h returns scan:00h for Alt+letters,
 /// including on layouts where the host virtual key and physical position differ.
-#[cfg(any(windows,test))]
 fn native_bios_word(scan:u8,key:Option<(Key,Mods)>)->Option<u16>{
     let (key,mods)=key?;
     match key {
