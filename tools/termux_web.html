@@ -309,7 +309,12 @@ function planar(reply){
     return [pal[index*3],pal[index*3+1],pal[index*3+2]];
   });
 }
-let previousDiagnosticSteps=null, previousFrameSignature=null, unchangedFrames=0;
+let previousDiagnosticSteps=null, previousDiagnosticTime=null;
+let firstDiagnosticSteps=null, firstDiagnosticTime=null;
+let previousFrameSignature=null, unchangedFrames=0;
+function formatRate(value){
+  return Number.isFinite(value)&&value>=0?Math.round(value).toLocaleString()+" steps/s":"measuring...";
+}
 function frameSignature(reply){
   // Sample guest framebuffer bytes, not the rendered canvas. Avoid expensive
   // full-frame comparisons on memory-constrained Android phones.
@@ -326,8 +331,19 @@ function frameSignature(reply){
 }
 function reportProgress(reply){
   const steps=Number(reply.steps);
-  const delta=Number.isFinite(steps)&&previousDiagnosticSteps!==null?steps-previousDiagnosticSteps:null;
-  if(Number.isFinite(steps))previousDiagnosticSteps=steps;
+  const now=performance.now();
+  const valid=reply.steps!==undefined&&reply.steps!==null&&Number.isFinite(steps);
+  // Session reset may restart the counter; avoid negative rates.
+  if(valid&&(firstDiagnosticSteps===null||steps<previousDiagnosticSteps)){
+    firstDiagnosticSteps=steps;firstDiagnosticTime=now;
+    previousDiagnosticSteps=null;previousDiagnosticTime=null;
+  }
+  const delta=valid&&previousDiagnosticSteps!==null?steps-previousDiagnosticSteps:null;
+  const seconds=previousDiagnosticTime!==null?(now-previousDiagnosticTime)/1000:0;
+  const instantRate=delta!==null&&delta>=0&&seconds>0?delta/seconds:NaN;
+  const elapsed=firstDiagnosticTime!==null?(now-firstDiagnosticTime)/1000:0;
+  const totalRate=valid&&elapsed>0?(steps-firstDiagnosticSteps)/elapsed:NaN;
+  if(valid){previousDiagnosticSteps=steps;previousDiagnosticTime=now;}
   const signature=frameSignature(reply);
   if(signature!==null){
     unchangedFrames=signature===previousFrameSignature?unchangedFrames+1:0;
@@ -337,6 +353,8 @@ function reportProgress(reply){
   document.getElementById("diagnostic-report").textContent=
     "Guest: "+(reply.status||"unknown")+" | total steps: "+(reply.steps??"?")+
     " | steps since prior update: "+(delta??"first sample")+
+    " | recent: "+formatRate(instantRate)+
+    " | average: "+formatRate(totalRate)+
     " | graphics: "+changed;
 }
 function paint(reply){
