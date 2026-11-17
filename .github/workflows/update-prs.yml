@@ -65,7 +65,7 @@ jobs:
                 echo "merged dev and pushed"
                 # GITHUB_TOKEN pushes do not trigger push/pull_request checks.
                 # workflow_dispatch is an allowed exception.
-                if gh workflow run check.yml --ref "$branch"; then
+                if gh workflow run check.yml --ref "$branch" -f full=false -f base_ref=dev; then
                   echo "dispatched Check for updated PR #$number ($branch)"
                 else
                   echo "::error::#$number updated but Check dispatch failed: $branch"
