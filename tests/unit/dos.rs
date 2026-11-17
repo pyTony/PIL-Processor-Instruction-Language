@@ -1733,7 +1733,7 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
   assert!(matches!(r.stop, Stop::Monitor(_)), "{:?}", r.stop);
   let first = r.loaded.cpu.regs[3] & 0xff;
   let second = (r.loaded.cpu.regs[3] >> 8) & 0xff;
-  assert_ne!(first & 1, second & 1, "bit 0 toggles between reads on port {port:04x}h");
+  assert_eq!(first & 1, second & 1, "display blanking remains stable across adjacent polls on port {port:04x}h");
  }
  // 4HELP.EXE CGA snow check: wait until horizontal blank ends, then wait until blank begins.
  let snow_code = [
@@ -1758,6 +1758,28 @@ fn video_status_ports_cycle_retrace_and_horizontal_blanking(){
   let r=run(load(code,"port.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  }
 }
+#[test]
+fn vga_status_two_consecutive_blanking_polls_advance_wolfenstein_sync_loop(){
+    // Synthetic version of the VGA timing loop captured in Wolfenstein 3D:
+    // poll port 03DAh until two consecutive reads have display blanking
+    // asserted (bit 0) while vertical retrace (bit 3) stays clear.
+    // A previous model flipped bit 0 after every read, making it impossible
+    // for the guest to exit even after tens of millions of instructions.
+    //
+    // MOV DX,03DAh; loop: IN AL,DX; TEST AL,08h; JNZ loop;
+    // TEST AL,01h; JZ loop; IN AL,DX; TEST AL,08h; JNZ loop;
+    // TEST AL,01h; JZ loop; CLI; HLT.
+    let code=[
+        0xba,0xda,0x03, 0xec,0xa8,0x08,0x75,0xfb,
+        0xa8,0x01,0x74,0xf7, 0xec,0xa8,0x08,0x75,0xf2,
+        0xa8,0x01,0x74,0xee, 0xfa,0xf4,
+    ];
+    let result=run(load(&code,"vga-dual-blank.com").unwrap(),150).unwrap();
+    assert!(matches!(result.stop,Stop::Monitor(_)), "{:?}",result.stop);
+    assert_eq!(result.loaded.cpu.regs[0]&9,1,
+        "both consecutive blanking polls must occur outside vertical retrace");
+}
+
 #[test]
 fn memory_drive_is_z_with_temp_and_keeps_files_for_the_session(){
  let mut p=load_with_drives(&[0xcd,0x21],"x.com",vec![Source::Memory(MemDir::default())],None).unwrap();let psp=u32::from(PSP)*16;
