@@ -29,6 +29,8 @@ pub(crate) struct Mods{pub(crate) shift:bool,pub(crate) ctrl:bool,pub(crate) alt
 #[cfg_attr(not(windows),allow(dead_code))]
 pub(crate) enum Event{
     Key(Key,Mods),
+    /// Physical set-1 identity plus optional layout-translated BIOS key.
+    NativeKey{scan:u8,extended:bool,down:bool,key:Option<(Key,Mods)>},
     /// Ctrl+Break.
     Break,
     /// The pointer at a fraction of the drawn screen: x/width, y/height;
@@ -41,6 +43,22 @@ pub(crate) enum Event{
     HostMenu,
     HostCommand(u16),
     Quit,
+}
+
+#[cfg(any(windows,test))]
+#[path="dos_host_keys.rs"]
+mod host_keys;
+
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum PendingKey{Tap(u16),Native{scan:u8,extended:bool,down:bool,word:Option<u16>}}
+impl From<u16> for PendingKey{fn from(word:u16)->Self{Self::Tap(word)}}
+impl PendingKey{
+    fn send(self,session:&mut Session)->Result<bool,String>{
+        match self{
+            Self::Tap(word)=>session.key(word as u8,(word>>8)as u8),
+            Self::Native{scan,extended,down,word}=>session.native_key(scan,extended,down,word),
+        }
+    }
 }
 
 // US-layout set 1 scan codes of the keys that type ASCII.
@@ -326,7 +344,7 @@ pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&
 
 fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound,sb_sound:&mut sb_audio::Sound)->Result<String,String>{
     const SLICE:usize=20_000;
-    let mut pending=std::collections::VecDeque::<u16>::new();
+    let mut pending=std::collections::VecDeque::<PendingKey>::new();
     let mut last_present=Instant::now()-Duration::from_secs(1);
     let mut note=None::<String>;
     let mut host_menu_open=false;
@@ -343,14 +361,18 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     let letter=if n%2==1{b'A'}else{b'B'};
                     note=Some(session.disk(letter,Some(if n<=2{"next"}else{"prev"})).unwrap_or_else(|e|e));
                 },
-                Event::Key(key,mods)=>{front.clear_selection();if let Some(word)=bios_word(key,mods){pending.push_back(word);}},
+                Event::Key(key,mods)=>{front.clear_selection();if let Some(word)=bios_word(key,mods){pending.push_back(word.into());}},
+                Event::NativeKey{scan,extended,down,key}=>{
+                    front.clear_selection();
+                    pending.push_back(PendingKey::Native{scan,extended,down,word:key.and_then(|(k,m)|bios_word(k,m))});
+                },
                 Event::Copy=>front.copy(session)?,
-                Event::Paste=>pending.extend(front.paste()),
+                Event::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
                 Event::HostMenu=>{host_menu_open=front.media_menu();},
                 Event::HostCommand(id)=>{
                     host_menu_open=false;
                     if id==1{front.copy(session)?;}
-                    else if id==2{pending.extend(front.paste());}
+                    else if id==2{pending.extend(front.paste().into_iter().map(PendingKey::from));}
                     else if id==3{note=Some(save_live_snapshot(session,pending.len()).unwrap_or_else(|e|e));}
                     else if id==4{note=Some(session.disable_live_trace().map(|_|"Dispatch history disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id!=0{note=front.media_command(session,id);}
@@ -362,7 +384,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     if front.selects(active,shift){
                         match front.select(session,x,y,width,height,buttons)?{
                             select::Gesture::Copy=>front.copy(session)?,
-                            select::Gesture::Paste=>pending.extend(front.paste()),
+                            select::Gesture::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
                             select::Gesture::None=>{},
                         }
                     }else if width>0&&height>0{
@@ -375,8 +397,8 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
             }
         }
         if host_menu_open{std::thread::sleep(Duration::from_millis(10));continue;}
-        while let Some(&word)=pending.front(){
-            if session.key(word as u8,(word>>8) as u8)?{pending.pop_front();}else{break;}
+        while let Some(&key)=pending.front(){
+            if key.send(session)?{pending.pop_front();}else{break;}
         }
         // Run for about one frame.
         let until=Instant::now()+Duration::from_millis(15);
@@ -665,9 +687,9 @@ impl WindowFront{
         let (input,raw)=mpsc::channel::<crate::dine_window::Input>();
         // The window thread sends raw input; map it here, off the window thread.
         std::thread::Builder::new().name("dine-console-input".into()).spawn(move||{
+            let mut keys=host_keys::WindowKeys::default();
             for input in raw{
-                let event=window_event(input);
-                if let Some(event)=event{if tx.send(event).is_err(){break;}}
+                for event in keys.input(input){if tx.send(event).is_err(){return;}}
             }
         }).ok();
         let font=super::vga_text::font().unwrap_or_else(|_|vec![0;256*super::vga_text::CELL_HEIGHT]);
@@ -700,7 +722,7 @@ impl WindowFront{
 }
 /// A window input as a console event. Ctrl+Shift+C and Ctrl+Shift+V copy
 /// and paste, as Shift+Insert pastes; plain Ctrl+C and Ctrl+V reach DOS.
-#[cfg(windows)]
+#[cfg(any(windows,test))]
 fn window_event(input:crate::dine_window::Input)->Option<Event>{
     use crate::dine_window::Input;
     match input{
@@ -728,10 +750,11 @@ fn window_event(input:crate::dine_window::Input)->Option<Event>{
         Input::Key{vk,shift,ctrl,alt}=>windows_key(vk).map(|k|if k==Event::Break{k}else if let Event::Key(k,_)=k{Event::Key(k,Mods{shift,ctrl,alt})}else{k}),
         Input::Mouse{x,y,width,height,buttons,shift}=>Some(Event::Mouse{x,y,width,height,buttons,shift}),
         Input::Menu{id}=>Some(Event::HostCommand(id)),
+        Input::Physical{..}|Input::Text{..}|Input::DeadKey|Input::FocusLost=>None,
     }
 }
 /// Windows virtual-key codes of the keys that type nothing.
-#[cfg(windows)]
+#[cfg(any(windows,test))]
 fn windows_key(vk:u16)->Option<Event>{
     let m=Mods::default();
     Some(Event::Key(match vk{
