@@ -12,9 +12,13 @@ pub(crate) struct Frame {
 /// Input from an interactive window, before any DOS mapping: a typed
 /// character, a key that types none (Windows virtual-key code), or the mouse
 /// in client coordinates.
-#[cfg(windows)]
+#[cfg(any(windows,test))]
 #[derive(Clone,Copy,Debug)]
 pub(crate) enum Input{
+    Physical{vk:u16,scan:u8,extended:bool,down:bool,repeat:u16,shift:bool,ctrl:bool,alt:bool},
+    Text{scan:u8,extended:bool,ch:char,shift:bool,ctrl:bool,alt:bool},
+    DeadKey,
+    FocusLost,
     Char{ch:char,shift:bool,ctrl:bool,alt:bool},
     Key{vk:u16,shift:bool,ctrl:bool,alt:bool},
     Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16,shift:bool},
@@ -114,6 +118,11 @@ mod windows {
     static HOST_MENU:OnceLock<Mutex<MenuGroups>>=OnceLock::new();
     const WM_HOST_MENU:u32=0x8001;
     const WM_KEYDOWN:u32=0x100;
+    const WM_KEYUP:u32=0x101;
+    const WM_SYSKEYUP:u32=0x105;
+    const WM_KILLFOCUS:u32=0x08;
+    const WM_DEADCHAR:u32=0x103;
+    const WM_SYSDEADCHAR:u32=0x107;
     const WM_CHAR:u32=0x102;
     const WM_SYSKEYDOWN:u32=0x104;
     const WM_SYSCHAR:u32=0x106;
@@ -128,9 +137,6 @@ mod windows {
         match guard.as_ref(){Some(tx)=>{let _=tx.send(input);true},None=>false}
     }
     fn held(vk:i32)->bool{unsafe{GetKeyState(vk)<0}}
-    /// Keys that type no character reach WM_KEYDOWN only: arrows, the editing
-    /// block, F1-F12 and Ctrl+Break.
-    fn untyped(vk:usize)->bool{matches!(vk,0x03|0x21..=0x28|0x2d|0x2e|0x5d|0x70..=0x7b)}
 
     #[repr(C)]
     #[derive(Default,Clone,Copy)]
@@ -285,6 +291,7 @@ mod windows {
     unsafe extern "system" fn wndproc(hwnd:Handle,msg:u32,w:usize,l:isize)->isize{
         match msg{
             WM_HOST_MENU=>{
+                send(Input::FocusLost);
                 let menu=CreatePopupMenu();
                 if menu.is_null(){send(Input::Menu{id:0});return 0;}
                 if let Some(groups)=HOST_MENU.get().and_then(|m|m.lock().ok()){
@@ -342,17 +349,24 @@ mod windows {
                 }
                 0
             },
-            WM_KEYDOWN|WM_SYSKEYDOWN if untyped(w)&&!(msg==WM_SYSKEYDOWN&&w==VK_F4)=>{
-                let input=Input::Key{vk:w as u16,shift:held(VK_SHIFT),ctrl:held(VK_CONTROL),alt:held(VK_MENU)};
-                if send(input){0}else{DefWindowProcW(hwnd,msg,w,l)}
+            WM_KEYDOWN|WM_SYSKEYDOWN|WM_KEYUP|WM_SYSKEYUP=>{
+                // TranslateMessage retains layout/AltGr/dead-key text. Physical
+                // identity comes from lParam, never from a translated character.
+                let sent=send(Input::Physical{vk:w as u16,scan:((l>>16)&0x7f)as u8,extended:l&(1<<24)!=0,
+                    down:matches!(msg,WM_KEYDOWN|WM_SYSKEYDOWN),repeat:(l as u16).max(1),shift:held(VK_SHIFT),ctrl:held(VK_CONTROL),alt:held(VK_MENU)});
+                if !sent||(matches!(msg,WM_SYSKEYDOWN|WM_SYSKEYUP)&&w==VK_F4){DefWindowProcW(hwnd,msg,w,l)}else{0}
             },
+            WM_KILLFOCUS=>{send(Input::FocusLost);DefWindowProcW(hwnd,msg,w,l)},
+            WM_DEADCHAR|WM_SYSDEADCHAR=>{send(Input::DeadKey);0},
             WM_CHAR|WM_SYSCHAR=>{
                 let Some(ch)=char::from_u32(w as u32) else {return 0;};
                 let (ctrl,alt)=(held(VK_CONTROL),msg==WM_SYSCHAR||held(VK_MENU));
                 // AltGr arrives as Ctrl+Alt with the character it typed.
                 let altgr=ctrl&&alt&&!ch.is_control();
-                let input=Input::Char{ch,shift:held(VK_SHIFT),ctrl:ctrl&&!altgr,alt:alt&&!altgr};
-                if send(input){0}else{DefWindowProcW(hwnd,msg,w,l)}
+                let input=Input::Text{scan:((l>>16)&0x7f)as u8,extended:l&(1<<24)!=0,ch,shift:held(VK_SHIFT),ctrl:ctrl&&!altgr,alt:alt&&!altgr};
+                let mut sent=false;
+                for _ in 0..(l as u16).max(1){sent|=send(input);}
+                if sent{0}else{DefWindowProcW(hwnd,msg,w,l)}
             },
             WM_MOUSEMOVE|WM_LBUTTONDOWN|WM_LBUTTONUP|WM_RBUTTONDOWN|WM_RBUTTONUP|WM_MBUTTONDOWN|WM_MBUTTONUP=>{
                 let mut client=Rect::default();
@@ -399,7 +413,7 @@ mod windows {
                     DefWindowProcW(hwnd,msg,w,l)
                 }
             },
-            WM_CLOSE=>{DestroyWindow(hwnd);0},
+            WM_CLOSE=>{send(Input::FocusLost);DestroyWindow(hwnd);0},
             WM_DESTROY=>{
                 debug_log("WM_DESTROY: VGA window closed");
                 CLOSED.store(true,Ordering::Release);

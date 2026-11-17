@@ -149,6 +149,13 @@ impl Session{
         if keyboard::hooked(p)?{return keyboard::edge(p,u16::from(scan)<<8|u16::from(ascii),down);}
         if down{self.key(ascii,scan)}else{Ok(true)}
     }
+    /// Native window input has physical scan codes, independent of BIOS words.
+    pub(crate) fn native_key(&mut self,scan:u8,extended:bool,down:bool,word:Option<u16>)->Result<bool,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        if keyboard::hooked(p)?{return keyboard::physical(p,scan,extended,down,word);}
+        if down{if let Some(word)=word{return self.key(word as u8,(word>>8)as u8);}}
+        Ok(true)
+    }
     /// The active text page as character/attribute pairs, its width and the cursor.
     pub fn screen(&self)->Result<(Vec<u8>,u32,(u32,u32)),String>{
         let p=self.loaded.as_ref().ok_or("session state lost")?;
