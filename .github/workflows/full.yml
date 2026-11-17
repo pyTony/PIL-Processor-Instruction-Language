@@ -280,7 +280,6 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - run: python tools/dos_program_versions.py --check
     - run: python tools/build_selftest.py --check
     - run: python tools/build_hello.py --check
     - run: python tools/build_numeric.py --check
@@ -292,9 +291,6 @@ jobs:
     - run: python tools/verify_exchange.py
     - run: python tools/verify_flag_transfer.py
     - run: python tools/verify_direction_flag.py
-    - run: python tools/build_ansi_mandel.py --check
-    - run: python tools/build_recursive_fib.py --check
-    - run: python tools/build_mz_demo.py --check
   policy:
     if: github.event_name == 'schedule' || inputs.policy
     runs-on: ubuntu-latest
@@ -307,3 +303,15 @@ jobs:
     - run: python tools/check_portable_paths.py --self-test
     - run: python tools/check_program_specific.py --self-test
     - run: python tools/export_runtime.py target/runtime-links
+  fixtures:
+    if: github.event_name == 'schedule' || inputs.dos || inputs.core
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - run: python tools/dos_program_versions.py --check
+    - run: python tools/build_ansi_mandel.py --check
+    - run: python tools/build_recursive_fib.py --check
+    - run: python tools/build_mz_demo.py --check
