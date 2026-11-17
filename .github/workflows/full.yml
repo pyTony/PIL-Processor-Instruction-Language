@@ -1,0 +1,317 @@
+name: Full CI
+'on':
+  schedule:
+  - cron: 23 1 * * *
+  workflow_dispatch:
+    inputs:
+      policy:
+        description: Run repository policy checks
+        type: boolean
+        default: true
+      core:
+        description: Run core checks
+        type: boolean
+        default: true
+      frontend:
+        description: Run frontend checks
+        type: boolean
+        default: true
+      integration:
+        description: Run integration checks
+        type: boolean
+        default: true
+      backends:
+        description: Run backends checks
+        type: boolean
+        default: true
+      delivery:
+        description: Run delivery checks
+        type: boolean
+        default: true
+      performance:
+        description: Run performance checks
+        type: boolean
+        default: true
+      dos:
+        type: boolean
+        default: true
+        description: Run dos checks
+      library:
+        type: boolean
+        default: true
+        description: Run library checks
+  workflow_call:
+    inputs:
+      policy:
+        type: boolean
+        default: true
+      core:
+        type: boolean
+        default: true
+      frontend:
+        type: boolean
+        default: true
+      integration:
+        type: boolean
+        default: true
+      backends:
+        type: boolean
+        default: true
+      delivery:
+        type: boolean
+        default: true
+      performance:
+        type: boolean
+        default: true
+      dos:
+        type: boolean
+        default: true
+      library:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: full-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  modules:
+    name: modules (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ci
+        cache-workspace-crates: true
+        cache-on-failure: true
+    - name: 'dos: focused Rust tests'
+      if: (github.event_name == 'schedule' || inputs.dos) && !inputs.core && github.event_name != 'schedule'
+      run: cargo test --locked dos -- --show-output
+    - run: cargo test --locked -- --show-output
+      if: (github.event_name == 'schedule' || inputs.core)
+      name: 'core: cargo test --locked -- --show-output'
+    - run: cargo run --locked -- --selftest
+      if: (github.event_name == 'schedule' || inputs.core)
+      name: 'core: cargo run --locked -- --selftest'
+    - run: cargo run --locked -- --numeric-test
+      if: (github.event_name == 'schedule' || inputs.core)
+      name: 'core: cargo run --locked -- --numeric-test'
+    - name: 'frontend: build engine once'
+      if: github.event_name == 'schedule' || inputs.frontend
+      run: cargo build --locked --bin pil
+    - name: 'frontend: Python GUI and engine checks'
+      if: github.event_name == 'schedule' || inputs.frontend
+      run: python -m unittest discover -s tests/gui -v
+    - run: cargo build --locked --bin pil
+      if: github.event_name == 'schedule' || inputs.integration || inputs.backends
+      name: 'integration: cargo build --locked --bin pil'
+    - run: python tools/verify_debug_service.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_debug_service.py'
+    - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Windows')
+      run: python tools/verify_debug_service.py --window
+      name: 'integration: python tools/verify_debug_service.py --window'
+    - run: python tools/verify_dos_probe.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_dos_probe.py'
+    - run: python tools/verify_dos_text_io.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_dos_text_io.py'
+    - run: python tools/verify_ansi_mandel.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_ansi_mandel.py'
+    - run: python tools/verify_dos_demos.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_dos_demos.py'
+    - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Linux')
+      run: python tools/verify_dos_console.py --engine target/debug/pil --out target/console-fixtures
+      name: 'integration: python tools/verify_dos_console.py --engine target/debug/pil --out target/console-fixtures'
+    - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Windows')
+      run: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures
+      name: 'integration: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures'
+    - if: (github.event_name == 'schedule' || inputs.integration || inputs.backends) && runner.os == 'Linux'
+      run: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x
+      name: 'integration: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x'
+    - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Linux')
+      env:
+        SDL_VIDEODRIVER: dummy
+        SDL_AUDIODRIVER: dummy
+      run: |
+        python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
+        python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cga --out target/dosbox-cga
+      name: 'integration: DOSBox console and CGA comparisons'
+    - if: (github.event_name == 'schedule' || inputs.backends) && runner.os == 'Linux'
+      env:
+        SDL_VIDEODRIVER: dummy
+        SDL_AUDIODRIVER: dummy
+      run: python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
+      name: 'backends: DOSBox CPU comparison'
+    - run: python tools/verify_containers.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_containers.py'
+    - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Linux')
+      run: sh tools/debug.sh --check
+      name: 'integration: sh tools/debug.sh --check'
+    - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Windows')
+      shell: pwsh
+      run: ./tools/debug.ps1 -Check
+      name: 'integration: ./tools/debug.ps1 -Check'
+    - name: 'integration: release engine for graphics checks'
+      if: github.event_name == 'schedule' || inputs.integration
+      run: cargo build --release --locked --bin pil
+    - run: python tools/verify_mandel_cycle.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_mandel_cycle.py'
+    - run: python tools/verify_mandel_cga.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_mandel_cga.py'
+    - run: python tools/verify_mandel_vga.py
+      if: (github.event_name == 'schedule' || inputs.integration)
+      name: 'integration: python tools/verify_mandel_vga.py'
+    - run: python tools/check_build_warnings.py
+      if: github.event_name == 'schedule' || inputs.library || inputs.backends
+      name: 'backends: python tools/check_build_warnings.py'
+    - run: python tools/check_build_warnings.py build --release --locked --lib --features dine-library
+      if: github.event_name == 'schedule' || inputs.library || inputs.backends
+      name: 'backends: python tools/check_build_warnings.py build --release --locked --lib --features dine-library'
+    - run: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check
+      if: (github.event_name == 'schedule' || inputs.backends)
+      name: 'backends: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check'
+    - run: python tools/verify_dine_library.py
+      if: (github.event_name == 'schedule' || inputs.library)
+      name: 'library: python tools/verify_dine_library.py'
+    - if: (github.event_name == 'schedule' || inputs.library) && (runner.os == 'Windows')
+      run: python tools/verify_dos_text_io.py --library target/release/dine.dll
+      name: 'library: python tools/verify_dos_text_io.py --library target/release/dine.dll'
+    - if: (github.event_name == 'schedule' || inputs.library) && (runner.os == 'Linux')
+      run: python tools/verify_dos_text_io.py --library target/release/libdine.so
+      name: 'library: python tools/verify_dos_text_io.py --library target/release/libdine.so'
+    - run: python tools/verify_dine_executable.py
+      if: (github.event_name == 'schedule' || inputs.library)
+      name: 'library: python tools/verify_dine_executable.py'
+    - run: cargo run --release --locked -- --verify-backends
+      if: (github.event_name == 'schedule' || inputs.backends)
+      name: 'backends: cargo run --release --locked -- --verify-backends'
+    - if: (github.event_name == 'schedule' || inputs.backends) && (runner.os == 'Linux')
+      run: sh tools/mandelbrot.sh 256 32
+      name: 'backends: sh tools/mandelbrot.sh 256 32'
+    - if: (github.event_name == 'schedule' || inputs.backends) && (runner.os == 'Windows')
+      shell: pwsh
+      run: ./tools/mandelbrot.ps1 -Size 256 -Iterations 32
+      name: 'backends: ./tools/mandelbrot.ps1 -Size 256 -Iterations 32'
+    - run: python tools/verify_mandelbrot.py target/mandelbrot/256x256-i32/mandelbrot.pgm 256 32
+      if: (github.event_name == 'schedule' || inputs.backends)
+      name: 'backends: python tools/verify_mandelbrot.py target/mandelbrot/256x256-i32/mandelbrot.pgm 256 32'
+    - if: (github.event_name == 'schedule' || inputs.backends) && (runner.os == 'Linux')
+      run: sh tools/mandelbrot.sh --compare 256 32
+      name: 'backends: sh tools/mandelbrot.sh --compare 256 32'
+    - if: (github.event_name == 'schedule' || inputs.backends) && (runner.os == 'Windows')
+      shell: pwsh
+      run: ./tools/mandelbrot.ps1 -Compare -Size 256 -Iterations 32
+      name: 'backends: ./tools/mandelbrot.ps1 -Compare -Size 256 -Iterations 32'
+    - run: python tools/export_runtime.py target/runtime-source --verify
+      if: (github.event_name == 'schedule' || inputs.delivery)
+      name: 'delivery: python tools/export_runtime.py target/runtime-source --verify'
+    - name: 'delivery: release engine'
+      if: github.event_name == 'schedule' || inputs.delivery
+      run: cargo build --release --locked --bin pil
+    - run: python tools/package.py
+      if: (github.event_name == 'schedule' || inputs.delivery)
+      name: 'delivery: python tools/package.py'
+    - uses: actions/upload-artifact@v6
+      with:
+        name: pil-${{ matrix.os }}
+        path: dist/*.zip
+      if: (github.event_name == 'schedule' || inputs.delivery)
+      name: 'delivery: actions/upload-artifact@v6'
+    - run: cargo build --release --locked --bin pil
+      if: (github.event_name == 'schedule' || inputs.performance)
+      name: 'performance: cargo build --release --locked --bin pil'
+    - if: (github.event_name == 'schedule' || inputs.performance) && (runner.os == 'Linux')
+      run: sh tools/bench.sh 10000 5
+      name: 'performance: sh tools/bench.sh 10000 5'
+    - if: (github.event_name == 'schedule' || inputs.performance) && (runner.os == 'Linux')
+      run: sh tools/bench.sh 10000 5 --uncached
+      name: 'performance: sh tools/bench.sh 10000 5 --uncached'
+    - if: (github.event_name == 'schedule' || inputs.performance) && (runner.os == 'Windows')
+      shell: pwsh
+      run: ./tools/bench.ps1 -Iterations 10000 -Samples 5
+      name: 'performance: ./tools/bench.ps1 -Iterations 10000 -Samples 5'
+    - if: (github.event_name == 'schedule' || inputs.performance) && (runner.os == 'Windows')
+      shell: pwsh
+      run: ./tools/bench.ps1 -Iterations 10000 -Samples 5 -Uncached
+      name: 'performance: ./tools/bench.ps1 -Iterations 10000 -Samples 5 -Uncached'
+    - if: (github.event_name == 'schedule' || inputs.performance) && (runner.os == 'Linux')
+      run: sh tools/compare.sh 10000 5
+      name: 'performance: sh tools/compare.sh 10000 5'
+    - if: (github.event_name == 'schedule' || inputs.performance) && (runner.os == 'Windows')
+      shell: pwsh
+      run: ./tools/compare.ps1 -Iterations 10000 -Samples 5
+      name: 'performance: ./tools/compare.ps1 -Iterations 10000 -Samples 5'
+    - name: Upload backend evidence
+      if: '!cancelled() && (github.event_name == ''schedule'' || inputs.backends)'
+      uses: actions/upload-artifact@v6
+      with:
+        name: backend-${{ matrix.os }}
+        path: |-
+          target/host-cpu-oracle/run-*/report.txt
+          target/host-cpu-oracle/run-*/cases.jsonl
+          target/host-cpu-oracle/run-*/hardware.bin
+          target/mandelbrot/256x256-i32/*
+          target/backend-comparison/run-*/mandelbrot/*
+    if: github.event_name == 'schedule' || inputs.core || inputs.integration || inputs.backends || inputs.delivery || inputs.performance
+      || inputs.frontend || inputs.dos || inputs.library
+  oracles:
+    if: github.event_name == 'schedule' || inputs.core
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - run: python tools/build_selftest.py --check
+    - run: python tools/build_hello.py --check
+    - run: python tools/build_numeric.py --check
+    - run: python tools/verify_memory.py
+    - run: python tools/verify_descriptions.py
+    - run: python tools/verify_flow.py
+    - run: python tools/verify_extensions.py
+    - run: python tools/verify_rotates.py
+    - run: python tools/verify_exchange.py
+    - run: python tools/verify_flag_transfer.py
+    - run: python tools/verify_direction_flag.py
+  policy:
+    if: github.event_name == 'schedule' || inputs.policy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - run: python -m unittest discover -s tests/ci -v
+    - run: python tools/check_portable_paths.py --self-test
+    - run: python tools/check_program_specific.py --self-test
+    - run: python tools/export_runtime.py target/runtime-links
+  fixtures:
+    if: github.event_name == 'schedule' || inputs.dos || inputs.core
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - run: python tools/dos_program_versions.py --check
+    - run: python tools/build_ansi_mandel.py --check
+    - run: python tools/build_recursive_fib.py --check
+    - run: python tools/build_mz_demo.py --check
