@@ -94,6 +94,7 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 </div>
 </section>
 <div id="status" role="status">Connecting to PILdos...</div>
+<details id="diagnostics"><summary>Execution diagnostics</summary><div id="diagnostic-report" role="status" aria-live="off">Waiting for a frame...</div><small>Step progress does not guarantee guest graphics progress. Pause to inspect the last frame.</small></details>
 <div id="interrupt-status" role="status" aria-live="polite"></div>
 <form class="type" id="typeform"><input id="type" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tap to type DOS command" aria-label="DOS command input"><button type="submit">Type + ↵</button><button id="typeonly" type="button">Type</button><button id="keyboard" type="button">⌨ Keyboard</button></form>
 <div class="controls">
@@ -308,8 +309,39 @@ function planar(reply){
     return [pal[index*3],pal[index*3+1],pal[index*3+2]];
   });
 }
+let previousDiagnosticSteps=null, previousFrameSignature=null, unchangedFrames=0;
+function frameSignature(reply){
+  // Sample guest framebuffer bytes, not the rendered canvas. Avoid expensive
+  // full-frame comparisons on memory-constrained Android phones.
+  const frame=reply.graphics13||reply.graphics_cga||reply.graphics_planar;
+  if(!frame)return null;
+  const raw=typeof frame==="string"?frame:JSON.stringify(frame);
+  if(!raw.length)return "empty";
+  let hash=2166136261;
+  const stride=Math.max(1,Math.floor(raw.length/256));
+  for(let i=0;i<raw.length;i+=stride){
+    hash=Math.imul(hash^raw.charCodeAt(i),16777619);
+  }
+  return raw.length+":"+(hash>>>0);
+}
+function reportProgress(reply){
+  const steps=Number(reply.steps);
+  const delta=Number.isFinite(steps)&&previousDiagnosticSteps!==null?steps-previousDiagnosticSteps:null;
+  if(Number.isFinite(steps))previousDiagnosticSteps=steps;
+  const signature=frameSignature(reply);
+  if(signature!==null){
+    unchangedFrames=signature===previousFrameSignature?unchangedFrames+1:0;
+    previousFrameSignature=signature;
+  }else{unchangedFrames=0;previousFrameSignature=null;}
+  const changed=signature===null?"no graphics framebuffer":unchangedFrames===0?"sample changed":"sample unchanged for "+unchangedFrames+" polls";
+  document.getElementById("diagnostic-report").textContent=
+    "Guest: "+(reply.status||"unknown")+" | total steps: "+(reply.steps??"?")+
+    " | steps since prior update: "+(delta??"first sample")+
+    " | graphics: "+changed;
+}
 function paint(reply){
   latest=reply;
+  reportProgress(reply);
   const graphics=!!(reply.graphics13||reply.graphics_cga||reply.graphics_planar);
   document.getElementById("view").hidden=!graphics;
   if(forceTextView&&reply.screen)textFrame(reply);
