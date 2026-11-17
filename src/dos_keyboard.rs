@@ -11,7 +11,8 @@
 //! takes that word rather than translating scan codes itself; a scan code
 //! that arrives with no word (a software INT 09h, a release) only changes the
 //! shift bits. Ctrl+Break arrives as the XT codes Ctrl+Scroll Lock (46h with
-//! Ctrl down), without the AT E0h prefixes. Typematic repeat, LEDs, the
+//! Ctrl down), without the AT E0h prefixes. Native host repeats are repeated
+//! makes, and extended physical edges retain E0h. Device-generated typematic, LEDs, the
 //! keyboard's command set and the 0040:0096/0097 status bytes are not modelled.
 use super::*;
 use std::collections::VecDeque;
@@ -77,6 +78,13 @@ pub(super) fn edge(p:&mut Loaded,word:u16,down:bool)->Result<bool,String>{
     let raw=make((word>>8)as u8);
     if raw==0xb8&&!down{return Ok(true);}
     push(p,&[Code{raw:raw|if down{0}else{0x80},word:down.then_some(word)}])
+}
+/// An actual set-1 edge. Prefix and code enter the bounded queue together.
+/// The optional BIOS word belongs only to a make, for handlers chaining to BIOS.
+pub(super) fn physical(p:&mut Loaded,scan:u8,extended:bool,down:bool,word:Option<u16>)->Result<bool,String>{
+    if scan==0||scan>=0x80{return Ok(true);}
+    let code=Code{raw:scan|if down{0}else{0x80},word:if down{word}else{None}};
+    if extended{push(p,&[Code{raw:0xe0,word:None},code])}else{push(p,&[code])}
 }
 pub(super) fn key(p:&mut Loaded,word:u16)->Result<bool,String>{
     let raw=make((word>>8)as u8);

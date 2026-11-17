@@ -14,6 +14,131 @@ const CTRL:Mods=Mods{shift:false,ctrl:true,alt:false};
 const ALT:Mods=Mods{shift:false,ctrl:false,alt:true};
 const SHIFT:Mods=Mods{shift:true,ctrl:false,alt:false};
 
+use crate::dine_window::Input;
+fn physical(vk:u16,scan:u8,extended:bool,down:bool,m:Mods)->Input{
+    Input::Physical{vk,scan,extended,down,repeat:1,shift:m.shift,ctrl:m.ctrl,alt:m.alt}
+}
+fn text(scan:u8,ch:char,m:Mods)->Input{
+    Input::Text{scan,extended:false,ch,shift:m.shift,ctrl:m.ctrl,alt:m.alt}
+}
+fn native(scan:u8,extended:bool,down:bool,key:Option<(Key,Mods)>)->Event{
+    Event::NativeKey{scan,extended,down,key}
+}
+#[test]
+fn native_printable_hold_repeat_release_and_layout_identity(){
+    let mut keys=host_keys::WindowKeys::default();
+    assert!(keys.input(physical(0x57,0x11,false,true,NONE)).is_empty());
+    assert_eq!(keys.input(text(0x11,'w',NONE)),[native(0x11,false,true,Some((Key::Char('w'),NONE)))]);
+    // Repeated WM_CHAR is a repeated make, never a break or a duplicate tap.
+    assert!(keys.input(physical(0x57,0x11,false,true,SHIFT)).is_empty());
+    assert_eq!(keys.input(text(0x11,'W',SHIFT)),[native(0x11,false,true,Some((Key::Char('W'),SHIFT)))]);
+    assert_eq!(keys.input(physical(0x57,0x11,false,false,NONE)),[native(0x11,false,false,None)]);
+    // A non-US layout can type a different letter from the same physical key.
+    keys.input(physical(0x5a,0x15,false,true,NONE));
+    assert_eq!(keys.input(text(0x15,'z',NONE)),[native(0x15,false,true,Some((Key::Char('z'),NONE)))]);
+    assert_eq!(keys.input(physical(0x5a,0x15,false,false,SHIFT)),[native(0x15,false,false,None)]);
+}
+#[test]
+fn native_focus_loss_releases_simultaneous_keys_once_and_discards_late_text(){
+    let mut keys=host_keys::WindowKeys::default();
+    assert_eq!(keys.input(physical(0x26,0x48,true,true,NONE)),[native(0x48,true,true,Some((Key::Up,NONE)))]);
+    keys.input(physical(0x41,0x1e,false,true,NONE));keys.input(text(0x1e,'a',NONE));
+    assert_eq!(keys.input(Input::FocusLost),[native(0x48,true,false,None),native(0x1e,false,false,None)]);
+    assert!(keys.input(Input::FocusLost).is_empty());
+    assert!(keys.input(physical(0x41,0x1e,false,false,NONE)).is_empty());
+    assert!(keys.input(text(0x1e,'a',NONE)).is_empty());
+}
+#[test]
+fn native_text_controls_altgr_and_host_shortcuts_keep_their_bios_mapping(){
+    let mut keys=host_keys::WindowKeys::default();
+    for (vk,scan,ch,key) in [(0x0d,0x1c,'\r',Key::Enter),(9,0x0f,'\t',Key::Tab),(8,0x0e,'\u{8}',Key::Backspace)]{
+        keys.input(physical(vk,scan,false,true,NONE));
+        assert_eq!(keys.input(text(scan,ch,NONE)),[native(scan,false,true,Some((key,NONE)))]);
+        keys.input(physical(vk,scan,false,false,NONE));
+    }
+    // Win32 normalizes AltGr text while physical Ctrl/Alt edges stay independent.
+    keys.input(physical(0x51,0x10,false,true,Mods{ctrl:true,alt:true,..NONE}));
+    assert_eq!(keys.input(text(0x10,'@',NONE)),[native(0x10,false,true,Some((Key::Char('@'),NONE)))]);
+    keys.input(Input::FocusLost);
+    for (vk,scan,ch,event) in [(0x43,0x2e,'\u{3}',Event::Copy),(0x56,0x2f,'\u{16}',Event::Paste),(0x0d,0x1c,'\r',Event::HostMenu),(0x0d,0x1c,'\n',Event::HostMenu)]{
+        let m=Mods{ctrl:true,shift:true,..NONE};keys.input(physical(vk,scan,false,true,m));
+        assert_eq!(keys.input(text(scan,ch,m)),[event]);
+        assert!(keys.input(physical(vk,scan,false,false,NONE)).is_empty());
+    }
+    assert_eq!(keys.input(physical(0x2d,0x52,true,true,SHIFT)),[Event::Paste]);
+    assert!(keys.input(physical(0x2d,0x52,true,false,NONE)).is_empty());
+    assert_eq!(keys.input(physical(0x79,0x44,false,true,SHIFT)),[Event::HostMenu]);
+}
+#[test]
+fn native_modifiers_dead_keys_and_function_repeats_have_balanced_edges(){
+    let mut keys=host_keys::WindowKeys::default();
+    assert_eq!(keys.input(physical(0x11,0x1d,true,true,CTRL)),[native(0x1d,true,true,None)]);
+    keys.input(physical(0xde,0x28,false,true,NONE));
+    assert_eq!(keys.input(Input::DeadKey),[native(0x28,false,true,None)]);
+    for _ in 0..2{assert_eq!(keys.input(physical(0x70,0x3b,false,true,NONE)),[native(0x3b,false,true,Some((Key::F(1),NONE)))]);}
+    assert_eq!(keys.input(Input::FocusLost),[native(0x1d,true,false,None),native(0x28,false,false,None),native(0x3b,false,false,None)]);
+}
+#[test]
+fn native_batched_repeats_and_changed_shortcuts_release_previously_delivered_keys(){
+    let mut keys=host_keys::WindowKeys::default();
+    let mut input=physical(0x26,0x48,true,true,NONE);
+    if let Input::Physical{ref mut repeat,..}=input{*repeat=3;}
+    assert_eq!(keys.input(input),vec![native(0x48,true,true,Some((Key::Up,NONE)));3]);
+    keys.input(physical(0x43,0x2e,false,true,NONE));keys.input(text(0x2e,'c',NONE));
+    let m=Mods{shift:true,ctrl:true,..NONE};
+    keys.input(physical(0x43,0x2e,false,true,m));
+    assert_eq!(keys.input(text(0x2e,'\u{3}',m)),[native(0x2e,false,false,None),Event::Copy]);
+    assert_eq!(keys.input(Input::FocusLost),[native(0x48,true,false,None)]);
+}
+#[test]
+fn native_pending_fifo_retries_full_bios_input_before_its_release_and_paste(){
+    let loaded=crate::dos::load(&[0xfb,0xeb,0xfe],"fifo.com").unwrap();
+    let mut session=Session::new(loaded);
+    for _ in 0..15{assert!(session.key(b'x',0x2d).unwrap());}
+    let mut queue=std::collections::VecDeque::from([
+        PendingKey::Native{scan:0x11,extended:false,down:true,word:Some(0x1177)},
+        PendingKey::Native{scan:0x11,extended:false,down:false,word:None},
+        PendingKey::Tap(0x1e61),
+    ]);
+    assert!(!queue[0].send(&mut session).unwrap());assert_eq!(queue.len(),3);
+    // Consume the existing BIOS ring, then retry the same queued make.
+    let p=session.machine_mut().unwrap();
+    let tail=p.ram.load(0x41c,MemWidth::Word).unwrap();p.ram.store(0x41a,MemWidth::Word,tail).unwrap();
+    while let Some(&key)=queue.front(){assert!(key.send(&mut session).unwrap());queue.pop_front();}
+    let p=session.machine().unwrap();
+    // Ring wrapped: the make is at the last slot; the paste tap is at the first.
+    assert_eq!(p.ram.load(0x400+tail,MemWidth::Word).unwrap(),0x1177);
+    assert_eq!(p.ram.load(0x41e,MemWidth::Word).unwrap(),0x1e61);
+}
+#[test]
+fn native_window_events_keep_guest_sampled_state_until_focus_releases_it(){
+    // Original COM fixture: hook INT09 at 0140h; STI; JMP $. The ISR stores
+    // the last scan code at 0210h, sends EOI and IRETs without chaining BIOS.
+    let mut code=vec![0x90;0x60];
+    let main=[0xba,0x40,0x01,0xb8,0x09,0x25,0xcd,0x21,0xfb,0xeb,0xfe];
+    let handler=[0x50,0xe4,0x60,0x2e,0xa2,0x10,0x02,0xb0,0x20,0xe6,0x20,0x58,0xcf];
+    code[..main.len()].copy_from_slice(&main);code[0x40..0x40+handler.len()].copy_from_slice(&handler);
+    let mut session=Session::new(crate::dos::load(&code,"held-state.com").unwrap());session.run(50).unwrap();
+    let mut keys=host_keys::WindowKeys::default();
+    keys.input(physical(0x57,0x11,false,true,NONE));
+    let deliver=|session:&mut Session,events:Vec<Event>|{
+        for event in events{
+            if let Event::NativeKey{scan,extended,down,key}=event{
+                assert!(PendingKey::Native{scan,extended,down,word:key.and_then(|(k,m)|bios_word(k,m))}.send(session).unwrap());
+            }else{panic!("unexpected host event: {event:?}");}
+        }
+    };
+    deliver(&mut session,keys.input(text(0x11,'w',NONE)));
+    for _ in 0..4{
+        session.run(200).unwrap();let p=session.machine().unwrap();
+        assert_eq!(p.ram.load(u32::from(p.selectors[3])*16+0x210,MemWidth::Byte).unwrap(),0x11);
+    }
+    deliver(&mut session,keys.input(Input::FocusLost));session.run(200).unwrap();
+    let p=session.machine().unwrap();
+    assert_eq!(p.ram.load(u32::from(p.selectors[3])*16+0x210,MemWidth::Byte).unwrap(),0x91);
+    assert_eq!(p.ram.load(0x41a,MemWidth::Word).unwrap(),p.ram.load(0x41c,MemWidth::Word).unwrap(),"unchained IRQ handler must not get duplicate BIOS text");
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_menu_key_opens_host_media_controls(){

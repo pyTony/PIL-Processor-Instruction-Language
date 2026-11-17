@@ -138,6 +138,47 @@ fn separate_edges_leave_a_game_key_pressed_until_the_release_arrives(){
  assert_eq!(recorded(&p),vec![1,0x81]);assert_eq!(ring(&p),vec![0x011b],"release must not add another BIOS word");
 }
 #[test]
+fn native_scan_codes_hold_repeat_and_release_through_the_guest_irq_handler(){
+    let mut p=program(&[0xfb,0xeb,0xfe]);p=run(p,50).unwrap().loaded;
+    let mut session=super::super::session::Session::new(p);
+    assert!(session.native_key(0x11,false,true,Some(0x1177)).unwrap());
+    session.run(200).unwrap();assert_eq!(recorded(session.machine().unwrap()),[0x11]);
+    session.run(400).unwrap();assert_eq!(recorded(session.machine().unwrap()),[0x11]);
+    assert!(session.native_key(0x48,true,true,Some(0x4800)).unwrap());
+    assert!(session.native_key(0x11,false,true,Some(0x1177)).unwrap());
+    session.run(400).unwrap();assert_eq!(recorded(session.machine().unwrap()),[0x11,0xe0,0x48,0x11]);
+    assert!(session.native_key(0x11,false,false,None).unwrap());
+    assert!(session.native_key(0x48,true,false,None).unwrap());
+    session.run(400).unwrap();let p=session.machine().unwrap();
+    assert_eq!(recorded(p),[0x11,0xe0,0x48,0x11,0x91,0xe0,0xc8]);
+    assert_eq!(ring(p),[0x1177,0x4800,0x1177],"chained BIOS sees each make once, no prefix or release words");
+}
+#[test]
+fn native_bios_input_repeats_without_releases_or_modifier_words(){
+    let p=load(&[0xfb,0xeb,0xfe],"bios-input.com").unwrap();
+    let mut session=super::super::session::Session::new(p);
+    for down in [true,true,false]{assert!(session.native_key(0x1e,false,down,Some(0x1e61)).unwrap());}
+    assert!(session.native_key(0x1d,false,true,None).unwrap());
+    assert!(session.native_key(0x1d,false,false,None).unwrap());
+    assert_eq!(ring(session.machine().unwrap()),[0x1e61,0x1e61]);
+    assert!(!session.machine().unwrap().speaker.kbd.pending());
+    for _ in 0..13{assert!(session.native_key(0x1e,false,true,Some(0x1e61)).unwrap());}
+    assert!(!session.native_key(0x1e,false,true,Some(0x1e61)).unwrap());
+    assert!(session.native_key(0x1e,false,false,None).unwrap(),"full BIOS ring cannot block a release");
+}
+#[test]
+fn native_extended_prefix_and_release_are_atomic_under_irq_queue_pressure(){
+    let mut p=program(&[0xfb,0xeb,0xfe]);p=run(p,50).unwrap().loaded;
+    for _ in 0..31{assert!(physical(&mut p,0x11,false,true,Some(0x1177)).unwrap());}
+    let before=p.speaker.kbd.clone();
+    assert!(!physical(&mut p,0x48,true,false,None).unwrap());
+    assert_eq!(p.speaker.kbd,before,"failed enqueue must not leave a lone E0 prefix");
+    p=run(p,2000).unwrap().loaded;
+    assert!(physical(&mut p,0x48,true,false,None).unwrap());
+    p=run(p,400).unwrap().loaded;
+    let codes=recorded(&p);assert_eq!(&codes[codes.len()-2..],&[0xe0,0xc8]);
+}
+#[test]
 fn a_guest_that_samples_key_state_can_exit_while_escape_is_held(){
  // Hook INT09. The ISR stores its raw make/break code at 0210h, EOI, IRET.
  // Main waits until the stored byte is Escape make, then exits through DOS.

@@ -728,7 +728,7 @@ fn window_event(input:crate::dine_window::Input)->Option<Event>{
     match input{
         Input::Char{ch:'\u{3}',shift:true,ctrl:true,alt:false}=>Some(Event::Copy),
         Input::Char{ch:'\u{16}',shift:true,ctrl:true,alt:false}=>Some(Event::Paste),
-        Input::Char{ch:'\r',shift:true,ctrl:true,alt:false}=>Some(Event::HostMenu),
+        Input::Char{ch:'\r'|'\n',shift:true,ctrl:true,alt:false}=>Some(Event::HostMenu),
         Input::Char{ch:'\u{1b}',shift,ctrl,alt}=>Some(Event::Key(Key::Escape,Mods{shift,ctrl,alt})),
         Input::Key{vk:0x2d,shift:true,ctrl:false,alt:false}=>Some(Event::Paste),
         // Windows context-menu key (VK_APPS), and its standard Shift+F10

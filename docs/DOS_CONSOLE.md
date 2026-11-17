@@ -3,6 +3,27 @@
 For Android/Termux touch graphics without X11 or Tk, use the
 [loopback browser interface](TERMUX_WEB.md) with the same DOS session backend.
 
+## Native Windows held keys
+
+The Rust native window forwards physical key-down and key-up independently.
+Alphanumeric keys, arrows, function keys and modifiers stay down until released;
+extended keys retain their E0 scan-code prefix. Host repeats produce additional
+makes. The layout-translated character supplies a BIOS word on each make, so
+guest IRQ1 handlers that chain to BIOS retain text entry. With no guest keyboard
+handler, only translated down events enter the BIOS ring. Releases and modifier
+edges do not type extra characters. Queue pressure retries events in order.
+
+Focus loss, window closure and opening the host menu release held guest keys.
+Copy/paste, Shift+Insert, Shift+F10, the context-menu key, Ctrl+Shift+Enter and
+Ctrl+Shift+F1..F4 keep their host functions. Paste remains a sequence of taps.
+Windows translation still supplies AltGr and dead-key text; physical identity
+does not change when a modifier is released first. Pause's E1 sequence and
+Print Screen's multi-code hardware sequence are outside this input increment.
+Terminal input still uses taps where the terminal supplies no reliable releases.
+
+See the [Retro retest checklist](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/development/DOS_GAMES.md#native-windows-input-milestone-17-november-2026)
+for interactive validation and the next diagnostic milestone.
+
 ## Startup, shortcuts and redirected input
 
 `pil --dos-text` selects the Rust terminal console (`--dos-console --tty`).
