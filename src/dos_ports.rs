@@ -323,8 +323,14 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             0x3da|0x3ba=>{
                 p.vga.reset_attribute_flip_flop();
                 s.retrace=s.retrace.wrapping_add(1);
-                let vblank=(s.retrace&0x3f)>=56;
-                let hblank=vblank||(s.retrace&1)!=0;
+                // Sample a repeating VGA scanout phase. Display-blanking
+                // (status bit 0) lasts for several polls, rather than
+                // alternating on every IN: games including Wolfenstein 3D
+                // sample the same level twice to synchronize their updates.
+                // Bit 3 remains asserted only during vertical retrace.
+                let phase=s.retrace&0x3f;
+                let vblank=phase>=56;
+                let hblank=vblank||(phase&7)>=4;
                 (if hblank{1}else{0})|(if vblank{8}else{0})
             },
             0x40=>{let now=s.pit_io(p.clock_offset);s.pit.read(now)},
