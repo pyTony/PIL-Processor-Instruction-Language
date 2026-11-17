@@ -148,14 +148,14 @@ jobs:
         SDL_VIDEODRIVER: dummy
         SDL_AUDIODRIVER: dummy
       run: |
-        python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
-        python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cga --out target/dosbox-cga
+        python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out "$RUNNER_TEMP/dosbox-console"
+        python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cga --out "$RUNNER_TEMP/dosbox-cga"
       name: 'integration: DOSBox console and CGA comparisons'
     - if: (github.event_name == 'schedule' || inputs.backends) && runner.os == 'Linux'
       env:
         SDL_VIDEODRIVER: dummy
         SDL_AUDIODRIVER: dummy
-      run: python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
+      run: python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out "${{ runner.temp }}/dosbox-cpu"
       name: 'backends: DOSBox CPU comparison'
     - run: python tools/verify_containers.py
       if: (github.event_name == 'schedule' || inputs.integration)
@@ -220,7 +220,7 @@ jobs:
       shell: pwsh
       run: ./tools/mandelbrot.ps1 -Compare -Size 256 -Iterations 32
       name: 'backends: ./tools/mandelbrot.ps1 -Compare -Size 256 -Iterations 32'
-    - run: python tools/export_runtime.py target/runtime-source --verify
+    - run: python tools/export_runtime.py "${{ runner.temp }}/runtime-source" --verify
       if: (github.event_name == 'schedule' || inputs.delivery)
       name: 'delivery: python tools/export_runtime.py target/runtime-source --verify'
     - name: 'delivery: release engine'
