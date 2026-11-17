@@ -170,7 +170,9 @@ if __name__ == '__main__':
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
-    args.out.mkdir(parents=True, exist_ok=False)
+    # Other CI fixtures can already have created this shared output directory.
+    # This verification overwrites its own fixed filenames on every run.
+    args.out.mkdir(parents=True, exist_ok=True)
     for negative in (False, True):
         tests, code = build_console(negative)
         guest = args.out / ('negative.com' if negative else 'console.com')
