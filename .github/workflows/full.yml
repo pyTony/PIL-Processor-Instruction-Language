@@ -135,10 +135,10 @@ jobs:
       if: (github.event_name == 'schedule' || inputs.integration)
       name: 'integration: python tools/verify_dos_demos.py'
     - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Linux')
-      run: python tools/verify_dos_console.py --engine target/debug/pil --out target/console-fixtures
+      run: python tools/verify_dos_console.py --engine target/debug/pil --out "${{ runner.temp }}/console-fixtures"
       name: 'integration: python tools/verify_dos_console.py --engine target/debug/pil --out target/console-fixtures'
     - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Windows')
-      run: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures
+      run: python tools/verify_dos_console.py --engine target/debug/pil.exe --out "${{ runner.temp }}/console-fixtures"
       name: 'integration: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures'
     - if: (github.event_name == 'schedule' || inputs.integration || inputs.backends) && runner.os == 'Linux'
       run: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x
