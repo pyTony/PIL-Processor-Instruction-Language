@@ -400,9 +400,9 @@ fn pause(session:&super::session::Session,line:&str,front:&mut Front,rx:&mpsc::R
         if front.closed(){return Ok(());}
         let mut events:Vec<Event>=rx.try_iter().collect();
         front.poll(&mut events)?;
-        if events.iter().any(|e|matches!(e,Event::Key(..)|Event::Quit)){return Ok(());}
+        if events.iter().any(|e|matches!(e,Event::Key(..)|Event::NativeKey{down:true,key:Some(_),..}|Event::Quit)){return Ok(());}
         if events.is_empty(){
-            if let Ok(event)=rx.recv_timeout(Duration::from_millis(30)){if matches!(event,Event::Key(..)|Event::Quit){return Ok(());}}
+            if let Ok(event)=rx.recv_timeout(Duration::from_millis(30)){if matches!(event,Event::Key(..)|Event::NativeKey{down:true,key:Some(_),..}|Event::Quit){return Ok(());}}
         }
     }
 }
@@ -435,6 +435,8 @@ pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<Strin
         for event in events{
             let action=match event{
                 Event::Key(key,m)=>setup.key(key,m),
+                Event::NativeKey{down:true,key:Some((key,m)),..}=>setup.key(key,m),
+                Event::NativeKey{..}=>Action::Stay,
                 Event::Quit=>Action::Quit,
                 Event::Break|Event::Mouse{..}|Event::Copy|Event::Paste|Event::HostMenu|Event::HostCommand(_)=>Action::Stay,
             };
