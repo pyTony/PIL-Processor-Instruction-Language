@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 
-MODULES = ("core", "frontend", "web", "integration", "backends", "delivery", "performance")
+MODULES = ("core", "dos", "frontend", "web", "integration", "library", "backends", "delivery", "performance")
 # Only these reviewed frontend inputs bypass Rust/emulator verification.
 FRONTEND = {
     "tools/termux_web.py", "tools/termux_web.html", "tools/dos_terminal.py",
@@ -26,8 +26,10 @@ def classify(paths):
             selected.add("frontend")
             if path in {"tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"}:
                 selected.add("delivery")
+        elif path == "src/dos.rs" or path.startswith(("src/dos_", "tests/unit/dos", "programs/dos/")):
+            selected.update(("dos", "frontend", "integration", "library"))
         elif path.startswith(("src/", "isa/", "tests/unit/", "programs/")) or path in {"Cargo.toml", "Cargo.lock"}:
-            selected.update(("core", "frontend", "integration", "backends"))
+            selected.update(("core", "dos", "frontend", "integration", "library", "backends"))
         elif path.startswith("tools/bench") or path.startswith("tools/compare."):
             selected.update(("core", "performance"))
         elif path in {"tools/package.py", "tools/export_runtime.py"}:

@@ -15,17 +15,25 @@ is in `tools/ci_changes.py`:
 | Markdown and checksum manifest only | Selection and documentation checks |
 | Web page/server and its HTTP tests | Web tests on Linux and Windows; no Rust build |
 | Other reviewed frontend files and GUI tests | Engine-backed GUI tests on Linux and Windows, sharing the Rust build job |
-| Rust, ISA, Cargo, unit tests or guest fixtures | Rust tests and selftests on Linux/Windows; pure Python oracles once on Linux; frontend, integration and backend modules |
+| Dedicated DOS source/tests and DOS fixtures | DOS Rust tests, frontend, DOS integration and Dine library checks on Linux/Windows |
+| CPU/shared Rust, ISA, Cargo, other unit tests or fixtures | Full Rust tests and selftests on Linux/Windows; pure instruction oracles once on Linux; frontend, integration, library and CPU/backend modules |
 | Export/package tools and their contract tests | Frontend tests and delivery on Linux/Windows |
 | Benchmark/compare scripts | Core checks, pure oracles and performance on Linux/Windows |
 | Other files, CI/routing changes, unavailable diff | All modules |
+
+Dedicated `src/dos.rs`, `src/dos_*`, `tests/unit/dos*` and `programs/dos/`
+changes do not select instruction oracles, the full CPU/backend suite or DOSBox
+CPU comparisons. They select DOS tests with the Rust test-name filter `dos`,
+plus DOS/emulator integration and Dine ABI checks. Compilation still builds the
+shared crate; this distinction reduces test execution, not compiler scope.
+CPU/shared-state changes retain the full suite.
 
 Selections accumulate across all changed files. PRs compare merge base to head,
 not just the last commit. Renames inspect both old and new names. New files are
 conservative until explicitly classified. Documentation checks still run for
 documentation-only changes. Expensive checks remain mandatory whenever selected.
 
-`Full CI` separates broad DOS/emulator integration, generated/backend/library
+`Full CI` separates broad DOS/emulator integration, generated/backend and Dine library
 validation, standalone export/packages, and performance comparisons into selectable
 modules. Rust-dependent modules share one job and target directory per OS, so
 selecting more checks does not create separate cold builds. Cargo dependencies
@@ -33,7 +41,8 @@ and workspace outputs are cached with `Swatinem/rust-cache`; cache reuse across
 runs is best-effort, not a promise of incremental recompilation. Debug, release
 and library feature configurations still require their own compiler work.
 Pure oracles and web-only tests run separately without waiting for compilation.
-The full GUI suite launches the engine and runs after its shared debug build. Ordinary engine changes run integration and backend checks, while
+The full GUI suite launches the engine and runs after its shared debug build.
+CPU/shared engine changes run integration, library and backend checks, while
 standalone packaging and benchmarks normally run nightly. This trades immediate
 package/performance detection for shorter engine PR checks; package and benchmark
 tool changes still select those modules immediately.

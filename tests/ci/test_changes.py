@@ -20,8 +20,16 @@ class ChangesTests(unittest.TestCase):
         self.assertEqual(ci.classify(["tools/dos_terminal.py"]), {"frontend"})
 
     def test_engine_and_descriptions(self):
-        for path in ["src/dos.rs", "isa/i386/add.pil", "Cargo.lock", "tests/unit/cpu.rs", "programs/dos/fixture.asm"]:
-            self.assertEqual(ci.classify([path]), {"core", "frontend", "integration", "backends"})
+        for path in ["src/guest.rs", "src/memory.rs", "isa/i386/add.pil", "Cargo.lock", "tests/unit/cpu.rs", "programs/selftest.hex"]:
+            self.assertEqual(ci.classify([path]), {"core", "dos", "frontend", "integration", "library", "backends"})
+
+    def test_dos_changes_do_not_select_instruction_suites(self):
+        for path in ["src/dos.rs", "src/dos_services.rs", "src/dos_ports.rs", "tests/unit/dos.rs", "programs/dos/fixture.asm"]:
+            selected = ci.classify([path])
+            self.assertEqual(selected, {"dos", "frontend", "integration", "library"})
+            self.assertNotIn("core", selected)
+            self.assertNotIn("backends", selected)
+        self.assertIn("core", ci.classify(["src/dos_services.rs", "src/guest.rs"]))
 
     def test_delivery(self):
         for path in ["tools/package.py", "tools/export_runtime.py", "tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"]:

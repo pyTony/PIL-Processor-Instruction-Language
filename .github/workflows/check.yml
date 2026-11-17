@@ -32,6 +32,8 @@ jobs:
       delivery: ${{ steps.diff.outputs.delivery }}
       performance: ${{ steps.diff.outputs.performance }}
       web: ${{ steps.diff.outputs.web }}
+      dos: ${{ steps.diff.outputs.dos }}
+      library: ${{ steps.diff.outputs.library }}
     steps:
     - uses: actions/checkout@v5
       with:
@@ -79,7 +81,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.backends
       == 'true' || needs.changes.outputs.delivery == 'true' || needs.changes.outputs.performance == 'true' || needs.changes.outputs.frontend
-      == 'true'
+      == 'true' || needs.changes.outputs.dos == 'true' || needs.changes.outputs.library == 'true'
     uses: ./.github/workflows/full.yml
     with:
       core: ${{ needs.changes.outputs.core == 'true' }}
@@ -89,6 +91,8 @@ jobs:
       backends: ${{ needs.changes.outputs.backends == 'true' }}
       delivery: ${{ needs.changes.outputs.delivery == 'true' }}
       performance: ${{ needs.changes.outputs.performance == 'true' }}
+      dos: ${{ needs.changes.outputs.dos == 'true' }}
+      library: ${{ needs.changes.outputs.library == 'true' }}
   required:
     name: Required PR checks
     if: always()

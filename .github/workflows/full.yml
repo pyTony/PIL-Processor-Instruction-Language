@@ -32,6 +32,14 @@ name: Full CI
         description: Run performance checks
         type: boolean
         default: true
+      dos:
+        type: boolean
+        default: true
+        description: Run dos checks
+      library:
+        type: boolean
+        default: true
+        description: Run library checks
   workflow_call:
     inputs:
       policy:
@@ -53,6 +61,12 @@ name: Full CI
         type: boolean
         default: true
       performance:
+        type: boolean
+        default: true
+      dos:
+        type: boolean
+        default: true
+      library:
         type: boolean
         default: true
 permissions:
@@ -81,6 +95,9 @@ jobs:
         shared-key: ci
         cache-workspace-crates: true
         cache-on-failure: true
+    - name: 'dos: focused Rust tests'
+      if: (github.event_name == 'schedule' || inputs.dos) && !inputs.core && github.event_name != 'schedule'
+      run: cargo test --locked dos -- --show-output
     - run: cargo test --locked -- --show-output
       if: (github.event_name == 'schedule' || inputs.core)
       name: 'core: cargo test --locked -- --show-output'
@@ -97,7 +114,7 @@ jobs:
       if: github.event_name == 'schedule' || inputs.frontend
       run: python -m unittest discover -s tests/gui -v
     - run: cargo build --locked --bin pil
-      if: (github.event_name == 'schedule' || inputs.integration)
+      if: github.event_name == 'schedule' || inputs.integration || inputs.backends
       name: 'integration: cargo build --locked --bin pil'
     - run: python tools/verify_debug_service.py
       if: (github.event_name == 'schedule' || inputs.integration)
@@ -123,7 +140,7 @@ jobs:
     - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Windows')
       run: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures
       name: 'integration: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures'
-    - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Linux')
+    - if: (github.event_name == 'schedule' || inputs.integration || inputs.backends) && runner.os == 'Linux'
       run: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x
       name: 'integration: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x'
     - if: (github.event_name == 'schedule' || inputs.integration) && (runner.os == 'Linux')
@@ -131,11 +148,15 @@ jobs:
         SDL_VIDEODRIVER: dummy
         SDL_AUDIODRIVER: dummy
       run: |
-        python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
         python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
         python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cga --out target/dosbox-cga
-      name: 'integration: python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu
-        --out target/dosbox-cpu'
+      name: 'integration: DOSBox console and CGA comparisons'
+    - if: (github.event_name == 'schedule' || inputs.backends) && runner.os == 'Linux'
+      env:
+        SDL_VIDEODRIVER: dummy
+        SDL_AUDIODRIVER: dummy
+      run: python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
+      name: 'backends: DOSBox CPU comparison'
     - run: python tools/verify_containers.py
       if: (github.event_name == 'schedule' || inputs.integration)
       name: 'integration: python tools/verify_containers.py'
@@ -159,26 +180,26 @@ jobs:
       if: (github.event_name == 'schedule' || inputs.integration)
       name: 'integration: python tools/verify_mandel_vga.py'
     - run: python tools/check_build_warnings.py
-      if: (github.event_name == 'schedule' || inputs.backends)
+      if: github.event_name == 'schedule' || inputs.library || inputs.backends
       name: 'backends: python tools/check_build_warnings.py'
     - run: python tools/check_build_warnings.py build --release --locked --lib --features dine-library
-      if: (github.event_name == 'schedule' || inputs.backends)
+      if: github.event_name == 'schedule' || inputs.library || inputs.backends
       name: 'backends: python tools/check_build_warnings.py build --release --locked --lib --features dine-library'
     - run: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check
       if: (github.event_name == 'schedule' || inputs.backends)
       name: 'backends: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check'
     - run: python tools/verify_dine_library.py
-      if: (github.event_name == 'schedule' || inputs.backends)
-      name: 'backends: python tools/verify_dine_library.py'
-    - if: (github.event_name == 'schedule' || inputs.backends) && (runner.os == 'Windows')
+      if: (github.event_name == 'schedule' || inputs.library)
+      name: 'library: python tools/verify_dine_library.py'
+    - if: (github.event_name == 'schedule' || inputs.library) && (runner.os == 'Windows')
       run: python tools/verify_dos_text_io.py --library target/release/dine.dll
-      name: 'backends: python tools/verify_dos_text_io.py --library target/release/dine.dll'
-    - if: (github.event_name == 'schedule' || inputs.backends) && (runner.os == 'Linux')
+      name: 'library: python tools/verify_dos_text_io.py --library target/release/dine.dll'
+    - if: (github.event_name == 'schedule' || inputs.library) && (runner.os == 'Linux')
       run: python tools/verify_dos_text_io.py --library target/release/libdine.so
-      name: 'backends: python tools/verify_dos_text_io.py --library target/release/libdine.so'
+      name: 'library: python tools/verify_dos_text_io.py --library target/release/libdine.so'
     - run: python tools/verify_dine_executable.py
-      if: (github.event_name == 'schedule' || inputs.backends)
-      name: 'backends: python tools/verify_dine_executable.py'
+      if: (github.event_name == 'schedule' || inputs.library)
+      name: 'library: python tools/verify_dine_executable.py'
     - run: cargo run --release --locked -- --verify-backends
       if: (github.event_name == 'schedule' || inputs.backends)
       name: 'backends: cargo run --release --locked -- --verify-backends'
@@ -250,7 +271,7 @@ jobs:
           target/mandelbrot/256x256-i32/*
           target/backend-comparison/run-*/mandelbrot/*
     if: github.event_name == 'schedule' || inputs.core || inputs.integration || inputs.backends || inputs.delivery || inputs.performance
-      || inputs.frontend
+      || inputs.frontend || inputs.dos || inputs.library
   oracles:
     if: github.event_name == 'schedule' || inputs.core
     runs-on: ubuntu-latest
