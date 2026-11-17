@@ -82,6 +82,12 @@ jobs:
     - run: cargo run --locked -- --numeric-test
       if: (github.event_name == 'schedule' || inputs.core)
       name: 'core: cargo run --locked -- --numeric-test'
+    - name: 'frontend: build engine once'
+      if: github.event_name == 'schedule' || inputs.frontend
+      run: cargo build --locked --bin pil
+    - name: 'frontend: Python GUI and engine checks'
+      if: github.event_name == 'schedule' || inputs.frontend
+      run: python -m unittest discover -s tests/gui -v
     - run: cargo build --locked --bin pil
       if: (github.event_name == 'schedule' || inputs.integration)
       name: 'integration: cargo build --locked --bin pil'
@@ -233,6 +239,7 @@ jobs:
           target/mandelbrot/256x256-i32/*
           target/backend-comparison/run-*/mandelbrot/*
     if: github.event_name == 'schedule' || inputs.core || inputs.integration || inputs.backends || inputs.delivery || inputs.performance
+      || inputs.frontend
   oracles:
     if: github.event_name == 'schedule' || inputs.core
     runs-on: ubuntu-latest
@@ -256,23 +263,6 @@ jobs:
     - run: python tools/build_ansi_mandel.py --check
     - run: python tools/build_recursive_fib.py --check
     - run: python tools/build_mz_demo.py --check
-  frontend:
-    name: frontend (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-        - ubuntu-latest
-        - windows-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-    - uses: actions/checkout@v5
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.12'
-    - run: python -m unittest discover -s tests/gui -v
-    if: github.event_name == 'schedule' || inputs.frontend
   policy:
     runs-on: ubuntu-latest
     steps:

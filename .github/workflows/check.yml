@@ -31,6 +31,7 @@ jobs:
       backends: ${{ steps.diff.outputs.backends }}
       delivery: ${{ steps.diff.outputs.delivery }}
       performance: ${{ steps.diff.outputs.performance }}
+      web: ${{ steps.diff.outputs.web }}
     steps:
     - uses: actions/checkout@v5
       with:
@@ -57,7 +58,7 @@ jobs:
     - run: python tools/check_program_specific.py --self-test
     - run: python tools/export_runtime.py target/runtime-links
   frontend:
-    name: frontend (${{ matrix.os }})
+    name: web (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -71,17 +72,18 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - run: python -m unittest discover -s tests/gui -v
+    - run: python -m unittest discover -s tests/gui -p test_termux_web.py -v
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    if: needs.changes.outputs.web == 'true'
   affected:
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.backends
-      == 'true' || needs.changes.outputs.delivery == 'true' || needs.changes.outputs.performance == 'true'
+      == 'true' || needs.changes.outputs.delivery == 'true' || needs.changes.outputs.performance == 'true' || needs.changes.outputs.frontend
+      == 'true'
     uses: ./.github/workflows/full.yml
     with:
       core: ${{ needs.changes.outputs.core == 'true' }}
-      frontend: false
+      frontend: ${{ needs.changes.outputs.frontend == 'true' }}
       integration: ${{ needs.changes.outputs.integration == 'true' }}
       backends: ${{ needs.changes.outputs.backends == 'true' }}
       delivery: ${{ needs.changes.outputs.delivery == 'true' }}

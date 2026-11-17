@@ -13,7 +13,8 @@ is in `tools/ci_changes.py`:
 | Changed inputs | Required checks |
 | --- | --- |
 | Markdown and checksum manifest only | Selection and documentation checks |
-| Reviewed frontend files (including termux_web.html) and GUI tests | Python frontend tests on Linux and Windows |
+| Web page/server and its HTTP tests | Web tests on Linux and Windows; no Rust build |
+| Other reviewed frontend files and GUI tests | Engine-backed GUI tests on Linux and Windows, sharing the Rust build job |
 | Rust, ISA, Cargo, unit tests or guest fixtures | Rust tests and selftests on Linux/Windows; pure Python oracles once on Linux; frontend, integration and backend modules |
 | Export/package tools and their contract tests | Frontend tests and delivery on Linux/Windows |
 | Benchmark/compare scripts | Core checks, pure oracles and performance on Linux/Windows |
@@ -31,7 +32,8 @@ selecting more checks does not create separate cold builds. Cargo dependencies
 and workspace outputs are cached with `Swatinem/rust-cache`; cache reuse across
 runs is best-effort, not a promise of incremental recompilation. Debug, release
 and library feature configurations still require their own compiler work.
-Pure oracles and frontend tests run separately without waiting for compilation. Ordinary engine changes run integration and backend checks, while
+Pure oracles and web-only tests run separately without waiting for compilation.
+The full GUI suite launches the engine and runs after its shared debug build. Ordinary engine changes run integration and backend checks, while
 standalone packaging and benchmarks normally run nightly. This trades immediate
 package/performance detection for shorter engine PR checks; package and benchmark
 tool changes still select those modules immediately.

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 
-MODULES = ("core", "frontend", "integration", "backends", "delivery", "performance")
+MODULES = ("core", "frontend", "web", "integration", "backends", "delivery", "performance")
 # Only these reviewed frontend inputs bypass Rust/emulator verification.
 FRONTEND = {
     "tools/termux_web.py", "tools/termux_web.html", "tools/dos_terminal.py",
@@ -20,7 +20,9 @@ def classify(paths):
     for path in paths:
         if path.endswith(".md") or path == "docs/SHA256SUMS":
             continue  # Documentation is still checked in the always-running job.
-        if path in FRONTEND or path.startswith("tests/gui/"):
+        if path in {"tools/termux_web.html", "tools/termux_web.py", "tests/gui/test_termux_web.py"}:
+            selected.add("web")
+        elif path in FRONTEND or path.startswith("tests/gui/"):
             selected.add("frontend")
             if path in {"tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"}:
                 selected.add("delivery")

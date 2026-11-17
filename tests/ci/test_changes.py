@@ -16,7 +16,7 @@ class ChangesTests(unittest.TestCase):
         self.assertEqual(ci.classify(["README.md", "docs/SHA256SUMS"]), set())
 
     def test_frontend(self):
-        self.assertEqual(ci.classify(["tools/termux_web.html"]), {"frontend"})
+        self.assertEqual(ci.classify(["tools/termux_web.html"]), {"web"})
         self.assertEqual(ci.classify(["tools/dos_terminal.py"]), {"frontend"})
 
     def test_engine_and_descriptions(self):
@@ -25,14 +25,14 @@ class ChangesTests(unittest.TestCase):
 
     def test_delivery(self):
         for path in ["tools/package.py", "tools/export_runtime.py", "tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"]:
-            self.assertEqual(ci.classify([path, "tools/termux_web.html"]), {"frontend", "delivery"})
+            self.assertEqual(ci.classify([path, "tools/termux_web.html"]), {"frontend", "web", "delivery"})
 
     def test_unknown_and_ci_fail_closed(self):
         for path in ["new/input.dat", ".github/workflows/check.yml", "tools/ci_changes.py", "tools/verify_dosbox_cpu.py"]:
             self.assertEqual(ci.classify([path]), set(ci.MODULES))
 
     def test_mixed_changes_accumulate(self):
-        self.assertEqual(ci.classify(["src/main.rs", "tools/package.py", "tools/bench.sh"]), set(ci.MODULES))
+        self.assertEqual(ci.classify(["src/main.rs", "tools/package.py", "tools/bench.sh", "tools/termux_web.html"]), set(ci.MODULES))
 
     def test_diff_preserves_both_sides_of_rename(self):
         env = {"PR_BASE": "base", "PR_HEAD": "head"}
