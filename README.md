@@ -2,6 +2,40 @@
 
 PIL = Processor Instruction Language, the project's architecture description language (ADL) for x86.
 
+## Current development status: 0.38.0-alpha.1
+
+The version in [`Cargo.toml`](Cargo.toml) is **0.38.0-alpha.1**. This `dev`
+branch contains the full development tree; [`main`](https://github.com/pyTony/PIL-Processor-Instruction-Language/tree/main)
+is a separately exported runtime-oriented delivery, not a direct merge of `dev`.
+
+PIL interprets x86 instructions through PIL descriptions. **Dine** supplies the
+shared, program-independent DOS/BIOS runtime for DOS COM/MZ executables and
+FreeCOM sessions, with mounted drives, native text/graphics presentation,
+optional mouse/ANSI support, PC speaker, and Sound Blaster digital PCM.
+This is a **bounded compatibility environment**, not a complete DOS kernel
+or PC. DPMI hosting and AdLib/OPL music are not implemented in full.
+
+### Quick start
+
+Build with Rust and Cargo:
+
+```powershell
+cargo build --release --locked
+.\target\release\pil.exe --dos-text
+```
+
+On Windows, `--dos-console --window` selects the native text/graphics window.
+Configure the DOS image and mounted drives first; the example configuration
+refers to local files that are not included. See [DOS configuration](docs/DOS_CONFIG.md),
+[Rust DOS console](docs/DOS_CONSOLE.md), and the
+[documentation overview](docs/README.md). Run development tests with
+`cargo test --locked`.
+
+### Earlier development milestones
+
+The version-specific sections below record **past increments**, not the
+latest project version. Their original headings are retained for history.
+
 ## 0.35: Unsigned division (DIV) and foundational BIOS / DOS service shims
 
 ### Unsigned Division (DIV F6/F7 /6)

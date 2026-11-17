@@ -26,7 +26,23 @@ what was kept for a later in-engine block compiler is described in
 [Dine executables](DINE_EXECUTABLES.md) are small launchers that carry one
 guest program and load the shared dine library.
 
-## Current increment: 0.34.0-alpha.1
+## Current development version: 0.38.0-alpha.1
+
+The `dev` branch reports version **0.38.0-alpha.1** in
+[`Cargo.toml`](../Cargo.toml). PIL and Dine run DOS COM/MZ executables
+through a shared Rust DOS/BIOS runtime with console and graphics, mounted
+drives, and selected PC-compatible devices. The emulator remains a
+bounded compatibility environment, not a complete PC or DOS kernel.
+For commands and current limits see the [project README](../README.md),
+[Rust DOS console](DOS_CONSOLE.md), [DOS configuration](DOS_CONFIG.md),
+and [delivery feature matrix](../delivery/source/FEATURE_MATRIX.md).
+The `dev` tree and exported `main` runtime remain separate.
+
+## Historical development increments
+
+The entries below record earlier milestones, not the current project status.
+
+### 0.34.0-alpha.1
 
 AH02 character capture, AX3700 switch query and real-mode LES are implemented;
 Windows/Linux CI40624671136 passed328 tests and199 backend cases. Reports now identify version and step budget.
