@@ -65,3 +65,5 @@ After reviewing the staged content and choosing the licence, commit it.
 Create/select the intended GitHub repository and add its exact remote URL,
 then push main. No remote URL or account setting is assumed by this patch.
 The authoring environment has not run these Git commands on the user's phone.
+
+See [Modular CI](development/CI.md) for affected checks, nightly coverage and manual full validation.
