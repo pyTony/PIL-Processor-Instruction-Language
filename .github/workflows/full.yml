@@ -73,6 +73,7 @@ jobs:
       with:
         shared-key: ci
         cache-workspace-crates: true
+        cache-on-failure: true
     - run: cargo test --locked -- --show-output
       if: (github.event_name == 'schedule' || inputs.core)
       name: 'core: cargo test --locked -- --show-output'
@@ -138,6 +139,9 @@ jobs:
       shell: pwsh
       run: ./tools/debug.ps1 -Check
       name: 'integration: ./tools/debug.ps1 -Check'
+    - name: 'integration: release engine for graphics checks'
+      if: github.event_name == 'schedule' || inputs.integration
+      run: cargo build --release --locked --bin pil
     - run: python tools/verify_mandel_cycle.py
       if: (github.event_name == 'schedule' || inputs.integration)
       name: 'integration: python tools/verify_mandel_cycle.py'
