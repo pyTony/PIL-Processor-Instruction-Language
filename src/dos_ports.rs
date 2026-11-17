@@ -201,6 +201,23 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         if p.speaker.ignored_out.insert(port){eprintln!("Ignored unassigned OUT port {port:04X}h, width {}, value {:04X}, CS:IP={:04X}:{:04X}",if word{16}else{8},p.cpu.regs[0]&if word{65535}else{255},p.selectors[1],p.cpu.eip);}
         return Ok(());
     }
+    if word&&port==0x224{
+        // The 8-bit ISA Sound Blaster mixer uses consecutive index/data
+        // ports (224h/225h). An AT word I/O to an 8-bit card is split
+        // into two byte cycles, not treated as a native 16-bit register.
+        // Stage both accesses so an unsupported second byte cannot leave
+        // partially changed mixer/PIC state.
+        let mut sb=p.sb.clone();let mut pic=p.speaker.pic.clone();
+        let now=p.clock_offset.map(|_|p.speaker.pit_now(p.clock_offset));
+        sb.tick(now,&p.ram,&mut pic)?;
+        let lo=sb.io(port,input,p.cpu.regs[0]as u8,&p.ram,&mut pic)?
+            .ok_or("Sound Blaster mixer index port unavailable")?;
+        let hi=sb.io(port+1,input,(p.cpu.regs[0]>>8)as u8,&p.ram,&mut pic)?
+            .ok_or("Sound Blaster mixer data port unavailable")?;
+        p.sb=sb;p.speaker.pic=pic;
+        if input{p.cpu.regs[0]=(p.cpu.regs[0]&!0xffff)|u32::from(lo)|(u32::from(hi)<<8);}
+        return Ok(());
+    }
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
     if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
