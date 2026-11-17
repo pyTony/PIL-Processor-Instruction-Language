@@ -34,12 +34,30 @@ pub(super) fn parse(text:&str)->Result<Vec<Vec<&str>>,String>{
     Ok(entries)
 }
 
+/// The catalog is a host UI, not a DOS guest. The native window reports
+/// translated Windows keys as NativeKey edges, whereas terminal mode reports
+/// Key events. Consume only the press, never the release, in this host menu.
+fn catalog_event(event:Event)->Event{
+    match event{
+        Event::NativeKey{down:true,key:Some((key,mods)),..}=>Event::Key(key,mods),
+        other=>other,
+    }
+}
+
+/// Activate the row only when two distinct mouse presses target the same item.
+/// A single press continues to select, and mouse movement never launches it.
+fn double_click(last:Option<(usize,std::time::Instant)>,row:usize,now:std::time::Instant)->bool{
+    last.is_some_and(|(previous,at)|previous==row&&now.saturating_duration_since(at)<=Duration::from_millis(500))
+}
+
 pub(crate) fn run(shell:&str,catalog:&str)->Result<(),String>{
     let text=std::fs::read_to_string(catalog).map_err(|e|format!("catalog {catalog}: {e}"))?;
     let entries=parse(&text).map_err(|e|format!("catalog {catalog}: {e}"))?;
     let Some(_instance)=instance::Instance::acquire()? else{return Ok(())};
     let (tx,rx)=mpsc::channel();let mut front=Front::open(cfg!(windows),tx)?;
     let mut selected=0usize;let mut notice=String::new();
+    let mut mouse_left_down=false;
+    let mut last_click:Option<(usize,std::time::Instant)>=None;
     loop{
         front.title("PIL Retro Browser");
         let mut cells=vec![0u8;80*25*2];for cell in cells.chunks_mut(2){cell[0]=b' ';cell[1]=7;}
@@ -64,19 +82,33 @@ pub(crate) fn run(shell:&str,catalog:&str)->Result<(),String>{
         // a guest key. Stop the host catalog loop as the DOS console does.
         if front.closed(){return Ok(());}
         let mut launch=false;
-        for event in events{match event{
+        for event in events{match catalog_event(event){
             Event::Quit|Event::Key(Key::Escape,_)=>return Ok(()),
             Event::Key(Key::Up,_)=>selected=selected.saturating_sub(1),
             Event::Key(Key::Down,_)=>selected=(selected+1).min(entries.len()-1),
             Event::Key(Key::PageUp,_)=>selected=selected.saturating_sub(16),
             Event::Key(Key::PageDown,_)=>selected=(selected+16).min(entries.len()-1),
             Event::Key(Key::Enter,_)|Event::Key(Key::Char('\r'),_)=>launch=true,
-            Event::Mouse{y,height,buttons,..} if buttons&1!=0&&height>0=>{
-                let row=(y.max(0) as usize*25/height as usize).saturating_sub(3);
-                if row<16&&start+row<entries.len(){selected=start+row;}
+            Event::Mouse{y,height,buttons,..}=>{
+                let down=buttons&1!=0;
+                if down&&!mouse_left_down&&height>0{
+                    let row=(y.max(0) as usize*25/height as usize).saturating_sub(3);
+                    if row<16&&start+row<entries.len(){
+                        let index=start+row;
+                        let now=std::time::Instant::now();
+                        if double_click(last_click,index,now){
+                            selected=index;launch=true;last_click=None;
+                        }else{
+                            selected=index;last_click=Some((index,now));
+                        }
+                    }else{last_click=None;}
+                }
+                mouse_left_down=down;
             },_=>{},
         }}
         if launch{
+            last_click=None;
+            mouse_left_down=false;
             let entry=&entries[selected];
             // The catalog supplies the shell batch path, never executable host code.
             let batch=entry[4];
@@ -95,5 +127,34 @@ pub(crate) fn run(shell:&str,catalog:&str)->Result<(),String>{
                 },Err(e)=>notice=e,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod catalog_input_tests{
+    use super::*;
+
+    #[test]
+    fn native_window_keys_control_host_catalog(){
+        let cases=[(0x48,Key::Up),(0x50,Key::Down),(0x49,Key::PageUp),
+                   (0x51,Key::PageDown),(0x1c,Key::Enter),(0x01,Key::Escape)];
+        for (scan,key) in cases{
+            let mods=Mods::default();
+            let press=Event::NativeKey{scan,extended:false,down:true,key:Some((key,mods))};
+            assert_eq!(catalog_event(press),Event::Key(key,mods));
+            let release=Event::NativeKey{scan,extended:false,down:false,key:None};
+            assert_eq!(catalog_event(release),release);
+        }
+        let unknown=Event::NativeKey{scan:0x2a,extended:false,down:true,key:None};
+        assert_eq!(catalog_event(unknown),unknown);
+    }
+
+    #[test]
+    fn mouse_activates_only_on_double_click_of_same_catalog_row(){
+        let now=std::time::Instant::now();
+        assert!(!double_click(None,3,now));
+        assert!(double_click(Some((3,now)),3,now+Duration::from_millis(250)));
+        assert!(!double_click(Some((3,now)),4,now+Duration::from_millis(250)));
+        assert!(!double_click(Some((3,now)),3,now+Duration::from_millis(600)));
     }
 }
