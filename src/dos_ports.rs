@@ -325,8 +325,8 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 s.retrace=s.retrace.wrapping_add(1);
                 // Sample a repeating VGA scanout phase. Display-blanking
                 // (status bit 0) lasts for several polls, rather than
-                // alternating on every IN: games including Wolfenstein 3D
-                // sample the same level twice to synchronize their updates.
+                // alternating on every IN: a guest may sample the same
+                // level twice to synchronize video-memory updates.
                 // Bit 3 remains asserted only during vertical retrace.
                 let phase=s.retrace&0x3f;
                 let vblank=phase>=56;
