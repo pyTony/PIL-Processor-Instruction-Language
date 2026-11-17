@@ -1,168 +1,114 @@
 name: Check
-on:
+'on':
   push:
-    branches: [dev]
+    branches:
+    - dev
   pull_request:
-    branches: [dev]
+    branches:
+    - dev
   workflow_dispatch:
+    inputs:
+      full:
+        description: Run every module (false uses affected paths)
+        type: boolean
+        default: true
+      base_ref:
+        description: Base branch for automated PR refresh comparisons
+        type: string
+        default: ''
 permissions:
   contents: read
+concurrency:
+  group: check-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
 jobs:
-  # Decides whether the Rust jobs run: a push or PR that changes only
-  # Markdown files (*.md anywhere: CLAUDE.md, STATUS.md, docs/...) skips them.
-  # Anything else, or a diff that cannot be worked out, runs everything.
-  # The cheap checks that read documentation run here every time.
-  # A job skipped by `if` reports success, so it never blocks a merge.
   changes:
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ steps.diff.outputs.code }}
+      core: ${{ steps.diff.outputs.core }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+      integration: ${{ steps.diff.outputs.integration }}
+      backends: ${{ steps.diff.outputs.backends }}
+      delivery: ${{ steps.diff.outputs.delivery }}
+      performance: ${{ steps.diff.outputs.performance }}
+      web: ${{ steps.diff.outputs.web }}
+      dos: ${{ steps.diff.outputs.dos }}
+      library: ${{ steps.diff.outputs.library }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - id: diff
-        env:
-          EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
-        run: |
-          if [ "$EVENT" = workflow_dispatch ]; then
-            echo "Explicit dispatch after automated PR refresh: run full suite."
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$EVENT" = pull_request ]; then
-            # The whole PR (merge base to head), not only the latest push.
-            range="$PR_BASE...$PR_HEAD"
-          else
-            range="$BEFORE..$AFTER"
-          fi
-          code=true
-          if files=$(git diff --name-only "$range" 2>/dev/null); then
-            echo "Changed files ($range):"; echo "$files"
-            if [ -n "$files" ] && ! echo "$files" | grep -qv '\.md$'; then
-              code=false
-            fi
-          else
-            echo "Cannot diff $range (new branch or rewritten history): full run."
-          fi
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "Run Rust jobs: $code"
-      - run: python tools/check_portable_paths.py --self-test
-      - run: python tools/check_program_specific.py --self-test
-      # Exports the runtime tree and checks its Markdown links (no build).
-      - run: python tools/export_runtime.py target/runtime-links
-  rust:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - id: diff
+      env:
+        EVENT: ${{ github.event_name }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        BEFORE: ${{ github.event.before }}
+        AFTER: ${{ github.sha }}
+        BASE_REF: ${{ inputs.base_ref }}
+        FULL: ${{ inputs.full }}
+      shell: bash
+      run: |
+        args=()
+        if [ "$FULL" = true ]; then args+=(--full); fi
+        python tools/ci_changes.py "${args[@]}"
+    - run: python -m unittest discover -s tests/ci -v
+    - run: python tools/check_portable_paths.py --self-test
+    - run: python tools/check_program_specific.py --self-test
+    - run: python tools/export_runtime.py target/runtime-links
+  frontend:
+    name: web (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os:
+        - ubuntu-latest
+        - windows-latest
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - run: python tools/check_portable_paths.py --self-test
-      - run: python tools/check_program_specific.py --self-test
-      - run: python tools/dos_program_versions.py --check
-      - run: cargo test --locked -- --show-output
-      - run: cargo run --locked -- --selftest
-      - run: python -m unittest discover -s tests/gui -v
-      - run: python tools/verify_debug_service.py
-      - if: runner.os == 'Windows'
-        run: python tools/verify_debug_service.py --window
-      - run: python tools/build_selftest.py --check
-      - run: python tools/build_hello.py --check
-      - run: python tools/build_numeric.py --check
-      - run: cargo run --locked -- --numeric-test
-      - run: python tools/verify_memory.py
-      - run: python tools/verify_descriptions.py
-      - run: python tools/verify_flow.py
-      - run: python tools/verify_extensions.py
-      - run: python tools/verify_rotates.py
-      - run: python tools/verify_exchange.py
-      - run: python tools/verify_flag_transfer.py
-      - run: python tools/verify_direction_flag.py
-      - run: python tools/verify_dos_probe.py
-      - run: python tools/verify_dos_text_io.py
-      - run: python tools/build_ansi_mandel.py --check
-      - run: python tools/verify_ansi_mandel.py
-      - run: python tools/build_recursive_fib.py --check
-      - run: python tools/build_mz_demo.py --check
-      - run: python tools/verify_dos_demos.py
-      - if: runner.os == 'Linux'
-        run: python tools/verify_dos_console.py --engine target/debug/pil --out target/console-fixtures
-      - if: runner.os == 'Windows'
-        run: python tools/verify_dos_console.py --engine target/debug/pil.exe --out target/console-fixtures
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -y -q dosbox-x
-      - if: runner.os == 'Linux'
-        env:
-          SDL_VIDEODRIVER: dummy
-          SDL_AUDIODRIVER: dummy
-        run: |
-          python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cpu --out target/dosbox-cpu
-          python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite console --out target/dosbox-console
-          python tools/verify_dosbox_cpu.py --engine target/debug/pil --dosbox /usr/bin/dosbox-x --suite cga --out target/dosbox-cga
-      - run: python tools/verify_containers.py
-      - if: runner.os == 'Linux'
-        run: sh tools/debug.sh --check
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tools/debug.ps1 -Check
-      - run: python tools/export_runtime.py target/runtime-source --verify
-      # The release build (pil and the dine library target) stays free of rustc warnings.
-      - run: python tools/check_build_warnings.py
-      - run: python tools/check_build_warnings.py build --release --locked --lib --features dine-library
-      - run: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check
-      - run: python tools/verify_dine_library.py
-      - if: runner.os == 'Windows'
-        run: python tools/verify_dos_text_io.py --library target/release/dine.dll
-      - if: runner.os == 'Linux'
-        run: python tools/verify_dos_text_io.py --library target/release/libdine.so
-      - run: python tools/verify_dine_executable.py
-      - run: python tools/verify_mandel_cycle.py
-      - run: python tools/verify_mandel_cga.py
-      - run: python tools/verify_mandel_vga.py
-      - if: runner.os == 'Linux'
-        run: sh tools/bench.sh 10000 5
-      - if: runner.os == 'Linux'
-        run: sh tools/bench.sh 10000 5 --uncached
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tools/bench.ps1 -Iterations 10000 -Samples 5
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tools/bench.ps1 -Iterations 10000 -Samples 5 -Uncached
-      - if: runner.os == 'Linux'
-        run: sh tools/compare.sh 10000 5
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tools/compare.ps1 -Iterations 10000 -Samples 5
-      - run: cargo run --release --locked -- --verify-backends
-      - if: runner.os == 'Linux'
-        run: sh tools/mandelbrot.sh 256 32
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tools/mandelbrot.ps1 -Size 256 -Iterations 32
-      - run: python tools/verify_mandelbrot.py target/mandelbrot/256x256-i32/mandelbrot.pgm 256 32
-      - if: runner.os == 'Linux'
-        run: sh tools/mandelbrot.sh --compare 256 32
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tools/mandelbrot.ps1 -Compare -Size 256 -Iterations 32
-      - run: python tools/package.py
-      - uses: actions/upload-artifact@v6
-        with:
-          name: pil-${{ matrix.os }}
-          path: |
-            dist/*.zip
-            target/host-cpu-oracle/run-*/report.txt
-            target/host-cpu-oracle/run-*/cases.jsonl
-            target/host-cpu-oracle/run-*/hardware.bin
-            target/mandelbrot/256x256-i32/*
-            target/backend-comparison/run-*/mandelbrot/*
-
-
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - run: python -m unittest discover -s tests/gui -p test_termux_web.py -v
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+  affected:
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.integration == 'true' || needs.changes.outputs.backends
+      == 'true' || needs.changes.outputs.delivery == 'true' || needs.changes.outputs.performance == 'true' || needs.changes.outputs.frontend
+      == 'true' || needs.changes.outputs.dos == 'true' || needs.changes.outputs.library == 'true'
+    uses: ./.github/workflows/full.yml
+    with:
+      core: ${{ needs.changes.outputs.core == 'true' }}
+      frontend: ${{ needs.changes.outputs.frontend == 'true' }}
+      policy: false
+      integration: ${{ needs.changes.outputs.integration == 'true' }}
+      backends: ${{ needs.changes.outputs.backends == 'true' }}
+      delivery: ${{ needs.changes.outputs.delivery == 'true' }}
+      performance: ${{ needs.changes.outputs.performance == 'true' }}
+      dos: ${{ needs.changes.outputs.dos == 'true' }}
+      library: ${{ needs.changes.outputs.library == 'true' }}
+  required:
+    name: Required PR checks
+    if: always()
+    needs:
+    - changes
+    - frontend
+    - affected
+    runs-on: ubuntu-latest
+    steps:
+    - env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: |
+        python - <<'PY'
+        import json, os
+        results = json.loads(os.environ['RESULTS'])
+        assert results['changes']['result'] == 'success', results
+        assert all(job['result'] in ('success', 'skipped') for job in results.values()), results
+        print('All affected checks passed')
+        PY
