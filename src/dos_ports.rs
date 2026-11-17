@@ -196,6 +196,15 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         return Ok(());
     }
     let assigned=device(port).or_else(||if word{device(port.wrapping_add(1))}else{None});
+    // DOS sound libraries probe optional AdLib/OPL and nearby ISA expansion
+    // addresses even when no board is installed. No FM synthesizer is modeled
+    // yet, so these ports float high on reads and ignore writes rather than
+    // stopping the entire DOS program. This deliberately does not simulate
+    // OPL timers, synthesize audio, or claim an installed AdLib device.
+    if (0x380..=0x38b).contains(&port)&&(!word||port<0x38b){
+        if input{p.cpu.regs[0]|=if word{0xffff}else{0xff};}
+        return Ok(());
+    }
     // Only truly unassigned writes qualify; normal device handlers still run.
     if !input&&assigned.is_none()&&!matches!(port,0xe9|0x190)&&IGNORE_UNASSIGNED_OUT.load(std::sync::atomic::Ordering::Relaxed){
         if p.speaker.ignored_out.insert(port){eprintln!("Ignored unassigned OUT port {port:04X}h, width {}, value {:04X}, CS:IP={:04X}:{:04X}",if word{16}else{8},p.cpu.regs[0]&if word{65535}else{255},p.selectors[1],p.cpu.eip);}
