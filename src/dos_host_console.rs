@@ -139,6 +139,19 @@ pub(crate) fn bios_word(key:Key,m:Mods)->Option<u16>{
     }
 }
 
+/// A physical Alt+letter is identified by its actual set-1 scan code,
+/// not by a US layout lookup. DOS INT 16h returns scan:00h for Alt+letters,
+/// including on layouts where the host virtual key and physical position differ.
+#[cfg(any(windows,test))]
+fn native_bios_word(scan:u8,key:Option<(Key,Mods)>)->Option<u16>{
+    let (key,mods)=key?;
+    match key {
+        Key::Char(c) if mods.alt&&!mods.ctrl&&c.is_ascii_alphabetic()
+            =>Some(u16::from(scan)<<8),
+        _=>bios_word(key,mods),
+    }
+}
+
 /// Terminal input in raw mode: bytes to keys. ESC alone is the Esc key only
 /// after a short pause (`flush`); ESC [ and ESC O start VT sequences, ESC
 /// and another key is Alt with that key. Ctrl+] (1Dh) ends the console.
@@ -364,7 +377,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                 Event::Key(key,mods)=>{front.clear_selection();if let Some(word)=bios_word(key,mods){pending.push_back(word.into());}},
                 Event::NativeKey{scan,extended,down,key}=>{
                     front.clear_selection();
-                    pending.push_back(PendingKey::Native{scan,extended,down,word:key.and_then(|(k,m)|bios_word(k,m))});
+                    pending.push_back(PendingKey::Native{scan,extended,down,word:native_bios_word(scan,key)});
                 },
                 Event::Copy=>front.copy(session)?,
                 Event::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
