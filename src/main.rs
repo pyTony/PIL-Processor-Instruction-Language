@@ -2454,6 +2454,7 @@ Debugger and checks:
 Code generation and examples:
   --emit-rust 8|16|32 [DESCRIPTION]  Emit a Rust instruction implementation
   --emit-suite-rust [N] [SAMPLES]    Emit backend verification suite
+  --emit-loop-rust [N] [SAMPLES]     Emit small native loop benchmark
   --write-selftest PATH             Write a raw example
   --write-hello PATH                Write a raw hello example
   --write-factorials PATH           Write a factorial example
@@ -2613,11 +2614,15 @@ pub fn main() -> R<()> {
         let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{5};
         println!("{}",native::cpu_benchmark(n,samples)?);return Ok(());
     }
-    if matches!(args.get(1).map(String::as_str),Some("--compare-backends"|"--emit-suite-rust")) {
-        if args.len()>4{return Err("usage: pil --compare-backends|--emit-suite-rust [iterations] [samples]".into());}
+    if matches!(args.get(1).map(String::as_str),Some("--compare-backends"|"--emit-suite-rust"|"--emit-loop-rust")) {
+        if args.len()>4{return Err("usage: pil --compare-backends|--emit-suite-rust|--emit-loop-rust [iterations] [samples]".into());}
         let n=if let Some(x)=args.get(2){u32::try_from(number(x)?).map_err(|_|"iterations out of range")?}else{10000};
         let samples=if let Some(x)=args.get(3){u32::try_from(number(x)?).map_err(|_|"samples out of range")?}else{5};
-        if args[1]=="--emit-suite-rust"{print!("{}",native::emit_suite(n,samples)?);}else{println!("{}",native::compare(n,samples)?);}
+        match args[1].as_str() {
+            "--emit-suite-rust" => print!("{}",native::emit_suite(n,samples)?),
+            "--emit-loop-rust" => print!("{}",native::emit_loop(n,samples)?),
+            _ => println!("{}",native::compare(n,samples)?),
+        }
         return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--write-factorials") || args.get(1).map(String::as_str)==Some("--write-loop") {

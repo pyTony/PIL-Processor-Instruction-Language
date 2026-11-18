@@ -521,7 +521,15 @@ fn runner_source()->String {
     source
 }
 pub fn emit_suite(iterations:u32,samples:u32)->Result<String,String> {
-    validate(iterations,samples)?;let tests=cases()?;
+    emit_suite_select(iterations,samples,true)
+}
+/// Small fixed-image native benchmark with no unrelated verification cases.
+/// Uses the exact same timed-loop instruction emitter and assertions as emit_suite.
+pub fn emit_loop(iterations:u32,samples:u32)->Result<String,String> {
+    emit_suite_select(iterations,samples,false)
+}
+fn emit_suite_select(iterations:u32,samples:u32,include_cases:bool)->Result<String,String> {
+    validate(iterations,samples)?;let tests=if include_cases {cases()?} else {Vec::new()};
     let mut source=runner_source();
     for (id,test) in tests.iter().enumerate(){source.push_str(&emit_case(test,&format!("c{id}"))?);}
     source.push_str(&emit_case(&case("timed_loop",guest::loop_bytes(iterations)?)?,"timed_loop")?);
