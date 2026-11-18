@@ -6,6 +6,7 @@ keyboard and VGA semantics remain in the existing pil --dos-session engine.
 """
 import argparse
 from collections import deque
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -224,6 +225,16 @@ def create_server(backend, port=DEFAULT_PORT, html=HTML):
     return ThreadingHTTPServer((HOST, port), make_handler(backend, html))
 
 
+def configure_host_clock(session, offset=None):
+    """Enable the DOS host clock, matching the native desktop frontend."""
+    if offset is None:
+        offset = datetime.now().astimezone().utcoffset()
+        offset = int(offset.total_seconds()) if offset is not None else 0
+    reply = session.send("clock %d" % offset)
+    if not reply.get("ok", False):
+        raise RuntimeError("DOS clock initialization failed: %s" % reply)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("program", nargs="?", help="DOS COM/EXE or IMAGE.img::PATH (default: pildos.conf)")
@@ -248,6 +259,7 @@ def main(argv=None):
                       config=options.config, fpu=options.fpu, mouse=options.mouse,
                       ansi=options.ansi, stop_log="PILdos-stops.jsonl")
     try:
+        configure_host_clock(session)
         backend = WebBackend(session)
         with create_server(backend, options.port) as server:
             address = "http://127.0.0.1:%d/" % server.server_port
