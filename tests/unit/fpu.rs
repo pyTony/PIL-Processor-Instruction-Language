@@ -1220,8 +1220,8 @@ fn f2xm1_unsupported_ranges_unmasked_precision_and_empty_stack_are_atomic(){
                Outcome::StackFault(StackError::Underflow));
     assert_eq!(fpu.state,before);
     for (value,control) in [
-        (convert::from_i32(2),0x037f),
-        (convert::from_i32(-2),0x037f),
+        (convert::from_i32(2),0x035f),
+        (convert::from_i32(-2),0x035f),
         (convert::from_i32(1),0x0b7f),
         (convert::from_i32(1),0x035f),
     ]{
@@ -1232,4 +1232,36 @@ fn f2xm1_unsupported_ranges_unmasked_precision_and_empty_stack_are_atomic(){
                    if control==0x035f && value==convert::from_i32(1){Outcome::Completed}else{Outcome::Unsupported});
         if control!=0x035f {assert_eq!(fpu.state,saved);}
     }
+}
+
+#[test]
+fn sysinfo_f2xm1_pi_out_of_range_is_nontrapping_with_precision_flag(){
+    // System Information 8.0 diagnostic, at CS:IP=32F1:023C:
+    // CW=037F, SW=3800, ST0 is the exact FLDPI 80-bit ROM value.
+    let p=dos::load(&[0xd9,0xf0],"sysinfo-f2xm1-pi.com").unwrap();
+    let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+    let mut fpu=PresentFpu::default();
+    let pi=Extended80::from_bits(14488038916154245685,0x4000);
+    fpu.state.push(pi).unwrap();
+    assert_eq!(fpu.state.status,0x3800);
+    let before=fpu.state.top();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0xf0]),&mut cpu,&mut ram,&p.image),Outcome::Completed);
+    assert_eq!(fpu.state.st(0),Some(pi));
+    assert_eq!(fpu.state.st(1),None);
+    assert_eq!(fpu.state.top(),before);
+    assert_eq!(fpu.state.status,0x3820);
+    assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
+}
+
+#[test]
+fn out_of_range_f2xm1_rejects_unmasked_precision_without_changes(){
+    let p=dos::load(&[0xd9,0xf0],"f2xm1-pi-unmasked.com").unwrap();
+    let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+    let mut fpu=PresentFpu::default();
+    fpu.state.control &= !0x0020;
+    fpu.state.push(Extended80::from_bits(14488038916154245685,0x4000)).unwrap();
+    let before=fpu.state.clone();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0xf0]),&mut cpu,&mut ram,&p.image),Outcome::Unsupported);
+    assert_eq!(fpu.state,before);
+    assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
 }
