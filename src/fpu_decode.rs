@@ -23,6 +23,7 @@ pub enum Operation {
     Ftst,
     Fxtract,
     Frndint,
+    F2xm1,
     Fsin,
     Fcos,
     Fld1,
@@ -50,7 +51,6 @@ pub enum Operation {
     Compare { index: u8, pop: bool },
     ComparePop2,
     /// FUCOM/FUCOMP: quiet unordered compare ST(0) with ST(i), optionally pop.
-    UnorderedCompare { index: u8, pop: bool },
     CompareMemory { bytes: u32, pop: bool },
     /// Register arithmetic, either ST(0) op ST(i) or ST(i) op ST(0), pop.
     Arithmetic { kind: Arithmetic, index: u8, pop: bool },
@@ -86,6 +86,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0xe4) => Some(Operation::Ftst),
             (0xd9, 0xf4) => Some(Operation::Fxtract),
             (0xd9, 0xfc) => Some(Operation::Frndint),
+            (0xd9, 0xf0) => Some(Operation::F2xm1),
             (0xd9, 0xfe) => Some(Operation::Fsin),
             (0xd9, 0xff) => Some(Operation::Fcos),
             (0xd9, 0xe8) => Some(Operation::Fld1),

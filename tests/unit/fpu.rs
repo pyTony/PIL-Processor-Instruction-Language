@@ -1171,6 +1171,70 @@ fn fistp_m32_overflow_and_readonly_destination_leave_state_untouched(){
 }
 
 #[test]
+fn system_information_f2xm1_has_exact_endpoints_and_preserves_stack(){
+    // System Information 8.0: D9 F0. F2XM1 replaces only ST(0).
+    let mut p=dos::load(&[0xdb,0xe3,0xd9,0xe8,0xd9,0xf0,0xcd,0x20],"sysinfo-f2xm1.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,12).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.st(1),None);
+    let mut p=dos::load(&[0xd9,0xf0],"sysinfo-f2xm1-negative.com").unwrap();
+    let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+    let mut fpu=PresentFpu::default();
+    let minus_one=Extended80::from_bits(1u64<<63,0xbfff);
+    let guard=convert::from_i32(73);
+    fpu.state.push(guard).unwrap();fpu.state.push(minus_one).unwrap();
+    let top=fpu.state.top();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0xf0]),&mut cpu,&mut ram,&p.image),Outcome::Completed);
+    assert_eq!(fpu.state.st(0),Some(Extended80::from_bits(1u64<<63,0xbffe)));
+    assert_eq!(fpu.state.st(1),Some(guard));
+    assert_eq!(fpu.state.top(),top);
+    assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
+}
+
+#[test]
+fn f2xm1_finite_half_inputs_agree_with_reference_and_zero_keeps_its_sign(){
+    for value in [-0.75f64,-0.5,-0.125,0.125,0.5,0.75]{
+        let input=convert::from_f64_bits(value.to_bits()).unwrap();
+        let computed=math::f2xm1(input,0x037f).unwrap();
+        let result_bits=convert::to_f64_bits(computed.value,0x037f).unwrap().bits;
+        let actual=f64::from_bits(result_bits);
+        let expected=value.exp2()-1.0;
+        assert!((actual-expected).abs()<3e-15,"x={value}: {actual} vs {expected}");
+        assert!(computed.inexact);
+    }
+    assert_eq!(math::f2xm1(Extended80::default(),0x037f).unwrap().value,
+               Extended80::default());
+    assert_eq!(math::f2xm1(Extended80::from_bits(0,0x8000),0x037f).unwrap().value,
+               Extended80::from_bits(0,0x8000));
+}
+
+#[test]
+fn f2xm1_unsupported_ranges_unmasked_precision_and_empty_stack_are_atomic(){
+    let p=dos::load(&[0xd9,0xf0],"f2xm1-atomic.com").unwrap();
+    let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();let mut fpu=PresentFpu::default();
+    let before=fpu.state.clone();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0xf0]),&mut cpu,&mut ram,&p.image),
+               Outcome::StackFault(StackError::Underflow));
+    assert_eq!(fpu.state,before);
+    for (value,control) in [
+        (convert::from_i32(2),0x037f),
+        (convert::from_i32(-2),0x037f),
+        (convert::from_i32(1),0x0b7f),
+        (convert::from_i32(1),0x035f),
+    ]{
+        let mut fpu=PresentFpu::default();
+        fpu.state.control=control;fpu.state.push(value).unwrap();
+        let saved=fpu.state.clone();
+        assert_eq!(fpu.execute(&instruction(&[0xd9,0xf0]),&mut cpu,&mut ram,&p.image),
+                   if control==0x035f && value==convert::from_i32(1){Outcome::Completed}else{Outcome::Unsupported});
+        if control!=0x035f {assert_eq!(fpu.state,saved);}
+    }
+}
+
+#[test]
 fn quake_fucomp_dd_e9_compares_and_pops_only_st0(){
     // Quake's latest stop: 00A7:54788, DD E9 = FUCOMP ST(1).
     for (left,right,codes) in [(0,1,0x0100u16),(1,1,0x4000),(2,1,0)] {

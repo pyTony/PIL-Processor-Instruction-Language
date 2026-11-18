@@ -272,6 +272,55 @@ pub fn fyl2xp1(y: Extended80, x: Extended80, control: u16) -> Result<Computed, M
     Ok(result)
 }
 
+/// x87 F2XM1: compute 2^x - 1 for -1 <= x <= 1, without host floats.
+/// Evaluate exp(x*ln(2))-1 directly to avoid subtracting nearly equal
+/// floating-point numbers near zero. The internal arithmetic is the existing
+/// 80-bit nearest-even engine; unsupported rounding/exceptions stay explicit.
+/// This is a finite-range approximation, not a correctly-rounded transcendental.
+pub fn f2xm1(x: Extended80, control: u16) -> Result<Computed, MathError> {
+    if control & 0x0c00 != 0 || control & 0x0300 == 0x0100 {
+        return Err(MathError::Unsupported);
+    }
+    let (negative, exp, sig) = split(x)?;
+    if sig == 0 { return Ok(signed_zero(negative)); }
+    const CW: u16 = 0x037f;
+    let one = Extended80::from_bits(1u64 << 63, 0x3fff);
+    if exp > 0x3fff || (exp == 0x3fff && sig != 1u64 << 63) {
+        return Err(MathError::Unsupported);
+    }
+    if exp == 0x3fff {
+        return Ok(exact(if negative {
+            Extended80::from_bits(1u64 << 63, 0xbffe) // -1/2
+        } else { one })); // 2^1 - 1
+    }
+    // 80-bit rounded ln(2), not an f64 approximation.
+    let ln2 = Extended80::from_bits(0xb172_17f7_d1cf_79ac, 0x3ffe);
+    let y = calculate(Arithmetic::Multiply, x, ln2, CW)?.value;
+    // For tiny x every nonlinear term is below the 80-bit precision of y.
+    // Avoid squaring an exponent that would underflow the normal range.
+    if (y.sign_exponent & 0x7fff) < 0x3fff - 72 {
+        return Ok(Computed { value: y, inexact: true, rounded_up: false, zero_divide: false });
+    }
+    let mut sum = y;
+    let mut term = y;
+    // expm1(y) = y + y^2/2! + ...; |y| < ln(2).
+    // The tail beyond 32 terms is < 2^-150 for this domain.
+    // Stop when the next term is too small to change the 64-bit sum.
+    for n in 2..=32i32 {
+        let next = calculate(Arithmetic::Multiply, term, y, CW)?.value;
+        term = calculate(Arithmetic::Divide, next, int_to_ext80(n), CW)?.value;
+        let (_, term_exp, term_sig) = split(term)?;
+        let (_, sum_exp, _) = split(sum)?;
+        if term_sig == 0 || term_exp + 72 < sum_exp { break; }
+        sum = calculate(Arithmetic::Add, sum, term, CW)?.value;
+    }
+    // Honor destination precision using the same operation as other x87
+    // transcendental helpers, while avoiding hidden host-float arithmetic.
+    let mut result = calculate(Arithmetic::Multiply, sum, one, control)?;
+    result.inexact = true;
+    Ok(result)
+}
+
 /// Round `x` to an integer according to the x87 rounding control (`RC`).
 pub fn frndint(x: Extended80, control: u16) -> Result<Computed, MathError> {
     let (negative, exp, sig) = split(x)?;
