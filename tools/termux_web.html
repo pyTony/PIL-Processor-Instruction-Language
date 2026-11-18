@@ -47,8 +47,6 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
 .viewer-keys button { min-height:42px; padding:6px 0; }
 @media (max-width:420px) { .keyboard-layout { gap:6px; } .keygroup { padding:5px; } .keyrow button, .arrowpad button { font-size:14px; } }
 @media (max-width:330px) { .keyboard-layout { grid-template-columns:1fr; } }
-.type { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-.type input { flex:1 1 200px; min-width:0; }
 .media-controls { border:1px solid #364557; border-radius:9px; padding:9px; margin:10px 0; }
 .media-controls summary { cursor:pointer; font-weight:600; }
 .media-controls form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
@@ -57,10 +55,9 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
 #media-status { color:var(--muted); overflow-wrap:anywhere; min-height:1.3em; font-size:13px; }
 #ansi-on[aria-pressed="true"] { border-color:var(--accent); }
 
-.type { padding:8px 0; }
-#keyboard { flex:0 0 auto; }
-#type { font-size:16px; }
-#type:focus { border-color:var(--accent); }
+/* Kept focusable for Android's IME, but input is shown only in DOS video RAM. */
+#type { position:absolute; width:1px; height:1px; min-height:0; padding:0;
+        border:0; opacity:0; pointer-events:none; font-size:16px; }
 #log { white-space:pre-wrap; max-height:110px; overflow:auto; color:#b3d7af; font:12px ui-monospace,monospace; }
 details { color:var(--muted); margin-top:14px; }
 footer { color:var(--muted); font-size:12px; margin-top:20px; }
@@ -80,9 +77,11 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <output id="zoom-level" aria-live="polite">Fit</output>
 <button type="button" id="zoomin" aria-label="Zoom in">+</button>
 <button type="button" id="zoomfit">Fit</button>
+<button type="button" id="keyboard" aria-label="Open software keyboard">⌨ Keyboard</button>
 </div>
 <div class="screen" id="screen" aria-label="DOS graphics and text screen">
-<canvas id="display" width="720" height="400" tabindex="0" aria-label="DOS screen. Tap for mouse or press a key."></canvas>
+<canvas id="display" width="720" height="400" tabindex="0" aria-label="DOS screen. Tap to type directly, or use the mouse."></canvas>
+<input id="type" type="text" enterkeyhint="enter" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="DOS keyboard input">
 </div>
 <div class="viewer-keys" aria-label="Fullscreen DOS keyboard">
 <button data-ascii="27" data-scan="1">Esc</button>
@@ -96,7 +95,6 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <div id="status" role="status">Connecting to PILdos...</div>
 <details id="diagnostics"><summary>Execution diagnostics</summary><div id="diagnostic-report" role="status" aria-live="off">Waiting for a frame...</div><small>Step progress does not guarantee guest graphics progress. Pause to inspect the last frame.</small></details>
 <div id="interrupt-status" role="status" aria-live="polite"></div>
-<form class="type" id="typeform"><input id="type" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tap to type DOS command" aria-label="DOS command input"><button type="submit">Type + ↵</button><button id="typeonly" type="button">Type</button><button id="keyboard" type="button">⌨ Keyboard</button></form>
 <div class="controls">
 <label>CPU slice <select id="budget"><option value="5000">5k</option><option value="20000" selected>20k</option><option value="50000">50k</option></select></label>
 <button id="break">Ctrl+Break</button>
@@ -425,35 +423,42 @@ document.addEventListener("keydown",e=>{
   }else if(e.key===" "){e.preventDefault();key(32,57);}
 });
 const field=document.getElementById("type");
-let sending=false;
-async function typeText(addEnter=false){
-  if(sending)return;
-  const text=field.value+(addEnter?"\n":"");
+let composing=false, pendingText=Promise.resolve();
+// A hidden input is needed only to open Android's software keyboard. Text
+// travels straight to DOS and appears in the guest video RAM, not a web form.
+function forwardText(text){
   if(!text)return;
-  sending=true;
-  try {
-    await api("/api/type",{text});
-    field.value="";
-  } catch(e){error(e);}
-  finally {sending=false;}
+  pendingText=pendingText.catch(()=>{}).then(()=>api("/api/type",{text}))
+    .catch(error);
 }
-// Enter on Android's soft keyboard and the form's submit button both send
-// the DOS Enter key. "Type" is the explicit choice to send without Enter.
-document.getElementById("typeform").addEventListener("submit",e=>{
-  e.preventDefault();
-  if(!e.isComposing)typeText(true);
-});
+function flushInput(){
+  if(composing||!field.value)return;
+  const text=field.value;
+  field.value="";
+  forwardText(text);
+}
+field.addEventListener("compositionstart",()=>{composing=true;});
+field.addEventListener("compositionend",()=>{composing=false;flushInput();});
+field.addEventListener("input",()=>flushInput());
 field.addEventListener("keydown",e=>{
   if(e.isComposing||e.keyCode===229)return;
-  if(e.key==="Enter"){e.preventDefault();typeText(true);}
-  // Once a line has been submitted the browser input is empty, but DOS may
-  // still be editing that line. Forward Backspace to the guest then.
-  if(e.key==="Backspace"&&!field.value){
-    e.preventDefault();key(8,14);
+  // Printable characters, including pasted text, are delivered by input.
+  // Nonprintables have no input event and must be sent as BIOS keys.
+  if(e.key==="Enter"||e.key==="Backspace"||e.key==="Tab"||
+     e.key==="Escape"||e.key.startsWith("Arrow")||
+     e.key.startsWith("F")||e.ctrlKey){
+    const value=scans[e.code]||scans[e.key];
+    if(value){
+      e.preventDefault();
+      let [ascii,scan]=value;
+      if(e.ctrlKey&&e.code.startsWith("Key"))ascii=e.code.charCodeAt(3)-64;
+      flushInput();
+      pendingText=pendingText.catch(()=>{}).then(()=>key(ascii,scan));
+    }
   }
 });
-document.getElementById("typeonly").addEventListener("click",()=>typeText(false));
 document.getElementById("keyboard").addEventListener("click",()=>field.focus());
+
 document.getElementById("toggle").addEventListener("click",()=>{
   running=!running;
   document.getElementById("toggle").textContent=running?"Pause":"Resume";
@@ -520,11 +525,14 @@ async function mouse(e,down){
   const [x,y]=mousePosition(e);buttons=down?1:0;
   try{await api("/api/mouse",{x,y,buttons});}catch(err){error(err);}
 }
-// A canvas is not an editable element, so focusing it cannot open Android's
-// software keyboard. A tap on the DOS screen instead focuses the real input
-// unless the guest has explicitly enabled its DOS mouse.
+// Desktop hardware keyboards type into the focused canvas. On touch
+// devices, focus the invisible IME input to open the software keyboard.
 canvas.addEventListener("pointerdown",e=>{
-  if(!latest?.mouse_present){document.getElementById("type").focus();return;}
+  if(!latest?.mouse_present){
+    if(e.pointerType==="touch")field.focus();
+    else canvas.focus();
+    return;
+  }
   e.preventDefault();mouse(e,true);
 });
 canvas.addEventListener("pointerup",e=>{e.preventDefault();mouse(e,false);});
