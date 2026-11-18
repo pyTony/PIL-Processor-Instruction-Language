@@ -74,6 +74,20 @@ fn load(p:&Loaded,offset:u32)->Result<u8,String>{
 }
 pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
     let(al,bx,cx,dx)=(p.cpu.regs[0]as u8,p.cpu.regs[3]&0xffff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
+    if ah==0x63{
+        // AX=6300h: return the active DBCS lead-byte ranges at DS:SI.
+        // CP437 is single-byte, so the existing NLS table is just 00h,00h.
+        // This is the same table exported by AX=6507h.
+        if al!=0{return Err(format!("DOS AH63 subfunction AL={al:02x} is not modelled"));}
+        let ds=SegmentRegister::Ds.index();
+        p.selectors[ds]=DOSDATA;
+        p.image.selectors[ds]=DOSDATA;
+        p.image.segments[ds]=SegmentCache::real_mode(DOSDATA);
+        p.cpu.regs[6]=(p.cpu.regs[6]&0xffff0000)|u32::from(DBCS);
+        p.cpu.regs[0]&=!255;
+        ok(p);
+        return Ok(());
+    }
     if ah==0x66{
         // Global code page: 437 is both the active and the system code page.
         // Selecting 437 again changes nothing; another page would need its
