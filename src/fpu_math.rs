@@ -296,6 +296,11 @@ pub fn f2xm1(x: Extended80, control: u16) -> Result<Computed, MathError> {
     // 80-bit rounded ln(2), not an f64 approximation.
     let ln2 = Extended80::from_bits(0xb172_17f7_d1cf_79ac, 0x3ffe);
     let y = calculate(Arithmetic::Multiply, x, ln2, CW)?.value;
+    // For tiny x every nonlinear term is below the 80-bit precision of y.
+    // Avoid squaring an exponent that would underflow the normal range.
+    if (y.sign_exponent & 0x7fff) < 0x3fff - 72 {
+        return Ok(Computed { value: y, inexact: true, rounded_up: false, zero_divide: false });
+    }
     let mut sum = y;
     let mut term = y;
     // expm1(y) = y + y^2/2! + ...; |y| < ln(2).
