@@ -188,7 +188,7 @@ impl PresentFpu {
             Operation::FldM32 | Operation::FstpM32 |
             Operation::FldM64 | Operation::FstpM64 |
             Operation::FldM80 | Operation::FstpM80 |
-            Operation::FildM16 | Operation::FildM32 | Operation::FildM64 | Operation::FistpM64 | Operation::FbstpM80 | Operation::FbldM80 =>
+            Operation::FildM16 | Operation::FildM32 | Operation::FildM64 | Operation::FistpM32 | Operation::FistpM64 | Operation::FbstpM80 | Operation::FbldM80 =>
                 return self.execute_memory(operation,instruction,cpu,ram,image),
         };
         match result {
@@ -491,10 +491,10 @@ impl PresentFpu {
     /// checked before RAM access; FSTP commits a pop only after a successful write.
     fn execute_memory(&mut self,operation:Operation,instruction:&Instruction,
                       cpu:&Cpu,ram:&mut Ram,image:&Image)->Outcome {
-        let write=matches!(operation,Operation::FstpM32|Operation::FstpM64|Operation::FstpM80|Operation::FistpM64|Operation::FbstpM80);
+        let write=matches!(operation,Operation::FstpM32|Operation::FstpM64|Operation::FstpM80|Operation::FistpM32|Operation::FistpM64|Operation::FbstpM80);
         let bytes: u32=match operation {
             Operation::FildM16=>2,
-            Operation::FldM32|Operation::FstpM32|Operation::FildM32=>4,
+            Operation::FldM32|Operation::FstpM32|Operation::FildM32|Operation::FistpM32=>4,
             Operation::FldM64|Operation::FstpM64|Operation::FildM64|Operation::FistpM64=>8,
             Operation::FldM80|Operation::FstpM80|Operation::FbstpM80|Operation::FbldM80=>10,
             _=>return Outcome::Unsupported,
@@ -607,27 +607,32 @@ impl PresentFpu {
         let Some(value)=self.state.st(0) else {
             return Outcome::StackFault(StackError::Underflow);
         };
-        if matches!(operation,Operation::FistpM64) {
+        if matches!(operation,Operation::FistpM32|Operation::FistpM64) {
             let Ok((ival,inexact,rounded_up))=convert::to_i64(value,self.state.control) else {
                 return Outcome::Unsupported;
             };
             if inexact && self.state.control & 0x0020 == 0 {
                 return Outcome::Unsupported;
             }
-            for i in 0..8u32 {
+            // A narrower FISTP must fit the signed destination. Out-of-range
+            // values require x87 invalid-operation handling, not a truncated write.
+            if bytes==4 && i32::try_from(ival).is_err() {
+                return Outcome::Unsupported;
+            }
+            for i in 0..bytes {
                 if ram.check_write(linear+i,MemWidth::Byte).is_err() {
                     return Outcome::MemoryFault;
                 }
             }
             let bits=ival as u64;
             if ram.store(linear,MemWidth::Dword,bits as u32).is_err()
-                ||ram.store(high,MemWidth::Dword,(bits>>32) as u32).is_err() {
+                ||(bytes==8&&ram.store(high,MemWidth::Dword,(bits>>32) as u32).is_err()) {
                 return Outcome::MemoryFault;
             }
             self.state.status &= !0x0200;
             if rounded_up { self.state.status |= 0x0200; }
             if inexact { self.state.status |= 0x0020; }
-            self.state.pop().expect("FISTP m64 checked ST(0)");
+            self.state.pop().expect("FISTP checked ST(0)");
             return Outcome::Completed;
         }
         let converted=if bytes==4{
