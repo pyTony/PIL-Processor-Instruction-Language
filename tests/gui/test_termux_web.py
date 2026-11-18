@@ -100,13 +100,21 @@ class TermuxWebTests(unittest.TestCase):
         self.assertEqual(len(meta["colors"]), 16)
         self.assertNotIn("snapshot", self.session.commands)
 
-    def test_android_soft_keyboard_has_visible_focus_and_dos_enter(self):
+    def test_direct_canvas_typing_has_hidden_android_ime_and_dos_enter(self):
         html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
         self.assertIn('id="keyboard"', html)
-        self.assertIn('enterkeyhint="send"', html)
-        self.assertIn('typeText(true)', html)
-        self.assertIn('if(e.key==="Backspace"&&!field.value)', html)
-        self.assertLess(html.index('id="typeform"'), html.index('class="controls"'))
+        self.assertIn('enterkeyhint="enter"', html)
+        self.assertIn('id="type" type="text"', html)
+        self.assertIn('#type { position:absolute;', html)
+        self.assertIn('opacity:0; pointer-events:none;', html)
+        self.assertIn('field.addEventListener("input",()=>flushInput())', html)
+        self.assertIn('field.addEventListener("compositionend"', html)
+        self.assertIn('pendingText=pendingText.catch(()=>{}).then(()=>api("/api/type",{text}))', html)
+        self.assertIn('canvas.focus()', html)
+        self.assertIn('if(e.pointerType==="touch")field.focus()', html)
+        self.assertIn('e.key==="Enter"||e.key==="Backspace"', html)
+        self.assertNotIn('id="typeform"', html)
+        self.assertNotIn('id="typeonly"', html)
 
     def test_mount_and_ansi_controls_call_existing_dos_protocol(self):
         import tempfile
@@ -152,7 +160,7 @@ class TermuxWebTests(unittest.TestCase):
         self.assertIn('id="zoomout"', html)
         self.assertIn('id="zoomfit"', html)
         self.assertIn('class="viewer-keys"', html)
-        self.assertIn('id="typeform"', html)
+        self.assertIn('id="type" type="text"', html)
         self.assertIn('data-ascii="13" data-scan="28"', html)
 
     def test_orientation_and_keyboard_viewport_changes_recalculate_fit(self):
