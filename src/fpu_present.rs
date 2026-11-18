@@ -197,6 +197,8 @@ impl PresentFpu {
                 return self.compare_integer_memory(bytes, pop, instruction, cpu, ram, image),
             Operation::Compare { index, pop } =>
                 return self.compare_register(index, if pop {1}else{0}),
+            Operation::UnorderedCompare { index, pop } =>
+                return self.compare_unordered_register(index, pop),
             Operation::Ftst => {
                 let Some(value)=self.state.st(0) else{return Outcome::StackFault(StackError::Underflow);};
                 return self.commit_compare(value,Extended80::default(),0);
@@ -477,6 +479,34 @@ impl PresentFpu {
             self.state.pop().expect("all comparison pops validated before commit");
         }
         Outcome::Completed
+    }
+
+    /// FUCOM/FUCOMP are quiet comparisons: a quiet NaN sets C3,C2,C0
+    /// without signalling invalid-operation. Other exceptional encodings
+    /// remain unsupported rather than silently changing x87 state.
+    fn compare_unordered_register(&mut self, index:u8, pop:bool) -> Outcome {
+        let (Some(lhs),Some(rhs))=(self.state.st(0),self.state.st(usize::from(index))) else {
+            return Outcome::StackFault(StackError::Underflow);
+        };
+        let quiet_nan=|x:Extended80| {
+            x.sign_exponent & 0x7fff == 0x7fff &&
+            x.significand & (3u64<<62) == (3u64<<62)
+        };
+        if quiet_nan(lhs)||quiet_nan(rhs){
+            // A signaling NaN elsewhere still needs an invalid-operation
+            // exception; do not suppress it merely because one operand is QNaN.
+            let signaling_nan=|x:Extended80| {
+                x.sign_exponent & 0x7fff == 0x7fff &&
+                x.significand & (1u64<<63)!=0 &&
+                x.significand & (1u64<<62)==0 &&
+                x.significand & ((1u64<<62)-1)!=0
+            };
+            if signaling_nan(lhs)||signaling_nan(rhs){return Outcome::Unsupported;}
+            self.state.status=(self.state.status&!0x4700)|0x4500;
+            if pop {self.state.pop().expect("FUCOMP checked ST(0)");}
+            return Outcome::Completed;
+        }
+        self.commit_compare(lhs,rhs,u8::from(pop))
     }
 
     fn compare_register(&mut self, index:u8, pops:u8) -> Outcome {

@@ -50,6 +50,9 @@ pub enum Operation {
     FbldM80,
     Compare { index: u8, pop: bool },
     ComparePop2,
+    /// FUCOM/FUCOMP register comparison, with optional pop of ST(0).
+    UnorderedCompare { index: u8, pop: bool },
+    /// FUCOM/FUCOMP: quiet unordered compare ST(0) with ST(i), optionally pop.
     CompareMemory { bytes: u32, pop: bool },
     /// Register arithmetic, either ST(0) op ST(i) or ST(i) op ST(0), pop.
     Arithmetic { kind: Arithmetic, index: u8, pop: bool },
@@ -96,6 +99,8 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0xc0..=0xc7) => Some(Operation::FldSt(rm)),
             (0xd9, 0xc8..=0xcf) => Some(Operation::Fxch(rm)),
             (0xdd, 0xd8..=0xdf) => Some(Operation::FstpSt(rm)),
+            (0xdd, 0xe0..=0xe7) => Some(Operation::UnorderedCompare { index: rm, pop: false }),
+            (0xdd, 0xe8..=0xef) => Some(Operation::UnorderedCompare { index: rm, pop: true }),
             (0xd8, 0xc0..=0xc7) => Some(Operation::Arithmetic { kind: Arithmetic::Add, index: rm, pop: false }),
             (0xd8, 0xc8..=0xcf) => Some(Operation::Arithmetic { kind: Arithmetic::Multiply, index: rm, pop: false }),
             (0xd8, 0xe0..=0xe7) => Some(Operation::Arithmetic { kind: Arithmetic::Subtract, index: rm, pop: false }),

@@ -165,3 +165,14 @@ fn chained_blocks_match_the_interpreter_on_the_graphics_fixtures(){
     same_run(include_bytes!("../../programs/dos/MANDCGA.COM"),"MANDCGA.COM",300);
     same_run(include_bytes!("../../programs/dos/MANDVGA.COM"),"MANDVGA.COM",300);
 }
+
+/// Compact builds must not link generated native forms; unsupported forms
+/// automatically use the same generic PIL execution engine in either mode.
+#[cfg(feature = "compact-interpreter")]
+#[test]
+fn compact_build_omits_generated_forms_and_uses_interpreter() {
+    assert_eq!(forms(), 0);
+    let program = pil_program(&[0x05, 0x34, 0x12, 0xcd, 0x20]);
+    assert!(resolve(&program).is_none());
+    same_run(include_bytes!("../../programs/dos/FACTOR.COM"), "FACTOR.COM", 40);
+}

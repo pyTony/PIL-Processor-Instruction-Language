@@ -6,6 +6,7 @@ keyboard and VGA semantics remain in the existing pil --dos-session engine.
 """
 import argparse
 from collections import deque
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -58,17 +59,23 @@ class WebBackend:
         with self.lock:
             return self.session.send("snapshot")
 
-    def run(self, budget):
+    def run(self, budget, frame=True):
         if not isinstance(budget, int) or isinstance(budget, bool) or not 1 <= budget <= MAX_RUN:
             raise ValueError("run budget must be 1..100000")
+        if not isinstance(frame, bool):
+            raise ValueError("frame must be a boolean")
         with self.lock:
             self._drain_keys()
             previous = self.session.send("run %d buffered" % budget)
             self._drain_keys()
-            frame = self.session.send("snapshot")
+            # The CPU may run many slices between displays; avoid serializing
+            # a full VGA framebuffer unless the browser requests a refresh.
+            if not frame:
+                return previous
+            snapshot = self.session.send("snapshot")
             if previous.get("output"):
-                frame["output"] = previous["output"]
-            return frame
+                snapshot["output"] = previous["output"]
+            return snapshot
 
     def key(self, ascii_code, scan):
         if (not isinstance(ascii_code, int) or isinstance(ascii_code, bool)
@@ -194,7 +201,7 @@ def make_handler(backend, html=HTML):
                 if not isinstance(body, dict):
                     raise ValueError("expected a JSON object")
                 if path == "/api/run":
-                    reply = backend.run(body.get("budget"))
+                    reply = backend.run(body.get("budget"), body.get("frame", True))
                 elif path == "/api/key":
                     reply = backend.key(body.get("ascii"), body.get("scan"))
                 elif path == "/api/type":
@@ -224,6 +231,16 @@ def create_server(backend, port=DEFAULT_PORT, html=HTML):
     return ThreadingHTTPServer((HOST, port), make_handler(backend, html))
 
 
+def configure_host_clock(session, offset=None):
+    """Enable the DOS host clock, matching the native desktop frontend."""
+    if offset is None:
+        offset = datetime.now().astimezone().utcoffset()
+        offset = int(offset.total_seconds()) if offset is not None else 0
+    reply = session.send("clock %d" % offset)
+    if not reply.get("ok", False):
+        raise RuntimeError("DOS clock initialization failed: %s" % reply)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("program", nargs="?", help="DOS COM/EXE or IMAGE.img::PATH (default: pildos.conf)")
@@ -246,8 +263,10 @@ def main(argv=None):
             command_tail = default_args
     session = Session(engine, program, mount=options.mount, args=command_tail,
                       config=options.config, fpu=options.fpu, mouse=options.mouse,
-                      ansi=options.ansi, stop_log="PILdos-stops.jsonl")
+                      ansi=options.ansi, stop_log="PILdos-stops.jsonl",
+                      browser_video=True)
     try:
+        configure_host_clock(session)
         backend = WebBackend(session)
         with create_server(backend, options.port) as server:
             address = "http://127.0.0.1:%d/" % server.server_port

@@ -76,6 +76,17 @@ class TermuxWebTests(unittest.TestCase):
             handler.send_json(200, {"graphics_planar": "00" * 32})
             self.assertTrue(handler.close_connection)
 
+    def test_web_frontend_initializes_host_date_before_running_dos(self):
+        # The bare DOS-session engine intentionally defaults to 1980-01-01.
+        # The browser frontend must opt into host time like desktop PILdos.
+        web.configure_host_clock(self.session, 7200)
+        self.assertEqual(self.session.commands, ["clock 7200"])
+
+    def test_host_clock_rejects_failed_initialization(self):
+        self.session.send = lambda command: {"ok": False, "text": "bad clock"}
+        with self.assertRaisesRegex(RuntimeError, "clock initialization failed"):
+            web.configure_host_clock(self.session, 7200)
+
     def test_index_and_meta_do_not_require_x11(self):
         code, body = self.request("GET", "/")
         self.assertEqual(code, 200)
@@ -89,13 +100,21 @@ class TermuxWebTests(unittest.TestCase):
         self.assertEqual(len(meta["colors"]), 16)
         self.assertNotIn("snapshot", self.session.commands)
 
-    def test_android_soft_keyboard_has_visible_focus_and_dos_enter(self):
+    def test_direct_canvas_typing_has_hidden_android_ime_and_dos_enter(self):
         html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
         self.assertIn('id="keyboard"', html)
-        self.assertIn('enterkeyhint="send"', html)
-        self.assertIn('typeText(true)', html)
-        self.assertIn('if(e.key==="Backspace"&&!field.value)', html)
-        self.assertLess(html.index('id="typeform"'), html.index('class="controls"'))
+        self.assertIn('enterkeyhint="enter"', html)
+        self.assertIn('id="type" type="text"', html)
+        self.assertIn('#type { position:absolute;', html)
+        self.assertIn('opacity:0; pointer-events:none;', html)
+        self.assertIn('field.addEventListener("input",()=>flushInput())', html)
+        self.assertIn('field.addEventListener("compositionend"', html)
+        self.assertIn('pendingText=pendingText.catch(()=>{}).then(()=>api("/api/type",{text}))', html)
+        self.assertIn('canvas.focus()', html)
+        self.assertIn('if(e.pointerType==="touch")field.focus()', html)
+        self.assertIn('e.key==="Enter"||e.key==="Backspace"', html)
+        self.assertNotIn('id="typeform"', html)
+        self.assertNotIn('id="typeonly"', html)
 
     def test_mount_and_ansi_controls_call_existing_dos_protocol(self):
         import tempfile
@@ -141,7 +160,7 @@ class TermuxWebTests(unittest.TestCase):
         self.assertIn('id="zoomout"', html)
         self.assertIn('id="zoomfit"', html)
         self.assertIn('class="viewer-keys"', html)
-        self.assertIn('id="typeform"', html)
+        self.assertIn('id="type" type="text"', html)
         self.assertIn('data-ascii="13" data-scan="28"', html)
 
     def test_orientation_and_keyboard_viewport_changes_recalculate_fit(self):
@@ -187,6 +206,27 @@ class TermuxWebTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(list(self.backend.pending_keys), [])
         self.assertIn("key 13 28", self.session.commands)
+
+    def test_cpu_only_run_skips_large_video_snapshot(self):
+        code, body = self.request("POST", "/api/run",
+                                  {"budget": 50000, "frame": False})
+        state = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertTrue(state["frame_pending"])
+        self.assertEqual(state["output"], "hello")
+        self.assertEqual(self.session.commands, ["run 50000 buffered"])
+
+    def test_frame_option_must_be_boolean(self):
+        code, _ = self.request("POST", "/api/run",
+                               {"budget": 1000, "frame": "false"})
+        self.assertEqual(code, 400)
+        self.assertEqual(self.session.commands, [])
+
+    def test_display_refresh_is_capped_without_fixed_active_cpu_delay(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn("const MIN_FRAME_MS=1000/60", html)
+        self.assertIn('await api("/api/run",{budget,frame})', html)
+        self.assertNotIn("waits.normal", html)
 
     def test_run_and_snapshot_reuse_existing_engine_protocol(self):
         code, body = self.request("POST", "/api/run", {"budget": 20000})
