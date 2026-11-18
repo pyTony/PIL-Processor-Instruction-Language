@@ -113,3 +113,16 @@ fn checkpoint_diagnostics_name_mandelbrot_and_changed_state(){
     assert!(emit_mandelbrot(3,32).is_err());assert!(emit_mandelbrot(256,65).is_err());
 }
 
+
+#[test]
+fn small_loop_native_emitter_reuses_checked_benchmark_without_full_suite() {
+    let source=emit_loop(17,2).unwrap();
+    assert!(source.contains("mod timed_loop {"));
+    assert!(source.contains("NATIVE_RESULT median_ns="));
+    assert!(source.contains("assert_eq!(state.regs,[17,0,0,1,0,0,0,0])"));
+    assert!(!source.contains("mod c0 {"));
+    assert!(source.len()<emit_suite(17,2).unwrap().len());
+    for (n,s) in [(0,2),(100001,2),(17,0),(17,10)] {
+        assert!(emit_loop(n,s).is_err());
+    }
+}
