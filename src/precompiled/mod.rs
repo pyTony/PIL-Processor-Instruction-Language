@@ -25,8 +25,16 @@ use crate::{address,guest,ExecError,FlowContext,Program,Ram,Token};
 use std::collections::{BTreeMap,HashMap};
 use std::sync::OnceLock;
 
+// The generated table dominates Android code size. Omit it entirely for
+// memory-constrained hosts while retaining PIL decoding and interpretation.
+// This is a compile-time choice: PIL_PRECOMPILED=off only disables execution.
+#[cfg(not(feature = "compact-interpreter"))]
 #[path="forms.rs"]
 mod forms;
+#[cfg(feature = "compact-interpreter")]
+mod forms {
+    pub(super) static FORMS: [(u128, &[Option<u64>], super::FormFn); 0] = [];
+}
 
 pub(crate) type FormFn=fn(&mut [u32;8],&mut u32,&mut u32,&mut u32,(usize,u8),(usize,u8),FlowContext,&mut Ram,Option<address::AddressContext>,&mut address::SegmentState,&[u64])->Result<(),ExecError>;
 
