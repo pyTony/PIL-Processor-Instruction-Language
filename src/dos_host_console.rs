@@ -686,6 +686,36 @@ impl Front{
     }
 }
 
+// The DOS mouse driver edits the displayed text *word*, not guest B800 RAM.
+// Keep it a presentation overlay so cursor motion cannot corrupt screen cells.
+#[cfg(any(windows,test))]
+fn overlay_mouse_text_cursor(cells:&mut [u8],columns:u32,view:mouse::View,masks:Option<(u16,u16)>){
+    if !view.visible || columns==0{return;}
+    let (screen_mask,cursor_mask)=masks.unwrap_or((0x77ff,0x7700));
+    let (x,y)=(usize::from(view.x/8),usize::from(view.y/8));
+    let cols=columns as usize;
+    let Some(at)=y.checked_mul(cols).and_then(|n|n.checked_add(x)).and_then(|n|n.checked_mul(2)) else{return;};
+    if at+1>=cells.len(){return;}
+    let word=u16::from_le_bytes([cells[at],cells[at+1]]);
+    let shown=(word&screen_mask)^cursor_mask;
+    cells[at..at+2].copy_from_slice(&shown.to_le_bytes());
+}
+
+// Programs can upload an alternate CP437 glyph set to VGA plane 2. Preserve
+// the built-in ROM font for untouched glyphs: text font VRAM is initially zero.
+#[cfg(any(windows,test))]
+fn visible_text_font(p:&Loaded,rom:&[u8])->Vec<u8>{
+    let mut font=rom.to_vec();
+    let Some(planes)=p.ram.planar().or(p.vga.font.as_ref()) else{return font;};
+    for glyph in 0..256{
+        let at=glyph*32;
+        if (0..16).any(|row|planes.peek(2,at+row)!=0){
+            for row in 0..16{font[glyph*16+row]=planes.peek(2,at+row);}
+        }
+    }
+    font
+}
+
 #[cfg(windows)]
 struct WindowFront{
     window:crate::dine_window::Window,
@@ -718,11 +748,13 @@ impl WindowFront{
     fn present(&mut self,session:&Session,selection:Option<(select::Selection,u32,u32)>)->Result<(),String>{
         let p=session.machine().ok_or("session state lost")?;
         let frame=if graphics_mode(p){desktop_vga_frame(p)}else{
-            let (cells,columns,(row,column))=session.screen()?;
+            let (mut cells,columns,(row,column))=session.screen()?;
+            overlay_mouse_text_cursor(&mut cells,columns,p.mouse.view(),p.mouse.text_masks());
+            let font=visible_text_font(p,&self.font);
             // The hardware cursor blinks at about 3.75 Hz (16 frames of 60).
             let on=self.started.elapsed().as_millis()/267%2==0;
             let cursor=cursor_shape(p).filter(|_|on).map(|(a,b)|(row,column,a,b));
-            Some(text_pixels(&cells,columns,&self.font,cursor))
+            Some(text_pixels(&cells,columns,&font,cursor))
         };
         let Some(mut frame)=frame else{self.window.no_frame();return Ok(());};
         if let Some((s,columns,rows))=selection{select::highlight(&mut frame,columns,rows,s);}
@@ -839,3 +871,38 @@ fn grid(p:&Loaded)->Result<(u32,u32),String>{
 #[cfg(test)]
 #[path="../tests/unit/host_console.rs"]
 mod tests;
+
+#[cfg(test)]
+mod text_cursor_font_regressions {
+    use super::*;
+
+    #[test]
+    fn text_mouse_cursor_masks_are_display_only_and_respect_visibility() {
+        let original=[b'X',0x1f,b'Y',0x2e];
+        let mut cells=original;
+        let mut view=mouse::View{
+            present:true,active:true,visible:true,x:8,y:0,max_x:639,max_y:199
+        };
+        overlay_mouse_text_cursor(&mut cells,2,view,Some((0x00ff,0x7000)));
+        assert_eq!(&cells[..2],&original[..2]);
+        assert_eq!(&cells[2..],&[b'Y',0x70]);
+        assert_eq!(original,[b'X',0x1f,b'Y',0x2e]);
+        view.visible=false;
+        let mut hidden=original;
+        overlay_mouse_text_cursor(&mut hidden,2,view,Some((0x00ff,0x7000)));
+        assert_eq!(hidden,original);
+    }
+
+    #[test]
+    fn user_defined_vga_glyph_replaces_rom_only_for_written_character() {
+        let mut p=load(&[0xcd,0x20],"font-test.com").unwrap();
+        let rom=vga_text::font().unwrap();
+        let mut planes=crate::vga_planar::Planar::new();
+        // DOS programs store each glyph in a 32-byte plane-2 slot.
+        planes.poke(2,0xc4*32+7,0x55);
+        p.vga.font=Some(planes);
+        let font=visible_text_font(&p,&rom);
+        assert_eq!(font[0xc4*16+7],0x55);
+        assert_eq!(&font[0xb3*16..0xb3*16+16],&rom[0xb3*16..0xb3*16+16]);
+    }
+}
