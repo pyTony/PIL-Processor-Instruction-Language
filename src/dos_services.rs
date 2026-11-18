@@ -335,7 +335,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
-        (0x21,ah @ (0x38|0x65|0x66))=>{nls::service(p,ah)?;Ok(None)},
+        (0x21,ah @ (0x38|0x63|0x65|0x66))=>{nls::service(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==0x0c&&p.cpu.regs[1]&0xffff==0x036a=>{
             // Generic CON code-page query needs a DISPLAY-style device
             // driver. None is installed; the normal device rejects the
