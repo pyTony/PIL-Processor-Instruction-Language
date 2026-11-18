@@ -527,12 +527,12 @@ def screen_rows(reply, blink_on=True):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False, rust_graphics=False):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False, rust_graphics=False, browser_video=False):
         options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else []) + (['--fpu', fpu] if fpu != "none" else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                                        **({'env': {**os.environ, 'DINE_VIDEO': 'window'}} if rust_graphics else {}))
+                                        **({'env': {**os.environ, 'DINE_VIDEO': 'browser'}} if browser_video else {'env': {**os.environ, 'DINE_VIDEO': 'window'}} if rust_graphics else {}))
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
