@@ -384,3 +384,38 @@ pub(super) fn dos_line_key(p:&Loaded)->Result<Option<(u32,Writes)>,String>{
     let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
     Ok(Some((if key&255==0{key&0xff00}else{key&255},writes)))
 }
+
+#[cfg(test)]
+mod video_mode_02_regressions {
+    use super::*;
+
+    #[test]
+    fn visicalc_bios_mode_02_is_80x25_b800_text_and_reports_its_mode() {
+        let mut p=load(&[0xcd,0x20],"visicalc-mode02.com").unwrap();
+        p.cpu.regs[0]=0x0002;
+        display(&mut p,0x00).unwrap();
+        assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),2);
+        assert_eq!(p.ram.load(0x44a,MemWidth::Word).unwrap(),80);
+        assert_eq!(p.ram.load(0x44c,MemWidth::Word).unwrap(),PAGE);
+        assert_eq!(p.ram.load(0x463,MemWidth::Word).unwrap(),0x3d4);
+        assert_eq!(p.ram.load(0x485,MemWidth::Word).unwrap(),16);
+        assert_eq!(p.ram.load(VIDEO,MemWidth::Word).unwrap(),0x0720);
+        p.cpu.regs[0]=0x0f00;
+        display(&mut p,0x0f).unwrap();
+        assert_eq!(p.cpu.regs[0]&0xff,2);
+        assert_eq!((p.cpu.regs[0]>>8)&0xff,80);
+        p.cpu.regs[0]=0x0003;
+        display(&mut p,0x00).unwrap();
+        assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),3);
+    }
+
+    #[test]
+    fn mode_82_preserves_video_ram_like_mode_83() {
+        let mut p=load(&[0xcd,0x20],"visicalc-mode82.com").unwrap();
+        p.ram.store(VIDEO,MemWidth::Word,0x1e58).unwrap();
+        p.cpu.regs[0]=0x0082;
+        display(&mut p,0x00).unwrap();
+        assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),2);
+        assert_eq!(p.ram.load(VIDEO,MemWidth::Word).unwrap(),0x1e58);
+    }
+}
