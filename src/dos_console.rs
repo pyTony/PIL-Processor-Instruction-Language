@@ -265,7 +265,9 @@ fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
     scroll(&mut cells,(top,left,bottom,right),p.cpu.regs[0]&255,(p.cpu.regs[3]>>8)&255,up);
     commit(p,&window_writes(page,&cells,(top,left,bottom,right)))
 }
-/// Bounded mode 3, CGA 4/5/6, EGA/VGA planar 0Dh/0Eh/10h/12h and VGA 13h profile. Bit 7 keeps video RAM.
+/// Bounded 80x25 text modes 02h (monochrome colour-adapter text) and 03h,
+/// CGA 4/5/6, EGA/VGA planar 0Dh/0Eh/10h/12h and VGA 13h.
+/// Bit 7 keeps video RAM.
 fn set_mode(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
     if super::planar::geometry(al&0x7f).is_some(){return super::planar::set_mode(p,al&0x7f,al&0x80!=0);}
@@ -300,8 +302,13 @@ fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
         if al&0x80==0{p.ram.set_planar(None);}
         commit(p,&writes)?;p.vga.reset_palette();p.vga.bios_sync(Some(0),None,None);return Ok(());
     }
-    if al&0x7f!=3{return Err(format!("BIOS video mode {:02x} is outside the VGA BIOS profile (03h, 04h-06h, 0Dh, 0Eh, 10h, 12h, 13h)",al&0x7f));}
-    let mut writes=vec![(0x449,MemWidth::Byte,3),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
+    // BIOS mode 02h is the 80x25 black-and-white *colour-adapter* text
+    // mode. Like mode 03h it uses B800:0000, 8 text pages, 9x16 VGA cells,
+    // and the 3D4h CRTC. Keep its mode number visible to INT 10h/AH=0Fh.
+    // It is not mode 07h (MDA monochrome, B000:0000).
+    let mode=al&0x7f;
+    if !matches!(mode,2|3){return Err(format!("BIOS video mode {mode:02x} is outside the VGA BIOS profile (02h, 03h, 04h-06h, 0Dh, 0Eh, 10h, 12h, 13h)"));}
+    let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
         (0x463,MemWidth::Word,0x3d4),(0x44e,MemWidth::Word,0),(0x460,MemWidth::Word,0x0607),(0x462,MemWidth::Byte,0),(0x484,MemWidth::Byte,ROWS-1),(0x465,MemWidth::Byte,0x29),(0x485,MemWidth::Word,16)];
     writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
     if al&0x80==0{
