@@ -7,6 +7,7 @@ Rust input is compiled three times with rustc for the current host.
 import argparse
 import csv
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -37,9 +38,9 @@ def main():
         parser.error("iterations must be 1..100000")
     if not 1 <= args.samples <= 9:
         parser.error("samples must be 1..9")
-    pil = ROOT / "target" / "debug" / "pil"
+    pil = ROOT / "target" / "debug" / ("pil.exe" if os.name == "nt" else "pil")
     if not pil.is_file():
-        parser.error("missing target/debug/pil; first run sh tools/build_termux.sh --compact")
+        parser.error("missing debug PIL executable; build it first (on Termux: sh tools/build_termux.sh --compact)")
 
     details = subprocess.check_output(["rustc", "-vV"], text=True)
     host = next((line.split(": ", 1)[1] for line in details.splitlines()
