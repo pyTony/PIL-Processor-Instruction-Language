@@ -3598,3 +3598,37 @@ fn path_is_added_to_or_replaced_in_the_environment(){
     let bytes:Vec<u8>=(0..96).map(|i|p.ram.load(env+i,MemWidth::Byte).unwrap() as u8).collect();
     assert!(bytes.windows(12).any(|w|w==b"PATH=D:\\PIL\0"),"{bytes:?}");
 }
+
+#[test]
+fn int21_6300_returns_the_existing_cp437_dbcs_table(){
+    let mut p=load(&[0xcd,0x21],"dbcs.com").unwrap();
+    p.cpu.regs[0]=0x6300;
+    p.cpu.regs[6]=0xcafe_7777;
+    p.cpu.eflags|=1;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    assert_eq!(p.cpu.regs[0]&0xffff,0x6300);
+    assert_eq!(p.cpu.eflags&1,0);
+    assert_eq!(p.selectors[SegmentRegister::Ds.index()],DOSDATA);
+    assert_eq!(p.image.selectors[SegmentRegister::Ds.index()],DOSDATA);
+    assert_eq!(p.cpu.regs[6]>>16,0xcafe);
+    let offset=p.cpu.regs[6]&0xffff;
+    let linear=u32::from(DOSDATA)*16+offset;
+    assert_eq!(p.ram.load(linear,MemWidth::Word).unwrap(),0,
+      "CP437 has no DBCS lead-byte ranges");
+    // AX=6507h must report the very same NLS table.
+    p.cpu.regs[0]=0x6507;p.cpu.regs[1]=5;p.cpu.regs[7]=0x300;
+    service(&mut p,0x21,&mut vec![]).unwrap();
+    let base=u32::from(PSP)*16+0x300;
+    let record:Vec<u8>=(0..5).map(|i|p.ram.load(base+i,MemWidth::Byte).unwrap()as u8).collect();
+    assert_eq!(record,[7,offset as u8,(offset>>8)as u8,DOSDATA as u8,(DOSDATA>>8)as u8]);
+}
+
+#[test]
+fn int21_63_other_subfunction_is_not_silently_treated_as_cp437(){
+    let mut p=load(&[0xcd,0x21],"dbcs.com").unwrap();
+    p.cpu.regs[0]=0x63ff;
+    let old=p.clone();
+    assert!(service(&mut p,0x21,&mut vec![]).is_err());
+    assert_eq!(p.cpu.regs,old.cpu.regs);
+    assert_eq!(p.selectors,old.selectors);
+}
