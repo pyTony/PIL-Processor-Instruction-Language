@@ -50,6 +50,8 @@ pub enum Operation {
     FbldM80,
     Compare { index: u8, pop: bool },
     ComparePop2,
+    /// FUCOM/FUCOMP register comparison, with optional pop of ST(0).
+    UnorderedCompare { index: u8, pop: bool },
     /// FUCOM/FUCOMP: quiet unordered compare ST(0) with ST(i), optionally pop.
     CompareMemory { bytes: u32, pop: bool },
     /// Register arithmetic, either ST(0) op ST(i) or ST(i) op ST(0), pop.
