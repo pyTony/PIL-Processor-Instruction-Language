@@ -529,6 +529,7 @@ async function mouse(e,down){
 // devices, focus the invisible IME input to open the software keyboard.
 canvas.addEventListener("pointerdown",e=>{
   if(!latest?.mouse_present){
+    e.preventDefault();
     if(e.pointerType==="touch")field.focus();
     else canvas.focus();
     return;
