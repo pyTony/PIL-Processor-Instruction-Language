@@ -71,6 +71,9 @@ class WebBackend:
             # The CPU may run many slices between displays; avoid serializing
             # a full VGA framebuffer unless the browser requests a refresh.
             if not frame:
+                # No framebuffer is serialized, but tell callers a fresh
+                # display snapshot is still outstanding.
+                previous["frame_pending"] = True
                 return previous
             snapshot = self.session.send("snapshot")
             if previous.get("output"):
