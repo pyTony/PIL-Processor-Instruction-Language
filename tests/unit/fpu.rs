@@ -1233,3 +1233,58 @@ fn f2xm1_unsupported_ranges_unmasked_precision_and_empty_stack_are_atomic(){
         if control!=0x035f {assert_eq!(fpu.state,saved);}
     }
 }
+
+#[test]
+fn quake_fucomp_dd_e9_compares_and_pops_only_st0(){
+    // Quake's latest stop: 00A7:54788, DD E9 = FUCOMP ST(1).
+    for (left,right,codes) in [(0,1,0x0100u16),(1,1,0x4000),(2,1,0)] {
+        let p=dos::load(&[0xdd,0xe9],"quake-fucomp.com").unwrap();
+        let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+        let mut fpu=PresentFpu::default();
+        fpu.state.push(convert::from_i32(right)).unwrap();
+        fpu.state.push(convert::from_i32(left)).unwrap();
+        let original=fpu.state.top();
+        fpu.state.status|=0x4700|0x0020;
+        assert_eq!(fpu.execute(&instruction(&[0xdd,0xe9]),&mut cpu,&mut ram,&p.image),
+                   Outcome::Completed);
+        assert_eq!(fpu.state.st(0),Some(convert::from_i32(right)));
+        assert_eq!(fpu.state.top(),(original+1)&7);
+        assert_eq!(fpu.state.status&0x4700,codes);
+        assert_ne!(fpu.state.status&0x0020,0,"preserve precision flag");
+        assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
+    }
+}
+#[test]
+fn fucom_does_not_pop_and_quiet_nan_sets_unordered_flags(){
+    for (opcode,modrm,pop) in [(0xdd,0xe1,false),(0xdd,0xe9,true)] {
+        let p=dos::load(&[opcode,modrm],"fucom-qnan.com").unwrap();
+        let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+        let mut fpu=PresentFpu::default();
+        let one=convert::from_i32(1);
+        let qnan=Extended80::from_bits(0xc000_0000_0000_0001,0x7fff);
+        fpu.state.push(one).unwrap();fpu.state.push(qnan).unwrap();
+        let original_top=fpu.state.top();
+        assert_eq!(fpu.execute(&instruction(&[opcode,modrm]),&mut cpu,&mut ram,&p.image),
+                   Outcome::Completed);
+        assert_eq!(fpu.state.status&0x4700,0x4500);
+        assert_eq!(fpu.state.top(),(original_top+usize::from(pop))&7);
+        assert_eq!(fpu.state.st(0),Some(if pop{one}else{qnan}));
+        assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
+    }
+}
+#[test]
+fn fucomp_missing_operand_and_signaling_nan_are_atomic(){
+    let p=dos::load(&[0xdd,0xe9],"fucomp-invalid.com").unwrap();
+    let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();let mut fpu=PresentFpu::default();
+    let before=fpu.state.clone();
+    assert_eq!(fpu.execute(&instruction(&[0xdd,0xe9]),&mut cpu,&mut ram,&p.image),
+               Outcome::StackFault(StackError::Underflow));
+    assert_eq!(fpu.state,before);
+    let one=convert::from_i32(1);
+    let snan=Extended80::from_bits(0x8000_0000_0000_0001,0x7fff);
+    fpu.state.push(one).unwrap();fpu.state.push(snan).unwrap();
+    let before=fpu.state.clone();
+    assert_eq!(fpu.execute(&instruction(&[0xdd,0xe9]),&mut cpu,&mut ram,&p.image),
+               Outcome::Unsupported);
+    assert_eq!(fpu.state,before);assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
+}
