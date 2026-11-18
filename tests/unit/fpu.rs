@@ -1166,6 +1166,6 @@ fn fistp_m32_overflow_and_readonly_destination_leave_state_untouched(){
         let result=fpu.execute(&instruction(&[0xdb,0x1e,0,2]),&mut cpu,&mut ram,&p.image);
         assert_eq!(result,if protected{Outcome::MemoryFault}else{Outcome::Unsupported});
         assert_eq!(cpu,old_cpu);assert_eq!(ram,old_ram);
-        assert_eq!(fpu.state,&before);
+        assert_eq!(fpu.state,before);
     }
 }
