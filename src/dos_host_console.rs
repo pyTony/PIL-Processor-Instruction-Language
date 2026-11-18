@@ -686,6 +686,36 @@ impl Front{
     }
 }
 
+// The DOS mouse driver edits the displayed text *word*, not guest B800 RAM.
+// Keep it a presentation overlay so cursor motion cannot corrupt screen cells.
+#[cfg(any(windows,test))]
+fn overlay_mouse_text_cursor(cells:&mut [u8],columns:u32,view:mouse::View,masks:Option<(u16,u16)>){
+    if !view.visible || columns==0{return;}
+    let (screen_mask,cursor_mask)=masks.unwrap_or((0x77ff,0x7700));
+    let (x,y)=(usize::from(view.x/8),usize::from(view.y/8));
+    let cols=columns as usize;
+    let Some(at)=y.checked_mul(cols).and_then(|n|n.checked_add(x)).and_then(|n|n.checked_mul(2)) else{return;};
+    if at+1>=cells.len(){return;}
+    let word=u16::from_le_bytes([cells[at],cells[at+1]]);
+    let shown=(word&screen_mask)^cursor_mask;
+    cells[at..at+2].copy_from_slice(&shown.to_le_bytes());
+}
+
+// Programs can upload an alternate CP437 glyph set to VGA plane 2. Preserve
+// the built-in ROM font for untouched glyphs: text font VRAM is initially zero.
+#[cfg(any(windows,test))]
+fn visible_text_font(p:&Loaded,rom:&[u8])->Vec<u8>{
+    let mut font=rom.to_vec();
+    let Some(planes)=p.ram.planar().or(p.vga.font.as_ref()) else{return font;};
+    for glyph in 0..256{
+        let at=glyph*32;
+        if (0..16).any(|row|planes.peek(2,at+row)!=0){
+            for row in 0..16{font[glyph*16+row]=planes.peek(2,at+row);}
+        }
+    }
+    font
+}
+
 #[cfg(windows)]
 struct WindowFront{
     window:crate::dine_window::Window,
@@ -718,11 +748,13 @@ impl WindowFront{
     fn present(&mut self,session:&Session,selection:Option<(select::Selection,u32,u32)>)->Result<(),String>{
         let p=session.machine().ok_or("session state lost")?;
         let frame=if graphics_mode(p){desktop_vga_frame(p)}else{
-            let (cells,columns,(row,column))=session.screen()?;
+            let (mut cells,columns,(row,column))=session.screen()?;
+            overlay_mouse_text_cursor(&mut cells,columns,p.mouse.view(),p.mouse.text_masks());
+            let font=visible_text_font(p,&self.font);
             // The hardware cursor blinks at about 3.75 Hz (16 frames of 60).
             let on=self.started.elapsed().as_millis()/267%2==0;
             let cursor=cursor_shape(p).filter(|_|on).map(|(a,b)|(row,column,a,b));
-            Some(text_pixels(&cells,columns,&self.font,cursor))
+            Some(text_pixels(&cells,columns,&font,cursor))
         };
         let Some(mut frame)=frame else{self.window.no_frame();return Ok(());};
         if let Some((s,columns,rows))=selection{select::highlight(&mut frame,columns,rows,s);}
