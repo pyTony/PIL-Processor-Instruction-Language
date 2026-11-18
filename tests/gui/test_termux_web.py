@@ -21,7 +21,8 @@ class FakeSession:
     def send(self, command):
         self.commands.append(command)
         if command.startswith("run "):
-            return {"ok": True, "output": "hello", "status": "running"}
+            return {"ok": True, "output": "hello", "status": "running",
+                    "frame_pending": True}
         return {
             "ok": True, "status": "running", "screen": "2007" * 2000,
             "columns": 80, "cursor": [0, 0], "steps": 123,

@@ -88,6 +88,22 @@ impl PresentFpu {
                 let Some(x) = self.state.st(0) else {
                     return Outcome::StackFault(StackError::Underflow);
                 };
+                // 80387 specifies the result of F2XM1 outside [-1,1] as
+                // undefined, not as an invalid opcode. On current x87 hardware
+                // FLDPI; F2XM1 leaves the operand unchanged and sets PE.
+                // This compatibility behavior allows DOS hardware probes to
+                // continue without manufacturing 2^pi - 1. Keep unsupported
+                // control modes and unmasked precision exceptions atomic.
+                let magnitude_exp = x.sign_exponent & 0x7fff;
+                if magnitude_exp > 0x3fff && magnitude_exp < 0x7fff &&
+                   x.significand & (1u64 << 63) != 0 {
+                    if self.state.control & 0x0f00 != 0x0300 ||
+                       self.state.control & 0x0020 == 0 {
+                        return Outcome::Unsupported;
+                    }
+                    self.state.status |= 0x0020;
+                    return Outcome::Completed;
+                }
                 let Ok(computed) = math::f2xm1(x, self.state.control) else {
                     return Outcome::Unsupported;
                 };
