@@ -1133,3 +1133,39 @@ fn present_80387_fi_memory_fault_and_unmasked_zero_divide_are_atomic() {
         assert_eq!(r.loaded.fpu.state().unwrap(),&snapshot);
     }
 }
+
+#[test]
+fn pc_player_fistp_m32_stores_signed_integer_then_pops(){
+    // PC Player: DB 5C 24 08 is FISTP dword ptr [ESP+8].
+    // Use a 32-bit addressing override with a deterministic DOS stack.
+    for value in [-2147483648i64,-3,0,1,2147483647]{
+        let code=[0x67,0xdb,0x5c,0x24,0x08,0xcd,0x20];
+        let mut p=dos::load(&code,"pcplayer-fistp.com").unwrap();
+        p.fpu=Fpu::present();
+        p.cpu.regs[4]=0x400;
+        if let Fpu::Present(ref mut f)=p.fpu{f.state.push(convert::from_i64(value)).unwrap();}
+        let at=p.image.segments[2].base+0x408;
+        p.ram.store(at,MemWidth::Dword,0xdead_beef).unwrap();
+        let r=dos::run(p,12).unwrap();
+        assert!(matches!(r.stop,dos::Stop::Exit(0)),"value={value}: {:?}",r.stop);
+        assert_eq!(r.loaded.ram.load(at,MemWidth::Dword).unwrap(),value as i32 as u32);
+        assert_eq!(r.loaded.fpu.state().unwrap().st(0),None);
+    }
+}
+#[test]
+fn fistp_m32_overflow_and_readonly_destination_leave_state_untouched(){
+    for protected in [false,true]{
+        let p=dos::load(&[0xdb,0x1e,0,2],"fistp-atomic.com").unwrap();
+        let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+        let mut fpu=PresentFpu::default();
+        fpu.state.push(convert::from_i64(if protected{7}else{2147483648})).unwrap();
+        let at=p.image.segments[3].base+0x200;
+        ram.store(at,MemWidth::Dword,0xdeadbeef).unwrap();
+        if protected{ram.protect(at,4).unwrap();}
+        let before=fpu.state.clone();let old_cpu=cpu.clone();let old_ram=ram.clone();
+        let result=fpu.execute(&instruction(&[0xdb,0x1e,0,2]),&mut cpu,&mut ram,&p.image);
+        assert_eq!(result,if protected{Outcome::MemoryFault}else{Outcome::Unsupported});
+        assert_eq!(cpu,old_cpu);assert_eq!(ram,old_ram);
+        assert_eq!(fpu.state,&before);
+    }
+}
