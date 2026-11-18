@@ -76,6 +76,17 @@ class TermuxWebTests(unittest.TestCase):
             handler.send_json(200, {"graphics_planar": "00" * 32})
             self.assertTrue(handler.close_connection)
 
+    def test_web_frontend_initializes_host_date_before_running_dos(self):
+        # The bare DOS-session engine intentionally defaults to 1980-01-01.
+        # The browser frontend must opt into host time like desktop PILdos.
+        web.configure_host_clock(self.session, 7200)
+        self.assertEqual(self.session.commands, ["clock 7200"])
+
+    def test_host_clock_rejects_failed_initialization(self):
+        self.session.send = lambda command: {"ok": False, "text": "bad clock"}
+        with self.assertRaisesRegex(RuntimeError, "clock initialization failed"):
+            web.configure_host_clock(self.session, 7200)
+
     def test_index_and_meta_do_not_require_x11(self):
         code, body = self.request("GET", "/")
         self.assertEqual(code, 200)
