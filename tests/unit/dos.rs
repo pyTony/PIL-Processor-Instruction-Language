@@ -3648,7 +3648,8 @@ fn int21_6300_returns_the_existing_cp437_dbcs_table(){
     assert_eq!(p.ram.load(linear,MemWidth::Word).unwrap(),0,
       "CP437 has no DBCS lead-byte ranges");
     // AX=6507h must report the very same NLS table.
-    p.cpu.regs[0]=0x6507;p.cpu.regs[1]=5;p.cpu.regs[7]=0x300;
+    p.cpu.regs[0]=0x6507;p.cpu.regs[1]=5;p.cpu.regs[3]=0xffff;
+    p.cpu.regs[2]=0xffff;p.cpu.regs[7]=0x300;
     service(&mut p,0x21,&mut vec![]).unwrap();
     let base=u32::from(PSP)*16+0x300;
     let record:Vec<u8>=(0..5).map(|i|p.ram.load(base+i,MemWidth::Byte).unwrap()as u8).collect();
