@@ -257,7 +257,8 @@ def main(argv=None):
             command_tail = default_args
     session = Session(engine, program, mount=options.mount, args=command_tail,
                       config=options.config, fpu=options.fpu, mouse=options.mouse,
-                      ansi=options.ansi, stop_log="PILdos-stops.jsonl")
+                      ansi=options.ansi, stop_log="PILdos-stops.jsonl",
+                      browser_video=True)
     try:
         configure_host_clock(session)
         backend = WebBackend(session)
