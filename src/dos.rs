@@ -989,20 +989,30 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                     },
                     super::fpu::Outcome::NotAvailable=>{
                         let fault_ip=p.cpu.eip;
-                        match vectors::answered(&p,7){
-                            Ok(false) if p.image.real_mode=>{
-                                match vectors::deliver_fault(&mut p,7,fault_ip){
-                                    Ok(())=>{
-                                        execution_steps+=1;
-                                        *instructions.entry("#NM (vector 07h)".into()).or_insert(0)+=1;
-                                        continue;
-                                    },
-                                    Err(message)=>break Stop::Fault(message),
-                                }
+                        // #NM is a fault, not an unsupported x87 opcode. In
+                        // protected mode its handler is an IDT gate, not an
+                        // entry in the DOS real-mode IVT. In particular CR0.TS
+                        // may be set deliberately until the handler runs CLTS.
+                        let deliver=if p.image.real_mode{
+                            match vectors::answered(&p,7){
+                                Ok(false)=>vectors::deliver_fault(&mut p,7,fault_ip),
+                                Ok(true)=>Err("no guest #NM handler (vector 07h)".into()),
+                                Err(message)=>Err(message),
+                            }
+                        }else{
+                            vectors::deliver_protected(&mut p,crate::interrupt::Event{
+                                vector:7,error_code:None,return_eip:fault_ip,
+                                software:false,cr2:None,
+                            })
+                        };
+                        match deliver{
+                            Ok(())=>{
+                                execution_steps+=1;
+                                *instructions.entry("#NM (vector 07h)".into()).or_insert(0)+=1;
+                                continue;
                             },
-                            Err(message)=>break Stop::Fault(message),
-                            _=>break Stop::Fault(format!(
-                                "{}; #NM (vector 07h); CS:IP={:04x}:{:04x}; MSW={:04x}; bytes={}",
+                            Err(message)=>break Stop::Fault(format!(
+                                "{}; #NM (vector 07h); CS:IP={:04x}:{:08x}; MSW={:04x}; bytes={}; delivery: {message}",
                                 p.fpu.name(),p.selectors[1],fault_ip,p.image.msw,
                                 instruction.bytes[..instruction.length as usize].iter()
                                     .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" "))),

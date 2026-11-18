@@ -3600,6 +3600,38 @@ fn path_is_added_to_or_replaced_in_the_environment(){
 }
 
 #[test]
+fn protected_mode_x87_nm_uses_idt_and_retries_after_clts(){
+    use crate::address::{SegmentAccess,SegmentCache};
+    // Small ring-0 protected-mode harness: FNINIT faults with CR0.TS=1,
+    // vector 07h runs CLTS; IRETD retries FNINIT at the original EIP.
+    let mut p=load(&[0xdb,0xe3,0xf4],"nm.com").unwrap();
+    p.select_fpu(true).unwrap();
+    p.image.real_mode=false;
+    p.image.msw=0x1b; // PE | MP | TS | ET, the Quake screenshot value
+    p.image.fetch_base=0;p.image.start=0;p.image.end=0x10000;
+    p.image.tables=[(0x17,0x1000),(0x3f,0x2000)];
+    p.ram.write_bytes(0x1000+8,&0x00cf_9a00_0000_ffffu64.to_le_bytes()).unwrap();
+    p.ram.write_bytes(0x1000+16,&0x00cf_9200_0000_ffffu64.to_le_bytes()).unwrap();
+    let idt_gate=0x5000u64 | (0x08u64<<16) | (0x8eu64<<40);
+    p.ram.write_bytes(0x2000+7*8,&idt_gate.to_le_bytes()).unwrap();
+    p.ram.write_bytes(0x600,&[0xdb,0xe3,0xf4]).unwrap();
+    p.ram.write_bytes(0x5000,&[0x0f,0x06,0xcf]).unwrap();
+    let code=SegmentCache{base:0,limit:u32::MAX,
+        access:SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0}};
+    let data=SegmentCache{base:0,limit:u32::MAX,
+        access:SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};
+    p.image.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
+    p.image.segments=[data;6];p.image.segments[1]=code;
+    p.selectors=p.image.selectors;
+    p.cpu.eip=0x600;p.cpu.regs[4]=0x9000;p.cpu.eflags=0x202;
+    let result=run(p,5).unwrap();
+    assert_eq!(result.instructions.get("#NM (vector 07h)"),Some(&1));
+    assert_eq!(result.loaded.image.msw&8,0,"handler must clear TS before FNINIT retry");
+    assert!(result.instructions.iter().any(|(name,count)|name.contains("80387")&&*count>0),
+        "FNINIT must retire after the handler: {:?}",result.stop);
+}
+
+#[test]
 fn int21_6300_returns_the_existing_cp437_dbcs_table(){
     let mut p=load(&[0xcd,0x21],"dbcs.com").unwrap();
     p.cpu.regs[0]=0x6300;
