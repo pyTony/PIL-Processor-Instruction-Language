@@ -21,7 +21,15 @@ Get-Item target/release/pil.exe | Select-Object Name,Length
 
 For an apples-to-apples size comparison, build the default executable with the same toolchain/profile and record its size before replacing it. Consider using separate `CARGO_TARGET_DIR` values or copying the binaries. Run the DOS fixture and mode-transition tests on both variants.
 
-On Termux, continue to use the memory-safe build script already validated for that device. **Do not run an unbounded direct Cargo release build.** Integrate the feature with the script only if its argument handling is known and record the script's build profile and options.
+On Termux, keep the single-job, low-memory script settings and use the new `--compact` flag:
+
+```sh
+sh tools/build_termux.sh --compact
+# Optionally: sh tools/build_termux.sh --release --compact
+ls -l target/debug/pil
+```
+
+To compare stripped sizes, make a copy with `cp target/debug/pil "$HOME/pil-compact-stripped"` and run `llvm-strip "$HOME/pil-compact-stripped"`. Compare byte counts with the prior default build, using matched profiles. **Do not run an unbounded direct Cargo release build.**
 
 ## Expected limitations
 
