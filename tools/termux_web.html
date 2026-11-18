@@ -98,7 +98,7 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 <div id="interrupt-status" role="status" aria-live="polite"></div>
 <form class="type" id="typeform"><input id="type" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tap to type DOS command" aria-label="DOS command input"><button type="submit">Type + ↵</button><button id="typeonly" type="button">Type</button><button id="keyboard" type="button">⌨ Keyboard</button></form>
 <div class="controls">
-<label>CPU slice <select id="budget"><option value="5000">5k</option><option value="20000" selected>20k</option><option value="50000">50k</option></select></label>
+<label>CPU slice <select id="budget"><option value="5000">5k</option><option value="20000" selected>20k</option><option value="50000">50k</option><option value="100000">100k</option></select></label>
 <button id="break">Ctrl+Break</button>
 <button id="view" aria-pressed="false">Text view</button>
 <button id="refresh">Refresh</button>
@@ -235,7 +235,9 @@ const interruptStatus=document.getElementById("interrupt-status");
 let forceTextView=false;
 let glyphs=[], colors=[], latest=null, running=true, inLoop=false, terminated=false;
 let buttons=0, imageMouse=false;
-const waits={normal:60,idle:180};
+// Cap screen transfers at 60 FPS while allowing CPU-only slices between frames.
+const MIN_FRAME_MS=1000/60, IDLE_WAIT_MS=120;
+let lastFrameAt=0;
 function bytes(hex) {
   if(typeof hex!=="string" || hex.length%2) throw Error("bad frame encoding");
   const out=new Uint8Array(hex.length/2);
@@ -397,9 +399,30 @@ async function loop(){
     while(running){
       if(document.hidden){await new Promise(resolve=>setTimeout(resolve,450));continue;}
       const budget=Number(document.getElementById("budget").value);
-      const reply=await api("/api/run",{budget});
-      paint(reply);
-      await new Promise(resolve=>setTimeout(resolve,reply.idle_hint?waits.idle:waits.normal));
+      const now=performance.now();
+      const frame=(now-lastFrameAt)>=MIN_FRAME_MS;
+      // Buffered run omits the expensive VGA JSON when the 60 FPS frame cap
+      // has not elapsed. No fixed delay is applied while the CPU is working.
+      const reply=await api("/api/run",{budget,frame});
+      if(frame){
+        lastFrameAt=performance.now();
+        paint(reply);
+      }else{
+        // Preserve output and stop state even between screen refreshes.
+        if(reply.output){
+          log.textContent=(log.textContent+reply.output).slice(-4000);
+          log.scrollTop=log.scrollHeight;
+        }
+        if(reply.status==="exit"||reply.status==="stopped"||reply.status==="monitor"){
+          running=false;
+          await refresh();
+          document.getElementById("toggle").textContent="Resume";
+          document.getElementById("toggle").setAttribute("aria-pressed","false");
+        }
+      }
+      if(reply.idle_hint&&running){
+        await new Promise(resolve=>setTimeout(resolve,IDLE_WAIT_MS));
+      }
     }
   }catch(e){error(e);}finally{inLoop=false;}
 }
