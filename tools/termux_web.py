@@ -59,17 +59,23 @@ class WebBackend:
         with self.lock:
             return self.session.send("snapshot")
 
-    def run(self, budget):
+    def run(self, budget, frame=True):
         if not isinstance(budget, int) or isinstance(budget, bool) or not 1 <= budget <= MAX_RUN:
             raise ValueError("run budget must be 1..100000")
+        if not isinstance(frame, bool):
+            raise ValueError("frame must be a boolean")
         with self.lock:
             self._drain_keys()
             previous = self.session.send("run %d buffered" % budget)
             self._drain_keys()
-            frame = self.session.send("snapshot")
+            # The CPU may run many slices between displays; avoid serializing
+            # a full VGA framebuffer unless the browser requests a refresh.
+            if not frame:
+                return previous
+            snapshot = self.session.send("snapshot")
             if previous.get("output"):
-                frame["output"] = previous["output"]
-            return frame
+                snapshot["output"] = previous["output"]
+            return snapshot
 
     def key(self, ascii_code, scan):
         if (not isinstance(ascii_code, int) or isinstance(ascii_code, bool)
@@ -195,7 +201,7 @@ def make_handler(backend, html=HTML):
                 if not isinstance(body, dict):
                     raise ValueError("expected a JSON object")
                 if path == "/api/run":
-                    reply = backend.run(body.get("budget"))
+                    reply = backend.run(body.get("budget"), body.get("frame", True))
                 elif path == "/api/key":
                     reply = backend.key(body.get("ascii"), body.get("scan"))
                 elif path == "/api/type":
