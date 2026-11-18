@@ -196,6 +196,27 @@ class TermuxWebTests(unittest.TestCase):
         self.assertEqual(list(self.backend.pending_keys), [])
         self.assertIn("key 13 28", self.session.commands)
 
+    def test_cpu_only_run_skips_large_video_snapshot(self):
+        code, body = self.request("POST", "/api/run",
+                                  {"budget": 50000, "frame": False})
+        state = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertTrue(state["frame_pending"])
+        self.assertEqual(state["output"], "hello")
+        self.assertEqual(self.session.commands, ["run 50000 buffered"])
+
+    def test_frame_option_must_be_boolean(self):
+        code, _ = self.request("POST", "/api/run",
+                               {"budget": 1000, "frame": "false"})
+        self.assertEqual(code, 400)
+        self.assertEqual(self.session.commands, [])
+
+    def test_display_refresh_is_capped_without_fixed_active_cpu_delay(self):
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn("const MIN_FRAME_MS=1000/60", html)
+        self.assertIn('await api("/api/run",{budget,frame})', html)
+        self.assertNotIn("waits.normal", html)
+
     def test_run_and_snapshot_reuse_existing_engine_protocol(self):
         code, body = self.request("POST", "/api/run", {"budget": 20000})
         state = json.loads(body)
