@@ -871,3 +871,38 @@ fn grid(p:&Loaded)->Result<(u32,u32),String>{
 #[cfg(test)]
 #[path="../tests/unit/host_console.rs"]
 mod tests;
+
+#[cfg(test)]
+mod text_cursor_font_regressions {
+    use super::*;
+
+    #[test]
+    fn text_mouse_cursor_masks_are_display_only_and_respect_visibility() {
+        let original=[b'X',0x1f,b'Y',0x2e];
+        let mut cells=original;
+        let mut view=mouse::View{
+            present:true,active:true,visible:true,x:8,y:0,max_x:639,max_y:199
+        };
+        overlay_mouse_text_cursor(&mut cells,2,view,Some((0x00ff,0x7000)));
+        assert_eq!(&cells[..2],&original[..2]);
+        assert_eq!(&cells[2..],&[b'Y',0x70]);
+        assert_eq!(original,[b'X',0x1f,b'Y',0x2e]);
+        view.visible=false;
+        let mut hidden=original;
+        overlay_mouse_text_cursor(&mut hidden,2,view,Some((0x00ff,0x7000)));
+        assert_eq!(hidden,original);
+    }
+
+    #[test]
+    fn user_defined_vga_glyph_replaces_rom_only_for_written_character() {
+        let mut p=load(&[0xcd,0x20],"font-test.com").unwrap();
+        let rom=vga_text::font().unwrap();
+        let mut planes=crate::vga_planar::Planar::new();
+        // DOS programs store each glyph in a 32-byte plane-2 slot.
+        planes.poke(2,0xc4*32+7,0x55);
+        p.vga.font=Some(planes);
+        let font=visible_text_font(&p,&rom);
+        assert_eq!(font[0xc4*16+7],0x55);
+        assert_eq!(&font[0xb3*16..0xb3*16+16],&rom[0xb3*16..0xb3*16+16]);
+    }
+}
