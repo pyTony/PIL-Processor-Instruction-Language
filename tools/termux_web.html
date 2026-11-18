@@ -446,7 +446,7 @@ field.addEventListener("keydown",e=>{
   // Nonprintables have no input event and must be sent as BIOS keys.
   if(e.key==="Enter"||e.key==="Backspace"||e.key==="Tab"||
      e.key==="Escape"||e.key.startsWith("Arrow")||
-     e.key.startsWith("F")||e.ctrlKey){
+     /^F(?:[1-9]|10)$/.test(e.key)||e.ctrlKey){
     const value=scans[e.code]||scans[e.key];
     if(value){
       e.preventDefault();
