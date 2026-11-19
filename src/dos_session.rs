@@ -180,6 +180,9 @@ impl Session{
     pub(crate) fn native_key(&mut self,scan:u8,extended:bool,down:bool,word:Option<u16>)->Result<bool,String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
         if keyboard::hooked(p)?{return keyboard::physical(p,scan,extended,down,word);}
+        // With the built-in BIOS handler, keys enter the ring directly rather
+        // than through IRQ1. Keep INT16/AH02's modifier state in that path too.
+        keyboard::bios_modifiers(p,scan|if down{0}else{0x80})?;
         if down{if let Some(word)=word{return self.key(word as u8,(word>>8)as u8);}}
         Ok(true)
     }

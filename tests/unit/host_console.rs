@@ -94,6 +94,40 @@ fn native_alt_f_key_repeats_focus_and_layout_scan_are_consistent(){
 }
 
 #[test]
+fn native_bios_modifier_state_is_visible_without_a_guest_irq_handler(){
+    // Original BIOS client: repeatedly query INT16/AH02 and save AL. No INT09
+    // hook: translated keys enter the BIOS ring directly, but modifiers must
+    // still be visible to a guest that polls the shift-state byte.
+    let code=[0xb4,0x02,0xcd,0x16,0xa2,0x00,0x02,0xeb,0xf7];
+    let mut session=Session::new(crate::dos::load(&code,"bios-modifiers.com").unwrap());
+    let p=session.machine_mut().unwrap();
+    p.ram.store(0x417,MemWidth::Byte,0xf0).unwrap();
+    let saved=u32::from(p.selectors[3])*16+0x200;
+    let mut keys=host_keys::WindowKeys::default();
+    let mut deliver=|input:Input,expected:u8|{
+        for event in keys.input(input){
+            if let Event::NativeKey{scan,extended,down,key}=event{
+                assert!(PendingKey::Native{scan,extended,down,word:native_bios_word(scan,key)}.send(&mut session).unwrap());
+            }else{panic!("unexpected event {event:?}");}
+        }
+        session.run(30).unwrap();
+        let p=session.machine().unwrap();
+        assert_eq!(p.ram.load(0x417,MemWidth::Byte).unwrap(),u32::from(expected));
+        assert_eq!(p.ram.load(saved,MemWidth::Byte).unwrap(),u32::from(expected));
+    };
+    deliver(physical(0x12,0x38,false,true,ALT),0xf8);
+    deliver(physical(0x46,0x21,false,true,ALT),0xf8);
+    deliver(physical(0x46,0x21,false,false,ALT),0xf8);
+    deliver(physical(0x12,0x38,false,false,NONE),0xf0);
+    deliver(physical(0x10,0x2a,false,true,SHIFT),0xf2);
+    deliver(physical(0x11,0x1d,true,true,Mods{shift:true,ctrl:true,alt:false}),0xf6);
+    deliver(Input::FocusLost,0xf0);
+    let p=session.machine().unwrap();
+    assert_eq!(p.ram.load(0x41e,MemWidth::Word).unwrap(),0x2100);
+    assert_eq!(p.ram.load(0x41c,MemWidth::Word).unwrap(),0x20,"modifiers and releases must not type extra keys");
+}
+
+#[test]
 fn native_text_controls_altgr_and_host_shortcuts_keep_their_bios_mapping(){
     let mut keys=host_keys::WindowKeys::default();
     for (vk,scan,ch,key) in [(0x0d,0x1c,'\r',Key::Enter),(9,0x0f,'\t',Key::Tab),(8,0x0e,'\u{8}',Key::Backspace)]{
