@@ -143,7 +143,8 @@ class DineBuildTests(unittest.TestCase):
         command, options = self.calls[-1]
         self.assertTrue(Path(command[0]).samefile(self.launcher))
         self.assertEqual(command[1:], ["source file.pas", "--force"])
-        self.assertEqual(options["cwd"], self.guest.parent)
+        # Windows may expand a short-path alias when resolving the run folder.
+        self.assertTrue(Path(options["cwd"]).samefile(self.guest.parent))
 
     def test_cli_reuses_prebuilt_runtime_without_invoking_cargo(self):
         runtime = self.root / "shared" / build_dine.library_name()
@@ -193,7 +194,7 @@ class DineBuildTests(unittest.TestCase):
         data.mkdir()
         self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output),
                                           "--run", "--working-dir", str(data)]), 0)
-        self.assertEqual(self.calls[-1][1]["cwd"], data)
+        self.assertTrue(Path(self.calls[-1][1]["cwd"]).samefile(data))
 
     def invoke_invalid(self, path, data):
         path.write_bytes(data)
