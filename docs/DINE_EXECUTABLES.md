@@ -4,18 +4,83 @@ A `Dine_<program>` launcher is a hybrid executable: a tiny loader plus the
 original guest bytes, running on the **shared** Dine library. It contains no
 copy of Dine or PIL (Tony, 13 November 2026: "as long as they contain not
 dine or pil they are fine"). The library is the same for every program and
-holds no generated code for one guest. When block compilation comes back it
-will live inside that shared library, program-independent, so every
-launcher gets it ([Block compiler](development/BLOCK_COMPILER.md)).
+holds no generated code for one guest. Native instruction forms and run-time
+block planning live inside that shared library, program-independent, so every
+launcher gets them ([Block compiler](development/BLOCK_COMPILER.md)).
 
 The names reflect separate responsibilities:
 
 - **PIL**: processor instruction language, compiler and interpreter.
-- **Dine**: the DOS/BIOS and device runtime built using PIL's interpreter.
+- **Dine**: the shared DOS/BIOS and device runtime using PIL's executor.
 - **`Dine_MANDVGA.exe`**: a small host executable containing the original
   guest program and a loader that calls `dine.dll` dynamically.
 
-## Build and run on Windows
+## One-command build workflow
+
+Install Python 3.10 or newer and the Rust toolchain (`cargo`, `rustc`, and the
+platform linker). Builds target the current computer: Windows, Linux, macOS
+or Termux. Cross-compilation is not provided by this workflow.
+
+From the checkout, check the tools and build your DOS input:
+
+```powershell
+.\compile-dos.cmd --doctor
+.\compile-dos.cmd "path\to\program.exe" --run
+```
+
+On Linux, macOS or Termux:
+
+```sh
+sh compile-dos.sh --doctor
+sh compile-dos.sh path/to/program.exe --run
+```
+
+The cross-platform command is `python tools/build_dine.py PROGRAM`.
+Without a program argument, an interactive terminal prompts for the input
+path. Inputs may be DOS `.COM` or MZ `.EXE` files within Dine's 1 MiB limit.
+The builder checks file existence, extension and size; Dine validates the
+executable format when loading it. A successful build does not establish
+that every instruction or DOS service used by that input is supported.
+
+The first build compiles the shared system runtime and may take several
+minutes; Cargo reuses unchanged builds. It then compiles the small native
+launcher. The guest bytes are embedded as input to shared native forms and
+interpreter fallback. This workflow does not translate the entire guest to
+an independent, fully ahead-of-time native executable.
+
+Useful options (shown with the Windows entry point; the Python and shell
+entry points accept the same arguments):
+
+```powershell
+# Build only; choose where the executable and shared runtime go.
+.\compile-dos.cmd "path\to\program.exe" --output-dir dist/my-app
+
+# Rebuild and pass arguments to the program after --.
+.\compile-dos.cmd "path\to\program.exe" --force --run -- "input file.dat" /help
+
+# Build several launchers using one shared runtime build.
+.\compile-dos.cmd path/to/first.com path/to/second.exe --output-dir dist/apps
+
+# Reuse a built runtime; only rustc and the platform linker are then needed.
+.\compile-dos.cmd path/to/program.exe --runtime programs/compiled/dine.dll
+```
+
+`--run` accepts one input and returns the program's exit status. It runs
+from the original input's folder so relative data-file access uses that
+folder as DOS C:. Override this with `--working-dir path/to/data`. Companion
+files are not bundled: keep them available in the run folder. When starting
+the generated executable directly, its **current working directory** becomes
+DOS C:. The builder does not change the input or companion files; running a
+guest may change files through Dine's mapped-drive services.
+
+Batch inputs must produce distinct output names. Existing launchers are
+protected unless `--force` is supplied. For distribution, ship the launcher
+and platform-specific shared runtime together, along with any required data
+files; Python, Rust, the checkout and the original input file are not needed
+on the destination computer. Use the same host OS and architecture for the
+destination. Native OS runtime requirements still apply.
+
+## Build and run example on Windows
 
 From the repository root:
 
@@ -88,10 +153,11 @@ The initial Dine launcher still has only terminal input/preview support.
 
 ## Present runtime limitations
 
-The initial `dine_run` ABI accepts the original guest bytes, DOS filename
-and command tail. It runs all reached instructions through the existing PIL
-interpreter plus the Dine DOS/BIOS services; there are **no native guest
-compiled blocks yet**. A real `Stop::Exit` becomes the process exit status.
+The `dine_run` ABI accepts the original guest bytes, DOS filename and command
+tail. The shared PIL executor uses native instruction forms and run-time
+blocks when enabled and applicable, with interpreter fallback. Dine supplies
+the shared DOS/BIOS services. The launcher contains no compiled guest blocks
+or system implementation. A real `Stop::Exit` becomes the process exit status.
 Budget stops continue automatically. The shared Rust console now handles host
 input and output for this entry point as well as the CLI.
 
@@ -125,14 +191,19 @@ opt-in Rust window with Python terminal and BIOS keyboard bridge.
 
 ## Refactoring direction
 
-The next increment will move guest-specific compiled blocks into
-`Dine_<program>.exe`, keeping `dine.dll` independent of the application.
-That needs a versioned, opaque per-machine compiled-block callback ABI: a
-native block receives Dine's CPU/memory context, validates instruction bytes
-and segment state, reports consumed instructions, and falls back to PIL when
-its guard misses. BIOS, DOS, FPU and VGA services stay in the shared runtime.
-This change must keep instruction budgets, asynchronous interrupt boundaries,
-code-modification guards and guest exception delivery consistent.
+Keep all system execution code in the shared PIL/Dine implementation:
+instruction semantics, native forms, CPU and memory state handling, block
+dispatch, flag formulas and lazy-flag materialization, plus BIOS, DOS, FPU
+and VGA services. A launcher contains only its loader and guest bytes.
+There is no per-program engine, copied runtime, or guest-specific build of
+PIL or Dine. Run-time decoded instructions and block plans are per-machine
+data processed by that same shared implementation.
+
+Native lazy-flag optimization must also live in the shared executor and
+emitter. Guest-specific files must not contain copies of flag helpers or
+special rules for one application's flags. Preserve instruction budgets,
+asynchronous interrupt boundaries, code-modification guards and guest
+exception delivery when changing the shared executor.
 
 A separate future **native filesystem service** should support UTF-8 paths,
 long host filenames, Unicode, directory enumeration, file metadata, 64-bit
@@ -160,6 +231,11 @@ Verify that the COM inputs can be renamed or removed **after** compilation,
 the EXE still runs when the DLL is alongside it, and a missing DLL fails
 clearly. Compare the Mandelbrot guest state and VGA planes to
 `tools/verify_mandel_vga.py` and the linked-Dine reference before claiming
-image fidelity. Full-window presentation and performance require manual Windows testing;
-no run-time benchmark or graphics-window parity check has been executed
-in this chat.
+image fidelity. The Windows workflow has been checked with a real release
+runtime and native launcher, including factorial output, running after the
+original DOS file is removed, long-name file access, a missing runtime, and
+`--runtime --run` returning guest exit status 7 from an input folder with
+spaces. Thirteen build-helper tests cover batch runtime reuse, command-line
+handling and launcher/system separation. Full-window presentation and
+performance require separate validation; these workflow checks do not
+establish graphics parity or compatibility with arbitrary DOS applications.

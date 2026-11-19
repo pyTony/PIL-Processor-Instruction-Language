@@ -153,21 +153,19 @@ def library_name() -> str:
     return "libdine.so"
 
 
-def build(program: Path, output_dir: Path, force: bool = False) -> Path:
+def read_program(program: Path) -> tuple[Path, bytes]:
     program = program.resolve(strict=True)
     if not program.is_file() or program.suffix.lower() not in (".com", ".exe"):
         raise ValueError("input must be an existing DOS .COM or .EXE file")
-    guest = program.read_bytes()
+    with program.open("rb") as source:
+        guest = source.read(1_048_577)
     if not 1 <= len(guest) <= 1_048_576:
         raise ValueError("DOS program must contain 1..1048576 bytes")
-    output_dir = output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    launcher = output_dir / f"Dine_{program.stem}{'.exe' if os.name == 'nt' else ''}"
-    if launcher.exists() and not force:
-        raise FileExistsError(f"{launcher} already exists (use --force to replace it)")
+    return program, guest
 
-    # The shared Dine library is the same for every program: it never
-    # contains generated Rust or compiled blocks for this guest.
+
+def build_runtime() -> Path:
+    """Build the same shared system implementation, independently of inputs."""
     env = os.environ.copy()
     env.pop("CARGO_BUILD_TARGET", None)
     env.pop("CARGO_TARGET_DIR", None)
@@ -179,13 +177,39 @@ def build(program: Path, output_dir: Path, force: bool = False) -> Path:
     library = ROOT / "target" / "release" / library_name()
     if not library.is_file():
         raise FileNotFoundError(f"expected shared Dine library {library}")
+    return library
+
+
+def launcher_name(program: Path) -> str:
+    return f"Dine_{program.stem}{'.exe' if os.name == 'nt' else ''}"
+
+
+def build(program: Path, output_dir: Path, force: bool = False, *, runtime: Path | None = None) -> Path:
+    program, guest = read_program(program)
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    launcher = output_dir / launcher_name(program)
+    if launcher.exists() and not force:
+        raise FileExistsError(f"{launcher} already exists (use --force to replace it)")
+
+    # The shared Dine library is the same for every program: it never
+    # contains generated Rust or compiled blocks for this guest.
+    env = os.environ.copy()
+    env.pop("CARGO_BUILD_TARGET", None)
+    env.pop("CARGO_TARGET_DIR", None)
+    library = runtime.resolve(strict=True) if runtime is not None else build_runtime()
+    if not library.is_file():
+        raise FileNotFoundError(f"expected shared Dine library {library}")
 
     # Compiled launcher source lives in target/, not beside the final exe.
     intermediate = ROOT / "target" / "dine-launchers" / program.stem
     intermediate.mkdir(parents=True, exist_ok=True)
+    # Embed the bytes we hashed, using a relative source path. Subsequent
+    # changes to the original input cannot change this build's payload.
+    (intermediate / "guest.bin").write_bytes(guest)
     source = intermediate / "main.rs"
     source.write_text(
-        LAUNCHER.replace("@@GUEST_PATH@@", rust_raw(str(program)))
+        LAUNCHER.replace("@@GUEST_PATH@@", rust_raw("guest.bin"))
                 .replace("@@GUEST_NAME@@", rust_raw(program.name)),
         encoding="utf-8",
     )
@@ -208,7 +232,7 @@ def build(program: Path, output_dir: Path, force: bool = False) -> Path:
     pending.replace(launcher)
     manifest = {
         "format": 1,
-        "backend": "Dine interpreter through shared native library",
+        "backend": "Shared PIL/Dine native forms with interpreter fallback",
         "application": launcher.name,
         "guest": program.name,
         "guest_sha256": hashlib.sha256(guest).hexdigest(),
@@ -225,17 +249,86 @@ def build(program: Path, output_dir: Path, force: bool = False) -> Path:
     return launcher
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("program", type=Path)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        "Builds for this computer's native platform. The output uses shared PIL/Dine "
+        "native forms with interpreter fallback; DOS compatibility is not guaranteed. "
+        "Use --run -- ARGUMENTS to pass arguments to a single built program."))
+    parser.add_argument("program", type=Path, nargs="*", help="DOS input files (quote paths containing spaces)")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "programs" / "compiled")
     parser.add_argument("--force", action="store_true", help="replace an existing launcher")
-    args = parser.parse_args()
-    result = build(args.program, args.output_dir, args.force)
-    print(f"Dine executable: {result}", flush=True)
-    print(f"Shared runtime: {result.parent / library_name()}", flush=True)
-    print(f"Run directly: {result}", flush=True)
+    parser.add_argument("--runtime", type=Path, help="reuse a prebuilt shared runtime (skips Cargo)")
+    parser.add_argument("--run", action="store_true", help="run the single output after building")
+    parser.add_argument("--working-dir", type=Path, help="run from this folder (default: input file's folder)")
+    parser.add_argument("--doctor", action="store_true", help="check the required tools without building")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    guest_args = []
+    if "--" in argv:
+        at = argv.index("--")
+        argv, guest_args = argv[:at], argv[at + 1:]
+    args = parser.parse_args(argv)
+    if guest_args and not args.run:
+        parser.error("arguments after -- require --run")
+    if args.working_dir is not None and not args.run:
+        parser.error("--working-dir requires --run")
+    if args.run and len(args.program) > 1:
+        parser.error("--run accepts one input program")
+    try:
+        runtime = args.runtime.resolve(strict=True) if args.runtime else None
+        if runtime is not None and (not runtime.is_file() or runtime.name != library_name()):
+            raise ValueError(f"--runtime must name a shared {library_name()} for this platform")
+        required = ["rustc"] + ([] if runtime else ["cargo"])
+        missing = [tool for tool in required if shutil.which(tool) is None]
+        if missing:
+            raise ValueError("missing " + ", ".join(missing) +
+                             "; install the Rust toolchain, then run --doctor again")
+        if args.doctor:
+            for tool in required:
+                subprocess.run([tool, "--version"], check=True)
+            print("Ready to build for this computer's native platform.", flush=True)
+            return 0
+        if not args.program:
+            if not sys.stdin.isatty():
+                parser.error("provide at least one DOS input file (or use --doctor)")
+            value = input("DOS program path: ").strip().strip('"')
+            if not value:
+                parser.error("a DOS input file is required")
+            args.program = [Path(value)]
+        # Preflight the complete batch before compiling or publishing anything.
+        programs = [read_program(path)[0] for path in args.program]
+        names = [launcher_name(path).casefold() for path in programs]
+        if len(names) != len(set(names)):
+            raise ValueError("inputs produce the same output name; build them into separate output folders")
+        output = args.output_dir.resolve()
+        for path in programs:
+            destination = output / launcher_name(path)
+            if destination.exists() and not args.force:
+                raise FileExistsError(f"{destination} already exists (use --force to replace it)")
+        working_dir = (args.working_dir or programs[0].parent).resolve(strict=True)
+        if args.run and not working_dir.is_dir():
+            raise ValueError("--working-dir must name a directory")
+        if runtime is None:
+            print("Building shared PIL/Dine runtime (first build can take several minutes)...", flush=True)
+            runtime = build_runtime()
+        results = []
+        for index, program in enumerate(programs, 1):
+            print(f"[{index}/{len(programs)}] Building native launcher: {program.name}", flush=True)
+            result = build(program, output, args.force, runtime=runtime)
+            results.append(result)
+            print(f"Dine executable: {result}", flush=True)
+        print(f"Shared runtime: {output / library_name()}", flush=True)
+        print("Keep the shared runtime beside the executable(s).", flush=True)
+        if args.run:
+            print(f"Running from: {working_dir}", flush=True)
+            return subprocess.run([str(results[0]), *guest_args], cwd=working_dir).returncode
+        return 0
+    except (OSError, ValueError, EOFError) as error:
+        print(f"Build failed: {error}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as error:
+        print(f"Build failed: {error.cmd[0]} exited with status {error.returncode}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
