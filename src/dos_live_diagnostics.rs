@@ -40,6 +40,23 @@ fn current_program(p:&Loaded)->Option<String>{
     }
     None
 }
+/// Raw first five rows of the active text page, character/attribute pairs.
+/// Capture before mouse overlays or host palette conversion.
+fn text_cells_hex(p:&Loaded,mode:Option<u32>)->Option<String>{
+    if !mode.is_some_and(|m|matches!(m,0..=3|7)){return None;}
+    let columns=bda(p,0x44a,MemWidth::Word)?.clamp(1,80);
+    let page=bda(p,0x462,MemWidth::Byte)?&7;
+    let size=bda(p,0x44c,MemWidth::Word)?;
+    let origin=if p.vga.start_override{u32::from(p.vga.start())*2}else{page*size};
+    let base=if mode==Some(7){0xb0000}else{0xb8000};
+    let mut hex=String::with_capacity((columns*5*4)as usize);
+    use std::fmt::Write as _;
+    for index in 0..columns*5*2{
+        let byte=bda(p,base+(origin+index)%32768,MemWidth::Byte)? as u8;
+        write!(&mut hex,"{byte:02x}").ok()?;
+    }
+    Some(hex)
+}
 /// One JSON object, with no embedded newlines, for the append-only log.
 /// The initial executable name belongs to the session; PSP and EXEC depth
 /// distinguish a running child from the original COMMAND.COM loader.
@@ -54,6 +71,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
         p.vga.start_override,p.vga.cga_mode(),p.vga.attr[16],
         p.vga.idle.seq,p.vga.idle.gc
     );
+    let text_cells=text_cells_hex(p,mode).map_or_else(||"null".into(),|v|stoplog::quote(&v));
     let head=bda(p,0x41a,MemWidth::Word);
     let tail=bda(p,0x41c,MemWidth::Word);
     let valid=|n:u32|(0x1e..0x3e).contains(&n)&&n&1==0;
@@ -72,7 +90,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
     let program=stoplog::quote(&String::from_utf8_lossy(&p.own_name));
     let active=current_program(p).map_or_else(||"null".into(),|s|stoplog::quote(&s));
     format!(
-        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"keyboard":{keyboard}}}"#,
+        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"keyboard":{keyboard}}}"#,
         stoplog::quote(status),p.psp,p.exec.len(),p.history.enabled(),p.history.capacity()
     )
 }
@@ -95,6 +113,7 @@ mod tests{
         assert!(first.contains(r#""active_executable":"#));
         assert!(current_program(session.machine().unwrap()).unwrap().to_ascii_uppercase().ends_with("SPIN.COM"));
         assert!(first.contains(r#""bios_mode":3"#));
+        assert!(first.contains(r#""text_cells_first5_hex":"2007"#));
         assert!(first.contains(r#""recent_dispatches":[]"#));
         assert!(!first.contains('\n'));
         assert_eq!(session.machine().unwrap().cpu.eip,before);
@@ -124,6 +143,18 @@ mod tests{
         assert!(snapshot.contains(r#""recent_dispatches":[{"sequence":"#));
         session.disable_live_trace().unwrap();
         assert_eq!(session.machine().unwrap().history.capacity(),0);
+    }
+    #[test]
+    fn text_diagnostics_capture_exact_guest_character_and_attribute_bytes(){
+        let mut p=load(&[0xcd,0x20],"VC.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,2).unwrap();
+        // VisiCalc A1 near the top of the sheet, with black-on-black '1'.
+        p.ram.store(0xb8000+(3*80+1)*2,MemWidth::Word,0x0031).unwrap();
+        let hex=text_cells_hex(&p,Some(2)).unwrap();
+        let offset=(3*80+1)*4;
+        assert_eq!(&hex[offset..offset+4],"3100");
+        assert_eq!(hex.len(),80*5*4);
+        assert_eq!(text_cells_hex(&p,Some(0x13)),None);
     }
     #[test]
     fn live_snapshot_preserves_preexisting_dispatch_history(){
