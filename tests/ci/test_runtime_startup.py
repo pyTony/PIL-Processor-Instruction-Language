@@ -49,6 +49,20 @@ class RuntimeStartupTests(unittest.TestCase):
         self.assertFalse(startup.current(self.root, self.output, "library"))
         self.assertFalse((self.root / "target/pil-build-in-progress").exists())
 
+    def test_gui_build_shows_progress_but_current_runtime_stays_quiet(self):
+        def build(command, **kwargs):
+            self.output.write_bytes(self.source.read_bytes())
+            return subprocess.CompletedProcess(command, 0)
+        with mock.patch.object(startup.shutil, "which", return_value="cargo"), \
+             mock.patch.object(startup.subprocess, "run", side_effect=build), \
+             mock.patch.object(startup, "show_build_progress") as show:
+            startup.ensure(self.root, self.output, "library", gui=True)
+            startup.ensure(self.root, self.output, "library", gui=True)
+            self.assertEqual(show.call_count, 1)
+            self.source.write_text("// changed source\n")
+            startup.ensure(self.root, self.output, "library", gui=True)
+            self.assertEqual(show.call_count, 2)
+
     def test_active_build_prevents_launch_of_older_output(self):
         marker = self.root / "target/pil-build-in-progress"
         marker.mkdir(parents=True)

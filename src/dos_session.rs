@@ -444,6 +444,7 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
 /// Load PATH (a file or IMAGE::INNER) with its drives, configuration, FPU
 /// choice, command line and COM1, as `--dos-session` and `--dos-console` do.
 pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<&str>,fpu_mode:Option<&str>)->Result<Session,String>{
+    let _span=crate::profile::span("dos_session_open");
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;
     let bytes=match containers{
@@ -451,9 +452,13 @@ pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<
             let is_image=Path::new(container).extension().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("img")||x.eq_ignore_ascii_case("ima"));
             if is_image{
                 let data=super::super::containers::read_image(Path::new(container))?;
-                drives.push(Source::Image(std::sync::Arc::new(super::super::containers::fat16_tree(&data)?)));inner=Some(entry);
+                let tree=std::sync::Arc::new(super::super::containers::fat16_tree(&data)?);
+                let bytes=tree.read_entry(entry)?.as_ref().clone();
+                drives.push(Source::Image(tree));inner=Some(entry);
+                bytes
+            }else{
+                super::super::containers::read_entry(Path::new(container),entry)?
             }
-            super::super::containers::read_entry(Path::new(container),entry)?
         },
         None=>read_file(Path::new(path))?,
     };

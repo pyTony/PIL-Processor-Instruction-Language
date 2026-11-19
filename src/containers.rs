@@ -141,6 +141,27 @@ pub enum FatNode{Dir(usize),File(usize)}
 /// label, cluster size in sectors and cluster count. `.` and `..` are left out.
 #[derive(Debug)]
 pub struct FatTree{pub dirs:Vec<Vec<FatEntry>>,pub files:Vec<std::sync::Arc<Vec<u8>>>,pub label:Option<[u8;11]>,pub sectors_per_cluster:u16,pub clusters:u16}
+impl FatTree{
+    /// Read from an already-validated mounted tree without reopening the image.
+    pub(crate) fn read_entry(&self,path:&str)->Result<std::sync::Arc<Vec<u8>>,String>{
+        let path=safe_name(path)?;
+        let mut parts=path.split('/').peekable();let mut directory=0;
+        while let Some(part)=parts.next(){
+            let entry=self.dirs.get(directory).and_then(|entries|entries.iter().find(|entry|{
+                let base=String::from_utf8_lossy(&entry.name[..8]);
+                let ext=String::from_utf8_lossy(&entry.name[8..]);
+                let name=if ext.trim_end().is_empty(){base.trim_end().to_string()}else{format!("{}.{}",base.trim_end(),ext.trim_end())};
+                name.eq_ignore_ascii_case(part)
+            })).ok_or_else(||format!("file not found in container: {path}"))?;
+            match entry.node{
+                FatNode::Dir(child) if parts.peek().is_some()=>directory=child,
+                FatNode::File(index) if parts.peek().is_none()=>return self.files.get(index).cloned().ok_or_else(||"missing FAT file data".into()),
+                _=>return Err(format!("not a file in container: {path}")),
+            }
+        }
+        Err(format!("file not found in container: {path}"))
+    }
+}
 pub fn fat16_tree(data:&[u8])->Result<FatTree,String>{
     let(fs,root_start,root_len,_)=fat_volume(data)?;
     let mut tree=FatTree{dirs:Vec::new(),files:Vec::new(),label:None,sectors_per_cluster:(fs.unit/512)as u16,clusters:fs.clusters.min(0xffff)as u16};

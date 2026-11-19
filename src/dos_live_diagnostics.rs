@@ -189,7 +189,16 @@ mod tests{
     }
     #[test]
     fn bios_service_trace_is_opt_in_and_exported_without_dispatch_history(){
-        let p=load(&[0xcd,0x10,0xcd,0x20],"VID.COM").unwrap();
+        for paragraphs in [0u16,1]{
+        let mut p=load(&[0xcd,0x10,0xcd,0x20],"VID.COM").unwrap();
+        p.history=history::History::default();
+        // The same instruction bytes through two real-mode CS:IP aliases.
+        p.cpu.regs[0]=0x0f00; // Supported BIOS video-mode query.
+        p.selectors[1]+=paragraphs;p.image.selectors=p.selectors;
+        p.image.segments[1]=crate::address::SegmentCache::real_mode(p.selectors[1]);
+        p.cpu.eip-=u32::from(paragraphs)*16;
+        let entry=p.cpu.eip;
+        let location=format!(r#""location":"{:04X}:{entry:04X}""#,p.selectors[1]);
         let mut session=session::Session::new(p);
         assert!(!session.machine().unwrap().services_trace.enabled());
         session.enable_service_trace().unwrap();
@@ -197,11 +206,13 @@ mod tests{
         session.run(1).unwrap();
         let trace=session.machine().unwrap().services_trace.json();
         assert!(trace.contains(r#""vector":"10""#),"{trace}");
-        assert!(trace.contains(r#""location":"1010:0100""#),"{trace}");
+        assert!(trace.contains(&location),"{trace}");
+        assert_eq!(session.machine().unwrap().cpu.eip,entry+2);
         let (snapshot,_)=session.live_snapshot(0).unwrap();
         assert!(snapshot.contains(r#""service_trace":{"enabled":true"#));
         session.disable_service_trace().unwrap();
         assert!(session.machine().unwrap().services_trace.json().contains(r#""enabled":false"#));
+        }
     }
     #[test]
     fn live_snapshot_preserves_preexisting_dispatch_history(){

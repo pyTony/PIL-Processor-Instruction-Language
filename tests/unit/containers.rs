@@ -119,6 +119,18 @@ fn fat16_tree_keeps_attributes_stamps_label_and_directories(){
     assert_eq!(tree.dirs[1][0].name,*b"PACKAGE ZIP");
 }
 #[test]
+fn mounted_image_lookup_reuses_file_bytes_and_checks_paths(){
+    let tree=fat16_tree(&image(false)).unwrap();
+    let bytes=tree.read_entry("hello.com").unwrap();
+    assert!(std::sync::Arc::ptr_eq(&bytes,&tree.files[0]));
+    assert_eq!(bytes.as_ref(),&super::super::dos::hello("com").unwrap());
+    let package=tree.read_entry("pkgs\\package.zip").unwrap();
+    assert!(package.starts_with(b"PK"));
+    for path in ["../HELLO.COM","/HELLO.COM","PKGS","HELLO.COM/child","PKGS/missing.zip"]{
+        assert!(tree.read_entry(path).is_err(),"{path}");
+    }
+}
+#[test]
 fn fat12_floppy_reads_odd_and_even_cluster_chains_and_tree(){
     let sectors=720usize;let mut b=vec![0u8;sectors*512];
     b[..3].copy_from_slice(&[0xeb,0x3c,0x90]);w16(&mut b,11,512);b[13]=1;w16(&mut b,14,1);b[16]=2;w16(&mut b,17,112);w16(&mut b,19,sectors as u16);b[21]=0xf9;w16(&mut b,22,3);
