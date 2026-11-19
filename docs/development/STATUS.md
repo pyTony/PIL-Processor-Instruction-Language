@@ -1,3 +1,30 @@
+# INT 15h block move and E801h (protected-mode plan, increment 9) — 16 November 2026
+
+Tony asked for the next step of the protected-mode plan: the rest of
+increment 9 (Dine memory above 1 MiB). New src/dos_block_move.rs:
+- INT 15h AX=E801h returns AX=CX=3C00h (15 MiB between 1 and 16 MiB) and
+  BX=DX=0 (nothing above 16 MiB), CF=0: the same RAM as AH=88h and CMOS.
+  E820h and the rest of AH=E8h stay unsupported (CF=1, AH=86h).
+- INT 15h AH=87h (block move) is a host-side copy of CX words between the
+  source descriptor (ES:SI+10h) and the destination descriptor (+18h),
+  forward word by word as the BIOS's REP MOVSW, so overlapping ranges
+  give the same result. Success is AH=00h, CF=0, ZF=1. CF=1, AH=02h,
+  with nothing written, for a descriptor the BIOS's protected-mode copy
+  would fault on: not present, a system descriptor, a code or read-only
+  destination, an execute-only source, expand-down data, or a limit below
+  2*CX-1 (limit bits 19-16, G and base bits 31-24 are honoured).
+- Choices: the A20 gate is left as the caller had it (SeaBIOS and DOSBox
+  do so; the IBM AT BIOS leaves it disabled). More than 8000h words, a
+  call outside real mode and an address past the 16 MiB of RAM stop the
+  run with a message, as other unmodelled cases do. Words written to ROM
+  (C0000h-FFFFFh) are dropped, as a CPU store there is.
+- Increment 10 (XMS, INT 2Fh 4300h/4310h) is next and not started.
+
+Local Linux, release: 986 Rust tests pass, 2 ignored (5 new; the E801h
+"unsupported" check now tests E820h); `pil --selftest` passes. No guest
+program that uses AH=87h or E801h was run (none at hand), and nothing was
+compared with DOSBox-X or a real BIOS. Not run on Windows.
+
 # Protected-mode plan brought up to date — 15 November 2026
 
 Tony asked to keep docs/development/PROTECTED_MODE_PLAN.md current. CPU

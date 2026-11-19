@@ -1,11 +1,11 @@
-# 80386 protected mode plan — 7 November 2026 (status 15 November 2026)
+# 80386 protected mode plan — 7 November 2026 (status 16 November 2026)
 
 Tony set protected mode as the priority, ahead of the x87 FPU. The plan is
 eight CPU increments and two Dine increments, each a PR against dev with
 expected-state, fault and size-combination tests and green Windows/Linux CI.
 CPU increments 1-8 are merged (test386 runs every POST to FFh); increment 9
-(Dine memory above 1 MiB) is partly done and increment 10 (XMS) is not
-started. The section "Current state and handoff" below is written so that
+(Dine memory above 1 MiB) is done with the 16 November delivery and
+increment 10 (XMS) is not started. The section "Current state and handoff" below is written so that
 another assistant can pick the work up from this file alone.
 
 ## Yardstick: test386.asm
@@ -39,7 +39,7 @@ protected, unreal and V86 sets are announced but not published.
 | 6 | V86 mode | 21h | done, #128; follow-ups #129 (ARPL `store_if`) and #131 (128 KB ROM) |
 | 7 | Task switching | 22h (128 KB ROM) | done, #172; follow-up #186 (TR in its reset state, MOV DRn) |
 | 8 | Remaining test386 (E0h, EEh) | FFh | done, #175: both ROMs run every POST to FFh, EEh output matches the reference (local Linux) |
-| 9 | Dine: memory above 1 MiB (INT 15h 88h/E801h/87h, CMOS) | — | partly done, #138: 16 MiB RAM, AH=88h, CMOS 17h/18h/30h/31h, A20 through port 92h and the 8042; E801h refused, 87h not implemented |
+| 9 | Dine: memory above 1 MiB (INT 15h 88h/E801h/87h, CMOS) | — | done: #138 (16 MiB RAM, AH=88h, CMOS 17h/18h/30h/31h, A20 through port 92h and the 8042) and the 16 November delivery (E801h, AH=87h block move; see "Increment 9 status") |
 | 10 | Dine: XMS 3.0 driver (INT 2Fh 4300h/4310h) | — | not started (AX=4300h returns unchanged: no XMS driver) |
 
 DPMI, VCPI and EMS are not Dine services at first: DOS extenders (CWSDPMI,
@@ -193,6 +193,23 @@ and #132 (SMSW r32 keeps PG). Increment 7, on the same branch:
   286 and 386, JMP/CALL/IRET/INT, and its V86 task) and then runs POST
   0Bh-19h, stopping in POST 1Ah like the 64 KB ROM.
 
+## Increment 9 status — 16 November 2026
+
+src/dos_block_move.rs, after #138:
+- AX=E801h: AX=CX=3C00h KiB (1-16 MiB), BX=DX=0 (64 KiB blocks above
+  16 MiB), CF=0, from the same RAM size as AH=88h. E820h stays CF=1, AH=86h.
+- AH=87h: host-side copy of CX words from the descriptor at ES:SI+10h to
+  the one at +18h, forward word by word. AH=00h, CF=0, ZF=1 on success.
+  CF=1, AH=02h and no write when the BIOS's protected-mode copy would
+  fault: descriptor not present, system, code or read-only destination,
+  execute-only source, expand-down, or limit below 2*CX-1.
+- The A20 gate keeps the caller's state (SeaBIOS, DOSBox); the IBM AT BIOS
+  would leave it disabled.
+- Stops, not modelled: CX above 8000h, a call outside real mode, an
+  address past installed RAM. Words written to ROM are dropped.
+- Tested with own fixtures only (tests/unit/dos.rs, `int15_`); no guest
+  program using these calls was run and nothing was compared with DOSBox-X.
+
 ## Current state and handoff — 15 November 2026
 
 Where test386 stands (local Linux, release build, `--steps 100000000`;
@@ -232,8 +249,8 @@ Protected-mode programs, as far as runs are recorded:
   needs the 80387, which is being built separately (#181 and earlier).
 
 Remaining blockers and gaps:
-- Dine increment 9: INT 15h E801h returns CF=1, AH=86h (unsupported), and
-  AH=87h (block move) stops as an unimplemented service.
+- Dine increment 9 is done (16 November: E801h and the AH=87h block move);
+  E820h stays unsupported, as on an AT-class BIOS.
 - Dine increment 10: no XMS driver (INT 2Fh 4300h finds none, 4310h is not
   answered). DPMI, VCPI and EMS stay with the guest's extender or JEMM386.
 - Not modelled, listed under increment 7: task-switch faults after the
@@ -247,8 +264,7 @@ Remaining blockers and gaps:
 - SingleStepTests/80386 still publishes no protected, unreal or V86 data,
   so test386 and own fixtures are the only protected-mode references.
 
-Next: finish increment 9 (E801h, AH=87h), then XMS (10), unless a program
-Tony runs stops elsewhere first.
+Next: XMS (increment 10), unless a program Tony runs stops elsewhere first.
 
 Key files:
 - src/address.rs: SegmentState (caches, CPL, GDT/LDT/IDT/TR, CR0-CR3,

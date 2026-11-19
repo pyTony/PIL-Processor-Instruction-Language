@@ -348,3 +348,54 @@ Build-helper tests cover batch runtime reuse, command-line handling,
 matching-build reuse and launcher/system separation. Full-window presentation and
 performance require separate validation; these workflow checks do not
 establish graphics parity or compatibility with arbitrary DOS applications.
+
+## Native COM entry ABI
+
+The shared library exports `dine_run_compiled_v1` for a caller that already
+has native code for a real-mode COM program. The caller supplies the native
+entry point and one contiguous initialized data span. Dine reserves the COM
+image in the process allocation starting at `PSP:0100h`. The data offset is
+relative to that address and the rest of the reserved image starts zeroed.
+The callback starts with standard COM registers, the DOS stack, and the
+prepared command tail. The input filename is a DOS process name.
+
+```c
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct {
+    uint32_t gpr[8];      /* AX, CX, DX, BX, SP, BP, SI, DI, including upper halves */
+    uint32_t eflags;
+    uint16_t ip;          /* Guest address of the current operation */
+    uint16_t segments[6]; /* ES, CS, SS, DS, FS, GS */
+} DineCompiledRegistersV1;
+
+typedef struct {
+    int32_t (*interrupt)(void *, DineCompiledRegistersV1 *, uint8_t vector);
+    int32_t (*read)(void *, uint32_t linear, uint8_t bytes, uint32_t *value);
+    int32_t (*write)(void *, uint32_t linear, uint8_t bytes, uint32_t value);
+    int32_t (*port)(void *, uint16_t port, uint8_t bytes, uint8_t input, uint32_t *value);
+} DineCompiledServicesV1;
+
+typedef void (*DineCompiledEntryV1)(
+    void *context, DineCompiledRegistersV1 *state, const DineCompiledServicesV1 *services);
+
+int32_t dine_run_compiled_v1(
+    const uint8_t *data, size_t data_len, size_t image_len, size_t data_offset,
+    const char *name, const char *tail, DineCompiledEntryV1 entry);
+```
+
+The callback runs synchronously. It must stop after a service returns 1
+(DOS exit) or -1 (runtime error). A service returns 0 after a normal call,
+including a DOS error reported through guest carry and AX. The entry point
+returns 0–255 on DOS exit and -1 on runtime error. Memory access widths
+are 1, 2, or 4 bytes. Port direction is 1 for input and 0 for output.
+Use the context and service table only on the callback thread and only
+during the callback.
+
+This first ABI supports synchronous DOS and BIOS calls, guest memory and
+port I/O, and redirected text output. Compiled execution that requires
+blocking input, guest interrupt handlers, child execution, or TSR
+termination reports a runtime error. Graphics presentation, asynchronous
+interrupt delivery, self-modifying guest code, and COM translation
+are separate work.
