@@ -1,8 +1,40 @@
+# Upper memory (DOS=UMB) and LOADHIGH — 20 November 2026
+
+Tony: "Can we load high then?" With the XMS driver installed, Dine now
+acts as DOS=UMB (src/dos_memory.rs):
+- C800-EFFF (160 KiB) is RAM; C000-C7FF (video BIOS) and F000-FFFF stay
+  ROM. Conventional memory ends at 9FFFh, where a system MCB (owner 0008h,
+  name "SC") spans A000-C7FF to the first upper MCB at C800h. It is 'Z'
+  while the UMBs are unlinked and 'M' once AX=5803h BX=1 links them; list
+  of lists byte 63h is the link state, word 66h holds 9FFFh. AX=5802h
+  reports it.
+- AH48 (and EXEC's choice of block) use upper memory only while linked:
+  strategy 40h-42h upper only, 80h-82h upper first then conventional,
+  00h-02h the whole chain in address order (FreeDOS DosMemAlloc).
+- Upper memory is a code range (image.system slot 4): FreeCOM's LH moves
+  part of FreeCOM into an upper block and runs it there.
+- XMS 10h finds no UMB left (DOS holds them all: BL=B1h, DX=0); 11h/12h
+  are BL=B2h. The case-map routine and the XMS entry moved to DOSDATA:03C0
+  and 03D0 (the old places overlapped list-of-lists offsets 53h-66h).
+- PIL_XMS=off or select_xms(false) removes the UMBs too (FFh bus again,
+  conventional memory to A000h).
+
+Local Windows, release: 1007 Rust tests pass, 2 ignored (3 new UMB tests;
+4 older ones updated for the 9FFFh end, the 5803h link and the chain with
+the system MCB; the arena tests use conventional memory alone); 0 rustc
+warnings. FD14LITE.img (SHA256 f539d456...) FreeCOM, local:
+- `MEM`: Upper 160K free; largest free upper memory block 160K.
+- `LH MEM /C`: Upper 54K used while it runs, exit code 0.
+- A 35-byte COM printing its CS (scratch, not in the repo): 1092h
+  normally, C807h through `LH`.
+SuperCalc 5.5 still reaches its grid. Not tried: DEVICEHIGH (Dine has no
+CONFIG.SYS), LH of a TSR, JEMM386, MEM with PIL_XMS=off beyond one run.
+
 # XMS 3.0 driver (protected-mode plan, increment 10) — 19 November 2026
 
 Tony asked to continue the protected-mode plan; increment 10 was the XMS
 driver. New src/dos_xms.rs, as DEVICE=HIMEM.SYS would load it:
-- INT 2Fh AX=4300h returns AL=80h; AX=4310h returns ES:BX=0070:0079. The
+- INT 2Fh AX=4300h returns AL=80h; AX=4310h returns ES:BX=0070:03D0 (0079h before the UMB change). The
   entry is RAM in Dine's DOS data segment (JMP SHORT +3, three NOPs, a
   private HLT the runner catches, RETF), so a program can hook it by
   patching a far JMP over the first five bytes and chain to entry+5.
@@ -17,8 +49,8 @@ driver. New src/dos_xms.rs, as DEVICE=HIMEM.SYS would load it:
   EMBs from 1 MiB + 64 KiB to 16 MiB (15,296 KiB), first fit; odd move
   length, or a range past the block or past 10FFF0h, A7h; forward overlap
   A8h; INT 15h AH=88h reports 0 KiB while the driver is installed (E801h,
-  CMOS and AH=87h unchanged). No UMBs: 10h-12h and unknown functions are
-  AX=0, BL=80h. A call from V86 mode stops the run (not modelled).
+  CMOS and AH=87h unchanged). UMBs: see the 20 November entry above.
+  Unknown functions are AX=0, BL=80h. A call from V86 mode stops the run (not modelled).
 - The driver is installed by default; PIL_XMS=off starts without it (old
   behaviour: AX=4300h unchanged, AH=88h 15 MiB). Loaded::select_xms for
   front ends; no pildos.conf key yet.

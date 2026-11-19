@@ -213,13 +213,18 @@ src/dos_block_move.rs, after #138:
 ## Increment 10 status — 19 November 2026
 
 src/dos_xms.rs: an XMS 3.0 driver, installed by default (PIL_XMS=off
-removes it). INT 2Fh 4300h/4310h; entry 0070:0079 in RAM, hookable;
+removes it). INT 2Fh 4300h/4310h; entry 0070:03D0 in RAM, hookable;
 functions 00h-0Fh, 88h, 89h, 8Eh, 8Fh; 48 handles; 15,296 KiB of EMBs
-above the HMA; HMA and A20 global/local; no UMBs (BL=80h). INT 15h AH=88h
+above the HMA; HMA and A20 global/local. With it Dine is DOS=UMB:
+C800-EFFF upper memory behind a system MCB at 9FFFh, linked by AX=5803h,
+used by AH48/EXEC strategies 40h/80h, so FreeCOM's LH loads high
+(20 November; XMS 10h then finds none left). INT 15h AH=88h
 reports 0 KiB while it is installed, as under HIMEM/HIMEMX. Tested with
 own fixtures (tests/unit/dos_xms.rs); SuperCalc 5.5 uses the HMA and
 reaches its grid, DOS/4GW Doom allocates and locks all EMB memory and
-reaches R_Init (local, Tony's files). Not done: UMBs, a pildos.conf key,
+reaches R_Init (local, Tony's files); FreeDOS MEM sees 160 KiB upper
+memory and `LH` runs a program at C807h. Not done: DEVICEHIGH (no
+CONFIG.SYS), a pildos.conf key,
 calls from V86 mode, CWSDPMI/Quake rerun.
 
 ## Current state and handoff — 15 November 2026

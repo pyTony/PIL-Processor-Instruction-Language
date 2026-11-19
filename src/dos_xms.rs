@@ -23,15 +23,18 @@
 //!   memory with A20 on, whatever the gate says.
 //! - Reallocate (0Fh/8Fh) grows in place when the memory after the block is
 //!   free, otherwise moves the contents to the first block that fits.
-//! - No UMBs: 10h, 11h and 12h are AX=0, BL=80h (not implemented), as HIMEM
-//!   without an upper-memory provider. Unknown functions are BL=80h too.
+//! - Upper memory belongs to DOS (DOS=UMB, see dos_memory): 10h finds none
+//!   left (AX=0, BL=B1h, DX=0), 11h and 12h name no block of the driver's
+//!   (BL=B2h), as under HIMEM+EMM386 once DOS has taken every UMB. Unknown
+//!   functions are AX=0, BL=80h.
 //! A call from V86 or protected mode stops the run (not modelled).
 use super::*;
 
 /// Offset in DOSDATA of the entry; the HLT Dine catches is 5 bytes on.
-const ENTRY:u16=0x0079;
+const ENTRY:u16=0x03d0;
 const CODE:[u8;7]=[0xeb,0x03,0x90,0x90,0x90,0xf4,0xcb];
 pub(super) const TRAP:u32=DOSDATA as u32*16+ENTRY as u32+5;
+pub(super) const CODE_END:u32=DOSDATA as u32*16+ENTRY as u32+CODE.len()as u32;
 const HANDLES:usize=48;
 /// The first kilobyte EMBs may use: after the 64 KiB HMA at 1 MiB.
 const POOL_START_K:u32=1024+64;
@@ -163,6 +166,8 @@ fn call(p:&mut Loaded,ah:u8)->Result<(),String>{
                 None=>fail(p,0xa2),
             }
         },
+        0x10=>{fail(p,0xb1);set16(p,2,0);},
+        0x11|0x12=>fail(p,0xb2),
         _=>fail(p,0x80),
     }
     Ok(())

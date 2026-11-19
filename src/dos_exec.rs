@@ -131,7 +131,10 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     // the largest free block, an EXE what fits between its minimum and maximum.
     let resident=(program.module.len().div_ceil(16)+0x10)as u32;
     let Some(env_block)=allocate(p,(env.len().div_ceil(16))as u16)? else{fail(p,8);return Ok(())};
-    let largest=u32::from(p.arena.free());
+    // AH58 strategy and the UMB link pick the region, as for AH48: LOADHIGH
+    // (strategy 80h, linked) gets the largest upper block when it fits.
+    let need=resident+if program.entry.is_none(){0x10}else{u32::from(program.min)};
+    let largest=u32::from(p.arena.exec_block(p.alloc_strategy,need));
     let wanted=match program.entry{None=>largest,Some(_)=>(resident+u32::from(program.max)).min(largest)};
     if largest<resident+u32::from(program.min)||(program.entry.is_none()&&largest<resident+0x10){
         p.arena.set_owner(&mut p.ram,env_block,0)?;fail(p,8);return Ok(());

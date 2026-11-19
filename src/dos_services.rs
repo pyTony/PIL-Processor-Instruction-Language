@@ -516,8 +516,10 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
                 // With no UMB chain linked, FreeDOS DosMemAlloc searches low
                 // memory for 4xh (high only) and 8xh (high first) with the same fit.
                 1=>{p.alloc_strategy=bl;p.cpu.eflags&=!1;},
-                2=>{p.cpu.regs[0]&=!255;p.cpu.eflags&=!1;},
-                // No UMB chain exists, so linking it is an invalid function (FreeDOS).
+                2=>{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.arena.linked());p.cpu.eflags&=!1;},
+                // Link (BX=1) or unlink (BX=0) the upper blocks (dos_memory).
+                3 if p.cpu.regs[3]&0xffff<=1&&memory_arena::link(p,p.cpu.regs[3]&0xffff==1)?=>{p.cpu.eflags&=!1;},
+                // No UMB chain exists, or BX is not 0/1: invalid function (FreeDOS).
                 _=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
             }
             p.cpu.undefined_flags&=!1;Ok(None)

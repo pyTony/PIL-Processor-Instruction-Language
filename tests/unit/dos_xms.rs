@@ -8,7 +8,7 @@ fn x(p:&mut Loaded,ax:u16,bx:u16,dx:u16)->(u16,u8){
     (p.cpu.regs[0]as u16,p.cpu.regs[3]as u8)
 }
 fn dx(p:&Loaded)->u16{p.cpu.regs[2]as u16}
-fn fresh()->Loaded{let mut p=load(&[0xfa,0xf4],"xms.com").unwrap();p.select_xms(true);p}
+fn fresh()->Loaded{let mut p=load(&[0xfa,0xf4],"xms.com").unwrap();p.select_xms(true).unwrap();p}
 /// Writes an XMS move structure at DS:0200h and points SI at it.
 fn structure(p:&mut Loaded,length:u32,src:(u16,u32),dst:(u16,u32)){
     let base=p.image.segments[SegmentRegister::Ds.index()].base+0x200;
@@ -112,8 +112,11 @@ fn xms_a20_global_local_and_the_hma(){
     assert_eq!(x(&mut p,0x0200,0,0),(0,0x93));
     assert_eq!(x(&mut p,0x0100,0,0xffff),(1,0));assert_eq!(x(&mut p,0x0100,0,0xffff),(0,0x91));
     assert_eq!(x(&mut p,0x0200,0,0),(1,0));
-    // No UMBs, and an unknown function: not implemented.
-    for ax in [0x1000,0x1100,0x1200,0x2000,0x8a00]{assert_eq!(x(&mut p,ax,0,0x10),(0,0x80),"{ax:x}");}
+    // DOS holds every UMB: 10h finds none (DX=0), 11h/12h name no block.
+    assert_eq!(x(&mut p,0x1000,0,0x10),(0,0xb1));assert_eq!(dx(&p),0);
+    for ax in [0x1100,0x1200]{assert_eq!(x(&mut p,ax,0,0xc801),(0,0xb2),"{ax:x}");}
+    // Unknown functions: not implemented.
+    for ax in [0x2000,0x8a00]{assert_eq!(x(&mut p,ax,0,0x10),(0,0x80),"{ax:x}");}
 }
 
 #[test]
@@ -167,10 +170,10 @@ fn xms_program_finds_the_driver_and_calls_it_through_a_hook(){
     // MOV AX,4310h; INT 2Fh; MOV DI,BX; MOV AL,EAh; STOSB; MOV AX,0130h; STOSW;
     // MOV AX,CS; STOSW; MOV [0140h],BX; MOV [0142h],ES; MOV AH,00h;
     // CALL FAR [0140h]; CLI; HLT; then at 0130h: INC BYTE [0144h];
-    // JMP FAR 0070:007Eh
+    // JMP FAR 0070:03D5h
     let mut code=vec![0xb8,0x10,0x43,0xcd,0x2f,0x89,0xdf,0xb0,0xea,0xaa,0xb8,0x30,0x01,0xab,0x8c,0xc8,0xab,
         0x89,0x1e,0x40,0x01,0x8c,0x06,0x42,0x01,0xb4,0x00,0xff,0x1e,0x40,0x01,0xfa,0xf4];
-    code.resize(0x30,0);code.extend([0xfe,0x06,0x44,0x01,0xea,0x7e,0x00,0x70,0x00]);code.resize(0x48,0);
+    code.resize(0x30,0);code.extend([0xfe,0x06,0x44,0x01,0xea,0xd5,0x03,0x70,0x00]);code.resize(0x48,0);
     let r=run(load(&code,"xmshook.com").unwrap(),60).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     let ds=r.loaded.image.segments[SegmentRegister::Ds.index()].base;
     assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[3]&0xffff,r.loaded.ram.bytes()[(ds+0x144)as usize]),(0x0300,0x0300,1));
@@ -179,10 +182,10 @@ fn xms_program_finds_the_driver_and_calls_it_through_a_hook(){
 #[test]
 fn xms_entry_from_v86_mode_stops_and_removed_driver_is_not_answered(){
     let mut p=fresh();
-    let cs=SegmentRegister::Cs.index();p.selectors[cs]=0x70;p.image.selectors[cs]=0x70;p.image.segments[cs]=SegmentCache::real_mode(0x70);p.cpu.eip=0x7e;
+    let cs=SegmentRegister::Cs.index();p.selectors[cs]=0x70;p.image.selectors[cs]=0x70;p.image.segments[cs]=SegmentCache::real_mode(0x70);p.cpu.eip=0x3d5;
     p.image.real_mode=false;p.cpu.eflags|=0x20000;
     assert!(trapped(&mut p).unwrap_err().contains("V86"));
-    p.image.real_mode=true;p.cpu.eflags&=!0x20000;p.select_xms(false);
+    p.image.real_mode=true;p.cpu.eflags&=!0x20000;p.select_xms(false).unwrap();
     assert!(trapped(&mut p).unwrap_err().contains("no XMS driver"));
     p.cpu.regs[0]=0x4300;assert!(!multiplex(&mut p).unwrap());assert_eq!(p.cpu.regs[0],0x4300);
 }

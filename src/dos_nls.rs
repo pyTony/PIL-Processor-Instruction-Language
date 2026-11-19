@@ -4,7 +4,9 @@
 use super::*;
 /// Offsets in DOSDATA of the case-map routine, its 128-byte table (with the
 /// size word before it, as AH65 points at it) and an empty DBCS table.
-const CASE_MAP:u16=0x0080;
+/// The routine sits clear of the list of lists (SYSVARS 26h + up to 68h),
+/// whose DOS 5 fields 63h (UMB link) and 66h (first upper MCB) Dine fills.
+const CASE_MAP:u16=0x03c0;
 const UPCASE:u16=0x0090;
 const DBCS:u16=0x0110;
 const COLLATING:u16=0x0120;
