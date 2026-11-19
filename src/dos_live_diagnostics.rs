@@ -72,6 +72,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
         p.vga.idle.seq,p.vga.idle.gc
     );
     let text_cells=text_cells_hex(p,mode).map_or_else(||"null".into(),|v|stoplog::quote(&v));
+    let text_write_watch=p.ram.text_watch_json();
     let head=bda(p,0x41a,MemWidth::Word);
     let tail=bda(p,0x41c,MemWidth::Word);
     let valid=|n:u32|(0x1e..0x3e).contains(&n)&&n&1==0;
@@ -90,7 +91,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
     let program=stoplog::quote(&String::from_utf8_lossy(&p.own_name));
     let active=current_program(p).map_or_else(||"null".into(),|s|stoplog::quote(&s));
     format!(
-        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"keyboard":{keyboard}}}"#,
+        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"text_write_watch":{text_write_watch},"keyboard":{keyboard}}}"#,
         stoplog::quote(status),p.psp,p.exec.len(),p.history.enabled(),p.history.capacity()
     )
 }
