@@ -137,6 +137,8 @@ pub struct Loaded{
     pub(crate) blocks:crate::block_compiler::engine::Blocks,
     /// Opt-in bounded instruction-dispatch history, shared by DOS frontends.
     pub(crate) history:history::History,
+    /// Opt-in BIOS and DOS service call trace, independent of instruction history.
+    pub(crate) services_trace:history::ServiceTrace,
 }
 impl Clone for Loaded{
     fn clone(&self)->Self{Self{
@@ -148,7 +150,7 @@ impl Clone for Loaded{
         own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),load_only:self.load_only.clone(),return_code:self.return_code,
         con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),
+        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),
     }}
 }
 impl std::fmt::Debug for Loaded{
@@ -402,7 +404,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -906,7 +908,22 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 Err(message)=>break Stop::Service(message),
                 Ok(false)=>{},
             }
-            match service(&mut p,vector,output){
+            // Save the caller and input registers before the shim mutates AX
+            // or advances IP. This records the serviced call, not its inner
+            // implementation in Rust; hooked guest interrupts are excluded.
+            let call_site=(p.selectors[1],p.cpu.eip);
+            let input_regs=[
+                p.cpu.regs[0] as u16,p.cpu.regs[3] as u16,
+                p.cpu.regs[1] as u16,p.cpu.regs[2] as u16,
+                p.selectors[3],p.selectors[0],
+            ];
+            let serviced=service(&mut p,vector,output);
+            if p.services_trace.enabled()&&matches!(vector,0x10|0x16|0x21){
+                let mut trace=std::mem::take(&mut p.services_trace);
+                trace.record(&p,vector,call_site,input_regs);
+                p.services_trace=trace;
+            }
+            match serviced{
                 Ok(_) if p.input_wait=>{p.input_wait=false;break Stop::WaitingForInput},
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{
