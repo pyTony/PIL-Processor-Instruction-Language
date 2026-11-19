@@ -114,6 +114,18 @@ impl Session{
         p.history=history::History::new(capacity);
         Ok(())
     }
+    /// Observe writes to all B0000h..BFFFFh text display pages, independent
+    /// of DOS program and current active text page. Off by default.
+    pub(crate) fn start_text_write_watch(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.ram.start_text_watch();
+        Ok(())
+    }
+    pub(crate) fn stop_text_write_watch(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.ram.stop_text_watch();
+        Ok(())
+    }
     /// Restore the normal execution pipeline when tracing is no longer needed.
     pub(crate) fn disable_live_trace(&mut self)->Result<(),String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
