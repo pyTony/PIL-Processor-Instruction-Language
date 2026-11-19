@@ -1,7 +1,9 @@
 use super::*;
 use super::super::{load,run,hello,Stop,service};
 fn call(p:&mut Loaded,ah:u8,bx:u16,es:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(u32::from(ah)<<8);low(&mut p.cpu.regs[3],bx);p.image.selectors[0]=es;let mut out=Vec::new();assert_eq!(service(p,0x21,&mut out),Ok(None));assert!(out.is_empty());}
-fn fresh()->Loaded{load(&[0x90],"arena.com").unwrap()}
+/// Conventional memory alone (no XMS, so no UMBs): the arena as before DOS=UMB.
+fn plain(mut p:Loaded)->Loaded{p.select_xms(false).unwrap();p}
+fn fresh()->Loaded{plain(load(&[0x90],"arena.com").unwrap())}
 #[test]
 fn guest_split_mcbs_are_used_for_allocation_and_owner_release(){
  let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);
@@ -45,7 +47,7 @@ fn cf(p:&Loaded)->bool{p.cpu.eflags&1!=0}
 #[test]
 fn loader_creates_mcb_chain_and_ram_is_distinct_from_allocation(){
  let p=fresh();assert_eq!(p.ram.bytes().len(),super::super::PHYSICAL_RAM);assert!(!p.ram.a20_enabled());assert_eq!(p.allocated_end,LIMIT as u32);assert_eq!(p.ram.load(u32::from(PSP-1)*16,MemWidth::Byte).unwrap(),u32::from(b'Z'));assert_eq!(p.ram.load(u32::from(ENV-1)*16,MemWidth::Byte).unwrap(),u32::from(b'M'));assert_eq!(p.arena.blocks,vec![Block{header:ENV-1,size:ENV_PARAS,owner:PSP},Block{header:PSP-1,size:0x9000,owner:PSP}]);assert!(p.arena.valid(&p.ram));
- let mut b=hello("exe").unwrap();super::super::put_word(&mut b,12,1);super::super::put_word(&mut b,16,0x10);let p=load(&b,"small.exe").unwrap();assert!(p.allocated_end<LIMIT as u32);assert_eq!(p.arena.blocks.len(),3);assert_eq!(p.arena.blocks[2].owner,0);assert!(p.arena.valid(&p.ram));
+ let mut b=hello("exe").unwrap();super::super::put_word(&mut b,12,1);super::super::put_word(&mut b,16,0x10);let p=plain(load(&b,"small.exe").unwrap());assert!(p.allocated_end<LIMIT as u32);assert_eq!(p.arena.blocks.len(),3);assert_eq!(p.arena.blocks[2].owner,0);assert!(p.arena.valid(&p.ram));
 }
 #[test]
 fn shrink_alloc_free_and_first_fit_reuse_have_correct_headers(){
@@ -94,4 +96,67 @@ fn best_and_last_fit_strategies_pick_their_blocks(){
  let mut p=setup(2);call(&mut p,0x48,0x80,0);assert!(!cf(&p));assert_eq!(p.cpu.regs[0]as u16,0xa000-0x80);assert!(p.arena.valid(&p.ram));
  // For 0x100 paragraphs the old hole is an exact fit, smaller than the tail.
  let mut p=setup(1);call(&mut p,0x48,0x100,0);assert_eq!(p.cpu.regs[0]as u16,0x2001);
+}
+/// INT 21h with AX and BX; returns (AX, CF).
+fn int21(p:&mut Loaded,ax:u16,bx:u16)->(u16,bool){
+ low(&mut p.cpu.regs[0],ax);low(&mut p.cpu.regs[3],bx);let mut out=Vec::new();
+ assert_eq!(service(p,0x21,&mut out),Ok(None));(p.cpu.regs[0]as u16,cf(p))
+}
+#[test]
+fn dos_umb_layout_with_the_xms_driver(){
+ let p=load(&[0x90],"umb.com").unwrap();
+ // Conventional memory ends at 9FFFh, where the system MCB ("SC", owner 8)
+ // ends the visible chain and spans A000-C7FF; upper memory is one free block.
+ assert_eq!(&p.arena.blocks[1..],&[Block{header:PSP-1,size:0x8fff,owner:PSP},Block{header:SC,size:0x2800,owner:8},Block{header:UMB_FIRST,size:0x27ff,owner:0}]);
+ assert!(p.arena.valid(&p.ram));assert!(!p.arena.linked());
+ let byte=|a:u32|p.ram.load(a,MemWidth::Byte).unwrap();let word=|a:u32|p.ram.load(a,MemWidth::Word).unwrap();
+ assert_eq!((byte(0x9fff0),word(0x9fff1),&p.ram.bytes()[0x9fff8..0x9fffa]),(u32::from(b'Z'),8,&b"SC"[..]));
+ assert_eq!((byte(0xc8000),word(0xc8001),word(0xc8003)),(u32::from(b'Z'),0,0x27ff));
+ assert_eq!((byte(LINK_FLAG),word(UPPER_ROOT)),(0,0x9fff));
+ assert_eq!((p.allocated_end,word(u32::from(PSP)*16+2)),(0x9fff0,0x9fff));
+ assert_eq!(p.image.system[UMB_CODE_SLOT],(0xc8000,0xf0000));
+ // Upper memory is RAM; the video BIOS area and F000 stay ROM.
+ let mut p=p;p.ram.store(0xc9000,MemWidth::Byte,0x5a).unwrap();assert_eq!(p.ram.bytes()[0xc9000],0x5a);
+ p.ram.store(0xc7fff,MemWidth::Byte,0x5a).unwrap();assert_ne!(p.ram.bytes()[0xc7fff],0x5a);
+ p.ram.store(0xf0000,MemWidth::Byte,0x5a).unwrap();assert_ne!(p.ram.bytes()[0xf0000],0x5a);
+}
+#[test]
+fn dos_umb_link_and_allocation_strategies(){
+ let mut p=load(&[0x90],"umb.com").unwrap();call(&mut p,0x4a,0x1000,PSP);
+ // Unlinked: high-first and high-only strategies still allocate low.
+ for strategy in [0x80,0x40]{assert_eq!(int21(&mut p,0x5801,strategy),(0x5801,false));call(&mut p,0x48,0x10,0);assert!(!cf(&p));assert!((p.cpu.regs[0]as u16)<SC,"{strategy:x}");}
+ assert_eq!(int21(&mut p,0x5802,0),(0x5800,false));
+ // Link: the system MCB becomes 'M' and the list of lists says so.
+ assert_eq!(int21(&mut p,0x5803,1),(0x5803,false));assert_eq!(int21(&mut p,0x5802,0),(0x5801,false));
+ assert_eq!((p.ram.bytes()[0x9fff0],p.ram.bytes()[LINK_FLAG as usize]),(b'M',1));assert!(p.arena.valid(&p.ram));
+ // 80h: upper first; 40h: upper only (too big: error 8, BX = largest upper);
+ // 00h: address order, so low first; 82h: last fit in upper memory.
+ int21(&mut p,0x5801,0x80);call(&mut p,0x48,0x100,0);assert_eq!(p.cpu.regs[0]as u16,UMB_FIRST+1);
+ int21(&mut p,0x5801,0x40);call(&mut p,0x48,0x3000,0);assert!(cf(&p));assert_eq!((p.cpu.regs[0]as u16,p.cpu.regs[3]as u16),(8,0x27ff-0x101));
+ int21(&mut p,0x5801,0x00);call(&mut p,0x48,0x10,0);assert!((p.cpu.regs[0]as u16)<SC);
+ int21(&mut p,0x5801,0x82);call(&mut p,0x48,0x10,0);assert_eq!(p.cpu.regs[0]as u16,UMB_END-0x10);
+ // 80h falls back to conventional memory when no upper block fits.
+ int21(&mut p,0x5801,0x80);call(&mut p,0x48,0x3000,0);assert!(!cf(&p));assert!((p.cpu.regs[0]as u16)<SC);
+ assert!(p.arena.valid(&p.ram));
+ // Unlink: 'Z' again; the upper blocks keep their owners.
+ assert_eq!(int21(&mut p,0x5803,0),(0x5803,false));assert_eq!((p.ram.bytes()[0x9fff0],p.ram.bytes()[LINK_FLAG as usize]),(b'Z',0));
+ assert!(p.arena.valid(&p.ram));assert_eq!(p.arena.block_owner(UMB_FIRST+1),Some(PSP));
+ // BX other than 0 or 1 is invalid function.
+ assert_eq!(int21(&mut p,0x5803,2),(1,true));
+}
+#[test]
+fn dos_umb_removed_without_the_xms_driver(){
+ let mut p=load(&[0x90],"umb.com").unwrap();p.select_xms(false).unwrap();
+ assert_eq!(p.arena.blocks,vec![Block{header:ENV-1,size:ENV_PARAS,owner:PSP},Block{header:PSP-1,size:0x9000,owner:PSP}]);assert!(p.arena.valid(&p.ram));
+ assert_eq!((p.allocated_end,p.ram.load(u32::from(PSP)*16+2,MemWidth::Word).unwrap()),(0xa0000,0xa000));
+ assert_eq!(p.image.system[UMB_CODE_SLOT],(0,0));
+ // C800-EFFF is the empty FFh bus again; stores there are dropped.
+ p.ram.store(0xc9000,MemWidth::Byte,0x5a).unwrap();assert_eq!(p.ram.bytes()[0xc9000],0xff);
+ assert_eq!((p.ram.bytes()[LINK_FLAG as usize],p.ram.load(UPPER_ROOT,MemWidth::Word).unwrap()),(0,0xffff));
+ assert_eq!(int21(&mut p,0x5803,1),(1,true));
+ // And back: the same layout as a fresh load.
+ p.select_xms(true).unwrap();assert_eq!(p.arena,load(&[0x90],"umb.com").unwrap().arena);
+ // Upper memory in use cannot be taken away.
+ int21(&mut p,0x5803,1);int21(&mut p,0x5801,0x40);call(&mut p,0x4a,0x1000,PSP);call(&mut p,0x48,0x10,0);assert!(!cf(&p));
+ assert!(p.select_xms(false).is_err());
 }

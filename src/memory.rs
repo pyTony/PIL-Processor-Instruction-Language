@@ -291,6 +291,18 @@ impl Ram {
         if !range.is_empty() {self.rom.push(range);}
         Ok(())
     }
+    /// Makes physical bytes ordinary RAM again (the reverse of `rom`).
+    pub fn unrom(&mut self,address:u32,bytes:usize)->Result<(),AccessFault> {
+        self.settle();
+        let cut=self.range(address,bytes,false)?;
+        let mut kept=Vec::new();
+        for r in self.rom.drain(..){
+            if r.end<=cut.start||r.start>=cut.end{kept.push(r);continue;}
+            if r.start<cut.start{kept.push(r.start..cut.start);}
+            if r.end>cut.end{kept.push(cut.end..r.end);}
+        }
+        self.rom=kept;Ok(())
+    }
     fn in_rom(&self,index:usize)->bool{self.rom.iter().any(|r|r.contains(&index))}
     pub fn check_write(&self,address:u32,width:MemWidth)->Result<(),AccessFault> {
         self.check_bus(address,width.bytes()as usize,true)
