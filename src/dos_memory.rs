@@ -21,6 +21,28 @@ impl Arena{
     fn valid(&self,ram:&Ram)->bool{
         self.headers().iter().all(|(at,bytes)|bytes.iter().enumerate().all(|(n,&b)|ram.load(*at+n as u32,MemWidth::Byte)==Ok(u32::from(b))))
     }
+    /// DOS programs may split/relink their own MCBs (for example while swapping
+    /// resident memory). Follow the visible chain rather than overwriting it
+    /// from stale host metadata. Malformed or out-of-arena chains stay errors.
+    fn refreshed(&self,ram:&Ram)->Result<Self,String>{
+        if self.valid(ram){return Ok(self.clone());}
+        let mut header=self.blocks.first().ok_or("missing DOS MCB arena")?.header;
+        let mut blocks=Vec::new();
+        for _ in 0..MAX_BLOCKS{
+            let at=u32::from(header)*16;
+            let kind=ram.load(at,MemWidth::Byte).map_err(|_|"unreadable DOS MCB")? as u8;
+            if !matches!(kind,b'M'|b'Z'){return Err("invalid DOS MCB type".into());}
+            let owner=ram.load(at+1,MemWidth::Word).map_err(|_|"unreadable DOS MCB owner")? as u16;
+            let size=ram.load(at+3,MemWidth::Word).map_err(|_|"unreadable DOS MCB size")? as u16;
+            let next=u32::from(header)+1+u32::from(size);
+            if next>u32::from(END){return Err("DOS MCB exceeds conventional arena".into());}
+            blocks.push(Block{header,size,owner});
+            if kind==b'Z'{return Ok(Self{blocks});}
+            if next>=u32::from(END){return Err("DOS MCB chain has no terminator".into());}
+            header=next as u16;
+        }
+        Err("DOS MCB block-count limit reached".into())
+    }
     fn coalesce(&mut self){
         let mut i=0;while i+1<self.blocks.len(){if self.blocks[i].owner==0&&self.blocks[i+1].owner==0{let b=self.blocks.remove(i+1);self.blocks[i].size+=b.size+1;}else{i+=1;}}
     }
@@ -50,9 +72,14 @@ impl Arena{
     }
     /// Frees every block `owner` holds except `keep` (a TSR's resident block).
     pub(super) fn release(&mut self,ram:&mut Ram,owner:u16,keep:Option<u16>)->Result<(),String>{
-        for b in self.blocks.iter_mut().filter(|b|b.owner==owner&&Some(b.header+1)!=keep){
+        let mut next=self.refreshed(ram)?;
+        for b in next.blocks.iter().filter(|b|b.owner==owner&&Some(b.header+1)!=keep){
+            ram.check_write(u32::from(b.header)*16+1,MemWidth::Word).map_err(|e|format!("DOS MCB release: {e:?}"))?;
+        }
+        for b in next.blocks.iter_mut().filter(|b|b.owner==owner&&Some(b.header+1)!=keep){
             b.owner=0;ram.write_bytes(u32::from(b.header)*16+1,&[0,0]).map_err(|e|format!("DOS MCB release: {e:?}"))?;
         }
+        *self=next;
         Ok(())
     }
     /// The largest free block in paragraphs.
@@ -65,10 +92,8 @@ fn result(p:&mut Loaded,error:Option<u16>,bx:Option<u16>,allocated:Option<u16>){
     if let Some(bx)=bx{low(&mut p.cpu.regs[3],bx);}
 }
 pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
-    // MCB fields are mirrored in RAM. Unsupported direct chain edits return DOS7;
-    // do not silently overwrite a corrupted header from trusted host metadata.
-    if !p.arena.valid(&p.ram){result(p,Some(7),None,None);return Ok(());}
-    let mut next=p.arena.clone();let requested=p.cpu.regs[3]as u16;
+    let Ok(mut next)=p.arena.refreshed(&p.ram) else{result(p,Some(7),None,None);return Ok(());};
+    let requested=p.cpu.regs[3]as u16;
     let segment=p.image.selectors[0];let(mut error,mut bx,mut allocated)=(None,None,None);
     match function{
         0x48=>{

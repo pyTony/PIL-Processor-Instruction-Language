@@ -2,6 +2,45 @@ use super::*;
 use super::super::{load,run,hello,Stop,service};
 fn call(p:&mut Loaded,ah:u8,bx:u16,es:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(u32::from(ah)<<8);low(&mut p.cpu.regs[3],bx);p.image.selectors[0]=es;let mut out=Vec::new();assert_eq!(service(p,0x21,&mut out),Ok(None));assert!(out.is_empty());}
 fn fresh()->Loaded{load(&[0x90],"arena.com").unwrap()}
+#[test]
+fn guest_split_mcbs_are_used_for_allocation_and_owner_release(){
+ let mut p=fresh();call(&mut p,0x4a,0x1000,PSP);
+ // Split a free block into a guest-owned resident block and a free remainder.
+ let first=0x2000u16;let second=first+0x21;
+ p.ram.write_bytes(u32::from(first)*16,&[b'M',0x67,0x45,0x20,0]).unwrap();
+ let left=END-second-1;let [lo,hi]=left.to_le_bytes();
+ p.ram.write_bytes(u32::from(second)*16,&[b'Z',0,0,lo,hi]).unwrap();
+ call(&mut p,0x48,0x10,0);assert!(!cf(&p));assert_eq!(p.cpu.regs[0]as u16,second+1);
+ assert_eq!(p.arena.block_owner(first+1),Some(0x4567));assert!(p.arena.valid(&p.ram));
+ // Insert a second block for that owner, unknown to the host's old shape.
+ let tail=second+0x11;let size=END-tail-1;
+ p.ram.write_bytes(u32::from(tail)*16,&[b'M',0x67,0x45,0x10,0]).unwrap();
+ let end=tail+0x11;let [lo,hi]=(size-0x11).to_le_bytes();
+ p.ram.write_bytes(u32::from(end)*16,&[b'Z',0,0,lo,hi]).unwrap();
+ p.arena.release(&mut p.ram,0x4567,None).unwrap();
+ assert_eq!(p.arena.block_owner(first+1),Some(0));
+ assert_eq!(p.arena.block_owner(tail+1),Some(0));assert!(p.arena.valid(&p.ram));
+}
+#[test]
+fn guest_mcb_chain_rejects_out_of_range_and_missing_terminators(){
+ for (kind,size) in [(b'M',0xffffu16),(b'Z',0xffff),(b'M',0x9000)]{
+  let mut p=fresh();let [lo,hi]=size.to_le_bytes();
+  p.ram.write_bytes(u32::from(PSP-1)*16,&[kind,0,0,lo,hi]).unwrap();
+  let old=(p.ram.clone(),p.arena.clone());call(&mut p,0x48,1,0);
+  assert!(cf(&p));assert_eq!(p.cpu.regs[0]as u16,7);assert_eq!(p.ram,old.0);assert_eq!(p.arena,old.1);
+ }
+}
+#[test]
+fn guest_mcb_chain_count_is_bounded_and_release_preflights_all_owners(){
+ let mut p=fresh();
+ for i in 0..=MAX_BLOCKS{p.ram.write_bytes((u32::from(ENV-1)+i as u32)*16,&[b'M',0,0,0,0]).unwrap();}
+ let old=(p.ram.clone(),p.arena.clone());call(&mut p,0x48,1,0);
+ assert!(cf(&p));assert_eq!(p.cpu.regs[0]as u16,7);assert_eq!(p.ram,old.0);assert_eq!(p.arena,old.1);
+ let mut p=fresh();p.ram.protect(u32::from(PSP-1)*16+1,2).unwrap();
+ let old=(p.ram.clone(),p.arena.clone());
+ assert!(p.arena.release(&mut p.ram,PSP,None).is_err());
+ assert_eq!(p.ram,old.0);assert_eq!(p.arena,old.1);
+}
 fn cf(p:&Loaded)->bool{p.cpu.eflags&1!=0}
 #[test]
 fn loader_creates_mcb_chain_and_ram_is_distinct_from_allocation(){

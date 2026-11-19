@@ -28,6 +28,10 @@ status at 22Ch is ready. Supported DSP commands are: 10h direct DAC,
 D8h speaker query, DAh exit auto-init, E0h identification, E1h version,
 E4h/E8h test register, and F2h software IRQ.
 
+The FM aliases at 228h/229h follow the same absent-OPL profile as 388h/389h:
+reads return FFh and writes are ignored, including an address/data word pair
+at 228h. These accesses do not consume DSP replies or enable FM music.
+
 The DMA model handles channel 1's address/count, page, mode, mask, byte
 flip-flop and clear/reset ports, with 64 KiB page wrapping and terminal count.
 The DMA source must be guest RAM, with an unmasked **memory-to-device**
