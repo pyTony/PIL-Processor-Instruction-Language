@@ -28,6 +28,29 @@ pause, and save a snapshot. A compressed EXE such as LZEXE is supported by
 watching the runtime instruction stream after its loader has unpacked code.
 The reported CS:IP is a **runtime location**, not a stable disk-file offset.
 
+## Whole-screen text video-memory write watch
+
+Use **Diagnostics → Watch all text video-memory writes** to enable a
+program-independent watch on the full physical text apertures
+`B0000h–BFFFFh` (MDA plus CGA/VGA, including every text page).
+The watch is **off by default**, and normal untraced/native execution remains
+available whenever it is disabled. Unlike a VisiCalc-specific A1 monitor,
+this also works with other DOS applications.
+
+When enabled, changed memory bytes are recorded in a bounded 2,048-event
+ring. Each event includes physical address, previous byte, new byte, and
+the current runtime CS:IP. Guest instructions use precise per-instruction
+dispatch rather than native blocks while the watch is active.
+Use **Save live guest snapshot** to export the ring as `text_write_watch`
+in `PILdos-snapshots.jsonl`. Disable it again with
+**Diagnostics → Disable text video-memory watch**.
+
+A screen-clear operation can generate thousands of events, so the oldest
+events are discarded when the ring fills. Only changed bytes are recorded,
+but writes performed by BIOS or DOS services are associated with their
+calling instruction rather than an internal Rust service routine. The watch
+does not yet stop on a write; it is a trace facility.
+
 ## Limitations
 
 The pre-dispatch trace shows the last 16 records in snapshots, from a

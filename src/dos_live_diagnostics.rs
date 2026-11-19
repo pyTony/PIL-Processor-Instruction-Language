@@ -72,6 +72,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
         p.vga.idle.seq,p.vga.idle.gc
     );
     let text_cells=text_cells_hex(p,mode).map_or_else(||"null".into(),|v|stoplog::quote(&v));
+    let text_write_watch=p.ram.text_watch_json();
     let head=bda(p,0x41a,MemWidth::Word);
     let tail=bda(p,0x41c,MemWidth::Word);
     let valid=|n:u32|(0x1e..0x3e).contains(&n)&&n&1==0;
@@ -90,7 +91,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
     let program=stoplog::quote(&String::from_utf8_lossy(&p.own_name));
     let active=current_program(p).map_or_else(||"null".into(),|s|stoplog::quote(&s));
     format!(
-        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"keyboard":{keyboard}}}"#,
+        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"text_write_watch":{text_write_watch},"keyboard":{keyboard}}}"#,
         stoplog::quote(status),p.psp,p.exec.len(),p.history.enabled(),p.history.capacity()
     )
 }
@@ -155,6 +156,34 @@ mod tests{
         assert_eq!(&hex[offset..offset+4],"3100");
         assert_eq!(hex.len(),80*5*4);
         assert_eq!(text_cells_hex(&p,Some(0x13)),None);
+    }
+    #[test]
+    fn whole_screen_text_write_watch_tracks_changed_bytes_and_runtime_site(){
+        let p=load(&[0xeb,0xfe],"GENERIC.COM").unwrap();
+        let mut session=session::Session::new(p);
+        assert!(!session.machine().unwrap().ram.text_watch_enabled());
+        session.start_text_write_watch().unwrap();
+        let p=session.machine_mut().unwrap();
+        p.ram.text_watch_site(0x1234,0x5678);
+        // CGA page 0, later text page and the MDA aperture.
+        p.ram.store(0xb8000,MemWidth::Word,0x0731).unwrap();
+        p.ram.store(0xb9000,MemWidth::Byte,0x41).unwrap();
+        p.ram.write_bytes(0xb0000,&[0x42,0x1f]).unwrap();
+        // An identical write must not generate a spurious event.
+        p.ram.store(0xb9000,MemWidth::Byte,0x41).unwrap();
+        // Normal DOS memory is outside the watched region.
+        p.ram.store(0x2000,MemWidth::Byte,0x44).unwrap();
+        let json=p.ram.text_watch_json();
+        assert!(json.contains(r#""total":5"#),"{json}");
+        assert!(json.contains(r#""address":753664"#),"{json}"); // B8000h
+        assert!(json.contains(r#""address":757760"#),"{json}"); // B9000h
+        assert!(json.contains(r#""address":720896"#),"{json}"); // B0000h
+        assert!(json.contains(r#""cs":"1234","ip":"5678""#),"{json}");
+        let (snapshot,_)=session.live_snapshot(0).unwrap();
+        assert!(snapshot.contains(r#""text_write_watch":{"enabled":true"#));
+        session.stop_text_write_watch().unwrap();
+        assert!(!session.machine().unwrap().ram.text_watch_enabled());
+        assert!(session.machine().unwrap().ram.text_watch_json().contains(r#""enabled":false"#));
     }
     #[test]
     fn live_snapshot_preserves_preexisting_dispatch_history(){

@@ -408,6 +408,8 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                             else{"DOS debugger resumed".into()});
                     }
                     else if id==6{note=Some(session.enable_live_trace(256).map(|_|"256-entry DOS dispatch history enabled".to_string()).unwrap_or_else(|e|e));}
+                    else if id==7{note=Some(session.start_text_write_watch().map(|_|"Text memory write watch enabled (B0000-BFFFF)".to_string()).unwrap_or_else(|e|e));}
+                    else if id==8{note=Some(session.stop_text_write_watch().map(|_|"Text memory write watch disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id!=0{note=front.media_command(session,id);}
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
@@ -548,6 +550,8 @@ impl Front{
                 (4,"Disable instruction history".into()),
                 (5,"Pause / resume guest execution (Ctrl+Shift+F12)".into()),
                 (6,"Enable 256-entry dispatch history".into()),
+                (7,"Watch all text video-memory writes (off by default)".into()),
+                (8,"Disable text video-memory watch".into()),
             ]));
             w.window.popup(groups);return true;
         }

@@ -63,6 +63,33 @@ impl PartialEq for CodeWatch {fn eq(&self,_:&Self)->bool{true}}
 impl Eq for CodeWatch {}
 impl std::fmt::Debug for CodeWatch {fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("CodeWatch")}}
 
+// Optional host debugger watch for the complete MDA/CGA/VGA text apertures.
+// Guest memory comparison deliberately ignores this diagnostic-only state.
+#[derive(Clone,Debug)]
+struct TextWrite{address:u32,before:u8,after:u8,cs:u16,ip:u32}
+#[derive(Clone,Debug)]
+struct TextWatch{
+    site:(u16,u32),events:std::collections::VecDeque<TextWrite>,total:u64,
+}
+impl TextWatch{
+    const CAPACITY:usize=2048;
+    fn new()->Self{Self{site:(0,0),events:std::collections::VecDeque::new(),total:0}}
+    fn write(&mut self,at:usize,before:u8,after:u8){
+        if before==after||!(0xb0000..0xc0000).contains(&at){return;}
+        self.total=self.total.saturating_add(1);
+        if self.events.len()==Self::CAPACITY{self.events.pop_front();}
+        self.events.push_back(TextWrite{address:at as u32,before,after,cs:self.site.0,ip:self.site.1});
+    }
+    fn json(&self)->String{
+        let entries=self.events.iter().map(|e|format!(
+            r#"{{"address":{},"old":{},"new":{},"cs":"{:04X}","ip":"{:04X}"}}"#,
+            e.address,e.before,e.after,e.cs,e.ip)).collect::<Vec<_>>().join(",");
+        format!(r#"{{"enabled":true,"total":{},"capacity":{},"writes":[{}]}}"#,
+            self.total,Self::CAPACITY,entries)
+    }
+}
+impl PartialEq for TextWatch{fn eq(&self,_:&Self)->bool{true}}
+impl Eq for TextWatch{}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ram {
     data:Vec<u8>,
@@ -80,13 +107,14 @@ pub struct Ram {
     /// `settle` writes them, and every `&mut` method settles first.
     marks:std::cell::RefCell<Vec<(usize,u8)>>,
     code_watch:CodeWatch,
+    text_watch:Option<TextWatch>,
 }
 /// Host-only alias of the four planes (plane n at PLANE_ALIAS + n*10000h),
 /// for BIOS services that write pixels without the graphics controller. Real-
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes)}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None}}
     fn code_pages(&self,address:u32,bytes:usize)->Option<std::ops::RangeInclusive<usize>>{
         if bytes==0{return None;}
         self.contiguous_slice(address,bytes)?;
@@ -167,6 +195,17 @@ impl Ram {
     /// The physical byte (A20 applied) behind a linear byte.
     pub fn bus_address(&self,linear:u32,write:bool)->Result<u32,AccessFault>{self.locate(linear,write)}
     fn locate(&self,linear:u32,write:bool)->Result<u32,AccessFault>{Ok(self.physical_address(self.translate(linear,write)?))}
+    /// Watch all text pages at B0000h..BFFFFh, regardless of program or mode.
+    /// Disabled by default; only *changed* bytes create history records.
+    pub(crate) fn start_text_watch(&mut self){self.text_watch=Some(TextWatch::new());}
+    pub(crate) fn stop_text_watch(&mut self){self.text_watch=None;}
+    pub(crate) fn text_watch_enabled(&self)->bool{self.text_watch.is_some()}
+    pub(crate) fn text_watch_site(&mut self,cs:u16,ip:u32){
+        if let Some(w)=self.text_watch.as_mut(){w.site=(cs,ip);}
+    }
+    pub(crate) fn text_watch_json(&self)->String{
+        self.text_watch.as_ref().map_or_else(||r#"{"enabled":false}"#.into(),TextWatch::json)
+    }
     pub fn bytes(&self)->&[u8] {&self.data}
     /// Physical read-only spans, for reproducing an initialized guest snapshot.
     pub fn a20_enabled(&self)->bool{self.a20_enabled}
@@ -286,7 +325,7 @@ impl Ram {
         if self.paging.get().is_some(){
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
-                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
+                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
             }
             self.settle();
             return Ok(());
@@ -298,7 +337,7 @@ impl Ram {
         }
         for shift in 0..bytes {
             let index=self.physical_address(address+shift as u32)as usize;let byte=(value>>(shift*8)) as u8;
-            match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{self.code_watch.write(index,1);self.data[index]=byte;}}
+            match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
         }
         Ok(())
     }
@@ -307,13 +346,13 @@ impl Ram {
         self.settle();
         self.check_bus(address,data.len(),true)?;
         if self.paging.get().is_some(){
-            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;if !self.in_rom(index){self.code_watch.write(index,1);self.data[index]=b;}}
+            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;if !self.in_rom(index){if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],b);}self.code_watch.write(index,1);self.data[index]=b;}}
             self.settle();
             return Ok(());
         }
         let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.code_watch.write(start,chunk);
             // ROM bytes stay as they are, as for `store`.
-            for i in 0..chunk{if !self.in_rom(start+i){self.data[start+i]=data[done+i];}}
+            for i in 0..chunk{if !self.in_rom(start+i){if let Some(w)=self.text_watch.as_mut(){w.write(start+i,self.data[start+i],data[done+i]);}self.data[start+i]=data[done+i];}}
             done+=chunk;}Ok(())
     }
 }
