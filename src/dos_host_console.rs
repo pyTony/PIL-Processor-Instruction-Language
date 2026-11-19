@@ -355,7 +355,11 @@ pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&
 }
 
 fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound,sb_sound:&mut sb_audio::Sound)->Result<String,String>{
-    const SLICE:usize=20_000;
+    // Keep the host event pump responsive during compute-only programs such
+    // as Mandelbrot. Large instruction batches delay both redraw and pause.
+    // Tracing takes smaller batches because single-stepping dispatch is slower.
+    const NORMAL_SLICE:usize=1_024;
+    const TRACED_SLICE:usize=128;
     let mut pending=std::collections::VecDeque::<PendingKey>::new();
     let mut last_present=Instant::now()-Duration::from_secs(1);
     let mut note=None::<String>;
@@ -442,7 +446,8 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
         // Run for about one frame.
         let until=Instant::now()+Duration::from_millis(15);
         loop{
-            session.run(SLICE)?;
+            let traced=session.machine().is_some_and(|p|p.history.enabled());
+            session.run(if traced{TRACED_SLICE}else{NORMAL_SLICE})?;
             // Both PC speaker and Sound Blaster PCM follow guest execution.
             if let Some(p)=session.machine_mut(){sound.take(&mut p.speaker);sb_sound.take(&mut p.sb);}
             if session.status().0!="running"||Instant::now()>=until{break;}
