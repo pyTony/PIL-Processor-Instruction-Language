@@ -1,4 +1,35 @@
 #[test]
+fn supercalc_fldlg2_pushes_exact_x87_log10_2(){
+    // SuperCalc 5.5 executes D9 EC when committing a numeric cell.
+    let bytes=[0xdb,0xe3,0xd9,0xec,0xcd,0x20];
+    let mut p=dos::load(&bytes,"supercalc-fldlg2.com").unwrap();
+    p.fpu=Fpu::present();
+    let result=dos::run(p,12).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let state=result.loaded.fpu.state().unwrap();
+    assert_eq!(state.top(),7);
+    assert_eq!(state.st(0),Some(Extended80::from_bits(0x9a20_9a84_fbcf_f799,0x3ffd)));
+    assert_eq!(state.st(1),None);
+    assert_eq!(state.status&0x003f,0);
+}
+
+#[test]
+fn supercalc_fldlg2_full_stack_does_not_mutate_stack(){
+    let p=dos::load(&[0xd9,0xec],"supercalc-fldlg2-full.com").unwrap();
+    let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
+    let mut fpu=PresentFpu::default();
+    for _ in 0..8{fpu.state.push(Extended80::from_bits(1u64<<63,0x3fff)).unwrap();}
+    let before=fpu.state.clone();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0xec]),&mut cpu,&mut ram,&p.image),
+               Outcome::StackFault(StackError::Overflow));
+    assert_eq!(fpu.state.tag_word(),before.tag_word());
+    assert_eq!(fpu.state.status,before.status);
+    for i in 0..8{assert_eq!(fpu.state.st(i),before.st(i));}
+    assert_eq!(cpu,p.cpu);
+    assert_eq!(ram,p.ram);
+}
+
+#[test]
 fn present_80387_fldpi_pushes_exact_80bit_constant(){
     // The System Information application stops on D9 EB (FLDPI).
     let bytes=[0xdb,0xe3,0xd9,0xeb,0xcd,0x20]; // FNINIT; FLDPI; INT 20h
