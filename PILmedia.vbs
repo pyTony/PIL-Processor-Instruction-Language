@@ -1,6 +1,6 @@
 ' Native catalog launcher. Hide the engine console, not its interactive window.
 Option Explicit
-Dim shell, files, root, engine, catalog, shellImage, command, result, checkOnly, runtimeFolder, runtimeCopy, builtAt, stale
+Dim shell, files, root, engine, catalog, shellImage, command, result, checkOnly, runtimeFolder, runtimeCopy, checkCommand
 Set shell = CreateObject("WScript.Shell")
 Set files = CreateObject("Scripting.FileSystemObject")
 root = files.GetParentFolderName(WScript.ScriptFullName)
@@ -9,25 +9,20 @@ engine = root & "\target\release\pil.exe"
 shellImage = root & "\images\FD14LITE.img"
 checkOnly = False
 If WScript.Arguments.Count > 0 Then checkOnly = (WScript.Arguments(0) = "--check")
-If Not files.FileExists(engine) Then
-    Fail "The runtime " & engine & " is missing. Build it with PILbuild.cmd or cargo build --release --locked.", "Retro browser"
+checkCommand = "python " & Chr(34) & root & "\tools\runtime_startup.py" & Chr(34) & " --engine " & Chr(34) & engine & Chr(34)
+If checkOnly Then
+    checkCommand = checkCommand & " --check-only"
+Else
+    checkCommand = checkCommand & " --gui"
 End If
+result = shell.Run(checkCommand, 0, True)
+If result <> 0 Then Fail "Runtime startup check failed. Run: " & checkCommand, "Retro browser"
 If Not files.FileExists(shellImage) Then
     Fail "The DOS shell image " & shellImage & " is missing. The browser starts COMMAND.COM from it.", "Retro browser"
 End If
 catalog = FindCatalog()
 If catalog = "" Then
     Fail "No catalog.tsv found. Looked for " & root & "\images\retro\catalog.tsv and catalog.tsv in each folder directly below images\retro. Set PIL_RETRO_CATALOG to use another file; the format is in docs\DOS_INSTALL_MEDIA.md.", "Retro browser"
-End If
-builtAt = files.GetFile(engine).DateLastModified
-stale = files.FolderExists(root & "\target\pil-build-in-progress")
-If Not stale Then stale = NewerSources(files.GetFolder(root & "\src"), builtAt)
-If Not stale Then stale = NewerSources(files.GetFolder(root & "\isa"), builtAt)
-If Not stale Then stale = NewerFile(root & "\Cargo.toml", builtAt)
-If Not stale Then stale = NewerFile(root & "\Cargo.lock", builtAt)
-If stale Then
-    If Not checkOnly Then MsgBox "The runtime is being rebuilt or is older than the source. Wait for a successful PILbuild.cmd before opening the browser.", vbInformation, "PIL Retro - build required"
-    WScript.Quit 1
 End If
 If checkOnly Then WScript.Quit 0
 On Error Resume Next
@@ -48,28 +43,6 @@ ElseIf result <> 0 Then
     MsgBox "The retro browser exited with code " & result & ". Run target\release\pil.exe --dos-catalog images/FD14LITE.img::COMMAND.COM " & Chr(34) & catalog & Chr(34) & " in a terminal for diagnostics.", vbCritical, "Retro browser"
 End If
 If files.FileExists(runtimeCopy) Then files.DeleteFile runtimeCopy, True
-
-Function NewerFile(path, timestamp)
-    NewerFile = False
-    If files.FileExists(path) Then NewerFile = (files.GetFile(path).DateLastModified > timestamp)
-End Function
-
-Function NewerSources(folder, timestamp)
-    Dim item, child
-    NewerSources = False
-    For Each item In folder.Files
-        If item.DateLastModified > timestamp Then
-            NewerSources = True
-            Exit Function
-        End If
-    Next
-    For Each child In folder.SubFolders
-        If NewerSources(child, timestamp) Then
-            NewerSources = True
-            Exit Function
-        End If
-    Next
-End Function
 
 Sub Fail(message, title)
     If Not checkOnly Then MsgBox message, vbCritical, title

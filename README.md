@@ -51,6 +51,9 @@ for batch builds, data files and runtime reuse.
 editor first; `--time` measures execution to exit or the first input wait,
 without host drawing. Native launchers use `pildos.conf`/`PILDOS_CONFIG`;
 `--config FILE` selects one explicitly for a run.
+Use `--interpreted` for the interpreter or `--compare` to time both modes on
+the same launcher. Source-checkout launchers share a quick freshness check,
+report Git status and warn outside `dev`/`main`; unchanged system builds are reused.
 
 ### Earlier development milestones
 

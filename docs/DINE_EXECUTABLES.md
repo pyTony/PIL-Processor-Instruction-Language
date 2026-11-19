@@ -43,7 +43,9 @@ executable format when loading it. A successful build does not establish
 that every instruction or DOS service used by that input is supported.
 
 The first build compiles the shared system runtime and may take several
-minutes; Cargo reuses unchanged builds. It then compiles the small native
+minutes. The shared startup checker verifies system inputs and the compiled
+artifact on every source-checkout launch. Unchanged builds skip Cargo;
+changed inputs invoke Cargo before the program starts. It then compiles the small native
 launcher. The guest bytes are embedded as input to shared native forms and
 interpreter fallback. This workflow does not translate the entire guest to
 an independent, fully ahead-of-time native executable.
@@ -67,11 +69,27 @@ entry points accept the same arguments):
 
 `--run` accepts one input and returns the program's exit status. After a
 successful build, repeat the command with `--run` to reuse it without
-recompiling or requiring Rust tools. The input name and bytes and the recorded
-shared-runtime hash must still match; newer builds also check the launcher
-hash. Existing manifests from before launcher hashes were added remain
-usable. Changed, missing or unrecorded outputs require `--force` to rebuild.
+recompiling or requiring Rust tools when the system build is current. The input
+name and bytes must still match; newer builds also check the launcher hash.
+The runtime must match its recorded hash or a verified shared-system update.
+Existing manifests from before launcher hashes were added remain usable.
+Changed guest bytes, modified launchers and missing/unrecorded outputs require
+`--force` to rebuild.
 Use `--force --run` when you explicitly want a fresh build.
+`--force` replaces the small launcher; it does not force recompilation of an
+unchanged shared library. If shared system code changed, an ordinary `--run`
+refreshes the library while keeping the matching launcher.
+
+The same checker (`tools/runtime_startup.py`) is used by PILdos, the Retro
+launcher, PILbuild and source-checkout native launchers. It reports Git branch,
+changed/untracked counts and known upstream ahead/behind state. A branch other
+than `dev` or `main` produces a warning (including a message box for desktop
+shortcuts). It neither changes Git branches nor fetches or updates the repository.
+The check honors the shared build-in-progress lock and never launches a known
+stale runtime after a failed build. Desktop source-checkout launchers need
+Python for this check; Cargo is needed only for missing or stale system builds.
+Distributed native applications outside a checkout retain their loader plus
+shared-library layout without Python, Cargo or Git dependencies.
 
 It runs
 from the original input's folder so relative data-file access uses that
@@ -119,6 +137,10 @@ continues to escape control bytes rather than drawing terminal graphics.
 .\compile-dos.cmd path/to/program.com --time
 # Or invoke timing directly from the generated executable.
 .\programs\compiled\Dine_program.exe --dine-time
+# Time both execution modes using that same executable and configuration.
+.\compile-dos.cmd path/to/program.com --compare
+# Select interpretation for an ordinary interactive run.
+.\compile-dos.cmd path/to/program.com --interpreted
 ```
 
 Timing runs the generated native executable through shared native forms and
@@ -137,6 +159,12 @@ does not include graphical presentation or prove whole-program native
 translation. Older launchers require `--force` once to gain the new settings
 and timing entry points; the shared runtime must also be current.
 
+`--compare` runs two fresh processes with `PIL_PRECOMPILED=off` and `on`,
+respectively. It checks that exit status, retired instruction count and timing
+boundary agree before printing the ratio. A single comparison is a measurement,
+not a correctness proof. Direct native launchers accept `--dine-interpreted`
+and `--dine-native`, combined with `--dine-time` in either order.
+
 Local Windows x86-64 release example (19 November 2026, Rust 1.99.1): the
 repository's original MANDVGA input reached its keyboard wait after
 150,784,761 instructions. Three fresh native-process runs took 2,888.798,
@@ -144,6 +172,10 @@ repository's original MANDVGA input reached its keyboard wait after
 count each time and presentation disabled. These are execution timings on
 one host, not an interpreter speed comparison or a graphical-frame-rate
 measurement.
+One paired run of the same mapped-drive VGA input took 35,107.416 ms interpreted
+and 2,860.439 ms with native forms (12.27x), both ending after 150,784,761
+instructions at the same keyboard wait, with presentation off. These use the
+current `Dine_` launcher in both modes, not older experimental executables.
 
 Batch inputs must produce distinct output names. Existing launchers are
 protected unless `--force` is supplied. For distribution, ship the launcher
