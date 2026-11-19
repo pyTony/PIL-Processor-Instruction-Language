@@ -112,14 +112,23 @@ fn launch() -> Result<i32, String> {
     if actual != DINE_ABI {
         return Err(format!("Dine DLL ABI {actual} is not supported; expected {DINE_ABI}"));
     }
+    let mut arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|arg| arg == "--dine-settings") {
+        if arguments.len() != 1 { return Err("--dine-settings takes no guest arguments".into()); }
+        type Edit = unsafe extern "C" fn() -> i32;
+        let edit: Edit = unsafe { std::mem::transmute(runtime.symbol(c"dine_edit_settings")?) };
+        return Ok(unsafe { edit() });
+    }
+    let timed = arguments.first().is_some_and(|arg| arg == "--dine-time");
+    if timed { arguments.remove(0); }
     let run: Run = unsafe {
-        std::mem::transmute(runtime.symbol(c"dine_run")?)
+        std::mem::transmute(runtime.symbol(if timed { c"dine_run_timed" } else { c"dine_run" })?)
     };
     let name = CString::new(GUEST_NAME).map_err(|e| e.to_string())?;
     // Preserve native argument boundaries in the UTF-8 tail sent to Dine.
     // The Dine compatibility shim resolves quoted host long names to
     // legacy DOS aliases before constructing PSP:0080.
-    let tail = std::env::args().skip(1).map(|arg| {
+    let tail = arguments.into_iter().map(|arg| {
         if arg.chars().any(char::is_whitespace) {
             format!("\"{arg}\"")
         } else { arg }
@@ -184,6 +193,47 @@ def launcher_name(program: Path) -> str:
     return f"Dine_{program.stem}{'.exe' if os.name == 'nt' else ''}"
 
 
+def reusable_launcher(program: Path, output: Path, runtime: Path | None, *, settings: bool = False, timing: bool = False) -> bool:
+    """Reuse only a recorded build of these guest bytes and its shared runtime."""
+    launcher = output / launcher_name(program)
+    library = output / library_name()
+    try:
+        record = json.loads(launcher.with_name(launcher.name + ".json").read_text(encoding="utf-8"))
+        if not isinstance(record, dict) or not launcher.is_file() or not library.is_file():
+            return False
+        _, guest = read_program(program)
+        if (record.get("format") != 1 or record.get("application") != launcher.name
+                or record.get("guest") != program.name
+                or record.get("guest_sha256") != hashlib.sha256(guest).hexdigest()
+                or record.get("runtime") != library.name
+                or record.get("original_guest_embedded") is not True):
+            return False
+        runtime_hash = hashlib.sha256(library.read_bytes()).hexdigest()
+        if settings and record.get("settings_editor") is not True:
+            return False
+        if timing and record.get("execution_timing") is not True:
+            return False
+        if record.get("runtime_sha256") != runtime_hash:
+            return False
+        if runtime is not None and hashlib.sha256(runtime.read_bytes()).hexdigest() != runtime_hash:
+            return False
+        # Older manifests did not record a launcher hash. Keep them runnable;
+        # new builds also detect an accidentally replaced native executable.
+        expected = record.get("launcher_sha256")
+        return expected is None or expected == hashlib.sha256(launcher.read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return False
+
+
+def check_tools(runtime: Path | None) -> list[str]:
+    required = ["rustc"] + ([] if runtime else ["cargo"])
+    missing = [tool for tool in required if shutil.which(tool) is None]
+    if missing:
+        raise ValueError("missing " + ", ".join(missing) +
+                         "; install the Rust toolchain, then run --doctor again")
+    return required
+
+
 def build(program: Path, output_dir: Path, force: bool = False, *, runtime: Path | None = None) -> Path:
     program, guest = read_program(program)
     output_dir = output_dir.resolve()
@@ -234,6 +284,9 @@ def build(program: Path, output_dir: Path, force: bool = False, *, runtime: Path
         "format": 1,
         "backend": "Shared PIL/Dine native forms with interpreter fallback",
         "application": launcher.name,
+        "launcher_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        "settings_editor": True,
+        "execution_timing": True,
         "guest": program.name,
         "guest_sha256": hashlib.sha256(guest).hexdigest(),
         "runtime": library.name,
@@ -258,7 +311,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, default=ROOT / "programs" / "compiled")
     parser.add_argument("--force", action="store_true", help="replace an existing launcher")
     parser.add_argument("--runtime", type=Path, help="reuse a prebuilt shared runtime (skips Cargo)")
-    parser.add_argument("--run", action="store_true", help="run the single output after building")
+    parser.add_argument("--run", action="store_true", help="run an unchanged existing output, or build and run it")
+    parser.add_argument("--time", action="store_true", help="time execution to exit or first input wait, without host drawing")
+    parser.add_argument("--settings", action="store_true", help="open the shared PILdos settings editor before an optional run")
+    parser.add_argument("--config", type=Path, help="DOS configuration to use for settings/run (default: PILDOS_CONFIG or pildos.conf)")
     parser.add_argument("--working-dir", type=Path, help="run from this folder (default: input file's folder)")
     parser.add_argument("--doctor", action="store_true", help="check the required tools without building")
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -267,23 +323,21 @@ def main(argv: list[str] | None = None) -> int:
         at = argv.index("--")
         argv, guest_args = argv[:at], argv[at + 1:]
     args = parser.parse_args(argv)
+    args.run |= args.time
     if guest_args and not args.run:
         parser.error("arguments after -- require --run")
-    if args.working_dir is not None and not args.run:
-        parser.error("--working-dir requires --run")
-    if args.run and len(args.program) > 1:
-        parser.error("--run accepts one input program")
+    if args.working_dir is not None and not (args.run or args.settings):
+        parser.error("--working-dir requires --run or --settings")
+    if (args.run or args.settings) and len(args.program) > 1:
+        parser.error("--run/--settings accept one input program")
+    if args.config is not None and not (args.run or args.settings):
+        parser.error("--config requires --run, --time or --settings")
     try:
         runtime = args.runtime.resolve(strict=True) if args.runtime else None
         if runtime is not None and (not runtime.is_file() or runtime.name != library_name()):
             raise ValueError(f"--runtime must name a shared {library_name()} for this platform")
-        required = ["rustc"] + ([] if runtime else ["cargo"])
-        missing = [tool for tool in required if shutil.which(tool) is None]
-        if missing:
-            raise ValueError("missing " + ", ".join(missing) +
-                             "; install the Rust toolchain, then run --doctor again")
         if args.doctor:
-            for tool in required:
+            for tool in check_tools(runtime):
                 subprocess.run([tool, "--version"], check=True)
             print("Ready to build for this computer's native platform.", flush=True)
             return 0
@@ -300,13 +354,22 @@ def main(argv: list[str] | None = None) -> int:
         if len(names) != len(set(names)):
             raise ValueError("inputs produce the same output name; build them into separate output folders")
         output = args.output_dir.resolve()
+        reuse = None
         for path in programs:
             destination = output / launcher_name(path)
             if destination.exists() and not args.force:
-                raise FileExistsError(f"{destination} already exists (use --force to replace it)")
+                if (args.run or args.settings) and reusable_launcher(path, output, runtime,settings=args.settings,timing=args.time):
+                    reuse = destination
+                else:
+                    raise FileExistsError(f"{destination} already exists (use --force to replace it; "
+                                          "--run reuses only a matching recorded build)")
         working_dir = (args.working_dir or programs[0].parent).resolve(strict=True)
         if args.run and not working_dir.is_dir():
             raise ValueError("--working-dir must name a directory")
+        if reuse is not None:
+            print(f"Using existing Dine executable: {reuse}", flush=True)
+            return launch_output(reuse,working_dir,guest_args,args)
+        check_tools(runtime)
         if runtime is None:
             print("Building shared PIL/Dine runtime (first build can take several minutes)...", flush=True)
             runtime = build_runtime()
@@ -318,9 +381,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Dine executable: {result}", flush=True)
         print(f"Shared runtime: {output / library_name()}", flush=True)
         print("Keep the shared runtime beside the executable(s).", flush=True)
-        if args.run:
-            print(f"Running from: {working_dir}", flush=True)
-            return subprocess.run([str(results[0]), *guest_args], cwd=working_dir).returncode
+        if args.run or args.settings:
+            return launch_output(results[0],working_dir,guest_args,args)
         return 0
     except (OSError, ValueError, EOFError) as error:
         print(f"Build failed: {error}", file=sys.stderr)
@@ -328,6 +390,23 @@ def main(argv: list[str] | None = None) -> int:
     except subprocess.CalledProcessError as error:
         print(f"Build failed: {error.cmd[0]} exited with status {error.returncode}", file=sys.stderr)
         return 1
+
+
+def launch_output(launcher: Path, working_dir: Path, guest_args: list[str], args) -> int:
+    env = os.environ.copy()
+    selected = args.config or env.get("PILDOS_CONFIG") or None
+    if selected is None and Path("pildos.conf").is_file():
+        selected = Path("pildos.conf")
+    if selected is not None:
+        env["PILDOS_CONFIG"] = str(Path(selected).resolve())
+    if args.settings:
+        status = subprocess.run([str(launcher), "--dine-settings"], cwd=working_dir, env=env).returncode
+        if status or not args.run:
+            return status
+    if args.time:
+        guest_args = ["--dine-time", *guest_args]
+    print(f"Running from: {working_dir}", flush=True)
+    return subprocess.run([str(launcher), *guest_args], cwd=working_dir, env=env).returncode
 
 
 if __name__ == "__main__":

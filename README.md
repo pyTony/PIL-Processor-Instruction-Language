@@ -47,6 +47,10 @@ to pass guest arguments. Outputs go to `programs/compiled/`: a native
 and interpreter fallback run inside that shared library; compatibility depends
 on the DOS services supported by Dine. See the [build workflow](docs/DINE_EXECUTABLES.md)
 for batch builds, data files and runtime reuse.
+`--run` reuses matching builds. `--settings --run` opens the shared PILdos
+editor first; `--time` measures execution to exit or the first input wait,
+without host drawing. Native launchers use `pildos.conf`/`PILDOS_CONFIG`;
+`--config FILE` selects one explicitly for a run.
 
 ### Earlier development milestones
 

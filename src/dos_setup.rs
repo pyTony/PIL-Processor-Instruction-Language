@@ -57,6 +57,8 @@ pub(crate) struct Setup{
     front:Option<String>,
     /// The start page is showing.
     on_front:bool,
+    /// Edit shared runtime settings without launching the config's program.
+    edit_only:bool,
 }
 
 fn cp437(c:char)->u8{
@@ -89,7 +91,7 @@ impl Setup{
             (None,Some(t))=>(Document::parse(t),true,("New file from pildos.conf.example: F2 saves it.".to_string(),false)),
             (None,None)=>(Document::parse(""),true,("New file: F2 saves it.".to_string(),false)),
         };
-        let mut setup=Self{doc,path,selected:0,editing:None,dirty,status,quit_armed:false,front:None,on_front:false};
+        let mut setup=Self{doc,path,selected:0,editing:None,dirty,status,quit_armed:false,front:None,on_front:false,edit_only:false};
         if let Err(e)=setup.doc.check(setup.parent()){setup.status=(e,true);}
         setup
     }
@@ -213,6 +215,7 @@ impl Setup{
         let (status,error)=&self.status;
         put(&mut cells,ROWS-2,0,COLUMNS,&format!(" {}",tail(status,COLUMNS-1)),if *error{STATUS_ERROR}else{STATUS_OK});
         let keys=if self.editing.is_some(){" Enter Accept   Esc Cancel   Left/Right Home/End Move   Backspace/Del Erase"}
+            else if self.edit_only{" \u{18}\u{19} Select  Enter Edit  Del Clear  F2 Save  F10 Save and close  Esc Quit"}
             else if self.front.is_some(){" \u{18}\u{19} Select  Enter Edit  Del Clear  F2 Save  F10 Save and start  Esc Back"}
             else{" \u{18}\u{19} Select  Enter Edit  Del Clear  F2 Save  F10 Save and start  Esc Quit"};
         put(&mut cells,ROWS-1,0,COLUMNS,keys,KEYS);
@@ -362,7 +365,7 @@ impl Setup{
         Action::Stay
     }
     fn start(&mut self)->Action{
-        if self.doc.get("program").filter(|p|!p.is_empty()).is_none(){
+        if !self.edit_only&&self.doc.get("program").filter(|p|!p.is_empty()).is_none(){
             self.selected=0;self.status=("Set the program to start first.".into(),true);
             return Action::Stay;
         }
@@ -409,9 +412,17 @@ fn pause(session:&super::session::Session,line:&str,front:&mut Front,rx:&mpsc::R
 
 /// `pil --pildos [--tty|--window] [CONFIG]`: the setup screen, until Esc.
 pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<String,String>{
+    run_mode(explicit,window,stop_log,false)
+}
+#[cfg_attr(not(feature="dine-library"),allow(dead_code))]
+pub(crate) fn edit(explicit:Option<&str>,window:bool)->Result<String,String>{
+    run_mode(explicit,window,"",true)
+}
+fn run_mode(explicit:Option<&str>,window:bool,stop_log:&str,edit_only:bool)->Result<String,String>{
     let (path,_)=dos_config::selected_path(explicit);
     let mut setup=Setup::load(path)?;
-    setup.open_front();
+    setup.edit_only=edit_only;
+    if !edit_only{setup.open_front();}
     // The project's own programs on the drive follow programs/dos.
     if let Some(config)=setup.path().to_str().filter(|_|setup.path().exists()){
         match dos_config::refresh_own_programs(Some(config)){
@@ -444,6 +455,7 @@ pub(crate) fn run(explicit:Option<&str>,window:bool,stop_log:&str)->Result<Strin
                 Action::Stay=>{},
                 Action::Quit=>return Ok(if setup.dirty(){"PILdos setup: quit without saving".into()}else{"PILdos setup: done".into()}),
                 Action::Start=>{
+                    if edit_only{return Ok("Dine settings saved".into());}
                     let (text,error)=match launch(setup.path(),window,stop_log,&mut front,&rx){
                         Ok(line)=>(line,false),
                         Err(e)=>(e,true),

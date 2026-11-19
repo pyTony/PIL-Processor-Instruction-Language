@@ -65,13 +65,85 @@ entry points accept the same arguments):
 .\compile-dos.cmd path/to/program.exe --runtime programs/compiled/dine.dll
 ```
 
-`--run` accepts one input and returns the program's exit status. It runs
+`--run` accepts one input and returns the program's exit status. After a
+successful build, repeat the command with `--run` to reuse it without
+recompiling or requiring Rust tools. The input name and bytes and the recorded
+shared-runtime hash must still match; newer builds also check the launcher
+hash. Existing manifests from before launcher hashes were added remain
+usable. Changed, missing or unrecorded outputs require `--force` to rebuild.
+Use `--force --run` when you explicitly want a fresh build.
+
+It runs
 from the original input's folder so relative data-file access uses that
 folder as DOS C:. Override this with `--working-dir path/to/data`. Companion
 files are not bundled: keep them available in the run folder. When starting
 the generated executable directly, its **current working directory** becomes
 DOS C:. The builder does not change the input or companion files; running a
 guest may change files through Dine's mapped-drive services.
+
+### DOS configuration and optional editor
+
+Native launchers read the same DOS configuration as PILdos: `PILDOS_CONFIG`
+or optional `pildos.conf` in the current working directory. Drive mounts,
+country, FPU, ANSI, mouse, clock offset, host pointer, speaker volume and disk
+sets use the shared implementations. Configured drives override the default
+working-directory mount. The config's startup program does not replace the
+embedded guest, and command-line arguments still come from the launcher call.
+
+The build workflow accepts `--config path/to/pildos.conf`. Otherwise it pins
+an existing config from the invoking directory before changing to the guest's
+folder; relative paths inside the config remain relative to the config file.
+If no invoking-directory config is selected, the runtime uses its working
+directory's optional config.
+
+```powershell
+# Open the existing shared PILdos editor, then run the embedded program.
+.\compile-dos.cmd path/to/program.com --settings --run --config pildos.conf
+
+# Open settings directly from a newly built launcher.
+.\programs\compiled\Dine_program.exe --dine-settings
+```
+
+F2 saves; F10 saves and closes this editor; Esc closes without starting the
+configuration's startup program. The editor and DOS services live in the
+shared library. ANSI output needs `ansi=true`; the shared driver also accepts
+the bright foreground SGR extension (90-97). Redirected transcript output
+continues to escape control bytes rather than drawing terminal graphics.
+
+### Native execution timing
+
+```powershell
+# Refresh an older launcher/runtime once, then measure it.
+.\compile-dos.cmd path/to/program.com --force --time
+# Repeat using the matching existing build.
+.\compile-dos.cmd path/to/program.com --time
+# Or invoke timing directly from the generated executable.
+.\programs\compiled\Dine_program.exe --dine-time
+```
+
+Timing runs the generated native executable through shared native forms and
+interpreter fallback, without host drawing or keyboard input. It reports
+`DINE_TIMING elapsed_ms=... instructions=... boundary=exit|waiting_input`.
+The timed interval covers guest execution and device/service work after
+loading and configuration. It ends at program exit or the first input wait,
+excluding human response time. A guest that asks for input before doing its
+work will therefore time only its startup. DOS children launched by the
+embedded guest stay in that same measured session.
+
+The default execution budget is one billion steps; set
+`DINE_BENCHMARK_STEPS` to 1..1,000,000,000 to change it. Budget exhaustion or
+a guest fault is an error, not a successful timing result. This measurement
+does not include graphical presentation or prove whole-program native
+translation. Older launchers require `--force` once to gain the new settings
+and timing entry points; the shared runtime must also be current.
+
+Local Windows x86-64 release example (19 November 2026, Rust 1.99.1): the
+repository's original MANDVGA input reached its keyboard wait after
+150,784,761 instructions. Three fresh native-process runs took 2,888.798,
+2,862.683 and 2,872.042 ms (median 2,872.042 ms), with the same instruction
+count each time and presentation disabled. These are execution timings on
+one host, not an interpreter speed comparison or a graphical-frame-rate
+measurement.
 
 Batch inputs must produce distinct output names. Existing launchers are
 protected unless `--force` is supplied. For distribution, ship the launcher
@@ -183,6 +255,10 @@ console routing remain limited. See [Rust DOS console](DOS_CONSOLE.md).
 The runtime C ABI is version 1 and currently exports
 `dine_abi_version() -> u32` and
 `dine_run(bytes, byte_count, name, tail) -> i32`.
+It also provides the additive optional exports `dine_edit_settings() -> i32`
+and `dine_run_timed(bytes, byte_count, name, tail) -> i32`. Existing ABI-1
+loaders remain compatible; a new launcher requesting a missing optional
+export reports that the shared runtime needs updating.
 The loader verifies the ABI before invoking guest code and reports a missing
 or incompatible library rather than running without DOS services.
 
@@ -235,7 +311,8 @@ image fidelity. The Windows workflow has been checked with a real release
 runtime and native launcher, including factorial output, running after the
 original DOS file is removed, long-name file access, a missing runtime, and
 `--runtime --run` returning guest exit status 7 from an input folder with
-spaces. Thirteen build-helper tests cover batch runtime reuse, command-line
-handling and launcher/system separation. Full-window presentation and
+spaces, and a build followed by `--run` reusing the existing output.
+Build-helper tests cover batch runtime reuse, command-line handling,
+matching-build reuse and launcher/system separation. Full-window presentation and
 performance require separate validation; these workflow checks do not
 establish graphics parity or compatibility with arbitrary DOS applications.

@@ -1,6 +1,17 @@
 use super::*;
 
 const NONE:Mods=Mods{shift:false,ctrl:false,alt:false};
+#[test]
+fn settings_only_editor_saves_without_requiring_a_startup_program(){
+    let root=std::env::temp_dir().join(format!("dine-settings-{}",std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();let path=root.join("pildos.conf");
+    let mut s=Setup::new(path.clone(),None,None);s.edit_only=true;
+    s.doc.set("ansi",Some("true"));
+    assert!(row_text(&s.render().0,ROWS-1).contains("Save and close"));
+    assert!(matches!(s.key(Key::F(10),NONE),Action::Start));
+    assert!(std::fs::read_to_string(path).unwrap().contains("ansi=true"));
+    std::fs::remove_dir_all(root).unwrap();
+}
 const EXAMPLE:&str="# Copy to pildos.conf and edit paths.\r\n#@program=images/FD.img::SHELL.EXE\r\nargs=/K D:\\START.BAT\r\nC=images/FD.img\r\nd: = driveD\r\ncountry=358\r\n";
 
 fn setup(text:Option<&str>)->Setup{Setup::new(PathBuf::from("base/pildos.conf"),text,None)}
