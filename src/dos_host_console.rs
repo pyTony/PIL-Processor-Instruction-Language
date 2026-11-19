@@ -355,12 +355,19 @@ pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&
 }
 
 fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound,sb_sound:&mut sb_audio::Sound)->Result<String,String>{
-    const SLICE:usize=20_000;
+    // Keep the host event pump responsive during compute-only programs such
+    // as Mandelbrot. Large instruction batches delay both redraw and pause.
+    // Tracing takes smaller batches because single-stepping dispatch is slower.
+    const NORMAL_SLICE:usize=1_024;
+    const TRACED_SLICE:usize=128;
     let mut pending=std::collections::VecDeque::<PendingKey>::new();
     let mut last_present=Instant::now()-Duration::from_secs(1);
     let mut note=None::<String>;
     let mut host_menu_open=false;
     let mut right_down=false;
+    // Host-side pause: never inject a guest keyboard event or retire a DOS
+    // instruction while paused. Device state remains available for snapshots.
+    let mut paused=false;
     loop{
         // Input first: keys wait while the BIOS ring is full.
         let mut events:Vec<Event>=rx.try_iter().collect();
@@ -368,7 +375,14 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
         for event in events{
             match event{
                 Event::Quit=>return Ok("DOS console closed by the user".into()),
-                Event::Break=>{if let Err(refused)=session.ctrl_break()?{note=Some(refused);}},
+                Event::Break=>{if !paused{if let Err(refused)=session.ctrl_break()?{note=Some(refused);}}}, 
+                // Ctrl+Shift+F12 is reserved for the host debugger and never
+                // reaches BIOS INT 09h. Also available from the host menu.
+                Event::Key(Key::F(12),mods) if mods.ctrl&&mods.shift&&!mods.alt=>{
+                    paused=!paused;
+                    note=Some(if paused{"DOS debugger paused (Ctrl+Shift+F12 resumes)".into()}
+                        else{"DOS debugger resumed".into()});
+                },
                 Event::Key(Key::F(n @ 1..=4),mods) if mods.ctrl&&mods.shift&&!mods.alt=>{
                     let letter=if n%2==1{b'A'}else{b'B'};
                     note=Some(session.disk(letter,Some(if n<=2{"next"}else{"prev"})).unwrap_or_else(|e|e));
@@ -387,6 +401,12 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     else if id==2{pending.extend(front.paste().into_iter().map(PendingKey::from));}
                     else if id==3{note=Some(save_live_snapshot(session,pending.len()).unwrap_or_else(|e|e));}
                     else if id==4{note=Some(session.disable_live_trace().map(|_|"Dispatch history disabled".to_string()).unwrap_or_else(|e|e));}
+                    else if id==5{
+                        paused=!paused;
+                        note=Some(if paused{"DOS debugger paused (Ctrl+Shift+F12 resumes)".into()}
+                            else{"DOS debugger resumed".into()});
+                    }
+                    else if id==6{note=Some(session.enable_live_trace(256).map(|_|"256-entry DOS dispatch history enabled".to_string()).unwrap_or_else(|e|e));}
                     else if id!=0{note=front.media_command(session,id);}
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
@@ -399,7 +419,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                             select::Gesture::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
                             select::Gesture::None=>{},
                         }
-                    }else if width>0&&height>0{
+                    }else if !paused&&width>0&&height>0{
                         let view=session.machine().map(|p|p.mouse.view()).ok_or("session state lost")?;
                         let fx=(x.clamp(0,width-1) as i64*(i64::from(view.max_x)+1)/i64::from(width)) as u16;
                         let fy=(y.clamp(0,height-1) as i64*(i64::from(view.max_y)+1)/i64::from(height)) as u16;
@@ -409,13 +429,25 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
             }
         }
         if host_menu_open{std::thread::sleep(Duration::from_millis(10));continue;}
+        if paused{
+            // Keep pumping host events, but do not inject queued keys, poll
+            // guest DMA, or execute an instruction. Snapshot and copy still work.
+            if last_present.elapsed()>=Duration::from_millis(16)||note.is_some(){
+                front.present(session,note.clone())?;
+                last_present=Instant::now();
+            }
+            if front.closed(){return Ok("DOS console window closed".into());}
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
         while let Some(&key)=pending.front(){
             if key.send(session)?{pending.pop_front();}else{break;}
         }
         // Run for about one frame.
         let until=Instant::now()+Duration::from_millis(15);
         loop{
-            session.run(SLICE)?;
+            let traced=session.machine().is_some_and(|p|p.history.enabled());
+            session.run(if traced{TRACED_SLICE}else{NORMAL_SLICE})?;
             // Both PC speaker and Sound Blaster PCM follow guest execution.
             if let Some(p)=session.machine_mut(){sound.take(&mut p.speaker);sb_sound.take(&mut p.sb);}
             if session.status().0!="running"||Instant::now()>=until{break;}
@@ -513,6 +545,8 @@ impl Front{
             groups.push(("Diagnostics".into(),vec![
                 (3,"Save live guest snapshot".into()),
                 (4,"Disable instruction history".into()),
+                (5,"Pause / resume guest execution (Ctrl+Shift+F12)".into()),
+                (6,"Enable 256-entry dispatch history".into()),
             ]));
             w.window.popup(groups);return true;
         }

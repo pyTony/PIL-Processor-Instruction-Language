@@ -107,6 +107,13 @@ impl Session{
         if started{p.history=history::History::new(32);}
         Ok((super::live_diagnostics::capture(p,steps,host_pending,status),started))
     }
+    /// Enable a bounded DOS dispatch ring without taking an initial snapshot.
+    /// Native block execution can resume after the trace is disabled.
+    pub(crate) fn enable_live_trace(&mut self,capacity:usize)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.history=history::History::new(capacity);
+        Ok(())
+    }
     /// Restore the normal execution pipeline when tracing is no longer needed.
     pub(crate) fn disable_live_trace(&mut self)->Result<(),String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
