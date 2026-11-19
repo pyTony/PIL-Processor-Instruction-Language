@@ -25,7 +25,16 @@ If WScript.Arguments.Count > 0 Then
 End If
 
 If route <> "python" Then
-    If Len(engine) = 0 Then
+    If Len(engine) = 0 Then engine = dir & "\target\release\pil.exe"
+    If fso.FileExists(dir & "\tools\runtime_startup.py") Then
+        checkCmd = "python " & Chr(34) & dir & "\tools\runtime_startup.py" & Chr(34) & " --engine " & Chr(34) & engine & Chr(34) & " --gui"
+        checkResult = WshShell.Run(checkCmd, 0, True)
+        If checkResult <> 0 Then
+            MsgBox "Runtime startup check failed. Run in this folder:" & vbCrLf & checkCmd, vbCritical, "PIL DOS startup error"
+            WScript.Quit checkResult
+        End If
+    End If
+    If Not fso.FileExists(engine) Then
         MsgBox "No PIL engine in " & dir & vbCrLf & vbCrLf & "Build it there first:" & vbCrLf & "cargo build --release --locked", vbCritical, "PIL DOS startup error"
         WScript.Quit 1
     End If

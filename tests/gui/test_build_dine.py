@@ -26,6 +26,7 @@ class DineBuildTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        (self.root / "Cargo.toml").write_text('[package]\nname="fixture"\nversion="0.1.0"\n')
         self.guest = self.root / "MANDVGA.COM"
         self.guest.write_bytes(b"original mandelbrot COM bytes\xcd\x20")
         self.output = self.root / "compiled"
@@ -36,8 +37,9 @@ class DineBuildTests(unittest.TestCase):
         self.calls = []
         self.fail_rustc = False
         self.run_exit = 0
+        self.comparison_mismatch = False
 
-    def invoke(self, force=False, argv=None):
+    def invoke(self, force=False, argv=None, tools_available=True, cargo_available=True):
         def fake_run(argv, **kwargs):
             self.calls.append((argv, kwargs))
             if "env" in kwargs:
@@ -53,13 +55,18 @@ class DineBuildTests(unittest.TestCase):
                     raise subprocess.CalledProcessError(1, argv)
                 Path(argv[-1]).write_bytes(b"small host executable containing guest bytes")
             elif Path(argv[0]).name.startswith("Dine_"):
+                if kwargs.get("capture_output"):
+                    elapsed = "20.000" if kwargs["env"].get("PIL_PRECOMPILED") == "off" else "10.000"
+                    instructions = 124 if self.comparison_mismatch and kwargs["env"].get("PIL_PRECOMPILED") == "on" else 123
+                    return subprocess.CompletedProcess(argv, self.run_exit,
+                        stdout=f"DINE_TIMING elapsed_ms={elapsed} instructions={instructions} boundary=waiting_input presentation=off\n", stderr="")
                 return subprocess.CompletedProcess(argv, self.run_exit)
             else:
                 self.fail(f"unexpected invocation: {argv!r}")
             return subprocess.CompletedProcess(argv, 0)
 
         with mock.patch.object(build_dine, "ROOT", self.root), \
-             mock.patch.object(build_dine.shutil, "which", side_effect=lambda tool: tool), \
+             mock.patch.object(build_dine.shutil, "which", side_effect=lambda tool: tool if tools_available and (tool != "cargo" or cargo_available) else None), \
              mock.patch.object(build_dine.subprocess, "run", side_effect=fake_run):
             if argv is not None:
                 return build_dine.main(argv)
@@ -166,9 +173,10 @@ class DineBuildTests(unittest.TestCase):
 
     def test_cli_missing_tools_reports_setup_error_without_traceback(self):
         with mock.patch.object(build_dine.shutil, "which", return_value=None), \
+             mock.patch.object(build_dine, "ROOT", self.root), \
              mock.patch.object(build_dine.subprocess, "run") as run, \
              contextlib.redirect_stderr(io.StringIO()) as errors:
-            self.assertEqual(build_dine.main([str(self.guest)]), 1)
+            self.assertEqual(build_dine.main([str(self.guest), "--output-dir", str(self.output)]), 1)
         self.assertIn("--doctor", errors.getvalue())
         run.assert_not_called()
 
@@ -195,6 +203,138 @@ class DineBuildTests(unittest.TestCase):
         self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output),
                                           "--run", "--working-dir", str(data)]), 0)
         self.assertTrue(Path(self.calls[-1][1]["cwd"]).samefile(data))
+
+    def test_cli_run_reuses_a_matching_build_without_compiler_tools(self):
+        self.invoke()
+        before = (self.launcher.read_bytes(), self.library.read_bytes())
+        self.calls.clear()
+        self.run_exit = 17
+        self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output),
+                                          "--run", "--", "argument"], tools_available=False), 17)
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(Path(self.calls[0][0][0]).samefile(self.launcher))
+        self.assertEqual(self.calls[0][0][1:], ["argument"])
+        self.assertEqual(before, (self.launcher.read_bytes(), self.library.read_bytes()))
+
+    def test_cli_run_reuses_older_manifests_without_launcher_hash(self):
+        self.invoke()
+        record = json.loads(self.manifest.read_text())
+        del record["launcher_sha256"]
+        self.manifest.write_text(json.dumps(record))
+        self.calls.clear()
+        self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output), "--run"]), 0)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_cli_run_does_not_reuse_stale_or_incomplete_outputs(self):
+        self.invoke()
+        original = {p: p.read_bytes() for p in (self.guest, self.library, self.launcher, self.manifest)}
+        for path, replacement in ((self.guest, b"changed input"), (self.library, b"changed system"),
+                                  (self.launcher, b"changed launcher"), (self.manifest, b"[]"),
+                                  (self.manifest, b"broken json"), (self.manifest, None), (self.library, None)):
+            with self.subTest(path=path, replacement=replacement):
+                for saved, content in original.items():
+                    saved.write_bytes(content)
+                if replacement is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(replacement)
+                self.calls.clear()
+                with contextlib.redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output),
+                                                      "--run"]), 1)
+                self.assertIn("--force", errors.getvalue())
+                self.assertEqual(self.calls, [])
+
+    def test_cli_force_run_rebuilds_launcher_and_reuses_compiled_system(self):
+        self.invoke()
+        self.calls.clear()
+        self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output),
+                                          "--run", "--force"]), 0)
+        self.assertEqual(self.calls[0][0][0], "rustc")
+        self.assertEqual(len(self.calls), 2)
+
+    def test_other_guests_reuse_compiled_system_without_cargo(self):
+        self.invoke()
+        other = self.root / "SECOND.COM"
+        other.write_bytes(b"\xcd\x20")
+        self.calls.clear()
+        self.assertEqual(self.invoke(argv=[str(other), "--output-dir", str(self.output)],
+                                     cargo_available=False), 0)
+        self.assertEqual([argv[0] for argv, _ in self.calls], ["rustc"])
+
+    def test_source_changes_and_replaced_libraries_invalidate_system_cache(self):
+        source = self.root / "src" / "core.rs"
+        source.parent.mkdir()
+        source.write_text("// initial system source\n")
+        self.invoke()
+        self.assertIsNotNone(self.cached_runtime())
+        source.write_text("// changed shared system source\n")
+        self.assertIsNone(self.cached_runtime())
+        self.calls.clear()
+        self.invoke(force=True)
+        self.assertEqual([argv[0] for argv, _ in self.calls], ["cargo", "rustc"])
+        (self.root / "target" / "release" / build_dine.library_name()).write_bytes(b"replaced")
+        self.assertIsNone(self.cached_runtime())
+
+    def cached_runtime(self):
+        with mock.patch.object(build_dine, "ROOT", self.root):
+            return build_dine.cached_runtime()
+
+    def test_run_checks_system_freshness_and_refreshes_library_without_rewrapping(self):
+        source = self.root / "src/core.rs"
+        source.parent.mkdir()
+        source.write_text("// initial system\n")
+        self.invoke()
+        source.write_text("// changed system\n")
+        self.calls.clear()
+        self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output), "--run"]), 0)
+        self.assertEqual(self.calls[0][0][0], "cargo")
+        self.assertFalse(any(argv[0] == "rustc" for argv, _ in self.calls))
+
+    def test_compare_uses_same_launcher_config_and_boundary_in_both_modes(self):
+        self.invoke()
+        self.calls.clear()
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output), "--compare"]), 0)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.calls[0][0], self.calls[1][0])
+        self.assertEqual(self.calls[0][1]["env"]["PIL_PRECOMPILED"], "off")
+        self.assertEqual(self.calls[1][1]["env"]["PIL_PRECOMPILED"], "on")
+        self.assertIn("2.00x", output.getvalue())
+
+    def test_compare_rejects_a_ratio_for_different_work(self):
+        self.invoke()
+        self.comparison_mismatch = True
+        with contextlib.redirect_stdout(io.StringIO()) as output, \
+             contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output), "--compare"]), 1)
+        self.assertIn("disagree", errors.getvalue())
+        self.assertNotIn("speedup:", output.getvalue())
+
+    def test_cli_settings_and_timing_use_shared_library_entry_points(self):
+        self.invoke()
+        self.calls.clear()
+        config = self.root / "configuration with spaces.conf"
+        config.write_text("ansi=true\n")
+        self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output),
+                                          "--settings", "--time", "--config", str(config)]), 0)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.calls[0][0][1:], ["--dine-settings"])
+        self.assertEqual(self.calls[1][0][1:], ["--dine-time"])
+        for _, options in self.calls:
+            self.assertTrue(Path(options["env"]["PILDOS_CONFIG"]).samefile(config))
+
+    def test_old_launchers_require_rebuild_for_new_host_options(self):
+        self.invoke()
+        record = json.loads(self.manifest.read_text())
+        del record["settings_editor"]
+        del record["execution_timing"]
+        self.manifest.write_text(json.dumps(record))
+        for flag in ("--settings", "--time"):
+            self.calls.clear()
+            with self.subTest(flag=flag), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(self.invoke(argv=[str(self.guest), "--output-dir", str(self.output), flag]), 1)
+            self.assertEqual(self.calls, [])
 
     def invoke_invalid(self, path, data):
         path.write_bytes(data)

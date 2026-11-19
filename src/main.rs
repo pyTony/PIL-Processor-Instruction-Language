@@ -14,7 +14,7 @@ mod host_io;
 mod debugger;
 mod guest;
 mod dos;
-#[cfg(feature = "dine-library")]
+#[cfg(any(feature = "dine-library",test))]
 mod dine_ffi;
 // Win32 window presentation for --dos-session (DINE_VIDEO=window).
 #[cfg(windows)]

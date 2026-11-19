@@ -64,6 +64,8 @@ def long_name_open_fixture() -> bytes:
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="verify-dine-") as temporary:
         root = Path(temporary)
+        config = root / "pildos.conf"
+        config.write_text("ansi=true\nown_programs=none\n", encoding="utf-8")
         guest = root / "FACTOR.COM"
         shutil.copyfile(DOS, guest)
         out = root / "bin"
@@ -79,6 +81,17 @@ def main() -> None:
         metadata = json.loads((out / (launcher.name + ".json")).read_text())
         assert metadata["guest"] == "FACTOR.COM"
         assert metadata["compiled_guest_blocks"] is False
+        # A build followed by --run must reuse the output without requiring
+        # --force, recompiling, or replacing the published runtime.
+        reused = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "build_dine.py"),
+             str(guest), "--output-dir", str(out), "--config", str(config), "--run", "--", "2"],
+            cwd=ROOT, capture_output=True, timeout=30,
+        )
+        assert reused.returncode == 0, (reused.stdout, reused.stderr)
+        assert b"Using existing Dine executable:" in reused.stdout
+        assert expected(2) in reused.stdout
+        assert b"Building shared" not in reused.stdout
         # Compiled guest bytes really are in the native application: do not
         # leave the original COM next to it and do not run from the output dir.
         guest.unlink()
@@ -97,10 +110,17 @@ def main() -> None:
         workflow = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "build_dine.py"),
              str(exits), "--runtime", str(lib), "--output-dir", str(root / "workflow"),
-             "--run"], cwd=ROOT, capture_output=True, timeout=60,
+             "--config", str(config), "--run"], cwd=ROOT, capture_output=True, timeout=60,
         )
         assert workflow.returncode == 7, (workflow.returncode, workflow.stdout, workflow.stderr)
         assert b"Running from:" in workflow.stdout
+        timed = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "build_dine.py"), str(exits),
+             "--output-dir", str(root / "workflow"), "--config", str(config), "--time"],
+            cwd=ROOT, capture_output=True, timeout=60,
+        )
+        assert timed.returncode == 7, (timed.returncode,timed.stdout,timed.stderr)
+        assert b"DINE_TIMING elapsed_ms=" in timed.stdout and b"boundary=exit" in timed.stdout
         # Runtime missing must fail clearly, not silently invoke another PIL.
         missing = lib.with_name(lib.name + ".hidden")
         lib.rename(missing)

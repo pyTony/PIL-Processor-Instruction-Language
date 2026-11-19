@@ -27,7 +27,11 @@ case "${1:-}" in
     ;;
 esac
 
-if [ -z "$engine" ]; then
+if [ -z "$engine" ]; then engine=./target/release/pil; fi
+if [ -f tools/runtime_startup.py ]; then
+    python3 tools/runtime_startup.py --engine "$engine" || exit $?
+fi
+if [ ! -x "$engine" ]; then
     echo "No PIL engine in $(pwd). Run: cargo build --release --locked" >&2
     exit 1
 fi
