@@ -205,6 +205,7 @@ mod windows {
         fn IsWindowVisible(window:Handle)->i32;
         fn GetKeyState(key:i32)->i16;
         fn SetFocus(window:Handle)->Handle;
+        fn SetForegroundWindow(window:Handle)->i32;
         fn LoadCursorW(instance:Handle,name:usize)->Handle;
         fn SetCursor(cursor:Handle)->Handle;
         fn AdjustWindowRectEx(area:*mut Rect,style:u32,menu:i32,ex:u32)->i32;
@@ -491,7 +492,14 @@ mod windows {
             let swp_flags=0x0001u32|0x0002u32|0x0010u32; // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
             SetWindowPos(hwnd,hwnd_topmost,0,0,0,0,swp_flags);
             SetWindowPos(hwnd,hwnd_notopmost,0,0,0,0,swp_flags);
-            if interactive{SetFocus(hwnd);}
+            if interactive{
+                // SetFocus only sets this thread's keyboard focus. The hidden
+                // shortcut launcher can leave another process in the foreground,
+                // so also request activation once when its interactive UI opens.
+                let activated=SetForegroundWindow(hwnd);
+                SetFocus(hwnd);
+                debug_log(&format!("interactive startup foreground activation={activated}"));
+            }
             let now_visible=IsWindowVisible(hwnd);
             let mut bounds=Rect::default();
             let rect_ok=GetWindowRect(hwnd,&mut bounds);
