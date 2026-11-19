@@ -13,6 +13,19 @@ FRONTEND = {
     "PILdos.sh", "PILdos.vbs", "PILdos.ico", "PILdos.png",
     "pildos.conf.example",
 }
+# These only select/build/load the shared runtime; they do not implement CPU
+# instructions. ABI and delivery checks still verify the produced launchers.
+RUNTIME_LAUNCHERS = {
+    "tools/runtime_startup.py", "tools/build_dine.py",
+    "compile-dos.cmd", "compile-dos.sh", "PILbuild.cmd",
+    "PILmedia.vbs", "PILmedia.cmd",
+}
+# Shared rendering and container import need DOS/container tests and integration,
+# rather than the instruction oracles or generated CPU-backend comparisons.
+DOS_SUPPORT = {
+    "src/dine_window.rs", "src/dine_display.rs", "src/containers.rs",
+    "tests/unit/containers.rs", "tests/unit/host_console.rs",
+}
 
 
 def classify(paths):
@@ -20,13 +33,17 @@ def classify(paths):
     for path in paths:
         if path.endswith(".md") or path == "docs/SHA256SUMS":
             continue  # Documentation is still checked in the always-running job.
+        if path == "tests/ci/test_runtime_startup.py":
+            continue  # Already executed by Check's always-running selection job.
         if path in {"tools/termux_web.html", "tools/termux_web.py", "tests/gui/test_termux_web.py"}:
             selected.add("web")
+        elif path in RUNTIME_LAUNCHERS:
+            selected.update(("frontend", "library", "delivery"))
         elif path in FRONTEND or path.startswith("tests/gui/"):
             selected.add("frontend")
             if path in {"tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"}:
                 selected.add("delivery")
-        elif path == "src/dos.rs" or path.startswith(("src/dos_", "tests/unit/dos", "programs/dos/")):
+        elif path in DOS_SUPPORT or path == "src/dos.rs" or path.startswith(("src/dos_", "tests/unit/dos", "programs/dos/")):
             selected.update(("dos", "frontend", "integration", "library"))
         elif path.startswith(("src/", "isa/", "tests/unit/", "programs/")) or path in {"Cargo.toml", "Cargo.lock"}:
             selected.update(("core", "dos", "frontend", "integration", "library", "backends"))

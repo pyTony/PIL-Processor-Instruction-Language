@@ -15,6 +15,8 @@ is in `tools/ci_changes.py`:
 | Markdown and checksum manifest only | Selection and documentation checks |
 | Web page/server and its HTTP tests | Web tests on Linux and Windows; no Rust build |
 | Other reviewed frontend files and GUI tests | Engine-backed GUI tests on Linux and Windows, sharing the Rust build job |
+| Shared runtime startup/build drivers | Frontend, shared-library ABI and delivery checks; no instruction oracles, CPU/backend comparisons or performance benchmarks |
+| Shared window rendering and container import | Focused DOS and container Rust tests, frontend, integration and library checks |
 | Dedicated DOS source/tests and DOS fixtures | DOS Rust tests, frontend, DOS integration and Dine library checks on Linux/Windows |
 | CPU/shared Rust, ISA, Cargo, other unit tests or fixtures | Full Rust tests and selftests on Linux/Windows; pure instruction oracles once on Linux; frontend, integration, library and CPU/backend modules |
 | Export/package tools and their contract tests | Frontend tests and delivery on Linux/Windows |
@@ -23,10 +25,19 @@ is in `tools/ci_changes.py`:
 
 Dedicated `src/dos.rs`, `src/dos_*`, `tests/unit/dos*` and `programs/dos/`
 changes do not select instruction oracles, the full CPU/backend suite or DOSBox
-CPU comparisons. They select DOS tests with the Rust test-name filter `dos`,
+CPU comparisons. Shared window/display and container-import files have the same
+explicit route. They select Rust tests with the filters `dos` and `containers::`,
 plus DOS/emulator integration and Dine ABI checks. Compilation still builds the
 shared crate; this distinction reduces test execution, not compiler scope.
 CPU/shared-state changes retain the full suite.
+
+`tools/runtime_startup.py`, `tools/build_dine.py` and the reviewed native-launcher
+wrappers explicitly select frontend, library and delivery checks. Their startup
+unit test is already run by the always-running selection job. Unclassified new
+files and changes to CI/routing itself still select all modules. Consequently,
+the PR that changes these rules receives a full validation once; later startup
+or rendering PRs benefit from the narrower routes. Package smoke tests may still
+run small selftests to verify that the delivered executable works.
 
 Selections accumulate across all changed files. PRs compare merge base to head,
 not just the last commit. Renames inspect both old and new names. New files are

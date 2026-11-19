@@ -97,7 +97,9 @@ jobs:
         cache-on-failure: true
     - name: 'dos: focused Rust tests'
       if: (github.event_name == 'schedule' || inputs.dos) && !inputs.core && github.event_name != 'schedule'
-      run: cargo test --locked dos -- --show-output
+      run: |
+        cargo test --locked dos -- --show-output
+        cargo test --locked containers:: -- --show-output
     - run: cargo test --locked -- --show-output
       if: (github.event_name == 'schedule' || inputs.core)
       name: 'core: cargo test --locked -- --show-output'
