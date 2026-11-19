@@ -20,7 +20,7 @@ independently replaceable component today.
 | DOS and BIOS interrupt dispatch | `src/dos_services.rs`, `src/dos_vectors.rs` |
 | DOS files and drives, memory blocks, EXEC and overlays | `src/dos_files.rs`, `src/dos_memory.rs`, `src/dos_exec.rs` |
 | DOS console, ANSI, country and Ctrl-Break | `src/dos_console.rs`, `src/dos_color_text.rs`, `src/dos_ansi.rs`, `src/dos_nls.rs`, `src/dos_break.rs` |
-| Emulated machine devices | `src/dos_ports.rs`, `src/dos_pic.rs`, `src/dos_pit.rs`, `src/dos_rtc.rs`, `src/dos_serial.rs`, `src/dos_vga.rs` |
+| Emulated machine devices | `src/dos_ports.rs`, `src/dos_pic.rs`, `src/dos_pit.rs`, `src/dos_rtc.rs`, `src/dos_block_move.rs` (INT 15h AH=87h, E801h), `src/dos_serial.rs`, `src/dos_vga.rs` |
 | Host-facing session protocol | `src/dos_session.rs`; terminal frontend in `tools/dos_terminal.py` |
 | CPU, PIL execution and physical memory | `src/guest.rs`, `src/main.rs`, `src/address.rs`, `src/memory.rs`, `isa/i386/` |
 
