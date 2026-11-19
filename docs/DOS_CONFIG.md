@@ -39,6 +39,10 @@ image. On Windows, setting `DINE_VIDEO_LOG` to a log filename also records the
 program-and-drive loading time, which helps distinguish loading delays from
 the DOS program's own startup.
 
+When the desktop shortcut needs to rebuild the shared runtime, an **Updating
+PIL DOS** progress console remains visible until the build finishes. Keep it
+open; the PILdos start window opens after the update succeeds.
+
 The `PILdos.vbs` and `PILdos.sh` desktop launchers prefer `target/release/pil`,
 then `target/debug/pil`, and only use a root-level `pil` as a fallback (`.exe`
 on Windows). Thus a stale root executable cannot shadow a newly built Cargo

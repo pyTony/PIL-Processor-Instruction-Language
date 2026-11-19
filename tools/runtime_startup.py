@@ -90,7 +90,33 @@ def record_copy(root: Path, source: Path, output: Path) -> None:
         destination.write_text(data, encoding="utf-8")
 
 
-def ensure(root: Path, output: Path, kind: str, *, check_only: bool = False) -> Path:
+def show_build_progress() -> None:
+    """Make an otherwise hidden shortcut build visible until this process exits."""
+    if os.name != "nt":
+        return
+    import ctypes
+    kernel = ctypes.windll.kernel32
+    kernel.GetConsoleWindow.restype = ctypes.c_void_p
+    window = kernel.GetConsoleWindow()
+    if not window:
+        if not kernel.AllocConsole():
+            return
+        window = kernel.GetConsoleWindow()
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+    user = ctypes.windll.user32
+    user.ShowWindow.argtypes = (ctypes.c_void_p, ctypes.c_int)
+    user.IsWindowVisible.argtypes = (ctypes.c_void_p,)
+    user.ShowWindow(window, 1)
+    # WshShell.Run style 0 can override the process's first ShowWindow call.
+    if not user.IsWindowVisible(window):
+        user.ShowWindow(window, 1)
+    kernel.SetConsoleTitleW("Updating PIL DOS")
+    print("Updating PIL DOS. It will open when this finishes; please keep this window open.",
+          file=sys.stderr, flush=True)
+
+
+def ensure(root: Path, output: Path, kind: str, *, check_only: bool = False, gui: bool = False) -> Path:
     root, output = root.resolve(), output.resolve()
     if not output.is_relative_to(root) and output.is_file():
         print(f"Using explicitly selected external runtime: {output}", file=sys.stderr)
@@ -125,6 +151,8 @@ def ensure(root: Path, output: Path, kind: str, *, check_only: bool = False) -> 
     env.pop("CARGO_BUILD_TARGET", None)
     env.pop("CARGO_TARGET_DIR", None)
     try:
+        if gui:
+            show_build_progress()
         print(f"Checking/building shared {kind} runtime: {output}", file=sys.stderr)
         subprocess.run(command, cwd=root, env=env, check=True)
         name = output.name if kind == "library" else ("pil.exe" if os.name == "nt" else "pil")
@@ -152,7 +180,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         git_status(args.root, gui=args.gui)
-        ensure(args.root, args.engine, args.kind, check_only=args.check_only)
+        ensure(args.root, args.engine, args.kind, check_only=args.check_only, gui=args.gui)
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"PIL startup: {error}", file=sys.stderr)
