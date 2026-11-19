@@ -51,6 +51,28 @@ but writes performed by BIOS or DOS services are associated with their
 calling instruction rather than an internal Rust service routine. The watch
 does not yet stop on a write; it is a trace facility.
 
+## BIOS/DOS service-call history (opt-in)
+
+Select **Diagnostics → Trace BIOS video/keyboard and DOS calls**.
+This records the last 256 serviced interrupts `INT 10h` (video),
+`INT 16h` (keyboard), and `INT 21h` (DOS) in a separate bounded ring.
+
+Each event contains the runtime caller CS:IP, vector, input AX/BX/CX/DX,
+DS/ES, result AX/carry, and current BIOS video mode. Save a live
+snapshot to export the full ring as `service_trace` in
+`PILdos-snapshots.jsonl`. The watch starts disabled and may be turned off
+with **Diagnostics → Disable BIOS/DOS service trace**.
+
+Only interrupts actually dispatched through Dine's shim are captured;
+guest-hooked vectors are not included. The service is recorded after its
+Rust implementation returns; blocked keyboard calls may be retried,
+and caller-site records don't alone prove a screen update was intended.
+This is not a full screen-write or I/O instruction trace.
+
+Service tracing is independent of instruction dispatch history. Unlike
+the precise memory-write watch, this option does **not** disable native
+instruction blocks and is suitable for ordinary runs.
+
 ## Limitations
 
 The pre-dispatch trace shows the last 16 records in snapshots, from a

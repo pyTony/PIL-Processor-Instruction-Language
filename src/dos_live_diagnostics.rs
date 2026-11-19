@@ -73,6 +73,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
     );
     let text_cells=text_cells_hex(p,mode).map_or_else(||"null".into(),|v|stoplog::quote(&v));
     let text_write_watch=p.ram.text_watch_json();
+    let service_trace=p.services_trace.json();
     let head=bda(p,0x41a,MemWidth::Word);
     let tail=bda(p,0x41c,MemWidth::Word);
     let valid=|n:u32|(0x1e..0x3e).contains(&n)&&n&1==0;
@@ -91,7 +92,7 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
     let program=stoplog::quote(&String::from_utf8_lossy(&p.own_name));
     let active=current_program(p).map_or_else(||"null".into(),|s|stoplog::quote(&s));
     format!(
-        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"text_write_watch":{text_write_watch},"keyboard":{keyboard}}}"#,
+        r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"text_write_watch":{text_write_watch},"service_trace":{service_trace},"keyboard":{keyboard}}}"#,
         stoplog::quote(status),p.psp,p.exec.len(),p.history.enabled(),p.history.capacity()
     )
 }
@@ -185,6 +186,22 @@ mod tests{
         session.stop_text_write_watch().unwrap();
         assert!(!session.machine().unwrap().ram.text_watch_enabled());
         assert!(session.machine().unwrap().ram.text_watch_json().contains(r#""enabled":false"#));
+    }
+    #[test]
+    fn bios_service_trace_is_opt_in_and_exported_without_dispatch_history(){
+        let p=load(&[0xcd,0x10,0xcd,0x20],"VID.COM").unwrap();
+        let mut session=session::Session::new(p);
+        assert!(!session.machine().unwrap().services_trace.enabled());
+        session.enable_service_trace().unwrap();
+        assert!(!session.machine().unwrap().history.enabled());
+        session.run(1).unwrap();
+        let trace=session.machine().unwrap().services_trace.json();
+        assert!(trace.contains(r#""vector":"10""#),"{trace}");
+        assert!(trace.contains(r#""location":"1010:0100""#),"{trace}");
+        let (snapshot,_)=session.live_snapshot(0).unwrap();
+        assert!(snapshot.contains(r#""service_trace":{"enabled":true"#));
+        session.disable_service_trace().unwrap();
+        assert!(session.machine().unwrap().services_trace.json().contains(r#""enabled":false"#));
     }
     #[test]
     fn live_snapshot_preserves_preexisting_dispatch_history(){

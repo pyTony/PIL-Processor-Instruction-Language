@@ -126,6 +126,14 @@ impl Session{
         p.ram.stop_text_watch();
         Ok(())
     }
+    pub(crate) fn enable_service_trace(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.services_trace.enable();Ok(())
+    }
+    pub(crate) fn disable_service_trace(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.services_trace.disable();Ok(())
+    }
     /// Restore the normal execution pipeline when tracing is no longer needed.
     pub(crate) fn disable_live_trace(&mut self)->Result<(),String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;

@@ -410,6 +410,8 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     else if id==6{note=Some(session.enable_live_trace(256).map(|_|"256-entry DOS dispatch history enabled".to_string()).unwrap_or_else(|e|e));}
                     else if id==7{note=Some(session.start_text_write_watch().map(|_|"Text memory write watch enabled (B0000-BFFFF)".to_string()).unwrap_or_else(|e|e));}
                     else if id==8{note=Some(session.stop_text_write_watch().map(|_|"Text memory write watch disabled".to_string()).unwrap_or_else(|e|e));}
+                    else if id==9{note=Some(session.enable_service_trace().map(|_|"INT 10h/16h/21h service trace enabled".to_string()).unwrap_or_else(|e|e));}
+                    else if id==10{note=Some(session.disable_service_trace().map(|_|"Service trace disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id!=0{note=front.media_command(session,id);}
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
@@ -552,6 +554,8 @@ impl Front{
                 (6,"Enable 256-entry dispatch history".into()),
                 (7,"Watch all text video-memory writes (off by default)".into()),
                 (8,"Disable text video-memory watch".into()),
+                (9,"Trace BIOS video/keyboard and DOS calls".into()),
+                (10,"Disable BIOS/DOS service trace".into()),
             ]));
             w.window.popup(groups);return true;
         }
