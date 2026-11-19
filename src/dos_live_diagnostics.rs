@@ -129,6 +129,22 @@ mod tests{
         assert!(!session.machine().unwrap().history.enabled());
     }
     #[test]
+    fn explicit_dos_history_can_be_enabled_without_running_guest(){
+        let p=load(&[0xeb,0xfe],"SPIN.COM").unwrap();
+        let mut session=session::Session::new(p);
+        let before=session.machine().unwrap().cpu.eip;
+        session.enable_live_trace(256).unwrap();
+        assert_eq!(session.machine().unwrap().history.capacity(),256);
+        assert_eq!(session.machine().unwrap().cpu.eip,before);
+        session.run(32).unwrap();
+        let (snapshot,started)=session.live_snapshot(0).unwrap();
+        assert!(!started);
+        assert!(snapshot.contains(r#""history_capacity":256"#));
+        assert!(snapshot.contains(r#""recent_dispatches":[{"sequence":"#));
+        session.disable_live_trace().unwrap();
+        assert_eq!(session.machine().unwrap().history.capacity(),0);
+    }
+    #[test]
     fn text_diagnostics_capture_exact_guest_character_and_attribute_bytes(){
         let mut p=load(&[0xcd,0x20],"VC.COM").unwrap();
         p.ram.store(0x449,MemWidth::Byte,2).unwrap();
