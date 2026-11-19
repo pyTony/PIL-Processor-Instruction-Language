@@ -376,11 +376,22 @@ impl Setup{
 
 /// Start the configured program in `front` until it ends; the closing line.
 fn launch(path:&Path,window:bool,stop_log:&str,front:&mut Front,rx:&mpsc::Receiver<Event>)->Result<String,String>{
+    // Replace the setup page before synchronous program/drive loading starts.
+    let mut cells=vec![0;COLUMNS*ROWS*2];
+    put(&mut cells,0,0,COLUMNS," PILdos",TITLE);
+    put(&mut cells,2,2,COLUMNS-2,"Starting DOS...",VALUE);
+    put(&mut cells,4,2,COLUMNS-2,"Loading the program and drives.",VALUE);
+    front.present_text(&cells,None)?;
+    let started=std::time::Instant::now();
     let config=path.to_str().ok_or("the configuration path is not Unicode")?;
     let (program,args)=dos_config::startup(Some(config))?;
     let settings=dos_config::console_settings(Some(config))?;
     let fpu=settings.fpu.map(|on|if on{"80387"}else{"none"});
     let mut session=super::session::open(&program,None,args.as_deref(),Some(config),fpu)?;
+    #[cfg(windows)]
+    crate::dine_display::debug_log(&format!("PILdos program and drives loaded in {:.1} ms",started.elapsed().as_secs_f64()*1000.0));
+    #[cfg(not(windows))]
+    let _=started;
     let mut logger=super::stoplog::Logger::new(stop_log,&program);
     let options=Options{window,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(super::host_console::speaker::DEFAULT_VOLUME)};
     let result=host_console::run_on(&mut session,&options,front,rx);
