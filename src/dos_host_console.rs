@@ -355,10 +355,11 @@ pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&
 }
 
 fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound,sb_sound:&mut sb_audio::Sound)->Result<String,String>{
-    // Keep the host event pump responsive during compute-only programs such
-    // as Mandelbrot. Large instruction batches delay both redraw and pause.
-    // Tracing takes smaller batches because single-stepping dispatch is slower.
-    const NORMAL_SLICE:usize=1_024;
+    // Normal native blocks should run in sufficiently large batches to
+    // preserve Mandelbrot throughput. Host input is checked at each outer
+    // frame; a short traced batch is used only while history is active.
+    // The target is <=100 ms pause responsiveness, not 1,024-step polling.
+    const NORMAL_SLICE:usize=20_000;
     const TRACED_SLICE:usize=128;
     let mut pending=std::collections::VecDeque::<PendingKey>::new();
     let mut last_present=Instant::now()-Duration::from_secs(1);
