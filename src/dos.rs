@@ -765,10 +765,12 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
     // Native blocks would hide intermediate control flow from the trace.
     // The ordinary one-instruction interpreter still handles any DOS guest.
     let history_enabled=p.history.enabled();
-    let blocks_enabled=mode==crate::precompiled::Mode::On&&!p.rom_mode&&!history_enabled;
+    let watched=p.ram.text_watch_enabled();
+    let blocks_enabled=mode==crate::precompiled::Mode::On&&!p.rom_mode&&!history_enabled&&!watched;
     let stop=loop{
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
+        if watched{p.ram.text_watch_site(p.selectors[1],p.cpu.eip);}
         if history_enabled{
             let entry=history::Dispatch::capture(&p);
             p.history.record(entry);
@@ -1067,7 +1069,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 }
             }
         }
-        if let Some(b)=backend.as_deref_mut().filter(|_|!history_enabled){
+        if let Some(b)=backend.as_deref_mut().filter(|_|!history_enabled&&!watched){
             if b.may_block(&p.image,&p.ram,p.cpu.eip){
             // A clocked DOS session samples IRQ0 every 256 guest steps.
             // Never batch across that boundary, even when a guest owns INT 08h:
