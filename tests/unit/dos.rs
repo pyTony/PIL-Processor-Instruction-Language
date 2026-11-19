@@ -1020,13 +1020,15 @@ fn handle_write_psp_query_and_absent_extensions(){
  code[3]=4;let r=run(load(&code,"prn.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
  // MOV AH,51; INT 21 and MOV AH,62; INT 21 both return the PSP in BX.
  for ah in [0x51,0x62]{let r=run(load(&[0xb4,ah,0xcd,0x21,0xfa,0xf4],"psp.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&0xffff,u32::from(r.loaded.selectors[SegmentRegister::Ds.index()]));}
- // INT 2F installation checks find nothing: AX comes back unchanged.
+ // INT 2F installation checks find nothing: AX comes back unchanged
+ // (4300h too once the XMS driver is removed).
  for ax in [0x0100u16,0x1100,0x1600,0x1680,0x1687,0x1700,0x1a00,0x4300,0x4a11,0xb710]{
-  let [lo,hi]=ax.to_le_bytes();let r=run(load(&[0xb8,lo,hi,0xcd,0x2f,0xfa,0xf4],"mux.com").unwrap(),10).unwrap();
+  let [lo,hi]=ax.to_le_bytes();let mut p=load(&[0xb8,lo,hi,0xcd,0x2f,0xfa,0xf4],"mux.com").unwrap();p.select_xms(false);let r=run(p,10).unwrap();
   assert_eq!(r.loaded.cpu.regs[0]&0xffff,u32::from(ax));assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  }
- // AX=4310h (XMS entry point) is only meaningful once XMS is present: still a stop.
- let r=run(load(&[0xb8,0x10,0x43,0xcd,0x2f,0xfa,0xf4],"xms.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
+ // Without the driver AX=4310h (XMS entry point) is not answered: a stop.
+ let mut p=load(&[0xb8,0x10,0x43,0xcd,0x2f,0xfa,0xf4],"xms.com").unwrap();p.select_xms(false);
+ let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));
  // MOV AH,12; MOV BL,10; INT 10: no EGA, BL stays 10h. INT 15 AH=C0: CF=1, AH=86h.
  // The VGA BIOS answers the EGA information call: colour, 256 KiB.
  let r=run(load(&[0xb4,0x12,0xb3,0x10,0xcd,0x10,0xfa,0xf4],"ega.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[3]&0xffff,0x0003);
@@ -1086,9 +1088,12 @@ fn tsr_date_strategy_lfn_and_extended_memory(){
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x41,0x00,0xcd,0x21,0xfa,0xf4],"upperonly.com").unwrap(),10).unwrap();assert_eq!((r.loaded.alloc_strategy,r.loaded.cpu.eflags&1),(0x41,0));
  // AX=5803 (link UMBs) fails: no UMB chain.
  let r=run(load(&[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xfa,0xf4],"umb.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
- // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=15360 KiB, CF=0.
+ // AX=7147 (LFN get directory) -> AX=7100, CF=1. INT 15 AH=88 -> AX=15360 KiB, CF=0
+ // without the XMS driver; with it (the default) the driver owns that memory: 0 KiB.
  let r=run(load(&[0xb8,0x47,0x71,0xcd,0x21,0xfa,0xf4],"lfn.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x7100);assert_eq!(r.loaded.cpu.eflags&1,1);
- let r=run(load(&[0xb4,0x88,0xf9,0xcd,0x15,0xfa,0xf4],"ext.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,15360);assert_eq!(r.loaded.cpu.eflags&1,0);
+ let mut p=load(&[0xb4,0x88,0xf9,0xcd,0x15,0xfa,0xf4],"ext.com").unwrap();p.select_xms(false);
+ let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,15360);assert_eq!(r.loaded.cpu.eflags&1,0);
+ let r=run(load(&[0xb4,0x88,0xf9,0xcd,0x15,0xfa,0xf4],"ext.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0);assert_eq!(r.loaded.cpu.eflags&1,0);
 }
 #[test]
 fn bios_rom_identity_and_hlt_idle(){
@@ -2884,7 +2889,8 @@ fn absent_dos_extender_probes_preserve_signature_registers_and_report_failure(){
 }
 #[test]
 fn extended_memory_size_matches_cmos_and_remains_outside_the_dos_arena(){
- let mut p=load(&[0xcd,0x15],"memory.com").unwrap();p.cpu.regs[0]=0xabcd8800;
+ // Without the XMS driver, which takes this memory and makes AH=88h report 0.
+ let mut p=load(&[0xcd,0x15],"memory.com").unwrap();p.select_xms(false);p.cpu.regs[0]=0xabcd8800;
  service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0xabcd3c00);
  p.ram.set_a20_enabled(true);p.ram.store(0xffffff,MemWidth::Byte,0x5a).unwrap();
  assert_eq!(p.ram.load(0xffffff,MemWidth::Byte).unwrap(),0x5a);assert_eq!(p.allocated_end,0xa0000);

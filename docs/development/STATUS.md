@@ -1,3 +1,40 @@
+# XMS 3.0 driver (protected-mode plan, increment 10) — 19 November 2026
+
+Tony asked to continue the protected-mode plan; increment 10 was the XMS
+driver. New src/dos_xms.rs, as DEVICE=HIMEM.SYS would load it:
+- INT 2Fh AX=4300h returns AL=80h; AX=4310h returns ES:BX=0070:0079. The
+  entry is RAM in Dine's DOS data segment (JMP SHORT +3, three NOPs, a
+  private HLT the runner catches, RETF), so a program can hook it by
+  patching a far JMP over the first five bytes and chain to entry+5.
+- Functions 00h-0Fh and 88h, 89h, 8Eh, 8Fh of XMS 3.0: version 3.00 with
+  an HMA; HMA request/release; A20 global/local (through the same gate as
+  INT 15h AH=24h and the 8042); free-memory query; allocate, free, lock
+  (DX:BX linear address), unlock, handle information, reallocate (in place
+  when it can, else moved with its contents); move (0Bh) between handles
+  and segment:offset memory with A20 on for the copy.
+- Where XMS 3.0 leaves room, FreeDOS HIMEMX 3.34 decided (its source on
+  Tony's retro image was read for behaviour, nothing copied): 48 handles;
+  EMBs from 1 MiB + 64 KiB to 16 MiB (15,296 KiB), first fit; odd move
+  length, or a range past the block or past 10FFF0h, A7h; forward overlap
+  A8h; INT 15h AH=88h reports 0 KiB while the driver is installed (E801h,
+  CMOS and AH=87h unchanged). No UMBs: 10h-12h and unknown functions are
+  AX=0, BL=80h. A call from V86 mode stops the run (not modelled).
+- The driver is installed by default; PIL_XMS=off starts without it (old
+  behaviour: AX=4300h unchanged, AH=88h 15 MiB). Loaded::select_xms for
+  front ends; no pildos.conf key yet.
+
+Local Windows, release: 1004 Rust tests pass, 2 ignored (9 new in
+tests/unit/dos_xms.rs; 3 older tests now remove the driver for their
+no-XMS expectations). Tony's local programs through tools/dos_terminal.py
+(not in the repo), with a temporary call trace that is not committed:
+- SuperCalc 5.5 (retro image, APP\SC5): with XMS it asks the version,
+  takes the HMA and enables A20, then runs partly at FFFF:025E; Enter at
+  its title opens the spreadsheet grid, as with PIL_XMS=off.
+- Doom v1.9 (dosbench DOOMS, DOS/4GW, -warp 1 1 -nosound -nomusic, 60 s):
+  queries 15,296 KiB, allocates it as one block and locks it at 110000h,
+  then reaches R_Init as without XMS ("DPMI memory" 64 KiB lower). Not run
+  further; no frames compared. CWSDPMI/Quake was not run.
+
 # INT 15h block move and E801h (protected-mode plan, increment 9) — 16 November 2026
 
 Tony asked for the next step of the protected-mode plan: the rest of

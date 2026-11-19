@@ -401,6 +401,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // Do not claim the DPMILOAD/TDX protected-mode API is installed.
             Ok(None)
         },
+        (0x2f,0x43) if xms::multiplex(p)?=>Ok(None),
         (0x2f,_) if p.cpu.regs[0]&0xffff==0x4b02=>{
             // The default multiplex handler leaves the caller's state unchanged.
             Ok(None)
@@ -409,7 +410,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // Nothing hooks the multiplex chain, so these installation checks
             // reach the kernel default, which returns AX unchanged (FreeDOS
             // int2f.asm; RBIL): no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI host, ANSI.SYS (unless loaded) or
-            // XMS driver, and no installable command claims AX=AE00h (AL stays 00h).
+            // XMS driver (4300h when it is removed: see dos_xms), and no installable command claims AX=AE00h (AL stays 00h).
             // AX=1680h leaves AL=80h (time slice not released). D44Dh is the
             // 4DOS installation check (no resident 4DOS answers 44DDh) and
             // 4680h the Windows 3.0 real/standard-mode check (AX=0 if running);
@@ -539,6 +540,11 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // FreeDOS kernel answers unsupported functions with AL=00h
             // (inthndlr.c, default case), which callers read as no network.
             p.cpu.regs[0]&=!255;Ok(None)
+        },
+        (0x15,0x88) if p.xms.installed()=>{
+            // HIMEM/HIMEMX: extended memory belongs to the XMS driver, so the
+            // BIOS call reports none and old INT 15h users leave EMBs alone.
+            p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x15,0x88)=>{
             let kb=p.ram.bytes().len().saturating_sub(0x100000)/1024;
