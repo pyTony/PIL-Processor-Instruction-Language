@@ -1166,6 +1166,70 @@ fn present_80387_fi_memory_fault_and_unmasked_zero_divide_are_atomic() {
 }
 
 #[test]
+fn fistp_m16_stores_exact_words_with_independent_address_and_operand_sizes(){
+    for code in [&[0xdf,0x9e,0x22,0][..],&[0x66,0xdf,0x9e,0x22,0][..],
+                 &[0x3e,0xdf,0x9e,0x22,0][..],&[0x67,0xdf,0x5c,0x24,0x22][..]]{
+        for value in [-32768i64,-17,0,1,32767]{
+            let mut p=dos::load(code,"word-store.com").unwrap();
+            p.selectors[2]=0x3000;p.image.selectors=p.selectors;
+            p.image.segments[2]=crate::address::SegmentCache::real_mode(0x3000);
+            p.cpu.regs[5]=0x500;p.cpu.regs[4]=0x500;
+            let segment=if code[0]==0x3e{3}else{2};
+            let at=p.image.segments[segment].base+0x522;
+            p.ram.write_bytes(at-1,&[0x91,0xcc,0xcc,0x92]).unwrap();
+            let mut fpu=PresentFpu::default();
+            fpu.state.push(convert::from_i64(value)).unwrap();
+            let cpu=p.cpu.clone();
+            assert_eq!(fpu.execute(&instruction(code),&mut p.cpu,&mut p.ram,&p.image),Outcome::Completed);
+            assert_eq!(p.cpu,cpu);
+            assert_eq!(p.ram.load(at,MemWidth::Word).unwrap(),value as i16 as u16 as u32);
+            assert_eq!(p.ram.load(at-1,MemWidth::Byte).unwrap(),0x91);
+            assert_eq!(p.ram.load(at+2,MemWidth::Byte).unwrap(),0x92);
+            assert_eq!(fpu.state.st(0),None);
+        }
+    }
+}
+
+#[test]
+fn fistp_m16_obeys_all_rounding_modes_and_updates_precision_and_c1(){
+    for (value,expected,up) in [(1.5f64,[2,1,2,1],[true,false,true,false]),
+                              (-1.5,[-2,-2,-1,-1],[true,true,false,false]),
+                              (2.5,[2,2,3,2],[false,false,true,false])]{
+        for mode in 0..4{
+            let mut p=dos::load(&[0xdf,0x1e,0,2],"word-round.com").unwrap();
+            let mut fpu=PresentFpu::default();
+            fpu.state.control=(fpu.state.control&!0x0c00)|((mode as u16)<<10);
+            fpu.state.push(convert::from_f64_bits(value.to_bits()).unwrap()).unwrap();
+            fpu.state.status|=0x0200;
+            assert_eq!(fpu.execute(&instruction(&[0xdf,0x1e,0,2]),&mut p.cpu,&mut p.ram,&p.image),Outcome::Completed);
+            assert_eq!(p.ram.load(p.image.segments[3].base+0x200,MemWidth::Word).unwrap(),expected[mode] as i16 as u16 as u32);
+            assert_ne!(fpu.state.status&0x0020,0);
+            assert_eq!(fpu.state.status&0x0200!=0,up[mode]);
+            assert_eq!(fpu.state.st(0),None);
+        }
+    }
+}
+
+#[test]
+fn fistp_m16_faults_and_unsupported_conversions_commit_nothing(){
+    for case in 0..7{
+        let mut p=dos::load(&[0xdf,0x1e,0,2],"word-fault.com").unwrap();
+        let mut fpu=PresentFpu::default();
+        let value=match case{0=>-32769.0,1=>32768.0,2=>32767.75,_=>1.5};
+        if case!=6{fpu.state.push(convert::from_f64_bits((value as f64).to_bits()).unwrap()).unwrap();}
+        let at=p.image.segments[3].base+0x200;
+        p.ram.write_bytes(at,&[0xa5,0x5a,0x77,0x88]).unwrap();
+        if case==3{p.ram.protect(at+1,1).unwrap();}
+        if case==4{p.image.segments[3].limit=0x200;}
+        if case==5{fpu.state.control&=!0x0020;}
+        let old=(p.cpu.clone(),p.ram.clone(),fpu.state.clone());
+        let expected=match case{3|4=>Outcome::MemoryFault,6=>Outcome::StackFault(StackError::Underflow),_=>Outcome::Unsupported};
+        assert_eq!(fpu.execute(&instruction(&[0xdf,0x1e,0,2]),&mut p.cpu,&mut p.ram,&p.image),expected,"case {case}");
+        assert_eq!(p.cpu,old.0);assert_eq!(p.ram,old.1);assert_eq!(fpu.state,old.2);
+    }
+}
+
+#[test]
 fn pc_player_fistp_m32_stores_signed_integer_then_pops(){
     // PC Player: DB 5C 24 08 is FISTP dword ptr [ESP+8].
     // Use a 32-bit addressing override with a deterministic DOS stack.

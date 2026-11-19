@@ -2777,7 +2777,7 @@ fn unsupported_scalar_and_string_port_accesses_stop_without_committing(){
  // open bus. Devices or widths with no implementation still stop explicitly.
  for (bytes,port,diagnostic) in [
   (vec![0x66,0xe5,0x60],0x60u32,"dword I/O"), // IN EAX,60h
-  (vec![0x6c],0x228u32,"not modelled"),        // INSB, unsupported SB reserved port
+  (vec![0x6c],0x227u32,"not modelled"),        // INSB, unsupported SB reserved port
   (vec![0xf3,0x6f],0x226u32,"word OUT"),      // REP OUTSW, unsupported DSP width
  ]{
   let mut p=load(&bytes,"port.com").unwrap();
@@ -2789,6 +2789,16 @@ fn unsupported_scalar_and_string_port_accesses_stop_without_committing(){
   assert_eq!(r.loaded.ram,old.ram,"{bytes:02x?}");
   assert_eq!(r.loaded.cpu.eip,0x100);
  }
+}
+#[test]
+fn string_input_from_fm_alias_reads_open_bus_bytes(){
+ let mut p=load(&[0xf3,0x6c,0xcd,0x20],"fm-string.com").unwrap();
+ p.cpu.regs[2]=0x228;p.cpu.regs[1]=3;p.cpu.regs[7]=0x200;
+ let at=p.image.segments[0].base+0x200;
+ p.ram.write_bytes(at-1,&[0x41,0,0,0,0x42]).unwrap();
+ let r=run(p,10).unwrap();assert_eq!(r.stop,Stop::Exit(0));
+ assert_eq!(r.loaded.cpu.regs[1],0);assert_eq!(r.loaded.cpu.regs[7],0x203);
+ assert_eq!(&r.loaded.ram.bytes()[at as usize-1..at as usize+4],&[0x41,0xff,0xff,0xff,0x42]);
 }
 #[test]
 fn session_mounts_and_unmounts_fat12_floppy_and_host_folders_live(){

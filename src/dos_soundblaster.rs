@@ -199,6 +199,10 @@ impl SoundBlaster{
         if let Some(result)=self.dma.io(port,input,value){return Ok(Some(result));}
         if !(BASE..=BASE+15).contains(&port){return Ok(None);}
         let result=match(port-BASE,input){
+            // SB 2.0 FM aliases follow the absent-OPL profile of 388h/389h.
+            // They neither consume DSP replies nor claim an FM synthesizer.
+            (0x08|0x09,true)=>0xff,
+            (0x08|0x09,false)=>0,
             (0x04,true)=>self.mixer_index,
             (0x04,false)=>{self.mixer_index=value;0},
             (0x05,true)=>match self.mixer_index{
@@ -251,6 +255,18 @@ mod tests{
     }
     fn read(sb:&mut SoundBlaster,pic:&mut Pair,ram:&Ram,port:u16)->u8{
         sb.io(port,true,0,ram,pic).unwrap().unwrap()
+    }
+    #[test]
+    fn fm_aliases_float_high_without_changing_dsp_or_dma_state(){
+        let ram=Ram::new(1024);let mut sb=SoundBlaster::default();let mut pic=Pair::default();
+        write(&mut sb,&mut pic,&ram,0x226,1);write(&mut sb,&mut pic,&ram,0x226,0);
+        let before=format!("{sb:?}");
+        for port in [0x228,0x229]{
+            for value in [0,4,0x60,0xff]{write(&mut sb,&mut pic,&ram,port,value);}
+            assert_eq!(read(&mut sb,&mut pic,&ram,port),0xff);
+        }
+        assert_eq!(format!("{sb:?}"),before);
+        assert_eq!(read(&mut sb,&mut pic,&ram,0x22a),0xaa);
     }
     fn setup(sb:&mut SoundBlaster,pic:&mut Pair,ram:&Ram,count:u16,address:u16,page:u8,mode:u8){
         write(sb,pic,ram,0x0c,0);
