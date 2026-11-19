@@ -6,6 +6,8 @@
 //! step, embeds a guest program. tools/verify_dine_library.py calls it with
 //! ctypes.
 use std::ffi::{c_char, CStr};
+#[path = "dine_compiled.rs"]
+mod compiled;
 
 /// Convert a host command line to the legacy 8.3 DOS view.
 /// File operands are resolved against the current host working directory,
@@ -41,13 +43,18 @@ fn dos_tail(loaded:&crate::dos::Loaded,command_line:&str)->Result<String,String>
 }
 
 fn prepare(guest:&[u8],name:&str,tail:&str,config:Option<&str>)->Result<(crate::dos::session::Session,crate::dos::host_console::Options),String>{
+    prepare_image(guest, name, tail, config, None)
+}
+
+fn prepare_image(data: &[u8], name: &str, tail: &str, config: Option<&str>, compiled: Option<(usize, usize)>) -> Result<(crate::dos::session::Session,crate::dos::host_console::Options),String>{
     // Current-directory mapping is intentional: Dine runs with the host
     // caller's folder as DOS C: so the aliases refer to real host files.
     // This is a compatibility mount, not unrestricted native filesystem I/O.
     let cwd=std::env::current_dir().map_err(|e|format!("Dine working directory: {e}"))?;
     let defaults=crate::dos_config::console_settings(config)?;
-    let loaded = crate::dos::load_with_drives(
-        guest, name, vec![crate::dos::Source::Host(cwd),crate::dos::Source::Memory(crate::dos::MemDir::default())], None)?;
+    let drives = vec![crate::dos::Source::Host(cwd),crate::dos::Source::Memory(crate::dos::MemDir::default())];
+    let loaded = if let Some((image_len, offset)) = compiled { crate::dos::load_compiled_com(data, image_len, offset, name, drives)? }
+        else { crate::dos::load_with_drives(data, name, drives, None)? };
     let mut session=crate::dos::session::configured(loaded,None,config,None,defaults.fpu.map(|on|if on{"80387"}else{"none"}))?;
     let translated=dos_tail(session.machine().ok_or("session state lost")?,tail)?;
     crate::dos::set_command_tail(session.machine_mut().ok_or("session state lost")?,&translated)?;

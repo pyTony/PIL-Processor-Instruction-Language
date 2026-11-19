@@ -176,3 +176,16 @@ fn compact_build_omits_generated_forms_and_uses_interpreter() {
     assert!(resolve(&program).is_none());
     same_run(include_bytes!("../../programs/dos/FACTOR.COM"), "FACTOR.COM", 40);
 }
+
+
+#[test]
+fn fused_subtract_branch_loop_preserves_partial_slices() {
+    // MOV CX,1000; SUB CX,1; JNZ back to SUB; INT 20h.
+    let bytes = [0xb9,0xe8,3,0x83,0xe9,1,0x75,0xfb,0xcd,0x20];
+    same_run(&bytes, "COUNT.COM", 50);
+    let mut output = CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let run = dos::run_with_backend(load_with(&bytes, "COUNT.COM", Mode::On),
+        3000, &mut output, None).unwrap();
+    assert_eq!(run.stop, Stop::Exit(0));
+    assert!(run.loaded.blocks.compare_branches > 900);
+}

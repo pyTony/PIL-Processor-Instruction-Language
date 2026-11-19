@@ -28,6 +28,42 @@ lib.dine_run.restype = ctypes.c_int32
 lib.dine_run.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_char_p]
 if sys.argv[2] == "--null":
     sys.exit(lib.dine_run(None, 1, b"T.COM", b""))
+if sys.argv[2] == "--compiled":
+    class Registers(ctypes.Structure):
+        _fields_ = [("gpr", ctypes.c_uint32 * 8), ("eflags", ctypes.c_uint32),
+                    ("ip", ctypes.c_uint16), ("segments", ctypes.c_uint16 * 6)]
+
+    interrupt = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, ctypes.POINTER(Registers), ctypes.c_uint8)
+    read = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, ctypes.c_uint32,
+                            ctypes.c_uint8, ctypes.POINTER(ctypes.c_uint32))
+
+    class Services(ctypes.Structure):
+        _fields_ = [("interrupt", interrupt), ("read", read), ("write", ctypes.c_void_p),
+                    ("port", ctypes.c_void_p)]
+
+    entry = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(Registers), ctypes.POINTER(Services))
+
+    @entry
+    def program(context, state, services):
+        regs = state.contents
+        base = regs.segments[3] * 16
+        value = ctypes.c_uint32()
+        assert regs.ip == 0x100
+        assert services.contents.read(context, base - 15, 2, ctypes.byref(value)) == 0
+        assert value.value == regs.segments[3]
+        assert services.contents.read(context, base - 13, 2, ctypes.byref(value)) == 0
+        assert value.value * 16 >= 0x180
+        assert services.contents.read(context, base + 0x100, 1, ctypes.byref(value)) == 0 and value.value == 0
+        regs.gpr[0], regs.gpr[2] = 0x0900, 0x140
+        assert services.contents.interrupt(context, state, 0x21) == 0
+        regs.gpr[0] = 0x4c2a
+        assert services.contents.interrupt(context, state, 0x21) == 1
+
+    compiled = lib.dine_run_compiled_v1
+    compiled.restype = ctypes.c_int32
+    compiled.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t,
+                         ctypes.c_char_p, ctypes.c_char_p, entry]
+    sys.exit(compiled(b"Native\r\n$", 9, 0x80, 0x40, b"TEST.COM", b"", program))
 guest = open(sys.argv[2], "rb").read()
 status = lib.dine_run(guest, len(guest), sys.argv[3].encode(), sys.argv[4].encode("utf-8"))
 sys.stdout.flush()
@@ -113,6 +149,9 @@ def main() -> None:
                 argument, result.returncode, result.stdout, result.stderr)
         result = run(lib, work, "--null")
         assert result.returncode == 1 and b"null argument" in result.stderr, result
+
+        result = run(lib, work, "--compiled")
+        assert (result.returncode, result.stdout, result.stderr) == (42, b"Native\r\n", b""), result
 
         # A long host filename in the working folder reaches the guest as its
         # DOS 8.3 alias; the guest opens it with INT 21h AH=3Dh.

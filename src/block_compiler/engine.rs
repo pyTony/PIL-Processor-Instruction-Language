@@ -41,6 +41,9 @@ struct Block {
     /// The last instruction leaves segments, control state and the flags
     /// the DOS loop watches as they were, so another block may follow.
     chains:bool,
+    // A register-only block may reuse its code guard on a back edge.
+    register_only:bool,
+    compare_branch:Option<super::compare_branch::CompareBranch>,
     /// Blocks that followed this one in a chain: (EIP, slot, slot version).
     /// A link only saves the table lookup and the segment and window
     /// comparison, which a chain cannot change; the code guard of the next
@@ -71,6 +74,7 @@ pub(crate) struct Blocks {
     /// Block entries and instructions retired in blocks, for diagnostics.
     pub(crate) blocks:u64,
     pub(crate) instructions:u64,
+    pub(crate) compare_branches:u64,
     /// Returns to the DOS loop with at least one instruction retired (a
     /// chain of blocks counts once).
     pub(crate) runs:u64,
@@ -147,7 +151,11 @@ impl Blocks {
         if steps.is_empty(){return None;}
         let stamp=ram.watch_code(linear,bytes.len());
         let chains=steps.last().is_some_and(|d|matches!(&d.operation,Operation::Pil{program,..} if !context(program)));
-        Some(Block{eip,machine:image.segment_state(),window:window(image),linear,bytes,stamp,runs:vec![0;steps.len()+1],steps,chains,links:[None;2]})
+        let register_only = chains && steps.iter().all(|step| matches!(
+            &step.operation, Operation::Pil { program, address: None, .. } if !program.uses_memory
+        ));
+        let compare_branch = super::compare_branch::CompareBranch::suffix(&steps);
+        Some(Block{compare_branch,register_only,eip,machine:image.segment_state(),window:window(image),linear,bytes,stamp,runs:vec![0;steps.len()+1],steps,chains,links:[None;2]})
     }
 
     /// Run blocks from `cpu.eip`, at most `budget` instructions in all.
@@ -166,14 +174,17 @@ impl Blocks {
     /// None: no block applies here; the caller interprets.
     pub(crate) fn run(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,chain:bool)->Option<(usize,Result<(),ExecError>)>{
         let mut total=0usize;let mut from=None;
+        let mut flags = crate::LazyFlags::None;
         loop {
-            let Some((slot,n,result,more))=self.enter(cache,image,cpu,ram,machine,budget-total,from)else{
+            let Some((slot,n,result,more))=self.enter(cache,image,cpu,ram,machine,budget-total,from,chain,&mut flags)else{
                 if total>0{self.runs+=1;}
+                flags.flush(&mut cpu.eflags, &mut cpu.undefined_flags);
                 return (total>0).then_some((total,Ok(())));
             };
             total+=n;
             if result.is_err()||!more||!chain||total==budget{
                 self.runs+=1;
+                flags.flush(&mut cpu.eflags, &mut cpu.undefined_flags);
                 return Some((total,result));
             }
             from=Some(slot);
@@ -225,23 +236,48 @@ impl Blocks {
     /// One block: its slot, retired instructions, the result, and whether
     /// the block ran to its end on an instruction after which another block
     /// may follow at once.
-    fn enter(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,from:Option<usize>)->Option<(usize,usize,Result<(),ExecError>,bool)>{
+    fn enter(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,from:Option<usize>,chain:bool,flags:&mut crate::LazyFlags)->Option<(usize,usize,Result<(),ExecError>,bool)>{
         if budget==0||cpu.eflags&0x100!=0||machine.ss_shadow!=0||machine.sti_shadow!=0{return None;}
         let slot=self.find(cache,image,ram,machine,cpu.eip,from)?;
         let block=&mut self.slots[slot].1;
-        let mut n=0usize;let mut failure=None;
-        for decoded in block.steps.iter().take(budget){
-            let Operation::Pil{program,dst,src,flow,address}=&decoded.operation else{unreachable!("blocks hold PIL operations")};
-            let result=match decoded.native(){
-                Some(native)=>(native.form)(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,ram,*address,machine,&native.consts),
-                None=>{let mut lazy=crate::LazyFlags::None;let r=crate::execute_machine_lazy(program,cpu,*dst,*src,*flow,ram,*address,machine,&mut lazy).map(|_|());lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);r},
-            };
-            if let Err(e)=result{failure=Some(e);break;}
-            n+=1;
+        let mut total = 0;
+        loop {
+            let mut n=0usize;let mut failure=None;
+            let available = (budget - total).min(block.steps.len());
+            let pair = block.compare_branch.as_ref().filter(|_| available == block.steps.len());
+            let prefix = available - if pair.is_some() { 2 } else { 0 };
+            if prefix != 0 {
+                flags.flush(&mut cpu.eflags, &mut cpu.undefined_flags);
+            }
+            for decoded in &block.steps[..prefix]{
+                let Operation::Pil{program,dst,src,flow,address}=&decoded.operation else{unreachable!("blocks hold PIL operations")};
+                let result=match decoded.native(){
+                    Some(native)=>(native.form)(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,ram,*address,machine,&native.consts),
+                    None=>{let mut lazy=crate::LazyFlags::None;let r=crate::execute_machine_lazy(program,cpu,*dst,*src,*flow,ram,*address,machine,&mut lazy).map(|_|());lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);r},
+                };
+                if let Err(e)=result{failure=Some(e);break;}
+                n+=1;
+            }
+            if failure.is_none() {
+                if let Some(pair) = pair {
+                    ram.set_paging(machine.ram_paging());
+                    // A pair overwrites all arithmetic flags before its branch.
+                    *flags = pair.execute(cpu);
+                    self.compare_branches += 1;
+                    machine.retired();
+                    n += 2;
+                }
+            }
+            block.runs[n] += 1;
+            self.blocks += 1;
+            self.instructions += n as u64;
+            total += n;
+            let more = n == block.steps.len() && block.chains;
+            if failure.is_some() || !more || !chain || !block.register_only
+                || cpu.eip != block.eip || total == budget {
+                return Some((slot, total, failure.map_or(Ok(()), Err), more));
+            }
         }
-        block.runs[n]+=1;self.blocks+=1;self.instructions+=n as u64;
-        let more=n==block.steps.len()&&block.chains;
-        Some((slot,n,failure.map_or(Ok(()),Err),more))
     }
 
     /// Move the per-mnemonic counts of retired block instructions into the

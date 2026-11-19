@@ -76,6 +76,40 @@ mod mouse;
 #[path="dos_vectors.rs"]
 mod vectors;
 use services::dispatch as service;
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn compiled_interrupt(
+    guest: &mut Loaded,
+    vector: u8,
+    output: &mut impl crate::host_io::Output,
+) -> Result<Option<u8>, String> {
+    let ah = (guest.cpu.regs[0] >> 8) as u8;
+    if !matches!(vector, 0x10 | 0x16 | 0x20 | 0x21)
+        || (vector == 0x21 && matches!(ah, 0x25 | 0x31 | 0x4b))
+        || !vectors::answered(guest, vector)?
+    {
+        return Err(format!("INT {vector:02x}h AH={ah:02x} needs an unsupported compiled-mode control transfer or service"));
+    }
+    if console::waiting(guest, vector)? {
+        return Err("compiled guest requested blocking input".into());
+    }
+    let result = service(guest, vector, output);
+    if std::mem::take(&mut guest.input_wait) {
+        return Err("compiled guest requested blocking input".into());
+    }
+    result
+}
+
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn compiled_port(
+    guest: &mut Loaded, port: u16, bytes: u8, input: bool, value: u32,
+) -> Result<u32, String> {
+    let opcode = (if input { 0xec } else { 0xee }) | u8::from(bytes != 1);
+    let saved = std::mem::replace(&mut guest.cpu.regs[0], value);
+    let result = ports::transfer(guest, opcode, port, bytes);
+    let accumulator = std::mem::replace(&mut guest.cpu.regs[0], saved);
+    result.map(|()| accumulator)
+}
+
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
 pub struct Loaded{
@@ -315,19 +349,33 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{load_with_drives(bytes
 /// Loads a program with `drives` as read-only C:, D:, ...; `path` is where the
 /// program lies on C: (else its base name in the root).
 pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>)->Result<Loaded,String>{
+    load_program(bytes, name, drives, path, None)
+}
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn load_compiled_com(
+    data: &[u8], image_len: usize, offset: usize, name: &str, drives: Vec<Source>,
+) -> Result<Loaded, String> {
+    if image_len > 0xff00 || offset > image_len || data.len() > image_len - offset {
+        return Err("compiled COM data lies outside its reserved image".into());
+    }
+    load_program(data, name, drives, None, Some((image_len, offset)))
+}
+fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compiled_image:Option<(usize,usize)>)->Result<Loaded,String>{
+    let compiled=compiled_image.is_some();
+    let (image_len, data_offset) = compiled_image.unwrap_or((bytes.len(), 0));
     for source in &drives{if let Source::Host(root)=source{if !root.is_dir(){return Err(format!("mount {} is not a folder",root.display()));}}}
     let drive=files::Drives::new(drives);
     let program=match path{
         Some(path)=>path.bytes().map(|b|if b==b'/'{b'\\'}else{b.to_ascii_uppercase()}).filter(|b|b.is_ascii_graphic()).take(64).collect(),
         None=>base_name(name.as_bytes()),
     };
-    if bytes.is_empty()||bytes.len()>MAX_FILE{return Err("DOS input must contain 1..1048576 bytes".into());}
-    let mz=bytes.starts_with(b"MZ")||bytes.starts_with(b"ZM");
-    if !mz&&Path::new(name).extension().is_some_and(|x|x.to_str().is_some_and(|s|s.eq_ignore_ascii_case("exe"))){
+    if (!compiled&&bytes.is_empty())||bytes.len()>MAX_FILE{return Err("DOS input must contain 1..1048576 bytes".into());}
+    let mz=!compiled&&(bytes.starts_with(b"MZ")||bytes.starts_with(b"ZM"));
+    if !compiled&&!mz&&Path::new(name).extension().is_some_and(|x|x.to_str().is_some_and(|s|s.eq_ignore_ascii_case("exe"))){
         return Err(".EXE input requires a DOS MZ/ZM header; not a raw monitor image".into());
     }
     let(mut format,mut cpu,mut selectors,mut header_bytes,mut relocations)=(Format::Com,Cpu::default(),[PSP;6],0,0);
-    let(mut module_base,mut module_bytes,mut allocation_end,mut trailing)=(u32::from(PSP)*16+0x100,bytes.len(),LIMIT,0);
+    let(mut module_base,mut module_bytes,mut allocation_end,mut trailing)=(u32::from(PSP)*16+0x100,image_len,LIMIT,0);
     let mut module=bytes.to_vec();
     cpu.eip=0x100;cpu.regs[4]=0xfffe;cpu.eflags=0x202;
     if mz{
@@ -386,7 +434,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     put_word(&mut psp,0x32,20);put_word(&mut psp,0x34,0x18);put_word(&mut psp,0x36,PSP);
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(u32::from(ENV)*16,&environment(&program,drive.letter(),drive.memory_letter())).map_err(|e|format!("{e:?}"))?;
-    ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
+    ram.write_bytes(module_base + data_offset as u32,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
@@ -404,7 +452,7 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()})
+    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()})
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}

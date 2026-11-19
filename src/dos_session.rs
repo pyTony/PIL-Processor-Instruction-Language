@@ -263,7 +263,8 @@ impl Session{
         let block_runs=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(_),_)=>blocks,(None,Some(p))=>p.blocks.runs,(None,None)=>0};
         let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
         let native_total=native+single;
-        let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_block_runs\":{block_runs},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total}",mode_control&8!=0,mode_control&0x20!=0);
+        let compare_branches=self.loaded.as_ref().map_or(0,|p|p.blocks.compare_branches);
+        let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_compare_branches\":{compare_branches},\"native_block_runs\":{block_runs},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total}",mode_control&8!=0,mode_control&0x20!=0);
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
         let com1_wait=matches!(self.stop,Stop::WaitingForInput)&&self.loaded.as_ref().is_some_and(services::stdin_aux);
         let view=self.loaded.as_ref().map(|p|p.mouse.view());

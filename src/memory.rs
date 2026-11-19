@@ -41,7 +41,16 @@ pub struct Paging {pub directory:u32,pub user:bool}
 // take a new stamp once they match.
 pub(crate) const CODE_LINE:usize=64;
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct CodeStamp {owner:u64,address:u32,bytes:usize,a20:bool,writes:u64}
+pub(crate) struct CodeStamp {
+    owner: u64,
+    address: u32,
+    bytes: usize,
+    a20: bool,
+    planar: bool,
+    first_line: usize,
+    last_line: usize,
+    writes: u64,
+}
 struct CodeWatch {owner:u64,lines:Vec<std::cell::Cell<u64>>}
 impl CodeWatch {
     fn new(bytes:usize)->Self{
@@ -127,15 +136,43 @@ impl Ram {
     /// read the bytes it trusts after the last such write.
     pub(crate) fn watch_code(&self,address:u32,bytes:usize)->Option<CodeStamp>{
         let lines=self.code_pages(address,bytes)?;
-        Some(CodeStamp{owner:self.code_watch.owner,address,bytes,a20:self.a20_enabled,writes:self.code_watch.writes(lines)})
+        Some(CodeStamp {
+            owner: self.code_watch.owner,
+            address,
+            bytes,
+            a20: self.a20_enabled,
+            planar: self.planar.is_some(),
+            first_line: *lines.start(),
+            last_line: *lines.end(),
+            writes: self.code_watch.writes(lines),
+        })
     }
-    pub(crate) fn code_unchanged(&self,stamp:CodeStamp,address:u32,bytes:usize)->bool{
-        stamp.owner==self.code_watch.owner&&stamp.address==address&&stamp.bytes==bytes&&stamp.a20==self.a20_enabled&&
-            self.code_pages(address,bytes).is_some_and(|lines|self.code_watch.writes(lines)==stamp.writes)
+    #[inline]
+    pub(crate) fn code_unchanged(&self, stamp: CodeStamp, address: u32, bytes: usize) -> bool {
+        if stamp.owner != self.code_watch.owner || stamp.address != address
+            || stamp.bytes != bytes || stamp.a20 != self.a20_enabled
+            || stamp.planar != self.planar.is_some() || self.paging.get().is_some()
+        {
+            return false;
+        }
+        // The owner fixes the backing RAM and the stamp was issued for this
+        // exact address, length, and mapping.
+        let writes = if stamp.first_line == stamp.last_line {
+            self.code_watch.lines[stamp.first_line].get()
+        } else {
+            self.code_watch.writes(stamp.first_line..=stamp.last_line)
+        };
+        writes == stamp.writes
     }
     /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
     /// modelled: every access walks the tables as they are in memory.
-    pub fn set_paging(&mut self,paging:Option<Paging>){self.settle();self.paging.set(paging);}
+    #[inline]
+    pub fn set_paging(&mut self, paging: Option<Paging>) {
+        if !self.marks.get_mut().is_empty() {
+            self.settle();
+        }
+        self.paging.set(paging);
+    }
     /// Runs `f` with accesses at user level (`user`) or supervisor level,
     /// whatever CPL selected: the 386 reads descriptor tables and the TSS,
     /// and pushes on an inner-level stack, at supervisor level.

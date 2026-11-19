@@ -34,6 +34,7 @@ pub(crate) mod codegen;
 pub(crate) mod guards;
 pub(crate) mod recorder;
 pub(crate) mod engine;
+mod compare_branch;
 
 #[cfg(test)]
 mod tests {
