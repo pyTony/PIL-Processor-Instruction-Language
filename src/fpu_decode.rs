@@ -28,6 +28,7 @@ pub enum Operation {
     Fcos,
     Fld1,
     Fldpi,
+    Fldlg2,
     Fldz,
     /// Clear the sign bit of ST(0), including negative zero.
     Fabs,
@@ -93,6 +94,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 0xff) => Some(Operation::Fcos),
             (0xd9, 0xe8) => Some(Operation::Fld1),
             (0xd9, 0xeb) => Some(Operation::Fldpi),
+            (0xd9, 0xec) => Some(Operation::Fldlg2),
             (0xd9, 0xee) => Some(Operation::Fldz),
             (0xd9, 0xe1) => Some(Operation::Fabs),
             (0xd9, 0xf9) => Some(Operation::Fyl2xp1),
@@ -177,6 +179,7 @@ mod tests {
         assert_eq!(classify(0xdf,0xe0),Ok(Operation::FnstswAx));
         assert_eq!(classify(0xd9,0xe8),Ok(Operation::Fld1));
         assert_eq!(classify(0xd9,0xeb),Ok(Operation::Fldpi));
+        assert_eq!(classify(0xd9,0xec),Ok(Operation::Fldlg2));
         assert_eq!(classify(0xd9,0xee),Ok(Operation::Fldz));
         assert_eq!(classify(0xd9,0xe1),Ok(Operation::Fabs));
         assert_eq!(classify(0xd9,0xf9),Ok(Operation::Fyl2xp1));

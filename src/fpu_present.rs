@@ -156,6 +156,8 @@ impl PresentFpu {
             Operation::Fld1 => self.state.push(one),
             // 80387 FLDPI: exact 80-bit ROM constant, no host f64 rounding.
             Operation::Fldpi => self.state.push(Extended80::from_bits(0xc90f_daa2_2168_c235,0x4000)),
+            // 80387 FLDLG2 (D9 EC): log10(2), exact extended-precision ROM constant.
+            Operation::Fldlg2 => self.state.push(Extended80::from_bits(0x9a20_9a84_fbcf_f799,0x3ffd)),
             Operation::Fldz => self.state.push(Extended80::default()),
             Operation::Fyl2xp1 => {
                 let (Some(x), Some(y)) = (self.state.st(0), self.state.st(1)) else {
