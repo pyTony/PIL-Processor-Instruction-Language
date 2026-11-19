@@ -35,6 +35,31 @@ class ChangesTests(unittest.TestCase):
         for path in ["tools/package.py", "tools/export_runtime.py", "tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"]:
             self.assertEqual(ci.classify([path, "tools/termux_web.html"]), {"frontend", "web", "delivery"})
 
+    def test_runtime_launchers_do_not_select_cpu_oracles_or_benchmarks(self):
+        for path in ci.RUNTIME_LAUNCHERS:
+            with self.subTest(path=path):
+                self.assertEqual(ci.classify([path]), {"frontend", "library", "delivery"})
+        self.assertEqual(ci.classify(["tests/ci/test_runtime_startup.py"]), set())
+
+    def test_rendering_and_containers_keep_dos_coverage_without_cpu_suites(self):
+        for path in ci.DOS_SUPPORT:
+            with self.subTest(path=path):
+                self.assertEqual(ci.classify([path]), {"dos", "frontend", "integration", "library"})
+        workflow = (ROOT / ".github/workflows/full.yml").read_text(encoding="utf-8")
+        self.assertIn("cargo test --locked containers:: -- --show-output", workflow)
+
+    def test_startup_pr_selects_only_its_affected_modules(self):
+        paths = ["src/containers.rs", "src/dos_session.rs", "src/dos_setup.rs",
+                 "src/dine_window.rs", "src/dos_live_diagnostics.rs",
+                 "tests/unit/containers.rs", "tools/runtime_startup.py",
+                 "tests/ci/test_runtime_startup.py", "docs/DOS_CONFIG.md"]
+        self.assertEqual(ci.classify(paths), {"dos", "frontend", "integration", "library", "delivery"})
+        # Adding a real decoder/compiler change must restore CPU verification.
+        for path in ["src/guest.rs", "src/emit.rs", "src/precompiled/forms.rs", "isa/i386/add.pil"]:
+            with self.subTest(path=path):
+                selected = ci.classify([*paths, path])
+                self.assertTrue({"core", "backends"}.issubset(selected))
+
     def test_unknown_and_ci_fail_closed(self):
         for path in ["new/input.dat", ".github/workflows/check.yml", "tools/ci_changes.py", "tools/verify_dosbox_cpu.py"]:
             self.assertEqual(ci.classify([path]), set(ci.MODULES))
