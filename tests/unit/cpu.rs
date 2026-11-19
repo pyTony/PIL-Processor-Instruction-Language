@@ -1,6 +1,84 @@
 use super::*;
 
 #[test]
+fn generated_named_register_effects_are_ordered_transactional_and_allocation_free(){
+    use std::{fs,process::Command};
+    let mut text=String::from("read_gpr original 0 32\nconst byte 8 90\nwrite_gpr 0 byte\nread_gpr snapshot 0 32\nwrite_gpr 1 snapshot\n");
+    // More effects than the interpreter's small staging buffer, including
+    // repeated writes of different widths to one register.
+    for n in 0..24{
+        let width=[32,16,8][n%3];
+        let value=match width{32=>0xaabb_0000u32+n as u32,16=>0xcc00+n as u32,_=>0x80+n as u32};
+        text.push_str(&format!("const x{n} {width} {value}\nwrite_gpr 0 x{n}\n"));
+    }
+    text.push_str("write_gpr 2 original\nconst target 32 512\nconst take 1 1\nbranch_if target take\npreserve_flags all\nretire");
+    let p=compile(&text,32).unwrap();
+    let slots=crate::precompiled::shape(&p).1.into_iter().map(Some).collect::<Vec<_>>();
+    let mut source=emit_rust_support();
+    source.push_str(&format!("\nmod plain {{use super::*;{}}}\nmod form {{use super::*;{}}}\n",emit_rust_functions(&p),emit_rust_form(&p,&slots)));
+    source.push_str(r#"
+use std::sync::atomic::{AtomicBool,AtomicUsize,Ordering};
+use ExecError::*;
+static COUNTING:AtomicBool=AtomicBool::new(false);
+static ALLOCATIONS:AtomicUsize=AtomicUsize::new(0);
+struct Allocator;
+unsafe impl std::alloc::GlobalAlloc for Allocator {
+    unsafe fn alloc(&self,l:std::alloc::Layout)->*mut u8{
+        if COUNTING.load(Ordering::Relaxed){ALLOCATIONS.fetch_add(1,Ordering::Relaxed);}
+        std::alloc::System.alloc(l)
+    }
+    unsafe fn dealloc(&self,p:*mut u8,l:std::alloc::Layout){std::alloc::System.dealloc(p,l)}
+}
+#[global_allocator] static ALLOCATOR:Allocator=Allocator;
+fn main(){
+"#);
+    for limit in [255,65535]{
+        let mut expected=Cpu::default();expected.regs=[0x89ab_cdef;8];expected.eip=0x100;expected.eflags=0x202;expected.undefined_flags=0x10;
+        let flow=FlowContext{next_eip:0x101,displacement:0,displacement_bits:32,code_limit:limit};
+        let view=View{register:0,low:0,width:32};
+        let status=execute_flow(&p,&mut expected,view,view,flow);
+        if limit==255{
+            assert_eq!(status,Err(ExecError::GeneralProtection{eip:0x100,error_code:0}));
+            assert_eq!(expected.regs,[0x89ab_cdef;8]);
+        }else{
+            assert_eq!(status,Ok(()));
+            assert_eq!(&expected.regs[..3],&[0xaabb_cc97,0x89ab_cdef,0x89ab_cdef]);
+        }
+        for native in [false,true]{
+            let call=if native{"form::execute_form(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine,&[])"}
+                else{"plain::execute_with_machine(&mut regs,&mut flags,&mut undefined,&mut ip,(0,0),(0,0),flow,&mut ram,None,&mut machine)"};
+            source.push_str(&format!(r#"{{
+let mut regs=[0x89abcdef;8];let mut flags=0x202;let mut undefined=0x10;let mut ip=0x100;
+let flow=FlowContext{{next_eip:0x101,displacement:0,displacement_bits:32,code_limit:{limit}}};
+let mut ram=Ram::new(16);
+let mut machine=address::SegmentState{{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],
+msw:0,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,
+ldt_tr:[address::SystemSegment::default();2],paging:false,debug:address::DEBUG_RESET}};
+ALLOCATIONS.store(0,Ordering::Relaxed);COUNTING.store(true,Ordering::Relaxed);
+let result={call};
+COUNTING.store(false,Ordering::Relaxed);
+assert_eq!(result,{status:?});assert_eq!(regs,{:?});
+assert_eq!((flags,undefined,ip),({},{},{}));
+assert_eq!(ALLOCATIONS.load(Ordering::Relaxed),0);
+}}
+"#,expected.regs,expected.eflags,expected.undefined_flags,expected.eip));
+        }
+    }
+    source.push_str("}\n");
+    // Debug codegen also proves the staging has no allocator dependency.
+    let dir=std::env::temp_dir().join(format!("pil-register-effects-{}",std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let path=dir.join("check.rs");fs::write(&path,source).unwrap();
+    let bin=dir.join(if cfg!(windows){"check.exe"}else{"check"});
+    let output=Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into()))
+        .args(["--edition=2021","-A","warnings"]).arg(&path).arg("-o").arg(&bin).output().unwrap();
+    assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+    let output=Command::new(&bin).output().unwrap();
+    assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn pil_trace_stops_at_the_same_mode_segment_and_branch_checks_as_execution(){
     let real="require_real_mode\npreserve_flags all\nretire";
     let span="const offset 64 65534\ncheck_segment 2 offset 4\npreserve_flags all\nretire";

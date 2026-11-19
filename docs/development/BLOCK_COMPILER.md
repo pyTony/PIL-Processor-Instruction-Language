@@ -182,5 +182,37 @@ instruction, #DE in a callee inside a chain (default INT 0 handler, exit
 Not yet: instructions after a branch or store inside one block (side
 exits), protected-mode and 32-bit-stack forms, a smaller emitter for the
 table. Callgrind on 1M MANDCGA steps showed the remaining time in the
-native forms and the per-block code check; CALL's form also allocates a
-Vec per call.
+native forms and the per-block code check. The register-effect allocation
+identified in CALL's form is addressed below.
+
+## Scalar native register effects (19 November 2026)
+
+The shared Rust emitter now captures each `write_gpr` value in a scalar
+local and emits its fixed register and width directly at retirement.
+Generated CALL, RET, PUSH, POP, multiply/divide and string forms no longer
+allocate a vector to stage named register effects. Reads still see incoming
+registers, repeated writes commit in token order, and a later fault leaves
+all staged register effects uncommitted. The emitter handles any number of
+validated register effects without a fixed staging-array limit.
+
+The same change applies to standalone generated-Rust backend comparisons
+and the program-independent native table shared by PIL and Dine. All 2,685
+forms were regenerated; their keys and constant-slot layouts are unchanged.
+The generated source shrank by 409,405 bytes. This does not extend native
+instruction coverage or establish a measured execution-time improvement.
+
+`generated_named_register_effects_are_ordered_transactional_and_allocation_free`
+compiles and runs both generated APIs with allocation counting enabled only
+during execution. It checks incoming-register snapshots, 27 ordered effects
+with repeated 8/16/32-bit writes, preservation of upper register bits, and a
+late branch-limit fault. Both successful and faulting execution allocate
+zero times, including with debug code generation.
+
+Local Windows validation: `cargo test --locked --bin pil` passed 972 tests
+(2 ignored), including full-state form/block comparisons and the 280-case
+interpreter/generated trace suite. The native-enabled binary builds and
+passes `--selftest`; regeneration with `--check`, portable-path and
+program-independence self-tests also pass. The full suite exposed an existing
+text-watch fixture writing its initial 07h attribute while expecting a change;
+the fixture now writes 1Fh so its five-event expectation checks five changed
+bytes.

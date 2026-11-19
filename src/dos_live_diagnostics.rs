@@ -166,7 +166,8 @@ mod tests{
         let p=session.machine_mut().unwrap();
         p.ram.text_watch_site(0x1234,0x5678);
         // CGA page 0, later text page and the MDA aperture.
-        p.ram.store(0xb8000,MemWidth::Word,0x0731).unwrap();
+        // Change the attribute too: the initialized screen already uses 07h.
+        p.ram.store(0xb8000,MemWidth::Word,0x1f31).unwrap();
         p.ram.store(0xb9000,MemWidth::Byte,0x41).unwrap();
         p.ram.write_bytes(0xb0000,&[0x42,0x1f]).unwrap();
         // An identical write must not generate a spurious event.
