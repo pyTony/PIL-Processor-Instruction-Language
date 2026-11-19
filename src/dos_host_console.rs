@@ -415,7 +415,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                             select::Gesture::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
                             select::Gesture::None=>{},
                         }
-                    }else if width>0&&height>0{
+                    }else if !paused&&width>0&&height>0{
                         let view=session.machine().map(|p|p.mouse.view()).ok_or("session state lost")?;
                         let fx=(x.clamp(0,width-1) as i64*(i64::from(view.max_x)+1)/i64::from(width)) as u16;
                         let fy=(y.clamp(0,height-1) as i64*(i64::from(view.max_y)+1)/i64::from(height)) as u16;
