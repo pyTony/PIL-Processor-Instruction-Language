@@ -88,6 +88,19 @@ def main() -> None:
             assert (result.returncode, result.stdout, result.stderr) == (0, expected(n), b""), (
                 argument, result.returncode, result.stdout, result.stderr
             )
+        # The one-command workflow can reuse that same runtime, preserve
+        # paths containing spaces and return the guest's exit status.
+        inputs = root / "input folder"
+        inputs.mkdir()
+        exits = inputs / "EXIT.COM"
+        exits.write_bytes(bytes.fromhex("b8074ccd21"))
+        workflow = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "build_dine.py"),
+             str(exits), "--runtime", str(lib), "--output-dir", str(root / "workflow"),
+             "--run"], cwd=ROOT, capture_output=True, timeout=60,
+        )
+        assert workflow.returncode == 7, (workflow.returncode, workflow.stdout, workflow.stderr)
+        assert b"Running from:" in workflow.stdout
         # Runtime missing must fail clearly, not silently invoke another PIL.
         missing = lib.with_name(lib.name + ".hidden")
         lib.rename(missing)

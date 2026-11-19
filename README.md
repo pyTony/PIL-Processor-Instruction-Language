@@ -31,6 +31,23 @@ refers to local files that are not included. See [DOS configuration](docs/DOS_CO
 [documentation overview](docs/README.md). Run development tests with
 `cargo test --locked`.
 
+### Build a native DOS application
+
+With Python 3.10+ and the Rust toolchain installed, build and run a DOS
+program on the current computer:
+
+```powershell
+.\compile-dos.cmd "path\to\program.exe" --run
+```
+
+On Linux, macOS or Termux: `sh compile-dos.sh path/to/program.exe --run`.
+Use `--doctor` to check build tools, `--force` to rebuild, and `--run -- ARGS`
+to pass guest arguments. Outputs go to `programs/compiled/`: a native
+`Dine_<name>` launcher plus the shared Dine library. Native instruction forms
+and interpreter fallback run inside that shared library; compatibility depends
+on the DOS services supported by Dine. See the [build workflow](docs/DINE_EXECUTABLES.md)
+for batch builds, data files and runtime reuse.
+
 ### Earlier development milestones
 
 The version-specific sections below record **past increments**, not the

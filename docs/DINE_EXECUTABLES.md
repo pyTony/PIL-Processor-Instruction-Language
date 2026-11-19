@@ -15,7 +15,72 @@ The names reflect separate responsibilities:
 - **`Dine_MANDVGA.exe`**: a small host executable containing the original
   guest program and a loader that calls `dine.dll` dynamically.
 
-## Build and run on Windows
+## One-command build workflow
+
+Install Python 3.10 or newer and the Rust toolchain (`cargo`, `rustc`, and the
+platform linker). Builds target the current computer: Windows, Linux, macOS
+or Termux. Cross-compilation is not provided by this workflow.
+
+From the checkout, check the tools and build your DOS input:
+
+```powershell
+.\compile-dos.cmd --doctor
+.\compile-dos.cmd "path\to\program.exe" --run
+```
+
+On Linux, macOS or Termux:
+
+```sh
+sh compile-dos.sh --doctor
+sh compile-dos.sh path/to/program.exe --run
+```
+
+The cross-platform command is `python tools/build_dine.py PROGRAM`.
+Without a program argument, an interactive terminal prompts for the input
+path. Inputs may be DOS `.COM` or MZ `.EXE` files within Dine's 1 MiB limit.
+The builder checks file existence, extension and size; Dine validates the
+executable format when loading it. A successful build does not establish
+that every instruction or DOS service used by that input is supported.
+
+The first build compiles the shared system runtime and may take several
+minutes; Cargo reuses unchanged builds. It then compiles the small native
+launcher. The guest bytes are embedded as input to shared native forms and
+interpreter fallback. This workflow does not translate the entire guest to
+an independent, fully ahead-of-time native executable.
+
+Useful options (shown with the Windows entry point; the Python and shell
+entry points accept the same arguments):
+
+```powershell
+# Build only; choose where the executable and shared runtime go.
+.\compile-dos.cmd "path\to\program.exe" --output-dir dist/my-app
+
+# Rebuild and pass arguments to the program after --.
+.\compile-dos.cmd "path\to\program.exe" --force --run -- "input file.dat" /help
+
+# Build several launchers using one shared runtime build.
+.\compile-dos.cmd path/to/first.com path/to/second.exe --output-dir dist/apps
+
+# Reuse a built runtime; only rustc and the platform linker are then needed.
+.\compile-dos.cmd path/to/program.exe --runtime programs/compiled/dine.dll
+```
+
+`--run` accepts one input and returns the program's exit status. It runs
+from the original input's folder so relative data-file access uses that
+folder as DOS C:. Override this with `--working-dir path/to/data`. Companion
+files are not bundled: keep them available in the run folder. When starting
+the generated executable directly, its **current working directory** becomes
+DOS C:. The builder does not change the input or companion files; running a
+guest may change files through Dine's mapped-drive services.
+
+Batch inputs must produce distinct output names. Existing launchers are
+protected unless `--force` is supplied. For distribution, ship the launcher
+and platform-specific shared runtime together, along with any required data
+files; Python, Rust, the checkout and the original input file are not needed
+on the destination computer. Use the same host OS and architecture for the
+destination. Native OS runtime requirements still apply.
+
+## Build and run example on Windows
 
 From the repository root:
 
@@ -166,6 +231,11 @@ Verify that the COM inputs can be renamed or removed **after** compilation,
 the EXE still runs when the DLL is alongside it, and a missing DLL fails
 clearly. Compare the Mandelbrot guest state and VGA planes to
 `tools/verify_mandel_vga.py` and the linked-Dine reference before claiming
-image fidelity. Full-window presentation and performance require manual Windows testing;
-no run-time benchmark or graphics-window parity check has been executed
-in this chat.
+image fidelity. The Windows workflow has been checked with a real release
+runtime and native launcher, including factorial output, running after the
+original DOS file is removed, long-name file access, a missing runtime, and
+`--runtime --run` returning guest exit status 7 from an input folder with
+spaces. Thirteen build-helper tests cover batch runtime reuse, command-line
+handling and launcher/system separation. Full-window presentation and
+performance require separate validation; these workflow checks do not
+establish graphics parity or compatibility with arbitrary DOS applications.
