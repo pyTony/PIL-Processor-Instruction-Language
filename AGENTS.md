@@ -17,6 +17,12 @@ Dine library or translator for one guest program; precompilation is not a
 JIT, but it is not exempt. `Dine_<program>` launchers are fine: a loader
 plus guest bytes on the shared dine library, no copy of Dine or PIL. See docs/development/BLOCK_COMPILER.md.
 
+System execution code includes flag formulas, lazy-flag descriptors and
+materialization, native instruction forms, block dispatch, CPU state and
+DOS/BIOS/device services. Keep these in the shared PIL/Dine implementation;
+guest code, launchers and guest-specific build outputs must not copy or
+specialize them. Lazy-flag optimization must follow this same boundary.
+
 Do not put code for one guest program into PIL's general files (src/, isa/,
 Cargo.toml and every script in tools/ except tests, benchmarks and fixture
 builders): no program or file names, hashes, PSP or command-line checks, and

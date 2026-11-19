@@ -4,14 +4,14 @@ A `Dine_<program>` launcher is a hybrid executable: a tiny loader plus the
 original guest bytes, running on the **shared** Dine library. It contains no
 copy of Dine or PIL (Tony, 13 November 2026: "as long as they contain not
 dine or pil they are fine"). The library is the same for every program and
-holds no generated code for one guest. When block compilation comes back it
-will live inside that shared library, program-independent, so every
-launcher gets it ([Block compiler](development/BLOCK_COMPILER.md)).
+holds no generated code for one guest. Native instruction forms and run-time
+block planning live inside that shared library, program-independent, so every
+launcher gets them ([Block compiler](development/BLOCK_COMPILER.md)).
 
 The names reflect separate responsibilities:
 
 - **PIL**: processor instruction language, compiler and interpreter.
-- **Dine**: the DOS/BIOS and device runtime built using PIL's interpreter.
+- **Dine**: the shared DOS/BIOS and device runtime using PIL's executor.
 - **`Dine_MANDVGA.exe`**: a small host executable containing the original
   guest program and a loader that calls `dine.dll` dynamically.
 
@@ -88,10 +88,11 @@ The initial Dine launcher still has only terminal input/preview support.
 
 ## Present runtime limitations
 
-The initial `dine_run` ABI accepts the original guest bytes, DOS filename
-and command tail. It runs all reached instructions through the existing PIL
-interpreter plus the Dine DOS/BIOS services; there are **no native guest
-compiled blocks yet**. A real `Stop::Exit` becomes the process exit status.
+The `dine_run` ABI accepts the original guest bytes, DOS filename and command
+tail. The shared PIL executor uses native instruction forms and run-time
+blocks when enabled and applicable, with interpreter fallback. Dine supplies
+the shared DOS/BIOS services. The launcher contains no compiled guest blocks
+or system implementation. A real `Stop::Exit` becomes the process exit status.
 Budget stops continue automatically. The shared Rust console now handles host
 input and output for this entry point as well as the CLI.
 
@@ -125,14 +126,19 @@ opt-in Rust window with Python terminal and BIOS keyboard bridge.
 
 ## Refactoring direction
 
-The next increment will move guest-specific compiled blocks into
-`Dine_<program>.exe`, keeping `dine.dll` independent of the application.
-That needs a versioned, opaque per-machine compiled-block callback ABI: a
-native block receives Dine's CPU/memory context, validates instruction bytes
-and segment state, reports consumed instructions, and falls back to PIL when
-its guard misses. BIOS, DOS, FPU and VGA services stay in the shared runtime.
-This change must keep instruction budgets, asynchronous interrupt boundaries,
-code-modification guards and guest exception delivery consistent.
+Keep all system execution code in the shared PIL/Dine implementation:
+instruction semantics, native forms, CPU and memory state handling, block
+dispatch, flag formulas and lazy-flag materialization, plus BIOS, DOS, FPU
+and VGA services. A launcher contains only its loader and guest bytes.
+There is no per-program engine, copied runtime, or guest-specific build of
+PIL or Dine. Run-time decoded instructions and block plans are per-machine
+data processed by that same shared implementation.
+
+Native lazy-flag optimization must also live in the shared executor and
+emitter. Guest-specific files must not contain copies of flag helpers or
+special rules for one application's flags. Preserve instruction budgets,
+asynchronous interrupt boundaries, code-modification guards and guest
+exception delivery when changing the shared executor.
 
 A separate future **native filesystem service** should support UTF-8 paths,
 long host filenames, Unicode, directory enumeration, file metadata, 64-bit
