@@ -158,6 +158,34 @@ mod tests{
         assert_eq!(text_cells_hex(&p,Some(0x13)),None);
     }
     #[test]
+    fn whole_screen_text_write_watch_tracks_changed_bytes_and_runtime_site(){
+        let p=load(&[0xeb,0xfe],"GENERIC.COM").unwrap();
+        let mut session=session::Session::new(p);
+        assert!(!session.machine().unwrap().ram.text_watch_enabled());
+        session.start_text_write_watch().unwrap();
+        let p=session.machine_mut().unwrap();
+        p.ram.text_watch_site(0x1234,0x5678);
+        // CGA page 0, later text page and the MDA aperture.
+        p.ram.store(0xb8000,MemWidth::Word,0x0731).unwrap();
+        p.ram.store(0xb9000,MemWidth::Byte,0x41).unwrap();
+        p.ram.write_bytes(0xb0000,&[0x42,0x1f]).unwrap();
+        // An identical write must not generate a spurious event.
+        p.ram.store(0xb9000,MemWidth::Byte,0x41).unwrap();
+        // Normal DOS memory is outside the watched region.
+        p.ram.store(0x2000,MemWidth::Byte,0x44).unwrap();
+        let json=p.ram.text_watch_json();
+        assert!(json.contains(r#""total":5"#),"{json}");
+        assert!(json.contains(r#""address":753664"#),"{json}"); // B8000h
+        assert!(json.contains(r#""address":757760"#),"{json}"); // B9000h
+        assert!(json.contains(r#""address":720896"#),"{json}"); // B0000h
+        assert!(json.contains(r#""cs":"1234","ip":"5678""#),"{json}");
+        let (snapshot,_)=session.live_snapshot(0).unwrap();
+        assert!(snapshot.contains(r#""text_write_watch":{"enabled":true"#));
+        session.stop_text_write_watch().unwrap();
+        assert!(!session.machine().unwrap().ram.text_watch_enabled());
+        assert!(session.machine().unwrap().ram.text_watch_json().contains(r#""enabled":false"#));
+    }
+    #[test]
     fn live_snapshot_preserves_preexisting_dispatch_history(){
         let mut p=load(&[0xeb,0xfe],"SPIN.COM").unwrap();
         p.history=history::History::new(64);
