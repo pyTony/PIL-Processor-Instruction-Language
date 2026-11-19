@@ -12,6 +12,9 @@ makes. The layout-translated character supplies a BIOS word on each make, so
 guest IRQ1 handlers that chain to BIOS retain text entry. With no guest keyboard
 handler, only translated down events enter the BIOS ring. Releases and modifier
 edges do not type extra characters. Queue pressure retries events in order.
+That direct BIOS-input path also updates the Shift/Ctrl/Alt bits at 0040:0017,
+so INT 16h/AH=02h sees held modifiers even without a guest INT 09h handler.
+Focus-loss releases clear those bits through the same shared BIOS logic.
 
 Focus loss, window closure and opening the host menu release held guest keys.
 Copy/paste, Shift+Insert, Shift+F10, the context-menu key, Ctrl+Shift+Enter and
