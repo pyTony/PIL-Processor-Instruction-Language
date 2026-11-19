@@ -223,6 +223,9 @@ impl SoundBlaster{
                 0
             },
             (0x0a,true)=>self.reply.pop_front().unwrap_or(0xff),
+            // 22Ah is the DSP's read-only data latch. An ISA OUT to
+            // that address is not a DSP command and must not consume replies.
+            (0x0a,false)=>0,
             (0x0c,true)=>0, // DSP write buffer is ready
             (0x0c,false)=>{self.command(value,ram,pic)?;0},
             (0x0e,true)=>{
@@ -272,6 +275,22 @@ mod tests{
         assert_eq!(read(&mut sb,&mut pic,&ram,0x22a),0xaa);
         write(&mut sb,&mut pic,&ram,0x22c,0xd1);write(&mut sb,&mut pic,&ram,0x22c,0xd8);
         assert_eq!(read(&mut sb,&mut pic,&ram,0x22a),0xff);
+    }
+    #[test]fn prince_of_persia_write_to_dsp_read_port_is_ignored(){
+        let(mut sb,mut pic,ram)=(SoundBlaster::default(),Pair::default(),Ram::new(1<<20));
+        write(&mut sb,&mut pic,&ram,0x226,1);
+        write(&mut sb,&mut pic,&ram,0x226,0);
+        // Prince writes 22Ah during startup; it is read-only, not a command
+        // register. A queued DSP reset acknowledgement must survive.
+        write(&mut sb,&mut pic,&ram,0x22a,0x55);
+        assert_eq!(read(&mut sb,&mut pic,&ram,0x22e),0x80);
+        assert_eq!(read(&mut sb,&mut pic,&ram,0x22a),0xaa);
+        assert_eq!(read(&mut sb,&mut pic,&ram,0x22e),0);
+        // Subsequent genuine DSP commands at 22Ch still work.
+        write(&mut sb,&mut pic,&ram,0x22c,0xe1);
+        write(&mut sb,&mut pic,&ram,0x22a,0xff);
+        assert_eq!(read(&mut sb,&mut pic,&ram,0x22a),2);
+        assert_eq!(read(&mut sb,&mut pic,&ram,0x22a),1);
     }
     #[test]fn dma_wraps_within_page_and_irq_waits_for_completion(){
         let(mut sb,mut pic,mut ram)=(SoundBlaster::default(),Pair::default(),Ram::new(1<<20));
