@@ -315,7 +315,7 @@ fn listing(d:&Drive,dir:&Dir)->Result<Vec<Entry>,u16>{
 /// deletion or a new colliding host name can change dynamically generated
 /// BASIS~N aliases, so callers should not cache them across directory changes.
 impl Drives {
-    #[cfg(feature = "dine-library")]
+    #[cfg(any(feature = "dine-library",test))]
     pub(crate) fn host_argument_alias(&self,host_name:&str)->Result<Option<String>,String>{
         let Some(drive)=self.list.get(self.current)else{return Ok(None);};
         let Source::Host(root)=&drive.source else{return Ok(None)};

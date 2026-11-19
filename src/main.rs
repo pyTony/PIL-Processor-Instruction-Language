@@ -14,7 +14,7 @@ mod host_io;
 mod debugger;
 mod guest;
 mod dos;
-#[cfg(feature = "dine-library")]
+#[cfg(any(feature = "dine-library",test))]
 mod dine_ffi;
 // Win32 window presentation for --dos-session (DINE_VIDEO=window).
 #[cfg(windows)]
@@ -2272,6 +2272,16 @@ fn emit_rust_functions(p:&Program)->String {emit_rust_body(p,None)}
 fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {emit_rust_body(p,Some(slots))}
 fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
     let mut out=String::new();let mut const_index=0usize;
+    // Each named register effect has a statically known destination and width.
+    // Capture its value where it occurs, then commit in token order only at
+    // retirement. Scalar locals avoid a heap allocation on every CALL/PUSH
+    // and preserve snapshot reads, repeated writes and late-fault rollback.
+    let register_commits=p.tokens.iter().enumerate().filter_map(|(index,t)|{
+        if let Token::WriteGpr(reg,_,width)=t{
+            let m=mask(*width);
+            Some(format!("regs[{reg}]=((regs[{reg}] as u64 & !{m}u64)|(pending_register_{index}&{m}u64)) as u32;\n"))
+        }else{None}
+    }).collect::<String>();
     // A segment load may stage one more byte store: the descriptor's accessed bit.
     let stores=p.tokens.iter().filter(|t|matches!(t,Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)|Token::LoadSystem(..))).count().max(1);
     out.push_str(&format!(
@@ -2291,8 +2301,7 @@ fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
          let mut pending_flags = *flags;\n\
          let mut pending_undefined = *undefined;\n\
          let mut pending_dst: Option<u64> = None;\n\
-         let mut pending_src: Option<u64> = None;\n\
-         let mut pending_registers: Vec<(usize,u8,u64)> = Vec::new();\n",
+         let mut pending_src: Option<u64> = None;\n",
         if slots.is_some(){", k: &[u64]"}else{""},p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
     let mut carry_skip=0;
     for (index,t) in p.tokens.iter().enumerate() {
@@ -2321,7 +2330,7 @@ fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
             Token::ReadSegment(o,reg)=>format!("let v{o}: u64 = machine.as_deref().ok_or(ExecError::InvalidContext)?.selectors[{reg}] as u64;"),
             Token::WriteSegment(reg,a)=>format!("{}pending_segment=Some(({reg},selector,cache));",emit_segment_load(&reg.to_string(),a)),
             Token::ReadGpr(o,reg,w)=>format!("let v{o}: u64 = (regs[{reg}] as u64) & {}u64;",mask(w)),
-            Token::WriteGpr(reg,a,w)=>format!("pending_registers.push(({reg},{w},v{a}));"),
+            Token::WriteGpr(_,a,_)=>format!("let pending_register_{index}=v{a};"),
             Token::ReadControl(o,r)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.read_control({r},*flags,*eip)? as u64;"),
             Token::WriteControl(r,v)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?.validate_control({r},v{v} as u32,*flags,*eip)?;pending_control=Some(({r},v{v} as u32));"),
             Token::WriteTable(t,l,b)=>format!("machine.as_deref().ok_or(ExecError::InvalidContext)?;pending_table=Some(({t},v{l} as u16,v{b} as u32));"),
@@ -2385,7 +2394,7 @@ fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|f.error(*eip))?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\nfor (reg,width,value) in pending_registers {{let m=(1u64<<width)-1;regs[reg]=((regs[reg] as u64 & !m)|(value&m)) as u32;}}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}if let Some(t)=pending_transfer{{t.commit(regs,flags,undefined,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|f.error(*eip))?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\n{register_commits}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}if let Some(t)=pending_transfer{{t.commit(regs,flags,undefined,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }

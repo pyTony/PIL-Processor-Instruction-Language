@@ -48,6 +48,22 @@ pub(crate) fn stream<R:BufRead,W:Write>(session:&mut Session,input:&mut R,output
 fn exit_code(session:&Session)->Option<i32>{
     session.exit_code().map(i32::from)
 }
+/// Execution-only timing: no host rendering or human input time is included.
+#[cfg_attr(not(any(feature="dine-library",test)),allow(dead_code))]
+pub(crate) fn timed(session:&mut Session,budget:usize)->Result<(std::time::Duration,usize,&'static str),String>{
+    let start=std::time::Instant::now();let initial=session.steps();let mut remaining=budget;
+    while remaining>0{
+        let slice=remaining.min(1_000_000);
+        session.run(slice)?;
+        let status=session.status().0;
+        match status{
+            "exit"|"waiting_input"=>return Ok((start.elapsed(),session.steps()-initial,status)),
+            "running"=>remaining-=slice,
+            _=>return Err(format!("DOS timing stopped: {}",session.status().1)),
+        }
+    }
+    Err(format!("DOS timing exceeded its {budget}-step budget before exit or input wait"))
+}
 pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool)->Result<i32,String>{
     let mode=std::env::var("DINE_TEXT").unwrap_or_else(|_|"auto".into());
     if !matches!(mode.as_str(),"auto"|"terminal"|"headless"){return Err("DINE_TEXT must be auto, terminal or headless".into());}

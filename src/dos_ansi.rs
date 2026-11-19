@@ -64,6 +64,8 @@ pub(super) fn plan(p:&Loaded,page:u32,bytes:&[u8])->Result<Writes,String>{
                                         7=>(a&0x88)|((a&7)<<4)|((a>>4)&7),
                                         8=>(a&0xf0)|((a>>4)&7),
                                         30..=37=>(a&!7)|COLOUR[(v-30)as usize],
+                                        // Bright foreground SGR extension used by modern ANSI terminals.
+                                        90..=97=>(a&!15)|8|COLOUR[(v-90)as usize],
                                         40..=47=>(a&!0x70)|(COLOUR[(v-40)as usize]<<4),
                                         // Underline needs a monochrome adapter; others are not ANSI.SYS's.
                                         _=>a,

@@ -460,8 +460,12 @@ pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<
     if let Some(mount)=mount{drives.push(open_mount_source(mount)?);}
     // Z: holds files in memory for the session, and TEMP points there.
     drives.push(Source::Memory(MemDir::default()));
-    let mut loaded=load_with_drives(&bytes,path,drives,inner)?;
+    let loaded=load_with_drives(&bytes,path,drives,inner)?;
     let skip=mount.map(|_|if inner.is_some(){b'D'}else{b'C'});
+    configured(loaded,args,config,skip,fpu_mode)
+}
+/// Common configuration for file-backed and embedded guest sessions.
+pub(crate) fn configured(mut loaded:Loaded,args:Option<&str>,config:Option<&str>,skip:Option<u8>,fpu_mode:Option<&str>)->Result<Session,String>{
     crate::dos_config::apply(&mut loaded,config,skip)?;
     if let Some(mode)=fpu_mode{
         match mode{"none"=>loaded.select_fpu(false)?,"80387"=>loaded.select_fpu(true)?,_=>return Err("FPU must be none or 80387".into())}

@@ -1,4 +1,15 @@
 use super::*;
+#[test]
+fn timing_stops_at_exit_or_input_wait_and_bounds_busy_programs(){
+    let mut exits=session(&[0xb8,7,0x4c,0xcd,0x21]);
+    let (_,steps,boundary)=timed(&mut exits,100).unwrap();
+    assert_eq!(boundary,"exit");assert!(steps>0);assert_eq!(exits.exit_code(),Some(7));
+    let mut waits=session(&[0xb4,0,0xcd,0x16,0xcd,0x20]);
+    assert_eq!(timed(&mut waits,100).unwrap().2,"waiting_input");
+    let mut busy=session(&[0xeb,0xfe]);
+    assert!(timed(&mut busy,17).unwrap_err().contains("17-step budget"));
+    assert_eq!(busy.steps(),17);
+}
 fn session(bytes:&[u8])->Session{Session::new(dos::load(bytes,"FIXTURE.COM").unwrap())}
 fn echo()->Session{session(&[0xb4,1,0xcd,0x21,0x3c,13,0x75,0xf8,0xb8,7,0x4c,0xcd,0x21])}
 #[test]

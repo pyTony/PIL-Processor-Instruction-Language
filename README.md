@@ -31,6 +31,30 @@ refers to local files that are not included. See [DOS configuration](docs/DOS_CO
 [documentation overview](docs/README.md). Run development tests with
 `cargo test --locked`.
 
+### Build a native DOS application
+
+With Python 3.10+ and the Rust toolchain installed, build and run a DOS
+program on the current computer:
+
+```powershell
+.\compile-dos.cmd "path\to\program.exe" --run
+```
+
+On Linux, macOS or Termux: `sh compile-dos.sh path/to/program.exe --run`.
+Use `--doctor` to check build tools, `--force` to rebuild, and `--run -- ARGS`
+to pass guest arguments. Outputs go to `programs/compiled/`: a native
+`Dine_<name>` launcher plus the shared Dine library. Native instruction forms
+and interpreter fallback run inside that shared library; compatibility depends
+on the DOS services supported by Dine. See the [build workflow](docs/DINE_EXECUTABLES.md)
+for batch builds, data files and runtime reuse.
+`--run` reuses matching builds. `--settings --run` opens the shared PILdos
+editor first; `--time` measures execution to exit or the first input wait,
+without host drawing. Native launchers use `pildos.conf`/`PILDOS_CONFIG`;
+`--config FILE` selects one explicitly for a run.
+Use `--interpreted` for the interpreter or `--compare` to time both modes on
+the same launcher. Source-checkout launchers share a quick freshness check,
+report Git status and warn outside `dev`/`main`; unchanged system builds are reused.
+
 ### Earlier development milestones
 
 The version-specific sections below record **past increments**, not the
