@@ -1124,8 +1124,8 @@ fn dos_time_scales_bios_ticks_like_the_clock_driver(){
  // 65543 ticks are 359,998 hundredths: 00:59:59.98 (CH=0, CL=59, DH=59, DL=98).
  let mut p=load(&[0xb4,0x2c,0xcd,0x21,0xfa,0xf4],"time.com").unwrap();p.timer_ticks=65543;
  let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs[1]&0xffff,0x003b);assert_eq!(r.loaded.cpu.regs[2]&0xffff,0x3b62);assert_eq!(r.loaded.timer_ticks,65544);
- // INT 15 AX=E801 is unsupported on this AT-class BIOS; INT 2F AX=0600 finds no ASSIGN.
- let r=run(load(&[0xb8,0x01,0xe8,0xcd,0x15,0xfa,0xf4],"e801.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
+ // INT 15 AX=E820 is unsupported on this AT-class BIOS; INT 2F AX=0600 finds no ASSIGN.
+ let r=run(load(&[0xb8,0x20,0xe8,0xcd,0x15,0xfa,0xf4],"e820.com").unwrap(),10).unwrap();assert_eq!((r.loaded.cpu.regs[0]>>8)&255,0x86);assert_eq!(r.loaded.cpu.eflags&1,1);
  let r=run(load(&[0xb8,0x00,0x06,0xcd,0x2f,0xfa,0xf4],"assign.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x0600);
 }
 
@@ -3674,4 +3674,102 @@ fn int21_63_other_subfunction_is_not_silently_treated_as_cp437(){
     assert!(service(&mut p,0x21,&mut vec![]).is_err());
     assert_eq!(p.cpu.regs,old.cpu.regs);
     assert_eq!(p.selectors,old.selectors);
+}
+/// INT 15h AH=87h table at ES:0200h: source and destination descriptors
+/// (base, 16-bit limit, access byte) at offsets 10h and 18h.
+fn block_move_call(p:&mut Loaded,words:u32,source:(u32,u16,u8),target:(u32,u16,u8)){
+ let table=p.image.segments[SegmentRegister::Es.index()].base+0x200;let mut gdt=[0u8;48];
+ for (at,(base,limit,access)) in [(0x10,source),(0x18,target)]{
+  gdt[at..at+2].copy_from_slice(&limit.to_le_bytes());gdt[at+2..at+5].copy_from_slice(&base.to_le_bytes()[..3]);gdt[at+5]=access;gdt[at+7]=(base>>24)as u8;
+ }
+ p.ram.write_bytes(table,&gdt).unwrap();
+ p.cpu.regs[0]=0xabcd8734;p.cpu.regs[1]=0x1234_0000|words;p.cpu.regs[6]=0x200;p.cpu.eflags=0x203;p.cpu.undefined_flags=0x41;
+}
+#[test]
+fn int15_e801_reports_the_ram_of_ah88_in_two_ranges(){
+ let mut p=load(&[0xcd,0x15],"e801.com").unwrap();p.cpu.regs=[0xabcde801,0x1111ffff,0x2222ffff,0x3333ffff,0xfffe,5,6,7];p.cpu.eflags=0x203;p.cpu.undefined_flags=1;
+ service(&mut p,0x15,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.regs,[0xabcd3c00,0x11113c00,0x22220000,0x33330000,0xfffe,5,6,7]);assert_eq!((p.cpu.eflags,p.cpu.undefined_flags),(0x202,0));
+ // Through INT 15h itself, with CF set on entry.
+ let r=run(load(&[0xb8,0x01,0xe8,0xf9,0xcd,0x15,0xfa,0xf4],"e801run.com").unwrap(),10).unwrap();
+ assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[1]&0xffff,r.loaded.cpu.regs[2]&0xffff,r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.eflags&1),(0x3c00,0x3c00,0,0,0));
+}
+#[test]
+fn int15_block_move_copies_to_and_from_extended_memory_and_keeps_a20(){
+ let mut p=load(&[0xcd,0x15],"move.com").unwrap();assert!(!p.ram.a20_enabled());
+ let data:Vec<u8>=(0..0x40u32).map(|i|(i*7+3)as u8).collect();p.ram.write_bytes(0x30000,&data).unwrap();
+ block_move_call(&mut p,0x20,(0x30000,0x3f,0x93),(0x200000,0x3f,0x93));
+ service(&mut p,0x15,&mut vec![]).unwrap();
+ // AH=00h, CF=0, ZF=1; AL, CX and the upper halves stay; the gate is still off.
+ assert_eq!((p.cpu.regs[0],p.cpu.regs[1],p.cpu.eflags,p.cpu.undefined_flags),(0xabcd0034,0x1234_0020,0x242,0));assert!(!p.ram.a20_enabled());
+ assert_eq!(&p.ram.bytes()[0x200000..0x200040],&data[..]);assert_eq!(p.ram.bytes()[0x200040],0);assert_eq!(&p.ram.bytes()[0x100000..0x100040],&[0;0x40]);
+ // Back down from extended memory, and with the gate on it stays on.
+ p.ram.set_a20_enabled(true);block_move_call(&mut p,0x10,(0x200020,0xffff,0x92),(0x31000,0xffff,0x92));
+ service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0]>>8)&255,0);assert_eq!(p.cpu.eflags&0x41,0x40);assert!(p.ram.a20_enabled());
+ assert_eq!(&p.ram.bytes()[0x31000..0x31020],&data[0x20..]);assert_eq!(p.ram.bytes()[0x31020],0);
+ // Zero words copy nothing and succeed, whatever the limits.
+ block_move_call(&mut p,0,(0x30000,0,0x93),(0x200000,0,0x93));let before=p.ram.clone();
+ service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&0x41,0x40);assert_eq!(p.ram,before);
+ // Through INT 15h in a program: ES:SI table, CX=2, source 0500h, target 110000h.
+ let mut code=vec![0xbe,0x20,0x01,0xb9,2,0,0xb4,0x87,0xcd,0x15,0xfa,0xf4];code.resize(0x20,0);let mut gdt=[0u8;48];
+ gdt[0x10..0x16].copy_from_slice(&[3,0,0x00,0x05,0x00,0x93]);gdt[0x18..0x1e].copy_from_slice(&[3,0,0x00,0x00,0x11,0x93]);code.extend_from_slice(&gdt);
+ let mut p=load(&code,"moverun.com").unwrap();p.ram.write_bytes(0x500,&[1,2,3,4]).unwrap();
+ let r=run(p,10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!(((r.loaded.cpu.regs[0]>>8)&255,r.loaded.cpu.eflags&0x41),(0,0x40));assert_eq!(&r.loaded.ram.bytes()[0x110000..0x110004],&[1,2,3,4]);assert_eq!(&r.loaded.ram.bytes()[0x10000..0x10002],&[0xcd,0x20],"the A20 alias (the PSP) is untouched");
+}
+#[test]
+fn int15_block_move_copies_forward_word_by_word_and_uses_386_descriptor_fields(){
+ // Destination two bytes above the source: REP MOVSW repeats the first word.
+ let mut p=load(&[0xcd,0x15],"overlap.com").unwrap();p.ram.write_bytes(0x30000,&[1,2,3,4,5,6,7,8,9,10]).unwrap();
+ block_move_call(&mut p,4,(0x30000,7,0x93),(0x30002,7,0x93));service(&mut p,0x15,&mut vec![]).unwrap();
+ assert_eq!(&p.ram.bytes()[0x30000..0x3000a],&[1,2,1,2,1,2,1,2,1,2]);
+ // Destination below the source copies cleanly.
+ p.ram.write_bytes(0x30000,&[1,2,3,4,5,6,7,8,9,10]).unwrap();
+ block_move_call(&mut p,4,(0x30002,7,0x93),(0x30000,7,0x93));service(&mut p,0x15,&mut vec![]).unwrap();
+ assert_eq!(&p.ram.bytes()[0x30000..0x3000a],&[3,4,5,6,7,8,9,10,9,10]);
+ // Readable code as the source; the full 8000h words; base bits 31-24 zero.
+ p.ram.write_bytes(0x40000,&[0x5a;4]).unwrap();p.ram.set_a20_enabled(true);p.ram.store(0x4fffe,MemWidth::Word,0xbeef).unwrap();p.ram.set_a20_enabled(false);
+ block_move_call(&mut p,0x8000,(0x40000,0xffff,0x9b),(0xf00000,0xffff,0x93));service(&mut p,0x15,&mut vec![]).unwrap();
+ assert_eq!(p.cpu.eflags&0x41,0x40);assert_eq!(&p.ram.bytes()[0xf00000..0xf00004],&[0x5a;4]);assert_eq!(&p.ram.bytes()[0xf0fffe..0xf10002],&[0xef,0xbe,0,0]);
+ // A page-granular limit (G with limit 0) covers 4096 bytes: 800h words pass, 801h do not.
+ let table=p.image.segments[SegmentRegister::Es.index()].base+0x200;
+ for (words,flags) in [(0x800,0x40),(0x801,1)]{
+  block_move_call(&mut p,words,(0x40000,0,0x93),(0x200000,0,0x93));p.ram.write_bytes(table+0x16,&[0x80]).unwrap();p.ram.write_bytes(table+0x1e,&[0x80]).unwrap();
+  service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&0x41,flags,"{words:x}");
+ }
+}
+#[test]
+fn int15_block_move_refuses_descriptors_the_copy_would_fault_on(){
+ // limit below 2*CX-1 (source, then destination); not present; system
+ // descriptor; code or read-only destination; execute-only source;
+ // expand-down data.
+ for (source,target) in [((0x30000,0x3e,0x93),(0x200000,0x3f,0x93)),((0x30000,0x3f,0x93),(0x200000,0x3e,0x93)),((0x30000,0x3f,0x13),(0x200000,0x3f,0x93)),((0x30000,0x3f,0x93),(0x200000,0x3f,0x13)),
+  ((0x30000,0x3f,0x82),(0x200000,0x3f,0x93)),((0x30000,0x3f,0x93),(0x200000,0x3f,0x9b)),((0x30000,0x3f,0x93),(0x200000,0x3f,0x91)),((0x30000,0x3f,0x99),(0x200000,0x3f,0x93)),
+  ((0x30000,0x3f,0x97),(0x200000,0x3f,0x93)),((0x30000,0x3f,0x93),(0x200000,0x3f,0x97))]{
+  let mut p=load(&[0xcd,0x15],"refuse.com").unwrap();p.ram.write_bytes(0x30000,&[0x77;0x40]).unwrap();
+  block_move_call(&mut p,0x20,source,target);p.cpu.eflags=0x242;let ram=p.ram.clone();
+  service(&mut p,0x15,&mut vec![]).unwrap();
+  // CF=1, AH=02h, ZF=0; AL and CX stay; nothing is written.
+  assert_eq!((p.cpu.regs[0],p.cpu.regs[1],p.cpu.eflags,p.cpu.undefined_flags),(0xabcd0234,0x1234_0020,0x203,0),"{source:x?} {target:x?}");assert_eq!(p.ram,ram);assert!(!p.ram.a20_enabled());
+ }
+}
+#[test]
+fn int15_block_move_stops_on_what_is_not_modelled(){
+ // More than 8000h words; source or destination past 16 MiB; protected mode.
+ for (words,source,target,text) in [(0x8001,(0x30000,0xffff,0x93),(0x200000,0xffff,0x93),"more than 8000h"),(0x20,(0xffffe0,0x3f,0x93),(0x200000,0x3f,0x93),"source 00FFFFE0h+40h is outside the 16 MiB"),
+  (0x20,(0x30000,0x3f,0x93),(0x1000000,0x3f,0x93),"destination 01000000h+40h is outside the 16 MiB")]{
+  let mut p=load(&[0xcd,0x15],"stop.com").unwrap();p.ram.write_bytes(0x30000,&[0x77;0x40]).unwrap();
+  block_move_call(&mut p,words,source,target);let (cpu,ram)=(p.cpu.clone(),p.ram.clone());
+  let error=service(&mut p,0x15,&mut vec![]).unwrap_err();assert!(error.contains(text),"{error}");assert_eq!((&p.cpu,&p.ram),(&cpu,&ram));
+ }
+ let mut p=load(&[0xcd,0x15],"pm.com").unwrap();block_move_call(&mut p,1,(0x30000,1,0x93),(0x200000,1,0x93));p.image.real_mode=false;
+ assert!(service(&mut p,0x15,&mut vec![]).unwrap_err().contains("outside real mode"));
+ // A ROM destination (C0000h-FFFFFh) succeeds and drops the writes, as a
+ // CPU store there does; a move ending in ROM still fills the RAM part.
+ for target in [0xf0000u32,0xbffc2]{
+  let mut p=load(&[0xcd,0x15],"rom.com").unwrap();p.ram.write_bytes(0x30000,&[0x77;0x40]).unwrap();
+  block_move_call(&mut p,0x20,(0x30000,0x3f,0x93),(target,0x3f,0x93));let rom=p.ram.bytes()[0xc0000..0xc0040].to_vec();
+  service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&0x41,0x40);
+  assert_eq!(&p.ram.bytes()[0xc0000..0xc0040],&rom[..]);if target==0xf0000{assert_ne!(p.ram.bytes()[0xf0000],0x77);}else{assert_eq!(&p.ram.bytes()[0xbffc2..0xc0000],&[0x77;0x3e]);}
+ }
 }

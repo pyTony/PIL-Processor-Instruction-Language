@@ -437,8 +437,11 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // unchanged), and AX=4F00h does not return AL=4Fh.
             Ok(None)
         },
+        (0x15,0x87)=>{block_move::block_move(p)?;Ok(None)},
+        (0x15,0xe8) if p.cpu.regs[0]as u8==0x01=>{block_move::memory_size(p);Ok(None)},
         (0x15,0xe8)=>{
-            // E801h/E820h memory maps postdate this AT-class BIOS: unsupported.
+            // The E820h memory map (and E881h) postdate this AT-class BIOS:
+            // unsupported. E801h is answered above.
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
