@@ -187,6 +187,22 @@ mod tests{
         assert!(session.machine().unwrap().ram.text_watch_json().contains(r#""enabled":false"#));
     }
     #[test]
+    fn bios_service_trace_is_opt_in_and_exported_without_dispatch_history(){
+        let p=load(&[0xcd,0x10,0xcd,0x20],"VID.COM").unwrap();
+        let mut session=session::Session::new(p);
+        assert!(!session.machine().unwrap().services_trace.enabled());
+        session.enable_service_trace().unwrap();
+        assert!(!session.machine().unwrap().history.enabled());
+        session.run(1).unwrap();
+        let trace=session.machine().unwrap().services_trace.json();
+        assert!(trace.contains(r#""vector":"10""#),"{trace}");
+        assert!(trace.contains(r#""location":"1010:0100""#),"{trace}");
+        let (snapshot,_)=session.live_snapshot(0).unwrap();
+        assert!(snapshot.contains(r#""service_trace":{"enabled":true"#));
+        session.disable_service_trace().unwrap();
+        assert!(session.machine().unwrap().services_trace.json().contains(r#""enabled":false"#));
+    }
+    #[test]
     fn live_snapshot_preserves_preexisting_dispatch_history(){
         let mut p=load(&[0xeb,0xfe],"SPIN.COM").unwrap();
         p.history=history::History::new(64);
