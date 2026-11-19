@@ -62,3 +62,47 @@ impl Dispatch{
             self.registers,self.selectors,self.eflags,self.msw)
     }
 }
+
+/// Optional, bounded record of emulated DOS/BIOS service calls.
+/// This is independent of CPU dispatch history, so native block execution
+/// remains available while service tracing is enabled.
+#[derive(Clone,Debug,Default)]
+pub(crate) struct ServiceTrace{
+    next:u64,
+    entries:VecDeque<ServiceCall>,
+    enabled:bool,
+}
+#[derive(Clone,Debug)]
+struct ServiceCall{
+    sequence:u64,vector:u8,cs:u16,ip:u32,
+    ax:u16,bx:u16,cx:u16,dx:u16,ds:u16,es:u16,
+    result_ax:u16,carry:bool,video_mode:Option<u8>,
+}
+impl ServiceTrace{
+    const CAPACITY:usize=256;
+    pub(crate) fn enable(&mut self){self.enabled=true;self.entries.clear();self.next=0;}
+    pub(crate) fn disable(&mut self){self.enabled=false;self.entries.clear();}
+    pub(crate) fn enabled(&self)->bool{self.enabled}
+    pub(crate) fn record(&mut self,p:&Loaded,vector:u8,site:(u16,u32),before:[u16;6]){
+        if !self.enabled{return;}
+        let entry=ServiceCall{
+            sequence:self.next,vector,cs:site.0,ip:site.1,
+            ax:before[0],bx:before[1],cx:before[2],dx:before[3],
+            ds:before[4],es:before[5],
+            result_ax:p.cpu.regs[0] as u16,carry:p.cpu.eflags&1!=0,
+            video_mode:p.ram.load(0x449,MemWidth::Byte).ok().map(|v|v as u8),
+        };
+        self.next=self.next.saturating_add(1);
+        if self.entries.len()==Self::CAPACITY{self.entries.pop_front();}
+        self.entries.push_back(entry);
+    }
+    pub(crate) fn json(&self)->String{
+        if !self.enabled{return r#"{"enabled":false}"#.to_string();}
+        let entries=self.entries.iter().map(|e|format!(
+            r#"{{"sequence":{},"vector":"{:02X}","location":"{:04X}:{:04X}","ax":{},"bx":{},"cx":{},"dx":{},"ds":{},"es":{},"result_ax":{},"carry":{},"video_mode":{}}}"#,
+            e.sequence,e.vector,e.cs,e.ip,e.ax,e.bx,e.cx,e.dx,e.ds,e.es,e.result_ax,
+            e.carry,e.video_mode.map_or_else(||"null".to_string(),|v|v.to_string())
+        )).collect::<Vec<_>>().join(",");
+        format!(r#"{{"enabled":true,"capacity":{},"total":{},"calls":[{}]}}"#,Self::CAPACITY,self.next,entries)
+    }
+}
