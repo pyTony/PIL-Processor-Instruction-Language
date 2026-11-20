@@ -93,7 +93,9 @@ footer { color:var(--muted); font-size:12px; margin-top:20px; }
 </div>
 </section>
 <div id="status" role="status">Connecting to PILdos...</div>
-<details id="diagnostics"><summary>Execution diagnostics</summary><div id="diagnostic-report" role="status" aria-live="off">Waiting for a frame...</div><small>Step progress does not guarantee guest graphics progress. Pause to inspect the last frame.</small></details>
+<details id="diagnostics"><summary>Execution diagnostics</summary>
+<button type="button" id="video-watch" aria-pressed="false">Count video writes</button>
+<div id="diagnostic-report" role="status" aria-live="off">Waiting for a frame...</div><small>Step progress does not guarantee guest graphics progress. Pause to inspect the last frame.</small></details>
 <div id="interrupt-status" role="status" aria-live="polite"></div>
 <div class="controls">
 <label>CPU slice <select id="budget"><option value="5000">5k</option><option value="20000" selected>20k</option><option value="50000">50k</option><option value="100000">100k</option></select></label>
@@ -312,6 +314,7 @@ function planar(reply){
 let previousDiagnosticSteps=null, previousDiagnosticTime=null;
 let firstDiagnosticSteps=null, firstDiagnosticTime=null;
 let previousFrameSignature=null, unchangedFrames=0;
+let previousPc=null, repeatedPc=0, previousVideoTotal=null;
 function formatRate(value){
   return Number.isFinite(value)&&value>=0?Math.round(value).toLocaleString()+" steps/s":"measuring...";
 }
@@ -352,12 +355,35 @@ function reportProgress(reply){
     previousFrameSignature=signature;
   }else{unchangedFrames=0;previousFrameSignature=null;}
   const changed=signature===null?"no graphics framebuffer":unchangedFrames===0?"sample changed":"sample unchanged for "+unchangedFrames+" polls";
+  // A single sampled CS:IP is not proof of a loop, but repeat samples
+  // alongside stagnant VRAM counts provide useful independent evidence.
+  const pc=Number.isInteger(reply.cs)&&Number.isInteger(reply.eip)
+    ?reply.cs.toString(16).toUpperCase().padStart(4,"0")+":"+
+     reply.eip.toString(16).toUpperCase().padStart(4,"0"):"unavailable";
+  repeatedPc=pc===previousPc?repeatedPc+1:0;
+  previousPc=pc;
+  const video=reply.video_writes;
+  let videoDetail="write counter off";
+  if(video&&video.enabled){
+    const total=Number(video.total);
+    const difference=previousVideoTotal!==null&&total>=previousVideoTotal?total-previousVideoTotal:null;
+    videoDetail="writes "+total.toLocaleString()+
+      " (+"+(difference===null?"?":difference.toLocaleString())+" since frame)"+
+      " | graphics "+Number(video.graphics).toLocaleString()+
+      " | text "+Number(video.text).toLocaleString();
+    previousVideoTotal=total;
+  }else{previousVideoTotal=null;}
+  const watchButton=document.getElementById("video-watch");
+  watchButton.setAttribute("aria-pressed",String(!!video?.enabled));
+  watchButton.textContent=video?.enabled?"Stop counting video writes":"Count video writes";
   document.getElementById("diagnostic-report").textContent=
     "Guest: "+(reply.status||"unknown")+" | total steps: "+(reply.steps??"?")+
     " | steps since prior update: "+(delta??"first sample")+
     " | recent: "+formatRate(instantRate)+
     " | average: "+formatRate(totalRate)+
-    " | graphics: "+changed;
+    " | graphics: "+changed+
+    " | CS:IP "+pc+(repeatedPc?" ("+repeatedPc+" repeated samples)":"")+
+    " | VRAM: "+videoDetail;
 }
 function paint(reply){
   latest=reply;
@@ -392,6 +418,17 @@ function error(e){
   running=false;document.getElementById("toggle").textContent="Resume";
 }
 async function refresh(){try{paint(await api("/api/state"));}catch(e){error(e);}}
+document.getElementById("video-watch").addEventListener("click",async()=>{
+  const button=document.getElementById("video-watch");
+  const enabled=button.getAttribute("aria-pressed")!=="true";
+  button.disabled=true;
+  try{
+    await api("/api/video-watch",{enabled});
+    previousVideoTotal=null;
+    await refresh();
+  }catch(e){status.textContent="Video diagnostics: "+String(e.message||e);}
+  finally{button.disabled=false;}
+});
 async function loop(){
   if(inLoop||!running)return;
   inLoop=true;
