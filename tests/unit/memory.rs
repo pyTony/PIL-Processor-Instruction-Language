@@ -55,3 +55,24 @@ fn a20_masks_only_bit_twenty_and_cross_boundary_accesses_are_atomic(){
     assert!(m.write_bytes(0xfffff,&[1,2,3]).is_err());assert_eq!(m,before);
     m.set_a20_enabled(true);assert_eq!(m.load(0x100000,MemWidth::Dword).unwrap(),0x88776655);assert_eq!(m.load(0,MemWidth::Word).unwrap(),0xdead);
 }
+
+#[test]
+fn video_write_watch_counts_real_aperture_stores_and_resets(){
+    let mut m=Ram::new(0x100000);
+    assert!(m.video_watch_json().contains(r#""enabled":false"#));
+    m.start_video_watch();
+    m.store(0xa0000,MemWidth::Byte,0x12).unwrap();
+    m.store(0xa0000,MemWidth::Byte,0x12).unwrap(); // counted write, unchanged byte
+    m.store(0xb8000,MemWidth::Word,0x5678).unwrap();
+    m.write_bytes(0xb0000,&[0x34,0x56]).unwrap();
+    m.store(0x2000,MemWidth::Byte,0xaa).unwrap(); // not VRAM
+    let json=m.video_watch_json();
+    assert!(json.contains(r#""total":6"#),"{json}");
+    assert!(json.contains(r#""graphics":2"#),"{json}");
+    assert!(json.contains(r#""text":4"#),"{json}");
+    assert!(json.contains(r#""changed_known":5"#),"{json}");
+    m.start_video_watch();
+    assert!(m.video_watch_json().contains(r#""total":0"#));
+    m.stop_video_watch();
+    assert!(m.video_watch_json().contains(r#""enabled":false"#));
+}
