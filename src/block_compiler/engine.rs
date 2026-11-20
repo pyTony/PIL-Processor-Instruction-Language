@@ -74,6 +74,12 @@ pub(crate) struct Blocks {
     /// Block entries and instructions retired in blocks, for diagnostics.
     pub(crate) blocks:u64,
     pub(crate) instructions:u64,
+    /// Successfully retired native forms, excluding interpreter fallback.
+    pub(crate) native_instructions:u64,
+    /// Successfully retired PIL instructions executed by the interpreter.
+    pub(crate) interpreted_instructions:u64,
+    /// Native forms retired outside blocks.
+    pub(crate) single_instructions:u64,
     pub(crate) compare_branches:u64,
     /// Returns to the DOS loop with at least one instruction retired (a
     /// chain of blocks counts once).
@@ -129,7 +135,7 @@ impl Blocks {
         self.map.clear();
     }
 
-    fn plan(cache:&mut DecodeCache,image:&Image,ram:&Ram,eip:u32)->Option<Block>{
+    fn plan(cache:&mut DecodeCache,image:&Image,ram:&Ram,eip:u32,required:bool)->Option<Block>{
         if image.paging||!image.real_mode{return None;}
         let base=image.segments[1].base;
         let linear=base.checked_add(eip)?;
@@ -142,6 +148,7 @@ impl Blocks {
             let code=&signature[..decoded.length as usize];
             if answered_by_loop(code){break;}
             let Operation::Pil{program,flow,..}=&decoded.operation else{break};
+            if required && decoded.native().is_none(){break;}
             if program.partial{break;}
             let last=boundary(program);let next=flow.next_eip;
             bytes.extend_from_slice(code);steps.push(decoded.clone());
@@ -217,7 +224,7 @@ impl Blocks {
         // so links to the old one stop matching.
         let mut from=from;
         if self.slots.len()>=CAPACITY{self.clear();from=None;}
-        let planned=Self::plan(cache,image,ram,eip)?;
+        let planned=Self::plan(cache,image,ram,eip,self.mode.unwrap_or_else(crate::precompiled::mode)==crate::precompiled::Mode::Required)?;
         let i=match self.map.get(&linear).copied(){
             Some(i)=>{let (version,old)=&mut self.slots[i];count(old,&mut self.pending);*old=planned;*version+=1;i},
             None=>{self.slots.push((self.next_version,planned));self.next_version+=1;self.map.insert(linear,self.slots.len()-1);self.slots.len()-1},
@@ -251,11 +258,13 @@ impl Blocks {
             }
             for decoded in &block.steps[..prefix]{
                 let Operation::Pil{program,dst,src,flow,address}=&decoded.operation else{unreachable!("blocks hold PIL operations")};
-                let result=match decoded.native(){
+                let native = decoded.native();
+                let result=match native{
                     Some(native)=>(native.form)(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,ram,*address,machine,&native.consts),
                     None=>{let mut lazy=crate::LazyFlags::None;let r=crate::execute_machine_lazy(program,cpu,*dst,*src,*flow,ram,*address,machine,&mut lazy).map(|_|());lazy.flush(&mut cpu.eflags,&mut cpu.undefined_flags);r},
                 };
                 if let Err(e)=result{failure=Some(e);break;}
+                if native.is_some(){self.native_instructions+=1;}else{self.interpreted_instructions+=1;}
                 n+=1;
             }
             if failure.is_none() {
@@ -264,6 +273,7 @@ impl Blocks {
                     // A pair overwrites all arithmetic flags before its branch.
                     *flags = pair.execute(cpu);
                     self.compare_branches += 1;
+                    self.native_instructions += 2;
                     machine.retired();
                     n += 2;
                 }

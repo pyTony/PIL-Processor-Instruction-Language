@@ -165,9 +165,11 @@ class DosTerminalTests(unittest.TestCase):
             'steps': 1000, 'native_blocks': 100,
             'native_block_instructions': 400,
             'native_single_instructions': 300,
+            'interpreter_instructions': 50,
         })
         self.assertIn('Native total: 700 (70.0% of steps)', output)
         self.assertIn('Native single instructions: 300', output)
+        self.assertIn('Interpreted PIL instructions: 50', output)
         self.assertIn('Other steps: 300 (includes DOS/BIOS services)', output)
         self.assertIn('Average native block length: 4.00', output)
         self.assertIn('stats unavailable', term.format_native_stats({'steps': 10}))
