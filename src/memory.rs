@@ -401,21 +401,21 @@ impl Ram {
         if self.paging.get().is_some(){
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
-                if !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
+                if self.video_watch.is_some() && !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
                 match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
             }
             self.settle();
             return Ok(());
         }
         if let Some(offset)=self.alias(address,bytes){
-            for shift in 0..bytes{self.note_video_write(0xa0000+(offset+shift)%super::vga_planar::PLANE,None);}
+            if self.video_watch.is_some(){for shift in 0..bytes{self.note_video_write(0xa0000+(offset+shift)%super::vga_planar::PLANE,None);}}
             let p=self.planar.as_deref_mut().unwrap();
             for shift in 0..bytes{let at=offset+shift;p.poke(at/super::vga_planar::PLANE,at%super::vga_planar::PLANE,(value>>(shift*8))as u8);}
             return Ok(());
         }
         for shift in 0..bytes {
             let index=self.physical_address(address+shift as u32)as usize;let byte=(value>>(shift*8)) as u8;
-            if !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
+            if self.video_watch.is_some() && !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
                 match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
         }
         Ok(())
