@@ -161,6 +161,14 @@ class DineBuildTests(unittest.TestCase):
                                           "--output-dir", str(self.output)]), 0)
         self.assertEqual([argv[0] for argv, _ in self.calls], ["rustc"])
         self.assertEqual(self.library.read_bytes(), runtime.read_bytes())
+        source = self.root / "target" / "dine-launchers" / self.guest.stem / "main.rs"
+        self.assertIn("const PREBUILT_RUNTIME: bool = true;", source.read_text())
+        self.assertTrue(json.loads(self.manifest.read_text())["prebuilt_runtime"])
+        self.calls.clear()
+        self.assertEqual(self.invoke(argv=[str(self.guest), "--runtime", str(runtime),
+                                          "--output-dir", str(self.output), "--run"],
+                                     tools_available=False), 0)
+        self.assertEqual(len(self.calls), 1)
 
     def test_cli_rejects_colliding_outputs_before_building(self):
         other = self.root / "elsewhere" / self.guest.name
