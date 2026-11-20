@@ -314,7 +314,7 @@ struct Backend {
     sites: std::collections::BTreeMap<(u16, u32, Reference), u64>,
 }
 impl Backend {
-    fn reason(&self, image: &Image, ram: &Ram, ip: u32) -> Reference {
+    fn reason(&self, image: &Image, ram: &Ram, ip: u32, length: u32) -> Reference {
         if !image.real_mode
             || image.paging
             || image.segments[1].default_32()
@@ -335,36 +335,26 @@ impl Backend {
             .resource_origin(linear)
             .filter(|(id, _)| *id == std::sync::Arc::as_ptr(&self.resource) as usize)
             .map(|(_, offset)| RESOURCE | offset);
-        let mut prepared = false;
+        let Ok(current) = image.fetch_signature(ram, ip, length) else {
+            return Reference::Unprepared;
+        };
+        let mut changed = false;
         for offset in [initial, resource].into_iter().flatten() {
-            prepared = true;
             let at = (offset & !RESOURCE) as usize;
             let original = if offset & RESOURCE != 0 {
                 self.resource.as_slice()
             } else {
                 self.original.as_slice()
             };
-            if let Ok(index) = self.records.binary_search_by_key(&offset, |r| r.offset) {
-                let record = &self.records[index];
-                if image
-                    .fetch_signature(ram, ip, u32::from(record.length))
-                    .is_ok_and(|b| {
-                        b[..record.length as usize] != original[at..at + record.length as usize]
-                    })
-                {
-                    return Reference::Modified;
+            if let Some(expected) = original.get(at..at + length as usize) {
+                if current[..length as usize] == *expected {
+                    return Reference::Unavailable;
                 }
-            } else if image
-                .fetch_signature(ram, ip, 1)
-                .is_ok_and(|b| Some(&b[0]) != original.get(at))
-            {
-                // A source interrupt/port entry has no PIL call record. If
-                // the program replaces its opcode, it is changed code too.
-                return Reference::Modified;
+                changed = true;
             }
         }
-        if prepared {
-            Reference::Unavailable
+        if changed {
+            Reference::Modified
         } else {
             Reference::Unprepared
         }
@@ -412,6 +402,9 @@ impl Backend {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
             };
+            if crate::block_compiler::engine::answered_by_loop(&bytes[..record.length as usize]) {
+                continue;
+            }
             let original = if offset & RESOURCE != 0 {
                 self.resource.as_slice()
             } else {
@@ -446,6 +439,13 @@ fn context(
     (flow, address)
 }
 impl dos::InstructionBackend for Backend {
+    fn reference_instruction(&mut self, image: &Image, ram: &Ram, ip: u32, decoded: &Decoded) {
+        self.pending = Some((
+            self.reason(image, ram, ip, decoded.length),
+            image.selectors[1],
+            ip,
+        ));
+    }
     fn fallback_mode(&self) -> Option<precompiled::Mode> {
         Some(precompiled::Mode::Off)
     }
@@ -545,7 +545,6 @@ impl dos::InstructionBackend for Backend {
             Some(Ok(record)) => record,
             Some(Err(error)) => return Some(Err(error)),
             None => {
-                self.pending = Some((self.reason(image, ram, ip), image.selectors[1], ip));
                 return None;
             }
         };
@@ -690,12 +689,14 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
     word(2, (total % 512) as u16);
     word(4, total.div_ceil(512) as u16);
     word(8, 2);
-    let extra = (loaded.allocated_end as usize - 0x10000) / 16 - 16 - module.len().div_ceil(16);
+    let psp_base = usize::from(loaded.psp) * 16;
+    let load_segment = (loaded.module_base >> 4) as u16;
+    let extra = (loaded.allocated_end as usize - psp_base) / 16 - 16 - module.len().div_ceil(16);
     word(12, extra.max(1) as u16);
-    word(14, loaded.selectors[2].wrapping_sub(0x1010));
+    word(14, loaded.selectors[2].wrapping_sub(load_segment));
     word(16, loaded.cpu.regs[4] as u16);
     word(20, loaded.cpu.eip as u16);
-    word(22, loaded.selectors[1].wrapping_sub(0x1010));
+    word(22, loaded.selectors[1].wrapping_sub(load_segment));
     startup.extend(&module);
     let mut records = Vec::new();
     let mut offsets = Vec::new();
@@ -717,6 +718,10 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
                 continue;
             };
             if offset + decoded.length as usize > data.len() {
+                continue;
+            }
+            if crate::block_compiler::engine::answered_by_loop(&encoded[..decoded.length as usize])
+            {
                 continue;
             }
             let Operation::Pil {
@@ -753,13 +758,13 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
             for c in constants {
                 put64(&mut records, c);
             }
-            let label = decoded
-                .label
-                .split_whitespace()
-                .next()
-                .unwrap_or("PIL")
-                .as_bytes();
-            records.push(label.len() as u8);
+            let label = decoded.label.as_bytes();
+            records.push(
+                label
+                    .len()
+                    .try_into()
+                    .map_err(|_| "instruction label exceeds artifact bounds")?,
+            );
             records.extend(label);
             offsets.push(tag | offset as u32);
         }
@@ -1069,6 +1074,31 @@ mod tests {
             session.machine().unwrap().blocks.interpreted_instructions,
             1
         );
+    }
+    #[test]
+    fn prepared_port_instructions_keep_the_shared_dos_service_boundary() {
+        if precompiled::forms() == 0 {
+            return;
+        }
+        let bytes = [0x26, 0xe4, 0x91, 0xcd, 0x20];
+        let mut original = dos::load(&bytes, "PORTS.COM").unwrap();
+        original.blocks.mode = Some(precompiled::Mode::Off);
+        let mut out = crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let reference = dos::run_with_backend(original, 20, &mut out, None).unwrap();
+        assert!(matches!(reference.stop, dos::Stop::Service(_)));
+        let (data, _) = compile(&bytes, "PORTS.COM").unwrap();
+        let app = Application::read(&data).unwrap();
+        let mut session = dos::session::Session::new(dos::load(&app.image, "PORTS.COM").unwrap());
+        app.attach(&mut session, None).unwrap();
+        session.run(20).unwrap();
+        assert_eq!(session.machine().unwrap().cpu, reference.loaded.cpu);
+        assert_eq!(session.machine().unwrap().ram, reference.loaded.ram);
+        assert_eq!(session.exit_code(), None);
+        assert!(session
+            .command(0, "snapshot")
+            .unwrap()
+            .0
+            .contains("unimplemented service:"));
     }
     #[test]
     fn malformed_prepared_inputs_are_rejected_without_execution() {

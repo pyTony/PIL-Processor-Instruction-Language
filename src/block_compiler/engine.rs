@@ -95,7 +95,7 @@ fn opcode(bytes:&[u8])->Option<u8>{
     bytes.iter().copied().find(|b|!matches!(b,0x66|0x67|0x26|0x2e|0x36|0x3e|0x64|0x65|0xf0|0xf2|0xf3))
 }
 /// Instructions the DOS loop handles before the PIL decoder sees them.
-fn answered_by_loop(bytes:&[u8])->bool{
+pub(crate) fn answered_by_loop(bytes:&[u8])->bool{
     matches!(opcode(bytes),None|Some(0xe4..=0xe7|0xec..=0xef|0x6c..=0x6f|0xd8..=0xdf|0x9b|0xcc..=0xce|0xf4))
 }
 /// Linear code addresses blocks never cover: Dine's own low memory (vector

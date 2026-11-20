@@ -804,6 +804,7 @@ pub(crate) trait InstructionBackend {
     /// Number of generated single-instruction dispatches outside native blocks.
     fn single_stats(&self)->u64{0}
     fn reference_retired(&mut self){}
+    fn reference_instruction(&mut self,_image:&Image,_ram:&Ram,_ip:u32,_decoded:&super::guest::Decoded){}
     fn reference_stats(&self)->Option<u64>{None}
     fn fallback_mode(&self)->Option<crate::precompiled::Mode>{None}
     fn diagnostics(&self)->String{String::new()}
@@ -1242,7 +1243,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                     }else{None}
                 }else{None};
                 let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
-                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}};
+                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");if let Some(b)=backend.as_deref_mut(){b.reference_instruction(&p.image,&p.ram,old_ip,&decoded);}let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}};
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
