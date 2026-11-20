@@ -276,7 +276,8 @@ impl Session{
         // 16 cursor-mask rows (high bit leftmost) as little-endian words.
         let shape=self.loaded.as_ref().and_then(|p|p.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
             format!(",\"mouse_hotspot\":[{hx},{hy}],\"mouse_shape\":\"{}\"",rows.iter().map(|w|format!("{:02x}{:02x}",w&0xff,w>>8)).collect::<String>()));
-        let diagnostic=format!("{diagnostic},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
+        let video_watch=self.loaded.as_ref().map_or_else(||r#"{\"enabled\":false}"#.to_string(),|p|p.ram.video_watch_json());
+        let diagnostic=format!("{diagnostic},\"video_writes\":{video_watch},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
         Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"com1_wait\":{com1_wait},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
@@ -362,6 +363,15 @@ impl Session{
                 _=>(false,"country needs 1 or 358".into(),false),
             },
             // `ansi on`: load the ANSI.SYS-style CON driver, as DEVICE=ANSI.SYS would.
+            // Diagnostics are opt-in to preserve normal Termux performance.
+            ["video-watch","on"]=>{
+                self.loaded.as_mut().ok_or("session state lost")?.ram.start_video_watch();
+                (true,"Video write counter enabled".into(),false)
+            },
+            ["video-watch","off"]=>{
+                self.loaded.as_mut().ok_or("session state lost")?.ram.stop_video_watch();
+                (true,"Video write counter disabled".into(),false)
+            },
             ["ansi","on"]=>{super::console::ansi::install(self.loaded.as_mut().ok_or("session state lost")?)?;(true,String::new(),false)},
             ["console","com1"]=>{
                 let p=self.loaded.as_mut().ok_or("session state lost")?;
