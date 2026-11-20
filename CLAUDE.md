@@ -1,3 +1,38 @@
+# Dr.Web 3.23 reaches its menu: DOS verify flag, INT 13h tracing — 20 November 2026
+
+Tony's Dr.Web 3.23 (retro image, Utilities > Dr.Web scanner, a 1990s
+Russian anti-virus scanner) stopped on INT 21h AH=54h. Run here through
+FreeCOM from FD14LITE.img (copied from his driveD, not in the repo), it met:
+- INT 21h AH=54h (get VERIFY): AH=2Eh sets the flag from AL (nonzero is
+  on), AH=54h returns it in AL; off at start (FreeDOS inthndlr.c).
+- INT 10h AX=1103h (character map select): BL goes to sequencer register
+  03h in text modes, where programs may now write that register too.
+  Glyphs stay the host font's, as with AX=1100h.
+- INT 21h AH=BAh, one of the probes virus scanners make for resident
+  viruses. Functions DOS does not define (18h, 1Dh, 1Eh, 20h, 6Bh and
+  6Dh-FFh without an arm of their own) return AL=00h and change nothing
+  else, as MS-DOS and FreeDOS do; this replaces the AH=DCh special case.
+- An endless loop: Dr.Web traces INT 13h with its own small x86 emulator,
+  which follows INT n through the vector. Dine's entries were INT n; IRET
+  at F000:F000+3n, so INT 13h's vector led to INT 13h again. Entries are
+  now a private HLT, n, IRET, caught by address before decoding (as DOSBox
+  catches its callback opcodes); a tracer sees an ordinary instruction and
+  runs it, and Dine answers the call there.
+- INT 13h AH=54h, the harmless function it traces with: functions the AT
+  disk BIOS does not define (06h, 07h, 0Eh, 0Fh, 12h, 13h, 19h and up,
+  including EDD's 41h) give CF=1, AH=01h, with status 01h at 0040:0041
+  (diskette) or 0040:0074 (fixed disk), as the IBM AT BIOS does. Defined
+  functions Dine does not model (reads, writes) still stop.
+After that Dr.Web finishes its memory scan ("no viruses found in memory")
+and waits at its menu. Its text is code page 866; Dine draws CP437, so
+the Russian text shows as other symbols (a CP866 font is not done).
+
+Local Windows, release: 1011 Rust tests pass, 2 ignored (4 new; the
+unsupported-DOS-call example moved from AH=E0h to AH=5Ch, and the entry
+bytes test expects F4h n CFh). FreeCOM LH MEM, SuperCalc 5.5 (grid after
+Enter) and Doom (60 s, startup) run as before. Single-step traps (TF) are
+still not modelled; Dr.Web did not need them here. Not run on Linux.
+
 # Upper memory (DOS=UMB) and LOADHIGH — 20 November 2026
 
 Tony: "Can we load high then?" With the XMS driver installed, Dine now

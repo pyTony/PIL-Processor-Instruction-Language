@@ -257,6 +257,17 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
+        (0x13,ah) if !matches!(ah,0x00..=0x05|0x08..=0x0d|0x10|0x11|0x14..=0x18)=>{
+            // Not a function of the AT disk BIOS (no EDD either, so AH=41h
+            // finds none): CF=1, AH=01h (invalid function), and the same
+            // status in the BIOS data area, 0040:0041 for diskettes and
+            // 0040:0074 for fixed disks, as the IBM AT BIOS stores it. Virus
+            // scanners trace INT 13h with such a function so no disk is read.
+            let status=if p.cpu.regs[2]&0x80==0{0x441}else{0x474};
+            p.ram.store(status,MemWidth::Byte,1).map_err(|e|format!("BIOS disk status write: {e:?}"))?;
+            p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x0100;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
         (0x15,0xd8) if p.cpu.regs[0]as u8==0=>{
             // EISA slot-information probe on this non-EISA BIOS.
             p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x8600;

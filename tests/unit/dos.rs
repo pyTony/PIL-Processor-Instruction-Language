@@ -3806,3 +3806,14 @@ fn undefined_dos_functions_return_al_zero_and_change_nothing_else(){
   assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.eflags&1),(u32::from(ah)<<8,0x1234,1),"{ah:02x}");
  }
 }
+#[test]
+fn disk_bios_answers_functions_it_does_not_define_with_invalid_function(){
+ // MOV AX,5439h; MOV DL,DLV; CLC; INT 13h; CLI; HLT
+ for(ah,dl,status)in [(0x54u8,0x00u8,0x441u32),(0x41,0x80,0x474),(0x06,0x01,0x441),(0xff,0x81,0x474)]{
+  let code=[0xb8,0x39,ah,0xb2,dl,0xf8,0xcd,0x13,0xfa,0xf4];
+  let r=run(load(&code,"int13.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{ah:02x} {:?}",r.stop);
+  assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.eflags&1,r.loaded.ram.load(status,MemWidth::Byte).unwrap()),(0x0139,1,1),"{ah:02x}");
+ }
+ // A defined AT function that Dine does not model (read sectors) still stops.
+ let r=run(load(&[0xb4,0x02,0xcd,0x13,0xfa,0xf4],"read.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+}
