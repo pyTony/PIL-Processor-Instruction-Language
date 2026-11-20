@@ -176,7 +176,7 @@ fn missing_cpu_encoding_stops_without_skipping_or_modifying_state(){
 }
 #[test]
 fn unsupported_dos_calls_and_monitor_stops_are_not_cpu_gaps(){
-    let b=[0xb4,0xe0,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
+    let b=[0xb4,0x5c,0xcd,0x21];let r=run(load(&b,"service.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)));assert_eq!(r.loaded.cpu.eip,0x102);assert_eq!(r.completed,1);assert_eq!(r.dos_calls,0);
     let r=run(load(&[0xfa,0xf4],"halt.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)));
     let r=run(load(&[0x9a,0,0,0,0xa0],"boundary.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Boundary(_)));assert_eq!(r.completed,1);
 }
@@ -3784,5 +3784,25 @@ fn int15_block_move_stops_on_what_is_not_modelled(){
   block_move_call(&mut p,0x20,(0x30000,0x3f,0x93),(target,0x3f,0x93));let rom=p.ram.bytes()[0xc0000..0xc0040].to_vec();
   service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.eflags&0x41,0x40);
   assert_eq!(&p.ram.bytes()[0xc0000..0xc0040],&rom[..]);if target==0xf0000{assert_ne!(p.ram.bytes()[0xf0000],0x77);}else{assert_eq!(&p.ram.bytes()[0xbffc2..0xc0000],&[0x77;0x3e]);}
+ }
+}
+#[test]
+fn verify_flag_is_set_by_ah2e_and_read_by_ah54(){
+ // MOV AH,54h; INT 21h; MOV BL,AL; MOV AX,2E05h; INT 21h; MOV AH,54h; INT 21h; MOV BH,AL;
+ // MOV AX,2E00h; INT 21h; MOV AH,54h; INT 21h; CLI; HLT
+ let code=[0xb4,0x54,0xcd,0x21,0x88,0xc3,0xb8,0x05,0x2e,0xcd,0x21,0xb4,0x54,0xcd,0x21,0x88,0xc7,0xb8,0x00,0x2e,0xcd,0x21,0xb4,0x54,0xcd,0x21,0xfa,0xf4];
+ let mut p=load(&code,"verify.com").unwrap();p.cpu.eflags|=1;let flags=p.cpu.eflags;
+ let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ // Off at start, on after AL=05h, off again after AL=00h; flags untouched.
+ assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[0]&0xff),(0x0100,0));assert!(!r.loaded.verify);
+ assert_eq!(r.loaded.cpu.eflags&1,flags&1);
+}
+#[test]
+fn undefined_dos_functions_return_al_zero_and_change_nothing_else(){
+ // MOV AX,BAFFh; MOV BX,1234h; STC; INT 21h; CLI; HLT, for undefined and null functions.
+ for ah in [0x18u8,0x1d,0x1e,0x20,0x6b,0x6d,0xba,0xdc,0xff]{
+  let code=[0xb8,0xff,ah,0xbb,0x34,0x12,0xf9,0xcd,0x21,0xfa,0xf4];
+  let r=run(load(&code,"undef.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{ah:02x} {:?}",r.stop);
+  assert_eq!((r.loaded.cpu.regs[0]&0xffff,r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.eflags&1),(u32::from(ah)<<8,0x1234,1),"{ah:02x}");
  }
 }

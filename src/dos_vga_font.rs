@@ -60,6 +60,18 @@ pub(super) fn load_user_patterns(p:&mut Loaded)->Result<(),String>{
     if p.ram.planar().is_some(){p.ram.set_planar(Some(font));}else{p.vga.font=Some(font);}
     Ok(())
 }
+/// INT 10/AX=1103: BL is the character map select value (sequencer register
+/// 03h: the font blocks for attribute bit 3 clear and set), as the VGA BIOS
+/// writes it. Text modes only. It is recorded like a program's own write to
+/// that register; the host-font frontend draws the same glyphs whichever
+/// block is selected, as it does for glyphs loaded with AX=1100h.
+pub(super) fn select_blocks(p:&mut Loaded)->Result<(),String>{
+    if p.vga.idle.text_map.is_none(){return Err("INT 10h AX=1103h outside a text mode is not modelled".into());}
+    let bl=p.cpu.regs[3]as u8;
+    p.vga.idle.seq[3]=bl;
+    if let Some(planes)=p.ram.planar_mut(){planes.seq[3]=bl;}
+    Ok(())
+}
 #[cfg(test)]
 #[path="../tests/unit/dos_vga_font.rs"]
 mod tests;

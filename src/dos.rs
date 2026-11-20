@@ -154,6 +154,8 @@ pub struct Loaded{
     pub clock_offset:Option<i64>,
     /// The BREAK setting of INT21/AH33 AL=00h-02h; DOS starts with it off.
     pub break_check:bool,
+    /// The VERIFY setting of INT21/AH2E (set) and AH54 (get); off at start.
+    pub verify:bool,
     /// The CMOS register that port 71h reads, as port 70h last chose it.
     pub cmos_index:u8,pub cmos_shutdown:u8,rtc:rtc::Rtc,dos_date_adjust:i64,
     /// The DOS country code (001 or 358) for AH38 and AH65.
@@ -188,7 +190,7 @@ impl Clone for Loaded{
         open_handles:self.open_handles,dos_error:self.dos_error,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
         input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
         own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),load_only:self.load_only.clone(),return_code:self.return_code,
-        con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
+        con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,break_check:self.break_check,verify:self.verify,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
         mouse:self.mouse.clone(),xms:self.xms.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),
     }}
@@ -467,7 +469,7 @@ fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compi
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()}.with_upper_memory()
+    Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,verify:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()}.with_upper_memory()
 }
 impl Loaded{
     /// DOS=UMB comes with the XMS driver (dos_memory_arena::set_umbs).
