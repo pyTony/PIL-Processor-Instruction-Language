@@ -15,6 +15,13 @@ The names reflect separate responsibilities:
 - **`Dine_MANDVGA.exe`**: a small host executable containing the original
   guest program and a loader that calls `dine.dll` dynamically.
 
+The standard `pil` command calls the same Rust `dine` library. Its entry
+point is a thin wrapper around `dine::run_cli()`; all CPU, DOS and device
+implementation lives in the library. Cargo produces a Rust `rlib` for the
+command and a `cdylib` for C ABI launchers from that one library target.
+The command links the Rust library directly and can run without a separate
+DLL. Build the C ABI with `--lib --features dine-library` as before.
+
 ## One-command build workflow
 
 Install Python 3.10 or newer and the Rust toolchain (`cargo`, `rustc`, and the
