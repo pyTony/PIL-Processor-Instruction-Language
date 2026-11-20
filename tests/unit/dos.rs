@@ -3817,3 +3817,18 @@ fn disk_bios_answers_functions_it_does_not_define_with_invalid_function(){
  // A defined AT function that Dine does not model (read sectors) still stops.
  let r=run(load(&[0xb4,0x02,0xcd,0x13,0xfa,0xf4],"read.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
 }
+
+#[test]
+fn dos_session_video_watch_is_opt_in_and_visible_in_snapshots(){
+    let p=load(&[0xeb,0xfe],"VIDEO.COM").unwrap();
+    let mut session=session::Session::new(p);
+    let (initial,_)=session.command(0,"snapshot").unwrap();
+    assert!(initial.contains(r#""video_writes":{"enabled":false}"#),"{initial}");
+    let (enabled,_)=session.command(1,"video-watch on").unwrap();
+    assert!(enabled.contains(r#""video_writes":{"enabled":true,"total":0"#),"{enabled}");
+    session.machine_mut().unwrap().ram.store(0xa0000,MemWidth::Byte,0x42).unwrap();
+    let (sample,_)=session.command(2,"snapshot").unwrap();
+    assert!(sample.contains(r#""video_writes":{"enabled":true,"total":1"#),"{sample}");
+    let (disabled,_)=session.command(3,"video-watch off").unwrap();
+    assert!(disabled.contains(r#""video_writes":{"enabled":false}"#),"{disabled}");
+}
