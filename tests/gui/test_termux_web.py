@@ -264,6 +264,24 @@ class TermuxWebTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/../file")[0], 404)
         self.assertEqual(self.session.commands, [])
 
+
+    def test_video_write_diagnostics_are_explicit_and_validated(self):
+        code, body = self.request("POST", "/api/video-watch", {"enabled": True})
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        self.assertEqual(self.session.commands[-1], "video-watch on")
+        code, body = self.request("POST", "/api/video-watch", {"enabled": False})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.session.commands[-1], "video-watch off")
+        for value in ["true", 1, None]:
+            code, _ = self.request("POST", "/api/video-watch", {"enabled": value})
+            self.assertEqual(code, 400)
+        html = (ROOT / "tools/termux_web.html").read_text(encoding="utf-8")
+        self.assertIn('id="video-watch"', html)
+        self.assertIn('reply.cs', html)
+        self.assertIn('reply.eip', html)
+        self.assertIn('reply.video_writes', html)
+
     def test_build_script_serial_and_no_cargo_run(self):
         script = (ROOT / "tools/build_termux.sh").read_text(encoding="utf-8")
         self.assertIn("CARGO_BUILD_JOBS=1", script)
