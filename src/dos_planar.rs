@@ -166,6 +166,7 @@ pub(super) fn graphics_font(cell:u32)->u32{
 pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
     if al==0{return super::vga_font::load_user_patterns(p);}
+    if al==3{return super::vga_font::select_blocks(p);}
     if al!=0x30{return Err(format!("INT 10h AX=11{al:02X}h (font load) is not modelled"));}
     let bh=(p.cpu.regs[3]>>8)&255;
     let pointer=match bh{

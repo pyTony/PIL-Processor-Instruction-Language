@@ -53,3 +53,18 @@ fn chain4_graphics_and_the_mono_map_stay_refused_in_text_mode_with_nothing_chang
         assert!(r.loaded.ram.planar().is_none());
     }
 }
+#[test]
+fn bios_font_block_select_records_the_character_map_in_text_modes(){
+ let mut p=load(&[0xcd,0x10],"block.com").unwrap();
+ // AX=1103h BL=00h (the standard blocks) and BL=05h; AX and BX unchanged.
+ for bl in [0u32,5]{
+  p.cpu.regs[0]=0x1103;p.cpu.regs[3]=bl;service(&mut p,0x10,&mut Vec::new()).unwrap();
+  assert_eq!((p.vga.idle.seq[3],p.cpu.regs[0],p.cpu.regs[3]),(bl as u8,0x1103,bl));
+ }
+ // A program may write the register itself in a text mode (3C4h/3C5h).
+ let code=[0xba,0xc4,0x03,0xb8,0x03,0x00,0xef,0xfa,0xf4];
+ let r=run(load(&code,"seq3.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!(r.loaded.vga.idle.seq[3],0);
+ // Outside the text modes it stops, as before.
+ let mut p=load(&[0xcd,0x10],"block13.com").unwrap();p.cpu.regs[0]=0x0013;service(&mut p,0x10,&mut Vec::new()).unwrap();
+ p.cpu.regs[0]=0x1103;p.cpu.regs[3]=0;assert!(service(&mut p,0x10,&mut Vec::new()).unwrap_err().contains("1103h"));
+}

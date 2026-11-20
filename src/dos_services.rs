@@ -257,6 +257,17 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
+        (0x13,ah) if !matches!(ah,0x00..=0x05|0x08..=0x0d|0x10|0x11|0x14..=0x18)=>{
+            // Not a function of the AT disk BIOS (no EDD either, so AH=41h
+            // finds none): CF=1, AH=01h (invalid function), and the same
+            // status in the BIOS data area, 0040:0041 for diskettes and
+            // 0040:0074 for fixed disks, as the IBM AT BIOS stores it. Virus
+            // scanners trace INT 13h with such a function so no disk is read.
+            let status=if p.cpu.regs[2]&0x80==0{0x441}else{0x474};
+            p.ram.store(status,MemWidth::Byte,1).map_err(|e|format!("BIOS disk status write: {e:?}"))?;
+            p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x0100;
+            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
+        },
         (0x15,0xd8) if p.cpu.regs[0]as u8==0=>{
             // EISA slot-information probe on this non-EISA BIOS.
             p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x8600;
@@ -508,6 +519,11 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             }else{p.cpu.regs[0]|=0xff;}
             Ok(None)
         },
+        // VERIFY: AH=2Eh sets it from AL (any nonzero value turns it on),
+        // AH=54h returns it in AL; nothing else changes (FreeDOS inthndlr.c).
+        // Dine's file writes are always complete, so the flag only records.
+        (0x21,0x2e)=>{p.verify=p.cpu.regs[0]as u8!=0;Ok(None)},
+        (0x21,0x54)=>{p.cpu.regs[0]=(p.cpu.regs[0]&!0xff)|u32::from(p.verify);Ok(None)},
         (0x21,0x58)=>{
             let al=p.cpu.regs[0]as u8;let bl=p.cpu.regs[3]as u8;
             match al{
@@ -537,10 +553,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
-        (0x21,0xdc)=>{
-            // Not a DOS function (Novell NetWare's connection number): the
-            // FreeDOS kernel answers unsupported functions with AL=00h
-            // (inthndlr.c, default case), which callers read as no network.
+        (0x21,0x18|0x1d|0x1e|0x20|0x6b|0x6d..=0xff)=>{
+            // Functions DOS does not define: the CP/M null functions 18h,
+            // 1Dh, 1Eh and 20h, 6Bh (null since DOS 5), and everything above
+            // 6Ch that has no arm of its own (71h, 73h). MS-DOS and the
+            // FreeDOS kernel (inthndlr.c, default case) answer AL=00h and
+            // change nothing else. Callers read that as "not there": Novell
+            // NetWare's DCh connection number, and the probes virus scanners
+            // make for resident viruses that would answer them.
             p.cpu.regs[0]&=!255;Ok(None)
         },
         (0x15,0x88) if p.xms.installed()=>{

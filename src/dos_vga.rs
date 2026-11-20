@@ -63,6 +63,8 @@ impl Controllers{
             match(sequencer,index){
                 // Odd/even and extended memory may change; chain-4 may not.
                 (true,4)=>return value&0x08==0,
+                // Character map select picks font blocks in plane 2.
+                (true,3)=>return true,
                 // The memory map may move to A0000h and back; alphanumeric
                 // mode and the shift/256-colour bits stay.
                 (false,6)=>return value&0x01==self.gc[6]&0x01&&(value&0x0c==map||value&0x0c<=0x04),

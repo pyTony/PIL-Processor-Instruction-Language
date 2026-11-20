@@ -1,6 +1,11 @@
 //! The interrupt vector table as programs see it. Each vector Dine answers
-//! starts at a three-byte entry in the BIOS area (F000:F000 + 3*n): INT n,
-//! then IRET. While a vector still holds its entry (or 0, as vectors Dine has
+//! starts at a three-byte entry in the BIOS area (F000:F000 + 3*n): a private
+//! HLT, the vector number, then IRET. The runner catches CS:IP at an entry by
+//! its address before decoding, as DOSBox catches its BIOS callback opcodes,
+//! and answers INT n there. The entry is not itself an INT n: a program that
+//! traces an interrupt by following its vector (as anti-virus tunnellers do)
+//! would otherwise find INT n at the target and follow it forever.
+//! While a vector still holds its entry (or 0, as vectors Dine has
 //! no entry for start), INT n is answered by Dine on the spot, as before. When
 //! a program has put its own handler there (AH25h or a direct write), INT n
 //! is a real-mode interrupt: FLAGS, CS and the return IP are pushed, IF and TF
@@ -45,7 +50,7 @@ pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::f
 /// and points the answered vectors at them.
 pub(super) fn install(ram:&mut Ram)->Result<(),String>{
     let mut code=vec![0u8;3*256];
-    for n in 0..=255u8{code[3*usize::from(n)..][..3].copy_from_slice(&[0xcd,n,0xcf]);}
+    for n in 0..=255u8{code[3*usize::from(n)..][..3].copy_from_slice(&[0xf4,n,0xcf]);}
     code.extend_from_slice(TIMER_CODE);code.extend_from_slice(BREAK_CODE);
     code.push(0xf4); // mouse callback continuation, never executed by the guest
     ram.write_bytes(ENTRIES,&code).map_err(|e|format!("interrupt entries: {e:?}"))?;
@@ -61,8 +66,10 @@ pub(super) fn answered(p:&Loaded,n:u8)->Result<bool,String>{
     Ok(vector==0||vector==entry(n))
 }
 fn linear(p:&Loaded)->u32{p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip)}
-/// Whether CS:IP is at an entry's INT n, so Dine answers whatever the vector holds.
+/// Whether CS:IP is at an entry, so Dine answers whatever the vector holds.
 pub(super) fn at_entry(p:&Loaded)->bool{let at=linear(p);(ENTRIES..ENTRY_END).contains(&at)&&(at-ENTRIES)%3==0}
+/// The vector of the entry at CS:IP, when CS:IP is at one.
+pub(super) fn entry_vector(p:&Loaded)->Option<u8>{at_entry(p).then(||((linear(p)-ENTRIES)/3)as u8)}
 fn set_cs(p:&mut Loaded,selector:u16){
     let cs=SegmentRegister::Cs.index();
     p.selectors[cs]=selector;p.image.selectors[cs]=selector;p.image.segments[cs]=SegmentCache::real_mode(selector);

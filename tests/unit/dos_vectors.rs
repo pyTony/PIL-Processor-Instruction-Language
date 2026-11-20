@@ -16,9 +16,10 @@ fn answered_vectors_start_at_read_only_entries_and_others_keep_their_values(){
     for n in 0..=255u8{
         let at=ENTRIES+3*u32::from(n);
         let b:Vec<u32>=(0..3).map(|i|p.ram.load(at+i,MemWidth::Byte).unwrap()).collect();
-        assert_eq!(b,vec![0xcd,u32::from(n),0xcf]);
+        // A private HLT, the vector number, IRET: no INT n at the vector's target.
+        assert_eq!(b,vec![0xf4,u32::from(n),0xcf]);
         p.ram.store(at,MemWidth::Byte,0x90).unwrap();
-        assert_eq!(p.ram.load(at,MemWidth::Byte).unwrap(),0xcd,"entries are in the BIOS ROM, which ignores writes");
+        assert_eq!(p.ram.load(at,MemWidth::Byte).unwrap(),0xf4,"entries are in the BIOS ROM, which ignores writes");
     }
     // INT 1Fh points to the upper half of the BIOS graphics font.
     assert_eq!(p.ram.load(0x1f*4,MemWidth::Dword).unwrap(),super::super::console::graphics_text::UPPER_FONT);
