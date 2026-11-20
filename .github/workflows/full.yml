@@ -202,6 +202,12 @@ jobs:
     - run: python tools/verify_dine_executable.py
       if: (github.event_name == 'schedule' || inputs.library)
       name: 'library: python tools/verify_dine_executable.py'
+    - if: (github.event_name == 'schedule' || inputs.library) && runner.os == 'Windows'
+      run: python tools/verify_native_application.py --engine target/release/pil.exe --runtime target/release/dine.dll
+      name: 'library: native applications without original inputs'
+    - if: (github.event_name == 'schedule' || inputs.library) && runner.os == 'Linux'
+      run: python tools/verify_native_application.py --engine target/release/pil --runtime target/release/libdine.so
+      name: 'library: native applications without original inputs'
     - run: cargo run --release --locked -- --verify-backends
       if: (github.event_name == 'schedule' || inputs.backends)
       name: 'backends: cargo run --release --locked -- --verify-backends'
