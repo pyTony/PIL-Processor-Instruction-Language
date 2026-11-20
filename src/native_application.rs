@@ -905,8 +905,17 @@ unsafe fn application_entry(
             .to_str()
             .map_err(|e| e.to_string())?;
         let dispatch = dispatch.ok_or("missing native application dispatcher")?;
-        let (mut session, options) =
-            crate::dine_ffi::prepare(&application.image, name, tail, None)?;
+        let config = application_config_path();
+        let (mut session, mut options) = crate::dine_ffi::prepare(
+            &application.image,
+            name,
+            tail,
+            config.as_deref(),
+        )?;
+        // A native application is a desktop DOS program on Windows. The
+        // window frontend supplies host mouse events to INT 33h; terminal
+        // callers of the general Dine ABI keep their non-window default.
+        options.window = cfg!(windows);
         application.attach(&mut session, Some(dispatch))?;
         if protocol {
             dos::session::serve_native(session, name)?;
@@ -926,6 +935,24 @@ unsafe fn application_entry(
             -1
         }
     }
+}
+
+/// Honor PILDOS_CONFIG and a config in the launch directory first (the
+/// shared resolver handles both). Native apps are often launched from a
+/// nested folder such as driveD/TP/BIN/native, so when neither is present,
+/// search executable parents for the checkout's pildos.conf.
+fn application_config_path() -> Option<String> {
+    let (selected, required) = crate::dos_config::selected_path(None);
+    if required || selected.is_file() {
+        return None;
+    }
+    let executable = std::env::current_exe().ok()?;
+    executable
+        .ancestors()
+        .skip(1)
+        .map(|directory| directory.join("pildos.conf"))
+        .find(|candidate| candidate.is_file())
+        .and_then(|path| path.to_str().map(str::to_owned))
 }
 
 /// Development inspection through the existing session protocol. Native
