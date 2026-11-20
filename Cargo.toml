@@ -4,20 +4,18 @@ version = "0.38.0-alpha.1"
 edition = "2021"
 
 [dependencies]
-thiserror = "1.0"
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
 
-# Build the same CPU and DOS implementation as the Dine shared library
+# Build the CPU and DOS implementation once as a Rust library used by pil,
+# and expose it as the Dine shared library
 # (C ABI in src/dine_ffi.rs). PIL and Dine are program-independent: no build
 # embeds a guest program. The `pil` binary is the interpreter command. Build with `cargo build --release --lib --features dine-library`.
 [lib]
 name = "dine"
-path = "src/main.rs"
-crate-type = ["cdylib"]
-# Avoid running the main.rs development test suite twice in ordinary cargo test.
-# tools/verify_dine_library.py exercises this target on both hosts.
-test = false
-doctest = false
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+# The shared implementation owns the unit tests. The binary is a thin caller.
+# tools/verify_dine_library.py also exercises the C ABI on both hosts.
 
 [features]
 # Build the shared DOS runtime C ABI, not part of normal pil CLI builds.

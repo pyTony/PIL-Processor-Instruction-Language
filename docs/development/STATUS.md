@@ -1,3 +1,24 @@
+# One library implementation for PIL and Dine — 20 November 2026
+
+The standard pil executable now calls dine::run_cli() through the Rust
+library. The implementation moved from src/main.rs to src/lib.rs; main.rs
+is a three-line caller. Cargo emits rlib and cdylib from the same library
+target. Unit tests belong to the library and run once. The dine-library
+feature still exposes the C ABI for existing Dine launchers. The executable
+links the Rust library directly and needs no separate runtime DLL.
+
+Removed the unused thiserror dependency and its now-unused transitive
+packages from Cargo.lock. The separate target roots eliminate Cargo's
+multiple-target warning, and removal of thiserror eliminates nightly's
+unused-dependency warning. No warnings are suppressed.
+
+Local Windows: nightly release build and nightly C ABI library build pass
+without warnings. Nightly library tests: 1011 pass, 2 ignored (the existing
+unused-mut warning in an FPU test remains). CLI selftest, Dine C ABI and
+redirected text I/O integration checks pass; runtime export (2), runtime
+startup (5) and launcher (24) Python tests pass. The stable cargo check and
+portable-path/program-independent checks also pass. Linux CI is pending.
+
 # Dr.Web 3.23 reaches its menu: DOS verify flag, INT 13h tracing — 20 November 2026
 
 Tony's Dr.Web 3.23 (retro image, Utilities > Dr.Web scanner, a 1990s

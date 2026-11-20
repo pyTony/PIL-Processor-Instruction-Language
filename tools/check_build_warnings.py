@@ -2,13 +2,12 @@
 """Build with cargo and fail if rustc reports any warning.
 
 Default: `cargo build --release --locked`, which builds both the `pil`
-executable and the `dine` library target from src/main.rs. Extra arguments
-replace the cargo subcommand arguments, for example:
+executable as a thin caller of the `dine` library. Extra arguments replace
+the cargo subcommand arguments, for example:
 
     python tools/check_build_warnings.py build --release --locked --lib --features dine-library
 
-Only compiler diagnostics count. Cargo's own note that src/main.rs is the
-root of both targets is expected and not a rustc warning.
+Compiler diagnostics are read from Cargo's structured message output.
 """
 import json
 import subprocess
