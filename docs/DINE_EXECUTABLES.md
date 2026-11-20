@@ -87,6 +87,11 @@ Use `--force --run` when you explicitly want a fresh build.
 unchanged shared library. If shared system code changed, an ordinary `--run`
 refreshes the library while keeping the matching launcher.
 
+With `--runtime`, direct launches use the deployed copy of the selected shared
+library without a Cargo freshness check. Pass `--runtime` again when reusing
+that launcher through the build script. Rebuild older launchers once with
+`--runtime` and `--force` to select this behavior.
+
 The same checker (`tools/runtime_startup.py`) is used by PILdos, the Retro
 launcher, PILbuild and source-checkout native launchers. It reports Git branch,
 changed/untracked counts and known upstream ahead/behind state. A branch other

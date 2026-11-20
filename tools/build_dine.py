@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 const PROGRAM: &[u8] = include_bytes!(@@GUEST_PATH@@);
 const GUEST_NAME: &str = @@GUEST_NAME@@;
 const DINE_ABI: u32 = 1;
+const PREBUILT_RUNTIME: bool = @@PREBUILT_RUNTIME@@;
 
 #[cfg(windows)]
 #[link(name = "kernel32")]
@@ -108,8 +109,8 @@ fn runtime_path() -> Result<PathBuf, String> {
 
 fn launch() -> Result<i32, String> {
     // In a source checkout, use its one shared startup checker before loading
-    // the DLL. Distributed launchers outside a checkout need no build tools.
-    if std::env::var("PIL_STARTUP_CHECKED").as_deref() != Ok("1") {
+    // the DLL. An explicitly supplied library is loaded as deployed.
+    if !PREBUILT_RUNTIME && std::env::var("PIL_STARTUP_CHECKED").as_deref() != Ok("1") {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         if let Some(root) = exe.ancestors().skip(1).find(|p| p.join("Cargo.toml").is_file() && p.join("tools/runtime_startup.py").is_file()) {
             let python = if cfg!(windows) { "python" } else { "python3" };
@@ -226,6 +227,8 @@ def reusable_launcher(program: Path, output: Path, runtime: Path | None, *, sett
                 or record.get("runtime") != library.name
                 or record.get("original_guest_embedded") is not True):
             return False
+        if record.get("prebuilt_runtime", False) != (runtime is not None):
+            return False
         runtime_hash = hashlib.sha256(library.read_bytes()).hexdigest()
         if settings and record.get("settings_editor") is not True:
             return False
@@ -252,7 +255,8 @@ def check_tools(runtime: Path | None) -> list[str]:
     return required
 
 
-def build(program: Path, output_dir: Path, force: bool = False, *, runtime: Path | None = None) -> Path:
+def build(program: Path, output_dir: Path, force: bool = False, *,
+          runtime: Path | None = None, prebuilt_runtime: bool = False) -> Path:
     program, guest = read_program(program)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -278,7 +282,8 @@ def build(program: Path, output_dir: Path, force: bool = False, *, runtime: Path
     source = intermediate / "main.rs"
     source.write_text(
         LAUNCHER.replace("@@GUEST_PATH@@", rust_raw("guest.bin"))
-                .replace("@@GUEST_NAME@@", rust_raw(program.name)),
+                .replace("@@GUEST_NAME@@", rust_raw(program.name))
+                .replace("@@PREBUILT_RUNTIME@@", str(prebuilt_runtime).lower()),
         encoding="utf-8",
     )
     binary = intermediate / launcher.name
@@ -309,6 +314,7 @@ def build(program: Path, output_dir: Path, force: bool = False, *, runtime: Path
         "guest": program.name,
         "guest_sha256": hashlib.sha256(guest).hexdigest(),
         "runtime": library.name,
+        "prebuilt_runtime": prebuilt_runtime,
         "runtime_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
         "interpreter_fallback": True,
         "compiled_guest_blocks": False,
@@ -329,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("program", type=Path, nargs="*", help="DOS input files (quote paths containing spaces)")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "programs" / "compiled")
     parser.add_argument("--force", action="store_true", help="replace an existing launcher")
-    parser.add_argument("--runtime", type=Path, help="reuse a prebuilt shared runtime (skips Cargo)")
+    parser.add_argument("--runtime", type=Path, help="use a prebuilt shared runtime for build and direct launch (skips Cargo)")
     parser.add_argument("--run", action="store_true", help="run an unchanged existing output, or build and run it")
     parser.add_argument("--time", action="store_true", help="time execution to exit or first input wait, without host drawing")
     parser.add_argument("--interpreted", action="store_true", help="use the interpreter for this launch")
@@ -418,7 +424,8 @@ def main(argv: list[str] | None = None) -> int:
         results = []
         for index, program in enumerate(programs, 1):
             print(f"[{index}/{len(programs)}] Building native launcher: {program.name}", flush=True)
-            result = build(program, output, args.force, runtime=runtime)
+            result = build(program, output, args.force, runtime=runtime,
+                           prebuilt_runtime=args.runtime is not None)
             results.append(result)
             print(f"Dine executable: {result}", flush=True)
         print(f"Shared runtime: {output / library_name()}", flush=True)
