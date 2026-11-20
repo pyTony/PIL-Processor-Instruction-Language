@@ -299,6 +299,12 @@ opt-in Rust window with Python terminal and BIOS keyboard bridge.
 
 ## Refactoring direction
 
+Ahead-of-time native application calls with prepared relocation are documented
+in [Native applications](NATIVE_APPLICATIONS.md). That route emits
+`Native_<program>` applications importing the shared library, accounts for
+loaded/modified code separately, and retains executable resources for DOS
+self-reads. The existing `Dine_<program>` byte-loader route remains available.
+
 Keep all system execution code in the shared PIL/Dine implementation:
 instruction semantics, native forms, CPU and memory state handling, block
 dispatch, flag formulas and lazy-flag materialization, plus BIOS, DOS, FPU

@@ -793,6 +793,9 @@ mod desktop_scanout_tests{
 /// An optional executor for decoded PIL instructions. A miss falls back to the
 /// interpreter; DOS services and instruction retirement stay in the shared loop.
 pub(crate) trait InstructionBackend {
+    /// An ahead-of-time application can supply instruction metadata directly.
+    /// Returning None keeps runtime-generated/modified code on the normal path.
+    fn decode(&mut self,_image:&Image,_ram:&Ram,_ip:u32)->Option<Result<std::rc::Rc<super::guest::Decoded>,super::guest::GuestError>>{None}
     /// Conservative eligibility hints: false skips native dispatch without
     /// forcing pending interpreter flags. True still requires normal guards.
     fn may_block(&mut self,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
@@ -800,6 +803,10 @@ pub(crate) trait InstructionBackend {
     fn block_stats(&self)->(u64,u64){(0,0)}
     /// Number of generated single-instruction dispatches outside native blocks.
     fn single_stats(&self)->u64{0}
+    fn reference_retired(&mut self){}
+    fn reference_stats(&self)->Option<u64>{None}
+    fn fallback_mode(&self)->Option<crate::precompiled::Mode>{None}
+    fn diagnostics(&self)->String{String::new()}
     fn block(&mut self,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
 }
@@ -837,7 +844,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
     let mut exceptions=Vec::new();let mut exception_count=0;
     let mut lazy=super::LazyFlags::None;
 
-    let mode=p.blocks.mode.unwrap_or_else(crate::precompiled::mode);
+    let mode=backend.as_ref().and_then(|b|b.fallback_mode()).unwrap_or_else(||p.blocks.mode.unwrap_or_else(crate::precompiled::mode));
     // Native blocks would hide intermediate control flow from the trace.
     // The ordinary one-instruction interpreter still handles any DOS guest.
     let history_enabled=p.history.enabled();
@@ -1191,7 +1198,8 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             }
             }
         }
-        let decoded=match {let _span=crate::profile::span("decode_cache");p.cache.fetch(&p.image,&p.ram,p.cpu.eip)}{
+        let prepared=backend.as_deref_mut().and_then(|b|b.decode(&p.image,&p.ram,p.cpu.eip));
+        let decoded=match prepared.unwrap_or_else(||{let _span=crate::profile::span("decode_cache");p.cache.fetch(&p.image,&p.ram,p.cpu.eip)}){
             Ok(d)=>d,Err(GuestError::Execution(e))=>match exception(&mut p,&e,&mut lazy){
                 Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
                 Some(Err(message))=>break Stop::Fault(message),
@@ -1234,7 +1242,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                     }else{None}
                 }else{None};
                 let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
-                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;}result}};
+                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}};
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{

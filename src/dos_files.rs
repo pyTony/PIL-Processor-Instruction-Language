@@ -867,10 +867,12 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             let offset=p.cpu.regs[2]&0xffff;let wanted=p.cpu.regs[1]&0xffff;
             let file=&p.drive.files[i];let start=(file.pos as usize).min(file.data.len());
             let count=(wanted as usize).min(file.data.len()-start);let bytes=file.data[start..start+count].to_vec();
+            let resource_identity=Arc::as_ptr(&file.data)as usize;
             // A short read only touches the bytes returned, not the entire
             // requested buffer. Large CX probes are common in DOS loaders.
             if offset+count as u32>0x10000{fail(p,5);return Ok(());}
             store_ds(p,offset,&bytes)?;
+            p.ram.resource_read(resource_identity,p.image.segments[ds().index()].base.wrapping_add(offset),start as u32,count);
             p.drive.files[i].pos+=count as u32;set_ax(p,count as u32);ok(p);
         },
         0x42=>{
