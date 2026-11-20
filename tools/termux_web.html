@@ -323,7 +323,9 @@ function frameSignature(reply){
   const raw=typeof frame==="string"?frame:JSON.stringify(frame);
   if(!raw.length)return "empty";
   let hash=2166136261;
-  const stride=Math.max(1,Math.floor(raw.length/256));
+  // A sparse 256-point sample can miss narrow Mandelbrot row updates.
+  // Sample at least 4096 positions, while staying bounded on Android.
+  const stride=Math.max(1,Math.floor(raw.length/4096));
   for(let i=0;i<raw.length;i+=stride){
     hash=Math.imul(hash^raw.charCodeAt(i),16777619);
   }
