@@ -78,6 +78,84 @@ fn load_with(bytes:&[u8],name:&str,mode:Mode)->dos::Loaded{
     let mut p=dos::load(bytes,name).unwrap();p.blocks.mode=Some(mode);p
 }
 
+#[test]
+fn native_counts_exclude_block_fallback_and_include_single_dispatch() {
+    if forms()==0{return;}
+    let bytes=[0xb8,7,0,0x40,0xcd,0x20]; // MOV AX,7; INC AX; INT 20h.
+    let mut p=load_with(&bytes,"COUNTERS.COM",Mode::On);
+    // Model a table with an unavailable form, without depending on a gap
+    // in the generated instruction inventory.
+    p.cache.fetch(&p.image,&p.ram,0x103).unwrap().native.set(None).unwrap();
+    let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let run=dos::run_with_backend(p,20,&mut out,None).unwrap();
+    assert_eq!(run.stop,Stop::Exit(0));
+    assert_eq!(run.loaded.cpu.regs[0],8);
+    assert_eq!(run.loaded.blocks.instructions,2);
+    assert_eq!(run.loaded.blocks.native_instructions,1);
+    assert_eq!(run.loaded.blocks.interpreted_instructions,1);
+
+    let mut p=load_with(&bytes,"COUNTERS.COM",Mode::On);
+    p.image.ss_shadow=1; // The first instruction cannot enter a block.
+    let run=dos::run_with_backend(p,20,&mut out,None).unwrap();
+    assert_eq!(run.stop,Stop::Exit(0));
+    assert_eq!(run.loaded.blocks.single_instructions,1);
+    assert_eq!(run.loaded.blocks.native_instructions,1);
+    assert_eq!(run.loaded.blocks.interpreted_instructions,0);
+}
+
+#[test]
+fn required_native_stops_before_missing_form_without_interpreting_it() {
+    let bytes=[0xb8,7,0,0x40,0xcd,0x20];
+    let mut p=load_with(&bytes,"REQUIRED.COM",Mode::Required);
+    let missing=if forms()==0{0x100}else{0x103};
+    p.cache.fetch(&p.image,&p.ram,missing).unwrap().native.set(None).unwrap();
+    let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let run=dos::run_with_backend(p,20,&mut out,None).unwrap();
+    assert!(matches!(&run.stop,Stop::Service(s) if s.contains("interpreter fallback refused")),"{:?}",run.stop);
+    assert_eq!(run.loaded.cpu.eip,missing);
+    assert_eq!(run.loaded.cpu.regs[0],if forms()==0{0}else{7});
+    assert_eq!(run.loaded.blocks.interpreted_instructions,0);
+}
+
+#[test]
+fn interpreter_retirements_and_native_faults_are_counted_separately() {
+    let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let run=dos::run_with_backend(load_with(&[0x40,0xcd,0x20],"COUNT.COM",Mode::Off),20,&mut out,None).unwrap();
+    assert_eq!(run.stop,Stop::Exit(0));
+    assert_eq!(run.loaded.blocks.interpreted_instructions,1);
+    assert_eq!(run.loaded.blocks.native_instructions+run.loaded.blocks.single_instructions,0);
+    if forms()==0{return;}
+    // MOV AX,7; MOV [0200h],AX. A refused store must not count as retired.
+    let mut p=load_with(&[0xb8,7,0,0xa3,0,2],"FAULTCOUNT.COM",Mode::On);
+    let at=p.image.segments[3].base+0x200;
+    p.ram.protect(at,2).unwrap();
+    let run=dos::run_with_backend(p,20,&mut out,None).unwrap();
+    assert!(matches!(run.stop,Stop::Fault(_)),"{:?}",run.stop);
+    assert_eq!(run.loaded.cpu.eip,0x103);
+    assert_eq!(run.loaded.blocks.native_instructions,1);
+    assert_eq!(run.loaded.blocks.interpreted_instructions,0);
+}
+
+#[test]
+fn partial_repeat_elements_do_not_inflate_retired_instruction_counts() {
+    // MOV CX,3; MOV DI,0300h; REP STOSB; INT 20h.
+    let bytes=[0xb9,3,0,0xbf,0,3,0xf3,0xaa,0xcd,0x20];
+    for mode in [Mode::Off,Mode::On]{
+        let mut p=load_with(&bytes,"REPCOUNT.COM",mode);
+        let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let first=dos::run_with_backend(p,3,&mut out,None).unwrap();
+        assert_eq!(first.completed,2);
+        assert_eq!(first.loaded.cpu.regs[1],2);
+        let counters=&first.loaded.blocks;
+        assert_eq!(counters.native_instructions+counters.single_instructions+counters.interpreted_instructions,2);
+        p=first.loaded;
+        let last=dos::run_with_backend(p,20,&mut out,None).unwrap();
+        assert_eq!(last.stop,Stop::Exit(0));
+        let counters=&last.loaded.blocks;
+        assert_eq!(counters.native_instructions+counters.single_instructions+counters.interpreted_instructions,3);
+    }
+}
+
 /// Blocks and the interpreter reach the same state after every slice, with
 /// slice budgets that cut blocks at odd places.
 fn same_run(bytes:&[u8],name:&str,slices:usize){

@@ -83,14 +83,16 @@ pub(crate) fn resolve(p:&Program)->Option<Native>{
 
 /// Execution mode, from `PIL_PRECOMPILED`: `off` uses only the interpreter,
 /// `verify` runs both and compares the full state after each instruction,
+/// `required` refuses an unavailable native form before it executes;
 /// anything else (the default) runs the native form when there is one.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub(crate) enum Mode { Off, On, Verify }
+pub(crate) enum Mode { Off, On, Verify, Required }
 pub(crate) fn mode()->Mode{
     static MODE:OnceLock<Mode>=OnceLock::new();
     *MODE.get_or_init(||match std::env::var("PIL_PRECOMPILED").unwrap_or_default().to_ascii_lowercase().as_str(){
         "off"|"0"|"no"|"interpreter"=>Mode::Off,
         "verify"|"lockstep"=>Mode::Verify,
+        "required"|"strict"=>Mode::Required,
         _=>Mode::On,
     })
 }

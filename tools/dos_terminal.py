@@ -602,11 +602,15 @@ def format_native_stats(reply):
     other = max(0, steps - native)
     coverage = f'{native / steps:.1%}' if steps else 'n/a'
     average = f'{block / blocks:.2f}' if blocks else 'n/a'
+    interpreted = reply.get('interpreter_instructions')
+    fallback = (f'Interpreted PIL instructions: {int(interpreted):,}\n'
+                if interpreted is not None else '')
     return (
         f'Guest steps: {steps:,}\n'
         f'Native block instructions: {block:,} in {blocks:,} blocks\n'
         f'Native single instructions: {single:,}\n'
         f'Native total: {native:,} ({coverage} of steps)\n'
+        f'{fallback}'
         f'Other steps: {other:,} (includes DOS/BIOS services)\n'
         f'Average native block length: {average} instructions'
     )

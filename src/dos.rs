@@ -815,8 +815,10 @@ fn precompiled_step(m:crate::precompiled::Mode,decoded:&super::guest::Decoded,p:
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     let before=(m==Mode::Verify).then(||(p.cpu.clone(),p.ram.clone(),*machine));
     let _span=crate::profile::span("precompiled_execute");
+    let old_ip=p.cpu.eip;
     let cpu=&mut p.cpu;
     let result=(native.form)(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,&mut p.ram,*address,machine,&native.consts);
+    if result.is_ok()&&(!program.partial||cpu.eip!=old_ip){p.blocks.single_instructions+=1;}
     if let Some((mut cpu,mut ram,mut reference))=before{
         let mut none=super::LazyFlags::None;
         let expected=super::execute_machine_lazy(program,&mut cpu,*dst,*src,*flow,&mut ram,*address,&mut reference,&mut none).map(|_|());
@@ -840,7 +842,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
     // The ordinary one-instruction interpreter still handles any DOS guest.
     let history_enabled=p.history.enabled();
     let watched=p.ram.text_watch_enabled();
-    let blocks_enabled=mode==crate::precompiled::Mode::On&&!p.rom_mode&&!history_enabled&&!watched;
+    let blocks_enabled=matches!(mode,crate::precompiled::Mode::On|crate::precompiled::Mode::Required)&&!p.rom_mode&&!history_enabled&&!watched;
     let stop=loop{
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
@@ -1221,6 +1223,9 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
+                if mode==crate::precompiled::Mode::Required && decoded.native().is_none(){
+                    break Stop::Service(format!("native form required for {} at {:04x}:{:08x}; interpreter fallback refused",decoded.label,p.selectors[1],p.cpu.eip));
+                }
                 let mut machine=p.image.segment_state();
                 let native=if let Some(b)=backend.as_deref_mut(){
                     if b.may_execute(&p.image,&p.ram,p.cpu.eip){
@@ -1229,7 +1234,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                     }else{None}
                 }else{None};
                 let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
-                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|())}};
+                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;}result}};
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
