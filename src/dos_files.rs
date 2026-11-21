@@ -315,6 +315,48 @@ fn listing(d:&Drive,dir:&Dir)->Result<Vec<Entry>,u16>{
 /// deletion or a new colliding host name can change dynamically generated
 /// BASIS~N aliases, so callers should not cache them across directory changes.
 impl Drives {
+    /// The mounted host drive holding `folder` and the folder's 8.3 path
+    /// components on it, as DOS lists them (aliases for long names). None
+    /// when no host drive contains it or a component has no DOS name.
+    #[cfg(any(feature = "dine-library",test))]
+    pub(crate) fn host_location(&self,folder:&Path)->Option<(u8,Vec<Name>)>{
+        let folder=std::fs::canonicalize(folder).ok()?;
+        // Deepest root first, so a drive inside another drive's folder wins.
+        let mut roots:Vec<(u8,PathBuf)>=self.list.iter().filter_map(|d|match &d.source{
+            Source::Host(root)=>std::fs::canonicalize(root).ok().map(|r|(d.letter,r)),_=>None}).collect();
+        roots.sort_by_key(|(_,r)|std::cmp::Reverse(r.components().count()));
+        for(letter,root)in roots{
+            let Ok(rest)=folder.strip_prefix(&root)else{continue};
+            let mut dir=root.clone();let mut path=Vec::new();
+            for part in rest.components(){
+                let entries=host_listing(&dir).ok()?;
+                let entry=entries.into_iter().find(|e|e.attr&0x10!=0&&match &e.node{
+                    Node::Host(p)=>p.file_name()==Some(part.as_os_str()),_=>false})?;
+                path.push(entry.name);dir=dir.join(part);
+            }
+            return Some((letter,path));
+        }
+        None
+    }
+    /// Make `letter` the default drive with `path` (from host_location) as
+    /// its current directory, before guest execution starts.
+    #[cfg(any(feature = "dine-library",test))]
+    pub(crate) fn select_directory(&mut self,letter:u8,path:Vec<Name>)->Result<(),String>{
+        self.select_default(letter)?;
+        self.list[self.current].cwd=path;Ok(())
+    }
+    /// `X:\DIR\SUB\` for a host_location result.
+    #[cfg(any(feature = "dine-library",test))]
+    pub(crate) fn dos_directory(letter:u8,path:&[Name])->Vec<u8>{
+        let mut out=vec![letter,b':',b'\\'];
+        for name in path{out.extend(display(name));out.push(b'\\');}
+        out
+    }
+    /// A letter A:..E: with nothing mounted, from E: down.
+    #[cfg(any(feature = "dine-library",test))]
+    pub(crate) fn free_letter(&self)->Option<u8>{
+        (b'A'..=b'E').rev().find(|&l|!self.list.iter().any(|d|d.letter==l))
+    }
     #[cfg(any(feature = "dine-library",test))]
     pub(crate) fn host_argument_alias(&self,host_name:&str)->Result<Option<String>,String>{
         let Some(drive)=self.list.get(self.current)else{return Ok(None);};

@@ -59,7 +59,14 @@ impl std::hash::Hasher for LinearHash {
     fn write(&mut self,bytes:&[u8]){for &b in bytes{self.0=(self.0.rotate_left(8)^u64::from(b)).wrapping_mul(0x9e37_79b9_7f4a_7c15);}}
     fn write_u32(&mut self,n:u32){self.0=(u64::from(n)^self.0).wrapping_mul(0x9e37_79b9_7f4a_7c15);}
 }
-type Map=HashMap<u32,usize,std::hash::BuildHasherDefault<LinearHash>>;
+/// Blocks kept for one linear address: the same code entered with
+/// different segment states (a routine called with several DS or ES values)
+/// keeps a block for each, instead of planning anew on every alternation.
+const VARIANTS:usize=4;
+/// Slots for one linear address, most recently planned first; NONE is free.
+type Variants=[usize;VARIANTS];
+const NONE:usize=usize::MAX;
+type Map=HashMap<u32,Variants,std::hash::BuildHasherDefault<LinearHash>>;
 
 #[derive(Default)]
 pub(crate) struct Blocks {
@@ -207,7 +214,7 @@ impl Blocks {
             .filter(|&(_,slot,version)|self.slots.get(slot).is_some_and(|s|s.0==version));
         let slot=match linked{
             Some((_,slot,_))=>Some(slot),
-            None=>self.map.get(&linear).copied().filter(|&i|{let b=&self.slots[i].1;b.eip==eip&&b.machine==*machine&&b.window==window(image)}),
+            None=>self.map.get(&linear).and_then(|v|v.iter().copied().filter(|&i|i!=NONE).find(|&i|{let b=&self.slots[i].1;b.eip==eip&&b.machine==*machine&&b.window==window(image)})),
         };
         if let Some(i)=slot{
             let b=&mut self.slots[i].1;
@@ -221,14 +228,22 @@ impl Blocks {
             }
         }
         // Plan anew. A replaced block keeps its slot under a new version,
-        // so links to the old one stop matching.
-        let mut from=from;
-        if self.slots.len()>=CAPACITY{self.clear();from=None;}
+        // so links to the old one stop matching. The block whose code
+        // changed is replaced; otherwise a free variant is used, and with
+        // none free the least recently planned one gives way.
+        let mut from=from;let mut stale=slot;
+        if self.slots.len()>=CAPACITY{self.clear();from=None;stale=None;}
         let planned=Self::plan(cache,image,ram,eip,self.mode.unwrap_or_else(crate::precompiled::mode)==crate::precompiled::Mode::Required)?;
-        let i=match self.map.get(&linear).copied(){
+        let mut variants=self.map.get(&linear).copied().unwrap_or([NONE;VARIANTS]);
+        let reuse=stale.or_else(||variants.iter().copied().all(|v|v!=NONE).then(||variants[VARIANTS-1]));
+        let i=match reuse{
             Some(i)=>{let (version,old)=&mut self.slots[i];count(old,&mut self.pending);*old=planned;*version+=1;i},
-            None=>{self.slots.push((self.next_version,planned));self.next_version+=1;self.map.insert(linear,self.slots.len()-1);self.slots.len()-1},
+            None=>{self.slots.push((self.next_version,planned));self.next_version+=1;self.slots.len()-1},
         };
+        // Most recently planned first.
+        let at=variants.iter().position(|&v|v==i).unwrap_or(VARIANTS-1);
+        variants.copy_within(0..at,1);variants[0]=i;
+        self.map.insert(linear,variants);
         self.link(from,eip,i);
         Some(i)
     }

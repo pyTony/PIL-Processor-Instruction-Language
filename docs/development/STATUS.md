@@ -1,3 +1,82 @@
+# STATUS.md merges like CLAUDE.md — 21 November 2026
+
+Tony: open PRs kept conflicting after merges even though the update-prs
+workflow should fix them. Every PR adds its note at the top of both
+CLAUDE.md and docs/development/STATUS.md; only CLAUDE.md had the union
+merge driver, so STATUS.md conflicted, and the workflow (which regenerates
+docs/SHA256SUMS only when that is the sole other conflict) rightly left
+those branches alone. .gitattributes and update-prs.yml now give
+docs/development/STATUS.md the union driver too.
+
+# Blocks per segment state; REP elements in batches — 21 November 2026
+
+Tony asked to speed up REP after the native Turbo Pascal benchmark (TPC
+7.0 compiling a 2,256-line program: 14.7 s on Dine, 2.0 s native). Profile
+spans showed REP was not the main cost: 11.4 of 14.5 s went to planning
+blocks, 678,000 plans for 8.8 million steps. The block map kept one block
+per linear address with an exact segment-state guard, and a routine
+entered with DS or ES alternating between values (656,100 of the misses)
+threw its block away on every entry.
+- src/block_compiler/engine.rs: up to four blocks per linear address
+  (VARIANTS), most recently planned first. A block whose code changed is
+  replaced in its slot; with no free variant the least recently planned
+  one gives way. The guard (segment state, window, code bytes) is the same.
+- src/dos.rs: after a REP element runs and the instruction is still
+  repeating, the following elements run in the same pass of the DOS loop,
+  up to the next 256-step timer poll and the budget (so interrupts and host
+  events are seen at the same step counts), with no interrupt shadow, not
+  in ROM mode and not while history or the text watch is on. A fault ends
+  the batch where it occurred, as before.
+
+Local Windows, release: 1023 Rust tests pass, 2 ignored (1 new, in
+tests/unit/precompiled.rs: REP MOVSW and a subroutine entered with two DS
+values, blocks against the interpreter per slice, and one-step slices,
+which never batch, against one run: same CPU, RAM and counts). TPC 7.0 on
+Dine, same program, 8,770,681 steps either way: 14.7 s -> 0.98 s with the
+variants, 0.87 s with REP batching too (3 runs each). Native_TPC.exe
+(tools/bench_native_application.py, 3 runs) stays at 1.90 s: native
+applications run through their own prepared dispatcher, not the shared
+blocks, so the original on Dine is now about twice as fast as the native
+application. Making the prepared path chain like blocks is open. Host independent:
+no architecture conditionals, unsafe or intrinsics. Not run on Linux.
+
+# Native applications find their support files — 21 November 2026
+
+Tony asked to fix Turbo Pascal's support files in the native (compiled)
+version and to benchmark it against the original. Native_TPC.exe (his
+native-batch build, local only) printed "Warning: TURBO.TPL not found" and
+"File not found (H.PAS)" when the launch folder held both. The launch folder
+was C:, but a pildos.conf with its own C= (found through the executable's
+parent folders) replaced it with the image, and the program's own path in
+its environment was C:\TPC.EXE, the launch folder, never where its files lie.
+- dos::place_host_program (dine_ffi::prepare, so native applications and
+  Dine_<program> launchers): the launch folder is the current drive and
+  directory, through a configured host drive that contains it (cd'ed into),
+  else on a free letter, so every configured drive stays (the #289 test
+  now checks the configured C: and a launch-folder name). The environment's program path
+  names the host executable's folder, through a configured drive that
+  contains it (8.3 aliases for long names, as DOS lists them), else that
+  folder mounted on a free letter (E: down to A:).
+- Drives::host_location/select_directory/dos_directory/free_letter;
+  dos::set_program_path rewrites the environment block in place.
+- tools/bench_native_application.py: original on `pil --dos-session` and
+  the native application with DINE_PROTOCOL=1, same files and command line
+  in a fresh folder, same `run 1000000 buffered` loop to the exit, empty
+  configuration; median run-loop time and instruction counts.
+- docs/NATIVE_APPLICATIONS.md: keep a native application beside its
+  original's support files (compile with --output-dir into that folder).
+
+Local Windows, release: 1022 Rust tests pass, 2 ignored (1 new, with
+temporary folders: a configured C: no longer hides the launch folder; a nested long-named folder
+on D: gives D:\LANG\LONG-F~1\TOOL.COM). Native_TPC.exe with TURBO.TPL beside
+it, started from another folder under Tony's pildos.conf: compiles H.PAS
+there. Benchmark, TPC 7.0 compiling a generated 2,256-line program (250
+functions, 45,808 bytes code), 3 alternating runs: both 8,770,681 guest
+instructions, exit code 0; original 14.72 s median, native 1.96 s (7.5x).
+Both are slow per instruction: about 165,000 of the hot steps are REP MOVSW
+elements (F3 A5), each one DOS-loop iteration (about 1.5 us; the original
+with PIL_PRECOMPILED=off takes 13.8 s, so the blocks are not the cost).
+REP batching is not done here. Not run on Linux.
 # Writes the 386 makes before #SS/#GP (SingleStepTests/80386 run 11) — 20 November 2026
 
 Tony: "next todo". The protected-mode plan's ten increments are merged, so

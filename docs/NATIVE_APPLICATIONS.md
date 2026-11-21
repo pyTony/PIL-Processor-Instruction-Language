@@ -16,6 +16,31 @@ applications in the same output folder use that one library. Rust and Cargo
 are needed to build; the original DOS executable is not an external dependency
 when running the result.
 
+## Where the program finds its files
+
+A native application (and a `Dine_<program>` launcher) sees its files as it
+would when DOS runs it from its own folder:
+
+- The folder you start it from is the current drive and directory. If a
+  configured host drive (such as `D=driveD`) contains that folder, the
+  program starts there, cd'ed into it; otherwise the folder goes on a free
+  letter (E: down to A:) and every configured drive stays.
+- The program's own path in its environment, which DOS 3+ programs read to
+  find support files beside themselves, names **the native executable's
+  folder**: through a configured drive that contains it (for example
+  `D:\TP\BIN\TURBO.EXE`), else that folder on a free letter (E: down to A:).
+
+So keep a native application in the same folder as the support files its
+original expects beside itself. For Turbo Pascal, compile into the folder
+that holds TURBO.TPL, TURBO.TPH and TPC.CFG:
+
+```powershell
+python tools/compile_application.py driveD/TP/BIN/TPC.EXE --output-dir driveD/TP/BIN
+```
+
+`Native_TPC.exe` then finds TURBO.TPL from any working folder, and the files
+you name on its command line are taken from the folder you start it in.
+
 Native applications use the shared DOS configuration: `PILDOS_CONFIG` takes
 precedence, followed by `pildos.conf` in the launch directory. If neither is
 present there, the native launcher searches its executable's parent folders
@@ -79,6 +104,16 @@ without consuming an original application's command-line option. Snapshots
 report native and interpreted retirements separately. Successfully compiling
 an application does not assert complete native coverage or prove equivalence
 of every function of an arbitrary closed binary.
+
+`tools/bench_native_application.py` times a native application against its
+original on Dine: both run the same command line in a fresh folder with the
+same files, through the same session protocol, to the program's exit. Start
+up, window and key waits are left out on both sides. It reports the median
+run-loop time, guest instructions, and how many retired natively.
+
+```powershell
+python tools/bench_native_application.py --original path/to/TPC.EXE --native path/to/Native_TPC.exe --support path/to/TURBO.TPL --source BIG.PAS --args BIG.PAS --runs 5
+```
 
 The local Pascal IDE acceptance test takes user-supplied binaries and libraries:
 

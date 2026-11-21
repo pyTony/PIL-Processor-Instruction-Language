@@ -182,6 +182,51 @@ fn blocks_match_the_interpreter_on_the_dos_fixtures(){
     same_run(include_bytes!("../../programs/dos/MANDBBC.COM"),"MANDBBC.COM",400);
 }
 
+/// 50 rounds of: REP MOVSW of 512 words, then DS toggles by one paragraph
+/// and a subroutine adds BX into [3000h] in that DS. The subroutine's block
+/// is entered with two segment states in turn.
+const REP_AND_TWO_DS:&[u8]=&[
+    0xba,0x32,0x00,             // MOV DX,50
+    0xb9,0x00,0x02,             // again: MOV CX,0200h
+    0xbe,0x00,0x10,             // MOV SI,1000h
+    0xbf,0x00,0x20,             // MOV DI,2000h
+    0xfc,                       // CLD
+    0xf3,0xa5,                  // REP MOVSW
+    0x8c,0xd8,                  // MOV AX,DS
+    0x35,0x01,0x00,             // XOR AX,1
+    0x8e,0xd8,                  // MOV DS,AX
+    0xe8,0x08,0x00,             // CALL sub
+    0x4a,                       // DEC DX
+    0x75,0xe7,                  // JNZ again
+    0xb8,0x00,0x4c,0xcd,0x21,   // MOV AX,4C00h; INT 21h
+    0x01,0x1e,0x00,0x30,        // sub: ADD [3000h],BX
+    0x43,0xc3,                  // INC BX; RET
+];
+
+#[test]
+fn rep_batches_and_block_variants_match_one_step_at_a_time(){
+    same_run(REP_AND_TWO_DS,"REPDS.COM",400);
+    // A one-step budget never batches REP elements; one long run does.
+    for mode in [Mode::Off,Mode::On]{
+        let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let whole=dos::run_with_backend(load_with(REP_AND_TWO_DS,"REPDS.COM",mode),100_000,&mut out,None).unwrap();
+        assert_eq!(whole.stop,Stop::Exit(0));
+        let mut p=load_with(REP_AND_TWO_DS,"REPDS.COM",mode);let mut steps=0;let mut completed=0;
+        let last=loop{
+            let r=dos::run_with_backend(p,1,&mut out,None).unwrap();
+            steps+=1;completed+=r.completed;
+            if r.stop!=Stop::Budget{break r;}
+            p=r.loaded;p.blocks.mode=Some(mode);
+        };
+        assert_eq!(last.stop,Stop::Exit(0));
+        assert_eq!(last.loaded.cpu,whole.loaded.cpu,"{mode:?}");
+        assert!(last.loaded.ram.bytes()==whole.loaded.ram.bytes(),"{mode:?}: RAM differs");
+        assert_eq!(completed,whole.completed,"{mode:?}");
+        // 50 x (512 elements + 13 instructions) + 3 at the start and end.
+        assert!(steps>50*512,"{mode:?}: {steps}");
+    }
+}
+
 #[test]
 fn blocks_see_code_the_program_rewrites(){
     // MOV CX,5; again: MOV [0108h],CL; MOV AX,0 (its immediate is rewritten);

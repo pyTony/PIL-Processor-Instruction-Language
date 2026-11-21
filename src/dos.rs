@@ -321,6 +321,65 @@ pub(crate) fn set_environment_path(p:&mut Loaded,value:&str)->Result<(),String>{
     for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
     p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
 }
+/// Where a host-launched program (a native application or a Dine launcher)
+/// finds itself and its files, as when DOS runs it from its own folder:
+/// - The launch folder is the default drive and directory. A configured
+///   host drive that contains it is used (cd'ed into); otherwise it goes on
+///   a free letter, so every configured drive stays.
+/// - The program's path in its environment (DOS 3+, what programs read to
+///   find support files beside themselves) names `program_folder`, the
+///   host executable's folder: through a configured drive that contains
+///   it, else that folder mounted on a free letter.
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn place_host_program(p:&mut Loaded,launch:&Path,program_folder:&Path,name:&str)->Result<(),String>{
+    match p.drive.host_location(launch){
+        Some((letter,path))=>{select_startup_drive(p,letter)?;p.drive.select_directory(letter,path)?;}
+        None=>{
+            // Every configured drive stays; the launch folder takes a free
+            // letter (C: only when all of A:-E: are in use).
+            let letter=p.drive.free_letter().unwrap_or(b'C');
+            p.drive.mount(letter,Source::Host(launch.to_path_buf()))?;select_startup_drive(p,letter)?;
+        }
+    }
+    let directory=match p.drive.host_location(program_folder){
+        Some((letter,path))=>files::Drives::dos_directory(letter,&path),
+        None=>{
+            let Some(letter)=p.drive.free_letter() else{return Ok(())};
+            p.drive.mount(letter,Source::Host(program_folder.to_path_buf()))?;
+            files::Drives::dos_directory(letter,&[])
+        }
+    };
+    let mut path=directory;path.extend(base_name(name.as_bytes()));
+    set_program_path(p,&path)
+}
+/// Set the program's own path after the first program's environment
+/// strings (what DOS 3+ programs read to find files beside themselves),
+/// keeping the strings. The whole block must still fit.
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn set_program_path(p:&mut Loaded,value:&[u8])->Result<(),String>{
+    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let size=usize::from(ENV_PARAS)*16;
+    let mut block=vec![0u8;size];
+    for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
+    let block=with_program(&block,value).ok_or("DOS environment: no room for the program path")?;
+    for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
+}
+/// `block` with the program path after the count word replaced by `value`.
+#[cfg(any(feature = "dine-library", test))]
+fn with_program(block:&[u8],value:&[u8])->Option<Vec<u8>>{
+    let mut at=0;
+    loop{
+        let end=at+block.get(at..)?.iter().position(|&b|b==0)?;
+        if end==at{break;}
+        at=end+1;
+    }
+    let mut out=block.get(..at+1)?.to_vec();
+    out.extend([1,0]);out.extend(value);out.push(0);
+    if out.len()>block.len(){return None;}
+    out.resize(block.len(),0);
+    Some(out)
+}
 /// `block` (an environment: strings, an empty one, count word, program
 /// path) with PATH=`value`, the same size, or None when it does not fit
 /// or the block is not an environment.
@@ -1229,21 +1288,41 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         // answers its device ports itself in ports::io, so any port access
         // that reaches here (a prefixed IN/OUT, INS or OUTS) is not modelled.
         if is_port_access(&decoded.label){break Stop::Service(format!("{} at {:04x}:{:04x}: this port access is not modelled in Dine",decoded.label,p.selectors[1],p.cpu.eip));}
-        let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
+        let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];let mut repeated_elements=0usize;
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
                 if mode==crate::precompiled::Mode::Required && decoded.native().is_none(){
                     break Stop::Service(format!("native form required for {} at {:04x}:{:08x}; interpreter fallback refused",decoded.label,p.selectors[1],p.cpu.eip));
                 }
                 let mut machine=p.image.segment_state();
-                let native=if let Some(b)=backend.as_deref_mut(){
-                    if b.may_execute(&p.image,&p.ram,p.cpu.eip){
-                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                        b.execute(&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
-                    }else{None}
-                }else{None};
-                let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
-                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");if let Some(b)=backend.as_deref_mut(){b.reference_instruction(&p.image,&p.ram,old_ip,&decoded);}let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}};
+                // One instruction, or one element of a repeated string
+                // instruction (REP leaves EIP on itself until it is done).
+                macro_rules! element{()=>{{
+                    let native=if let Some(b)=backend.as_deref_mut(){
+                        if b.may_execute(&p.image,&p.ram,p.cpu.eip){
+                            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                            b.execute(&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
+                        }else{None}
+                    }else{None};
+                    let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
+                    match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");if let Some(b)=backend.as_deref_mut(){b.reference_instruction(&p.image,&p.ram,old_ip,&decoded);}let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}}
+                }}}
+                let shadowed=machine.ss_shadow!=0||machine.sti_shadow!=0;
+                let mut result=element!();
+                // Further elements of the same REP run here, without a trip
+                // round the DOS loop each: up to the next timer poll and the
+                // budget, so interrupts and host events are still seen at
+                // the same step counts. A string element raises no event
+                // the loop looks at; a fault ends the batch where it was.
+                if program.partial&&result.is_ok()&&p.cpu.eip==old_ip&&!shadowed&&!p.rom_mode&&!history_enabled&&!watched{
+                    let limit=(budget-execution_steps-1).min(255-execution_steps%256);
+                    while repeated_elements<limit{
+                        let r=element!();
+                        if r.is_err(){result=r;break;}
+                        repeated_elements+=1;
+                        if p.cpu.eip!=old_ip{break;}
+                    }
+                }
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
@@ -1286,6 +1365,8 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             },
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),
         };
+        // Elements a REP batch completed before its last one (or its fault).
+        execution_steps+=repeated_elements;pil_steps+=repeated_elements;
         if let Err(e)=result{
             match exception(&mut p,&e,&mut lazy){
                 Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
@@ -1296,7 +1377,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         execution_steps+=1;pil_steps+=1;
         let repeated=matches!(&decoded.operation,Operation::Pil{program,..}if program.partial);
         let partial=repeated&&p.cpu.eip==old_ip;
-        if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1;}
+        if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1+repeated_elements;}
         if !partial{
             completed+=1;
             let key=if repeated{decoded.label.as_str()}else{decoded.label.split_whitespace().next().unwrap_or("?")};
