@@ -22,6 +22,7 @@ mod dine_display;
 mod dine_window;
 mod block_compiler;
 mod precompiled;
+mod native_application;
 mod dos_encoding;
 mod dos_text_io;
 mod rust_codegen;
@@ -2460,6 +2461,8 @@ Debugger and checks:
   --compare-mandelbrot [SIZE] [ITERATIONS]
 
 Code generation and examples:
+  --emit-native-application INPUT OUTPUT.rs
+                                    Prepare native application calls and relocated startup
   --emit-rust 8|16|32 [DESCRIPTION]  Emit a Rust instruction implementation
   --emit-suite-rust [N] [SAMPLES]    Emit backend verification suite
   --emit-loop-rust [N] [SAMPLES]     Emit small native loop benchmark
@@ -2686,6 +2689,10 @@ pub fn run_cli() -> Result<(), String> {
     if args.get(1).map(String::as_str)==Some("--emit-precompiled-forms") {
         let (path,check)=match args.len(){3=>(args[2].as_str(),false),4 if args[3]=="--check"=>(args[2].as_str(),true),_=>return Err("usage: pil --emit-precompiled-forms PATH [--check]".into())};
         println!("{}",precompiled::emit(path,check)?);return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--emit-native-application"){
+        if args.len()!=4{return Err("usage: pil --emit-native-application INPUT OUTPUT.rs".into());}
+        println!("{}",native_application::emit(&args[2],&args[3])?);return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("--emit-rust") {
         let w = args.get(2).ok_or("usage: pil --emit-rust 8|16|32 [description]")?;

@@ -42,7 +42,7 @@ fn dos_tail(loaded:&crate::dos::Loaded,command_line:&str)->Result<String,String>
     Ok(arguments.join(" "))
 }
 
-fn prepare(guest:&[u8],name:&str,tail:&str,config:Option<&str>)->Result<(crate::dos::session::Session,crate::dos::host_console::Options),String>{
+pub(crate) fn prepare(guest:&[u8],name:&str,tail:&str,config:Option<&str>)->Result<(crate::dos::session::Session,crate::dos::host_console::Options),String>{
     prepare_image(guest, name, tail, config, None)
 }
 

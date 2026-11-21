@@ -81,6 +81,14 @@ pub(crate) fn resolve(p:&Program)->Option<Native>{
     Some(Native{form,consts:consts.into_boxed_slice()})
 }
 
+/// Resolve an already compiled application call. No guest decoding or PIL
+/// parsing occurs here. Fixed literals are still checked at the library ABI.
+pub(crate) fn prepared(form_key:u128,consts:&[u64])->Option<Native>{
+    let &(_,fixed,form)=forms::FORMS.get(*table().get(&form_key)?)?;
+    if fixed.len()!=consts.len()||fixed.iter().zip(consts).any(|(f,c)|f.is_some_and(|f|f!=*c)){return None;}
+    Some(Native{form,consts:consts.into()})
+}
+
 /// Execution mode, from `PIL_PRECOMPILED`: `off` uses only the interpreter,
 /// `verify` runs both and compares the full state after each instruction,
 /// `required` refuses an unavailable native form before it executes;
