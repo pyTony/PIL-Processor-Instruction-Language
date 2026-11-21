@@ -110,3 +110,64 @@ fn alternate_register_encodings_and_fs_gs_push_use_same_pil(){
     }}
     for bytes in [vec![0x8f,0xc8],vec![0xff,0x3f],vec![0x8f,0x0f],vec![0xf0,0x50]]{let (image,ram,_)=setup(&bytes,false);assert!(image.decode(&ram,0x100).is_err());}
 }
+// PUSHA/PUSHAD and POPA/POPAD on a 16-bit stack whose slots run past FFFFh:
+// the 386 makes the slots (PUSHA) or registers (POPA) before the slot that
+// crosses the end, then raises #SS; SP/ESP and the rest stay as they were
+// (SingleStepTests/80386 cases 6660, 61 and 6661).
+#[test]
+fn pusha_popa_effects_before_a_crossing_slot_then_ss_fault(){
+    // PUSHA at SP=0001h: DI at FFF1h ... CX at FFFDh, AX at FFFFh crosses.
+    // PUSHAD at SP=000Eh: EDI at FFEEh, ESI, EBP, ESP at FFFAh, EBX at FFFEh crosses.
+    for (bytes,sp,written) in [(vec![0x60u8],1u32,7usize),(vec![0x66,0x60],0x0e,4)]{
+        let (image,mut ram,mut c)=setup(&bytes,false);
+        c.regs=[0x11112222,0x33334444,0x55556666,0x77778888,0xabcd0000|sp,0x9999aaaa,0xbbbbcccc,0xddddeeee];
+        let old=c.clone();let w:u32=if bytes.len()==2{4}else{2};
+        let error=step(&image,&mut ram,&mut c).unwrap_err();
+        assert!(matches!(error,ExecError::StackSegment{..}),"{error:?}");
+        assert_eq!(c,old);
+        let width=MemWidth::from_bits(w as u8*8).unwrap();
+        for k in 0..8usize{
+            // Slot k from the bottom holds register 7-k (DI first).
+            let off=sp.wrapping_sub(8*w).wrapping_add(k as u32*w)&0xffff;
+            if k<written{
+                assert_eq!(ram.load(0x200+off,width).unwrap(),old.regs[7-k]&super::mask(w as u8*8) as u32,"slot {k}");
+            }else if off+w<=0x10000{
+                assert_eq!(ram.load(0x200+off,width).unwrap(),0,"slot {k} not written");
+            }
+        }
+    }
+    // POPA at SP=FFF9h: DI, SI, BP are read, the skipped SP slot at FFFFh crosses.
+    // POPAD at SP=FFF9h: EDI is read, ESI at FFFDh crosses.
+    // POPAD at SP=FFF2h: EDI, ESI, EBP are read, the skipped ESP slot at FFFEh crosses.
+    for (bytes,sp,regs) in [(vec![0x61u8],0xfff9u32,vec![7usize,6,5]),(vec![0x66,0x61],0xfff9,vec![7]),(vec![0x66,0x61],0xfff2,vec![7,6,5])]{
+        let (image,mut ram,mut c)=setup(&bytes,false);
+        let w:u32=if bytes.len()==2{4}else{2};
+        for k in 0..8u32{let off=sp+k*w;for b in 0..w{if off+b<0x10000{ram.store(0x200+off+b,MemWidth::Byte,0x10*(k+1)+b).unwrap();}}}
+        c.regs[4]=0xabcd0000|sp;let old=c.clone();let oldram=ram.clone();
+        let error=step(&image,&mut ram,&mut c).unwrap_err();
+        assert!(matches!(error,ExecError::StackSegment{..}),"{error:?}");
+        assert_eq!(ram,oldram);
+        let mut want=old.clone();
+        for (k,r) in regs.iter().enumerate(){
+            let v=ram.load(0x200+sp+k as u32*w,MemWidth::from_bits(w as u8*8).unwrap()).unwrap();
+            want.regs[*r]=if w==2{(old.regs[*r]&0xffff0000)|v}else{v};
+        }
+        assert_eq!(c,want);
+    }
+}
+// ENTER 0,3 at BP=0003h: BP is pushed, the copy from BP-2 is pushed, and the
+// read of BP-4 (FFFFh) crosses the end of the stack: #SS with both pushes
+// written and BP/SP unchanged (SingleStepTests/80386 C8).
+#[test]
+fn enter_pushes_before_a_faulting_frame_pointer_read(){
+    let (image,mut ram,mut c)=setup(&[0xc8,0,0,3],false);
+    c.regs[4]=0xabcd0100;c.regs[5]=0x12340003;ram.store(0x200+1,MemWidth::Word,0x5a5a).unwrap();
+    let old=c.clone();
+    let guest::Operation::Pil{program,dst,src,flow,address}=image.decode(&ram,c.eip).unwrap().operation else{panic!("expected ENTER PIL")};
+    let error=execute_machine(&program,&mut c,dst,src,flow,&mut ram,address,&mut image.segment_state()).unwrap_err();
+    assert!(matches!(error,ExecError::StackSegment{..}),"{error:?}");
+    assert_eq!(c,old);
+    assert_eq!(ram.load(0x200+0xfe,MemWidth::Word).unwrap(),3);
+    assert_eq!(ram.load(0x200+0xfc,MemWidth::Word).unwrap(),0x5a5a);
+    assert_eq!(ram.load(0x200+0xfa,MemWidth::Word).unwrap(),0);
+}

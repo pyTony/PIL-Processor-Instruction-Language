@@ -116,7 +116,7 @@ def main() -> None:
         assert b"Running from:" in workflow.stdout
         timed = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "build_dine.py"), str(exits),
-             "--runtime", str(lib), "--output-dir", str(root / "workflow"),
+             "--runtime", str(lib), "--output-dir", str(root / "workflow-timed"),
              "--config", str(config), "--time"],
             cwd=ROOT, capture_output=True, timeout=60,
         )

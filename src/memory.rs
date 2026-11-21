@@ -99,6 +99,23 @@ impl TextWatch{
 }
 impl PartialEq for TextWatch{fn eq(&self,_:&Self)->bool{true}}
 impl Eq for TextWatch{}
+#[derive(Clone,Debug,Default)]
+struct VideoWatch{total:u64,changed_known:u64,graphics:u64,text:u64}
+impl PartialEq for VideoWatch{fn eq(&self,_:&Self)->bool{true}}
+impl Eq for VideoWatch{}
+impl VideoWatch{
+    fn note(&mut self,index:usize,changed:Option<bool>){
+        if !(0xa0000..0xc0000).contains(&index){return;}
+        self.total=self.total.saturating_add(1);
+        if index<0xb0000{self.graphics=self.graphics.saturating_add(1);}
+        else{self.text=self.text.saturating_add(1);}
+        if changed==Some(true){self.changed_known=self.changed_known.saturating_add(1);}
+    }
+    fn json(&self)->String{
+        format!(r#"{{"enabled":true,"total":{},"graphics":{},"text":{},"changed_known":{}}}"#,
+            self.total,self.graphics,self.text,self.changed_known)
+    }
+}
 /// Optional origin hints for code read from an immutable executable resource.
 /// A hint never authorizes execution: the application backend still checks its
 /// compiled bytes. Ordinary CPU writes can leave hints stale safely; changed
@@ -125,6 +142,7 @@ pub struct Ram {
     marks:std::cell::RefCell<Vec<(usize,u8)>>,
     code_watch:CodeWatch,
     text_watch:Option<TextWatch>,
+    video_watch:Option<VideoWatch>,
     code_origins:CodeOrigins,
 }
 /// Host-only alias of the four planes (plane n at PLANE_ALIAS + n*10000h),
@@ -132,7 +150,7 @@ pub struct Ram {
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,code_origins:Default::default()}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,video_watch:None,code_origins:Default::default()}}
     pub(crate) fn track_resource(&mut self,identity:usize){self.code_origins=CodeOrigins{identity:Some(identity),ranges:Default::default()};}
     pub(crate) fn resource_origin(&self,address:u32)->Option<(usize,u32)>{
         if self.paging.get().is_some(){return None;}
@@ -278,6 +296,15 @@ impl Ram {
     pub(crate) fn text_watch_json(&self)->String{
         self.text_watch.as_ref().map_or_else(||r#"{"enabled":false}"#.into(),TextWatch::json)
     }
+    pub(crate) fn start_video_watch(&mut self){self.video_watch=Some(VideoWatch::default());}
+    pub(crate) fn stop_video_watch(&mut self){self.video_watch=None;}
+    pub(crate) fn video_watch_json(&self)->String{
+        self.video_watch.as_ref().map_or_else(||r#"{"enabled":false}"#.into(),VideoWatch::json)
+    }
+    #[inline]
+    fn note_video_write(&mut self,index:usize,changed:Option<bool>){
+        if let Some(w)=self.video_watch.as_mut(){w.note(index,changed);}
+    }
     pub fn bytes(&self)->&[u8] {&self.data}
     /// Physical read-only spans, for reproducing an initialized guest snapshot.
     pub fn a20_enabled(&self)->bool{self.a20_enabled}
@@ -409,19 +436,22 @@ impl Ram {
         if self.paging.get().is_some(){
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
+                if self.video_watch.is_some() && !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
                 match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
             }
             self.settle();
             return Ok(());
         }
         if let Some(offset)=self.alias(address,bytes){
+            if self.video_watch.is_some(){for shift in 0..bytes{self.note_video_write(0xa0000+(offset+shift)%super::vga_planar::PLANE,None);}}
             let p=self.planar.as_deref_mut().unwrap();
             for shift in 0..bytes{let at=offset+shift;p.poke(at/super::vga_planar::PLANE,at%super::vga_planar::PLANE,(value>>(shift*8))as u8);}
             return Ok(());
         }
         for shift in 0..bytes {
             let index=self.physical_address(address+shift as u32)as usize;let byte=(value>>(shift*8)) as u8;
-            match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
+            if self.video_watch.is_some() && !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
+                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
         }
         Ok(())
     }
@@ -430,13 +460,13 @@ impl Ram {
         self.settle();
         self.check_bus(address,data.len(),true)?;
         if self.paging.get().is_some(){
-            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;if !self.in_rom(index){if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],b);}self.code_watch.write(index,1);self.data[index]=b;}}
+            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;if !self.in_rom(index){self.note_video_write(index,Some(self.data[index]!=b));if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],b);}self.code_watch.write(index,1);self.data[index]=b;}}
             self.settle();
             return Ok(());
         }
         let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.code_watch.write(start,chunk);
             // ROM bytes stay as they are, as for `store`.
-            for i in 0..chunk{if !self.in_rom(start+i){if let Some(w)=self.text_watch.as_mut(){w.write(start+i,self.data[start+i],data[done+i]);}self.data[start+i]=data[done+i];}}
+            for i in 0..chunk{if !self.in_rom(start+i){self.note_video_write(start+i,Some(self.data[start+i]!=data[done+i]));if let Some(w)=self.text_watch.as_mut(){w.write(start+i,self.data[start+i],data[done+i]);}self.data[start+i]=data[done+i];}}
             done+=chunk;}Ok(())
     }
 }

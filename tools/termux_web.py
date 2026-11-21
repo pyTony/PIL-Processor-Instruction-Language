@@ -103,6 +103,15 @@ class WebBackend:
         with self.lock:
             return self._queue_keys(keys)
 
+    def video_watch(self, enabled):
+        if not isinstance(enabled, bool):
+            raise ValueError("video diagnostics enabled must be a boolean")
+        with self.lock:
+            reply = self.session.send("video-watch " + ("on" if enabled else "off"))
+            if not reply.get("ok", False):
+                raise RuntimeError(reply.get("text") or "video diagnostics request rejected")
+            return reply
+
     def ansi_on(self):
         # DOS has an install command but no uninstall command. Enabling it
         # affects the existing guest session without restarting the program.
@@ -215,6 +224,8 @@ def make_handler(backend, html=HTML):
                     reply = backend.stop()
                 elif path == "/api/ansi":
                     reply = backend.ansi_on()
+                elif path == "/api/video-watch":
+                    reply = backend.video_watch(body.get("enabled"))
                 elif path == "/api/media":
                     reply = backend.media(body.get("action"), body.get("drive"), body.get("path"))
                 else:

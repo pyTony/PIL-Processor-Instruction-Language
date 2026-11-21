@@ -167,6 +167,19 @@ Result:
 The generated backend ran 2,330 programs with 0 disagreements. Report:
 sst80386-run-07.md (project files, not in git).
 
+Run 11 (20 November 2026, local cloud session, same revision) adds:
+- REPE/REPNE CMPS/SCAS keep the flags of finished elements on a fault.
+- `effects_before_fault`: PUSHA/PUSHAD, POPA/POPAD and ENTER make the slots,
+  registers or pushes before the one that faults.
+
+Result:
+- 1,621,459 pass.
+- 15 failures: 9 byte IDIVs where the 386EX returns AL=80h instead of #DE,
+  and 6 port reads (IN EAX from 1Fh, IN from 21h on the 386EX).
+
+The generated backend ran 2,379 programs with 0 disagreements. Report:
+sst80386-run-11.md (project files, not in git).
+
 ## Original plan: SingleStepTests CPU adapter
 
 The captures use an Intel80386EX KU80C386EX33 with a16-bit external data bus.

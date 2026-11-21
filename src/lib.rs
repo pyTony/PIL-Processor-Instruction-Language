@@ -75,6 +75,10 @@ enum Token {
     ReadFlag(usize, Flag),
     ReadFlags(usize),
     CheckpointFlags,
+    // A load or store whose segment or RAM check faults first makes the
+    // stores and named register writes staged before it, in order, as the
+    // 386 does in PUSHA/PUSHAD and POPA/POPAD (SingleStepTests/80386).
+    EffectsBeforeFault,
     RequireRealMode,
     RequireRing0,
     InterruptShadowIf(usize),
@@ -654,6 +658,7 @@ impl Program {
             Token::ReadFlag(v, f) => format!("v{v} = read_flag {f:?}"),
             Token::ReadFlags(v) => format!("v{v} = read_flags"),
             Token::CheckpointFlags => "checkpoint_flags".into(),
+            Token::EffectsBeforeFault => "effects_before_fault".into(),
             Token::RequireRealMode => "require_real_mode".into(),
             Token::RequireRing0 => "require_ring0".into(),
             Token::InterruptShadowIf(c) => format!("interrupt_shadow_if v{c}"),
@@ -1189,6 +1194,10 @@ fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if wrote {return Err("multiple destination writes".into());}
                     wrote=true; Token::WriteIf(a,c)
                 }
+                ["effects_before_fault"]=>{
+                    if tokens.iter().any(|t|!matches!(t,Token::PreserveFlags(0)|Token::CheckpointFlags)){return Err("effects_before_fault must precede all operations".into());}
+                    Token::EffectsBeforeFault
+                }
                 ["checkpoint_flags"]=>{
                     if tokens.iter().any(|t|!matches!(t,Token::PreserveFlags(0))){return Err("checkpoint_flags must precede all operations".into());}
                     Token::CheckpointFlags
@@ -1520,7 +1529,10 @@ fn execute_machine_lazy(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowCo
     ram.set_paging(machine.ram_paging());
     let result=execute_state(p,cpu,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective),lazy);
     ram.set_paging(machine.ram_paging());
-    if result.is_err()&&p.checkpoint_flags{if let Some((f,u))=machine.recover_flags(){cpu.eflags=f;cpu.undefined_flags=u;*lazy=LazyFlags::None;}}
+    // A fault in a later element keeps the flags of the elements already
+    // compared, as the 386 does (SingleStepTests/80386). The current Intel
+    // SDM (REP) describes restoring the entry EFLAGS; this is a 386.
+    if result.is_err()&&p.checkpoint_flags{machine.flag_checkpoint=None;}
     result
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1675,6 +1687,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_transfer:Option<privilege::Transfer>=None;
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;MAX_STORES]=[None;MAX_STORES];let mut store_index=0;let mut extra_stores:Vec<(u32,MemWidth,u32)>=Vec::new();
+    let effects_before_fault=p.tokens.iter().any(|t|matches!(t,Token::EffectsBeforeFault));
     let mut probed:Option<ProbedMemoryAccess>=None;
     // Keep ordinary instructions on the stack without restricting valid PIL programs.
     let mut value_stack = [Value { bits: 0, width: 0 }; 64];
@@ -1691,6 +1704,15 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
         register_heap=vec![empty_effect;p.register_effects];&mut register_heap
     };
     let mut reg_count = 0usize;
+    // effects_before_fault: a load or store that faults first makes the
+    // stores staged so far and the earlier named register writes.
+    macro_rules! effects_then_fault{($e:expr)=>{{
+        if effects_before_fault{
+            for (addr,w,v) in pending_stores.into_iter().flatten().chain(extra_stores) {ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|access_error(cpu.eip,f))?;}
+            for &(v,x) in &pending_registers[..reg_count] {cpu.write(v,x);}
+        }
+        return Err($e);
+    }}}
     if p.flushes_lazy {
         lazy.flush(&mut cpu.eflags, &mut cpu.undefined_flags);
     }
@@ -1899,6 +1921,7 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             PackedOp::Token(ref t) => match *t {
             Token::CheckpointFlags=>{machine.as_deref().ok_or(ExecError::InvalidContext)?;},
+            Token::EffectsBeforeFault=>{},
             Token::ReadFlags(o)=>values[o]=value(cpu.eflags as u64,32),
             Token::RequireRealMode=>if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||cpu.eflags&0x20000!=0{return Err(ExecError::InvalidContext);},
             Token::RequireRing0=>{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;if m.cpl()!=0{return Err(ExecError::GeneralProtection{eip:cpu.eip,error_code:0});}},
@@ -1913,15 +1936,21 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             Token::LoadSegment(o,a,w,segment)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
-                let at=c.translate(values[a].bits as u32,w,false,cpu.eip)?;
-                values[o]=value(ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,w,&pending_stores[..store_index.min(MAX_STORES)],&extra_stores).map_err(|f|access_error(cpu.eip,f))? as u64,w.bits());
+                let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;
+                let loaded=c.translate(values[a].bits as u32,w,false,cpu.eip)
+                    .and_then(|at|r.load_staged(at,w,&pending_stores[..store_index.min(MAX_STORES)],&extra_stores).map(|v|(at,v)).map_err(|f|access_error(cpu.eip,f)));
+                let (at,v)=match loaded{Ok(x)=>x,Err(e)=>effects_then_fault!(e)};
+                values[o]=value(v as u64,w.bits());
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:false,is_stack:segment==2&&!p.checkpoint_flags});
             }
             Token::StoreSegment(a,v,w,segment)=>{
                 let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;
                 let c=address::MemoryContext{segment:[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],cache:m.segments[segment]};
-                let at=c.translate(values[a].bits as u32,w,true,cpu.eip)?;
-                ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,w).map_err(|f|access_error(cpu.eip,f))?;if store_index<MAX_STORES{pending_stores[store_index]=Some((at,w,values[v].bits as u32));}else{extra_stores.push((at,w,values[v].bits as u32));}store_index+=1;
+                let r=ram.as_deref().ok_or(ExecError::InvalidContext)?;
+                let checked=c.translate(values[a].bits as u32,w,true,cpu.eip)
+                    .and_then(|at|r.check_write(at,w).map(|_|at).map_err(|f|access_error(cpu.eip,f)));
+                let at=match checked{Ok(at)=>at,Err(e)=>effects_then_fault!(e)};
+                if store_index<MAX_STORES{pending_stores[store_index]=Some((at,w,values[v].bits as u32));}else{extra_stores.push((at,w,values[v].bits as u32));}store_index+=1;
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:at,bytes:w.bytes(),write:true,is_stack:segment==2&&!p.checkpoint_flags});
             }
             Token::RetireIf(c)=>if values[c].bits!=0{cpu.eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){m.retired();}return Ok(probed);},
@@ -1964,19 +1993,27 @@ fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowContext,m
             }
             Token::ReadAddress(o)=>values[o]=value(address as u64,32),
             Token::Load(o,a,w)=>{
-                let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
                 let offset=values[a].bits as u32;
-                let addr=match memory_context {Some(c)=>c.translate(offset,w,false,cpu.eip)?,None=>offset};
-                let v=m.load(addr,w).map_err(|f|access_error(cpu.eip,f))?;
+                let m=ram.as_deref().ok_or(ExecError::InvalidContext)?;
+                let loaded=match memory_context {Some(c)=>c.translate(offset,w,false,cpu.eip),None=>Ok(offset)}
+                    .and_then(|addr|m.load(addr,w).map(|v|(addr,v)).map_err(|f|access_error(cpu.eip,f)));
+                let (addr,v)=match loaded{
+                    Ok(x)=>x,
+                    Err(e)=>effects_then_fault!(e),
+                };
                 values[o]=value(v as u64,w.bits());
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:false,is_stack:!p.has_read_address});
             }
             Token::StoreIf(_,_,c,_) if values[c].bits==0=>{}
             Token::Store(a,v,w)|Token::StoreIf(a,v,_,w)=>{
-                let m=ram.as_deref_mut().ok_or(ExecError::InvalidContext)?;
                 let offset=values[a].bits as u32;
-                let addr=match memory_context {Some(c)=>c.translate(offset,w,true,cpu.eip)?,None=>offset};
-                m.check_write(addr,w).map_err(|f|access_error(cpu.eip,f))?;
+                let m=ram.as_deref().ok_or(ExecError::InvalidContext)?;
+                let checked=match memory_context {Some(c)=>c.translate(offset,w,true,cpu.eip),None=>Ok(offset)}
+                    .and_then(|addr|m.check_write(addr,w).map(|_|addr).map_err(|f|access_error(cpu.eip,f)));
+                let addr=match checked{
+                    Ok(addr)=>addr,
+                    Err(e)=>effects_then_fault!(e),
+                };
                 if store_index<MAX_STORES{pending_stores[store_index]=Some((addr,w,values[v].bits as u32));}else{extra_stores.push((addr,w,values[v].bits as u32));}store_index+=1;
                 merge_probed_access(&mut probed,ProbedMemoryAccess{address:addr,bytes:w.bytes(),write:true,is_stack:!p.has_read_address});
             }
@@ -2261,10 +2298,19 @@ if CHECKPOINT{machine.checkpoint_flags(*eip,*flags,*undefined);}
 ram.set_paging(machine.ram_paging());
 let result=execute_state(regs,flags,undefined,eip,dst,src,context,Some(ram),offset,memory,Some(&mut *machine),address.map(|a|a.effective));
 ram.set_paging(machine.ram_paging());
-if result.is_err()&&CHECKPOINT{if let Some((f,u))=machine.recover_flags(){*flags=f;*undefined=u;}}
+if result.is_err()&&CHECKPOINT{machine.flag_checkpoint=None;}
 result
 }
 "#;
+/// Generated code for `effects_before_fault`: the stores staged so far and
+/// the named register writes of tokens before `index`, in order.
+fn effects_so_far(p:&Program,index:usize)->String{
+    let mut out=String::from("for (at,w,v) in pending_stores[..store_index].iter().flatten(){ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(*at,*w,*v).map_err(|f|f.error(*eip))?;}");
+    for (i,t) in p.tokens[..index].iter().enumerate(){
+        if let Token::WriteGpr(reg,_,width)=t{let m=mask(*width);out.push_str(&format!("regs[{reg}]=((regs[{reg}] as u64 & !{m}u64)|(pending_register_{i}&{m}u64)) as u32;"));}
+    }
+    out
+}
 fn emit_rust_functions(p:&Program)->String {emit_rust_body(p,None)}
 /// One precompiled form (src/precompiled): `slots[n]` is the n-th `const`
 /// of the program; `Some` keeps a literal, `None` reads `k[n]` at run time.
@@ -2304,11 +2350,13 @@ fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
          let mut pending_src: Option<u64> = None;\n",
         if slots.is_some(){", k: &[u64]"}else{""},p.operand_width,p.source_width,p.uses_displacement,p.uses_memory,stores,stores));
     let mut carry_skip=0;
+    let effects_before_fault=p.tokens.iter().any(|t|matches!(t,Token::EffectsBeforeFault));
     for (index,t) in p.tokens.iter().enumerate() {
         if carry_skip>0{carry_skip-=1;continue;}
         if let Some(code)=rust_codegen::carry_window(p,index){out.push_str(&code);carry_skip=3;continue;}
         let line = match *t {
             Token::CheckpointFlags=>"machine.as_deref().ok_or(ExecError::InvalidContext)?;".into(),
+            Token::EffectsBeforeFault=>String::new(),
             Token::ReadFlags(o)=>format!("let v{o}:u64 = *flags as u64;"),
             Token::RequireRealMode=>"if !machine.as_deref().ok_or(ExecError::InvalidContext)?.real_mode||*flags&0x20000!=0 {return Err(ExecError::InvalidContext);}".into(),
             Token::RequireRing0=>"if machine.as_deref().ok_or(ExecError::InvalidContext)?.cpl()!=0 {return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}".into(),
@@ -2323,7 +2371,9 @@ fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
                 let binding = match b { Binding::Dst => "dst", Binding::Src => "src" };
                 format!("let v{o}: u64 = ((regs[{binding}.0] as u64) >> {binding}.1) & {}u64;",mask(w))
             }
+            Token::LoadSegment(o,a,w,segment) if effects_before_fault=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let loaded:Result<u64,ExecError>=(||{{let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;Ok(ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,MemWidth::{w:?},&pending_stores[..store_index],&[]).map_err(|f|f.error(*eip))? as u64)}})();let v{o}:u64=match loaded{{Ok(v)=>v,Err(e)=>{{{}return Err(e);}}}};",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],effects_so_far(p,index)),
             Token::LoadSegment(o,a,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.as_deref().ok_or(ExecError::InvalidContext)?.load_staged(at,MemWidth::{w:?},&pending_stores[..store_index],&[]).map_err(|f|f.error(*eip))? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
+            Token::StoreSegment(a,v,w,segment) if effects_before_fault=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let checked:Result<u32,ExecError>=(||{{let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;Ok(at)}})();let at=match checked{{Ok(at)=>at,Err(e)=>{{{}return Err(e);}}}};pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],effects_so_far(p,index)),
             Token::StoreSegment(a,v,w,segment)=>format!("let cache=machine.as_deref().ok_or(ExecError::InvalidContext)?.segments[{segment}];let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
             Token::RetireIf(c)=>format!("if v{c}!=0 {{*eip=context.next_eip;if let Some(m)=machine.as_deref_mut(){{m.retired();}}return Ok(());}}"),
             Token::ResumeIf(c)=>format!("if v{c}!=0 {{pending_eip=*eip;pending_resume=true;}}"),
@@ -2346,7 +2396,9 @@ fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
             Token::RaiseUnless(c,v)=>if v==13{format!("if v{c}==0{{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}")}else{format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}")},
             Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
             Token::ReadAddress(o)=>format!("let v{o}: u64 = address as u64;"),
+            Token::Load(o,a,w) if effects_before_fault=>format!("let loaded:Result<u64,ExecError>=(||{{let at=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}};Ok(ram.as_deref().ok_or(ExecError::InvalidContext)?.load(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))? as u64)}})();let v{o}:u64=match loaded{{Ok(v)=>v,Err(e)=>{{{}return Err(e);}}}};",effects_so_far(p,index)),
             Token::Load(o,a,w)=>format!("let addr{o}=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}}; let v{o}: u64 = ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.load(addr{o},MemWidth::{w:?}).map_err(|f|f.error(*eip))? as u64;"),
+            Token::Store(a,v,w) if effects_before_fault=>format!("let checked:Result<u32,ExecError>=(||{{let at=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}};ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;Ok(at)}})();let store_addr=match checked{{Ok(at)=>at,Err(e)=>{{{}return Err(e);}}}}; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;",effects_so_far(p,index)),
             Token::Store(a,v,w)=>format!("let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;"),
             Token::StoreIf(a,v,c,w)=>format!("if v{c}!=0{{let store_addr=match memory_context {{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}}; ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?; pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;}}"),
             Token::ReadIp(o,next,w) => format!("let v{o}: u64 = ({} as u64) & {}u64;",if next {"context.next_eip"} else {"*eip"},mask(w)),
