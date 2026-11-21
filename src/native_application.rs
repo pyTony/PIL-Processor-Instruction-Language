@@ -941,6 +941,7 @@ unsafe fn application_entry(
 /// shared resolver handles both). Native apps are often launched from a
 /// nested folder such as driveD/TP/BIN/native, so when neither is present,
 /// search executable parents for the checkout's pildos.conf.
+#[cfg(feature = "dine-library")]
 fn application_config_path() -> Option<String> {
     let (selected, required) = crate::dos_config::selected_path(None);
     if required || selected.is_file() {
