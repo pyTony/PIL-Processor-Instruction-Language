@@ -16,6 +16,15 @@ applications in the same output folder use that one library. Rust and Cargo
 are needed to build; the original DOS executable is not an external dependency
 when running the result.
 
+Native applications use the shared DOS configuration: `PILDOS_CONFIG` takes
+precedence, followed by `pildos.conf` in the launch directory. If neither is
+present there, the native launcher searches its executable's parent folders
+for `pildos.conf`, so an application in a nested output directory can still
+find the checkout configuration. On Windows the native application uses the
+DOS window frontend; `mouse=true` enables the guest mouse driver and host
+pointer input. Keep the application's `dine.dll` beside it when rebuilding the
+shared runtime.
+
 For a local compiler/runtime build, pass `--engine` and `--runtime`. Use
 `--output-dir` for a separate destination. The helper refuses existing native
 application outputs and a destination containing a different shared runtime.
