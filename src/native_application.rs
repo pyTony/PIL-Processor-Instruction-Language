@@ -130,7 +130,7 @@ impl Application {
         let image = r.take(image_len)?.to_vec();
         let resource = r.take(resource_len)?.to_vec();
         let initial = dos::load(&image, &name)?;
-        if initial.relocations != 0 {
+        if initial.dos.relocations != 0 {
             return Err("prepared startup must not contain relocation work".into());
         }
         let mut records = Vec::with_capacity(count);
@@ -146,7 +146,7 @@ impl Application {
             let extent = if offset & RESOURCE != 0 {
                 resource.len()
             } else {
-                initial.module_bytes
+                initial.dos.module_bytes
             };
             if previous.is_some_and(|p| p >= offset)
                 || length == 0
@@ -254,16 +254,16 @@ impl Application {
         dispatch: Option<Dispatch>,
     ) -> Result<(), String> {
         let p = session.machine_mut().ok_or("session state lost")?;
-        let start = p.module_base as usize;
-        let original = p.ram.bytes()[start..start + p.module_bytes].to_vec();
+        let start = p.dos.module_base as usize;
+        let original = p.ram.bytes()[start..start + p.dos.module_bytes].to_vec();
         // Read-only executable resources (including overlays) remain available
         // to ordinary DOS file reads without an external original file.
-        p.own_file = std::sync::Arc::new(self.resource);
-        let resource = p.own_file.clone();
+        p.dos.own_file = std::sync::Arc::new(self.resource);
+        let resource = p.dos.own_file.clone();
         p.ram
             .track_resource(std::sync::Arc::as_ptr(&resource) as usize);
         p.blocks.mode = Some(precompiled::Mode::Off);
-        let module_base = p.module_base;
+        let module_base = p.dos.module_base;
         session.set_backend(Box::new(Backend {
             records: self.records,
             original,
@@ -679,8 +679,8 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
     // optional service setup while recording the original allocation request;
     // runtime configuration installs it normally on the prepared startup.
     loaded.select_xms(false)?;
-    let base = loaded.module_base as usize;
-    let module = loaded.ram.bytes()[base..base + loaded.module_bytes].to_vec();
+    let base = loaded.dos.module_base as usize;
+    let module = loaded.ram.bytes()[base..base + loaded.dos.module_bytes].to_vec();
     // A new, zero-relocation startup header carries the already relocated image.
     let total = 32 + module.len();
     let mut startup = vec![0u8; 32];
@@ -689,9 +689,9 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
     word(2, (total % 512) as u16);
     word(4, total.div_ceil(512) as u16);
     word(8, 2);
-    let psp_base = usize::from(loaded.psp) * 16;
-    let load_segment = (loaded.module_base >> 4) as u16;
-    let extra = (loaded.allocated_end as usize - psp_base) / 16 - 16 - module.len().div_ceil(16);
+    let psp_base = usize::from(loaded.dos.psp) * 16;
+    let load_segment = (loaded.dos.module_base >> 4) as u16;
+    let extra = (loaded.dos.allocated_end as usize - psp_base) / 16 - 16 - module.len().div_ceil(16);
     word(12, extra.max(1) as u16);
     word(14, loaded.selectors[2].wrapping_sub(load_segment));
     word(16, loaded.cpu.regs[4] as u16);
@@ -702,7 +702,7 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
     let mut offsets = Vec::new();
     let mut image = loaded.image.clone();
     let mut code = loaded.ram.clone();
-    image.selectors[1] = (loaded.module_base >> 4) as u16;
+    image.selectors[1] = (loaded.dos.module_base >> 4) as u16;
     image.segments[1] = address::SegmentCache::real_mode(image.selectors[1]);
     image.end = image.end.max(0x10000);
     for (tag, data) in [(0, module.as_slice()), (RESOURCE, bytes)] {
@@ -712,7 +712,7 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
             let remaining = (data.len() - offset).min(15);
             let mut encoded = [0u8; 15];
             encoded[..remaining].copy_from_slice(&data[offset..offset + remaining]);
-            code.write_bytes(loaded.module_base, &encoded)
+            code.write_bytes(loaded.dos.module_base, &encoded)
                 .map_err(|e| format!("enumeration access: {e:?}"))?;
             let Ok(decoded) = image.decode(&code, 0) else {
                 continue;
@@ -993,12 +993,12 @@ mod tests {
         reference.blocks.mode = Some(precompiled::Mode::Off);
         dos::set_command_tail(&mut reference, tail).unwrap();
         let mut prepared = dos::load(&app.image, name).unwrap();
-        assert_eq!(prepared.relocations, 0);
+        assert_eq!(prepared.dos.relocations, 0);
         dos::set_command_tail(&mut prepared, tail).unwrap();
         assert_eq!(prepared.cpu, reference.cpu);
         assert_eq!(prepared.image, reference.image);
         assert_eq!(prepared.ram.bytes(), reference.ram.bytes());
-        prepared.own_file = std::sync::Arc::new(Vec::new()); // attach restores resources, never a host file.
+        prepared.dos.own_file = std::sync::Arc::new(Vec::new()); // attach restores resources, never a host file.
         let mut reference = dos::session::Session::new(reference);
         let mut prepared = dos::session::Session::new(prepared);
         app.attach(&mut prepared, None).unwrap();

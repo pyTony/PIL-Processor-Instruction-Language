@@ -97,7 +97,7 @@ pub(crate) fn compiled_interrupt(
         return Err("compiled guest requested blocking input".into());
     }
     let result = service(guest, vector, output);
-    if std::mem::take(&mut guest.input_wait) {
+    if std::mem::take(&mut guest.dos.input_wait) {
         return Err("compiled guest requested blocking input".into());
     }
     result
@@ -117,33 +117,15 @@ pub(crate) fn compiled_port(
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
 pub struct Loaded{
-    arena:Arena,
-    pub format:Format,pub cpu:Cpu,pub ram:Ram,pub image:Image,
-    pub selectors:[u16;6],pub relocations:usize,pub module_bytes:usize,
-    pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
-    pub timer_ticks:u32,timer_tick_adjust:i64,pub open_handles:u32,
-    /// Most recent reported DOS error for INT 21h/AH=59h.
-    pub dos_error:u16,
-    pub dta:(u16,u16),
-    /// DOS console state: scan code owed after an ASCII-0 key, and an AH0C flush
-    /// already performed for the read that is waiting.
-    pub pending_scan:Option<u8>,pub flushed:bool,
-    /// AH0A line being edited across waits: bytes so far, entry column, first key.
-    pub line:Option<(Vec<u8>,usize,bool)>,
-    /// Set by a service that consumed what input there was and must wait.
-    pub input_wait:bool,
-    /// AH58 allocation strategy (first fit only is modelled) and the AH31
-    /// paragraphs kept resident when the program terminated that way.
-    pub alloc_strategy:u8,pub resident:Option<u16>,
-    /// The program's own file, which opens read-only by its upper-case base
-    /// name from any directory, and the drive with the files AH3D opened.
-    pub own_file:std::sync::Arc<Vec<u8>>,pub own_name:Vec<u8>,pub drive:files::Drives,
-    /// The running program's PSP, the parents waiting in EXEC, the last
-    /// child's return code for AH4D, and console bytes AH3F read but did not
-    /// return yet.
-    pub psp:u16,exec:Vec<exec::Frame>,in_memory:Vec<exec::InMemoryChild>,
-    /// Programs loaded by EXEC AL=01h remain allocated while the caller runs.
-    load_only:Vec<exec::LoadedChild>,pub return_code:u16,con_pending:Vec<u8>,
+    /// The DOS run by Dine on this machine: its memory chain, processes,
+    /// files, console state and drivers. Everything else here is the PC.
+    pub dos:Dos,
+    pub cpu:Cpu,
+    pub ram:Ram,
+    pub image:Image,
+    pub selectors:[u16;6],
+    pub timer_ticks:u32,
+    timer_tick_adjust:i64,
     /// The PC speaker behind ports 42h, 43h and 61h.
     pub speaker:ports::Speaker,
     /// ISA Sound Blaster 2.0 DSP, DMA1 and PCM queue.
@@ -152,22 +134,12 @@ pub struct Loaded{
     /// AH00, AH2A, AH2C); None keeps the deterministic clock from midnight
     /// on 1 January 1980.
     pub clock_offset:Option<i64>,
-    /// The BREAK setting of INT21/AH33 AL=00h-02h; DOS starts with it off.
-    pub break_check:bool,
-    /// The VERIFY setting of INT21/AH2E (set) and AH54 (get); off at start.
-    pub verify:bool,
     /// The CMOS register that port 71h reads, as port 70h last chose it.
-    pub cmos_index:u8,pub cmos_shutdown:u8,rtc:rtc::Rtc,dos_date_adjust:i64,
-    /// The DOS country code (001 or 358) for AH38 and AH65.
-    pub country:u16,
+    pub cmos_index:u8,
+    pub cmos_shutdown:u8,
+    rtc:rtc::Rtc,
     /// COM1 when a session attached it.
     pub com1:Option<serial::Serial>,
-    /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
-    breaks:Vec<brk::Frame>,
-    /// Optional software INT 33h mouse driver, enabled by interactive sessions.
-    mouse:mouse::Mouse,
-    /// The XMS 3.0 driver (installed unless PIL_XMS=off or `select_xms`).
-    xms:xms::Xms,
     /// Persistent, signature-validated cache across session slices.
     pub cache:super::cache::DecodeCache,
     /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
@@ -182,17 +154,74 @@ pub struct Loaded{
     /// Opt-in BIOS and DOS service call trace, independent of instruction history.
     pub(crate) services_trace:history::ServiceTrace,
 }
+/// DOS state Dine keeps for the program it runs, apart from the machine
+/// (CPU, memory, devices) it runs on.
+#[derive(Clone)]
+pub struct Dos{
+    arena:Arena,
+    pub format:Format,
+    pub relocations:usize,
+    pub module_bytes:usize,
+    pub header_bytes:usize,
+    pub module_base:u32,
+    pub allocated_end:u32,
+    pub trailing_bytes:usize,
+    pub open_handles:u32,
+    /// Most recent reported DOS error for INT 21h/AH=59h.
+    pub dos_error:u16,
+    pub dta:(u16,u16),
+    /// DOS console state: scan code owed after an ASCII-0 key, and an AH0C flush
+    /// already performed for the read that is waiting.
+    pub pending_scan:Option<u8>,
+    pub flushed:bool,
+    /// AH0A line being edited across waits: bytes so far, entry column, first key.
+    pub line:Option<(Vec<u8>,usize,bool)>,
+    /// Set by a service that consumed what input there was and must wait.
+    pub input_wait:bool,
+    /// AH58 allocation strategy (first fit only is modelled) and the AH31
+    /// paragraphs kept resident when the program terminated that way.
+    pub alloc_strategy:u8,
+    pub resident:Option<u16>,
+    /// The program's own file, which opens read-only by its upper-case base
+    /// name from any directory, and the drive with the files AH3D opened.
+    pub own_file:std::sync::Arc<Vec<u8>>,
+    pub own_name:Vec<u8>,
+    pub drive:files::Drives,
+    /// The running program's PSP, the parents waiting in EXEC, the last
+    /// child's return code for AH4D, and console bytes AH3F read but did not
+    /// return yet.
+    pub psp:u16,
+    exec:Vec<exec::Frame>,
+    in_memory:Vec<exec::InMemoryChild>,
+    /// Programs loaded by EXEC AL=01h remain allocated while the caller runs.
+    load_only:Vec<exec::LoadedChild>,
+    pub return_code:u16,
+    con_pending:Vec<u8>,
+    /// The BREAK setting of INT21/AH33 AL=00h-02h; DOS starts with it off.
+    pub break_check:bool,
+    /// The VERIFY setting of INT21/AH2E (set) and AH54 (get); off at start.
+    pub verify:bool,
+    dos_date_adjust:i64,
+    /// The DOS country code (001 or 358) for AH38 and AH65.
+    pub country:u16,
+    /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
+    breaks:Vec<brk::Frame>,
+    /// Optional software INT 33h mouse driver, enabled by interactive sessions.
+    mouse:mouse::Mouse,
+    /// The XMS 3.0 driver (installed unless PIL_XMS=off or `select_xms`).
+    xms:xms::Xms,
+}
 impl Clone for Loaded{
-    fn clone(&self)->Self{Self{
-        arena:self.arena.clone(),format:self.format.clone(),cpu:self.cpu.clone(),ram:self.ram.clone(),image:self.image.clone(),
-        selectors:self.selectors,relocations:self.relocations,module_bytes:self.module_bytes,header_bytes:self.header_bytes,
-        module_base:self.module_base,allocated_end:self.allocated_end,trailing_bytes:self.trailing_bytes,timer_ticks:self.timer_ticks,timer_tick_adjust:self.timer_tick_adjust,
-        open_handles:self.open_handles,dos_error:self.dos_error,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
-        input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
-        own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),load_only:self.load_only.clone(),return_code:self.return_code,
-        con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,break_check:self.break_check,verify:self.verify,
-        cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        mouse:self.mouse.clone(),xms:self.xms.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),
+    fn clone(&self)->Self{Self{dos:self.dos.clone(),
+        cpu:self.cpu.clone(),ram:self.ram.clone(),image:self.image.clone(),
+        selectors:self.selectors,
+        timer_ticks:self.timer_ticks,timer_tick_adjust:self.timer_tick_adjust,
+        
+        
+        
+        speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,
+        cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),com1:self.com1.clone(),
+        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),
     }}
 }
 impl std::fmt::Debug for Loaded{
@@ -208,7 +237,7 @@ impl Loaded{
     /// Install or remove the XMS driver before the first guest instruction.
     #[allow(dead_code)]
     pub fn select_xms(&mut self,installed:bool)->Result<(),String>{
-        memory_arena::set_umbs(self,installed)?;self.xms.set_installed(installed);Ok(())
+        memory_arena::set_umbs(self,installed)?;self.dos.xms.set_installed(installed);Ok(())
     }
     /// Select the optional 80387 backend before executing the first guest instruction.
     /// Keep the BIOS equipment word consistent with INT 11h without replacing
@@ -301,10 +330,10 @@ fn environment(path:&[u8],drive:u8,temp:Option<u8>)->Vec<u8>{
 pub use files::{MemDir,Source};
 /// Adjust the initial environment when configuration supplies the DOS drive.
 pub(crate) fn select_startup_drive(p:&mut Loaded,letter:u8)->Result<(),String>{
-    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
-    let tail=b"COMSPEC=A:\\COMMAND.COM\0".len()+if p.drive.memory_letter().is_some(){b"TEMP=Z:\\\0".len()}else{0}+b"BLASTER=A220 I5 D1 T3\0".len()+3;
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let tail=b"COMSPEC=A:\\COMMAND.COM\0".len()+if p.dos.drive.memory_letter().is_some(){b"TEMP=Z:\\\0".len()}else{0}+b"BLASTER=A220 I5 D1 T3\0".len()+3;
     for at in [env+8,env+tail as u32]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
-    p.drive.select_default(letter)?;
+    p.dos.drive.select_default(letter)?;
     for at in [env+8,env+tail as u32]{p.ram.store(at,MemWidth::Byte,u32::from(letter)).map_err(|e|format!("DOS environment: {e:?}"))?;}
     Ok(())
 }
@@ -313,7 +342,7 @@ use nls::COUNTRIES;
 /// there is one), keeping the other strings and the program path after
 /// them. The whole block must still fit the environment's paragraphs.
 pub(crate) fn set_environment_path(p:&mut Loaded,value:&str)->Result<(),String>{
-    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
     let size=usize::from(ENV_PARAS)*16;
     let mut block=vec![0u8;size];
     for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
@@ -332,20 +361,20 @@ pub(crate) fn set_environment_path(p:&mut Loaded,value:&str)->Result<(),String>{
 ///   it, else that folder mounted on a free letter.
 #[cfg(any(feature = "dine-library", test))]
 pub(crate) fn place_host_program(p:&mut Loaded,launch:&Path,program_folder:&Path,name:&str)->Result<(),String>{
-    match p.drive.host_location(launch){
-        Some((letter,path))=>{select_startup_drive(p,letter)?;p.drive.select_directory(letter,path)?;}
+    match p.dos.drive.host_location(launch){
+        Some((letter,path))=>{select_startup_drive(p,letter)?;p.dos.drive.select_directory(letter,path)?;}
         None=>{
             // Every configured drive stays; the launch folder takes a free
             // letter (C: only when all of A:-E: are in use).
-            let letter=p.drive.free_letter().unwrap_or(b'C');
-            p.drive.mount(letter,Source::Host(launch.to_path_buf()))?;select_startup_drive(p,letter)?;
+            let letter=p.dos.drive.free_letter().unwrap_or(b'C');
+            p.dos.drive.mount(letter,Source::Host(launch.to_path_buf()))?;select_startup_drive(p,letter)?;
         }
     }
-    let directory=match p.drive.host_location(program_folder){
+    let directory=match p.dos.drive.host_location(program_folder){
         Some((letter,path))=>files::Drives::dos_directory(letter,&path),
         None=>{
-            let Some(letter)=p.drive.free_letter() else{return Ok(())};
-            p.drive.mount(letter,Source::Host(program_folder.to_path_buf()))?;
+            let Some(letter)=p.dos.drive.free_letter() else{return Ok(())};
+            p.dos.drive.mount(letter,Source::Host(program_folder.to_path_buf()))?;
             files::Drives::dos_directory(letter,&[])
         }
     };
@@ -357,7 +386,7 @@ pub(crate) fn place_host_program(p:&mut Loaded,launch:&Path,program_folder:&Path
 /// keeping the strings. The whole block must still fit.
 #[cfg(any(feature = "dine-library", test))]
 pub(crate) fn set_program_path(p:&mut Loaded,value:&[u8])->Result<(),String>{
-    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
     let size=usize::from(ENV_PARAS)*16;
     let mut block=vec![0u8;size];
     for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
@@ -528,12 +557,12 @@ fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compi
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,break_check:false,verify:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()}.with_upper_memory()
+    Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()}.with_upper_memory()
 }
 impl Loaded{
     /// DOS=UMB comes with the XMS driver (dos_memory_arena::set_umbs).
     fn with_upper_memory(mut self)->Result<Self,String>{
-        if self.xms.installed(){memory_arena::set_umbs(&mut self,true)?;}
+        if self.dos.xms.installed(){memory_arena::set_umbs(&mut self,true)?;}
         Ok(self)
     }
 }
@@ -694,9 +723,9 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
 /// The output never aliases guest RAM and cannot mutate VGA/CPU state.
 #[cfg(any(windows,unix,test))]
 fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
-    let view=p.mouse.view();
+    let view=p.dos.mouse.view();
     if !view.visible{return;}
-    let Some((hx,hy,rows))=p.mouse.shape() else {return;};
+    let Some((hx,hy,rows))=p.dos.mouse.shape() else {return;};
     let mx=i32::from(view.x)*(width as i32)/(i32::from(view.max_x)+1);
     let my=i32::from(view.y)*(height as i32)/(i32::from(view.max_y)+1);
     for dy in 0..16i32{
@@ -722,7 +751,7 @@ fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
 }
 #[cfg(windows)]
 pub(crate) fn mouse_state(p:&Loaded)->(u16,u16,bool){
-    let view=p.mouse.view();
+    let view=p.dos.mouse.view();
     (view.max_x,view.max_y,view.visible)
 }
 #[cfg(any(windows,unix,test))]
@@ -934,7 +963,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             Ok(None)=>{},
             Err(message)=>break Stop::Service(message),
         }
-        if !p.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
+        if !p.dos.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match brk::returned(&mut p){
             Ok(None)=>{},
             Ok(Some(brk::Return::Resume))=>{execution_steps+=1;*instructions.entry("DOS INT23 return (resume)".into()).or_insert(0)+=1;continue;},
@@ -1074,12 +1103,12 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 p.services_trace=trace;
             }
             match serviced{
-                Ok(_) if p.input_wait=>{p.input_wait=false;break Stop::WaitingForInput},
+                Ok(_) if p.dos.input_wait=>{p.dos.input_wait=false;break Stop::WaitingForInput},
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{
                         // A child returns to the parent that ran it; the first program ends the run.
                         if !exec::has_parent(&p){break Stop::Exit(code);}
-                        let kind=if p.resident.is_some(){3}else{0};
+                        let kind=if p.dos.resident.is_some(){3}else{0};
                         if let Err(message)=exec::terminate(&mut p,code,kind){break Stop::Service(message);}
                     }continue;},
                 Err(message) if message==console::BREAK=>match brk::start(&mut p,output){
@@ -1388,7 +1417,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     p.blocks.report(&mut instructions);
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
-    let file_offset=linear.and_then(|a|a.checked_sub(p.module_base)).filter(|n|(*n as usize)<p.module_bytes).map(|n|n as usize+p.header_bytes);
+    let file_offset=linear.and_then(|a|a.checked_sub(p.dos.module_base)).filter(|n|(*n as usize)<p.dos.module_bytes).map(|n|n as usize+p.dos.header_bytes);
     Ok(Probe{exceptions,exception_count,loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})
 }
 fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_>=counts.iter().collect();v.sort_by(|a,b|b.1.cmp(a.1).then(a.0.cmp(b.0)));v}
@@ -1429,14 +1458,14 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
         let p=match bytes.and_then(|b|load(&b,&path)){
             Ok(p)=>p,Err(e)=>{writeln!(report,"IMPORT ERROR: {e}").unwrap();continue;}
         };imported+=1;
-        writeln!(report,"IMPORT {:?}: module={} bytes header={} relocations={} trailing={} PSP={PSP:04x} allocation_end={:05x}",p.format,p.module_bytes,p.header_bytes,p.relocations,p.trailing_bytes,p.allocated_end).unwrap();
+        writeln!(report,"IMPORT {:?}: module={} bytes header={} relocations={} trailing={} PSP={PSP:04x} allocation_end={:05x}",p.dos.format,p.dos.module_bytes,p.dos.header_bytes,p.dos.relocations,p.dos.trailing_bytes,p.dos.allocated_end).unwrap();
         writeln!(report,"ENTRY CS:IP={:04x}:{:04x} DS={:04x} ES={:04x} SS:SP={:04x}:{:04x}",p.selectors[1],p.cpu.eip,p.selectors[3],p.selectors[0],p.selectors[2],p.cpu.regs[4]).unwrap();
         let result=run(p,budget)?;
         if matches!(result.stop,Stop::Exit(_)){exited+=1;}
         if let Stop::MissingEncoding{key,..}=&result.stop{*blockers.entry(key.clone()).or_insert(0)+=1;}
         for(k,n)in &result.instructions{*mix.entry(k.clone()).or_insert(0)+=n;}
         writeln!(report,"STOP {:?}; CS:IP={:04x}:{:04x}; file_offset={:?}; bytes={}",result.stop,result.loaded.selectors[1],result.loaded.cpu.eip,result.file_offset,result.stop_bytes.iter().map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")).unwrap();
-        if let Some(paragraphs)=result.loaded.resident{writeln!(report,"RESIDENT INT21/AH31 kept {paragraphs} paragraphs; no resident code runs after this probe stop").unwrap();}
+        if let Some(paragraphs)=result.loaded.dos.resident{writeln!(report,"RESIDENT INT21/AH31 kept {paragraphs} paragraphs; no resident code runs after this probe stop").unwrap();}
         writeln!(report,"completed={} PIL={} DOS_calls={} EAX={:08x} ESP={:08x}",result.completed,result.pil_steps,result.dos_calls,result.loaded.cpu.regs[0],result.loaded.cpu.regs[4]).unwrap();
         writeln!(report,"OUTPUT (escaped bytes): {}",result.output.iter().map(|b|std::ascii::escape_default(*b).map(char::from).collect::<String>()).collect::<String>()).unwrap();
     }

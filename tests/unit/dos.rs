@@ -118,7 +118,7 @@ fn exe(module:&[u8],relocs:&[(u16,u16)])->Vec<u8>{
 }
 #[test]
 fn original_com_hello_loads_psp_stack_and_runs_to_dos_exit(){
-    let bytes=hello("com").unwrap();let p=load(&bytes,"hello.com").unwrap();assert_eq!(p.format,Format::Com);
+    let bytes=hello("com").unwrap();let p=load(&bytes,"hello.com").unwrap();assert_eq!(p.dos.format,Format::Com);
     assert_eq!(p.selectors,[PSP;6]);assert_eq!(p.cpu.eip,0x100);assert_eq!(p.cpu.regs[4],0xfffe);
     let base=u32::from(PSP)*16;assert_eq!(p.ram.load(base,MemWidth::Word).unwrap(),0x20cd);
     assert_eq!(p.ram.load(base+0xfffe,MemWidth::Word).unwrap(),0);assert_eq!(p.ram.load(base+0x80,MemWidth::Word).unwrap(),0x0d00);
@@ -126,7 +126,7 @@ fn original_com_hello_loads_psp_stack_and_runs_to_dos_exit(){
 }
 #[test]
 fn original_exe_hello_uses_cs_ip_zero_and_psp_data_segment(){
-    let p=load(&hello("exe").unwrap(),"hello.exe").unwrap();assert_eq!(p.format,Format::Mz);
+    let p=load(&hello("exe").unwrap(),"hello.exe").unwrap();assert_eq!(p.dos.format,Format::Mz);
     assert_eq!(p.cpu.eip,0);assert_eq!(p.selectors[1],LOAD);assert_eq!(p.selectors[3],PSP);assert_eq!(p.image.start,0);
     let r=run(p,100).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"Hello, DOS!\r\n");assert_eq!(r.pil_steps,3);
 }
@@ -134,8 +134,8 @@ fn original_exe_hello_uses_cs_ip_zero_and_psp_data_segment(){
 fn mz_relocations_are_word_wrapping_ordered_and_relative_to_load_module(){
     let mut module=vec![0x90;64];put_word(&mut module,0,0xfff0);put_word(&mut module,18,0x1234);
     let mut b=exe(&module,&[(0,0),(2,1),(0,0)]);put_word(&mut b,22,1);put_word(&mut b,20,3);put_word(&mut b,14,2);put_word(&mut b,16,0x40);
-    let before=b.clone();let p=load(&b,"reloc.exe").unwrap();assert_eq!(b,before);assert_eq!(p.relocations,3);
-    assert_eq!(p.ram.load(p.module_base,MemWidth::Word).unwrap(),0x2010);assert_eq!(p.ram.load(p.module_base+18,MemWidth::Word).unwrap(),0x2244);
+    let before=b.clone();let p=load(&b,"reloc.exe").unwrap();assert_eq!(b,before);assert_eq!(p.dos.relocations,3);
+    assert_eq!(p.ram.load(p.dos.module_base,MemWidth::Word).unwrap(),0x2010);assert_eq!(p.ram.load(p.dos.module_base+18,MemWidth::Word).unwrap(),0x2244);
     assert_eq!((p.selectors[1],p.cpu.eip,p.selectors[2],p.cpu.regs[4]),(LOAD+1,3,LOAD+2,0x40));
 }
 #[test]
@@ -156,10 +156,10 @@ fn mz_allocation_and_stack_are_bounded_and_bytes_past_the_last_page_are_not_load
     }
     // DOS loads the whole last page, not just its declared byte count (BBC
     // BASIC checksums 10 bytes past it); bytes past the last page stay unloaded.
-    let mut b=good;put_word(&mut b,12,1);put_word(&mut b,16,0x20);b.extend([0xcc;8]);let p=load(&b,"extra.exe").unwrap();assert_eq!((p.trailing_bytes,p.module_bytes),(0,40));assert_eq!(p.allocated_end,u32::from(LOAD)*16+64);
+    let mut b=good;put_word(&mut b,12,1);put_word(&mut b,16,0x20);b.extend([0xcc;8]);let p=load(&b,"extra.exe").unwrap();assert_eq!((p.dos.trailing_bytes,p.dos.module_bytes),(0,40));assert_eq!(p.dos.allocated_end,u32::from(LOAD)*16+64);
     assert_eq!(p.ram.load(u32::from(LOAD)*16+32,MemWidth::Byte).unwrap(),0xcc);
-    b.resize(520,0xcc);let p=load(&b,"overlay.exe").unwrap();assert_eq!((p.trailing_bytes,p.module_bytes),(8,480));
-    let mut full=vec![0x90;512];full[..32].copy_from_slice(&exe(&[0x90],&[])[..32]);put_word(&mut full,2,0);put_word(&mut full,4,1);assert_eq!(load(&full,"page.exe").unwrap().module_bytes,480);
+    b.resize(520,0xcc);let p=load(&b,"overlay.exe").unwrap();assert_eq!((p.dos.trailing_bytes,p.dos.module_bytes),(8,480));
+    let mut full=vec![0x90;512];full[..32].copy_from_slice(&exe(&[0x90],&[])[..32]);put_word(&mut full,2,0);put_word(&mut full,4,1);assert_eq!(load(&full,"page.exe").unwrap().dos.module_bytes,480);
 }
 #[test]
 fn windows_new_format_signatures_are_rejected_and_zm_is_accepted(){
@@ -186,7 +186,7 @@ fn code_written_past_the_file_runs_inside_the_program_block(){
     let code=[0xc7,0x06,0x00,0x02,0xb8,0x00,0xc7,0x06,0x02,0x02,0x4c,0xcd,0xc6,0x06,0x04,0x02,0x21,0xe9,0xec,0x00];
     let r=run(load(&code,"unpack.com").unwrap(),20).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.completed,6);
     // An MZ program's fetch window is its whole block, PSP through allocation end.
-    let p=load(&hello("exe").unwrap(),"hello.exe").unwrap();assert_eq!((p.image.fetch_base,p.image.fetch_base+p.image.end),(u32::from(PSP)*16,p.allocated_end));
+    let p=load(&hello("exe").unwrap(),"hello.exe").unwrap();assert_eq!((p.image.fetch_base,p.image.fetch_base+p.image.end),(u32::from(PSP)*16,p.dos.allocated_end));
 }
 #[test]
 fn loops_are_budgeted_and_psp_int20_can_be_reached(){
@@ -326,7 +326,7 @@ fn bios_timer_write_fault_preserves_entire_service_state(){
   let old=p.clone();let mut out=vec![65];
   assert!(service(&mut p,0x1a,&mut out).is_err());
   assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);assert_eq!(p.image,old.image);
-  assert_eq!(p.timer_ticks,old.timer_ticks);assert_eq!(p.open_handles,old.open_handles);assert_eq!(out,vec![65]);
+  assert_eq!(p.timer_ticks,old.timer_ticks);assert_eq!(p.dos.open_handles,old.dos.open_handles);assert_eq!(out,vec![65]);
  }
  // A truncated BDA must also fail before touching its still-accessible tick cell.
  let mut p=load(&[0xcd,0x1a],"timer.com").unwrap();p.timer_ticks=123;
@@ -368,7 +368,7 @@ fn dos_open_and_close_validate_paths_modes_and_tracked_psp_handles(){
 #[test]
 fn dta_default_and_far_pointer_roundtrip_preserve_cpu_flags_and_memory(){
  let mut p=load(&[0xcd,0x21],"dta.com").unwrap();let mut out=vec![];
- assert_eq!(p.dta,(PSP,0x80));
+ assert_eq!(p.dos.dta,(PSP,0x80));
  p.cpu.regs[0]=0x2f00;service(&mut p,0x21,&mut out).unwrap();
  assert_eq!(p.cpu.regs[3],0x80);assert_eq!(p.image.selectors[0],PSP);
  p.image.selectors[3]=0xf123;p.cpu.regs[2]=0xabcdffff;p.cpu.regs[0]=0x1a00;
@@ -461,7 +461,7 @@ fn bios_screen_reads_guest_vram_and_writes_last_cell_without_moving_cursor(){
  let mut p=load(&[0xcd,0x10],"screen.com").unwrap();let mut out=vec![];
  // Video is not DOS-allocatable conventional memory; with upper memory
  // (DOS=UMB) the system MCB at 9FFFh takes the last paragraph.
- assert_eq!(p.allocated_end,0x9fff0);
+ assert_eq!(p.dos.allocated_end,0x9fff0);
  for page in 0..8u32{
   p.cpu.regs[3]=page<<8;p.cpu.regs[0]=0x0800;service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0x0720);
   p.ram.store(0x450+page*2,MemWidth::Word,0x184f).unwrap();
@@ -829,7 +829,7 @@ fn dos_reads_echo_extended_keys_in_two_calls_and_keep_flags(){
   let n=out.len();dos(&mut p,ah<<8,0x55,&mut out).unwrap();assert_eq!(p.cpu.regs[0],0xabcd0000|(ah<<8)|al);assert_eq!(p.cpu.regs[2],0x12340055);
   assert_eq!(out[n..],if echo{vec![al as u8]}else{vec![]});
  }
- assert_eq!((p.cpu.eflags,p.cpu.undefined_flags),(0xad7,u32::MAX));assert_eq!(p.pending_scan,None);
+ assert_eq!((p.cpu.eflags,p.cpu.undefined_flags),(0xad7,u32::MAX));assert_eq!(p.dos.pending_scan,None);
  assert_eq!(cell(&p,0,0,0)&255,0x61);assert_eq!(cell(&p,0,0,2)&255,0x48);assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),3);
  assert!(dos(&mut p,0x0100,0,&mut out).is_err()); // service needs input; the run loop waits first
 }
@@ -861,12 +861,12 @@ fn dos_flush_then_read_flushes_once_and_resumes_with_new_key(){
  // Type-ahead 'x' is discarded; the read waits, then returns and echoes 'y'.
  let code=[0xb8,1,0x0c,0xcd,0x21,0x88,0xc3,0xb8,0,0x4c,0xcd,0x21];
  let mut p=load(&code,"flush.com").unwrap();p.enqueue_key(0x2d78).unwrap();
- let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert!(r.loaded.flushed);assert!(!console::dos_available(&r.loaded).unwrap());
+ let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert!(r.loaded.dos.flushed);assert!(!console::dos_available(&r.loaded).unwrap());
  let mut p=r.loaded;p.enqueue_key(0x1579).unwrap();let r=run(p,20).unwrap();
- assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[3]&255,0x79);assert_eq!(r.output,b"y");assert!(!r.loaded.flushed);
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.loaded.cpu.regs[3]&255,0x79);assert_eq!(r.output,b"y");assert!(!r.loaded.dos.flushed);
  // Other subfunctions flush, then AL=0; AL=06 polls the now-empty input; AL=0A is not implemented.
  for (al,dl,want) in [(0u32,0,0u32),(0x0b,0,0),(0x02,0,0),(0x06,0xff,0)]{
-  let mut p=load(&[0xcd,0x21],"flush.com").unwrap();p.enqueue_key(0x2d78).unwrap();p.pending_scan=Some(0x48);let mut out=vec![];
+  let mut p=load(&[0xcd,0x21],"flush.com").unwrap();p.enqueue_key(0x2d78).unwrap();p.dos.pending_scan=Some(0x48);let mut out=vec![];
   dos(&mut p,0x0c00|al,dl,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,want);assert!(!console::dos_available(&p).unwrap());assert!(out.is_empty());
   if al==6{assert_eq!(p.cpu.eflags&0x40,0x40);}
  }
@@ -890,7 +890,7 @@ fn dos_line_input_edits_echoes_and_stores_count_without_cr(){
  let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,10);
  line_keys(&mut p,&[0x1e61,0x3062,0x0e08,0x2e63,0x1e01,0x4000,0x1c0a,0x4800,0x2106,0x1c0d]);
  p.cpu.eflags=0xad7;let mut out=vec![];dos(&mut p,0x0a00,0x200,&mut out).unwrap();
- assert!(!p.input_wait);assert_eq!(p.line,None);assert_eq!(p.cpu.regs[0],0xabcd0a00);assert_eq!(p.cpu.eflags,0xad7);
+ assert!(!p.dos.input_wait);assert_eq!(p.dos.line,None);assert_eq!(p.cpu.regs[0],0xabcd0a00);assert_eq!(p.cpu.eflags,0xad7);
  assert_eq!(out,b"ab\x08 \x08c^A^Z\r\n\r");assert_eq!(line_bytes(&p,base,7),[10,4,b'a',b'c',1,0x1a,13]);
  assert!(!console::dos_available(&p).unwrap());assert_eq!(cell(&p,0,0,0)&255,u32::from(b'a'));
 }
@@ -912,14 +912,14 @@ fn dos_line_input_full_buffer_beeps_and_escape_restarts_line(){
  let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,1);line_keys(&mut p,&[0x1e61,0x1c0d]);
  let mut out=vec![];dos(&mut p,0x0a00,0x200,&mut out).unwrap();assert_eq!(out,b"\x07\r");assert_eq!(line_bytes(&p,base,3),[1,0,13]);
  let mut p=load(&[0xcd,0x21],"line.com").unwrap();line_buf(&mut p,0);line_keys(&mut p,&[0x1e61]);let old=p.clone();
- let mut out=vec![];dos(&mut p,0x0a00,0x200,&mut out).unwrap();assert!(out.is_empty());assert_eq!(p.ram,old.ram);assert!(!p.input_wait);
+ let mut out=vec![];dos(&mut p,0x0a00,0x200,&mut out).unwrap();assert!(out.is_empty());assert_eq!(p.ram,old.ram);assert!(!p.dos.input_wait);
 }
 #[test]
 fn dos_line_input_rejects_template_keys_and_ctrl_c_keeping_line(){
  for stop in [0x3b00,0x5300,0x2e03]{
   let mut p=load(&[0xcd,0x21],"line.com").unwrap();let base=line_buf(&mut p,10);line_keys(&mut p,&[0x1e61,stop]);
   let mut out=vec![];assert!(dos(&mut p,0x0a00,0x200,&mut out).is_err());assert_eq!(out,b"a");
-  assert_eq!(p.line,Some((b"a".to_vec(),0,false)));assert!(console::dos_available(&p).unwrap());assert_eq!(line_bytes(&p,base,2),[10,0]);
+  assert_eq!(p.dos.line,Some((b"a".to_vec(),0,false)));assert!(console::dos_available(&p).unwrap());assert_eq!(line_bytes(&p,base,2),[10,0]);
  }
  // A buffer crossing the segment end stops before reading a key.
  let mut p=load(&[0xcd,0x21],"line.com").unwrap();line_keys(&mut p,&[0x1e61,0x1c0d]);
@@ -933,15 +933,15 @@ fn dos_line_input_waits_between_keys_and_resumes_same_call(){
  let code=[0xba,0,2,0xb4,0x0a,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21];
  let mut p=load(&code,"line.com").unwrap();let base=line_buf(&mut p,8);line_keys(&mut p,&[0x1e61]);
  let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert_eq!(r.completed,2);assert_eq!(r.output,b"a");
- let mut p=r.loaded;assert_eq!(p.line,Some((b"a".to_vec(),0,false)));assert!(!p.input_wait);
+ let mut p=r.loaded;assert_eq!(p.dos.line,Some((b"a".to_vec(),0,false)));assert!(!p.dos.input_wait);
  line_keys(&mut p,&[0x3062,0x1c0d]);let r=run(p,20).unwrap();
- assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"b\r");assert_eq!(r.loaded.line,None);assert_eq!(line_bytes(&r.loaded,base,5),[8,2,b'a',b'b',13]);
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"b\r");assert_eq!(r.loaded.dos.line,None);assert_eq!(line_bytes(&r.loaded,base,5),[8,2,b'a',b'b',13]);
  // AH0C/AL0A flushes the type-ahead once, then edits keys typed after the wait.
  let code=[0xba,0,2,0xb8,0x0a,0x0c,0xcd,0x21,0xb8,0,0x4c,0xcd,0x21];
  let mut p=load(&code,"line.com").unwrap();let base=line_buf(&mut p,8);line_keys(&mut p,&[0x2d78]);
- let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert!(r.loaded.flushed);
+ let r=run(p,20).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert!(r.loaded.dos.flushed);
  let mut p=r.loaded;line_keys(&mut p,&[0x1579,0x1c0d]);let r=run(p,20).unwrap();
- assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"y\r");assert!(!r.loaded.flushed);assert_eq!(line_bytes(&r.loaded,base,4),[8,1,b'y',13]);
+ assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"y\r");assert!(!r.loaded.dos.flushed);assert_eq!(line_bytes(&r.loaded,base,4),[8,1,b'y',13]);
 }
 #[test]
 fn bios_pointing_device_reports_function_not_supported(){
@@ -1044,8 +1044,8 @@ fn true_version_default_drive_and_handle_count_answers(){
  // BREAK: AL=0 reads DL=0 (off), AL=1 sets it from DL bit 0, AL=2 swaps; AL=3 is not answered.
  let mut p=load(&[0xcd,0x21],"break.com").unwrap();
  let ah33=|p:&mut Loaded,al:u32,dl:u32|{p.cpu.regs[0]=0x3300|al;p.cpu.regs[2]=0xff00|dl;service(p,0x21,&mut vec![]).map(|_|p.cpu.regs[2]&0xffff)};
- assert_eq!(ah33(&mut p,0,0x55),Ok(0xff00));assert_eq!(ah33(&mut p,1,1),Ok(0xff01));assert!(p.break_check);
- assert_eq!(ah33(&mut p,2,0),Ok(0xff01));assert!(!p.break_check);assert!(ah33(&mut p,3,0).is_err());
+ assert_eq!(ah33(&mut p,0,0x55),Ok(0xff00));assert_eq!(ah33(&mut p,1,1),Ok(0xff01));assert!(p.dos.break_check);
+ assert_eq!(ah33(&mut p,2,0),Ok(0xff01));assert!(!p.dos.break_check);assert!(ah33(&mut p,3,0).is_err());
  // MOV AX,19FF; INT 21: AL=0 (A:).
  let r=run(load(&[0xb8,0xff,0x19,0xcd,0x21,0xfa,0xf4],"drive.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x1900);
  // MOV AH,67; MOV BX,20; STC; INT 21: 20 handles fit the PSP table (CF=0).
@@ -1078,7 +1078,7 @@ fn far_jump_forms_transfer_cs_and_ip(){
 #[test]
 fn tsr_date_strategy_lfn_and_extended_memory(){
  // MOV AX,3105; MOV DX,0002; INT 21 -> exit 5, 6 paragraphs kept (FreeDOS minimum).
- let r=run(load(&[0xb8,0x05,0x31,0xba,0x02,0x00,0xcd,0x21,0xfa,0xf4],"tsr.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Exit(5)));assert_eq!(r.loaded.resident,Some(6));
+ let r=run(load(&[0xb8,0x05,0x31,0xba,0x02,0x00,0xcd,0x21,0xfa,0xf4],"tsr.com").unwrap(),10).unwrap();assert!(matches!(r.stop,Stop::Exit(5)));assert_eq!(r.loaded.dos.resident,Some(6));
  // AH2A: 1980-01-01, Tuesday.
  let r=run(load(&[0xb4,0x2a,0xcd,0x21,0xfa,0xf4],"date.com").unwrap(),10).unwrap();
  assert_eq!(r.loaded.cpu.regs[1]&0xffff,1980);assert_eq!(r.loaded.cpu.regs[2]&0xffff,0x0101);assert_eq!(r.loaded.cpu.regs[0]&255,2);
@@ -1087,7 +1087,7 @@ fn tsr_date_strategy_lfn_and_extended_memory(){
  // AX=5801 BX=0080 accepted, then AX=5800 returns 0080; BX=0003 is invalid; BX=0041 (upper memory only) is accepted and allocates low.
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x80,0x00,0xcd,0x21,0xb8,0x00,0x58,0xcd,0x21,0xfa,0xf4],"strategy.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x80);assert_eq!(r.loaded.cpu.eflags&1,0);
  let r=run(load(&[0xb8,0x01,0x58,0xbb,0x03,0x00,0xcd,0x21,0xfa,0xf4],"badfit.com").unwrap(),10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,1);assert_eq!(r.loaded.cpu.eflags&1,1);
- let r=run(load(&[0xb8,0x01,0x58,0xbb,0x41,0x00,0xcd,0x21,0xfa,0xf4],"upperonly.com").unwrap(),10).unwrap();assert_eq!((r.loaded.alloc_strategy,r.loaded.cpu.eflags&1),(0x41,0));
+ let r=run(load(&[0xb8,0x01,0x58,0xbb,0x41,0x00,0xcd,0x21,0xfa,0xf4],"upperonly.com").unwrap(),10).unwrap();assert_eq!((r.loaded.dos.alloc_strategy,r.loaded.cpu.eflags&1),(0x41,0));
  // AX=5803 BX=1 links the UMBs and AX=5802 then reports AL=1; without the
  // XMS driver there is no UMB chain and 5803 is invalid function.
  let link=[0xb8,0x03,0x58,0xbb,0x01,0x00,0xcd,0x21,0xb8,0x02,0x58,0xcd,0x21,0xfa,0xf4];
@@ -1160,7 +1160,7 @@ fn program_reads_its_own_file_and_nothing_else(){
  let r=run(load(&code,"self.com").unwrap(),20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[6]&0xffff,r.loaded.cpu.eflags&1),(5,4,0));
  let buffer:Vec<u32>=(0..4).map(|i|r.loaded.ram.load(u32::from(PSP)*16+0x200+i,MemWidth::Byte).unwrap()).collect();assert_eq!(buffer,[0x3d,0xba,0x26,0x01]);
- assert_eq!((r.loaded.open_handles,r.loaded.drive.open_files()),(0x1f,0));
+ assert_eq!((r.loaded.dos.open_handles,r.loaded.dos.drive.open_files()),(0x1f,0));
  // Seek from the end gives DX:AX = file size; reading there returns 0 bytes.
  let mut end=code.clone();end[10..18].copy_from_slice(&[0xb8,0x02,0x42,0x31,0xc9,0x31,0xd2,0x90]);end[30..32].copy_from_slice(&[0x89,0xc6]);
  let r=run(load(&end,"self.com").unwrap(),20).unwrap();assert_eq!(r.loaded.cpu.regs[6]&0xffff,0);
@@ -1319,7 +1319,7 @@ fn mounted_folder_is_drive_c_for_find_chdir_and_reading_files(){
  p.cpu.regs[3]=handle;p.cpu.regs[2]=0x400;p.cpu.regs[1]=4;p.cpu.regs[0]=0x3f00;service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!(p.cpu.regs[0]&0xffff,4);let read:Vec<u8>=(0..4).map(|i|p.ram.load(u32::from(PSP)*16+0x400+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(read,b"MAND");
  p.cpu.regs[0]=0x4400;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[2]&0xffff,0x42);
- p.cpu.regs[0]=0x3e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.drive.open_files(),0);
+ p.cpu.regs[0]=0x3e00;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.dos.drive.open_files(),0);
  assert_eq!(call(&mut p,0x3d00,0,b"missing.txt"),(2,1));assert_eq!(call(&mut p,0x3d00,0,b"\\games"),(5,1));
  assert_eq!(call(&mut p,0x4300,0,b"readme.txt"),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x20);assert_eq!(call(&mut p,0x4301,0x20,b"readme.txt"),(5,1));
  for d in [&b"."[..],b"..",b"\\"]{assert_eq!(call(&mut p,0x4300,0,d),(0x4300,0));assert_eq!(p.cpu.regs[1]&0xffff,0x10);}
@@ -1417,9 +1417,9 @@ fn exec_overlay_loads_relocates_and_executes_without_a_child(){
  let parent=[0xba,0x00,0x02,0xbb,0x40,0x02,0xb8,0x03,0x4b,0xcd,0x21,0x9a,0,0,0,0x30,0xfa,0xf4];
  let mut p=load_with_drives(&parent,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();let base=u32::from(PSP)*16;
  p.ram.write_bytes(base+0x200,b"CODE.OVL\0").unwrap();p.ram.write_bytes(base+0x240,&[0,0x30,0x35,0x12]).unwrap();
- let arena=p.arena.clone();let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ let arena=p.dos.arena.clone();let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x1234);assert_eq!(r.loaded.ram.load(0x30004,MemWidth::Word).unwrap(),0x1225);assert_eq!(r.loaded.ram.load(0x30006,MemWidth::Word).unwrap(),0x1358);
- assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));assert_eq!(r.loaded.arena,arena);
+ assert_eq!((r.loaded.dos.psp,r.loaded.dos.exec.len()),(PSP,0));assert_eq!(r.loaded.dos.arena,arena);
  // A raw overlay loads at offset zero as well, without applying the factor.
  module[..4].copy_from_slice(&[0xb8,0x78,0x56,0xcb]);std::fs::write(dir.join("RAW.OVL"),&module).unwrap();
  let mut p=load_with_drives(&[0xcd,0x21],"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
@@ -1468,10 +1468,10 @@ fn exec_runs_a_com_and_a_relocated_exe_and_returns_their_codes(){
  let r=run_with_output(p,200,&mut output).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  let regs=&r.loaded.cpu.regs;assert_eq!((regs[6]&0xffff,regs[7]&0xffff,regs[5]&0xffff),(3,7,2));
  // Back in the parent: its PSP again, the children's blocks free, no frames left.
- assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
+ assert_eq!((r.loaded.dos.psp,r.loaded.dos.exec.len()),(PSP,0));
  assert_eq!((r.loaded.image.msw,r.loaded.image.controls),(0x1e,[0x12345678,0x4000]));
  let mut again=r.loaded;again.cpu.regs[0]=0x4800;again.cpu.regs[3]=0xffff;service(&mut again,0x21,&mut vec![]).unwrap();
- assert_eq!(again.cpu.regs[3]&0xffff,u32::from(again.arena.free()));assert!(again.arena.free()>0x8000);
+ assert_eq!(again.cpu.regs[3]&0xffff,u32::from(again.dos.arena.free()));assert!(again.dos.arena.free()>0x8000);
  std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
@@ -1600,8 +1600,8 @@ fn duplicated_handles_share_the_file_position_and_close_independently(){
  assert_eq!(svc(&mut p,0x3f00,file,2),(2,0));assert_eq!(svc(&mut p,0x3f00,6,2),(2,0));
  assert_eq!(p.ram.load(psp+0x400,MemWidth::Word).unwrap(),u32::from(u16::from_le_bytes(*b"cd")));
  // Closing the original keeps the copy open; closing the copy closes the file.
- assert_eq!(svc(&mut p,0x3e00,file,0).1,0);assert_eq!(p.drive.open_files(),1);
- assert_eq!(svc(&mut p,0x3f00,6,9),(2,0));assert_eq!(svc(&mut p,0x3e00,6,0).1,0);assert_eq!(p.drive.open_files(),0);
+ assert_eq!(svc(&mut p,0x3e00,file,0).1,0);assert_eq!(p.dos.drive.open_files(),1);
+ assert_eq!(svc(&mut p,0x3f00,6,9),(2,0));assert_eq!(svc(&mut p,0x3e00,6,0).1,0);assert_eq!(p.dos.drive.open_files(),0);
  // AH46 points handle 9 at CON: device information and writes follow it; writing a file is access denied.
  assert_eq!(svc(&mut p,0x4600,1,9).1,0);assert_eq!(svc(&mut p,0x4400,9,0).1,0);assert_eq!(p.cpu.regs[2]&0xffff,0xc3);
  let (file,_)=call(&mut p,0x3d00,0,b"text.txt");assert_eq!(svc(&mut p,0x4000,file,1),(5,1));
@@ -1681,7 +1681,7 @@ fn generic_console_codepage_query_reports_no_display_driver(){
  p.cpu.regs[0]=0x4500;p.cpu.regs[3]=1;service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,5);
  for (handle,error) in [(5,1),(19,6)]{
   p.cpu.regs[0]=0xbeef440c;p.cpu.regs[1]=0x036a;p.cpu.regs[3]=handle;p.cpu.regs[2]=0x200;p.cpu.eflags&=!1;p.cpu.undefined_flags|=1;
-  let before=p.ram.clone();service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0],p.cpu.eflags&1,p.cpu.undefined_flags&1,p.dos_error),(0xbeef0000|error,1,0,error as u16));assert_eq!(p.ram,before);
+  let before=p.ram.clone();service(&mut p,0x21,&mut vec![]).unwrap();assert_eq!((p.cpu.regs[0],p.cpu.eflags&1,p.cpu.undefined_flags&1,p.dos.dos_error),(0xbeef0000|error,1,0,error as u16));assert_eq!(p.ram,before);
  }
 }
 #[test]
@@ -1962,7 +1962,7 @@ fn finland_358_gives_day_month_year_and_a_24_hour_clock(){
  let mut p=load(&[0xcd,0x21],"fi.com").unwrap();let psp=u32::from(PSP)*16;let mut out=vec![];
  let bytes=|p:&Loaded,at:u32,n:u32|->Vec<u8>{(0..n).map(|i|p.ram.load(at+i,MemWidth::Byte).unwrap()as u8).collect()};
  // AH38 AL=FFh BX=358 DX=FFFFh sets the country; AL=0 then reads it: AL=FFh (code over 254), BX=358.
- p.cpu.regs[0]=0x38ff;p.cpu.regs[3]=358;p.cpu.regs[2]=0xffff;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.country,358);
+ p.cpu.regs[0]=0x38ff;p.cpu.regs[3]=358;p.cpu.regs[2]=0xffff;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.dos.country,358);
  p.cpu.regs[0]=0x3800;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();
  assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.regs[3]&0xffff,p.cpu.eflags&1),(0xff,358,0));
  let info=bytes(&p,psp+0x200,24);assert_eq!(&info[..18],b"\x01\0EUR\0\0 \0,\0.\0.\0\x03\x02\x01");assert_eq!(info[22],b';');
@@ -1996,7 +1996,7 @@ fn com1_takes_bios_calls_uart_registers_and_dos_aux_handles(){
  p.ram.write_bytes(psp+0x200,b"ok").unwrap();p.cpu.regs[0]=0x4000;p.cpu.regs[3]=3;p.cpu.regs[1]=2;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!(p.com1.as_ref().unwrap().tx,b"ok");
  let (h,cf)=call(&mut p,0x3d02,0,b"C:\\DEV\\COM1.TXT");assert_eq!(cf,0);
- p.cpu.regs[0]=0x3f00;p.cpu.regs[3]=h;p.cpu.regs[1]=8;p.cpu.regs[2]=0x300;service(&mut p,0x21,&mut vec![]).unwrap();assert!(p.input_wait,"no byte yet: the read waits");p.input_wait=false;
+ p.cpu.regs[0]=0x3f00;p.cpu.regs[3]=h;p.cpu.regs[1]=8;p.cpu.regs[2]=0x300;service(&mut p,0x21,&mut vec![]).unwrap();assert!(p.dos.input_wait,"no byte yet: the read waits");p.dos.input_wait=false;
  p.com1.as_mut().unwrap().rx.extend(b"abc");service(&mut p,0x21,&mut vec![]).unwrap();
  assert_eq!((p.cpu.regs[0]&0xffff,p.ram.load(psp+0x300,MemWidth::Word).unwrap()),(3,u32::from_le_bytes([b'a',b'b',0,0])));
 }
@@ -2010,10 +2010,10 @@ fn com1_line_input_cancels_on_esc_and_shows_control_keys_as_freedos_read_line(){
  // A VT Up arrow (ESC [ A) arrives in two parts: ESC cancels what was typed.
  p.com1.as_mut().unwrap().rx.extend(b"dir\x1b");
  p.ram.write_bytes(psp+0x200,&[10]).unwrap();p.cpu.regs[0]=0x0a00;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut out).unwrap();
- assert!(p.input_wait);p.input_wait=false;
+ assert!(p.dos.input_wait);p.dos.input_wait=false;
  // The rest is ordinary text; Backspace takes it, then Ctrl+A shows as ^A and erases with two.
  p.com1.as_mut().unwrap().rx.extend(b"[A\x08\x08\x01\x08\nver\r");
- p.cpu.regs[0]=0x0a00;service(&mut p,0x21,&mut out).unwrap();assert!(!p.input_wait);
+ p.cpu.regs[0]=0x0a00;service(&mut p,0x21,&mut out).unwrap();assert!(!p.dos.input_wait);
  assert_eq!((0..5).map(|i|p.ram.load(psp+0x201+i,MemWidth::Byte).unwrap()as u8).collect::<Vec<_>>(),b"\x03ver\r");
  assert_eq!(p.com1.as_ref().unwrap().tx,b"C:\\>dir\\\r\n    [A\x08 \x08\x08 \x08^A\x08 \x08\x08 \x08\r\nver\r".to_vec());
  assert!(out.is_empty());
@@ -2031,7 +2031,7 @@ fn ctty_com1_moves_dos_console_input_and_output_to_the_port(){
  for h in [0,1]{p.ram.store(psp+0x18+h,MemWidth::Byte,3).unwrap();}
  let mut out=vec![];
  p.cpu.regs[0]=0x0b00;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,0);
- p.cpu.regs[0]=0x0100;service(&mut p,0x21,&mut out).unwrap();assert!(p.input_wait);p.input_wait=false;
+ p.cpu.regs[0]=0x0100;service(&mut p,0x21,&mut out).unwrap();assert!(p.dos.input_wait);p.dos.input_wait=false;
  p.com1.as_mut().unwrap().rx.extend(b"xDIX\x08R\r");
  p.cpu.regs[0]=0x0100;service(&mut p,0x21,&mut out).unwrap();assert_eq!(p.cpu.regs[0]&255,u32::from(b'x'));
  // AH0A: Backspace edits, CR ends; echo goes to the port, nothing to the screen output.
@@ -2050,14 +2050,14 @@ fn timeit_runs_its_command_through_comspec_and_prints_the_elapsed_time(){
  let timeit=|tail:&[u8],country:u16,ticks:u32|{
   let mut p=load_with_drives(include_bytes!("../../programs/dos/TIMEIT.COM"),"TIMEIT.COM",vec![Source::Host(dir.clone())],None).unwrap();
   let mut psp_tail=vec![tail.len()as u8];psp_tail.extend(tail);psp_tail.push(13);
-  p.ram.write_bytes(u32::from(PSP)*16+0x80,&psp_tail).unwrap();p.country=country;p.timer_ticks=ticks;
+  p.ram.write_bytes(u32::from(PSP)*16+0x80,&psp_tail).unwrap();p.dos.country=country;p.timer_ticks=ticks;
   let r=run(p,20_000).unwrap();(r.stop,String::from_utf8(r.output).unwrap(),r.loaded)
  };
  // Each AH2C read advances the deterministic clock one tick (5 hundredths).
  let (stop,text,p)=timeit(b"  FACTOR 3",1,0);
  assert!(matches!(stop,Stop::Exit(12)),"the command's exit code: {stop:?}");
  assert_eq!(text," /C FACTOR 3Command  FACTOR 3\r\nStart    0:00:00.00\r\nEnd      0:00:00.05\r\nElapsed  0:00:00.05\r\n");
- assert_eq!((p.psp,p.exec.len()),(PSP,0));
+ assert_eq!((p.dos.psp,p.dos.exec.len()),(PSP,0));
  // Finnish separators, and a run over midnight still counts forward.
  let (stop,text,_)=timeit(b" DIR",358,0x0018_00af);
  assert!(matches!(stop,Stop::Exit(7)),"{stop:?}");
@@ -2900,7 +2900,7 @@ fn extended_memory_size_matches_cmos_and_remains_outside_the_dos_arena(){
  let mut p=load(&[0xcd,0x15],"memory.com").unwrap();p.select_xms(false).unwrap();p.cpu.regs[0]=0xabcd8800;
  service(&mut p,0x15,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0],0xabcd3c00);
  p.ram.set_a20_enabled(true);p.ram.store(0xffffff,MemWidth::Byte,0x5a).unwrap();
- assert_eq!(p.ram.load(0xffffff,MemWidth::Byte).unwrap(),0x5a);assert_eq!(p.allocated_end,0xa0000);
+ assert_eq!(p.ram.load(0xffffff,MemWidth::Byte).unwrap(),0x5a);assert_eq!(p.dos.allocated_end,0xa0000);
  for (index,want) in [(0x17,0),(0x18,0x3c),(0x30,0),(0x31,0x3c)]{
   p.cmos_index=index;p.cpu.eip=0x100;p.ram.write_bytes(0x10100,&[0xe4,0x71]).unwrap();
   ports::io(&mut p).unwrap();assert_eq!(p.cpu.regs[0]&255,want);
@@ -2978,8 +2978,8 @@ fn child_psp_initializes_fields_and_inherits_parent_state(){
  // Return conventions: AL destroyed (0xf0), CF unchanged, active PSP switched
  assert_eq!(p.cpu.regs[0]as u8,0xf0);
  assert_eq!(p.cpu.eflags&1,0);
- assert_eq!(p.psp,child);
- assert_eq!(p.dta,(child,0x80));
+ assert_eq!(p.dos.psp,child);
+ assert_eq!(p.dos.dta,(child,0x80));
  // Check child PSP contents in RAM
  let child_base=u32::from(child)*16;
  assert_eq!(&p.ram.bytes()[child_base as usize..child_base as usize+2],&[0xcd,0x20]);
@@ -3012,13 +3012,13 @@ fn child_psp_transfers_mcb_ownership_for_allocated_block(){
  let mcb_header=u32::from(child-1)*16;
  // Before AH=55h: owner is parent PSP
  assert_eq!(p.ram.load(mcb_header+1,MemWidth::Word).unwrap()as u16,PSP);
- assert_eq!(p.arena.block_owner(child),Some(PSP));
+ assert_eq!(p.dos.arena.block_owner(child),Some(PSP));
  // Create child PSP
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x10);
  service(&mut p,0x21,&mut vec![]).unwrap();
  // After AH=55h: owner in RAM and arena is child segment
  assert_eq!(p.ram.load(mcb_header+1,MemWidth::Word).unwrap()as u16,child);
- assert_eq!(p.arena.block_owner(child),Some(child));
+ assert_eq!(p.dos.arena.block_owner(child),Some(child));
 }
 
 #[test]
@@ -3034,7 +3034,7 @@ fn child_psp_parent_linkage_and_switching(){
  // AH=55h creates child and sets current PSP to child
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(child+0x20);
  service(&mut p,0x21,&mut vec![]).unwrap();
- assert_eq!(p.psp,child);
+ assert_eq!(p.dos.psp,child);
  // Query current PSP via AH=51h and AH=62h
  for ah in [0x51,0x62]{
   p.cpu.regs[0]=ah<<8;
@@ -3044,7 +3044,7 @@ fn child_psp_parent_linkage_and_switching(){
  // Switch back to parent via AH=50h
  p.cpu.regs[0]=0x5000;p.cpu.regs[3]=u32::from(PSP);
  service(&mut p,0x21,&mut vec![]).unwrap();
- assert_eq!(p.psp,PSP);
+ assert_eq!(p.dos.psp,PSP);
  // Query current PSP via AH=51h: returns parent PSP
  p.cpu.regs[0]=0x5100;
  service(&mut p,0x21,&mut vec![]).unwrap();
@@ -3052,7 +3052,7 @@ fn child_psp_parent_linkage_and_switching(){
  // Switch back to child via AH=50h
  p.cpu.regs[0]=0x5000;p.cpu.regs[3]=u32::from(child);
  service(&mut p,0x21,&mut vec![]).unwrap();
- assert_eq!(p.psp,child);
+ assert_eq!(p.dos.psp,child);
 }
 
 #[test]
@@ -3076,7 +3076,7 @@ fn child_psp_rejects_invalid_and_boundary_segments(){
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(PSP);p.cpu.regs[6]=0x2000;
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
  // In unallocated free memory: rejected
- let free_seg=p.arena.first_free_segment().unwrap();
+ let free_seg=p.dos.arena.first_free_segment().unwrap();
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(free_seg);p.cpu.regs[6]=u32::from(free_seg+0x10);
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
  // Read-only protected memory: rejected
@@ -3104,7 +3104,7 @@ fn child_psp_rejects_allocated_block_smaller_than_psp_and_preserves_memory(){
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
  // RAM and MCB integrity must be completely unchanged
  assert_eq!(p.ram,ram_before);
- assert_eq!(p.arena.block_owner(child),Some(PSP));
+ assert_eq!(p.dos.arena.block_owner(child),Some(PSP));
 }
 
 #[test]
@@ -3123,10 +3123,10 @@ fn child_psp_rejects_mcb_overlap_too_near_end_and_other_program_memory(){
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child+0x11);p.cpu.regs[6]=u32::from(child+0x20);
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
  // Block owned by another program: simulate caller as child, trying to create PSP in parent memory
- p.psp=child;
+ p.dos.psp=child;
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(PSP);p.cpu.regs[6]=u32::from(PSP+0x40);
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
- p.psp=PSP;
+ p.dos.psp=PSP;
  // Untracked conventional memory (below arena, e.g. 0x0600): rejected
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=0x0600;p.cpu.regs[6]=0x0700;
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
@@ -3147,15 +3147,15 @@ fn child_psp_succeeds_in_parent_owned_interior_and_preserves_mcb_owner(){
  p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(interior);p.cpu.regs[6]=u32::from(block_base+0x40);
  assert!(service(&mut p,0x21,&mut vec![]).is_ok());
  // Active PSP switched to interior
- assert_eq!(p.psp,interior);
+ assert_eq!(p.dos.psp,interior);
  // Verify child PSP fields in RAM
  let base=u32::from(interior)*16;
  assert_eq!(&p.ram.bytes()[base as usize..base as usize+2],&[0xcd,0x20]);
  assert_eq!(p.ram.load(base+2,MemWidth::Word).unwrap()as u16,block_base+0x40);
  assert_eq!(p.ram.load(base+0x16,MemWidth::Word).unwrap()as u16,PSP); // Parent link
  // MCB owner of parent block is UNCHANGED (still PSP; no new MCB at interior-1)
- assert_eq!(p.arena.block_owner(block_base),Some(PSP));
- assert_eq!(p.arena.block_owner(interior),None);
+ assert_eq!(p.dos.arena.block_owner(block_base),Some(PSP));
+ assert_eq!(p.dos.arena.block_owner(interior),None);
 }
 
 #[test]
@@ -3199,8 +3199,8 @@ fn child_psp_rejects_protected_mcb_owner_and_preserves_memory_and_arena(){
  assert!(service(&mut p,0x21,&mut vec![]).is_err());
  // Preflight check must fail before any write to child PSP body or arena state change
  assert_eq!(p.ram,ram_before);
- assert_eq!(p.arena.block_owner(child),Some(PSP));
- assert_eq!(p.psp,PSP);
+ assert_eq!(p.dos.arena.block_owner(child),Some(PSP));
+ assert_eq!(p.dos.psp,PSP);
 }
 
 #[test]
@@ -3237,10 +3237,10 @@ fn cga_mode_control_port_3d8_routes_video_enable_and_blink_changes(){
 /// Drive an actual in-memory COM child through AH4Ch and a PSP INT22 callback.
 /// AH55 itself is still running in the parent; no AH4B CPU frame is pushed.
 fn stage_ah55_child(mut p:Loaded,borrowed:bool)->(Loaded,u16,u16,[(u32,u32);SYSTEM_RANGES]){
-    let parent=p.psp;
+    let parent=p.dos.psp;
     let system=p.image.system;
-    p.dta=(parent,0x1c0);
-    let handles=p.open_handles;
+    p.dos.dta=(parent,0x1c0);
+    let handles=p.dos.open_handles;
     p.cpu.regs[0]=0x4800;p.cpu.regs[3]=0x40;
     service(&mut p,0x21,&mut vec![]).unwrap();
     assert_eq!(p.cpu.eflags&1,0);
@@ -3252,11 +3252,11 @@ fn stage_ah55_child(mut p:Loaded,borrowed:bool)->(Loaded,u16,u16,[(u32,u32);SYST
     p.ram.store(0x22*4,MemWidth::Dword,(u32::from(parent)<<16)|0x100).unwrap();
     p.cpu.regs[0]=0x5500;p.cpu.regs[2]=u32::from(child);p.cpu.regs[6]=u32::from(block+0x40);
     service(&mut p,0x21,&mut vec![]).unwrap();
-    assert_eq!(p.psp,child);
+    assert_eq!(p.dos.psp,child);
     assert_eq!(p.ram.load(base+0x16,MemWidth::Word).unwrap(),u32::from(parent));
-    assert_eq!(p.dta,(child,0x80));
-    assert_eq!(p.open_handles,handles);
-    assert_eq!(p.in_memory.len(),1);
+    assert_eq!(p.dos.dta,(child,0x80));
+    assert_eq!(p.dos.open_handles,handles);
+    assert_eq!(p.dos.in_memory.len(),1);
     // The AH4B parent may already grant a system fetch window covering the
     // entire DOS conventional-memory arena. AH55 then needs no extra slot.
     // Assert the child can execute, rather than demanding an unnecessary
@@ -3283,17 +3283,17 @@ fn ah55_child_returns_to_ide_without_an_ah4b_frame(){
     assert_eq!(p.cpu.eflags&1,0);
     p.image.end=0x600;
     let (p,child,block,system)=stage_ah55_child(p,false);
-    assert_eq!(p.arena.block_owner(block),Some(child));
+    assert_eq!(p.dos.arena.block_owner(block),Some(child));
     let r=run(p,40).unwrap();
     assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     let p=r.loaded;
-    assert_eq!(p.psp,PSP);
-    assert!(p.exec.is_empty()&&p.in_memory.is_empty());
+    assert_eq!(p.dos.psp,PSP);
+    assert!(p.dos.exec.is_empty()&&p.dos.in_memory.is_empty());
     assert_eq!(p.cpu.regs[0]&0xffff,0x0037,"AH4D must read the in-memory child's exit code");
-    assert_eq!(p.return_code,0);
-    assert_eq!(p.dta,(PSP,0x1c0));
-    assert_eq!(p.open_handles,0x1f);
-    assert_eq!(p.arena.block_owner(block),Some(0),"child MCB must be released");
+    assert_eq!(p.dos.return_code,0);
+    assert_eq!(p.dos.dta,(PSP,0x1c0));
+    assert_eq!(p.dos.open_handles,0x1f);
+    assert_eq!(p.dos.arena.block_owner(block),Some(0),"child MCB must be released");
     assert_eq!(p.image.system,system,"temporary child fetch range must be dropped");
     assert_eq!(p.selectors[SegmentRegister::Cs.index()],PSP);
 }
@@ -3320,8 +3320,8 @@ fn ah55_interior_child_returns_to_turbo_not_freecom_and_can_run_twice(){
     p.ram.write_bytes(base+0x300,b"TURBO.COM\0").unwrap();
     p.cpu.regs[0]=0x4b00;p.cpu.regs[2]=0x300;p.cpu.regs[3]=0x200;
     service(&mut p,0x21,&mut vec![]).unwrap();
-    assert_eq!(p.exec.len(),1);
-    let turbo=p.psp;
+    assert_eq!(p.dos.exec.len(),1);
+    let turbo=p.dos.psp;
     assert_ne!(turbo,PSP);
     p.image.selectors[SegmentRegister::Es.index()]=turbo;
     p.cpu.regs[0]=0x4a00;p.cpu.regs[3]=0x60;
@@ -3330,25 +3330,25 @@ fn ah55_interior_child_returns_to_turbo_not_freecom_and_can_run_twice(){
     p.image.end=0x600;
     for _ in 0..2 {
         let (child_program,_child,block,system)=stage_ah55_child(p,true);
-        assert_eq!(child_program.arena.block_owner(block),Some(turbo),"borrowed MCB ownership changed");
-        assert_eq!(child_program.exec.len(),1);
+        assert_eq!(child_program.dos.arena.block_owner(block),Some(turbo),"borrowed MCB ownership changed");
+        assert_eq!(child_program.dos.exec.len(),1);
         let r=run(child_program,40).unwrap();
         assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
         p=r.loaded;
-        assert_eq!(p.psp,turbo,"must return to Turbo, not FreeCOM");
-        assert_eq!(p.exec.len(),1,"shell's AH4B frame was popped");
-        assert!(p.in_memory.is_empty());
+        assert_eq!(p.dos.psp,turbo,"must return to Turbo, not FreeCOM");
+        assert_eq!(p.dos.exec.len(),1,"shell's AH4B frame was popped");
+        assert!(p.dos.in_memory.is_empty());
         assert_eq!(p.cpu.regs[0]&0xffff,0x0037);
-        assert_eq!(p.dta,(turbo,0x1c0));
-        assert_eq!(p.open_handles,0x1f);
-        assert_eq!(p.arena.block_owner(block),Some(turbo));
+        assert_eq!(p.dos.dta,(turbo,0x1c0));
+        assert_eq!(p.dos.open_handles,0x1f);
+        assert_eq!(p.dos.arena.block_owner(block),Some(turbo));
         assert_eq!(p.image.system,system);
         assert_eq!(p.selectors[SegmentRegister::Cs.index()],turbo);
     }
     // Only Turbo's own termination may return to the waiting shell.
     exec::terminate(&mut p,0,0).unwrap();
-    assert_eq!(p.psp,PSP);
-    assert!(p.exec.is_empty()&&p.in_memory.is_empty());
+    assert_eq!(p.dos.psp,PSP);
+    assert!(p.dos.exec.is_empty()&&p.dos.in_memory.is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
@@ -3411,19 +3411,19 @@ fn exec_4b01_loads_com_without_running_and_releases_by_mcb(){
     std::fs::write(folder.join("LOADED.COM"),[0xb8,0x2a,0x4c,0xcd,0x21]).unwrap();
     let mut p=load_only_fixture(&folder,b"LOADED.COM\0");
     let before=p.cpu.clone();let parent_image=p.image.clone();
-    let free=p.arena.free();
+    let free=p.dos.arena.free();
     p.cpu.eflags|=1;p.cpu.undefined_flags|=1;
     service(&mut p,0x21,&mut vec![]).unwrap();
-    let child=p.psp;
+    let child=p.dos.psp;
     assert_ne!(child,PSP);
     assert_eq!(p.cpu.regs,before.regs);
     assert_eq!(p.cpu.eip,before.eip);
     assert_eq!((p.cpu.eflags&1,p.cpu.undefined_flags&1),(0,0));
     assert_eq!(p.selectors,parent_image.selectors);
     assert_eq!(p.image.fetch_base,parent_image.fetch_base);
-    assert_eq!(p.exec.len(),0,"the caller must not be suspended");
-    assert_eq!(p.load_only.len(),1);
-    let slot=p.load_only[0].fetch_slot.expect("separate child fetch window");
+    assert_eq!(p.dos.exec.len(),0,"the caller must not be suspended");
+    assert_eq!(p.dos.load_only.len(),1);
+    let slot=p.dos.load_only[0].fetch_slot.expect("separate child fetch window");
     let base=u32::from(child)*16;
     let child_end=p.ram.load(base+2,MemWidth::Word).unwrap();
     assert_eq!(p.image.system[slot],(base,child_end*16));
@@ -3437,14 +3437,14 @@ fn exec_4b01_loads_com_without_running_and_releases_by_mcb(){
         (u32::from(child)<<16)|0xfffe);
     assert_eq!(p.ram.load(params+0x12,MemWidth::Dword).unwrap(),
         (u32::from(child)<<16)|0x100);
-    assert_eq!(p.arena.block_owner(child),Some(child));
+    assert_eq!(p.dos.arena.block_owner(child),Some(child));
     let env=p.ram.load(base+0x2c,MemWidth::Word).unwrap()as u16;
-    assert_eq!(p.arena.block_owner(env),Some(child));
+    assert_eq!(p.dos.arena.block_owner(env),Some(child));
     p.cpu.regs[0]=0x6200;service(&mut p,0x21,&mut vec![]).unwrap();
     assert_eq!(p.cpu.regs[3]&0xffff,u32::from(child),"AH62 must report loaded PSP");
     p.cpu.regs[0]=0x5000;p.cpu.regs[3]=u32::from(PSP);
     service(&mut p,0x21,&mut vec![]).unwrap();
-    assert_eq!(p.psp,PSP);
+    assert_eq!(p.dos.psp,PSP);
     // AH49 frees the child PSP and invalidates its executable fetch window.
     for segment in [child,env]{
         p.cpu.regs[0]=0x4900;
@@ -3453,10 +3453,10 @@ fn exec_4b01_loads_com_without_running_and_releases_by_mcb(){
         service(&mut p,0x21,&mut vec![]).unwrap();
         assert_eq!(p.cpu.eflags&1,0);
     }
-    assert!(p.load_only.is_empty());
+    assert!(p.dos.load_only.is_empty());
     assert_eq!(p.image.system[slot],(0,0));
-    assert_eq!(p.arena.block_owner(child),Some(0));
-    assert_eq!(p.arena.free(),free);
+    assert_eq!(p.dos.arena.block_owner(child),Some(0));
+    assert_eq!(p.dos.arena.free(),free);
     std::fs::remove_dir_all(folder).unwrap();
 }
 
@@ -3474,9 +3474,9 @@ fn exec_4b01_loads_relocated_mz_and_returns_its_header_entry_and_stack(){
     let mut p=load_only_fixture(&folder,b"RELOC.EXE\0");
     let parent=p.cpu.clone();
     service(&mut p,0x21,&mut vec![]).unwrap();
-    let child=p.psp;let load=child+0x10;
+    let child=p.dos.psp;let load=child+0x10;
     assert_eq!(p.cpu,parent,"a load-only EXEC must not change CPU registers");
-    assert_eq!(p.exec.len(),0);
+    assert_eq!(p.dos.exec.len(),0);
     let block=u32::from(PSP)*16+0x240;
     assert_eq!(p.ram.load(block+0x0e,MemWidth::Dword).unwrap(),
         (u32::from(load+2)<<16)|0x40);
@@ -3496,19 +3496,19 @@ fn exec_4b01_later_child_termination_returns_to_caller_int22(){
     std::fs::write(folder.join("LATER.COM"),[0xb8,0x2a,0x4c,0xcd,0x21]).unwrap();
     let mut p=load_only_fixture(&folder,b"LATER.COM\0");
     service(&mut p,0x21,&mut vec![]).unwrap();
-    let child=p.psp;let slot=p.load_only[0].fetch_slot.unwrap();
+    let child=p.dos.psp;let slot=p.dos.load_only[0].fetch_slot.unwrap();
     p.selectors[1]=child;p.image.selectors[1]=child;
     p.image.segments[1]=SegmentCache::real_mode(child);
     p.cpu.eip=0x100;
     let r=run(p,20).unwrap();
     assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
-    assert_eq!(r.loaded.return_code,0x2a);
-    assert_eq!(r.loaded.psp,PSP);
-    assert_eq!(r.loaded.exec.len(),0);
-    assert!(r.loaded.load_only.is_empty());
+    assert_eq!(r.loaded.dos.return_code,0x2a);
+    assert_eq!(r.loaded.dos.psp,PSP);
+    assert_eq!(r.loaded.dos.exec.len(),0);
+    assert!(r.loaded.dos.load_only.is_empty());
     assert_eq!(r.loaded.image.system[slot],(0,0));
     assert_eq!(r.loaded.selectors[1],PSP);
-    assert_eq!(r.loaded.arena.block_owner(child),Some(0));
+    assert_eq!(r.loaded.dos.arena.block_owner(child),Some(0));
     std::fs::remove_dir_all(folder).unwrap();
 }
 
@@ -3525,14 +3525,14 @@ fn exec_4b01_bad_parameter_destination_and_missing_file_do_not_allocate(){
     let old=p.clone();
     assert!(service(&mut p,0x21,&mut vec![]).is_err());
     assert_eq!(p.cpu,old.cpu);assert_eq!(p.ram,old.ram);
-    assert_eq!(p.arena,old.arena);assert_eq!(p.psp,PSP);
-    assert!(p.load_only.is_empty());
+    assert_eq!(p.dos.arena,old.dos.arena);assert_eq!(p.dos.psp,PSP);
+    assert!(p.dos.load_only.is_empty());
     let mut p=load_only_fixture(&folder,b"UNKNOWN.COM\0");
-    let before=p.arena.clone();let ram=p.ram.clone();
+    let before=p.dos.arena.clone();let ram=p.ram.clone();
     service(&mut p,0x21,&mut vec![]).unwrap();
     assert_eq!((p.cpu.regs[0]&0xffff,p.cpu.eflags&1),(2,1));
-    assert_eq!(p.arena,before);assert_eq!(p.ram,ram);
-    assert_eq!(p.psp,PSP);
+    assert_eq!(p.dos.arena,before);assert_eq!(p.ram,ram);
+    assert_eq!(p.dos.psp,PSP);
     std::fs::remove_dir_all(folder).unwrap();
 }
 #[test]
@@ -3617,7 +3617,7 @@ fn path_is_added_to_or_replaced_in_the_environment(){
     // The first program's environment gets it through the PSP.
     let mut p=load(&[0xcd,0x20],"T.COM").unwrap();
     set_environment_path(&mut p,"D:\\PIL").unwrap();
-    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).unwrap()*16;
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).unwrap()*16;
     let bytes:Vec<u8>=(0..96).map(|i|p.ram.load(env+i,MemWidth::Byte).unwrap() as u8).collect();
     assert!(bytes.windows(12).any(|w|w==b"PATH=D:\\PIL\0"),"{bytes:?}");
 }
@@ -3630,7 +3630,7 @@ fn host_program_finds_itself_beside_the_host_executable(){
     let nested=drive.join("LANG").join("long-folder");
     for d in [&work,&tools,&nested]{std::fs::create_dir_all(d).unwrap();}
     let program_path=|p:&Loaded|{
-        let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).unwrap()*16;
+        let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).unwrap()*16;
         let bytes:Vec<u8>=(0..256).map(|i|p.ram.load(env+i,MemWidth::Byte).unwrap() as u8).collect();
         let at=bytes.windows(3).position(|w|w==[0,1,0]).unwrap()+3;
         let end=at+bytes[at..].iter().position(|&b|b==0).unwrap();
@@ -3640,19 +3640,19 @@ fn host_program_finds_itself_beside_the_host_executable(){
     // launch folder current on a free letter, the executable's folder on
     // the next one.
     let mut p=load_with_drives(&[0xcd,0x20],"tool.com",vec![Source::Host(work.clone())],None).unwrap();
-    p.drive.mount(b'C',Source::Host(drive.clone())).unwrap();
-    p.drive.mount(b'D',Source::Host(drive.clone())).unwrap();
+    p.dos.drive.mount(b'C',Source::Host(drive.clone())).unwrap();
+    p.dos.drive.mount(b'D',Source::Host(drive.clone())).unwrap();
     place_host_program(&mut p,&work,&tools,"tool.com").unwrap();
-    assert_eq!(p.drive.letter(),b'E');
-    assert!(p.drive.is_mounted(b'C')&&p.drive.is_mounted(b'D'));
-    assert!(p.drive.host_location(&work).is_some_and(|(l,path)|l==b'E'&&path.is_empty()));
+    assert_eq!(p.dos.drive.letter(),b'E');
+    assert!(p.dos.drive.is_mounted(b'C')&&p.dos.drive.is_mounted(b'D'));
+    assert!(p.dos.drive.host_location(&work).is_some_and(|(l,path)|l==b'E'&&path.is_empty()));
     assert_eq!(program_path(&p),"B:\\TOOL.COM");
     // Folders inside a mounted drive are named through it, aliases and all,
     // and a launch folder there becomes that drive's current directory.
     let mut p=load_with_drives(&[0xcd,0x20],"tool.com",vec![Source::Host(work.clone())],None).unwrap();
-    p.drive.mount(b'D',Source::Host(drive.clone())).unwrap();
+    p.dos.drive.mount(b'D',Source::Host(drive.clone())).unwrap();
     place_host_program(&mut p,&nested,&nested,"tool.com").unwrap();
-    assert_eq!(p.drive.letter(),b'D');
+    assert_eq!(p.dos.drive.letter(),b'D');
     assert_eq!(program_path(&p),"D:\\LANG\\LONG-F~1\\TOOL.COM");
     std::fs::remove_dir_all(&root).ok();
 }
@@ -3829,7 +3829,7 @@ fn verify_flag_is_set_by_ah2e_and_read_by_ah54(){
  let mut p=load(&code,"verify.com").unwrap();p.cpu.eflags|=1;let flags=p.cpu.eflags;
  let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  // Off at start, on after AL=05h, off again after AL=00h; flags untouched.
- assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[0]&0xff),(0x0100,0));assert!(!r.loaded.verify);
+ assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.cpu.regs[0]&0xff),(0x0100,0));assert!(!r.loaded.dos.verify);
  assert_eq!(r.loaded.cpu.eflags&1,flags&1);
 }
 #[test]

@@ -70,7 +70,7 @@ fn ok(p:&mut Loaded){set16(p,0,1);set_bl(p,0);}
 /// INT 2Fh AH=43h: AL=00h installation check, AL=10h driver entry.
 /// `Ok(false)` when the driver is not installed or AL is another function.
 pub(super) fn multiplex(p:&mut Loaded)->Result<bool,String>{
-    if !p.xms.installed{return Ok(false);}
+    if !p.dos.xms.installed{return Ok(false);}
     match p.cpu.regs[0]&0xffff{
         0x4300=>{p.cpu.regs[0]=(p.cpu.regs[0]&!0xff)|0x80;Ok(true)},
         0x4310=>{
@@ -92,7 +92,7 @@ pub(super) fn trapped(p:&mut Loaded)->Result<Option<u8>,String>{
         if p.cpu.eflags&0x20000!=0{return Err("XMS driver call from V86 mode is not modelled".into());}
         return Ok(None);
     }
-    if !p.xms.installed{return Err("XMS driver entry reached while no XMS driver is installed".into());}
+    if !p.dos.xms.installed{return Err("XMS driver entry reached while no XMS driver is installed".into());}
     let ah=(p.cpu.regs[0]>>8)as u8;
     call(p,ah)?;
     p.cpu.eip=(p.cpu.eip+1)&0xffff;p.image.retired();
@@ -102,14 +102,14 @@ pub(super) fn trapped(p:&mut Loaded)->Result<Option<u8>,String>{
 fn call(p:&mut Loaded,ah:u8)->Result<(),String>{
     match ah{
         0x00=>{set16(p,0,0x0300);set16(p,3,0x0300);set16(p,2,1);},
-        0x01=>if p.xms.hma_used{fail(p,0x91)}else{p.xms.hma_used=true;ok(p)},
-        0x02=>if p.xms.hma_used{p.xms.hma_used=false;ok(p)}else{fail(p,0x93)},
+        0x01=>if p.dos.xms.hma_used{fail(p,0x91)}else{p.dos.xms.hma_used=true;ok(p)},
+        0x02=>if p.dos.xms.hma_used{p.dos.xms.hma_used=false;ok(p)}else{fail(p,0x93)},
         0x03=>{p.speaker.bios_a20(&mut p.ram,true);ok(p)},
         0x04=>global_disable(p),
-        0x05=>{p.xms.a20_locks+=1;p.speaker.bios_a20(&mut p.ram,true);ok(p)},
+        0x05=>{p.dos.xms.a20_locks+=1;p.speaker.bios_a20(&mut p.ram,true);ok(p)},
         0x06=>{
-            if p.xms.a20_locks==0{fail(p,0x82);}
-            else{p.xms.a20_locks-=1;if p.xms.a20_locks>0{fail(p,0x94)}else{global_disable(p)}}
+            if p.dos.xms.a20_locks==0{fail(p,0x82);}
+            else{p.dos.xms.a20_locks-=1;if p.dos.xms.a20_locks>0{fail(p,0x94)}else{global_disable(p)}}
         },
         0x07=>{set16(p,0,u32::from(p.ram.a20_enabled()));set_bl(p,0);},
         0x08|0x88=>{
@@ -130,7 +130,7 @@ fn call(p:&mut Loaded,ah:u8)->Result<(),String>{
             }
         },
         0x0a=>match handle(p){
-            Some((i,b)) if b.locks==0=>{p.xms.handles[i]=None;ok(p)},
+            Some((i,b)) if b.locks==0=>{p.dos.xms.handles[i]=None;ok(p)},
             Some(_)=>fail(p,0xab),
             None=>fail(p,0xa2),
         },
@@ -138,7 +138,7 @@ fn call(p:&mut Loaded,ah:u8)->Result<(),String>{
         0x0c=>match handle(p){
             Some((_,b)) if b.locks==u8::MAX=>fail(p,0xac),
             Some((i,b))=>{
-                p.xms.handles[i]=Some(Block{locks:b.locks+1,..b});
+                p.dos.xms.handles[i]=Some(Block{locks:b.locks+1,..b});
                 let address=b.base_k*1024;
                 set16(p,0,1);set16(p,3,address);set16(p,2,address>>16);
             },
@@ -146,12 +146,12 @@ fn call(p:&mut Loaded,ah:u8)->Result<(),String>{
         },
         0x0d=>match handle(p){
             Some((_,b)) if b.locks==0=>fail(p,0xaa),
-            Some((i,b))=>{p.xms.handles[i]=Some(Block{locks:b.locks-1,..b});ok(p)},
+            Some((i,b))=>{p.dos.xms.handles[i]=Some(Block{locks:b.locks-1,..b});ok(p)},
             None=>fail(p,0xa2),
         },
         0x0e|0x8e=>match handle(p){
             Some((_,b))=>{
-                let free_handles=p.xms.handles.iter().filter(|h|h.is_none()).count()as u32;
+                let free_handles=p.dos.xms.handles.iter().filter(|h|h.is_none()).count()as u32;
                 set16(p,0,1);set_bh(p,b.locks);
                 if ah==0x0e{set_bl(p,free_handles.min(255)as u8);set16(p,2,b.size_k.min(0xffff));}
                 else{set16(p,1,free_handles);p.cpu.regs[2]=b.size_k;}
@@ -174,7 +174,7 @@ fn call(p:&mut Loaded,ah:u8)->Result<(),String>{
 }
 
 fn global_disable(p:&mut Loaded){
-    if p.xms.a20_locks>0{fail(p,0x94);return;}
+    if p.dos.xms.a20_locks>0{fail(p,0x94);return;}
     p.speaker.bios_a20(&mut p.ram,false);ok(p)
 }
 
@@ -183,11 +183,11 @@ fn pool_end_k(p:&Loaded)->u32{(p.ram.bytes().len()/1024)as u32}
 fn handle(p:&Loaded)->Option<(usize,Block)>{handle_value(p,p.cpu.regs[2]&0xffff)}
 fn handle_value(p:&Loaded,value:u32)->Option<(usize,Block)>{
     let i=usize::try_from(value).ok()?.checked_sub(1)?;
-    p.xms.handles.get(i).copied().flatten().map(|b|(i,b))
+    p.dos.xms.handles.get(i).copied().flatten().map(|b|(i,b))
 }
 /// Free gaps (base, size) in kilobytes, in address order, ignoring `skip`.
 fn gaps(p:&Loaded,skip:Option<usize>)->Vec<(u32,u32)>{
-    let mut used:Vec<(u32,u32)>=p.xms.handles.iter().enumerate()
+    let mut used:Vec<(u32,u32)>=p.dos.xms.handles.iter().enumerate()
         .filter(|&(i,_)|Some(i)!=skip)
         .filter_map(|(_,b)|*b).filter(|b|b.size_k>0).map(|b|(b.base_k,b.size_k)).collect();
     used.sort_unstable();
@@ -201,27 +201,27 @@ fn free(p:&Loaded)->(u32,u32){
     (g.iter().map(|g|g.1).max().unwrap_or(0),g.iter().map(|g|g.1).sum())
 }
 fn allocate(p:&mut Loaded,size_k:u32)->Result<u32,u8>{
-    let slot=p.xms.handles.iter().position(Option::is_none).ok_or(0xa1)?;
+    let slot=p.dos.xms.handles.iter().position(Option::is_none).ok_or(0xa1)?;
     let base_k=if size_k==0{0}else{gaps(p,None).into_iter().find(|g|g.1>=size_k).ok_or(0xa0)?.0};
-    p.xms.handles[slot]=Some(Block{base_k,size_k,locks:0});
+    p.dos.xms.handles[slot]=Some(Block{base_k,size_k,locks:0});
     Ok(slot as u32+1)
 }
 fn reallocate(p:&mut Loaded,i:usize,size_k:u32)->Result<Result<(),u8>,String>{
-    let b=p.xms.handles[i].expect("checked handle");
+    let b=p.dos.xms.handles[i].expect("checked handle");
     if size_k<=b.size_k||b.size_k==0&&size_k==0{
-        p.xms.handles[i]=Some(Block{size_k,base_k:if size_k==0{0}else{b.base_k},..b});
+        p.dos.xms.handles[i]=Some(Block{size_k,base_k:if size_k==0{0}else{b.base_k},..b});
         return Ok(Ok(()));
     }
     let g=gaps(p,Some(i));
     // In place when the block (or what follows it) can grow far enough.
     if b.size_k>0&&g.iter().any(|&(base,size)|base<=b.base_k&&b.base_k+size_k<=base+size){
-        p.xms.handles[i]=Some(Block{size_k,..b});return Ok(Ok(()));
+        p.dos.xms.handles[i]=Some(Block{size_k,..b});return Ok(Ok(()));
     }
     // Elsewhere: the copy goes through a buffer, so the new place may
     // overlap the old one.
     let Some(&(base,_))=g.iter().find(|&&(_,size)|size>=size_k)else{return Ok(Err(0xa0));};
     if b.size_k>0{copy(p,b.base_k*1024,base*1024,b.size_k*1024)?;}
-    p.xms.handles[i]=Some(Block{base_k:base,size_k,..b});
+    p.dos.xms.handles[i]=Some(Block{base_k:base,size_k,..b});
     Ok(Ok(()))
 }
 

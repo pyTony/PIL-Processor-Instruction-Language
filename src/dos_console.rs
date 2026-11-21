@@ -50,7 +50,7 @@ pub(super) fn waiting(p:&mut Loaded,vector:u8)->Result<bool,String>{
         (0x16,0|0x10)=>{let(head,tail)=ring(p)?;Ok(head==tail)},
         (0x21,1|7|8)=>Ok(!dos_available(p)?),
         (0x21,0x0c) if matches!(al,1|7|8)=>{
-            if !p.flushed{let writes=dos_flush_writes(p)?;commit(p,&writes)?;p.pending_scan=None;p.flushed=true;}
+            if !p.dos.flushed{let writes=dos_flush_writes(p)?;commit(p,&writes)?;p.dos.pending_scan=None;p.dos.flushed=true;}
             Ok(!dos_available(p)?)
         },
         _=>Ok(false),
@@ -225,12 +225,12 @@ pub(super) fn store(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),Strin
 /// DOS stdin is CON on the BIOS ring. An ASCII-0 key returns 00h, then its scan
 /// code on the next read, as single-byte DOS reads do.
 pub(super) fn dos_available(p:&Loaded)->Result<bool,String>{
-    if p.pending_scan.is_some(){return Ok(true);}
+    if p.dos.pending_scan.is_some(){return Ok(true);}
     let(head,tail)=ring(p)?;Ok(head!=tail)
 }
 /// Plan one DOS character read: the byte, ring writes and the next pending scan.
 pub(super) fn dos_take(p:&Loaded)->Result<(u8,Writes,Option<u8>),String>{
-    if let Some(scan)=p.pending_scan{return Ok((scan,Vec::new(),None));}
+    if let Some(scan)=p.dos.pending_scan{return Ok((scan,Vec::new(),None));}
     let(head,tail)=ring(p)?;
     if head==tail{return Err("DOS console read requires input".into());}
     let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
@@ -245,7 +245,7 @@ pub(super) const BREAK:&str="DOS Ctrl-C break";
 pub(super) fn dos_break_check(p:&Loaded)->Result<(),String>{
     if super::services::stdin_aux(p){return Ok(());}
     if byte(p,0x471)?&0x80!=0{return Err(BREAK.into());}
-    if p.pending_scan.is_some(){return Ok(());}
+    if p.dos.pending_scan.is_some(){return Ok(());}
     let(head,tail)=ring(p)?;
     if head!=tail&&read(p,0x400+head)?&255==3{return Err(BREAK.into());}
     Ok(())
@@ -378,7 +378,7 @@ pub(super) fn display(p:&mut Loaded,ah:u8)->Result<(),String>{
 /// two-byte pair read_line consumes. An owed scan from an earlier single-byte
 /// read comes back as a plain byte. None means no input is ready.
 pub(super) fn dos_line_key(p:&Loaded)->Result<Option<(u32,Writes)>,String>{
-    if let Some(scan)=p.pending_scan{return Ok(Some((u32::from(scan),Vec::new())));}
+    if let Some(scan)=p.dos.pending_scan{return Ok(Some((u32::from(scan),Vec::new())));}
     let(head,tail)=ring(p)?;
     if head==tail{return Ok(None);}
     let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];

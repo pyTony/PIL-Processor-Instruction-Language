@@ -239,27 +239,27 @@ pub(super) fn service(p:&mut Loaded)->Result<(),String>{
     let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("mouse video mode: {e:?}"))?as u8;
     let page=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("mouse video page: {e:?}"))?as u16;
     let f=p.cpu.regs[0]as u16;
-    if p.mouse.enabled&&f!=0&&f!=0x21{p.mouse.sync(mode);}
+    if p.dos.mouse.enabled&&f!=0&&f!=0x21{p.dos.mouse.sync(mode);}
     match f{
-        0x09 if p.mouse.enabled=>{
+        0x09 if p.dos.mouse.enabled=>{
             let rows=words(p,32)?;
-            p.mouse.shape=Some((p.cpu.regs[3]as i16,p.cpu.regs[1]as i16,rows.try_into().unwrap()));
+            p.dos.mouse.shape=Some((p.cpu.regs[3]as i16,p.cpu.regs[1]as i16,rows.try_into().unwrap()));
             return Ok(());
         },
-        0x16 if p.mouse.enabled=>{
+        0x16 if p.dos.mouse.enabled=>{
             let at=buffer(p,STATE_BYTES,true)?;
-            for (i,w) in p.mouse.state().into_iter().enumerate(){
+            for (i,w) in p.dos.mouse.state().into_iter().enumerate(){
                 for (j,b) in w.to_le_bytes().into_iter().enumerate(){
                     p.ram.store(at[2*i+j],MemWidth::Byte,u32::from(b)).map_err(|e|format!("INT 33h buffer: {e:?}"))?;
                 }
             }
             return Ok(());
         },
-        0x17 if p.mouse.enabled=>{let w=words(p,STATE_BYTES/2)?;return p.mouse.restore(&w);},
+        0x17 if p.dos.mouse.enabled=>{let w=words(p,STATE_BYTES/2)?;return p.dos.mouse.restore(&w);},
         _=>{},
     }
     let es=p.selectors[SegmentRegister::Es.index()];
-    if let Some(es)=p.mouse.call(&mut p.cpu.regs,mode,es,page)?{
+    if let Some(es)=p.dos.mouse.call(&mut p.cpu.regs,mode,es,page)?{
         let i=SegmentRegister::Es.index();
         p.selectors[i]=es;p.image.selectors[i]=es;p.image.segments[i]=p.image.segments[i].real_mode_reload(es);
     }
@@ -268,16 +268,16 @@ pub(super) fn service(p:&mut Loaded)->Result<(),String>{
 pub(super) fn ready(p:&Loaded)->bool{
     p.image.real_mode&&p.cpu.eflags&0x200!=0
         &&p.image.sti_shadow==0&&p.image.ss_shadow==0
-        &&p.mouse.frame.is_none()&&p.mouse.handler.active()&&!p.mouse.events.is_empty()
+        &&p.dos.mouse.frame.is_none()&&p.dos.mouse.handler.active()&&!p.dos.mouse.events.is_empty()
 }
 /// Run one queued user callback as a FAR call between guest instructions.
 /// This is not IRQ12: the software driver has no hardware controller.
 pub(super) fn deliver(p:&mut Loaded)->Result<bool,String>{
     if !ready(p){return Ok(false);}
-    let handler=p.mouse.handler;
-    let Some(event)=p.mouse.events.front().copied() else{return Ok(false);};
+    let handler=p.dos.mouse.handler;
+    let Some(event)=p.dos.mouse.events.front().copied() else{return Ok(false);};
     let conditions=event.flags&handler.mask&0x7f;
-    if conditions==0{p.mouse.events.pop_front();return Ok(false);}
+    if conditions==0{p.dos.mouse.events.pop_front();return Ok(false);}
     let target=u32::from(handler.segment)*16+u32::from(handler.offset);
     let inside=(target>=p.image.fetch_base+p.image.start&&target<p.image.fetch_base+p.image.end)
         ||p.image.system.iter().any(|&(a,b)|target>=a&&target<b);
@@ -299,7 +299,7 @@ pub(super) fn deliver(p:&mut Loaded)->Result<bool,String>{
     for (at,value) in writes{
         p.ram.store(at,MemWidth::Word,value).map_err(|e|format!("mouse callback stack write: {e:?}"))?;
     }
-    p.mouse.events.pop_front();p.mouse.frame=Some(frame);
+    p.dos.mouse.events.pop_front();p.dos.mouse.frame=Some(frame);
     p.cpu.regs[4]=(p.cpu.regs[4]&0xffff0000)|(sp.wrapping_sub(4)&0xffff);
     // RBIL table 03172: AX = the conditions that matched the call mask,
     // BX buttons, CX/DX position, SI/DI the horizontal/vertical motion
@@ -328,7 +328,7 @@ pub(super) fn deliver(p:&mut Loaded)->Result<bool,String>{
 pub(super) fn returned(p:&mut Loaded)->Result<bool,String>{
     let at=p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip);
     if at!=vectors::MOUSE_RETURN{return Ok(false);}
-    let frame=p.mouse.frame.take().ok_or("mouse callback return reached without a pending far call")?;
+    let frame=p.dos.mouse.frame.take().ok_or("mouse callback return reached without a pending far call")?;
     if p.cpu.regs[4]&0xffff!=u32::from(frame.sp){
         return Err(format!("mouse callback returned with SP={:04x}, expected {:04x} (RETF required)",p.cpu.regs[4]&0xffff,frame.sp));
     }

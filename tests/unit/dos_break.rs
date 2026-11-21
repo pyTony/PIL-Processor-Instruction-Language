@@ -19,7 +19,7 @@ fn default_handler_echoes_and_ends_the_program_with_ctrl_c(){
     let r=run(p,20).unwrap();
     assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"^C\r\n");
     // The rest of the type-ahead was flushed with the ^C; the screen shows it.
-    assert!(ring_empty(&r.loaded));assert!(r.loaded.breaks.is_empty());
+    assert!(ring_empty(&r.loaded));assert!(r.loaded.dos.breaks.is_empty());
     let row:Vec<u8>=(0..2).map(|c|r.loaded.ram.load(0xb8000+c*2,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(row,b"^C");
     assert_eq!(r.loaded.ram.load(0x450,MemWidth::Word).unwrap(),0x0100);
     assert_eq!(r.instructions.get("DOS ^C -> INT23"),Some(&1));assert_eq!(r.instructions.get("DOS INT23 return (abort)"),Some(&1));
@@ -39,7 +39,7 @@ fn iret_and_retf2_handlers_resume_the_call_and_plain_retf_aborts(){
         if !resumes{assert_eq!(r.loaded.cpu.regs[4]&0xffff,0xfffc);continue;}
         // Back at the INT 21h with SP as it was; the call runs again and reads.
         assert_eq!((r.loaded.selectors[1],r.loaded.cpu.eip,r.loaded.cpu.regs[4]&0xffff),(PSP,0x10b,0xfffe));
-        assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x0123);assert!(r.loaded.breaks.is_empty());
+        assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x0123);assert!(r.loaded.dos.breaks.is_empty());
         r.loaded.enqueue_key(0x2d78).unwrap();
         let r=run(r.loaded,10).unwrap();assert_eq!(r.stop,Stop::Exit(b'x'));assert_eq!(r.output,b"x");
     }
@@ -50,7 +50,7 @@ fn line_input_starts_again_after_a_resumed_break(){
     let code=[0xba,0x14,0x01,0xb8,0x23,0x25,0xcd,0x21,0xba,0x00,0x02,0xb4,0x0a,0xcd,0x21,0xb8,0x00,0x4c,0xcd,0x21,0xcf];
     let mut p=load(&code,"line.com").unwrap();let base=u32::from(PSP)*16+0x200;p.ram.store(base,MemWidth::Byte,10).unwrap();
     p.enqueue_key(0x1e61).unwrap();p.enqueue_key(CTRL_C).unwrap();
-    let mut r=run(p,40).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert_eq!(r.output,b"a^C\r\n");assert_eq!(r.loaded.line,Some((vec![],0,true)));
+    let mut r=run(p,40).unwrap();assert_eq!(r.stop,Stop::WaitingForInput);assert_eq!(r.output,b"a^C\r\n");assert_eq!(r.loaded.dos.line,Some((vec![],0,true)));
     r.loaded.enqueue_key(0x3062).unwrap();r.loaded.enqueue_key(0x1c0d).unwrap();
     let r=run(r.loaded,20).unwrap();assert_eq!(r.stop,Stop::Exit(0));assert_eq!(r.output,b"b\r");
     let bytes:Vec<u8>=(0..4).map(|i|r.loaded.ram.load(base+i,MemWidth::Byte).unwrap()as u8).collect();assert_eq!(bytes,[10,1,b'b',13]);
@@ -91,7 +91,7 @@ fn a_break_that_cannot_echo_or_push_changes_nothing(){
     p.ram.protect(u32::from(PSP)*16+0xfffa,2).unwrap();let screen=p.ram.load(0xb8000,MemWidth::Word).unwrap();
     let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
     assert!(r.output.is_empty());assert!(!ring_empty(&r.loaded));assert_eq!(r.loaded.ram.load(0xb8000,MemWidth::Word).unwrap(),screen);
-    assert_eq!((r.loaded.selectors[1],r.loaded.cpu.eip,r.loaded.cpu.regs[4]&0xffff),(PSP,0x102,0xfffe));assert!(r.loaded.breaks.is_empty());
+    assert_eq!((r.loaded.selectors[1],r.loaded.cpu.eip,r.loaded.cpu.regs[4]&0xffff),(PSP,0x102,0xfffe));assert!(r.loaded.dos.breaks.is_empty());
 }
 #[test]
 fn ctrl_c_in_a_child_ends_it_with_type_1_and_vectors_come_back(){
@@ -111,8 +111,8 @@ fn ctrl_c_in_a_child_ends_it_with_type_1_and_vectors_come_back(){
         let mut p=load_with_drives(&parent,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
         p.enqueue_key(CTRL_C).unwrap();
         let r=run(p,200).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
-        assert_eq!(r.loaded.cpu.regs[6]&0xffff,code);assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
-        assert!(r.loaded.breaks.is_empty());assert_eq!(vector23(&r.loaded),0x0070_0074);
+        assert_eq!(r.loaded.cpu.regs[6]&0xffff,code);assert_eq!((r.loaded.dos.psp,r.loaded.dos.exec.len()),(PSP,0));
+        assert!(r.loaded.dos.breaks.is_empty());assert_eq!(vector23(&r.loaded),0x0070_0074);
         assert_eq!(r.output,if code==0x100{b"^C\r\n".to_vec()}else{vec![]});
     }
     std::fs::remove_dir_all(dir).unwrap();

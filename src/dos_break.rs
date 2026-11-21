@@ -52,16 +52,16 @@ pub(super) fn start(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let image=&p.image;
     let inside=|base:u32,start:u32,end:u32|target>=base+start&&target<base+end;
     let window=if inside(image.fetch_base,image.start,image.end)||image.system.iter().any(|&(s,e)|target>=s&&target<e){None}
-        else{p.exec.iter().rev().map(|f|&f.image).find(|i|inside(i.fetch_base,i.start,i.end)).map(|i|(i.fetch_base,i.start,i.end))};
-    let frame=Frame{cs:p.selectors[SegmentRegister::Cs.index()],eip:p.cpu.eip,sp:sp as u16,depth:p.exec.len(),
+        else{p.dos.exec.iter().rev().map(|f|&f.image).find(|i|inside(i.fetch_base,i.start,i.end)).map(|i|(i.fetch_base,i.start,i.end))};
+    let frame=Frame{cs:p.selectors[SegmentRegister::Cs.index()],eip:p.cpu.eip,sp:sp as u16,depth:p.dos.exec.len(),
         window:window.map(|_|(p.image.fetch_base,p.image.start,p.image.end))};
     if let Some((base,start,end))=window{p.image.fetch_base=base;p.image.start=start;p.image.end=end;}
-    p.breaks.push(frame);
+    p.dos.breaks.push(frame);
     p.cpu.regs[4]=(p.cpu.regs[4]&0xffff0000)|(sp.wrapping_sub(6)&0xffff);
     // CLC, then INT 23h clears IF and TF.
     p.cpu.eflags&=!0x301;p.cpu.undefined_flags&=!0x301;
     set_cs(p,segment);p.cpu.eip=offset;
-    p.pending_scan=None;p.line=None;p.flushed=false;p.input_wait=false;
+    p.dos.pending_scan=None;p.dos.line=None;p.dos.flushed=false;p.dos.input_wait=false;
     p.image.retired();
     Ok(())
 }
@@ -71,14 +71,14 @@ pub(super) enum Return{Resume,Abort}
 pub(super) fn returned(p:&mut Loaded)->Result<Option<Return>,String>{
     let at=p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip);
     if at!=u32::from(DOSDATA)*16+u32::from(RETURN){return Ok(None);}
-    let frame=p.breaks.pop().ok_or("INT 23h return point reached without a Ctrl-C break")?;
+    let frame=p.dos.breaks.pop().ok_or("INT 23h return point reached without a Ctrl-C break")?;
     if let Some((base,start,end))=frame.window{p.image.fetch_base=base;p.image.start=start;p.image.end=end;}
     if p.cpu.regs[4]&0xffff!=u32::from(frame.sp){return Ok(Some(Return::Abort));}
     set_cs(p,frame.cs);p.cpu.eip=frame.eip;p.image.retired();
     Ok(Some(Return::Resume))
 }
 /// A program ended: its unreturned INT 23h calls go with it.
-pub(super) fn drop_program(p:&mut Loaded){let depth=p.exec.len();p.breaks.retain(|f|f.depth<depth);}
+pub(super) fn drop_program(p:&mut Loaded){let depth=p.dos.exec.len();p.dos.breaks.retain(|f|f.depth<depth);}
 /// Ctrl+Break as the PC BIOS and DOS take it (keyboard IRQ, then DOS's INT 1Bh
 /// handler): the keyboard buffer is emptied and holds one 0000h word, and bit 7
 /// of 0040:0071 is set for DOS to see at its next break check. A program's own
@@ -99,7 +99,7 @@ pub(super) fn bios_break(p:&mut Loaded)->Result<(),String>{
     let next=if tail==0x3c{0x1e}else{tail+2};
     writes.extend([(0x400+tail,MemWidth::Word,0),(0x41c,MemWidth::Word,next),(0x471,MemWidth::Byte,flag|0x80)]);
     console::check(p,&writes)?;console::store(p,&writes)?;
-    p.pending_scan=None;Ok(())
+    p.dos.pending_scan=None;Ok(())
 }
 #[cfg(test)]
 #[path="../tests/unit/dos_break.rs"]

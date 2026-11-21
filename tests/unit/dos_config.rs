@@ -27,20 +27,20 @@ fn config_mounts_selects_c_and_updates_the_startup_environment(){
     std::fs::create_dir(&root).unwrap();std::fs::create_dir(root.join("cdrive")).unwrap();std::fs::create_dir(root.join("ddrive")).unwrap();
     let path=root.join("pildos.conf");std::fs::write(&path,"C=cdrive\nD=ddrive\ncountry=358\n").unwrap();
     let mut p=dos::load(&dos::hello("com").unwrap(),"HELLO.COM").unwrap();
-    assert_eq!(p.drive.letter(),b'A');
+    assert_eq!(p.dos.drive.letter(),b'A');
     apply(&mut p,path.to_str(),None).unwrap();
-    assert_eq!(p.drive.letter(),b'C');assert_eq!(p.country,358);
-    let env=p.ram.load(u32::from(p.psp)*16+0x2c,crate::memory::MemWidth::Word).unwrap()*16;
+    assert_eq!(p.dos.drive.letter(),b'C');assert_eq!(p.dos.country,358);
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,crate::memory::MemWidth::Word).unwrap()*16;
     let bytes=p.ram.bytes();let start=env as usize;
     assert!(bytes[start..].starts_with(b"COMSPEC=C:\\COMMAND.COM\0"));
     assert!(bytes[start..start+100].windows(12).any(|v|v==b"C:\\HELLO.COM"));
     let mut z=dos::load_with_drives(&dos::hello("com").unwrap(),"HELLO.COM",vec![dos::Source::Memory(dos::MemDir::default())],None).unwrap();
     apply(&mut z,path.to_str(),None).unwrap();
-    let ze=z.ram.load(u32::from(z.psp)*16+0x2c,crate::memory::MemWidth::Word).unwrap()as usize*16;
+    let ze=z.ram.load(u32::from(z.dos.psp)*16+0x2c,crate::memory::MemWidth::Word).unwrap()as usize*16;
     assert!(z.ram.bytes()[ze..ze+100].windows(12).any(|v|v==b"C:\\HELLO.COM"));
     assert!(z.ram.bytes()[ze..ze+100].windows(9).any(|v|v==b"TEMP=Z:\\\0"));
     let mut q=dos::load(&dos::hello("com").unwrap(),"HELLO.COM").unwrap();
-    apply(&mut q,path.to_str(),Some(b'C')).unwrap();assert_eq!(q.drive.letter(),b'A');
+    apply(&mut q,path.to_str(),Some(b'C')).unwrap();assert_eq!(q.dos.drive.letter(),b'A');
     std::fs::remove_dir_all(root).unwrap();
 }
 #[test]
@@ -67,7 +67,7 @@ fn starts_update_the_own_programs_drive_from_programs_dos(){
     apply(&mut p,path.to_str(),None).unwrap();
     assert_eq!(std::fs::read(root.join("ddrive/PIL/DEMO.COM")).unwrap(),b"demo");
     // The folder is on PATH in the program's environment.
-    let environment=|p:&dos::Loaded|{let env=p.ram.load(u32::from(p.psp)*16+0x2c,crate::memory::MemWidth::Word).unwrap()*16;
+    let environment=|p:&dos::Loaded|{let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,crate::memory::MemWidth::Word).unwrap()*16;
         (0..256).map(|i|p.ram.load(env+i,crate::memory::MemWidth::Byte).unwrap() as u8).collect::<Vec<u8>>()};
     assert!(environment(&p).windows(12).any(|w|w==b"PATH=D:\\PIL\0"));
     // A legacy --mount for D: replaces the configured folder: left alone,

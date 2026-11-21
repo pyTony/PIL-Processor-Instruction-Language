@@ -7,7 +7,7 @@ pub(super) fn open_program(shell:&str,tail:Option<&str>,config:Option<&str>)->Re
     let defaults=crate::dos_config::console_settings(config)?;
     let fpu=defaults.fpu.map(|present|if present{"80387"}else{"none"});
     let mut session=crate::dos::session::open(shell,None,tail,config,fpu)?;
-    if !session.machine().ok_or("session state lost")?.drive.is_mounted(b'D')&&std::path::Path::new("driveD").is_dir(){
+    if !session.machine().ok_or("session state lost")?.dos.drive.is_mounted(b'D')&&std::path::Path::new("driveD").is_dir(){
         session.mount_media(b'D',"driveD")?;
     }
     Ok(session)
