@@ -416,7 +416,9 @@ fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
         0x0a=>0x26,0x0b=>0x02,0x0c=>0x00,0x0d=>0x80,
         // Diagnostics passed, normal shutdown, no diskette, no hard disk.
-        0x0e|0x10|0x11|0x12|0x13=>0,0x0f=>p.cmos_shutdown,
+        0x0e|0x11|0x12|0x13=>0,0x0f=>p.cmos_shutdown,
+        // Diskette drive types (A: high nibble, B: low) of attached BIOS disks.
+        0x10=>p.disks.cmos_floppy_types(),
         // Equipment: CGA 80 columns, no diskette, no coprocessor.
         0x14=>p.fpu.equipment(0x20) as u8,
         0x15=>0x80,0x16=>0x02,
