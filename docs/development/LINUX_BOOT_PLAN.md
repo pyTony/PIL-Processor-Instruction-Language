@@ -82,6 +82,19 @@ kernel) is another.
   disk swap on the console.
 - **Media:** user-supplied, or downloaded from a Linux history archive with
   permission. Never in the repository.
+- **Chosen image (21 November 2026):** MCC Interim 0.99.p10+ `boot.gz`
+  (878,864 bytes, 9 July 1993) from the Manchester mirror,
+  `debian.man.ac.uk/non-debian/mcc-interim/old/0.99.p10+/images/`, kept
+  locally in the git-ignored `images/mcc-interim/`.
+  - SHA256 of `boot.gz`:
+    74610555a78d0ff7dcea2da121d2653c5443dc83637990a449c24efbfa9084e8.
+  - Unpacked, it is a 1,228,800-byte 1.2 MB 5.25" floppy (80 cylinders,
+    2 heads, 15 sectors), so the CMOS reports drive A: as type 2.
+  - LILO is in its boot sector. LILO reads the kernel through BIOS INT 13h
+    and prints `boot:` through INT 10h, then waits on INT 16h. Enter boots
+    the floppy as a read-only `/` with MCC's install menu.
+  - The kernel then reads the same floppy through the floppy controller
+    (/dev/fd0); no disk swap is needed.
 - **Done when:** the root floppy mounts and a shell answers on the console.
 - **Later:** Linux 2.0/2.2 with an initrd and a serial console. Linux 3.8
   and later dropped the 386.
