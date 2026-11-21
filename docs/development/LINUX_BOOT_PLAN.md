@@ -63,26 +63,28 @@ kernel) is another.
   mode (today only IRQ0/1/5/7 and the mouse callback reach guests).
 - **8042:** command byte, self-test, output port (A20, reset through
   port 92h and FEh), keyboard enable/disable, scan code set 1 translation.
-- **16550 UART** for `console=ttyS0`, and VGA text memory as the second
-  console.
-- **Disks:** IDE and FDC report "none" correctly; a root file system comes
-  from an initrd first (no disk controller needed).
+- **Console:** VGA/EGA text memory and the 8042 keyboard. Kernels before
+  2.1 have no serial console.
+- **Floppy disks:** the floppy controller (8272/82077 at 3F0h-3F7h:
+  specify, recalibrate, seek, read/write data, sense interrupt; IRQ6),
+  8237 DMA channel 2 and the CMOS floppy types. The early kernels read
+  their root floppy through it; they have no initrd.
+- **Hard disks:** later, the AT hard-disk controller (1F0h-1F7h, IRQ14).
 - **HLT** in protected mode idles until the next IRQ.
 
-### 4. Early Linux
-- **Kernel:** a 386-capable Linux 2.0.x or 2.2.x kernel with an initrd
-  (ext2 or minix) and `console=ttyS0`. Kernels from 3.8 on dropped the 386.
-  Kernel and root image are user-supplied or downloaded with permission,
-  and stay out of the repository.
-- **Routes:**
-  - (a) through milestone 2, booting a boot floppy (LILO/SYSLINUX);
-  - (b) LOADLIN under Dine's DOS;
-  - (c) a direct loader for the Linux boot protocol (setup at 9000:0000,
-    kernel at 10000h or 100000h, initrd high, command line).
-
-  (a) is the general one; (c) is the quickest to debug.
-- **Done when:** the kernel reaches `init` from the initrd and a shell
-  answers on the serial console.
+### 4. Early Linux: MCC Interim
+- **Target (Tony's choice):** MCC Interim Linux (Manchester Computing
+  Centre, 1992-93), Linux 0.97-0.99 on a boot floppy and a root floppy, 386
+  only, minix file system.
+- **Boot:** the kernel's own boot sector loads it through BIOS INT 13h
+  (milestone 2). The kernel then switches to protected mode and reads the
+  root floppy through the floppy controller (milestone 3), asking for a
+  disk swap on the console.
+- **Media:** user-supplied, or downloaded from a Linux history archive with
+  permission. Never in the repository.
+- **Done when:** the root floppy mounts and a shell answers on the console.
+- **Later:** Linux 2.0/2.2 with an initrd and a serial console. Linux 3.8
+  and later dropped the 386.
 
 ### 5. Compiled protected-mode code
 - **Forms:** enumerate the decoder for a 32-bit default code segment and
