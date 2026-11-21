@@ -3,32 +3,44 @@
 # leaves the upper half of ESP from the skipped ESP slot, as the 386 does;
 # The decoder supplies the masks: which old ESP bits to keep and which ESP
 # slot bits to take above SP.
+# Each register is written as its slot is read: when a later slot crosses
+# the end of a 16-bit stack, the registers popped before it keep their new
+# values as the #SS is raised (SingleStepTests/80386). ESP changes only
+# when all eight slots are read.
+effects_before_fault
 require_width 16_or_32
 read_gpr old_sp 4 $S
 const step $S $BYTES
 zext o0 old_sp 32
 load v7 o0 $W
+write_gpr 7 v7
 add a1 old_sp step
 zext o1 a1 32
 load v6 o1 $W
+write_gpr 6 v6
 add a2 a1 step
 zext o2 a2 32
 load v5 o2 $W
+write_gpr 5 v5
 add a3 a2 step
 zext o3 a3 32
 load v4 o3 $W
 add a4 a3 step
 zext o4 a4 32
 load v3 o4 $W
+write_gpr 3 v3
 add a5 a4 step
 zext o5 a5 32
 load v2 o5 $W
+write_gpr 2 v2
 add a6 a5 step
 zext o6 a6 32
 load v1 o6 $W
+write_gpr 1 v1
 add a7 a6 step
 zext o7 a7 32
 load v0 o7 $W
+write_gpr 0 v0
 add new_sp a7 step
 read_gpr old_esp 4 32
 zext sp32 new_sp 32
@@ -39,13 +51,6 @@ const take_mask 32 $TAKE_ESP
 and taken slot_esp take_mask
 or upper kept taken
 or new_esp upper sp32
-write_gpr 7 v7
-write_gpr 6 v6
-write_gpr 5 v5
-write_gpr 3 v3
-write_gpr 2 v2
-write_gpr 1 v1
-write_gpr 0 v0
 write_gpr 4 new_esp
 preserve_flags all
 retire

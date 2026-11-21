@@ -8,6 +8,10 @@
 # nonzero one). The decoder expands the copy placeholder below into the
 # pushes after BP for the masked level: each copied pointer is read after the
 # earlier pushes are staged, so a chain that overlaps them reads the new bytes.
+# When a push or a copied pointer's read faults, the pushes before it are
+# written, as the 386 does (SingleStepTests/80386 C8 and 66C8); BP/EBP and
+# SP/ESP stay as they were.
+effects_before_fault
 require_width 16_or_32
 read_gpr old_sp 4 $S
 read_gpr chain_bp 5 $S

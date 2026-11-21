@@ -419,7 +419,6 @@ impl SegmentState {
         Ok(())
     }
     pub fn checkpoint_flags(&mut self,eip:u32,flags:u32,undefined:u32){if self.flag_checkpoint.map(|v|v.0)!=Some(eip){self.flag_checkpoint=Some((eip,flags,undefined));}}
-    pub fn recover_flags(&mut self)->Option<(u32,u32)>{self.flag_checkpoint.take().map(|(_,f,u)|(f,u))}
     pub fn retired(&mut self){self.flag_checkpoint=None;self.ss_shadow=self.ss_shadow.saturating_sub(1);self.sti_shadow=self.sti_shadow.saturating_sub(1);}
 }
 

@@ -26,8 +26,11 @@ fn source_override_and_fixed_es_are_independent_and_second_read_fault_is_atomic(
  let(mut i,mut r,mut c)=setup(&[0xa6]);i.segments[0].access=SegmentAccess::Unusable;let old=c.clone();let oldr=r.clone();assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!(c,old);assert_eq!(r,oldr);
 }
 #[test]
-fn compare_repeat_fault_restores_entry_flags_keeps_progress_and_retries(){
- for prefix in [0xf2,0xf3]{for op in [0xa6,0xae]{let bytes=code(op,8,16,Some(prefix));let(mut i,mut r,mut c)=setup(&bytes);c.regs[0]=if prefix==0xf3{0}else{1};r.write_bytes(0x900,&[c.regs[0]as u8;3]).unwrap();i.segments[0].limit=0xa00;i.ss_shadow=1;i.sti_shadow=1;let flags=(c.eflags,c.undefined_flags);step(&mut i,&mut r,&mut c).unwrap();assert_ne!((c.eflags,c.undefined_flags),flags);let old_regs=c.regs;assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!(c.regs,old_regs);assert_eq!((c.eflags,c.undefined_flags),flags);assert_eq!(c.eip,0x100);assert_eq!((i.ss_shadow,i.sti_shadow),(1,1));assert_eq!(i.flag_checkpoint,None);i.segments[0].limit=65535;for _ in 0..2{step(&mut i,&mut r,&mut c).unwrap();}assert_eq!((c.eip,c.regs[1]),(0x102,0));assert_eq!((i.ss_shadow,i.sti_shadow),(0,0));}}
+// The 386 keeps the flags of the elements it finished when a later element
+// faults (SingleStepTests/80386 pushes them in the #GP frame); the current
+// Intel SDM describes restoring the entry EFLAGS instead.
+fn compare_repeat_fault_keeps_finished_flags_and_progress_and_retries(){
+ for prefix in [0xf2,0xf3]{for op in [0xa6,0xae]{let bytes=code(op,8,16,Some(prefix));let(mut i,mut r,mut c)=setup(&bytes);c.regs[0]=if prefix==0xf3{0}else{1};r.write_bytes(0x900,&[c.regs[0]as u8;3]).unwrap();i.segments[0].limit=0xa00;i.ss_shadow=1;i.sti_shadow=1;let flags=(c.eflags,c.undefined_flags);step(&mut i,&mut r,&mut c).unwrap();assert_ne!((c.eflags,c.undefined_flags),flags);let finished=(c.eflags,c.undefined_flags);let old_regs=c.regs;assert!(step(&mut i,&mut r,&mut c).is_err());assert_eq!(c.regs,old_regs);assert_eq!((c.eflags,c.undefined_flags),finished);assert_eq!(c.eip,0x100);assert_eq!((i.ss_shadow,i.sti_shadow),(1,1));assert_eq!(i.flag_checkpoint,None);i.segments[0].limit=65535;for _ in 0..2{step(&mut i,&mut r,&mut c).unwrap();}assert_eq!((c.eip,c.regs[1]),(0x102,0));assert_eq!((i.ss_shadow,i.sti_shadow),(0,0));}}
 }
 #[test]
 fn memory_setcc_all_conditions_sizes_preserves_flags_and_registers(){
