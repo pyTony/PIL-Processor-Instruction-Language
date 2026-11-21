@@ -217,15 +217,15 @@ pub(crate) fn apply(p:&mut Loaded,explicit:Option<&str>,skip:Option<u8>)->Result
         let path=path.to_str().ok_or("DOS config path is not Unicode")?;
         mounts.push((letter,dos::session::open_mount_source(path)?));
     }
-    let choose_c=p.drive.letter()==b'A'&&mounts.iter().any(|(d,_)|*d==b'C');
-    for (letter,source) in mounts{p.drive.mount(letter,source)?;}
+    let choose_c=p.dos.drive.letter()==b'A'&&mounts.iter().any(|(d,_)|*d==b'C');
+    for (letter,source) in mounts{p.dos.drive.mount(letter,source)?;}
     if choose_c{dos::select_startup_drive(p,b'C')?;}
     // The own programs' folder on PATH (after the startup drive, which
     // edits the environment at fixed places).
-    if let Some(letter)=config.own_programs.unwrap_or(Some(b'D')).filter(|&l|p.drive.is_mounted(l)){
+    if let Some(letter)=config.own_programs.unwrap_or(Some(b'D')).filter(|&l|p.dos.drive.is_mounted(l)){
         dos::set_environment_path(p,&format!("{}:\\{}",char::from(letter),crate::dos_own_programs::FOLDER))?;
     }
-    if let Some(country)=config.country{p.country=country;}
+    if let Some(country)=config.country{p.dos.country=country;}
     Ok(())
 }
 /// Ordered installation media used by the persistent Dine session.

@@ -1,3 +1,28 @@
+# DOS state apart from the machine (Linux boot plan, milestone 1) — 21 November 2026
+
+Tony: "Boot early linux and implement the compiled protected code. First
+modularize OS layer to have common functionality available for linux
+also." Plan: docs/development/LINUX_BOOT_PLAN.md (separate PR). A booted
+kernel uses no DOS, so the DOS run by Dine has to be a layer over the PC,
+not part of it.
+- dos::Loaded keeps the machine: CPU, RAM, segment state, FPU, devices
+  (speaker/PIT/PIC, Sound Blaster, CMOS/RTC, VGA, COM1), BIOS tick count,
+  decode cache, blocks and diagnostics. New dos::Dos (field `dos`) holds the
+  33 DOS fields: MCB arena and allocation strategy, loaded-program layout,
+  PSP, DTA, handles and drives, EXEC frames, console line state, break and
+  verify settings, country, the INT 23h frames, the INT 33h mouse driver
+  and XMS.
+- 725 uses changed from `p.x` to `p.dos.x`, found by the compiler (no text
+  search). No behaviour change; the device modules already used only
+  machine fields.
+- Not done here: the firmware interface for INT n. It comes with the BIOS
+  boot path (milestone 2), its first user. Device files keep their
+  dos_*.rs names for now, to keep merges with open branches small.
+
+Local Windows, release: 1023 Rust tests pass, 2 ignored; 0 rustc warnings
+(release and dine-library); portable-path and program-specific checks
+pass. TPC 7.0 compiling the 2,256-line test program: 8,770,681 steps and
+0.88 s, as before. Not run on Linux.
 # STATUS.md merges like CLAUDE.md — 21 November 2026
 
 Tony: open PRs kept conflicting after merges even though the update-prs

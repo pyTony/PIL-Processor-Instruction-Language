@@ -416,7 +416,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
                     let pressed=buttons&2!=0&&!right_down;right_down=buttons&2!=0;
-                    let active=session.machine().is_some_and(|p|p.mouse.view().active);
+                    let active=session.machine().is_some_and(|p|p.dos.mouse.view().active);
                     if pressed&&(shift||!active){host_menu_open=front.media_menu();continue;}
                     if front.selects(active,shift){
                         match front.select(session,x,y,width,height,buttons)?{
@@ -425,7 +425,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                             select::Gesture::None=>{},
                         }
                     }else if !paused&&width>0&&height>0{
-                        let view=session.machine().map(|p|p.mouse.view()).ok_or("session state lost")?;
+                        let view=session.machine().map(|p|p.dos.mouse.view()).ok_or("session state lost")?;
                         let fx=(x.clamp(0,width-1) as i64*(i64::from(view.max_x)+1)/i64::from(width)) as u16;
                         let fy=(y.clamp(0,height-1) as i64*(i64::from(view.max_y)+1)/i64::from(height)) as u16;
                         session.mouse(fx,fy,buttons)?;
@@ -685,7 +685,7 @@ impl Front{
             let selection=self.selecting.selection.map(|s|(s,grid.0,grid.1));
             if let Some(w)=self.window.as_mut(){
                 if let Some(ref note)=note{w.window.title(&format!("Dine DOS console - {note}"));}
-                w.window.hide_pointer(self.host_pointer.hides(p.mouse.view().visible));
+                w.window.hide_pointer(self.host_pointer.hides(p.dos.mouse.view().visible));
                 w.present(session,selection)?;
             }
         }

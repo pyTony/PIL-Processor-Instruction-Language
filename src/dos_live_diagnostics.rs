@@ -15,7 +15,7 @@ fn number(value:Option<u32>)->String{
 /// Dine's EXEC loader writes a count word (1) and the child's full path.
 /// Treat this as best-effort, untrusted guest data: bound both scans.
 fn current_program(p:&Loaded)->Option<String>{
-    let psp=u32::from(p.psp)*16;
+    let psp=u32::from(p.dos.psp)*16;
     let segment=bda(p,psp+0x2c,MemWidth::Word)?;
     if segment==0{return None;}
     let base=segment.checked_mul(16)?;
@@ -89,11 +89,11 @@ pub(super) fn capture(p:&Loaded,steps:usize,host_pending:usize,status:&str)->Str
     );
     let pc=history::Dispatch::capture(p).json();
     let recent=p.history.recent_json(16);
-    let program=stoplog::quote(&String::from_utf8_lossy(&p.own_name));
+    let program=stoplog::quote(&String::from_utf8_lossy(&p.dos.own_name));
     let active=current_program(p).map_or_else(||"null".into(),|s|stoplog::quote(&s));
     format!(
         r#"{{"schema":1,"time_unix_ms":{timestamp},"status":{},"steps":{steps},"initial_executable":{program},"active_executable":{active},"current_psp":"{:04X}","exec_depth":{},"current_instruction":{pc},"history_enabled":{},"history_capacity":{},"recent_dispatches":{recent},"video":{video},"text_cells_first5_hex":{text_cells},"text_write_watch":{text_write_watch},"service_trace":{service_trace},"keyboard":{keyboard}}}"#,
-        stoplog::quote(status),p.psp,p.exec.len(),p.history.enabled(),p.history.capacity()
+        stoplog::quote(status),p.dos.psp,p.dos.exec.len(),p.history.enabled(),p.history.capacity()
     )
 }
 

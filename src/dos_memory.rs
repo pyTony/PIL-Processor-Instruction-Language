@@ -152,7 +152,7 @@ fn result(p:&mut Loaded,error:Option<u16>,bx:Option<u16>,allocated:Option<u16>){
     if let Some(bx)=bx{low(&mut p.cpu.regs[3],bx);}
 }
 pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
-    let Ok(mut next)=p.arena.refreshed(&p.ram) else{result(p,Some(7),None,None);return Ok(());};
+    let Ok(mut next)=p.dos.arena.refreshed(&p.ram) else{result(p,Some(7),None,None);return Ok(());};
     let requested=p.cpu.regs[3]as u16;
     let segment=p.image.selectors[0];let(mut error,mut bx,mut allocated)=(None,None,None);
     match function{
@@ -160,11 +160,11 @@ pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
             next.coalesce();
             // AH58 strategy, low two bits: 0 first fit, 1 best fit, 2 last
             // fit; the regions to search in order come from bits 6-7.
-            let plan=next.plan(p.alloc_strategy);
+            let plan=next.plan(p.dos.alloc_strategy);
             let mut chosen=None;
             for &high in &plan{
                 let fits=|b:&Block|b.owner==0&&b.size>=requested&&Arena::region(b,high);
-                chosen=match p.alloc_strategy&3{
+                chosen=match p.dos.alloc_strategy&3{
                     1=>next.blocks.iter().enumerate().filter(|(_,b)|fits(b)).min_by_key(|(_,b)|b.size).map(|(i,_)|i),
                     2=>next.blocks.iter().rposition(fits),
                     _=>next.blocks.iter().position(fits),
@@ -173,12 +173,12 @@ pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
             }
             if let Some(i)=chosen{
                 let available=next.blocks[i].size;let header=next.blocks[i].header;
-                if p.alloc_strategy&3==2&&requested<available{
+                if p.dos.alloc_strategy&3==2&&requested<available{
                     // Last fit takes the top of the block and leaves the bottom free.
                     let low=available-requested-1;next.blocks[i].size=low;
-                    next.blocks.insert(i+1,Block{header:header+1+low,size:requested,owner:p.psp});allocated=Some(header+2+low);
+                    next.blocks.insert(i+1,Block{header:header+1+low,size:requested,owner:p.dos.psp});allocated=Some(header+2+low);
                 }else{
-                    next.blocks[i].owner=p.psp;next.blocks[i].size=requested;allocated=Some(header+1);
+                    next.blocks[i].owner=p.dos.psp;next.blocks[i].size=requested;allocated=Some(header+1);
                     if requested<available{next.blocks.insert(i+1,Block{header:header+1+requested,size:available-requested-1,owner:0});}
                 }
             }else{error=Some(8);bx=Some(plan.iter().map(|&h|next.largest_in(h)).max().unwrap_or(0));}
@@ -205,28 +205,28 @@ pub(super) fn memory_service(p:&mut Loaded,function:u8)->Result<(),String>{
     let headers:Vec<_>=next.headers().into_iter().filter(|(at,bytes)|bytes.iter().enumerate().any(|(n,&b)|p.ram.load(*at+n as u32,MemWidth::Byte)!=Ok(u32::from(b)))).collect();
     // PSP:0002 retains its load-time value, as in the FreeDOS handler.
     // Report current ownership separately from that original PSP field.
-    let program_end=next.owned(p.psp).map(|i|(u32::from(p.psp)+u32::from(next.blocks[i].size))*16).unwrap_or(u32::from(p.psp)*16);
+    let program_end=next.owned(p.dos.psp).map(|i|(u32::from(p.dos.psp)+u32::from(next.blocks[i].size))*16).unwrap_or(u32::from(p.dos.psp)*16);
     for(at,bytes)in &headers{for n in 0..bytes.len(){p.ram.check_write(*at+n as u32,MemWidth::Byte).map_err(|e|format!("DOS MCB write: {e:?}"))?;}}
     for(at,bytes)in headers{p.ram.write_bytes(at,&bytes).map_err(|e|format!("DOS MCB commit: {e:?}"))?;}
-    p.arena=next;p.allocated_end=program_end;result(p,error,bx,allocated);Ok(())
+    p.dos.arena=next;p.dos.allocated_end=program_end;result(p,error,bx,allocated);Ok(())
 }
 /// AX=5803h: link (true) or unlink the upper blocks. `Ok(false)` when there
 /// are none (the caller answers invalid function, as FreeDOS does).
 pub(super) fn link(p:&mut Loaded,on:bool)->Result<bool,String>{
-    let Ok(mut next)=p.arena.refreshed(&p.ram) else{return Ok(false);};
+    let Ok(mut next)=p.dos.arena.refreshed(&p.ram) else{return Ok(false);};
     if !next.umb{return Ok(false);}
     next.linked=on;
     p.ram.write_bytes(u32::from(SC)*16,&[if on{b'M'}else{b'Z'}]).map_err(|e|format!("DOS UMB link: {e:?}"))?;
     p.ram.write_bytes(LINK_FLAG,&[u8::from(on)]).map_err(|e|format!("DOS UMB link flag: {e:?}"))?;
-    p.arena=next;Ok(true)
+    p.dos.arena=next;Ok(true)
 }
 /// Adds (DOS=UMB) or removes upper memory before the first instruction:
 /// C800-EFFF becomes RAM or the empty FFh bus again, the MCBs and list of
 /// lists follow, and a program block that ended at A000h (or 9FFFh) keeps its
 /// PSP:0002 and end in step.
 pub(super) fn set_umbs(p:&mut Loaded,on:bool)->Result<(),String>{
-    if p.arena.umb==on{return Ok(());}
-    let mut next=p.arena.refreshed(&p.ram)?;
+    if p.dos.arena.umb==on{return Ok(());}
+    let mut next=p.dos.arena.refreshed(&p.ram)?;
     let owner=if on{next.add_umbs()?}else{next.remove_umbs()?};
     let(base,bytes)=(u32::from(UMB_FIRST)*16,usize::from(UMB_END-UMB_FIRST)*16);
     let e=|e|format!("DOS upper memory: {e:?}");
@@ -237,17 +237,17 @@ pub(super) fn set_umbs(p:&mut Loaded,on:bool)->Result<(),String>{
     p.ram.write_bytes(LINK_FLAG,&[0]).map_err(e)?;
     p.ram.write_bytes(UPPER_ROOT,&if on{SC}else{0xffff}.to_le_bytes()).map_err(e)?;
     let(old,new)=if on{(END,SC)}else{(SC,END)};
-    if owner==p.psp&&owner!=0{
-        let at=u32::from(p.psp)*16+2;
+    if owner==p.dos.psp&&owner!=0{
+        let at=u32::from(p.dos.psp)*16+2;
         if p.ram.load(at,MemWidth::Word).map_err(e)?==u32::from(old){p.ram.store(at,MemWidth::Word,u32::from(new)).map_err(e)?;}
-        if p.allocated_end==u32::from(old)*16{p.allocated_end=u32::from(new)*16;}
+        if p.dos.allocated_end==u32::from(old)*16{p.dos.allocated_end=u32::from(new)*16;}
         let image=&mut p.image;
         if image.fetch_base+image.end==u32::from(old)*16{image.end=u32::from(new)*16-image.fetch_base;}
     }
     // Programs run code from AH48 blocks: in conventional memory that is
     // inside the program's own window, upper blocks need a range of their own.
     p.image.system[UMB_CODE_SLOT]=if on{(base,base+bytes as u32)}else{(0,0)};
-    p.arena=next;Ok(())
+    p.dos.arena=next;Ok(())
 }
 /// The fixed slot of image.system that holds C800-EFFF while UMBs exist.
 pub(super) const UMB_CODE_SLOT:usize=4;

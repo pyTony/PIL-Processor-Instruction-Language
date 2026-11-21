@@ -373,7 +373,7 @@ fn code_page_remote_drive_dr_dos_and_date_checks_answer_as_dos_6_22(){
     }
     // AH50h: the current PSP may be set to a segment holding a PSP.
     assert_eq!(dos(&mut p,0x5000,u32::from(PSP),0,0).unwrap().0,0x5000);
-    assert!(dos(&mut p,0x5000,0x2000,0,0).is_err());assert_eq!(p.psp,PSP);
+    assert!(dos(&mut p,0x5000,0x2000,0,0).is_err());assert_eq!(p.dos.psp,PSP);
 }
 #[test]
 fn multiplex_checks_for_4dos_windows_mscdex_and_append_leave_registers(){
@@ -449,7 +449,7 @@ fn parent_interrupt_handler_can_be_called_by_child_program(){
     let p=load_with_drives(&parent,"PARENT.COM",vec![Source::Host(dir.clone())],None).unwrap();
     let r=run(p,200).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     assert_eq!(r.loaded.cpu.regs[6]&0xffff,0x77,"child called parent INT 2Fh and exited with 77h");
-    assert_eq!((r.loaded.psp,r.loaded.exec.len()),(PSP,0));
+    assert_eq!((r.loaded.dos.psp,r.loaded.dos.exec.len()),(PSP,0));
     std::fs::remove_dir_all(dir).unwrap();
 }
 

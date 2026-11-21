@@ -96,7 +96,7 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
         let(file,_)=match files::program(p,&raw)?{Ok(found)=>found,Err(code)=>{fail(p,u32::from(code));return Ok(())}};
         return overlay(p,&file);
     }
-    if p.exec.len()+p.in_memory.len()+p.load_only.len()>=MAX_DEPTH{fail(p,8);return Ok(());}
+    if p.dos.exec.len()+p.dos.in_memory.len()+p.dos.load_only.len()>=MAX_DEPTH{fail(p,8);return Ok(());}
     let raw=files::asciiz(p,p.cpu.regs[2]&0xffff)?;
     let(file,path)=match files::program(p,&raw)?{Ok(found)=>found,Err(code)=>{fail(p,u32::from(code));return Ok(())}};
     let Some(program)=parse(&file)else{fail(p,11);return Ok(())};
@@ -113,7 +113,7 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
         }
     }
     let env_seg=word(ram,block)?;let tail=far(ram,block+2)?;let fcb1=far(ram,block+6)?;let fcb2=far(ram,block+10)?;
-    let parent=u32::from(p.psp)*16;
+    let parent=u32::from(p.dos.psp)*16;
     // Environment: the given block or the parent's, its strings up to the
     // empty one, then the count word 1 and the program's full path.
     let source=u32::from(if env_seg==0{word(ram,parent+0x2c)?}else{env_seg})*16;
@@ -134,13 +134,13 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     // AH58 strategy and the UMB link pick the region, as for AH48: LOADHIGH
     // (strategy 80h, linked) gets the largest upper block when it fits.
     let need=resident+if program.entry.is_none(){0x10}else{u32::from(program.min)};
-    let largest=u32::from(p.arena.exec_block(p.alloc_strategy,need));
+    let largest=u32::from(p.dos.arena.exec_block(p.dos.alloc_strategy,need));
     let wanted=match program.entry{None=>largest,Some(_)=>(resident+u32::from(program.max)).min(largest)};
     if largest<resident+u32::from(program.min)||(program.entry.is_none()&&largest<resident+0x10){
-        p.arena.set_owner(&mut p.ram,env_block,0)?;fail(p,8);return Ok(());
+        p.dos.arena.set_owner(&mut p.ram,env_block,0)?;fail(p,8);return Ok(());
     }
-    let Some(child)=allocate(p,wanted as u16)? else{p.arena.set_owner(&mut p.ram,env_block,0)?;fail(p,8);return Ok(())};
-    p.arena.set_owner(&mut p.ram,env_block,child)?;p.arena.set_owner(&mut p.ram,child,child)?;
+    let Some(child)=allocate(p,wanted as u16)? else{p.dos.arena.set_owner(&mut p.ram,env_block,0)?;fail(p,8);return Ok(())};
+    p.dos.arena.set_owner(&mut p.ram,env_block,child)?;p.dos.arena.set_owner(&mut p.ram,child,child)?;
     p.ram.write_bytes(u32::from(env_block)*16,&env).map_err(|e|format!("EXEC environment: {e:?}"))?;
     // The PSP: INT 20h, the block end, the parent's INT 22h/23h/24h targets,
     // parent PSP, a copy of the first 20 handles, environment, 20-entry table.
@@ -149,10 +149,10 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     let return_ip=(p.cpu.eip+2)&0xffff;let return_cs=p.selectors[SegmentRegister::Cs.index()];
     psp[0x0a..0x0c].copy_from_slice(&(return_ip as u16).to_le_bytes());psp[0x0c..0x0e].copy_from_slice(&return_cs.to_le_bytes());
     for(at,vector)in [(0x0e,0x23u32),(0x12,0x24)]{psp[at..at+4].copy_from_slice(&(p.ram.load(vector*4,MemWidth::Dword).map_err(|e|format!("EXEC vector read: {e:?}"))?).to_le_bytes());}
-    psp[0x16..0x18].copy_from_slice(&p.psp.to_le_bytes());
+    psp[0x16..0x18].copy_from_slice(&p.dos.psp.to_le_bytes());
     let mut handles=0u32;
     for h in 0..20u16{
-        let entry=if p.open_handles&(1<<h)!=0{p.ram.load(services::jft(p,h)?,MemWidth::Byte).map_err(|e|format!("EXEC JFT read: {e:?}"))?as u8}else{0xff};
+        let entry=if p.dos.open_handles&(1<<h)!=0{p.ram.load(services::jft(p,h)?,MemWidth::Byte).map_err(|e|format!("EXEC JFT read: {e:?}"))?as u8}else{0xff};
         psp[0x18+usize::from(h)]=entry;if entry!=0xff{handles|=1<<h;}
     }
     psp[0x2c..0x2e].copy_from_slice(&env_block.to_le_bytes());
@@ -165,7 +165,7 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     let load=child+0x10;let mut module=program.module;
     for(segment,offset)in &program.relocations{
         let at=usize::from(*segment)*16+usize::from(*offset);
-        let Some(value)=module.get(at..at+2).map(|b|u16::from_le_bytes([b[0],b[1]]))else{p.arena.release(&mut p.ram,child,None)?;fail(p,11);return Ok(())};
+        let Some(value)=module.get(at..at+2).map(|b|u16::from_le_bytes([b[0],b[1]]))else{p.dos.arena.release(&mut p.ram,child,None)?;fail(p,11);return Ok(())};
         module[at..at+2].copy_from_slice(&value.wrapping_add(load).to_le_bytes());
     }
     p.ram.write_bytes(u32::from(load)*16,&module).map_err(|e|format!("EXEC module: {e:?}"))?;
@@ -200,7 +200,7 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
             match p.image.system.iter().position(|&(a,b)|a==0&&b==0){
                 Some(slot)=>Some(slot),
                 None=>{
-                    p.arena.release(&mut p.ram,child,None)?;
+                    p.dos.arena.release(&mut p.ram,child,None)?;
                     fail(p,8);
                     return Ok(());
                 },
@@ -209,15 +209,15 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
         p.ram.write_bytes(block+0x0e,&result)
             .map_err(|e|format!("EXEC load-only return pointers: {e:?}"))?;
         if let Some(slot)=fetch_slot{p.image.system[slot]=window;}
-        p.load_only.push(LoadedChild{child,parent:p.psp,exec_depth:p.exec.len(),
-            open_handles:p.open_handles,dta:p.dta,fetch_slot});
-        p.psp=child;p.open_handles=handles;p.dta=(child,0x80);
+        p.dos.load_only.push(LoadedChild{child,parent:p.dos.psp,exec_depth:p.dos.exec.len(),
+            open_handles:p.dos.open_handles,dta:p.dos.dta,fetch_slot});
+        p.dos.psp=child;p.dos.open_handles=handles;p.dos.dta=(child,0x80);
         p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
         return Ok(());
     }
     // AL=00h suspends the parent and transfers control to the child's entry.
     let parent_window=(p.image.fetch_base+p.image.start,p.image.fetch_base+p.image.end);
-    p.exec.push(Frame{cpu:p.cpu.clone(),selectors:p.selectors,image:p.image.clone(),open_handles:p.open_handles,dta:p.dta,psp:p.psp});
+    p.dos.exec.push(Frame{cpu:p.cpu.clone(),selectors:p.selectors,image:p.image.clone(),open_handles:p.dos.open_handles,dta:p.dos.dta,psp:p.dos.psp});
     let mut system=p.image.system;
     if let Some(slot)=system.iter_mut().find(|(s,e)|*s==0&&*e==0){*slot=parent_window;}
     p.image.system=system;
@@ -227,34 +227,34 @@ pub(super) fn exec(p:&mut Loaded)->Result<(),String>{
     // The service loop steps past the INT 21 it returns from; start 2 bytes early.
     p.cpu.eip=u32::from(ip.wrapping_sub(2));p.cpu.regs[4]=u32::from(sp);p.cpu.regs[0]=0;p.cpu.regs[3]=0;p.cpu.regs[1]=0;
     p.cpu.eflags=0x202;
-    p.open_handles=handles;p.dta=(child,0x80);p.psp=child;
+    p.dos.open_handles=handles;p.dos.dta=(child,0x80);p.dos.psp=child;
     Ok(())
 }
 /// The child ended with `code` (`kind` 0 normal, 3 resident): free what it
 /// owned, close its files and resume the parent after its INT 21.
 /// Whether termination has a real waiting parent (AH4B or AH55).
 pub(super) fn has_parent(p:&Loaded)->bool{
-    !p.exec.is_empty()
-        || p.in_memory.last().is_some_and(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
-        || p.load_only.iter().any(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
+    !p.dos.exec.is_empty()
+        || p.dos.in_memory.last().is_some_and(|f|f.child==p.dos.psp&&f.exec_depth==p.dos.exec.len())
+        || p.dos.load_only.iter().any(|f|f.child==p.dos.psp&&f.exec_depth==p.dos.exec.len())
 }
 /// Dispatch termination by the active PSP and EXEC nesting depth. An AH55
 /// child must never pop the older AH4B frame that launched its parent.
 pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
-    let in_memory=p.in_memory.last().is_some_and(|f|f.child==p.psp&&f.exec_depth==p.exec.len());
+    let in_memory=p.dos.in_memory.last().is_some_and(|f|f.child==p.dos.psp&&f.exec_depth==p.dos.exec.len());
     // A load-only child can be started later by a debugger. Unlike an AH55
     // child, these records are indexed by PSP, not by nesting order.
     let load_only=if in_memory{None}else{
-        p.load_only.iter().position(|f|f.child==p.psp&&f.exec_depth==p.exec.len())
+        p.dos.load_only.iter().position(|f|f.child==p.dos.psp&&f.exec_depth==p.dos.exec.len())
     };
-    let base=u32::from(p.psp)*16;
+    let base=u32::from(p.dos.psp)*16;
     // Read the exit target before changing the MCB, IVT, or execution context.
-    let parent=if in_memory{Some(p.in_memory.last().unwrap().parent)}
-        else{load_only.map(|i|p.load_only[i].parent)};
+    let parent=if in_memory{Some(p.dos.in_memory.last().unwrap().parent)}
+        else{load_only.map(|i|p.dos.load_only[i].parent)};
     let exit=if let Some(expected)=parent{
         let actual=word(&p.ram,base+0x16)?;
         if actual!=expected{return Err(format!(
-            "loaded child PSP {:04x} has unexpected parent {actual:04x}, expected {expected:04x}",p.psp));}
+            "loaded child PSP {:04x} has unexpected parent {actual:04x}, expected {expected:04x}",p.dos.psp));}
         let target=p.ram.load(base+0x0a,MemWidth::Dword)
             .map_err(|e|format!("loaded child INT22 read: {e:?}"))?;
         if target==0{return Err("loaded child has no INT22 termination continuation".into());}
@@ -266,18 +266,18 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
         p.ram.store(vector*4,MemWidth::Dword,saved).map_err(|e|format!("terminate vector write: {e:?}"))?;
     }
     brk::drop_program(p);
-    let keep=p.resident.take().map(|_|p.psp);
-    p.arena.release(&mut p.ram,p.psp,keep)?;
-    p.return_code=u16::from(kind)<<8|u16::from(code);
+    let keep=p.dos.resident.take().map(|_|p.dos.psp);
+    p.dos.arena.release(&mut p.ram,p.dos.psp,keep)?;
+    p.dos.return_code=u16::from(kind)<<8|u16::from(code);
     if let Some(target)=exit{
         // Preserve the running child's CPU state, but return to the caller's
         // INT22 continuation with its PSP, handles and DTA restored.
         let (parent,open_handles,dta)=if in_memory{
-            let frame=p.in_memory.pop().unwrap();
+            let frame=p.dos.in_memory.pop().unwrap();
             p.image.system=frame.system;
             (frame.parent,frame.open_handles,frame.dta)
         }else{
-            let frame=p.load_only.remove(load_only.expect("loaded child recorded"));
+            let frame=p.dos.load_only.remove(load_only.expect("loaded child recorded"));
             if let Some(slot)=frame.fetch_slot{p.image.system[slot]=(0,0);}
             (frame.parent,frame.open_handles,frame.dta)
         };
@@ -287,32 +287,32 @@ pub(super) fn terminate(p:&mut Loaded,code:u8,kind:u8)->Result<(),String>{
         p.selectors[index]=cs;p.image.selectors[index]=cs;
         p.image.segments[index]=SegmentCache::real_mode(cs);
         p.cpu.eip=u32::from(ip);
-        p.open_handles=open_handles;p.dta=dta;p.psp=parent;
+        p.dos.open_handles=open_handles;p.dos.dta=dta;p.dos.psp=parent;
         return files::drop_unreferenced(p);
     }
-    let frame=p.exec.pop().ok_or("terminate without a parent")?;
+    let frame=p.dos.exec.pop().ok_or("terminate without a parent")?;
     p.cpu=frame.cpu;p.cpu.eip=(p.cpu.eip+2)&0xffff;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
     let (msw,controls)=(p.image.msw,p.image.controls);
     p.selectors=frame.selectors;p.image=frame.image;p.image.msw=msw;p.image.controls=controls;p.image.retired();
-    p.open_handles=frame.open_handles;p.dta=frame.dta;p.psp=frame.psp;
+    p.dos.open_handles=frame.open_handles;p.dos.dta=frame.dta;p.dos.psp=frame.psp;
     // Forget AH55 PSPs abandoned when the parent itself terminates.
-    p.in_memory.retain(|f|f.exec_depth<p.exec.len()+1);
+    p.dos.in_memory.retain(|f|f.exec_depth<p.dos.exec.len()+1);
     files::drop_unreferenced(p)
 }
 /// The active PSP, waiting parents, and all still-loaded children retain SFT references.
 pub(super) fn chain(p:&Loaded)->Vec<(u16,u32)>{
-    std::iter::once((p.psp,p.open_handles))
-        .chain(p.in_memory.iter().rev().map(|f|(f.parent,f.open_handles)))
-        .chain(p.load_only.iter().map(|f|(f.child,f.open_handles)))
-        .chain(p.exec.iter().rev().map(|f|(f.psp,f.open_handles))).collect()
+    std::iter::once((p.dos.psp,p.dos.open_handles))
+        .chain(p.dos.in_memory.iter().rev().map(|f|(f.parent,f.open_handles)))
+        .chain(p.dos.load_only.iter().map(|f|(f.child,f.open_handles)))
+        .chain(p.dos.exec.iter().rev().map(|f|(f.psp,f.open_handles))).collect()
 }
 
 /// Releasing the load-only child's PSP block with AH=49h invalidates its
 /// deferred execution context. The caller is responsible for freeing its
 /// separate environment block, as with ordinary DOS allocations.
 pub(super) fn forget_loaded(p:&mut Loaded,segment:u16){
-    if let Some(index)=p.load_only.iter().position(|f|f.child==segment){
-        let child=p.load_only.remove(index);
+    if let Some(index)=p.dos.load_only.iter().position(|f|f.child==segment){
+        let child=p.dos.load_only.remove(index);
         if let Some(slot)=child.fetch_slot{p.image.system[slot]=(0,0);}
     }
 }
@@ -321,18 +321,18 @@ pub(super) fn forget_loaded(p:&mut Loaded,segment:u16){
 /// and records the parent PSP segment. If the child block is allocated in the
 /// MCB arena, ownership is transferred to the child. The active PSP switches to DX.
 pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
-    if p.exec.len()+p.in_memory.len()>=MAX_DEPTH{return Err("DOS AH55 child nesting limit reached".into());}
+    if p.dos.exec.len()+p.dos.in_memory.len()>=MAX_DEPTH{return Err("DOS AH55 child nesting limit reached".into());}
     let child=(p.cpu.regs[2]&0xffff)as u16;
     let memory_end=(p.cpu.regs[6]&0xffff)as u16;
     let base=u32::from(child)*16;
     if base<0x500||base+256>crate::dos::LIMIT as u32{
         return Err(format!("DOS create child PSP at {child:04x}h outside conventional RAM is not modelled"));
     }
-    if child==p.psp{
+    if child==p.dos.psp{
         return Err("DOS create child PSP at current PSP is not modelled".into());
     }
-    let Some((header,owner,size))=p.arena.find_segment(child) else{
-        return Err(format!("DOS create child PSP at DX={child:04x}h SI={memory_end:04x}h parent={:04x}h outside tracked MCB arena is not modelled",p.psp));
+    let Some((header,owner,size))=p.dos.arena.find_segment(child) else{
+        return Err(format!("DOS create child PSP at DX={child:04x}h SI={memory_end:04x}h parent={:04x}h outside tracked MCB arena is not modelled",p.dos.psp));
     };
     if child==header{
         return Err(format!("DOS create child PSP at DX={child:04x}h overlaps MCB header at {header:04x}h"));
@@ -340,8 +340,8 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
     if owner==0{
         return Err(format!("DOS create child PSP at DX={child:04x}h in unallocated memory (MCB header={header:04x}h size={size:04x}h) is not modelled"));
     }
-    if owner!=p.psp{
-        return Err(format!("DOS create child PSP at DX={child:04x}h in memory owned by {owner:04x}h, not caller {:04x}h (MCB header={header:04x}h size={size:04x}h)",p.psp));
+    if owner!=p.dos.psp{
+        return Err(format!("DOS create child PSP at DX={child:04x}h in memory owned by {owner:04x}h, not caller {:04x}h (MCB header={header:04x}h size={size:04x}h)",p.dos.psp));
     }
     let alloc_end=header+size+1;
     if child+0x10>alloc_end{
@@ -371,8 +371,8 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
             .ok_or("DOS AH55 child code fetch range capacity exhausted")?;
         next_system[slot]=window;
     }
-    eprintln!("[DOS AH=55h] Create child PSP: DX={child:04x}h SI={memory_end:04x}h parent={:04x}h MCB(header={header:04x}h size={size:04x}h owner={owner:04x}h exact_base={is_exact_base})",p.psp);
-    let parent=u32::from(p.psp)*16;
+    eprintln!("[DOS AH=55h] Create child PSP: DX={child:04x}h SI={memory_end:04x}h parent={:04x}h MCB(header={header:04x}h size={size:04x}h owner={owner:04x}h exact_base={is_exact_base})",p.dos.psp);
+    let parent=u32::from(p.dos.psp)*16;
     let mut psp=[0u8;256];
     psp[..2].copy_from_slice(&[0xcd,0x20]);
     psp[2..4].copy_from_slice(&memory_end.to_le_bytes());
@@ -380,10 +380,10 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
         let saved=p.ram.load(vector*4,MemWidth::Dword).map_err(|e|format!("child PSP vector read: {e:?}"))?;
         psp[at as usize..at as usize+4].copy_from_slice(&saved.to_le_bytes());
     }
-    psp[0x16..0x18].copy_from_slice(&p.psp.to_le_bytes());
+    psp[0x16..0x18].copy_from_slice(&p.dos.psp.to_le_bytes());
     let mut handles=0u32;
     for h in 0..20u16{
-        let entry=if p.open_handles&(1<<h)!=0{
+        let entry=if p.dos.open_handles&(1<<h)!=0{
             p.ram.load(services::jft(p,h)?,MemWidth::Byte).map_err(|e|format!("child PSP JFT read: {e:?}"))?as u8
         }else{
             0xff
@@ -407,13 +407,13 @@ pub(super) fn create_child_psp(p:&mut Loaded)->Result<(),String>{
     psp[0x80..0x100].copy_from_slice(&tail);
     p.ram.write_bytes(base,&psp).map_err(|e|format!("child PSP write: {e:?}"))?;
     if is_exact_base{
-        p.arena.set_owner(&mut p.ram,child,child)?;
+        p.dos.arena.set_owner(&mut p.ram,child,child)?;
     }
-    p.in_memory.push(InMemoryChild{child,parent:p.psp,exec_depth:p.exec.len(),open_handles:p.open_handles,dta:p.dta,system:saved_system});
+    p.dos.in_memory.push(InMemoryChild{child,parent:p.dos.psp,exec_depth:p.dos.exec.len(),open_handles:p.dos.open_handles,dta:p.dos.dta,system:saved_system});
     p.image.system=next_system;
-    p.psp=child;
-    p.open_handles=handles;
-    p.dta=(child,0x80);
+    p.dos.psp=child;
+    p.dos.open_handles=handles;
+    p.dos.dta=(child,0x80);
     p.cpu.regs[0]=(p.cpu.regs[0]&!0xff)|0xf0;
     Ok(())
 }

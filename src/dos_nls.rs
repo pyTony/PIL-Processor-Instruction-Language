@@ -104,18 +104,18 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
     }
     if ah==0x38{
         let asked=if al==0xff{bx}else{u32::from(al)};
-        let country=if asked==0{p.country}else{asked as u16};
+        let country=if asked==0{p.dos.country}else{asked as u16};
         if !COUNTRIES.contains(&country){return Err(format!("DOS country {country} is not modelled (only 001 and 358)"));}
         // DX=FFFFh sets the country; otherwise DS:DX receives its record.
-        if dx==0xffff{p.country=country;}else{store(p,SegmentRegister::Ds,dx,&country_info(country))?;}
+        if dx==0xffff{p.dos.country=country;}else{store(p,SegmentRegister::Ds,dx,&country_info(country))?;}
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(country.min(0xff));p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(country);ok(p);
         return Ok(());
     }
-    if matches!(al,1..=7)&&(!matches!(bx,437|0xffff)||!(dx==0xffff||dx==u32::from(p.country))){return Err(format!("DOS country {dx} code page {bx} is not modelled (only {:03}/437)",p.country));}
+    if matches!(al,1..=7)&&(!matches!(bx,437|0xffff)||!(dx==0xffff||dx==u32::from(p.dos.country))){return Err(format!("DOS country {dx} code page {bx} is not modelled (only {:03}/437)",p.dos.country));}
     match al{
         0x01=>{
             // Info ID 1, size 1Ch, country, code page, then the AH38 record.
-            let mut record=vec![1,0x1c,0];record.extend(p.country.to_le_bytes());record.extend(437u16.to_le_bytes());record.extend_from_slice(&country_info(p.country));
+            let mut record=vec![1,0x1c,0];record.extend(p.dos.country.to_le_bytes());record.extend(437u16.to_le_bytes());record.extend_from_slice(&country_info(p.dos.country));
             if cx<record.len()as u32{fail(p,1);return Ok(());}
             store(p,SegmentRegister::Es,p.cpu.regs[7]&0xffff,&record)?;p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|record.len()as u32;ok(p);
         },

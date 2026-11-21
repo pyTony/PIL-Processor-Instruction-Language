@@ -26,11 +26,11 @@ pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exce
 impl Session{
     pub(crate) fn mount_media(&mut self,letter:u8,path:&str)->Result<String,String>{
         let source=open_mount_source(path)?;
-        self.loaded.as_mut().ok_or("session state lost")?.drive.mount(letter,source)?;
+        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.mount(letter,source)?;
         self.disk_sets.remove(&letter);Ok(format!("{}: {path}",char::from(letter)))
     }
     pub(crate) fn unmount_media(&mut self,letter:u8)->Result<String,String>{
-        self.loaded.as_mut().ok_or("session state lost")?.drive.unmount(letter)?;
+        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.unmount(letter)?;
         self.disk_sets.remove(&letter);Ok(format!("{}: unmounted",char::from(letter)))
     }
     pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None,disk_sets:BTreeMap::new()}}
@@ -51,7 +51,7 @@ impl Session{
     fn insert_set(&mut self,letter:u8,set:disk_set::DiskSet)->Result<String,String>{
         let path=set.images[0].to_str().ok_or("disk-set path is not Unicode")?;
         let source=open_mount_source(path)?;
-        self.loaded.as_mut().ok_or("session state lost")?.drive.mount(letter,source)?;
+        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.mount(letter,source)?;
         let text=set.description(letter);self.disk_sets.insert(letter,set);Ok(text)
     }
     /// A failed read or busy-drive refusal leaves both media and index intact.
@@ -61,7 +61,7 @@ impl Session{
         let index=set.select(selection)?;
         let path=set.images[index].to_str().ok_or("disk-set path is not Unicode")?;
         let source=open_mount_source(path)?;
-        self.loaded.as_mut().ok_or("session state lost")?.drive.mount(letter,source)?;
+        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.mount(letter,source)?;
         let set=self.disk_sets.get_mut(&letter).unwrap();set.current=index;Ok(set.description(letter))
     }
     /// Keep the executor for the whole session, including across frontend slices.
@@ -162,7 +162,7 @@ impl Session{
     pub(crate) fn mouse(&mut self,x:u16,y:u16,buttons:u16)->Result<(),String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
         let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("mouse mode: {e:?}"))?as u8;
-        p.mouse.host(x,y,buttons&7,mode);Ok(())
+        p.dos.mouse.host(x,y,buttons&7,mode);Ok(())
     }
     /// Ctrl+Break. The inner error is a refusal the frontend may show.
     pub(crate) fn ctrl_break(&mut self)->Result<Result<(),String>,String>{
@@ -202,7 +202,7 @@ impl Session{
             // The software text cursor: the cell's character/attribute word
             // ANDed with the screen mask and XORed with the cursor mask
             // (INT 33h AX=000Ah), on this copy only, never in B800h.
-            let (screen,cursor_mask)=p.mouse.text_masks().unwrap();
+            let (screen,cursor_mask)=p.dos.mouse.text_masks().unwrap();
             let value=(u16::from(cells[at])|u16::from(cells[at+1])<<8)&screen^cursor_mask;
             cells[at]=value as u8;cells[at+1]=(value>>8)as u8;
         }
@@ -211,9 +211,9 @@ impl Session{
     /// The byte offset in `screen` of the cell under a visible software text
     /// mouse cursor, in text modes only.
     fn mouse_cell(p:&Loaded,columns:u32)->Result<Option<usize>,String>{
-        let view=p.mouse.view();
+        let view=p.dos.mouse.view();
         let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"))?&0x7f;
-        if !view.visible||!matches!(mode,0..=3|7)||p.mouse.text_masks().is_none(){return Ok(None);}
+        if !view.visible||!matches!(mode,0..=3|7)||p.dos.mouse.text_masks().is_none(){return Ok(None);}
         // Virtual X spans 640 for 40 and 80 columns alike; rows are 8 high.
         let (column,row)=((u32::from(view.x)*columns/640).min(columns-1),(u32::from(view.y)/8).min(24));
         Ok(Some(((row*columns+column)*2)as usize))
@@ -270,13 +270,13 @@ impl Session{
         let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_compare_branches\":{compare_branches},\"native_block_runs\":{block_runs},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total},\"interpreter_instructions\":{interpreted}{application}",mode_control&8!=0,mode_control&0x20!=0);
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
         let com1_wait=matches!(self.stop,Stop::WaitingForInput)&&self.loaded.as_ref().is_some_and(services::stdin_aux);
-        let view=self.loaded.as_ref().map(|p|p.mouse.view());
+        let view=self.loaded.as_ref().map(|p|p.dos.mouse.view());
         let (present,active,visible,mx,my,max_x,max_y)=view.map_or((false,false,false,0,0,639,199),|v|(v.present,v.active,v.visible,v.x,v.y,v.max_x,v.max_y));
         // Text modes: the session already applied the text cursor masks.
         let drawn=self.loaded.as_ref().is_some_and(|p|Self::mouse_cell(p,columns).ok().flatten().is_some());
         // Graphics cursor from AX=0009h: hot spot, then 16 screen-mask and
         // 16 cursor-mask rows (high bit leftmost) as little-endian words.
-        let shape=self.loaded.as_ref().and_then(|p|p.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
+        let shape=self.loaded.as_ref().and_then(|p|p.dos.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
             format!(",\"mouse_hotspot\":[{hx},{hy}],\"mouse_shape\":\"{}\"",rows.iter().map(|w|format!("{:02x}{:02x}",w&0xff,w>>8)).collect::<String>()));
         let video_watch=self.loaded.as_ref().map_or_else(||r#"{\"enabled\":false}"#.to_string(),|p|p.ram.video_watch_json());
         let diagnostic=format!("{diagnostic},\"video_writes\":{video_watch},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
@@ -321,7 +321,7 @@ impl Session{
                     }else{
                         p.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33))
                             .map_err(|e|format!("mouse IVT write: {e:?}"))?;
-                        p.mouse.enable(vector);(true,"DOS mouse enabled".into(),false)
+                        p.dos.mouse.enable(vector);(true,"DOS mouse enabled".into(),false)
                     }
                 }
             },
@@ -361,7 +361,7 @@ impl Session{
             },
             // `country CODE`: the DOS country, as AH38 with DX=FFFFh would set it.
             ["country",code]=>match code.parse::<u16>(){
-                Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.country=code;(true,String::new(),false)},
+                Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.dos.country=code;(true,String::new(),false)},
                 _=>(false,"country needs 1 or 358".into(),false),
             },
             // `ansi on`: load the ANSI.SYS-style CON driver, as DEVICE=ANSI.SYS would.
@@ -379,7 +379,7 @@ impl Session{
                 let p=self.loaded.as_mut().ok_or("session state lost")?;
                 if self.steps!=0{return Err("console com1 must be selected before execution".into());}
                 if p.com1.is_none(){return Err("COM1 is not attached".into());}
-                let table=u32::from(p.psp)*16+0x18;
+                let table=u32::from(p.dos.psp)*16+0x18;
                 p.ram.check_write(table,MemWidth::Word).map_err(|e|format!("console handles: {e:?}"))?;
                 p.ram.store(table,MemWidth::Word,0x0303).map_err(|e|format!("console handles: {e:?}"))?;
                 p.com1.as_mut().unwrap().info|=0x23;
@@ -531,9 +531,9 @@ fn serve_session(session:&mut Session,logger:&mut stoplog::Logger)->Result<(),St
                 if let Some(p)=session.loaded.as_mut(){
                     let mode=p.ram.load(0x449,MemWidth::Byte).unwrap_or(3) as u8;
                     for (x,y,buttons) in events {
-                        p.mouse.host(x,y,buttons,mode);
+                        p.dos.mouse.host(x,y,buttons,mode);
                     }
-                    native_mouse_dirty=p.mouse.view().visible;
+                    native_mouse_dirty=p.dos.mouse.view().visible;
                 }
             }
         }

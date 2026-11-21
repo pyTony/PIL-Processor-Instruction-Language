@@ -193,14 +193,14 @@ fn store(p:&mut Loaded,segment:SegmentRegister,offset:u32,bytes:&[u8])->Result<(
     Ok(())
 }
 fn dta_write(p:&mut Loaded,at:u32,bytes:&[u8])->Result<(),String>{
-    let(segment,offset)=p.dta;
+    let(segment,offset)=p.dos.dta;
     if u32::from(offset)+at+bytes.len()as u32>0x10000{return Err("DOS DTA exceeds segment end".into());}
     let base=u32::from(segment)*16+u32::from(offset)+at;
     for n in 0..bytes.len()as u32{p.ram.check_write(base+n,MemWidth::Byte).map_err(|e|format!("DOS DTA write: {e:?}"))?;}
     p.ram.write_bytes(base,bytes).map_err(|e|format!("DOS DTA write: {e:?}"))
 }
 fn dta_read(p:&Loaded,at:u32,n:u32)->Result<Vec<u8>,String>{
-    let(segment,offset)=p.dta;
+    let(segment,offset)=p.dos.dta;
     if u32::from(offset)+at+n>0x10000{return Err("DOS DTA exceeds segment end".into());}
     let base=u32::from(segment)*16+u32::from(offset)+at;
     (0..n).map(|i|p.ram.load(base+i,MemWidth::Byte).map(|b|b as u8).map_err(|e|format!("DOS DTA read: {e:?}"))).collect()
@@ -423,8 +423,8 @@ fn find_next(p:&mut Loaded)->Result<(),String>{
     let state=dta_read(p,0,0x15)?;
     let pattern:Name=state[1..12].try_into().unwrap();let attr=state[12];
     let next=usize::from(u16::from_le_bytes([state[13],state[14]]));let slot=usize::from(u16::from_le_bytes([state[15],state[16]]));
-    let Some(Search{drive,path,last})=p.drive.searches.get(slot).cloned().filter(|s|p.drive.list.get(s.drive).is_some_and(|d|d.letter-b'A'+1==state[0]))else{fail(p,0x12);return Ok(())};
-    let d=&p.drive.list[drive];
+    let Some(Search{drive,path,last})=p.dos.drive.searches.get(slot).cloned().filter(|s|p.dos.drive.list.get(s.drive).is_some_and(|d|d.letter-b'A'+1==state[0]))else{fail(p,0x12);return Ok(())};
+    let d=&p.dos.drive.list[drive];
     let entries=match dir_of(d,&path){
         Ok((dir,time,date))=>{
             let mut all=Vec::new();
@@ -441,21 +441,21 @@ fn find_next(p:&mut Loaded)->Result<(),String>{
         // Hidden, system and directory entries need their bit in the search
         // attribute; the volume label is found only by a label search.
         if entry.attr&0x16&!attr!=0||!matches(&pattern,&entry.name){continue;}
-        p.drive.searches[slot].last=entry.key();
+        p.dos.drive.searches[slot].last=entry.key();
         return found(p,&state,i+1,entry,&display(&entry.name));
     }
     fail(p,0x12);Ok(())
 }
 fn find_first(p:&mut Loaded)->Result<(),String>{
     let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;let attr=p.cpu.regs[1]as u8;
-    let(drive,path)=match components(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
+    let(drive,path)=match components(&p.dos.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
     let Some((pattern,parent))=path.split_last()else{fail(p,3);return Ok(())};
-    if dir_of(&p.drive.list[drive],parent).is_err(){fail(p,3);return Ok(());}
-    let mut state=[0u8;0x15];state[0]=p.drive.list[drive].letter-b'A'+1;state[1..12].copy_from_slice(pattern);state[12]=attr;
+    if dir_of(&p.dos.drive.list[drive],parent).is_err(){fail(p,3);return Ok(());}
+    let mut state=[0u8;0x15];state[0]=p.dos.drive.list[drive].letter-b'A'+1;state[1..12].copy_from_slice(pattern);state[12]=attr;
     if attr==0x08{
         // A label-only search finds the volume label, as 11 characters with
         // a dot after the eighth, like MS-DOS and FreeDOS.
-        let label=match &p.drive.list[drive].source{Source::Image(tree)=>tree.label,_=>None};
+        let label=match &p.dos.drive.list[drive].source{Source::Image(tree)=>tree.label,_=>None};
         let Some(label)=label else{fail(p,0x12);return Ok(())};
         let mut name=label[..8].to_vec();if label[8..].iter().any(|&c|c!=b' '){name.push(b'.');name.extend(&label[8..]);}
         while name.last()==Some(&b' '){name.pop();}
@@ -463,9 +463,9 @@ fn find_first(p:&mut Loaded)->Result<(),String>{
         state[13..15].copy_from_slice(&0xffffu16.to_le_bytes());
         return found(p,&state,0xffff,&entry,&name);
     }
-    let slot=p.drive.next_search;p.drive.next_search=(slot+1)%MAX_SEARCHES;
+    let slot=p.dos.drive.next_search;p.dos.drive.next_search=(slot+1)%MAX_SEARCHES;
     let search=Search{drive,path:parent.to_vec(),last:None};
-    if slot<p.drive.searches.len(){p.drive.searches[slot]=search;}else{p.drive.searches.push(search);}
+    if slot<p.dos.drive.searches.len(){p.dos.drive.searches[slot]=search;}else{p.dos.drive.searches.push(search);}
     state[15..17].copy_from_slice(&(slot as u16).to_le_bytes());
     dta_write(p,0,&state)?;
     find_next(p)
@@ -508,21 +508,21 @@ fn open(p:&mut Loaded)->Result<(),String>{
     if serial::is_device(p,&raw){return device(p,3);}
     // CON opens the console, as handles 0..2 hold it (CTTY CON).
     if p.com1.is_some()&&serial::device_name(&raw,b"CON"){return device(p,1);}
-    let own=!raw.is_empty()&&base_name(&raw)==p.own_name;
+    let own=!raw.is_empty()&&base_name(&raw)==p.dos.own_name;
     let(data,drive,loc,stamp)=if own{
         // The program's own file opens by its name from any directory.
         if mode!=0{return Err("opening the program file for writing is not modelled".into());}
-        if p.own_file.is_empty(){fail(p,2);return Ok(());}
-        (p.own_file.clone(),p.drive.letter(),None,(0,0x21))
+        if p.dos.own_file.is_empty(){fail(p,2);return Ok(());}
+        (p.dos.own_file.clone(),p.dos.drive.letter(),None,(0,0x21))
     }else{
         if raw.is_empty(){fail(p,3);return Ok(());}
-        match lookup(&p.drive,&raw){
+        match lookup(&p.dos.drive,&raw){
             Err(code)=>{fail(p,code);return Ok(());},
             Ok((_,entry)) if entry.attr&0x18!=0=>{fail(p,5);return Ok(());},
             // Writing needs a host or memory file without the read-only attribute.
             Ok((_,Entry{node:Node::Image(_),..})) if mode!=0=>{fail(p,5);return Ok(());},
             Ok((_,entry)) if mode!=0&&entry.attr&1!=0=>{fail(p,5);return Ok(());},
-            Ok((drive,entry))=>(read_entry(&p.drive.list[drive],&entry)?,p.drive.list[drive].letter,entry.loc(drive),(entry.time,entry.date)),
+            Ok((drive,entry))=>(read_entry(&p.dos.drive.list[drive],&entry)?,p.dos.drive.list[drive].letter,entry.loc(drive),(entry.time,entry.date)),
         }
     };
     install(p,OpenFile{sft:0,data,pos:0,drive,loc,mode,written:false,stamp})
@@ -530,21 +530,21 @@ fn open(p:&mut Loaded)->Result<(),String>{
 /// Gives a device (system file 0..4) the lowest free handle, as opening a
 /// device name does; error 4 when none is free.
 fn device(p:&mut Loaded,sft:u8)->Result<(),String>{
-    let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
-    let Some(handle)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
+    let limit=p.ram.load(u32::from(p.dos.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
+    let Some(handle)=(0..limit).find(|&h|p.dos.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
     p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
-    p.open_handles|=1<<handle;set_ax(p,u32::from(handle));ok(p);Ok(())
+    p.dos.open_handles|=1<<handle;set_ax(p,u32::from(handle));ok(p);Ok(())
 }
 /// Gives an open file the lowest free handle and system file number, and
 /// returns the handle in AX; error 4 when either runs out.
 fn install(p:&mut Loaded,mut file:OpenFile)->Result<(),String>{
-    let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
+    let limit=p.ram.load(u32::from(p.dos.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
     // A shell redirects by closing handle 0 or 1 and opening: the file takes it.
-    let Some(handle)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
+    let Some(handle)=(0..limit).find(|&h|p.dos.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
     // System file numbers 0..5 are the devices; files take the lowest free one above.
-    let Some(sft)=(NUL+1..=0xfeu8).find(|n|!p.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};
+    let Some(sft)=(NUL+1..=0xfeu8).find(|n|!p.dos.drive.files.iter().any(|f|f.sft==*n))else{fail(p,4);return Ok(())};
     p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
-    file.sft=sft;p.open_handles|=1<<handle;p.drive.files.push(file);
+    file.sft=sft;p.dos.open_handles|=1<<handle;p.dos.drive.files.push(file);
     set_ax(p,u32::from(handle));ok(p);Ok(())
 }
 /// Where a new entry would go: drive, the place it would take, its 8.3 name
@@ -638,23 +638,23 @@ fn create(p:&mut Loaded,ah:u8)->Result<(),String>{
     if ah!=0x5a&&serial::device_name(&raw,b"NUL"){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,NUL);}
     if ah==0x5a{
         if !matches!(raw.last(),Some(b'\\'|b'/'|b':')){raw.push(b'\\');}
-        let(drive,path)=match components(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
-        let dir=match dir_of(&p.drive.list[drive],&path){Ok((dir@(Dir::Host(_)|Dir::Memory(_)),..))=>dir,Ok(_)=>{fail(p,5);return Ok(())},Err(code)=>{fail(p,code);return Ok(())}};
-        let taken:std::collections::BTreeSet<Name>=match listing(&p.drive.list[drive],&dir){Ok(list)=>list.iter().map(|e|e.name).collect(),Err(code)=>{fail(p,code);return Ok(())}};
+        let(drive,path)=match components(&p.dos.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
+        let dir=match dir_of(&p.dos.drive.list[drive],&path){Ok((dir@(Dir::Host(_)|Dir::Memory(_)),..))=>dir,Ok(_)=>{fail(p,5);return Ok(())},Err(code)=>{fail(p,code);return Ok(())}};
+        let taken:std::collections::BTreeSet<Name>=match listing(&p.dos.drive.list[drive],&dir){Ok(list)=>list.iter().map(|e|e.name).collect(),Err(code)=>{fail(p,code);return Ok(())}};
         let seed=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.subsec_nanos()^d.as_secs()as u32);
         let Some(name)=(0..0x10000u32).map(|n|fcb(format!("{:08X}",seed.wrapping_add(n)).as_bytes())).find(|n|!taken.contains(n))else{fail(p,5);return Ok(())};
         raw.extend(display(&name));
         let mut stored=raw.clone();stored.push(0);store_ds(p,dx,&stored)?;
     }
-    let(drive,new,_,existing)=match place(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
+    let(drive,new,_,existing)=match place(&p.dos.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
     let loc=match existing{
         Some(_) if ah!=0x3c=>{fail(p,0x50);return Ok(());},
         Some(entry) if entry.attr&0x19!=0=>{fail(p,5);return Ok(());},
         Some(entry)=>entry.loc(drive).unwrap_or(new),
         None=>new,
     };
-    if let Err(code)=p.drive.make_file(&loc){fail(p,code);return Ok(());}
-    let letter=p.drive.list[drive].letter;
+    if let Err(code)=p.dos.drive.make_file(&loc){fail(p,code);return Ok(());}
+    let letter=p.dos.drive.list[drive].letter;
     install(p,OpenFile{sft:0,data:Arc::new(Vec::new()),pos:0,drive:letter,loc:Some(loc),mode:2,written:false,stamp:(0,0x21)})
 }
 /// AH40 to a file: CX bytes at the file position, written through to the
@@ -663,8 +663,8 @@ fn create(p:&mut Loaded,ah:u8)->Result<(),String>{
 /// on a handle opened for reading.
 pub(super) fn write(p:&mut Loaded,sft:u8,bytes:&[u8])->Result<Result<u32,u16>,String>{
     use std::io::{Seek,SeekFrom,Write};
-    let Some(i)=p.drive.files.iter().position(|f|f.sft==sft)else{return Ok(Err(6))};
-    let file=&p.drive.files[i];
+    let Some(i)=p.dos.drive.files.iter().position(|f|f.sft==sft)else{return Ok(Err(6))};
+    let file=&p.dos.drive.files[i];
     let Some(loc)=file.loc.clone().filter(|_|file.mode!=0)else{return Ok(Err(5))};
     let pos=file.pos as usize;let end=pos+bytes.len();
     if end as u64>MAX_OPEN{return Err("DOS write past 16 MiB in a file is not modelled".into());}
@@ -676,27 +676,27 @@ pub(super) fn write(p:&mut Loaded,sft:u8,bytes:&[u8])->Result<Result<u32,u16>,St
         },
         Loc::Memory(drive,_)=>{
             // The drive is full: nothing is written, as DOS reports a full disk.
-            let used=p.drive.memory(*drive).map_or(0,MemDir::clusters);
+            let used=p.dos.drive.memory(*drive).map_or(0,MemDir::clusters);
             let clusters=|n:usize|(n as u32).div_ceil(MEMORY_CLUSTER);
             if used.saturating_sub(clusters(file.data.len()))+clusters(length)>MEMORY_BYTES/MEMORY_CLUSTER{return Ok(Ok(0));}
         },
     }
-    let file=&mut p.drive.files[i];
+    let file=&mut p.dos.drive.files[i];
     let data=Arc::make_mut(&mut file.data);
     data.resize(length,0);data[pos..end].copy_from_slice(bytes);
     file.pos=end as u32;file.written=true;let data=file.data.clone();
-    for other in &mut p.drive.files{
+    for other in &mut p.dos.drive.files{
         if other.sft!=sft&&other.loc.as_ref()==Some(&loc){other.data=data.clone();}
     }
     if let Loc::Memory(drive,path)=&loc{
-        let(dir,name)=p.drive.memory_parent(*drive,path).map_err(|_|"DOS write to a memory file that was removed is not modelled".to_string())?;
+        let(dir,name)=p.dos.drive.memory_parent(*drive,path).map_err(|_|"DOS write to a memory file that was removed is not modelled".to_string())?;
         let(time,date)=now();dir.entries.insert(name,MemNode::File{data,time,date});
     }
     Ok(Ok(bytes.len()as u32))
 }
 /// The open file standard output (handle 1) refers to, when it is a file.
 pub(super) fn redirected_output(p:&Loaded)->Result<Option<u8>,String>{
-    Ok(system_file(p,1)?.filter(|&sft|sft>NUL&&p.drive.files.iter().any(|f|f.sft==sft)))
+    Ok(system_file(p,1)?.filter(|&sft|sft>NUL&&p.dos.drive.files.iter().any(|f|f.sft==sft)))
 }
 /// AH41 deletes a file, AH56 renames a file or directory (DS:DX to ES:DI on
 /// the same drive), AH39 makes and AH3A removes an empty directory.
@@ -704,29 +704,29 @@ fn change(p:&mut Loaded,ah:u8)->Result<(),String>{
     let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
     if raw.is_empty(){fail(p,3);return Ok(());}
     let result=match ah{
-        0x39=>place(&p.drive,&raw).and_then(|(_,loc,_,existing)|{
+        0x39=>place(&p.dos.drive,&raw).and_then(|(_,loc,_,existing)|{
             if existing.is_some(){return Err(5);}
-            p.drive.make_dir(&loc)
+            p.dos.drive.make_dir(&loc)
         }),
-        0x3a=>lookup(&p.drive,&raw).and_then(|(drive,entry)|{
+        0x3a=>lookup(&p.dos.drive,&raw).and_then(|(drive,entry)|{
             let loc=entry.loc(drive).filter(|_|entry.attr&0x10!=0).ok_or(5u16)?;
             // The current directory of a drive cannot go: error 10h.
-            let(_,names)=components(&p.drive,&raw)?;
-            if p.drive.list[drive].cwd.starts_with(&names){return Err(0x10);}
-            p.drive.remove(&loc,true)
+            let(_,names)=components(&p.dos.drive,&raw)?;
+            if p.dos.drive.list[drive].cwd.starts_with(&names){return Err(0x10);}
+            p.dos.drive.remove(&loc,true)
         }),
-        0x41=>lookup(&p.drive,&raw).and_then(|(drive,entry)|{
+        0x41=>lookup(&p.dos.drive,&raw).and_then(|(drive,entry)|{
             let loc=entry.loc(drive).filter(|_|entry.attr&0x19==0).ok_or(5u16)?;
-            p.drive.remove(&loc,false)
+            p.dos.drive.remove(&loc,false)
         }),
         _=>{
             let to=asciiz_in(p,SegmentRegister::Es,p.cpu.regs[7]&0xffff)?;
-            lookup(&p.drive,&raw).and_then(|(drive,entry)|{
+            lookup(&p.dos.drive,&raw).and_then(|(drive,entry)|{
                 let from=entry.loc(drive).filter(|_|entry.attr&0x0d==0).ok_or(5u16)?;
-                let(to_drive,to,_,existing)=place(&p.drive,&to)?;
+                let(to_drive,to,_,existing)=place(&p.dos.drive,&to)?;
                 if to_drive!=drive{return Err(0x11);}
                 if existing.is_some(){return Err(5);}
-                p.drive.rename(&from,&to)
+                p.dos.drive.rename(&from,&to)
             })
         },
     };
@@ -736,22 +736,22 @@ fn change(p:&mut Loaded,ah:u8)->Result<(),String>{
 fn open_file(p:&mut Loaded,service:&str)->Result<Option<usize>,String>{
     let handle=(p.cpu.regs[3]&0xffff)as u16;
     let Some(sft)=system_file(p,handle)? else{fail(p,6);return Ok(None)};
-    if let Some(i)=p.drive.files.iter().position(|f|f.sft==sft){return Ok(Some(i));}
+    if let Some(i)=p.dos.drive.files.iter().position(|f|f.sft==sft){return Ok(Some(i));}
     if sft<=NUL{return Err(format!("DOS {service} handle {handle} (device {sft}) is not modelled"));}
     fail(p,6);Ok(None)
 }
 /// The file an EXEC path names and its full path (`C:\DIR\NAME.EXT`), or a
 /// DOS error: 2 or 3 when it is missing, 5 for a directory or label.
 pub(super) fn program(p:&Loaded,raw:&[u8])->Result<Result<(Arc<Vec<u8>>,Vec<u8>),u16>,String>{
-    let(drive,path)=match components(&p.drive,raw){Ok(found)=>found,Err(code)=>return Ok(Err(code))};
-    let entry=match lookup(&p.drive,raw){Ok((_,entry))=>entry,Err(code)=>return Ok(Err(code))};
+    let(drive,path)=match components(&p.dos.drive,raw){Ok(found)=>found,Err(code)=>return Ok(Err(code))};
+    let entry=match lookup(&p.dos.drive,raw){Ok((_,entry))=>entry,Err(code)=>return Ok(Err(code))};
     if entry.attr&0x18!=0{return Ok(Err(5));}
-    let mut full=vec![p.drive.list[drive].letter,b':',b'\\'];full.extend(path.iter().map(display).collect::<Vec<_>>().join(&b'\\'));
-    Ok(Ok((read_entry(&p.drive.list[drive],&entry)?,full)))
+    let mut full=vec![p.dos.drive.list[drive].letter,b':',b'\\'];full.extend(path.iter().map(display).collect::<Vec<_>>().join(&b'\\'));
+    Ok(Ok((read_entry(&p.dos.drive.list[drive],&entry)?,full)))
 }
 /// The system file number behind an open handle of the running program.
 pub(super) fn system_file(p:&Loaded,handle:u16)->Result<Option<u8>,String>{
-    if handle>=20||p.open_handles&(1<<handle)==0{return Ok(None);}
+    if handle>=20||p.dos.open_handles&(1<<handle)==0{return Ok(None);}
     p.ram.load(jft(p,handle)?,MemWidth::Byte).map(|b|Some(b as u8)).map_err(|e|format!("DOS JFT read: {e:?}"))
 }
 /// Drops the files no handle refers to any more, in the running program or
@@ -763,23 +763,23 @@ pub(super) fn drop_unreferenced(p:&mut Loaded)->Result<(),String>{
         let table=word(base+0x36)?*16+word(base+0x34)?;
         for h in (0..20).filter(|h|handles&(1<<h)!=0){live.insert(p.ram.load(table+h,MemWidth::Byte).map_err(|e|format!("DOS JFT read: {e:?}"))?as u8);}
     }
-    p.drive.files.retain(|f|live.contains(&f.sft));Ok(())
+    p.dos.drive.files.retain(|f|live.contains(&f.sft));Ok(())
 }
 /// AH45 duplicates BX into the lowest free handle; AH46 makes CX refer to
 /// BX's file, closing CX first. Both handles then share the file position.
 fn duplicate(p:&mut Loaded,ah:u8)->Result<(),String>{
     let from=(p.cpu.regs[3]&0xffff)as u16;
     let Some(sft)=system_file(p,from)? else{fail(p,6);return Ok(())};
-    let limit=p.ram.load(u32::from(p.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
+    let limit=p.ram.load(u32::from(p.dos.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
     let to=if ah==0x45{
-        let Some(to)=(0..limit).find(|&h|p.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};to
+        let Some(to)=(0..limit).find(|&h|p.dos.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};to
     }else{
         let to=(p.cpu.regs[1]&0xffff)as u16;
         if to>=limit{fail(p,6);return Ok(());}
         to
     };
     p.ram.store(jft(p,to)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS duplicate JFT write: {e:?}"))?;
-    p.open_handles|=1<<to;drop_unreferenced(p)?;
+    p.dos.open_handles|=1<<to;drop_unreferenced(p)?;
     if ah==0x45{set_ax(p,u32::from(to));}
     ok(p);Ok(())
 }
@@ -816,7 +816,7 @@ fn parse_name(p:&mut Loaded)->Result<(),String>{
     let mut bad_drive=false;
     if !field_sep(at(i))&&at(i+1)==b':'{
         let drive=nls::upper(at(i)).wrapping_sub(b'A');
-        bad_drive=p.drive.number(drive.wrapping_add(1)).is_none()||drive>25;
+        bad_drive=p.dos.drive.number(drive.wrapping_add(1)).is_none()||drive>25;
         fcb[0]=drive.wrapping_add(1);i+=2;
     }else if mode&2==0{fcb[0]=0;}
     fcb[12..16].fill(0);
@@ -853,18 +853,18 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
     match ah{
         0x0e=>{
             // DL=0 is A:. A drive that does not exist leaves the current one.
-            if let Some(i)=p.drive.list.iter().position(|d|d.letter-b'A'==dl){p.drive.current=i;}
-            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(LAST_DRIVE.max(p.drive.list.iter().map(|d|d.letter-b'A'+1).max().unwrap_or(0)));
+            if let Some(i)=p.dos.drive.list.iter().position(|d|d.letter-b'A'==dl){p.dos.drive.current=i;}
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(LAST_DRIVE.max(p.dos.drive.list.iter().map(|d|d.letter-b'A'+1).max().unwrap_or(0)));
         },
         0x29=>parse_name(p)?,
         0x45|0x46=>duplicate(p,ah)?,
-        0x19=>p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.drive.letter()-b'A'),
+        0x19=>p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.dos.drive.letter()-b'A'),
         0x36=>{
-            let Some(drive)=p.drive.number(dl)else{set_ax(p,0xffff);return Ok(())};
+            let Some(drive)=p.dos.drive.number(dl)else{set_ax(p,0xffff);return Ok(())};
             // The image is read-only, so it reports 0 free clusters. A host
             // folder is writable (Dine has no statvfs, so report at least 16 MiB
             // free in 512-byte clusters); the memory drive uses 2 KiB clusters.
-            let(per_cluster,clusters,free)=match &p.drive.list[drive].source{
+            let(per_cluster,clusters,free)=match &p.dos.drive.list[drive].source{
                 Source::Image(tree)=>(u32::from(tree.sectors_per_cluster),u32::from(tree.clusters),0),
                 Source::Host(root)=>(1,0xffff,0xffff-used_clusters(root).min(0x7fff)),Source::Empty=>(1,0,0),
                 Source::Memory(m)=>{let total=MEMORY_BYTES/MEMORY_CLUSTER;(MEMORY_CLUSTER/512,total,total.saturating_sub(m.clusters()))},
@@ -872,25 +872,25 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             set_ax(p,per_cluster);p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|free;p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|512;p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|clusters;
         },
         0x47=>{
-            let Some(drive)=p.drive.number(dl)else{fail(p,0x0f);return Ok(())};
-            let mut text=p.drive.list[drive].cwd.iter().map(display).collect::<Vec<_>>().join(&b'\\');text.push(0);
+            let Some(drive)=p.dos.drive.number(dl)else{fail(p,0x0f);return Ok(())};
+            let mut text=p.dos.drive.list[drive].cwd.iter().map(display).collect::<Vec<_>>().join(&b'\\');text.push(0);
             store_ds(p,p.cpu.regs[6]&0xffff,&text)?;set_ax(p,0x0100);ok(p);
         },
         0x3b=>{
             let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
-            match components(&p.drive,&raw).and_then(|(drive,path)|dir_of(&p.drive.list[drive],&path).map(|_|(drive,path))){
-                Ok((drive,path)) if !raw.is_empty()=>{p.drive.list[drive].cwd=path;ok(p);},
+            match components(&p.dos.drive,&raw).and_then(|(drive,path)|dir_of(&p.dos.drive.list[drive],&path).map(|_|(drive,path))){
+                Ok((drive,path)) if !raw.is_empty()=>{p.dos.drive.list[drive].cwd=path;ok(p);},
                 _=>fail(p,3),
             }
         },
         0x43=>{
             let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
             // The program's own file answers by name, as AH3D opens it.
-            let own=!raw.is_empty()&&base_name(&raw)==p.own_name;
+            let own=!raw.is_empty()&&base_name(&raw)==p.dos.own_name;
             let found=if own{Ok(0x20)}else if raw.is_empty(){Err(3)}else{
-                match components(&p.drive,&raw){
+                match components(&p.dos.drive,&raw){
                     Ok((_,path)) if path.is_empty()=>Ok(0x10),
-                    _=>lookup(&p.drive,&raw).map(|(_,e)|e.attr),
+                    _=>lookup(&p.dos.drive,&raw).map(|(_,e)|e.attr),
                 }
             };
             match(al,found){
@@ -905,9 +905,9 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
         0x3f if system_file(p,(p.cpu.regs[3]&0xffff)as u16)?==Some(NUL)=>{set_ax(p,0);ok(p);},
         0x3f=>{
             let Some(i)=open_file(p,"read from")? else{return Ok(())};
-            if p.drive.files[i].mode==1{fail(p,5);return Ok(());}
+            if p.dos.drive.files[i].mode==1{fail(p,5);return Ok(());}
             let offset=p.cpu.regs[2]&0xffff;let wanted=p.cpu.regs[1]&0xffff;
-            let file=&p.drive.files[i];let start=(file.pos as usize).min(file.data.len());
+            let file=&p.dos.drive.files[i];let start=(file.pos as usize).min(file.data.len());
             let count=(wanted as usize).min(file.data.len()-start);let bytes=file.data[start..start+count].to_vec();
             let resource_identity=Arc::as_ptr(&file.data)as usize;
             // A short read only touches the bytes returned, not the entire
@@ -915,7 +915,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             if offset+count as u32>0x10000{fail(p,5);return Ok(());}
             store_ds(p,offset,&bytes)?;
             p.ram.resource_read(resource_identity,p.image.segments[ds().index()].base.wrapping_add(offset),start as u32,count);
-            p.drive.files[i].pos+=count as u32;set_ax(p,count as u32);ok(p);
+            p.dos.drive.files[i].pos+=count as u32;set_ax(p,count as u32);ok(p);
         },
         0x42=>{
             let handle=(p.cpu.regs[3]&0xffff)as u16;
@@ -924,18 +924,18 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             }
             let Some(i)=open_file(p,"seek on")? else{return Ok(())};
             let distance=i64::from(((p.cpu.regs[1]&0xffff)<<16|(p.cpu.regs[2]&0xffff))as i32);
-            let file=&p.drive.files[i];
+            let file=&p.dos.drive.files[i];
             let origin=match al{0=>0,1=>i64::from(file.pos),2=>file.data.len()as i64,_=>{fail(p,1);return Ok(())}};
             let target=origin+distance;
             if !(0..=i64::from(u32::MAX)).contains(&target){return Err("DOS seek before the start of the file is not modelled".into());}
-            p.drive.files[i].pos=target as u32;
+            p.dos.drive.files[i].pos=target as u32;
             set_ax(p,target as u32);p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|(target as u32>>16);ok(p);
         },
         0x3e=>{
             let handle=(p.cpu.regs[3]&0xffff)as u16;
-            if handle<20&&(p.open_handles&(1u32<<handle))!=0{
+            if handle<20&&(p.dos.open_handles&(1u32<<handle))!=0{
                 p.ram.store(jft(p,handle)?,MemWidth::Byte,0xff).map_err(|e|format!("DOS close JFT write: {e:?}"))?;
-                p.open_handles&=!(1u32<<handle);drop_unreferenced(p)?;ok(p);
+                p.dos.open_handles&=!(1u32<<handle);drop_unreferenced(p)?;ok(p);
             }else{fail(p,6);}
         },
         0x44 if matches!(al,6|7)=>{
@@ -944,13 +944,13 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             let handle=(p.cpu.regs[3]&0xffff)as u16;
             let Some(sft)=system_file(p,handle)? else{fail(p,6);return Ok(())};
             let ready=match sft{
-                0..=2 if al==6=>!p.con_pending.is_empty()||console::dos_available(p)?,
+                0..=2 if al==6=>!p.dos.con_pending.is_empty()||console::dos_available(p)?,
                 0..=2=>true,
                 // NUL has no input buffer: a read completes immediately at EOF.
                 NUL=>true,
                 3 if p.com1.is_some()=>al==7||!p.com1.as_ref().unwrap().rx.is_empty(),
                 3|4=>return Err(format!("DOS IOCTL status on handle {handle} (device {sft}) is not modelled")),
-                _=>match p.drive.files.iter().find(|f|f.sft==sft){
+                _=>match p.dos.drive.files.iter().find(|f|f.sft==sft){
                     Some(f)=>al==7||f.mode==1||(f.pos as usize)<f.data.len(),
                     None=>{fail(p,6);return Ok(())},
                 },
@@ -961,16 +961,16 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             // AL=09 is the drive remote: no drive is a network or SUBST drive,
             // and none has a block device header whose attributes to report,
             // so DX=0 (local, not substituted). Unknown drive: error 15.
-            let Some(_)=p.drive.number(p.cpu.regs[3]as u8)else{fail(p,0x0f);return Ok(())};
+            let Some(_)=p.dos.drive.number(p.cpu.regs[3]as u8)else{fail(p,0x0f);return Ok(())};
             p.cpu.regs[2]&=0xffff0000;ok(p);
         },
         0x44 if al==0x0e=>{
-            if p.drive.number(p.cpu.regs[3]as u8).is_none(){fail(p,15);}
+            if p.dos.drive.number(p.cpu.regs[3]as u8).is_none(){fail(p,15);}
             else{p.cpu.regs[0]&=!255;ok(p);}
         },
         0x44 if al==0x0d=>{
             let drive=p.cpu.regs[3]as u8;
-            if p.drive.number(drive).is_none(){fail(p,15);}
+            if p.dos.drive.number(drive).is_none(){fail(p,15);}
             else if p.cpu.regs[1]as u16==0x0867{
                 let offset=p.cpu.regs[2]&0xffff;
                 if offset==0xffff{return Err("DOS IOCTL parameter block exceeds segment end".into());}
@@ -985,7 +985,7 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
                 Some(0..=2)=>Some(0xc3),
                 // NUL: a character device (bit 7) that is the NUL device (bit 2).
                 Some(NUL)=>Some(0xc4),Some(3) if p.com1.is_some()=>p.com1.as_ref().map(|s|u32::from(s.info)),Some(3|4)=>Some(0xc0),
-                Some(sft)=>p.drive.files.iter().find(|f|f.sft==sft).map(|f|if f.written{0}else{0x40}|u32::from(f.drive-b'A')),
+                Some(sft)=>p.dos.drive.files.iter().find(|f|f.sft==sft).map(|f|if f.written{0}else{0x40}|u32::from(f.drive-b'A')),
                 None=>None,
             };
             match info{Some(info)=>{p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|info;ok(p);},None=>fail(p,6)}
@@ -997,15 +997,15 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             // File time and date: AL=00 gets them into CX and DX, AL=01 sets
             // the host file's modification time. Image files cannot change.
             let Some(i)=open_file(p,"time and date of")? else{return Ok(())};
-            let file=&p.drive.files[i];
+            let file=&p.dos.drive.files[i];
             match al{
                 0=>{
-                    let(time,date)=file.loc.as_ref().and_then(|loc|p.drive.time(loc)).unwrap_or(file.stamp);
+                    let(time,date)=file.loc.as_ref().and_then(|loc|p.dos.drive.time(loc)).unwrap_or(file.stamp);
                     p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|u32::from(time);p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|u32::from(date);ok(p);
                 },
                 1=>{
                     let when=(p.cpu.regs[1]as u16,p.cpu.regs[2]as u16);
-                    match file.loc.clone(){Some(loc)=>match p.drive.set_time(&loc,when){Ok(())=>ok(p),Err(code)=>fail(p,code)},None=>fail(p,5)}
+                    match file.loc.clone(){Some(loc)=>match p.dos.drive.set_time(&loc,when){Ok(())=>ok(p),Err(code)=>fail(p,code)},None=>fail(p,5)}
                 },
                 _=>fail(p,1),
             }
@@ -1014,10 +1014,10 @@ pub(super) fn service(p:&mut Loaded,ah:u8)->Result<(),String>{
             // Truename: the full path of DS:SI at ES:DI, upper case, with `.`
             // and `..` resolved and `*` as `?`, whether or not it exists.
             let raw=asciiz(p,p.cpu.regs[6]&0xffff)?;
-            if raw.len()>=2&&raw[1]==b':'&&!p.drive.list.iter().any(|d|raw[0].eq_ignore_ascii_case(&d.letter)){fail(p,0x0f);return Ok(());}
-            let(drive,path)=match components(&p.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
+            if raw.len()>=2&&raw[1]==b':'&&!p.dos.drive.list.iter().any(|d|raw[0].eq_ignore_ascii_case(&d.letter)){fail(p,0x0f);return Ok(());}
+            let(drive,path)=match components(&p.dos.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};
             if raw.is_empty(){fail(p,3);return Ok(());}
-            let mut full=vec![p.drive.list[drive].letter,b':',b'\\'];full.extend(path.iter().map(display).collect::<Vec<_>>().join(&b'\\'));full.push(0);
+            let mut full=vec![p.dos.drive.list[drive].letter,b':',b'\\'];full.extend(path.iter().map(display).collect::<Vec<_>>().join(&b'\\'));full.push(0);
             if full.len()>128{fail(p,3);return Ok(());}
             store(p,SegmentRegister::Es,p.cpu.regs[7]&0xffff,&full)?;ok(p);
         },

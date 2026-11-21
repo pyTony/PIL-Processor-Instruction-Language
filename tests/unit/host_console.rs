@@ -521,7 +521,7 @@ fn catalog_launch_inherits_normal_configured_drives_and_ram_drive(){
     for (drive,expected) in [("C:\\NOTE.TXT","cdrive"),("D:\\NOTE.TXT","ddrive"),("E:\\NOTE.TXT","edrive")]{
         assert_eq!(&crate::dos::files::program(p,drive.as_bytes()).unwrap().unwrap().0[..],expected.as_bytes());
     }
-    assert_eq!(p.drive.memory_letter(),Some(b'Z'));assert_eq!(p.country,358);
+    assert_eq!(p.dos.drive.memory_letter(),Some(b'Z'));assert_eq!(p.dos.country,358);
     std::fs::remove_dir_all(root).unwrap();
 }
 

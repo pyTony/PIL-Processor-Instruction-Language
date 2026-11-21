@@ -29,7 +29,7 @@ fn dos_tail(loaded:&crate::dos::Loaded,command_line:&str)->Result<String,String>
             else{value.push(next);}
         }
         if quoted{return Err("unterminated quotation mark in Dine command line".into());}
-        if let Some(alias)=loaded.drive.host_argument_alias(&value)?{
+        if let Some(alias)=loaded.dos.drive.host_argument_alias(&value)?{
             arguments.push(alias);
         }else if had_quote {
             // Retain quotes for ordinary guest arguments that aren't host
@@ -153,12 +153,12 @@ mod tests {
         bytes.extend_from_slice(&[0xb8,0,0x4c,0xcd,0x21]);
         let (mut session,options)=super::prepare(&bytes,"FIXTURE.COM","",config.to_str()).unwrap();
         assert!(options.ansi&&options.mouse);assert_eq!(options.utc_offset,Some(7200));
-        let p=session.machine().unwrap();assert_eq!(p.country,358);
+        let p=session.machine().unwrap();assert_eq!(p.dos.country,358);
         assert_ne!(p.ram.load(0x410,crate::MemWidth::Word).unwrap()&2,0);
         // The configured C: stays; host names on the command line are the
         // launch folder's (the test's working directory), now current.
-        assert!(p.drive.is_mounted(b'C')&&p.drive.letter()!=b'C');
-        assert!(p.drive.host_argument_alias("Cargo.toml").unwrap().is_some());
+        assert!(p.dos.drive.is_mounted(b'C')&&p.dos.drive.letter()!=b'C');
+        assert!(p.dos.drive.host_argument_alias("Cargo.toml").unwrap().is_some());
         crate::dos::host_console::configure(&mut session,&options).unwrap();
         crate::dos_text_io::stream(&mut session,&mut std::io::Cursor::new(""),&mut Vec::new()).unwrap();
         assert_eq!(&session.screen().unwrap().0[..2],&[b'X',10]);

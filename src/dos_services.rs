@@ -7,7 +7,7 @@ pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Opt
     let ah=(p.cpu.regs[0]>>8)as u8;
     let result=dispatch_inner(p,vector,out);
     if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x5f|0x60|0x65..=0x67|0x69) && p.cpu.eflags&1!=0 {
-        p.dos_error=p.cpu.regs[0]as u16;
+        p.dos.dos_error=p.cpu.regs[0]as u16;
     }
     result
 }
@@ -17,10 +17,10 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
     // DOS checks for Ctrl-C on entry to the character calls, and to every
     // call while BREAK is on (FreeDOS int21_service).
     let ah=(p.cpu.regs[0]>>8)as u8;
-    if vector==0x21&&(p.break_check||matches!(ah,1..=5|8..=0x0b)){console::dos_break_check(p)?;}
+    if vector==0x21&&(p.dos.break_check||matches!(ah,1..=5|8..=0x0b)){console::dos_break_check(p)?;}
     match(vector,ah){
         (0x00,_)=>divide_error(p),
-        (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
+        (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.dos.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
         (0x21,0x02)=>{console::dos_break_check(p)?;put_char(p,out,p.cpu.regs[2]as u8)?;Ok(None)},
         (0x21,ah @ (0x01|0x07|0x08))=>{read_char(p,out,ah)?;Ok(None)},
         (0x21,0x06)=>{direct_console(p,out)?;Ok(None)},
@@ -54,11 +54,11 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         },
         (0x21,0x1a)=>{
             // Store the far pointer without dereferencing the caller's buffer.
-            p.dta=(p.image.selectors[SegmentRegister::Ds.index()],p.cpu.regs[2]as u16);
+            p.dos.dta=(p.image.selectors[SegmentRegister::Ds.index()],p.cpu.regs[2]as u16);
             Ok(None)
         },
         (0x21,0x2f)=>{
-            let (segment,offset)=p.dta;
+            let (segment,offset)=p.dos.dta;
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(offset);
             let es=SegmentRegister::Es.index();
             p.selectors[es]=segment;p.image.selectors[es]=segment;
@@ -66,7 +66,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             Ok(None)
         },
         (0x21,0x30)=>{
-            let version=p.ram.load(u32::from(p.psp)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
+            let version=p.ram.load(u32::from(p.dos.psp)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS version PSP read: {e:?}"))?;
             let flags=p.cpu.regs[0]as u8==1;
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|version;
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|if flags{0}else{0xff00};
@@ -76,21 +76,21 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         (0x21,0x33) if p.cpu.regs[0]as u8<=2=>{
             // BREAK flag: AL=0 gets it in DL, AL=1 sets it from DL, AL=2 does
             // both. While it is on, every INT 21h call checks for Ctrl-C.
-            let new=p.cpu.regs[2]&1!=0;let old=p.break_check;
-            if p.cpu.regs[0]as u8!=0{p.break_check=new;}
+            let new=p.cpu.regs[2]&1!=0;let old=p.dos.break_check;
+            if p.cpu.regs[0]as u8!=0{p.dos.break_check=new;}
             if p.cpu.regs[0]as u8!=1{p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(old);}
             Ok(None)
         },
         (0x21,0x33) if p.cpu.regs[0]as u8==5=>{
             // Boot drive: the first drive Dine has (C: for an image or a
             // mounted folder, A: when there is neither), as DL=1 for A:.
-            p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(p.drive.first_letter()-b'A'+1);
+            p.cpu.regs[2]=(p.cpu.regs[2]&!255)|u32::from(p.dos.drive.first_letter()-b'A'+1);
             Ok(None)
         },
         (0x21,0x33) if p.cpu.regs[0]as u8==6=>{
             // True version: the same 6.22 profile as AH30, revision 0, and
             // DH=0 because Dine is neither in ROM nor in the HMA.
-            let version=p.ram.load(u32::from(p.psp)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS true version PSP read: {e:?}"))?;
+            let version=p.ram.load(u32::from(p.dos.psp)*16+0x40,MemWidth::Word).map_err(|e|format!("DOS true version PSP read: {e:?}"))?;
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|version;
             p.cpu.regs[2]&=0xffff0000;
             Ok(None)
@@ -100,7 +100,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // the current table only updates PSP:32h; a larger one allocates a
             // new table (AH48 rules), copies the old entries, fills the rest
             // with FFh and points PSP:34h at it. No memory: CF=1, AX=8.
-            let psp=u32::from(p.psp)*16;let load=|p:&Loaded,at:u32|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT PSP read: {e:?}"));
+            let psp=u32::from(p.dos.psp)*16;let load=|p:&Loaded,at:u32|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT PSP read: {e:?}"));
             let wanted=p.cpu.regs[3]&0xffff;let current=load(p,psp+0x32)?;
             if wanted>current{
                 let saved=(p.cpu.regs[0],p.cpu.regs[3]);
@@ -132,8 +132,8 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             if p.cpu.regs[3]&0xffff!=0{return Err("DOS extended error AH59 requires BX=0000h".into());}
             // Match DOSBox-X's conservative classification: file/path-not-found
             // are class 8; other classes and the locus are unspecified.
-            let class=if matches!(p.dos_error,2|3){8}else{0};
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.dos_error);
+            let class=if matches!(p.dos.dos_error,2|3){8}else{0};
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.dos.dos_error);
             p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|(class<<8)|1;
             p.cpu.regs[1]&=!0xff00;
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
@@ -142,7 +142,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         (0x21,0x4b)=>{exec::exec(p)?;Ok(None)},
         (0x21,0x4d)=>{
             // The last child's return code (AH = how it ended), read once.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(std::mem::take(&mut p.return_code));
+            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(std::mem::take(&mut p.dos.return_code));
             p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
@@ -152,7 +152,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             if offset+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
             if wanted==0{p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(None);}
             match serial::read(p,wanted as usize)?{
-                None=>p.input_wait=true,
+                None=>p.dos.input_wait=true,
                 Some(bytes)=>{
                     let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
                     for(n,&b)in bytes.iter().enumerate(){
@@ -300,7 +300,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
             Ok(None)
         },
-        (0x33,_) if p.mouse.present()=>{mouse::service(p)?;Ok(None)},
+        (0x33,_) if p.dos.mouse.present()=>{mouse::service(p)?;Ok(None)},
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
             // Standalone probes keep the no-MOUSE.COM contract.
             p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;Ok(None)
@@ -372,7 +372,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             let at=u32::from(segment)*16;
             let signature=p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS PSP read: {e:?}"))?;
             if signature!=0x20cd{return Err(format!("DOS set PSP to {segment:04x}h, which holds no PSP, is not modelled"));}
-            p.psp=segment;
+            p.dos.psp=segment;
             let mut handles=0u32;
             for h in 0..20u16{
                 if let Ok(addr)=jft(p,h){
@@ -381,12 +381,12 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
                     }
                 }
             }
-            p.open_handles=handles;
+            p.dos.open_handles=handles;
             Ok(None)
         },
         (0x21,0x51|0x62)=>{
             // DOS 3+: AH51 and AH62 both return the current PSP segment.
-            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.psp);
+            p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|u32::from(p.dos.psp);
             Ok(None)
         },
         (0x21,0x55)=>{exec::create_child_psp(p)?;Ok(None)},
@@ -476,7 +476,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("DOS set time BDA write: {e:?}"))?;
             p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("DOS set time rollover write: {e:?}"))?;
             if p.clock_offset.is_some(){let raw=p.speaker.pit_interrupts(p.clock_offset)%u64::from(TICKS_PER_DAY);p.timer_tick_adjust=i64::from(desired)-raw as i64;}
-            p.dos_date_adjust=p.rtc.set_dos_time(p.clock_offset,p.dos_date_adjust,(h*60+m)*60+s);
+            p.dos.dos_date_adjust=p.rtc.set_dos_time(p.clock_offset,p.dos.dos_date_adjust,(h*60+m)*60+s);
             p.ram.store(0x046c,MemWidth::Dword,desired).map_err(|e|format!("DOS set time BDA write: {e:?}"))?;
             p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("DOS set time rollover write: {e:?}"))?;
             if p.clock_offset.is_some(){p.speaker.irq_edges=Some(desired);}
@@ -492,14 +492,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         (0x21,0x31)=>{
             // Terminate and stay resident: the run ends here, as for AH4C, and the
             // report records the paragraphs kept (at least 6, as FreeDOS does).
-            p.resident=Some((p.cpu.regs[2]as u16).max(6));
+            p.dos.resident=Some((p.cpu.regs[2]as u16).max(6));
             Ok(Some(p.cpu.regs[0]as u8))
         },
         (0x21,0x2a)=>{
             // Without the host clock there is no clock driver or CMOS: DOS keeps
             // its 1 January 1980 default, a Tuesday (FreeDOS systime.c: day of
             // week (days+2)%7 with days=0). With it, the host's local date.
-            let(year,month,day,weekday)=rtc::dos_date(p.clock_offset,p.dos_date_adjust);
+            let(year,month,day,weekday)=rtc::dos_date(p.clock_offset,p.dos.dos_date_adjust);
             p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|year;
             p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|month<<8|day;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|weekday;
@@ -515,24 +515,24 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             let leap=year%4==0&&(year%100!=0||year%400==0);
             let days=match month{1|3|5|7|8|10|12=>31,4|6|9|11=>30,2 if leap=>29,2=>28,_=>0};
             if (1980..=2099).contains(&year)&&day>=1&&day<=days{
-                p.dos_date_adjust=p.rtc.set_dos_date(p.clock_offset,p.dos_date_adjust,year,month,day);p.cpu.regs[0]&=!255;
+                p.dos.dos_date_adjust=p.rtc.set_dos_date(p.clock_offset,p.dos.dos_date_adjust,year,month,day);p.cpu.regs[0]&=!255;
             }else{p.cpu.regs[0]|=0xff;}
             Ok(None)
         },
         // VERIFY: AH=2Eh sets it from AL (any nonzero value turns it on),
         // AH=54h returns it in AL; nothing else changes (FreeDOS inthndlr.c).
         // Dine's file writes are always complete, so the flag only records.
-        (0x21,0x2e)=>{p.verify=p.cpu.regs[0]as u8!=0;Ok(None)},
-        (0x21,0x54)=>{p.cpu.regs[0]=(p.cpu.regs[0]&!0xff)|u32::from(p.verify);Ok(None)},
+        (0x21,0x2e)=>{p.dos.verify=p.cpu.regs[0]as u8!=0;Ok(None)},
+        (0x21,0x54)=>{p.cpu.regs[0]=(p.cpu.regs[0]&!0xff)|u32::from(p.dos.verify);Ok(None)},
         (0x21,0x58)=>{
             let al=p.cpu.regs[0]as u8;let bl=p.cpu.regs[3]as u8;
             match al{
-                0=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.alloc_strategy);p.cpu.eflags&=!1;},
+                0=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.dos.alloc_strategy);p.cpu.eflags&=!1;},
                 1 if bl>0x82||(bl&0x3f)>2=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|1;p.cpu.eflags|=1;},
                 // With no UMB chain linked, FreeDOS DosMemAlloc searches low
                 // memory for 4xh (high only) and 8xh (high first) with the same fit.
-                1=>{p.alloc_strategy=bl;p.cpu.eflags&=!1;},
-                2=>{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.arena.linked());p.cpu.eflags&=!1;},
+                1=>{p.dos.alloc_strategy=bl;p.cpu.eflags&=!1;},
+                2=>{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.dos.arena.linked());p.cpu.eflags&=!1;},
                 // Link (BX=1) or unlink (BX=0) the upper blocks (dos_memory).
                 3 if p.cpu.regs[3]&0xffff<=1&&memory_arena::link(p,p.cpu.regs[3]&0xffff==1)?=>{p.cpu.eflags&=!1;},
                 // No UMB chain exists, or BX is not 0/1: invalid function (FreeDOS).
@@ -563,7 +563,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // make for resident viruses that would answer them.
             p.cpu.regs[0]&=!255;Ok(None)
         },
-        (0x15,0x88) if p.xms.installed()=>{
+        (0x15,0x88) if p.dos.xms.installed()=>{
             // HIMEM/HIMEMX: extended memory belongs to the XMS driver, so the
             // BIOS call reports none and old INT 15h users leave EMBs alone.
             p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
@@ -692,7 +692,7 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
     p.ram.store(0x046c,MemWidth::Dword,ticks).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
     p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
     p.timer_ticks=next_ticks;
-    if p.clock_offset.is_none()&&rollover!=0{p.dos_date_adjust+=86400;}
+    if p.clock_offset.is_none()&&rollover!=0{p.dos.dos_date_adjust+=86400;}
     Ok((ticks,rollover))
 }
 /// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without
@@ -700,7 +700,7 @@ fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
 /// modelled; a closed handle is error 6.
 /// Linear address of a handle's entry in the job file table PSP:34h points at.
 pub(super) fn jft(p:&Loaded,handle:u16)->Result<u32,String>{
-    let psp=u32::from(p.psp)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
+    let psp=u32::from(p.dos.psp)*16;let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("DOS JFT pointer read: {e:?}"));
     Ok(word(psp+0x36)?*16+word(psp+0x34)?+u32::from(handle))
 }
 fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
@@ -768,7 +768,7 @@ fn read_char(p:&mut Loaded,out:&mut impl Output,ah:u8)->Result<(),String>{
     }
     console::check(p,&writes)?;
     if ah==1{out.write_atomic(&[byte]).map_err(|e|format!("DOS echo output provider: {e:?}"))?;}
-    console::store(p,&writes)?;p.pending_scan=pending;
+    console::store(p,&writes)?;p.dos.pending_scan=pending;
     p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(byte);Ok(())
 }
 /// AH06: DL=FF polls without waiting or a Ctrl-C check. Other DL values output
@@ -785,23 +785,23 @@ fn flush_then(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let al=p.cpu.regs[0]as u8;
     match al{
         1|7|8=>{
-            if !p.flushed{return Err("DOS AH0C read reached without its flush".into());}
-            read_char(p,out,al)?;p.flushed=false;Ok(())
+            if !p.dos.flushed{return Err("DOS AH0C read reached without its flush".into());}
+            read_char(p,out,al)?;p.dos.flushed=false;Ok(())
         },
         0x0a=>{
-            if !p.flushed{
+            if !p.dos.flushed{
                 let flush=console::dos_flush_writes(p)?;console::store(p,&flush)?;
-                p.pending_scan=None;p.flushed=true;
+                p.dos.pending_scan=None;p.dos.flushed=true;
             }
             line_input(p,out)?;
-            if !p.input_wait{p.flushed=false;}Ok(())
+            if !p.dos.input_wait{p.dos.flushed=false;}Ok(())
         },
         _=>{
             let flush=console::dos_flush_writes(p)?;
-            let saved=(p.ram.clone(),p.cpu.clone(),p.pending_scan);
-            console::store(p,&flush)?;p.pending_scan=None;
+            let saved=(p.ram.clone(),p.cpu.clone(),p.dos.pending_scan);
+            console::store(p,&flush)?;p.dos.pending_scan=None;
             let result=if al==6{direct_console(p,out)}else{p.cpu.regs[0]&=!255;Ok(())};
-            if result.is_err(){(p.ram,p.cpu,p.pending_scan)=saved;}
+            if result.is_err(){(p.ram,p.cpu,p.dos.pending_scan)=saved;}
             result
         },
     }
@@ -832,19 +832,19 @@ fn line_into(p:&mut Loaded,out:&mut impl Output,context:MemoryContext,dx:u32)->R
         context.translate(dx+n,MemWidth::Byte,false,eip).map_err(|e|format!("DOS line buffer access: {e:?}"))
     };
     let size=p.ram.load(at(0)?,MemWidth::Byte).map_err(|e|format!("DOS line buffer read: {e:?}"))?as usize;
-    if size==0{p.line=None;return Ok(());}
+    if size==0{p.dos.line=None;return Ok(());}
     at(1+size as u32)?; // the whole buffer must lie inside DS before any key is taken
-    let(mut line,cu_pos,mut first)=p.line.take().unwrap_or((Vec::new(),out.column(),true));
+    let(mut line,cu_pos,mut first)=p.dos.line.take().unwrap_or((Vec::new(),out.column(),true));
     let result=line_edit(p,out,&at,size,&mut line,cu_pos,&mut first);
-    if p.input_wait||result.is_err(){p.line=Some((line,cu_pos,first));}
+    if p.dos.input_wait||result.is_err(){p.dos.line=Some((line,cu_pos,first));}
     result
 }
 
 fn line_edit(p:&mut Loaded,out:&mut impl Output,at:&dyn Fn(u32)->Result<u32,String>,size:usize,line:&mut Vec<u8>,cu_pos:usize,first:&mut bool)->Result<(),String>{
     loop{
         console::dos_break_check(p)?;
-        let Some((c,ring))=console::dos_line_key(p)? else{p.input_wait=true;return Ok(());};
-        let clear=p.pending_scan.is_some();
+        let Some((c,ring))=console::dos_line_key(p)? else{p.dos.input_wait=true;return Ok(());};
+        let clear=p.dos.pending_scan.is_some();
         let mut c=c;if c==F6{c=0x1a;}
         match c{
             10=>{echo(p,out,if *first{&[]}else{b"\r\n"},ring)?;},
@@ -873,7 +873,7 @@ fn line_edit(p:&mut Loaded,out:&mut impl Output,at:&dyn Fn(u32)->Result<u32,Stri
                 for (i,&b) in line.iter().enumerate(){writes.push((at(2+i as u32)?,MemWidth::Byte,u32::from(b)));}
                 writes.push((at(1)?,MemWidth::Byte,(line.len()-1)as u32));
                 echo(p,out,b"\r",writes)?;
-                if clear{p.pending_scan=None;}
+                if clear{p.dos.pending_scan=None;}
                 return Ok(());
             },
             c=>{
@@ -884,7 +884,7 @@ fn line_edit(p:&mut Loaded,out:&mut impl Output,at:&dyn Fn(u32)->Result<u32,Stri
                 }else{echo(p,out,&[7],ring)?;}
             },
         }
-        if clear{p.pending_scan=None;}
+        if clear{p.dos.pending_scan=None;}
         *first=false;
     }
 }
@@ -905,7 +905,7 @@ fn aux_console(p:&mut Loaded)->Result<bool,String>{
     let(ah,dx)=if ah==0x0c{
         if !matches!(al,0x01|0x06|0x07|0x08|0x0a){p.cpu.regs[0]&=!255;return Ok(true);}
         // AH0C empties the input, then reads as AL says.
-        if !p.flushed{if let Some(port)=p.com1.as_mut(){port.rx.clear();}p.flushed=true;}
+        if !p.dos.flushed{if let Some(port)=p.com1.as_mut(){port.rx.clear();}p.dos.flushed=true;}
         (al,p.cpu.regs[2]&0xffff)
     }else{(ah,p.cpu.regs[2]&0xffff)};
     let set_al=|p:&mut Loaded,v:u8|p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(v);
@@ -917,8 +917,8 @@ fn aux_console(p:&mut Loaded)->Result<bool,String>{
             None=>{set_al(p,0);p.cpu.eflags|=0x40;},
         },
         0x01|0x07|0x08=>match take(p){
-            Some(b)=>{set_al(p,b);if ah==1{to_file(p,&[b])?;}p.flushed=false;},
-            None=>p.input_wait=true,
+            Some(b)=>{set_al(p,b);if ah==1{to_file(p,&[b])?;}p.dos.flushed=false;},
+            None=>p.dos.input_wait=true,
         },
         _=>{
             // AH0A: DS:DX holds the size, then the count and the line.
@@ -932,18 +932,18 @@ fn aux_console(p:&mut Loaded)->Result<bool,String>{
             if size==0{return Ok(true);}
             at(1+size as u32)?;
             let column=p.com1.as_ref().map_or(0,|s|s.column);
-            let(mut line,cu_pos,mut first)=p.line.take().unwrap_or((Vec::new(),column,true));
+            let(mut line,cu_pos,mut first)=p.dos.line.take().unwrap_or((Vec::new(),column,true));
             loop{
-                let Some(b)=take(p)else{p.line=Some((line,cu_pos,first));p.input_wait=true;return Ok(true)};
+                let Some(b)=take(p)else{p.dos.line=Some((line,cu_pos,first));p.dos.input_wait=true;return Ok(true)};
                 // 00h starts a two-byte key, as from the keyboard; template
                 // keys are not modelled here either, other extended keys do nothing.
                 if b==0{
                     let Some(scan)=take(p)else{
                         if let Some(s)=p.com1.as_mut(){s.rx.push_front(0);}
-                        p.line=Some((line,cu_pos,first));p.input_wait=true;return Ok(true)
+                        p.dos.line=Some((line,cu_pos,first));p.dos.input_wait=true;return Ok(true)
                     };
                     if matches!(scan,0x3b..=0x3f|0x4d|0x52|0x53){
-                        p.line=Some((line,cu_pos,first));
+                        p.dos.line=Some((line,cu_pos,first));
                         return Err(format!("DOS line template key {scan:02x} is not modelled"));
                     }
                     first=false;continue;
@@ -983,7 +983,7 @@ fn aux_console(p:&mut Loaded)->Result<bool,String>{
                 }
                 first=false;
             }
-            p.flushed=false;
+            p.dos.flushed=false;
         },
     }
     Ok(true)
@@ -1002,20 +1002,20 @@ fn console_read(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let wanted=(p.cpu.regs[1]&0xffff)as usize;let dx=p.cpu.regs[2]&0xffff;
     if wanted==0{p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(());}
     if dx as usize+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
-    if p.con_pending.is_empty(){
+    if p.dos.con_pending.is_empty(){
         let base=u32::from(DOSDATA)*16+u32::from(CON_LINE);
-        if p.line.is_none(){p.ram.store(base,MemWidth::Byte,128).map_err(|e|format!("DOS console line write: {e:?}"))?;}
+        if p.dos.line.is_none(){p.ram.store(base,MemWidth::Byte,128).map_err(|e|format!("DOS console line write: {e:?}"))?;}
         let context=MemoryContext{segment:SegmentRegister::Ds,cache:SegmentCache::real_mode(DOSDATA)};
         console::dos_break_check(p)?;
         line_into(p,out,context,u32::from(CON_LINE))?;
-        if p.input_wait{return Ok(());}
+        if p.dos.input_wait{return Ok(());}
         let count=p.ram.load(base+1,MemWidth::Byte).map_err(|e|format!("DOS console line read: {e:?}"))?;
         let mut line=(0..=count).map(|i|p.ram.load(base+2+i,MemWidth::Byte).map(|b|b as u8)).collect::<Result<Vec<_>,_>>().map_err(|e|format!("DOS console line read: {e:?}"))?;line.push(10);
         echo(p,out,b"\n",Vec::new())?;
-        p.con_pending=line;
+        p.dos.con_pending=line;
     }
-    let n=wanted.min(p.con_pending.len());
-    let bytes:Vec<u8>=p.con_pending.drain(..n).collect();
+    let n=wanted.min(p.dos.con_pending.len());
+    let bytes:Vec<u8>=p.dos.con_pending.drain(..n).collect();
     let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
     let addrs=(0..n as u32).map(|i|context.translate(dx+i,MemWidth::Byte,true,p.cpu.eip).map_err(|e|format!("DOS read buffer access: {e:?}"))).collect::<Result<Vec<_>,_>>()?;
     for &a in &addrs{p.ram.check_write(a,MemWidth::Byte).map_err(|e|format!("DOS read buffer write: {e:?}"))?;}
