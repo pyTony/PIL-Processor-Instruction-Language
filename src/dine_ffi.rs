@@ -52,10 +52,15 @@ fn prepare_image(data: &[u8], name: &str, tail: &str, config: Option<&str>, comp
     // This is a compatibility mount, not unrestricted native filesystem I/O.
     let cwd=std::env::current_dir().map_err(|e|format!("Dine working directory: {e}"))?;
     let defaults=crate::dos_config::console_settings(config)?;
-    let drives = vec![crate::dos::Source::Host(cwd),crate::dos::Source::Memory(crate::dos::MemDir::default())];
+    let drives = vec![crate::dos::Source::Host(cwd.clone()),crate::dos::Source::Memory(crate::dos::MemDir::default())];
     let loaded = if let Some((image_len, offset)) = compiled { crate::dos::load_compiled_com(data, image_len, offset, name, drives)? }
         else { crate::dos::load_with_drives(data, name, drives, None)? };
     let mut session=crate::dos::session::configured(loaded,None,config,None,defaults.fpu.map(|on|if on{"80387"}else{"none"}))?;
+    // The launch folder stays the current directory (next to the configured
+    // drives), and the program finds its support files
+    // beside the host executable, as DOS programs do beside themselves.
+    let folder=std::env::current_exe().ok().and_then(|exe|exe.parent().map(std::path::Path::to_path_buf)).unwrap_or_else(||cwd.clone());
+    crate::dos::place_host_program(session.machine_mut().ok_or("session state lost")?,&cwd,&folder,name)?;
     let translated=dos_tail(session.machine().ok_or("session state lost")?,tail)?;
     crate::dos::set_command_tail(session.machine_mut().ok_or("session state lost")?,&translated)?;
     let options=crate::dos::host_console::Options{window:false,mouse:defaults.mouse,ansi:defaults.ansi,country:None,utc_offset:defaults.utc_offset,host_pointer:defaults.host_pointer.unwrap_or_default(),speaker_volume:defaults.speaker_volume.unwrap_or(crate::dos::host_console::speaker::DEFAULT_VOLUME)};
@@ -150,7 +155,10 @@ mod tests {
         assert!(options.ansi&&options.mouse);assert_eq!(options.utc_offset,Some(7200));
         let p=session.machine().unwrap();assert_eq!(p.country,358);
         assert_ne!(p.ram.load(0x410,crate::MemWidth::Word).unwrap()&2,0);
-        assert!(p.drive.host_argument_alias("payload.dat").unwrap().is_some());
+        // The configured C: stays; host names on the command line are the
+        // launch folder's (the test's working directory), now current.
+        assert!(p.drive.is_mounted(b'C')&&p.drive.letter()!=b'C');
+        assert!(p.drive.host_argument_alias("Cargo.toml").unwrap().is_some());
         crate::dos::host_console::configure(&mut session,&options).unwrap();
         crate::dos_text_io::stream(&mut session,&mut std::io::Cursor::new(""),&mut Vec::new()).unwrap();
         assert_eq!(&session.screen().unwrap().0[..2],&[b'X',10]);

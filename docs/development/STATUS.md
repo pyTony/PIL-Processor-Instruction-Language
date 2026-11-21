@@ -1,3 +1,41 @@
+# Native applications find their support files — 21 November 2026
+
+Tony asked to fix Turbo Pascal's support files in the native (compiled)
+version and to benchmark it against the original. Native_TPC.exe (his
+native-batch build, local only) printed "Warning: TURBO.TPL not found" and
+"File not found (H.PAS)" when the launch folder held both. The launch folder
+was C:, but a pildos.conf with its own C= (found through the executable's
+parent folders) replaced it with the image, and the program's own path in
+its environment was C:\TPC.EXE, the launch folder, never where its files lie.
+- dos::place_host_program (dine_ffi::prepare, so native applications and
+  Dine_<program> launchers): the launch folder is the current drive and
+  directory, through a configured host drive that contains it (cd'ed into),
+  else on a free letter, so every configured drive stays (the #289 test
+  now checks the configured C: and a launch-folder name). The environment's program path
+  names the host executable's folder, through a configured drive that
+  contains it (8.3 aliases for long names, as DOS lists them), else that
+  folder mounted on a free letter (E: down to A:).
+- Drives::host_location/select_directory/dos_directory/free_letter;
+  dos::set_program_path rewrites the environment block in place.
+- tools/bench_native_application.py: original on `pil --dos-session` and
+  the native application with DINE_PROTOCOL=1, same files and command line
+  in a fresh folder, same `run 1000000 buffered` loop to the exit, empty
+  configuration; median run-loop time and instruction counts.
+- docs/NATIVE_APPLICATIONS.md: keep a native application beside its
+  original's support files (compile with --output-dir into that folder).
+
+Local Windows, release: 1022 Rust tests pass, 2 ignored (1 new, with
+temporary folders: a configured C: no longer hides the launch folder; a nested long-named folder
+on D: gives D:\LANG\LONG-F~1\TOOL.COM). Native_TPC.exe with TURBO.TPL beside
+it, started from another folder under Tony's pildos.conf: compiles H.PAS
+there. Benchmark, TPC 7.0 compiling a generated 2,256-line program (250
+functions, 45,808 bytes code), 3 alternating runs: both 8,770,681 guest
+instructions, exit code 0; original 14.72 s median, native 1.96 s (7.5x).
+Both are slow per instruction: about 165,000 of the hot steps are REP MOVSW
+elements (F3 A5), each one DOS-loop iteration (about 1.5 us; the original
+with PIL_PRECOMPILED=off takes 13.8 s, so the blocks are not the cost).
+REP batching is not done here. Not run on Linux.
+
 # One library implementation for PIL and Dine — 20 November 2026
 
 The standard pil executable now calls dine::run_cli() through the Rust

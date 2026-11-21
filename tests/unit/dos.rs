@@ -3623,6 +3623,41 @@ fn path_is_added_to_or_replaced_in_the_environment(){
 }
 
 #[test]
+fn host_program_finds_itself_beside_the_host_executable(){
+    use std::time::{SystemTime,UNIX_EPOCH};
+    let root=std::env::temp_dir().join(format!("pil-place-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let (work,tools,drive)=(root.join("work"),root.join("tools"),root.join("drive"));
+    let nested=drive.join("LANG").join("long-folder");
+    for d in [&work,&tools,&nested]{std::fs::create_dir_all(d).unwrap();}
+    let program_path=|p:&Loaded|{
+        let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).unwrap()*16;
+        let bytes:Vec<u8>=(0..256).map(|i|p.ram.load(env+i,MemWidth::Byte).unwrap() as u8).collect();
+        let at=bytes.windows(3).position(|w|w==[0,1,0]).unwrap()+3;
+        let end=at+bytes[at..].iter().position(|&b|b==0).unwrap();
+        String::from_utf8(bytes[at..end].to_vec()).unwrap()
+    };
+    // A configured C: no longer hides the launch folder: both stay, the
+    // launch folder current on a free letter, the executable's folder on
+    // the next one.
+    let mut p=load_with_drives(&[0xcd,0x20],"tool.com",vec![Source::Host(work.clone())],None).unwrap();
+    p.drive.mount(b'C',Source::Host(drive.clone())).unwrap();
+    p.drive.mount(b'D',Source::Host(drive.clone())).unwrap();
+    place_host_program(&mut p,&work,&tools,"tool.com").unwrap();
+    assert_eq!(p.drive.letter(),b'E');
+    assert!(p.drive.is_mounted(b'C')&&p.drive.is_mounted(b'D'));
+    assert!(p.drive.host_location(&work).is_some_and(|(l,path)|l==b'E'&&path.is_empty()));
+    assert_eq!(program_path(&p),"B:\\TOOL.COM");
+    // Folders inside a mounted drive are named through it, aliases and all,
+    // and a launch folder there becomes that drive's current directory.
+    let mut p=load_with_drives(&[0xcd,0x20],"tool.com",vec![Source::Host(work.clone())],None).unwrap();
+    p.drive.mount(b'D',Source::Host(drive.clone())).unwrap();
+    place_host_program(&mut p,&nested,&nested,"tool.com").unwrap();
+    assert_eq!(p.drive.letter(),b'D');
+    assert_eq!(program_path(&p),"D:\\LANG\\LONG-F~1\\TOOL.COM");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn protected_mode_x87_nm_uses_idt_and_retries_after_clts(){
     use crate::address::{SegmentAccess,SegmentCache};
     // Small ring-0 protected-mode harness: FNINIT faults with CR0.TS=1,

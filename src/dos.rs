@@ -321,6 +321,65 @@ pub(crate) fn set_environment_path(p:&mut Loaded,value:&str)->Result<(),String>{
     for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
     p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
 }
+/// Where a host-launched program (a native application or a Dine launcher)
+/// finds itself and its files, as when DOS runs it from its own folder:
+/// - The launch folder is the default drive and directory. A configured
+///   host drive that contains it is used (cd'ed into); otherwise it goes on
+///   a free letter, so every configured drive stays.
+/// - The program's path in its environment (DOS 3+, what programs read to
+///   find support files beside themselves) names `program_folder`, the
+///   host executable's folder: through a configured drive that contains
+///   it, else that folder mounted on a free letter.
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn place_host_program(p:&mut Loaded,launch:&Path,program_folder:&Path,name:&str)->Result<(),String>{
+    match p.drive.host_location(launch){
+        Some((letter,path))=>{select_startup_drive(p,letter)?;p.drive.select_directory(letter,path)?;}
+        None=>{
+            // Every configured drive stays; the launch folder takes a free
+            // letter (C: only when all of A:-E: are in use).
+            let letter=p.drive.free_letter().unwrap_or(b'C');
+            p.drive.mount(letter,Source::Host(launch.to_path_buf()))?;select_startup_drive(p,letter)?;
+        }
+    }
+    let directory=match p.drive.host_location(program_folder){
+        Some((letter,path))=>files::Drives::dos_directory(letter,&path),
+        None=>{
+            let Some(letter)=p.drive.free_letter() else{return Ok(())};
+            p.drive.mount(letter,Source::Host(program_folder.to_path_buf()))?;
+            files::Drives::dos_directory(letter,&[])
+        }
+    };
+    let mut path=directory;path.extend(base_name(name.as_bytes()));
+    set_program_path(p,&path)
+}
+/// Set the program's own path after the first program's environment
+/// strings (what DOS 3+ programs read to find files beside themselves),
+/// keeping the strings. The whole block must still fit.
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn set_program_path(p:&mut Loaded,value:&[u8])->Result<(),String>{
+    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let size=usize::from(ENV_PARAS)*16;
+    let mut block=vec![0u8;size];
+    for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
+    let block=with_program(&block,value).ok_or("DOS environment: no room for the program path")?;
+    for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
+}
+/// `block` with the program path after the count word replaced by `value`.
+#[cfg(any(feature = "dine-library", test))]
+fn with_program(block:&[u8],value:&[u8])->Option<Vec<u8>>{
+    let mut at=0;
+    loop{
+        let end=at+block.get(at..)?.iter().position(|&b|b==0)?;
+        if end==at{break;}
+        at=end+1;
+    }
+    let mut out=block.get(..at+1)?.to_vec();
+    out.extend([1,0]);out.extend(value);out.push(0);
+    if out.len()>block.len(){return None;}
+    out.resize(block.len(),0);
+    Some(out)
+}
 /// `block` (an environment: strings, an empty one, count word, program
 /// path) with PATH=`value`, the same size, or None when it does not fit
 /// or the block is not an environment.
