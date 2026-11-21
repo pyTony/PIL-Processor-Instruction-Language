@@ -1,3 +1,13 @@
+# STATUS.md merges like CLAUDE.md — 21 November 2026
+
+Tony: open PRs kept conflicting after merges even though the update-prs
+workflow should fix them. Every PR adds its note at the top of both
+CLAUDE.md and docs/development/STATUS.md; only CLAUDE.md had the union
+merge driver, so STATUS.md conflicted, and the workflow (which regenerates
+docs/SHA256SUMS only when that is the sole other conflict) rightly left
+those branches alone. .gitattributes and update-prs.yml now give
+docs/development/STATUS.md the union driver too.
+
 # Blocks per segment state; REP elements in batches — 21 November 2026
 
 Tony asked to speed up REP after the native Turbo Pascal benchmark (TPC

@@ -1,7 +1,8 @@
 name: Update open PRs
 # After every push to dev (a merged PR), merge dev into each open PR branch
-# that targets dev, so the PRs stay mergeable. CLAUDE.md merges with the
-# union driver (both new notes are kept). A branch with any other conflict is
+# that targets dev, so the PRs stay mergeable. CLAUDE.md and
+# docs/development/STATUS.md merge with the union driver (both new notes
+# are kept). A branch with any other conflict is
 # left as it is and listed in the log; docs/SHA256SUMS (a list of every
 # tracked file's hash) is regenerated from the merged tree when it is the
 # only other conflict. Also left alone and logged is a branch where the merge
@@ -37,6 +38,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Applies whatever .gitattributes the PR branch has.
           echo "CLAUDE.md merge=union" >> .git/info/attributes
+          echo "docs/development/STATUS.md merge=union" >> .git/info/attributes
           git fetch -q origin dev
           dispatch_failures=$(mktemp)
           gh pr list --base dev --state open --limit 100 \
@@ -75,7 +77,7 @@ jobs:
                 echo "::warning::#$number push refused (see the message above); next push to dev retries"
               fi
             else
-              echo "::warning::#$number has conflicts outside CLAUDE.md:"
+              echo "::warning::#$number has conflicts outside CLAUDE.md and STATUS.md:"
               git diff --name-only --diff-filter=U
               git merge --abort
             fi
