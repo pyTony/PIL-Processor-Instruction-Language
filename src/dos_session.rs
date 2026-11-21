@@ -34,6 +34,7 @@ impl Session{
         self.disk_sets.remove(&letter);Ok(format!("{}: unmounted",char::from(letter)))
     }
     pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None,disk_sets:BTreeMap::new()}}
+    pub(crate) fn set_backend(&mut self,backend:Box<dyn InstructionBackend>){self.backend=Some(backend);}
     /// Install disk one only after the manifest and media have been checked.
     pub(crate) fn disk_set(&mut self,letter:u8,manifest:&Path)->Result<String,String>{
         if !matches!(letter,b'A'|b'B'){return Err("disk sets use floppy drive A: or B:".into());}
@@ -259,13 +260,14 @@ impl Session{
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
         let(blocks,native)=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(b),_)=>b.block_stats(),(None,Some(p))=>(p.blocks.blocks,p.blocks.native_instructions),(None,None)=>(0,0)};
         let single=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(b),_)=>b.single_stats(),(None,Some(p))=>p.blocks.single_instructions,(None,None)=>0};
-        let interpreted=self.loaded.as_ref().map_or(0,|p|p.blocks.interpreted_instructions);
+        let interpreted=self.backend.as_ref().and_then(|b|b.reference_stats()).unwrap_or_else(||self.loaded.as_ref().map_or(0,|p|p.blocks.interpreted_instructions));
+        let application=self.backend.as_ref().map_or_else(String::new,|b|b.diagnostics());
         // Returns from block chains to the DOS loop (no chains with a backend).
         let block_runs=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(_),_)=>blocks,(None,Some(p))=>p.blocks.runs,(None,None)=>0};
         let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
         let native_total=native+single;
         let compare_branches=self.loaded.as_ref().map_or(0,|p|p.blocks.compare_branches);
-        let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_compare_branches\":{compare_branches},\"native_block_runs\":{block_runs},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total},\"interpreter_instructions\":{interpreted}",mode_control&8!=0,mode_control&0x20!=0);
+        let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_compare_branches\":{compare_branches},\"native_block_runs\":{block_runs},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total},\"interpreter_instructions\":{interpreted}{application}",mode_control&8!=0,mode_control&0x20!=0);
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
         let com1_wait=matches!(self.stop,Stop::WaitingForInput)&&self.loaded.as_ref().is_some_and(services::stdin_aux);
         let view=self.loaded.as_ref().map(|p|p.mouse.view());
@@ -446,9 +448,14 @@ pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config
     let mut session=open(path,mount,args,config,fpu_mode)?;
     serve_session(&mut session,&mut logger)
 }
+#[cfg(feature="dine-library")]
+pub(crate) fn serve_native(mut session:Session,name:&str)->Result<(),String>{
+    let mut logger=stoplog::Logger::new("",name);serve_session(&mut session,&mut logger)
+}
 /// Load PATH (a file or IMAGE::INNER) with its drives, configuration, FPU
 /// choice, command line and COM1, as `--dos-session` and `--dos-console` do.
 pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<&str>,fpu_mode:Option<&str>)->Result<Session,String>{
+    if Path::new(path).extension().is_some_and(|e|e=="pilapp"){return crate::native_application::open(path,mount,args,config,fpu_mode);}
     let _span=crate::profile::span("dos_session_open");
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;

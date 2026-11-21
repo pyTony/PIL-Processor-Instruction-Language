@@ -99,6 +99,14 @@ impl TextWatch{
 }
 impl PartialEq for TextWatch{fn eq(&self,_:&Self)->bool{true}}
 impl Eq for TextWatch{}
+/// Optional origin hints for code read from an immutable executable resource.
+/// A hint never authorizes execution: the application backend still checks its
+/// compiled bytes. Ordinary CPU writes can leave hints stale safely; changed
+/// instructions take the reference path. These are not architectural RAM state.
+#[derive(Clone,Debug,Default)]
+struct CodeOrigins{identity:Option<usize>,ranges:std::collections::BTreeMap<u32,(u32,u32)>}
+impl PartialEq for CodeOrigins{fn eq(&self,_:&Self)->bool{true}}
+impl Eq for CodeOrigins{}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ram {
     data:Vec<u8>,
@@ -117,13 +125,40 @@ pub struct Ram {
     marks:std::cell::RefCell<Vec<(usize,u8)>>,
     code_watch:CodeWatch,
     text_watch:Option<TextWatch>,
+    code_origins:CodeOrigins,
 }
 /// Host-only alias of the four planes (plane n at PLANE_ALIAS + n*10000h),
 /// for BIOS services that write pixels without the graphics controller. Real-
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,code_origins:Default::default()}}
+    pub(crate) fn track_resource(&mut self,identity:usize){self.code_origins=CodeOrigins{identity:Some(identity),ranges:Default::default()};}
+    pub(crate) fn resource_origin(&self,address:u32)->Option<(usize,u32)>{
+        if self.paging.get().is_some(){return None;}
+        let identity=self.code_origins.identity?;let at=self.physical_address(address);
+        let(&start,&(end,offset))=self.code_origins.ranges.range(..=at).next_back()?;
+        (at<end).then(||offset.checked_add(at-start)).flatten().map(|offset|(identity,offset))
+    }
+    pub(crate) fn resource_read(&mut self,identity:usize,address:u32,offset:u32,bytes:usize){
+        if self.code_origins.identity!=Some(identity)||self.paging.get().is_some(){return;}
+        if bytes>u32::MAX as usize||offset.checked_add(bytes as u32).is_none(){return;}
+        let mut done=0;
+        while done<bytes{
+            let guest=address.wrapping_add(done as u32);let start=self.physical_address(guest);
+            let count=if self.a20_enabled{bytes-done}else{(bytes-done).min(0x100000-(guest as usize&0xfffff))};
+            let Some(end)=start.checked_add(count as u32)else{return};
+            let ranges=&mut self.code_origins.ranges;
+            let overlaps:Vec<_>=ranges.range(..end).filter(|(_,r)|r.0>start).map(|(&s,&r)|(s,r)).collect();
+            for(old,(old_end,old_offset))in overlaps{
+                ranges.remove(&old);
+                if old<start{ranges.insert(old,(start,old_offset));}
+                if old_end>end{ranges.insert(end,(old_end,old_offset+(end-old)));}
+            }
+            if ranges.len()>=4096{ranges.clear();}
+            ranges.insert(start,(end,offset+done as u32));done+=count;
+        }
+    }
     fn code_pages(&self,address:u32,bytes:usize)->Option<std::ops::RangeInclusive<usize>>{
         if bytes==0{return None;}
         self.contiguous_slice(address,bytes)?;
