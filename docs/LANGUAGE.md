@@ -500,19 +500,33 @@ Each element consumes a budget step;full retirement occurs on count exhaustion
 or failed ZF repeat condition. Movement-string F2 remains rejected.
 
 `checkpoint_flags` is a first-operation generic machine effect. Machine-backed
-execution remembers entry EIP/EFLAGS/undefined metadata across partial resumes.
-Execution faults restore that original flag state,clear the checkpoint and
-retain completed element count/pointer progress. Full retirement clears it.
-The checkpoint is included in traces;debugger and DOS runner retain fault-state
-updates. Normal single-element CMPS/SCAS faults retain incoming state. This
-models memory/execution fault recovery,not interrupt delivery or exception frames.
+execution remembers entry EIP/EFLAGS/undefined metadata across partial resumes;
+it is included in traces and ends the run-time blocks. A fault in a later
+element clears it and keeps the flags of the elements already compared, with
+their count/pointer progress: the 386 pushes those flags in the #GP/#SS frame
+(SingleStepTests/80386, 20 November 2026). The current Intel SDM (REP)
+describes restoring the entry EFLAGS instead; until then PIL did so. Full retirement
+clears it. Normal single-element CMPS/SCAS faults retain incoming state.
+
+`effects_before_fault` (first operation, after `checkpoint_flags` if any): when
+a `load`, `load_segment`, `store` or `store_segment` fails its segment or RAM
+check (not `check_write_segment`), the stores staged so far and
+the `write_gpr` effects of earlier tokens are made, in token order, before the
+fault is returned. Other effects (bound writes, flags, EIP, segments) are not.
+PUSHA/PUSHAD stage their slots from the lowest address (DI) upwards and POPA/
+POPAD write each register as its slot is read, so a slot that crosses the end
+of a 16-bit stack (or the SS limit) leaves the earlier slots or registers
+changed and SP/ESP unchanged, as the 386 does (SingleStepTests/80386 6660, 61,
+6661). ENTER with a nesting level writes BP and the copied frame pointers
+pushed before a copy whose read faults (C8, 66C8). Without the token every
+fault leaves memory and registers unchanged.
 
 SETcc may now store one byte to ordinary ModRM/SIB memory,using existing PIL
 conditional selection/store effects. A false predicate still stores zero and
 checks permissions. Flags/markers/registers are unchanged; /0 profile restriction
 and existing normalized segment/memory checks remain.
 
-Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf), including entry-EFLAGS recovery for faulting REPE/REPNE CMPS/SCAS; legacy386 REP pseudocode has inverted stop-condition typos,so use its detailed step6 description for ZF termination.
+Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf) (it describes entry-EFLAGS recovery for faulting REPE/REPNE CMPS/SCAS, which the 386 does not do, see above); legacy386 REP pseudocode has inverted stop-condition typos,so use its detailed step6 description for ZF termination.
 
 ## Real-mode far return and checked frame spans (0.29)
 

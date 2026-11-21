@@ -23,6 +23,15 @@ Local Windows, release: 1023 Rust tests pass, 2 ignored; 0 rustc warnings
 (release and dine-library); portable-path and program-specific checks
 pass. TPC 7.0 compiling the 2,256-line test program: 8,770,681 steps and
 0.88 s, as before. Not run on Linux.
+# STATUS.md merges like CLAUDE.md — 21 November 2026
+
+Tony: open PRs kept conflicting after merges even though the update-prs
+workflow should fix them. Every PR adds its note at the top of both
+CLAUDE.md and docs/development/STATUS.md; only CLAUDE.md had the union
+merge driver, so STATUS.md conflicted, and the workflow (which regenerates
+docs/SHA256SUMS only when that is the sole other conflict) rightly left
+those branches alone. .gitattributes and update-prs.yml now give
+docs/development/STATUS.md the union driver too.
 
 # Blocks per segment state; REP elements in batches — 21 November 2026
 
@@ -93,6 +102,39 @@ Both are slow per instruction: about 165,000 of the hot steps are REP MOVSW
 elements (F3 A5), each one DOS-loop iteration (about 1.5 us; the original
 with PIL_PRECOMPILED=off takes 13.8 s, so the blocks are not the cost).
 REP batching is not done here. Not run on Linux.
+# Writes the 386 makes before #SS/#GP (SingleStepTests/80386 run 11) — 20 November 2026
+
+Tony: "next todo". The protected-mode plan's ten increments are merged, so
+this takes the real-mode SingleStepTests/80386 leftovers (Tony's standing
+priority). Of run 07's 130 real failures, 115 were writes the 386 makes
+before an #SS or #GP; PIL made none. All are now modelled:
+- REPE/REPNE CMPS/SCAS: a fault in a later element keeps the flags of the
+  elements already compared (the 386 pushes them in the #GP frame). PIL
+  restored the entry EFLAGS, which the current Intel SDM describes for later
+  CPUs. The flag checkpoint stays (traces, block boundaries) but no longer
+  restores anything.
+- New PIL token `effects_before_fault` (first operation): when a `load`,
+  `load_segment`, `store` or `store_segment` fails its segment or RAM check,
+  the stores staged so far and the earlier `write_gpr` effects are made, in
+  token order, before the fault. Interpreter and emitter share the rule;
+  without the token nothing changes.
+- PUSHA/PUSHAD stage their slots from DI (lowest address) upwards; POPA/
+  POPAD write each register as its slot is read; ENTER keeps its pushes
+  before a copied frame pointer whose read faults. A slot crossing the end
+  of a 16-bit stack (or the SS limit) leaves the earlier slots/registers
+  changed and SP/ESP, BP unchanged.
+- check_write_segment (ENTER's final SP check) is not covered: no case
+  needed it and the 386's order there is not known.
+
+Local Linux, release: 1011 Rust tests pass, 2 ignored (2 new in
+tests/unit/stack.rs, the REP compare fault test now expects the kept
+flags); generated-backend suite 282 cases (2 new: pusha_crossing_fault,
+popa_crossing_fault); forms.rs regenerated (`--check` current).
+SingleStepTests/80386 run 11 (local, all 941 files): 1,621,459 of
+1,758,700 pass (run 10: 1,621,228, plus 62 from the later shift rerun),
+0 generated-backend disagreements in 2,379 programs. Real failures 130 -> 15:
+9 byte IDIVs (386EX AL=80h instead of #DE) and 6 port reads (IN from 1Fh
+and 21h on the 386EX). Not run on Windows; no DOS program was rerun.
 
 # One library implementation for PIL and Dine — 20 November 2026
 
