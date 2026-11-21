@@ -249,6 +249,8 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
             Ok(None)
         },
+        (0x19,_) if p.booted=>bios_disk::bootstrap(p),
+        (0x18,_) if p.booted=>Err("INT 18h: no bootable disk and no ROM BASIC".into()),
         // Booted disks are BIOS sector devices.
         (0x13,_) if !p.disks.is_empty()=>bios_disk::int13(p),
         (0x13,0x08)=>{

@@ -27,6 +27,13 @@ impl Disk{
         };
         Ok(Self{data,cylinders,heads,sectors})
     }
+    /// A fixed-disk image: 16 heads and 63 sectors per track, the usual
+    /// BIOS translation, and as many whole cylinders as the image holds.
+    pub(crate) fn fixed(data:Vec<u8>)->Result<Self,String>{
+        let cylinders=(data.len()/(16*63*512)) as u32;
+        if cylinders==0||cylinders>1024{return Err(format!("{} bytes is not a fixed-disk image of 1-1024 cylinders (16 heads, 63 sectors)",data.len()));}
+        Ok(Self{data,cylinders,heads:16,sectors:63})
+    }
     /// The CMOS drive type of a floppy (register 10h): 1 360K, 2 1.2M,
     /// 3 720K, 4 1.44M, 5 2.88M.
     fn cmos_type(&self)->u8{
@@ -162,4 +169,25 @@ fn load_es(p:&mut Loaded,selector:u16){
     let es=SegmentRegister::Es.index();
     p.selectors[es]=selector;p.image.selectors[es]=selector;
     p.image.segments[es]=p.image.segments[es].real_mode_reload(selector);
+}
+
+/// Read the boot drive's first sector to 0000:7C00 and start there, with
+/// DL the drive, CS=DS=ES=SS=0, SP=7C00h and interrupts on, as the AT BIOS
+/// leaves the machine after POST.
+pub(super) fn load_boot_sector(p:&mut Loaded,drive:u8)->Result<(),String>{
+    let sector=p.disks.sector(drive,0).ok_or("boot drive has no sector 0")?.to_vec();
+    p.ram.write_bytes(0x7c00,&sector).map_err(|e|format!("boot sector: {e:?}"))?;
+    for i in 0..6{p.selectors[i]=0;p.image.selectors[i]=0;p.image.segments[i]=crate::address::SegmentCache::real_mode(0);}
+    p.cpu.regs=[0;8];p.cpu.regs[2]=u32::from(drive);p.cpu.regs[4]=0x7c00;
+    p.cpu.eip=0x7c00;p.cpu.eflags=0x202;p.cpu.undefined_flags=0;
+    Ok(())
+}
+/// INT 19h: load the boot sector again and start it. The service returns
+/// to the loop like any other, which steps over the two bytes of an INT
+/// instruction, so CS:IP is left two bytes before 0000:7C00.
+pub(super) fn bootstrap(p:&mut Loaded)->Result<Option<u8>,String>{
+    let drive=if p.disks.get(0).is_some(){0}else{0x80};
+    load_boot_sector(p,drive)?;
+    p.cpu.eip=0x7bfe;
+    Ok(None)
 }

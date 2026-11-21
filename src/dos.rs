@@ -63,6 +63,9 @@ mod rtc;
 mod block_move;
 #[path="dos_bios_disk.rs"]
 mod bios_disk;
+#[path="dos_boot.rs"]
+mod boot;
+pub use boot::{boot,probe as boot_probe};
 #[path="dos_xms.rs"]
 mod xms;
 #[path="dos_vga.rs"]
@@ -956,6 +959,9 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         if !p.rom_mode {
         // A callback returns by RETF to the private BIOS continuation.
         // Its scratch registers/flags are discarded; guest memory writes remain.
+        // A booted OS has none of Dine's DOS: its return points are
+        // ordinary memory there (Linux runs its kernel at physical 0).
+        if !p.booted{
         match mouse::returned(&mut p){
             Ok(true)=>{lazy=super::LazyFlags::None;execution_steps+=1;
                 *instructions.entry("DOS mouse callback RETF".into()).or_insert(0)+=1;continue;},
@@ -980,6 +986,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 continue;
             },
             Err(message)=>break Stop::Service(message),
+        }
         }
         // The host clock is checked every 256 steps (about 0.1 ms of work here).
         if execution_steps%256==0{
