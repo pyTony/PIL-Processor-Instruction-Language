@@ -1288,21 +1288,41 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         // answers its device ports itself in ports::io, so any port access
         // that reaches here (a prefixed IN/OUT, INS or OUTS) is not modelled.
         if is_port_access(&decoded.label){break Stop::Service(format!("{} at {:04x}:{:04x}: this port access is not modelled in Dine",decoded.label,p.selectors[1],p.cpu.eip));}
-        let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
+        let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];let mut repeated_elements=0usize;
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
                 if mode==crate::precompiled::Mode::Required && decoded.native().is_none(){
                     break Stop::Service(format!("native form required for {} at {:04x}:{:08x}; interpreter fallback refused",decoded.label,p.selectors[1],p.cpu.eip));
                 }
                 let mut machine=p.image.segment_state();
-                let native=if let Some(b)=backend.as_deref_mut(){
-                    if b.may_execute(&p.image,&p.ram,p.cpu.eip){
-                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                        b.execute(&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
-                    }else{None}
-                }else{None};
-                let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
-                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");if let Some(b)=backend.as_deref_mut(){b.reference_instruction(&p.image,&p.ram,old_ip,&decoded);}let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}};
+                // One instruction, or one element of a repeated string
+                // instruction (REP leaves EIP on itself until it is done).
+                macro_rules! element{()=>{{
+                    let native=if let Some(b)=backend.as_deref_mut(){
+                        if b.may_execute(&p.image,&p.ram,p.cpu.eip){
+                            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                            b.execute(&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
+                        }else{None}
+                    }else{None};
+                    let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
+                    match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");if let Some(b)=backend.as_deref_mut(){b.reference_instruction(&p.image,&p.ram,old_ip,&decoded);}let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}}
+                }}}
+                let shadowed=machine.ss_shadow!=0||machine.sti_shadow!=0;
+                let mut result=element!();
+                // Further elements of the same REP run here, without a trip
+                // round the DOS loop each: up to the next timer poll and the
+                // budget, so interrupts and host events are still seen at
+                // the same step counts. A string element raises no event
+                // the loop looks at; a fault ends the batch where it was.
+                if program.partial&&result.is_ok()&&p.cpu.eip==old_ip&&!shadowed&&!p.rom_mode&&!history_enabled&&!watched{
+                    let limit=(budget-execution_steps-1).min(255-execution_steps%256);
+                    while repeated_elements<limit{
+                        let r=element!();
+                        if r.is_err(){result=r;break;}
+                        repeated_elements+=1;
+                        if p.cpu.eip!=old_ip{break;}
+                    }
+                }
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
@@ -1345,6 +1365,8 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             },
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),
         };
+        // Elements a REP batch completed before its last one (or its fault).
+        execution_steps+=repeated_elements;pil_steps+=repeated_elements;
         if let Err(e)=result{
             match exception(&mut p,&e,&mut lazy){
                 Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
@@ -1355,7 +1377,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         execution_steps+=1;pil_steps+=1;
         let repeated=matches!(&decoded.operation,Operation::Pil{program,..}if program.partial);
         let partial=repeated&&p.cpu.eip==old_ip;
-        if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1;}
+        if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1+repeated_elements;}
         if !partial{
             completed+=1;
             let key=if repeated{decoded.label.as_str()}else{decoded.label.split_whitespace().next().unwrap_or("?")};

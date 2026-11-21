@@ -1,3 +1,35 @@
+# Blocks per segment state; REP elements in batches — 21 November 2026
+
+Tony asked to speed up REP after the native Turbo Pascal benchmark (TPC
+7.0 compiling a 2,256-line program: 14.7 s on Dine, 2.0 s native). Profile
+spans showed REP was not the main cost: 11.4 of 14.5 s went to planning
+blocks, 678,000 plans for 8.8 million steps. The block map kept one block
+per linear address with an exact segment-state guard, and a routine
+entered with DS or ES alternating between values (656,100 of the misses)
+threw its block away on every entry.
+- src/block_compiler/engine.rs: up to four blocks per linear address
+  (VARIANTS), most recently planned first. A block whose code changed is
+  replaced in its slot; with no free variant the least recently planned
+  one gives way. The guard (segment state, window, code bytes) is the same.
+- src/dos.rs: after a REP element runs and the instruction is still
+  repeating, the following elements run in the same pass of the DOS loop,
+  up to the next 256-step timer poll and the budget (so interrupts and host
+  events are seen at the same step counts), with no interrupt shadow, not
+  in ROM mode and not while history or the text watch is on. A fault ends
+  the batch where it occurred, as before.
+
+Local Windows, release: 1023 Rust tests pass, 2 ignored (1 new, in
+tests/unit/precompiled.rs: REP MOVSW and a subroutine entered with two DS
+values, blocks against the interpreter per slice, and one-step slices,
+which never batch, against one run: same CPU, RAM and counts). TPC 7.0 on
+Dine, same program, 8,770,681 steps either way: 14.7 s -> 0.98 s with the
+variants, 0.87 s with REP batching too (3 runs each). Native_TPC.exe
+(tools/bench_native_application.py, 3 runs) stays at 1.90 s: native
+applications run through their own prepared dispatcher, not the shared
+blocks, so the original on Dine is now about twice as fast as the native
+application. Making the prepared path chain like blocks is open. Host independent:
+no architecture conditionals, unsafe or intrinsics. Not run on Linux.
+
 # Native applications find their support files — 21 November 2026
 
 Tony asked to fix Turbo Pascal's support files in the native (compiled)
