@@ -27,6 +27,42 @@ fn tables()->Ram{
 }
 
 #[test]
+fn the_tlb_follows_page_table_writes_directory_changes_and_dirty_bits(){
+ let mut r=tables();
+ // Linear 6000h maps the page table itself (frame 11000h), as an OS maps
+ // its tables to change them.
+ r.store(PT0+6*4,MemWidth::Dword,PT0|3).unwrap();
+ r.store(0x9010,MemWidth::Byte,0x99).unwrap();r.store(0x5010,MemWidth::Byte,0x55).unwrap();
+ let supervisor=Some(Paging{directory:PD,user:false});
+ r.set_paging(supervisor);
+ // Linear 2010h is frame 9010h, from the walk and then from the TLB.
+ assert_eq!(r.load(0x2010,MemWidth::Byte).unwrap(),0x99);
+ assert_eq!(r.load(0x2010,MemWidth::Byte).unwrap(),0x99);
+ // The CPU rewrites the PTE for linear 2000h through linear 6008h: the
+ // next access sees frame 5000h.
+ r.store(0x6008,MemWidth::Dword,0x5000|3).unwrap();
+ assert_eq!(r.load(0x2010,MemWidth::Byte).unwrap(),0x55);
+ // A write to a page so far only read sets its dirty bit.
+ r.store(0x2010,MemWidth::Byte,0x56).unwrap();
+ assert_eq!(dword(&r,PT0+8)&0x40,0x40,"dirty");
+ // A user access to a supervisor page faults from the cache as well.
+ r.set_paging(Some(Paging{directory:PD,user:true}));
+ assert!(r.load(0x2010,MemWidth::Byte).is_err());
+ // Another directory: nothing of the old translations is used.
+ let mut other=tables();other.store(PT0+8,MemWidth::Dword,0x9000|3).unwrap();
+ for at in (0..0x1000).step_by(4){let v=other.load(PD+at,MemWidth::Dword).unwrap();other.store(0x13000+at,MemWidth::Dword,v).unwrap();}
+ let pd2=0x13000;let pt2=0x14000;
+ for at in (0..0x1000).step_by(4){let v=other.load(PT0+at,MemWidth::Dword).unwrap();other.store(pt2+at,MemWidth::Dword,v).unwrap();}
+ other.store(pd2,MemWidth::Dword,pt2|7).unwrap();
+ other.store(0x9010,MemWidth::Byte,0x99).unwrap();other.store(0x5010,MemWidth::Byte,0x55).unwrap();
+ other.store(PT0+8,MemWidth::Dword,0x5000|3).unwrap();
+ other.set_paging(Some(Paging{directory:PD,user:false}));
+ assert_eq!(other.load(0x2010,MemWidth::Byte).unwrap(),0x55);
+ other.set_paging(Some(Paging{directory:pd2,user:false}));
+ assert_eq!(other.load(0x2010,MemWidth::Byte).unwrap(),0x99,"the second directory maps 2000h to 9000h");
+}
+
+#[test]
 fn walk_maps_linear_pages_and_sets_accessed_and_dirty_bits(){
  let mut r=tables();r.set_paging(Some(Paging{directory:PD,user:false}));
  r.store(0xe000_0010,MemWidth::Dword,0x1234_5678).unwrap();
