@@ -66,7 +66,7 @@ pub struct Speaker{
     /// blanking and cycles vertical retrace so snow-check and sync loops advance.
     retrace:u32,
     ignored_out:std::collections::BTreeSet<u16>,
-    fast_a20:u8,kbc_a20:bool,kbc_write_output:bool,kbc_reply:Option<u8>,
+    fast_a20:u8,kbc_a20:bool,kbc_write_output:bool,kbc_reply:Option<u8>,kbd_typematic_wait:bool,
     /// ISA Plug and Play: the register last selected through the address
     /// port 279h, and the read-data port software placed with register 00h
     /// (Set RD_DATA Port). No PnP card is fitted, so that port reads FFh.
@@ -309,7 +309,12 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 },
                 0x60 if s.kbc_write_output=>{if value&1==0{return Err("keyboard-controller CPU reset is not modelled".into());}s.kbc_write_output=false;s.kbc_a20=value&2!=0;s.update_a20(&mut p.ram);},
                 // AT keyboard diagnostic echo: no ACK precedes the EE reply.
-                0x60 if value==0xee=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(0xee);},
+                0x60 if value==0xee=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbd_typematic_wait=false;s.kbc_reply=Some(0xee);},
+                // AT keyboard Set Typematic Rate/Delay (F3h) followed by 0ddrrrrr.
+                // Replies with FAh ACK through port 60h and IRQ1 (when unmasked).
+                0x60 if value==0xf3=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbd_typematic_wait=true;s.kbd.reply(0xfa);},
+                0x60 if s.kbd_typematic_wait&&value&0x80==0=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbd_typematic_wait=false;s.kbd.set_typematic(value);s.kbd.reply(0xfa);},
+                0x60 if s.kbd_typematic_wait=>return Err(format!("AT keyboard typematic parameter {value:02x}h has bit 7 set (unmodelled command or invalid parameter)")),
                 _=>return Err("OUT 60h without a keyboard-controller output-port command is not modelled".into()),
             }
         }

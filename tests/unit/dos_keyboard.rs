@@ -194,3 +194,112 @@ fn a_guest_that_samples_key_state_can_exit_while_escape_is_held(){
  let p=load(&code_at(&[(0,&main),(0x40,&handler)]),"tap.com").unwrap();let mut p=run(p,60).unwrap().loaded;
  key(&mut p,0x011b).unwrap();let r=run(p,200).unwrap();assert_eq!(r.stop,Stop::Budget);assert_eq!(r.loaded.ram.load(BASE+0x210,MemWidth::Byte).unwrap(),0x81);
 }
+
+#[test]
+fn typematic_command_f3_acks_via_bios_irq1_and_updates_bda_without_corrupting_kbc(){
+ // STI; OUT 60h,F3h; OUT 60h,00h; OUT 60h,F3h; OUT 60h,2Ch; IN 64h->BL;
+ // OUT 64h,D0h; IN 60h->BH; OUT 60h,EEh; IN 60h->CL; CLI; HLT.
+ let code=[
+  0xfb,
+  0xb0,0xf3,0xe6,0x60, 0xb0,0x00,0xe6,0x60,
+  0xb0,0xf3,0xe6,0x60, 0xb0,0x2c,0xe6,0x60,
+  0xe4,0x64,0x88,0xc3,
+  0xb0,0xd0,0xe6,0x64, 0xe4,0x60,0x88,0xc7,
+  0xb0,0xee,0xe6,0x60, 0xe4,0x60,0x88,0xc1,
+  0xfa,0xf4,
+ ];
+ let mut p=load(&code,"typematic-bios.com").unwrap();
+ p.cpu.eflags=0x202;
+ let r=run(p,200).unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ let p=&r.loaded;
+ assert_eq!(p.cpu.regs[3]&0xffff,0x0100,"IN 64h empty (00h) and D0h output port (01h)");
+ assert_eq!(p.cpu.regs[1]&0xff,0xee,"subsequent EEh echo succeeded");
+ assert_eq!(p.ram.load(0x497,MemWidth::Byte).unwrap()&0x10,0x10,"BDA 0040:0097 ACK bit set");
+ assert!(!p.speaker.kbd.full());
+ assert!(ring(p).is_empty(),"ACK must not enter the BIOS key ring");
+ assert_eq!(p.speaker.kbd.typematic_byte(),0x2c);
+ assert_eq!(r.instructions.get("BIOS INT 09h (keyboard)"),Some(&4));
+}
+
+#[test]
+fn typematic_command_f3_passes_through_chained_int09_hook_and_subsequent_keys_work(){
+ let p=program(&[0xfb,0xb0,0xf3,0xe6,0x60,0xb0,0x00,0xe6,0x60,0xeb,0xfe]);
+ let r=run(p,200).unwrap();
+ assert!(matches!(r.stop,Stop::Budget),"{:?}",r.stop);
+ let mut p=r.loaded;
+ assert_eq!(recorded(&p),vec![0xfa,0xfa]);
+ assert_eq!(p.ram.load(0x497,MemWidth::Byte).unwrap()&0x10,0x10);
+ assert_eq!(in_service(&mut p)&2,0);
+ assert_eq!(p.speaker.kbd.typematic_byte(),0x00);
+ assert!(key(&mut p,0x1e61).unwrap());
+ let r=run(p,200).unwrap();
+ assert_eq!(recorded(&r.loaded),vec![0xfa,0xfa,0x1e,0x9e]);
+ assert_eq!(ring(&r.loaded),vec![0x1e61]);
+}
+
+#[test]
+fn typematic_ack_can_be_polled_with_if_clear_and_irq1_masked_without_spurious_irq(){
+ // CLI; mask IRQ1; F3h -> poll 64h/60h; 00h -> poll 64h/60h; check empty;
+ // unmask IRQ1; STI; NOP; CLI; HLT.
+ let p=program(&[
+  0xfa,
+  0xb0,0x02,0xe6,0x21,
+  0xb0,0xf3,0xe6,0x60, 0xe4,0x64,0x88,0xc3, 0xe4,0x60,0x88,0xc7,
+  0xb0,0x00,0xe6,0x60, 0xe4,0x64,0x88,0xc1, 0xe4,0x60,0x88,0xc5,
+  0xe4,0x64,0x88,0xc2,
+  0xb0,0x00,0xe6,0x21,
+  0xfb,0x90,0xfa,0xf4,
+ ]);
+ let r=run(p,200).unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ let p=&r.loaded;
+ assert_eq!(p.cpu.regs[3]&0xffff,0xfa01);
+ assert_eq!(p.cpu.regs[1]&0xffff,0xfa01);
+ assert_eq!(p.cpu.regs[2]&0xff,0);
+ assert!(recorded(p).is_empty(),"polled ACK must not raise a late IRQ1");
+ assert_eq!(p.speaker.kbd.typematic_byte(),0x00);
+}
+
+#[test]
+fn unpolled_typematic_ack_drains_via_irq1_when_sti_enables_interrupts(){
+ let p=program(&[0xfa,0xb0,0xf3,0xe6,0x60,0xb0,0x00,0xe6,0x60,0xfb,0x90,0xfa,0xf4]);
+ let r=run(p,200).unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ let p=&r.loaded;
+ assert_eq!(recorded(p),vec![0xfa]);
+ assert_eq!(p.ram.load(0x497,MemWidth::Byte).unwrap()&0x10,0x10);
+ assert_eq!(p.speaker.kbd.typematic_byte(),0x00);
+}
+
+#[test]
+fn typematic_edge_cases_and_duration_formula(){
+ // Bit 7 set in parameter stops cleanly without changing typematic_byte.
+ for bad in [0x80u8,0xed]{
+  let code=[0xfa,0xb0,0xf3,0xe6,0x60,0xb0,bad,0xe6,0x60,0xfa,0xf4];
+  let r=run(load(&code,"bad-param.com").unwrap(),20).unwrap();
+  assert!(matches!(r.stop,Stop::Service(_)),"{bad:02x}: {:?}",r.stop);
+  assert_eq!(r.loaded.speaker.kbd.typematic_byte(),DEFAULT_TYPEMATIC);
+ }
+ // F3h followed by EEh cancels waiting for parameter and returns EEh echo.
+ let code=[0xfa,0xb0,0xf3,0xe6,0x60,0xb0,0xee,0xe6,0x60,0xe4,0x60,0x88,0xc3,0xb0,0x00,0xe6,0x60,0xf4];
+ let r=run(load(&code,"f3-then-ee.com").unwrap(),20).unwrap();
+ assert!(matches!(r.stop,Stop::Service(_)),"{:?}",r.stop);
+ assert_eq!(r.loaded.cpu.regs[3]&0xff,0xee);
+ assert_eq!(r.loaded.speaker.kbd.typematic_byte(),DEFAULT_TYPEMATIC);
+
+ // F3h followed by D1h + DFh updates A20 without consuming kbd_typematic_wait;
+ // the subsequent 10h still sets typematic.
+ let code=[0xfa,0xb0,0xf3,0xe6,0x60,0xb0,0xd1,0xe6,0x64,0xb0,0xdf,0xe6,0x60,0xb0,0x10,0xe6,0x60,0xf4];
+ let r=run(load(&code,"f3-d1-a20.com").unwrap(),20).unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert!(r.loaded.ram.a20_enabled());
+ assert_eq!(r.loaded.speaker.kbd.typematic_byte(),0x10);
+
+ // Duration calculations for 00h, 2Bh, 2Ch, 7Fh.
+ use std::time::Duration;
+ assert_eq!(typematic_duration(0x00),(Duration::from_millis(250),Duration::from_micros(8*1_000_000/240)));
+ assert_eq!(typematic_duration(0x2b),(Duration::from_millis(500),Duration::from_micros(22*1_000_000/240)));
+ assert_eq!(typematic_duration(0x2c),(Duration::from_millis(500),Duration::from_micros(100_000)));
+ assert_eq!(typematic_duration(0x7f),(Duration::from_millis(1000),Duration::from_micros(500_000)));
+}

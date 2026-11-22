@@ -61,6 +61,35 @@ impl PendingKey{
     }
 }
 
+/// Software AT typematic repeat scheduler when the guest programs port 60h F3h
+/// or INT 16h AH=03h. Suppresses host OS auto-repeat and emits repeats at the
+/// guest-configured delay and rate.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+struct HeldKey{scan:u8,extended:bool,word:Option<u16>,next_at:Instant,period:Duration}
+#[derive(Default)]
+struct Typematic{held:Option<HeldKey>}
+impl Typematic{
+    fn clear(&mut self){self.held=None;}
+    fn on_native_key(&mut self,scan:u8,extended:bool,down:bool,word:Option<u16>,timing:Option<(Duration,Duration)>,now:Instant)->bool{
+        let Some((delay,period))=timing else{self.held=None;return true;};
+        if !down{
+            if self.held.is_some_and(|h|(h.scan,h.extended)==(scan,extended)){self.held=None;}
+            return true;
+        }
+        if self.held.is_some_and(|h|(h.scan,h.extended)==(scan,extended)){return false;}
+        if word.is_some(){self.held=Some(HeldKey{scan,extended,word,next_at:now+delay,period});}
+        true
+    }
+    fn tick(&mut self,timing:Option<(Duration,Duration)>,now:Instant,can_emit:bool)->Option<PendingKey>{
+        let Some((_,period))=timing else{self.held=None;return None;};
+        let held=self.held.as_mut()?;
+        held.period=period;
+        if now<held.next_at||!can_emit{return None;}
+        held.next_at=now+held.period;
+        Some(PendingKey::Native{scan:held.scan,extended:held.extended,down:true,word:held.word})
+    }
+}
+
 // US-layout set 1 scan codes of the keys that type ASCII.
 const ROWS:[(&str,u8);4]=[("1234567890-=",0x02),("qwertyuiop[]",0x10),("asdfghjkl;'`",0x1e),("zxcvbnm,./",0x2c)];
 const SHIFTED:&str="!@#$%^&*()_+{}:\"~<>?|";
@@ -362,6 +391,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
     const NORMAL_SLICE:usize=20_000;
     const TRACED_SLICE:usize=128;
     let mut pending=std::collections::VecDeque::<PendingKey>::new();
+    let mut typematic=Typematic::default();
     let mut last_present=Instant::now()-Duration::from_secs(1);
     let mut note=None::<String>;
     let mut host_menu_open=false;
@@ -376,11 +406,12 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
         for event in events{
             match event{
                 Event::Quit=>return Ok("DOS console closed by the user".into()),
-                Event::Break=>{if !paused{if let Err(refused)=session.ctrl_break()?{note=Some(refused);}}}, 
+                Event::Break=>{typematic.clear();if !paused{if let Err(refused)=session.ctrl_break()?{note=Some(refused);}}},
                 // Ctrl+Shift+F12 is reserved for the host debugger and never
                 // reaches BIOS INT 09h. Also available from the host menu.
                 Event::Key(Key::F(12),mods) if mods.ctrl&&mods.shift&&!mods.alt=>{
                     paused=!paused;
+                    if paused{typematic.clear();}
                     note=Some(if paused{"DOS debugger paused (Ctrl+Shift+F12 resumes)".into()}
                         else{"DOS debugger resumed".into()});
                 },
@@ -391,11 +422,15 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                 Event::Key(key,mods)=>{front.clear_selection();if let Some(word)=bios_word(key,mods){pending.push_back(word.into());}},
                 Event::NativeKey{scan,extended,down,key}=>{
                     front.clear_selection();
-                    pending.push_back(PendingKey::Native{scan,extended,down,word:native_bios_word(scan,key)});
+                    let word=native_bios_word(scan,key);
+                    let timing=session.machine().and_then(|p|p.speaker.kbd.typematic_timing());
+                    if typematic.on_native_key(scan,extended,down,word,timing,Instant::now()){
+                        pending.push_back(PendingKey::Native{scan,extended,down,word});
+                    }
                 },
                 Event::Copy=>front.copy(session)?,
                 Event::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
-                Event::HostMenu=>{host_menu_open=front.media_menu();},
+                Event::HostMenu=>{typematic.clear();host_menu_open=front.media_menu();},
                 Event::HostCommand(id)=>{
                     host_menu_open=false;
                     if id==1{front.copy(session)?;}
@@ -404,6 +439,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     else if id==4{note=Some(session.disable_live_trace().map(|_|"Dispatch history disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id==5{
                         paused=!paused;
+                        if paused{typematic.clear();}
                         note=Some(if paused{"DOS debugger paused (Ctrl+Shift+F12 resumes)".into()}
                             else{"DOS debugger resumed".into()});
                     }
@@ -433,7 +469,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                 },
             }
         }
-        if host_menu_open{std::thread::sleep(Duration::from_millis(10));continue;}
+        if host_menu_open{typematic.clear();std::thread::sleep(Duration::from_millis(10));continue;}
         if paused{
             // Keep pumping host events, but do not inject queued keys, poll
             // guest DMA, or execute an instruction. Snapshot and copy still work.
@@ -444,6 +480,10 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
             if front.closed(){return Ok("DOS console window closed".into());}
             std::thread::sleep(Duration::from_millis(10));
             continue;
+        }
+        let timing=session.machine().and_then(|p|p.speaker.kbd.typematic_timing());
+        if let Some(repeat)=typematic.tick(timing,Instant::now(),pending.is_empty()){
+            pending.push_back(repeat);
         }
         while let Some(&key)=pending.front(){
             if key.send(session)?{pending.pop_front();}else{break;}

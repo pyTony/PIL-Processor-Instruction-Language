@@ -80,6 +80,23 @@ pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
             let flags=p.ram.load(0x417,MemWidth::Byte).map_err(|e|format!("keyboard flags: {e:?}"))?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|flags;Ok(())
         },
+        3=>{
+            let al=p.cpu.regs[0] as u8;
+            match al{
+                0x00=>{p.speaker.kbd.reset_typematic();Ok(())},
+                0x05=>{
+                    let(bh,bl)=(((p.cpu.regs[3]>>8)&0xff) as u8,(p.cpu.regs[3]&0xff) as u8);
+                    if bh<=3&&bl<=0x1f{p.speaker.kbd.set_typematic((bh<<5)|bl);}
+                    Ok(())
+                },
+                0x06=>{
+                    let v=p.speaker.kbd.typematic_byte();
+                    p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|(u32::from((v>>5)&3)<<8)|u32::from(v&0x1f);
+                    Ok(())
+                },
+                _=>Err(format!("unimplemented BIOS keyboard AH=03 AL={al:02x}")),
+            }
+        },
         5=>{
             let inserted=enqueue(p,p.cpu.regs[1]as u16)?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(!inserted);Ok(())

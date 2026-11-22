@@ -649,3 +649,49 @@ fn clipboard_mount_path_accepts_windows_explorer_quotes_and_rejects_bad_input(){
         assert!(clipboard_mount_path(bad).is_err(),"bad clipboard contents: {bad:?}");
     }
 }
+
+#[test]
+fn host_typematic_scheduler_drives_guest_rate_and_passes_through_without_override(){
+    let t0=Instant::now();
+    let mut sched=Typematic::default();
+    // Without a guest typematic setting, host repeats pass straight through.
+    for _ in 0..3{
+        assert!(sched.on_native_key(0x4b,true,true,Some(0x4b00),None,t0));
+    }
+    assert_eq!(sched.tick(None,t0+Duration::from_secs(1),true),None);
+
+    // With a guest typematic setting (250 ms delay, 33 ms period), duplicate
+    // host downs are suppressed and repeats fire on the guest schedule.
+    let timing=Some((Duration::from_millis(250),Duration::from_millis(33)));
+    assert!(sched.on_native_key(0x4b,true,true,Some(0x4b00),timing,t0));
+    // Modifier-only key (word=None) passes through without displacing the arrow key.
+    assert!(sched.on_native_key(0x2a,false,true,None,timing,t0+Duration::from_millis(10)));
+    assert!(!sched.on_native_key(0x4b,true,true,Some(0x4b00),timing,t0+Duration::from_millis(100)));
+    assert_eq!(sched.tick(timing,t0+Duration::from_millis(249),true),None);
+    // Suppressed when pending queue is not empty (can_emit = false).
+    assert_eq!(sched.tick(timing,t0+Duration::from_millis(250),false),None);
+    assert_eq!(
+        sched.tick(timing,t0+Duration::from_millis(250),true),
+        Some(PendingKey::Native{scan:0x4b,extended:true,down:true,word:Some(0x4b00)})
+    );
+    assert_eq!(sched.tick(timing,t0+Duration::from_millis(282),true),None);
+    assert_eq!(
+        sched.tick(timing,t0+Duration::from_millis(283),true),
+        Some(PendingKey::Native{scan:0x4b,extended:true,down:true,word:Some(0x4b00)})
+    );
+
+    // A second non-modifier key replaces the held repeat target.
+    assert!(sched.on_native_key(0x4d,true,true,Some(0x4d00),timing,t0+Duration::from_millis(300)));
+    assert_eq!(sched.tick(timing,t0+Duration::from_millis(549),true),None);
+    assert_eq!(
+        sched.tick(timing,t0+Duration::from_millis(550),true),
+        Some(PendingKey::Native{scan:0x4d,extended:true,down:true,word:Some(0x4d00)})
+    );
+
+    // Releasing stops repeats; clear() also cancels repeats.
+    assert!(sched.on_native_key(0x4d,true,false,None,timing,t0+Duration::from_millis(560)));
+    assert_eq!(sched.tick(timing,t0+Duration::from_millis(900),true),None);
+    assert!(sched.on_native_key(0x4b,true,true,Some(0x4b00),timing,t0+Duration::from_millis(910)));
+    sched.clear();
+    assert_eq!(sched.tick(timing,t0+Duration::from_millis(1500),true),None);
+}

@@ -610,6 +610,42 @@ fn keyboard_echo_uses_controller_response_without_consuming_bios_keys(){
  p.ram.store(p.image.segments[1].base+0x107,MemWidth::Byte,0x60).unwrap();
  assert_eq!(ports::io(&mut p).unwrap(),Some(2));assert_eq!(p.cpu.regs[0]&255,0xee);
 }
+#[test]
+fn bios_keyboard_typematic_service_gets_sets_and_resets_delay_and_rate(){
+ let mut p=load(&[0xcd,0x16],"typematic16.com").unwrap();let mut out=vec![];
+ assert_eq!(p.speaker.kbd.typematic_timing(),None);
+ // AL=06h gets default (BH=1, BL=0Bh) and preserves upper EBX and flags.
+ p.cpu.regs[0]=0x1234_0306;p.cpu.regs[3]=0xdead_beef;p.cpu.eflags=0xad7;
+ let old_flags=p.cpu.eflags;
+ service(&mut p,0x16,&mut out).unwrap();
+ assert_eq!(p.cpu.regs[3],0xdead_010b);assert_eq!(p.cpu.eflags,old_flags);
+ // AL=05h sets valid BH=0, BL=00h and AL=06h reads it back.
+ p.cpu.regs[0]=0x0305;p.cpu.regs[3]=0xaaaa_0000;
+ service(&mut p,0x16,&mut out).unwrap();
+ assert_eq!(p.cpu.regs[3],0xaaaa_0000);assert_eq!(p.cpu.eflags,old_flags);
+ assert!(p.speaker.kbd.typematic_timing().is_some());
+ p.cpu.regs[0]=0x0306;p.cpu.regs[3]=0xbeef_ffff;
+ service(&mut p,0x16,&mut out).unwrap();
+ assert_eq!(p.cpu.regs[3],0xbeef_0000);
+ // Out-of-range BH>=4 or BL>=20h is ignored without failing.
+ for bad in [0x0400u32,0x0020]{
+  p.cpu.regs[0]=0x0305;p.cpu.regs[3]=bad;
+  service(&mut p,0x16,&mut out).unwrap();
+  p.cpu.regs[0]=0x0306;p.cpu.regs[3]=0;
+  service(&mut p,0x16,&mut out).unwrap();
+  assert_eq!(p.cpu.regs[3]&0xffff,0x0000,"bad={bad:04x}");
+ }
+ // AL=00h resets to default and clears guest typematic override.
+ p.cpu.regs[0]=0x0300;
+ service(&mut p,0x16,&mut out).unwrap();
+ assert_eq!(p.speaker.kbd.typematic_timing(),None);
+ p.cpu.regs[0]=0x0306;p.cpu.regs[3]=0;
+ service(&mut p,0x16,&mut out).unwrap();
+ assert_eq!(p.cpu.regs[3],0x010b);
+ // Unsupported AL returns an error.
+ p.cpu.regs[0]=0x0301;
+ assert!(service(&mut p,0x16,&mut out).is_err());
+}
 fn cell(p:&Loaded,page:u32,row:u32,col:u32)->u32{p.ram.load(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word).unwrap()}
 fn put(p:&mut Loaded,page:u32,row:u32,col:u32,value:u32){p.ram.store(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word,value).unwrap();}
 /// Teletype onto `page` made active; BH deliberately names another page.
