@@ -2634,6 +2634,24 @@ pub fn run_cli() -> Result<(), String> {
         println!("{}",dos::setup::run(config,window,&stop_log)?);
         return Ok(());
     }
+    if dos_args.get(1).map(String::as_str)==Some("--boot-probe"){
+        let usage="usage: pil --boot-probe IMAGE [--hd] [--steps N] [--keys TEXT] [--keys-after N]";
+        let(mut image,mut drive,mut steps,mut at,mut keys,mut keys_after)=(None,0u8,10_000_000usize,2,String::new(),5_000_000usize);
+        while at<dos_args.len(){
+            match dos_args[at].as_str(){
+                "--hd"=>drive=0x80,
+                "--keys"=>{keys=dos_args.get(at+1).ok_or(usage)?.replace("\\r","\r");at+=1;},
+                "--keys-after"=>{keys_after=usize::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"step count out of range")?;at+=1;},
+                "--steps"=>{steps=usize::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"budget out of range")?;at+=1;},
+                a if a.starts_with("--")||image.is_some()=>return Err(usage.into()),
+                a=>image=Some(a),
+            }
+            at+=1;
+        }
+        let image=image.ok_or(usage)?;
+        let bytes=std::fs::read(image).map_err(|e|format!("{image}: {e}"))?;
+        print!("{}",dos::boot_probe(&bytes,drive,steps,&keys,keys_after)?);return Ok(());
+    }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;
         if dos_args.get(at).map(String::as_str)==Some("--steps"){

@@ -50,6 +50,12 @@ kernel) is another.
   are.
 
 ### 2. Booting a disk image through the BIOS
+Done (22 November 2026, `feat/bios-boot-20261122`): MCC Interim's LILO
+reaches `boot:`, loads the kernel, and Linux 0.99pl10 switches to protected
+mode, decompresses and prints `Console: colour`. It then stops on OUT 60h
+(a command to the keyboard itself), which is milestone 3. Usage:
+docs/BOOT.md. The FreeDOS kernel boot was not tried yet.
+
 - **`pil --boot IMAGE`:** the boot sector at 0000:7C00, DL=00h/80h.
 - **INT 13h on the image:** AH 00, 02, 03, 08, 15, 41/42/48 (LBA), with
   geometry for floppy sizes and a hard-disk translation; INT 19h; INT 12h;

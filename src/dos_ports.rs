@@ -371,8 +371,11 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 if s.access==3{s.high_next=!s.high_next;}
                 s.sound(now);
             },
+            // The POST diagnostic port: writes go nowhere on a PC. The ROM
+            // runner traces them (test386 reports its stages there); an
+            // operating system uses port 80h only as an I/O delay.
             0x80 | 0x190 => {
-                eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
+                if p.rom_mode{eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);}
             },
             // Port E9h (the Bochs debug port): the ROM runner passes its bytes to
             // stdout, so test386 built with OUT_PORT equ 0E9h prints its POST EEh

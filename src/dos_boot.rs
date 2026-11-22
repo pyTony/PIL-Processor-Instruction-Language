@@ -17,7 +17,7 @@ fn dummy(n:u8)->bool{n<8||(0x70..=0x77).contains(&n)}
 /// first diskette, or 80h, the first fixed disk).
 pub fn boot(image:&[u8],drive:u8)->Result<Loaded,String>{
     let disk=match drive{0|1=>bios_disk::Disk::floppy(image.to_vec())?,0x80=>bios_disk::Disk::fixed(image.to_vec())?,_=>return Err("boot drive must be 00h, 01h or 80h".into())};
-    let mut p=load(&[0xf4],"BOOT.COM")?;
+    let mut p=load(&[0xf4],"BOOT")?;
     // No XMS driver or upper memory: conventional memory to A000h, the
     // BIOS's own INT 15h AH=88h answer for the extended memory.
     p.select_xms(false)?;
@@ -59,26 +59,44 @@ pub(crate) fn screen_lines(p:&Loaded)->Vec<String>{
     }).collect()
 }
 
-/// Run a booted image headless for `steps` instructions and report the
-/// screen and why the run stopped.
-pub fn probe(image:&[u8],drive:u8,steps:usize)->Result<String,String>{
+/// Run a booted image headless for at most `steps` instructions and report
+/// the screen and why the run stopped. `keys` are typed (ASCII; carriage
+/// return is Enter) the first time the run waits for keyboard input or
+/// after `keys_after` steps (a boot loader that polls the keyboard never
+/// waits); a second wait for input ends the run.
+pub fn probe(image:&[u8],drive:u8,steps:usize,keys:&str,keys_after:usize)->Result<String,String>{
     let mut p=boot(image,drive)?;
     // The host clock drives the timer, so BIOS time-outs (a boot loader's
     // prompt) pass as they would on the machine.
     p.clock_offset=Some(0);
-    let mut out=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
-    let (mut left,mut stop,mut done)=(steps,String::from("budget"),0usize);
+    let mut session=session::Session::new(p);
+    let (mut left,mut done,mut typed)=(steps,0usize,keys.is_empty());
+    let mut reason=String::from("budget");
     while left>0{
-        let slice=left.min(MAX_STEPS);
-        let r=run_with_backend(p,slice,&mut out,None)?;
-        let ran=r.pil_steps.max(r.completed);done+=ran;
-        p=r.loaded;
-        if !matches!(r.stop,Stop::Budget){stop=format!("{:?}",r.stop);break;}
-        left-=slice;
+        let slice=left.min(1_000_000).min(if typed{usize::MAX}else{keys_after.saturating_sub(done).max(1)});
+        session.run(slice)?;done+=slice;left-=slice;
+        let (status,detail)=session.status();
+        let due=!typed&&(status=="waiting_input"||(status=="running"&&done>=keys_after));
+        match status{
+            _ if due=>{
+                typed=true;
+                for c in keys.bytes(){
+                    let scan=match c{13=>0x1c,b' '=>0x39,_=>0};
+                    session.key(c,scan)?;
+                }
+            },
+            "running"=>{},
+            _=>{reason=format!("{status} {detail}");break;},
+        }
     }
+    let p=session.machine().ok_or("session state lost")?;
     let mut report=String::new();
-    for line in screen_lines(&p){report.push_str(&line);report.push('\n');}
+    for line in screen_lines(p){report.push_str(&line);report.push('\n');}
     let cs=p.selectors[SegmentRegister::Cs.index()];
-    writeln!(report,"-- stop: {stop}; CS:EIP={cs:04x}:{:08x}; {} mode; about {done} steps",p.cpu.eip,if p.image.real_mode{"real"}else{"protected"}).unwrap();
+    writeln!(report,"-- stop: {}; CS:EIP={cs:04x}:{:08x}; {} mode; at most {done} steps",reason.trim(),p.cpu.eip,if p.image.real_mode{"real"}else{"protected"}).unwrap();
     Ok(report)
 }
+
+#[cfg(test)]
+#[path="../tests/unit/dos_boot.rs"]
+mod tests;

@@ -76,7 +76,13 @@ impl Disks{
 /// and pointed to by INT 1Eh.
 pub(super) fn install_table(p:&mut Loaded)->Result<(),String>{
     let sectors=p.disks.floppy[0].as_ref().map_or(18,|d|d.sectors) as u8;
-    p.ram.write_bytes(DPT,&[0xdf,0x02,0x25,0x02,sectors,0x1b,0xff,0x54,0xf6,0x0f,0x08]).map_err(|e|format!("diskette parameter table: {e:?}"))?;
+    // The table is BIOS ROM contents: written while the bytes are
+    // writable, then ROM again, so a guest store there is dropped.
+    let table=[0xdf,0x02,0x25,0x02,sectors,0x1b,0xff,0x54,0xf6,0x0f,0x08];
+    let rom=|e|format!("diskette parameter table: {e:?}");
+    p.ram.unrom(DPT,table.len()).map_err(rom)?;
+    p.ram.write_bytes(DPT,&table).map_err(rom)?;
+    p.ram.rom(DPT,table.len()).map_err(rom)?;
     p.ram.store(0x1e*4,MemWidth::Dword,u32::from(DPT_SEGMENT)<<16|u32::from(DPT_OFFSET)).map_err(|e|format!("INT 1Eh vector: {e:?}"))?;
     Ok(())
 }

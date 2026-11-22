@@ -82,6 +82,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     let(mut config,mut mount,mut tail,mut fpu,mut program)=(None,None,None,None,None);
     let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME};
     let mut plain=false;
+    let mut boot:Option<(String,u8)>=None;
     let mut host_pointer=None;
     let mut speaker_volume=None;
     let mut at=0;
@@ -97,6 +98,10 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
                 let value=args.get(at+1).ok_or("missing DOS console option value")?;
                 speaker_volume=Some(value.parse::<u8>().ok().filter(|v|*v<=100).ok_or("--speaker-volume takes 0..100")?);at+=1;
             },
+            "--boot"|"--boot-hd"=>{
+                let value=args.get(at+1).ok_or("--boot takes a disk image")?;
+                boot=Some((value.clone(),if args[at]=="--boot-hd"{0x80}else{0}));at+=1;
+            },
             "--config"|"--mount"|"--args"|"--fpu"|"--country"|"--utc-offset"=>{
                 let value=args.get(at+1).ok_or("missing DOS console option value")?.as_str();
                 match args[at].as_str(){"--config"=>config=Some(value),"--mount"=>mount=Some(value),"--args"=>tail=Some(value),"--fpu"=>fpu=Some(value),"--country"=>options.country=Some(value.parse().map_err(|_|"invalid country")?),_=>options.utc_offset=Some(value.parse().map_err(|_|"invalid UTC offset")?)}at+=1;
@@ -110,6 +115,15 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     options.utc_offset=options.utc_offset.or(defaults.utc_offset);
     options.host_pointer=host_pointer.or(defaults.host_pointer).unwrap_or_default();
     options.speaker_volume=speaker_volume.or(defaults.speaker_volume).unwrap_or(host_console::speaker::DEFAULT_VOLUME);
+    if let Some((image,drive))=boot{
+        // A booted disk: the machine without Dine's DOS (no program, drives
+        // or configuration file of its own).
+        let bytes=std::fs::read(&image).map_err(|e|format!("{image}: {e}"))?;
+        let mut session=dos::session::Session::new(dos::boot(&bytes,drive)?);
+        let result=run(&mut session,&options,plain);
+        session.log_stop(&mut dos::stoplog::Logger::new(log_path,&image));
+        return result;
+    }
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
     let tail=tail.or_else(||startup.as_ref().and_then(|s|s.1.as_deref()));
