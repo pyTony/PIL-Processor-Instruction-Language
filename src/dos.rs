@@ -896,7 +896,7 @@ pub(crate) trait InstructionBackend {
     fn reference_stats(&self)->Option<u64>{None}
     fn fallback_mode(&self)->Option<crate::precompiled::Mode>{None}
     fn diagnostics(&self)->String{String::new()}
-    fn block(&mut self,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
+    fn block(&mut self,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize,_chain:bool)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
 }
 /// Run one decoded PIL instruction through its precompiled native form
@@ -926,10 +926,19 @@ fn precompiled_step(m:crate::precompiled::Mode,decoded:&super::guest::Decoded,p:
     }
     Some(result)
 }
-pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,mut backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
+pub(crate) fn run_with_backend(p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
+    run_with_backend_inner(p,budget,output,backend,true)
+}
+/// Interactive session slice: keeps event counters (such as keyboard-poll
+/// counts for `idle_hint`, exceptions and IRQs) while skipping the
+/// per-instruction mnemonic mix.
+pub(crate) fn run_with_backend_session(p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
+    run_with_backend_inner(p,budget,output,backend,false)
+}
+fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,mut backend:Option<&mut dyn InstructionBackend>,collect_mnemonic_mix:bool)->Result<Probe,String>{
     if !(1..=if p.rom_mode{MAX_ROM_STEPS}else{MAX_STEPS}).contains(&budget){return Err(if p.rom_mode{"ROM step budget must be 1..1000000000"}else{"DOS step budget must be 1..1000000"}.into());}
     let _profile_run=crate::profile::span("dos_run");
-    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();
+    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();let mut native_block_count=0usize;
     let mut exceptions=Vec::new();let mut exception_count=0;
     let mut lazy=super::LazyFlags::None;
 
@@ -1273,14 +1282,13 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             // check as the interpreter. Interrupt shadows still forbid batching.
             let mut machine=p.image.segment_state();
             if machine.ss_shadow==0&&machine.sti_shadow==0{
-                let remaining=budget-execution_steps;
-                let next_timer_poll=if p.clock_offset.is_some(){256-execution_steps%256}else{remaining};
-                let block_budget=remaining.min(next_timer_poll);
+                let block_budget=(budget-execution_steps).min(256-execution_steps%256);
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if let Some((n,result))=b.block(&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
+                let chain=!p.rom_mode&&!p.speaker.kbd.pending()&&!mouse::ready(&p)&&!p.sb.pending_irq();
+                if let Some((n,result))=b.block(&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget,chain){
                     p.image.set_segment_state(machine);p.selectors=machine.selectors;
                     execution_steps+=n;completed+=n;pil_steps+=n;
-                    *instructions.entry("native block instructions".into()).or_insert(0)+=n;
+                    native_block_count+=n;
                     if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
                     if n>0{continue;}
                 }
@@ -1406,15 +1414,18 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         execution_steps+=1;pil_steps+=1;
         let repeated=matches!(&decoded.operation,Operation::Pil{program,..}if program.partial);
         let partial=repeated&&p.cpu.eip==old_ip;
-        if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1+repeated_elements;}
+        if collect_mnemonic_mix&&repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1+repeated_elements;}
         if !partial{
             completed+=1;
-            let key=if repeated{decoded.label.as_str()}else{decoded.label.split_whitespace().next().unwrap_or("?")};
-            if let Some(count)=instructions.get_mut(key){*count+=1;}else{instructions.insert(key.to_string(),1);}
+            if collect_mnemonic_mix{
+                let key=if repeated{decoded.label.as_str()}else{decoded.label.split_whitespace().next().unwrap_or("?")};
+                if let Some(count)=instructions.get_mut(key){*count+=1;}else{instructions.insert(key.to_string(),1);}
+            }
         }
 
     };
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+    if native_block_count>0{*instructions.entry("native block instructions".into()).or_insert(0)+=native_block_count;}
     p.blocks.report(&mut instructions);
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
     let file_offset=linear.and_then(|a|a.checked_sub(p.dos.module_base)).filter(|n|(*n as usize)<p.dos.module_bytes).map(|n|n as usize+p.dos.header_bytes);
