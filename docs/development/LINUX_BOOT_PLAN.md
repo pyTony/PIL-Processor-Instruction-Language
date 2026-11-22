@@ -85,6 +85,10 @@ A20/reset, the AT hard-disk controller.
 - **HLT** in protected mode idles until the next IRQ.
 
 ### 4. Early Linux: MCC Interim
+Reached (22 November 2026, `feat/pc-devices-20261122`): Linux 0.99.10
+mounts the root floppy and MCC's install menu waits at its prompt, after
+about 1.5 billion guest steps (10.5 minutes headless).
+
 - **Target (Tony's choice):** MCC Interim Linux (Manchester Computing
   Centre, 1992-93), Linux 0.97-0.99 on a boot floppy and a root floppy, 386
   only, minix file system.

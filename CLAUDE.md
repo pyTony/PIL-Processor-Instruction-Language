@@ -1,3 +1,35 @@
+# Linux 0.99.10 boots to MCC Interim's menu (Linux plan milestones 3-4) — 22 November 2026
+
+Tony's goal from 21 November: boot early Linux, MCC Interim 0.99.p10+
+(git-ignored images/mcc-interim/boot). `pil --boot-probe ... --keys "\r"`
+now runs LILO, the kernel and MCC's install menu: "VFS: Mounted root (minix
+filesystem) readonly", "Linux version 0.99.10 ... Jul 7 1993", the menu
+(fdisk, swap, mkfs, install, /bin/sh, quit) waiting at "?". What it took:
+- Keyboard commands through port 60h (ACK FAh, reset FAh AAh, echo,
+  identify, FEh otherwise); the reply fills an empty output buffer, IRQ1
+  announces it when a guest owns IRQ1; a polling read of port 64h with
+  IRQ1 not deliverable takes the next code in.
+- COM2-COM4 (and COM1 without a session) are an open bus; 3BCh-3BEh like
+  the other printer ports; in a booted machine any port no known device
+  answers is an open bus (SCSI, Ethernet and other ISA probes).
+- src/dos_fdc.rs: the diskette controller with DMA channel 2 and IRQ6
+  (booted machine only), through a general master-PIC IRQ helper; IRQ
+  2-7 vectors at a bare IRET when booted. DMA works on physical addresses
+  (Ram::physical).
+- A 256-entry TLB for the page walk (flushed on a directory change, paging
+  off, or a CPU write into a cached page-table frame): 100 million Linux
+  steps 194 s -> 51 s.
+- The boot probe reads the screen from the CRTC start address (the Linux
+  console scrolls that way), as the session screen already did.
+
+Local Windows, release: 1035 Rust tests pass, 2 ignored (4 FDC, 1 TLB, 1
+keyboard-command test; the echo test now queues the second reply); 0 rustc
+warnings; portable-path and program-specific checks pass. MCC to its menu:
+about 1.5 billion steps, 10.5 minutes headless (protected-mode code runs
+in the interpreter, with no blocks; milestone 5). Printer ports still read
+80h, so Linux reports lp0-lp2 and PLIP on them. The menu itself was not
+driven further (no key after the LILO prompt). Not run on Linux.
+
 # Booting disk images through the BIOS (Linux plan milestone 2) — 22 November 2026
 
 Tony's goal: early Linux, MCC Interim 0.99.p10+ (one 1.2 MB boot floppy,
