@@ -13,11 +13,12 @@ use crate::{
 use std::ffi::c_char;
 use std::{cell::OnceCell, path::Path, rc::Rc};
 
-const MAGIC: &[u8; 8] = b"PILAPP01";
+const MAGIC: &[u8; 8] = b"PILAPP02";
 const MAX_RECORDS: usize = 2_097_152;
 const RESOURCE: u32 = 1 << 31;
 pub(crate) type Dispatch = unsafe extern "C" fn(u32) -> u32;
 
+#[derive(Clone)]
 struct Record {
     offset: u32,
     length: u8,
@@ -56,6 +57,20 @@ impl<'a> Reader<'a> {
     }
     fn word(&mut self) -> Result<u16, String> {
         Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+    fn varint(&mut self) -> Result<u32, String> {
+        let mut value = 0u32;
+        for shift in (0..35).step_by(7) {
+            let b = self.byte()?;
+            value |= u32::from(b & 0x7f)
+                .checked_shl(shift)
+                .filter(|v| v >> shift == u32::from(b & 0x7f))
+                .ok_or("native application varint overflow")?;
+            if b & 0x80 == 0 {
+                return Ok(value);
+            }
+        }
+        Err("native application varint too long".into())
     }
     fn dword(&mut self) -> Result<u32, String> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
@@ -133,29 +148,23 @@ impl Application {
         if initial.dos.relocations != 0 {
             return Err("prepared startup must not contain relocation work".into());
         }
-        let mut records = Vec::with_capacity(count);
-        let mut previous = None;
-        for _ in 0..count {
-            let offset = r.dword()?;
+        // Identical instruction forms are stored once and referenced by every
+        // byte offset (module or resource) that decodes to them.
+        let unique_count = r.dword()? as usize;
+        if unique_count > count {
+            return Err("native application has more forms than entries".into());
+        }
+        let mut unique: Vec<Record> = Vec::with_capacity(unique_count);
+        for _ in 0..unique_count {
             let length = r.byte()?;
             let partial = match r.byte()? {
                 0 => false,
                 1 => true,
                 _ => return Err("invalid prepared repeat flag".into()),
             };
-            let extent = if offset & RESOURCE != 0 {
-                resource.len()
-            } else {
-                initial.dos.module_bytes
-            };
-            if previous.is_some_and(|p| p >= offset)
-                || length == 0
-                || length > 15
-                || (offset & !RESOURCE) as usize + usize::from(length) > extent
-            {
+            if length == 0 || length > 15 {
                 return Err("invalid prepared instruction extent/order".into());
             }
-            previous = Some(offset);
             let dst = view(&mut r)?;
             let src = view(&mut r)?;
             let displacement = r.dword()? as i32;
@@ -225,8 +234,8 @@ impl Application {
             let label = std::str::from_utf8(r.take(len)?)
                 .map_err(|_| "invalid prepared instruction label")?
                 .to_string();
-            records.push(Record {
-                offset,
+            unique.push(Record {
+                offset: 0,
                 length,
                 partial,
                 dst,
@@ -237,6 +246,34 @@ impl Application {
                 label,
                 native,
             });
+        }
+        let mut records = Vec::with_capacity(count);
+        let mut previous: Option<u32> = None;
+        for _ in 0..count {
+            let delta = r.varint()?;
+            let offset = match previous {
+                None => delta,
+                Some(p) if delta > 0 => p
+                    .checked_add(delta)
+                    .ok_or("invalid prepared instruction extent/order")?,
+                Some(_) => return Err("invalid prepared instruction extent/order".into()),
+            };
+            previous = Some(offset);
+            let form = r.varint()? as usize;
+            let mut record = unique
+                .get(form)
+                .ok_or("invalid prepared instruction form index")?
+                .clone();
+            let extent = if offset & RESOURCE != 0 {
+                resource.len()
+            } else {
+                initial.dos.module_bytes
+            };
+            if (offset & !RESOURCE) as usize + usize::from(record.length) > extent {
+                return Err("invalid prepared instruction extent/order".into());
+            }
+            record.offset = offset;
+            records.push(record);
         }
         if r.at != bytes.len() {
             return Err("trailing native application data".into());
@@ -628,6 +665,13 @@ impl dos::InstructionBackend for Backend {
     }
 }
 
+fn put_varint(out: &mut Vec<u8>, mut n: u32) {
+    while n >= 0x80 {
+        out.push(n as u8 | 0x80);
+        n >>= 7;
+    }
+    out.push(n as u8);
+}
 fn put16(out: &mut Vec<u8>, n: u16) {
     out.extend(n.to_le_bytes());
 }
@@ -669,6 +713,28 @@ fn address(out: &mut Vec<u8>, a: Option<address::AddressContext>) {
     }
 }
 
+/// Runtime only needs the mnemonic (port-access checks and statistics), so
+/// operands are omitted unless `debug-labels` is enabled. A trailing space
+/// is kept so "IN " and "OUT " stay distinguishable from other mnemonics.
+fn compact_label(label: &str) -> &str {
+    if cfg!(feature = "debug-labels") {
+        return label;
+    }
+    let skip = if label.starts_with("REP ") {
+        4
+    } else if label.starts_with("REPE ") {
+        5
+    } else if label.starts_with("REPNE ") {
+        6
+    } else {
+        0
+    };
+    match label[skip..].find(' ') {
+        Some(i) => &label[..skip + i + 1],
+        None => label,
+    }
+}
+
 /// Compile every possible byte entry in the initial image, not just a trace.
 /// Entry discovery therefore does not remove unvisited functions or indirect
 /// targets. Unchanged entries call native forms; generated/modified code has
@@ -698,7 +764,10 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
     word(20, loaded.cpu.eip as u16);
     word(22, loaded.selectors[1].wrapping_sub(load_segment));
     startup.extend(&module);
-    let mut records = Vec::new();
+    let mut unique: Vec<Vec<u8>> = Vec::new();
+    let mut unique_index: std::collections::HashMap<Vec<u8>, u32> =
+        std::collections::HashMap::new();
+    let mut entries: Vec<(u32, u32)> = Vec::new();
     let mut offsets = Vec::new();
     let mut image = loaded.image.clone();
     let mut code = loaded.ram.clone();
@@ -739,7 +808,7 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
             }
             let (text, constants) = precompiled::shape(program);
             let key = precompiled::key(&text);
-            put32(&mut records, tag | offset as u32);
+            let mut records = Vec::new();
             records.extend([decoded.length as u8, u8::from(program.partial)]);
             binding(&mut records, *dst);
             binding(&mut records, *src);
@@ -758,7 +827,7 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
             for c in constants {
                 put64(&mut records, c);
             }
-            let label = decoded.label.as_bytes();
+            let label = compact_label(&decoded.label).as_bytes();
             records.push(
                 label
                     .len()
@@ -766,6 +835,16 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
                     .map_err(|_| "instruction label exceeds artifact bounds")?,
             );
             records.extend(label);
+            let form = match unique_index.get(&records) {
+                Some(&i) => i,
+                None => {
+                    let i = unique.len() as u32;
+                    unique_index.insert(records.clone(), i);
+                    unique.push(records);
+                    i
+                }
+            };
+            entries.push((tag | offset as u32, form));
             offsets.push(tag | offset as u32);
         }
     }
@@ -785,7 +864,16 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
     out.extend(name.as_bytes());
     out.extend(startup);
     out.extend(bytes);
-    out.extend(records);
+    put32(&mut out, unique.len() as u32);
+    for form in &unique {
+        out.extend(form);
+    }
+    let mut previous = 0u32;
+    for (n, &(offset, form)) in entries.iter().enumerate() {
+        put_varint(&mut out, if n == 0 { offset } else { offset - previous });
+        put_varint(&mut out, form);
+        previous = offset;
+    }
     if out.len() > 128 * 1024 * 1024 || offsets.len() > MAX_RECORDS {
         return Err("compiled application exceeds artifact bounds".into());
     }
@@ -822,22 +910,37 @@ pub(crate) fn emit(input: &str, output: &str) -> Result<String, String> {
         .map(|n| n & !RESOURCE)
         .max()
         .map_or(0, |n| n as usize + 1);
-    let mut entries = vec![u32::MAX; initial_len + resource_len];
-    for (i, &offset) in offsets.iter().enumerate() {
+    // Bitmap of prepared byte offsets plus one running count per 64-bit word.
+    // Offsets are sorted (module first, then resource), so a form's record
+    // index equals the number of set bits before it.
+    let total = initial_len + resource_len;
+    let words = total.div_ceil(64);
+    let mut bits = vec![0u64; words];
+    let mut previous: Option<usize> = None;
+    for &offset in offsets.iter() {
         let at = if offset & RESOURCE == 0 {
             offset as usize
         } else {
             initial_len + (offset & !RESOURCE) as usize
         };
-        entries[at] = i as u32;
+        if bits[at / 64] >> (at % 64) & 1 != 0 || previous.is_some_and(|p| p >= at) {
+            return Err("native application offsets are not strictly ascending".into());
+        }
+        bits[at / 64] |= 1 << (at % 64);
+        previous = Some(at);
     }
-    let map: Vec<u8> = entries.into_iter().flat_map(u32::to_le_bytes).collect();
+    let mut map: Vec<u8> = bits.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let mut running = 0u32;
+    for w in &bits {
+        map.extend(running.to_le_bytes());
+        running += w.count_ones();
+    }
     let map_include = map_file
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or("invalid application map filename")?;
     let mut source=String::from("// Generated application calls; CPU and DOS implementation is in Dine.\nuse std::ffi::{c_char,CString};\n#[cfg_attr(windows,link(name=\"dine\",kind=\"raw-dylib\"))]\n#[cfg_attr(not(windows),link(name=\"dine\"))]\nextern \"C\" { fn dine_run_application_v1(data:*const u8,len:usize,name:*const c_char,tail:*const c_char,dispatch:unsafe extern \"C\" fn(u32)->u32)->i32; fn dine_session_application_v1(data:*const u8,len:usize,name:*const c_char,tail:*const c_char,dispatch:unsafe extern \"C\" fn(u32)->u32)->i32; }\n");
-    source.push_str(&format!("unsafe extern \"C\" fn dispatch(offset:u32)->u32{{\nlet map=include_bytes!({map_include:?});\nlet n=(offset&0x7fffffff)as usize;\nlet at=if offset&0x80000000==0{{if n>={initial_len}{{return u32::MAX;}}n}}else{{if n>={resource_len}{{return u32::MAX;}}n+{initial_len}}};\nu32::from_le_bytes(map[at*4..at*4+4].try_into().unwrap())\n}}\n"));
+    source.push_str(&format!("unsafe extern \"C\" fn dispatch(offset:u32)->u32{{\nlet map=include_bytes!({map_include:?});\nlet n=(offset&0x7fffffff)as usize;\nlet at=if offset&0x80000000==0{{if n>={initial_len}{{return u32::MAX;}}n}}else{{if n>={resource_len}{{return u32::MAX;}}n+{initial_len}}};\nlet w=u64::from_le_bytes(map[at/64*8..at/64*8+8].try_into().unwrap());\nlet bit=at%64;\nif w>>bit&1==0{{return u32::MAX;}}\nlet r={words}*8+at/64*4;\nu32::from_le_bytes(map[r..r+4].try_into().unwrap())+(w&((1u64<<bit)-1)).count_ones()\n}}\n"));
     source.push_str(&format!("fn main(){{\nlet data=include_bytes!({include:?});\nlet name=CString::new({name:?}).unwrap();\n"));
     source.push_str(
         r#"let protocol=std::env::var("DINE_PROTOCOL").is_ok_and(|v|v=="1");
@@ -1131,6 +1234,7 @@ mod tests {
     #[test]
     fn malformed_prepared_inputs_are_rejected_without_execution() {
         assert!(Application::read(b"PILAPP01").is_err());
+        assert!(Application::read(b"PILAPP02").is_err());
         if precompiled::forms() == 0 {
             return;
         }
@@ -1144,5 +1248,29 @@ mod tests {
         let mut invalid = bytes;
         invalid.push(0);
         assert!(Application::read(&invalid).is_err());
+    }
+    #[test]
+    fn compact_format_deduplicates_forms_and_compacts_labels() {
+        if cfg!(feature = "debug-labels") {
+            assert_eq!(compact_label("MOV AX, 1234"), "MOV AX, 1234");
+        } else {
+            assert_eq!(compact_label("MOV AX, 1234"), "MOV ");
+            assert_eq!(compact_label("IN AL, 60"), "IN ");
+            assert_eq!(compact_label("REP MOVSB"), "REP MOVSB");
+            assert_eq!(compact_label("REPE CMPSB"), "REPE CMPSB");
+        }
+        if precompiled::forms() == 0 {
+            return;
+        }
+        let mut com = vec![0x40; 32]; // 32x INC AX
+        com.extend([0xcd, 0x20]);
+        let (encoded, offsets) = compile(&com, "REPEAT.COM").unwrap();
+        let app = Application::read(&encoded).unwrap();
+        assert_eq!(app.records.len(), offsets.len());
+        assert!(app.records.len() >= 64);
+        assert!(app.records.iter().any(|r| r.offset & RESOURCE != 0));
+        assert!(app.records.iter().zip(&offsets).all(|(r, &o)| r.offset == o));
+        // Deduplicated forms should keep 64+ records well below 64 * ~30 bytes.
+        assert!(encoded.len() < 1024, "encoded len={}", encoded.len());
     }
 }
