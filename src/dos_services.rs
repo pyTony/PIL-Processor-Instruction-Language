@@ -6,7 +6,7 @@ use crate::host_io::Output;
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     let ah=(p.cpu.regs[0]>>8)as u8;
     let result=dispatch_inner(p,vector,out);
-    if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x5f|0x60|0x65..=0x67|0x69) && p.cpu.eflags&1!=0 {
+    if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x5f|0x60|0x65..=0x67|0x69|0x71) && p.cpu.eflags&1!=0 {
         p.dos.dos_error=p.cpu.regs[0]as u16;
     }
     result
@@ -207,15 +207,19 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
         (0x1c,_)=>Ok(None), // BIOS default timer user hook is an IRET.
 
         (0x10,0x01)=>{
-            p.ram.store(0x460,MemWidth::Word,p.cpu.regs[1]&0xffff).map_err(|e|format!("BIOS cursor shape write: {e:?}"))?;
+            let shape=p.cpu.regs[1]&0xffff;
+            p.ram.store(0x460,MemWidth::Word,shape).map_err(|e|format!("BIOS cursor shape write: {e:?}"))?;
+            p.vga.bios_sync(None,None,Some(shape as u16));
             Ok(None)
         },
         (0x10,0x02)=>{
             let page=(p.cpu.regs[3]>>8)&255;
             if page>=8{return Err("BIOS cursor page must be 0..7".into());}
             let pos=p.cpu.regs[2]&0xffff;
+            let active=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("BIOS active page read: {e:?}"))?&7;
+            let start=p.ram.load(0x44e,MemWidth::Word).map_err(|e|format!("BIOS page start read: {e:?}"))?/2;
+            let cols=p.ram.load(0x44a,MemWidth::Word).map_err(|e|format!("BIOS columns read: {e:?}"))?.clamp(1,80);
             if p.com1.is_some()&&matches!(files::system_file(p,1),Ok(Some(3))){
-                let active=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("BIOS active page read: {e:?}"))?&7;
                 let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?&0x7f;
                 let prev=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?;
                 let(prev_row,prev_col)=((prev>>8)&255,prev&255);
@@ -228,6 +232,10 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
                 }
             }
             p.ram.store(0x450+page*2,MemWidth::Word,pos).map_err(|e|format!("BIOS cursor position write: {e:?}"))?;
+            if page==active{
+                let cell=(start+((pos>>8)&255)*cols+(pos&255))as u16;
+                p.vga.bios_sync(None,Some(cell),None);
+            }
             Ok(None)
         },
         (0x10,0x03)=>{
@@ -541,9 +549,12 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x21,0x71)=>{
-            // No long-file-name API: AL=00h, CF=1, so AX=7100h (FreeDOS without LFN).
-            p.cpu.regs[0]&=!255;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
-            Ok(None)
+            if p.dos.drive.lfn_available(){lfn::service(p)?;Ok(None)}
+            else{
+                // No host folder mounted: keep AL=00h, CF=1 (AX=7100h).
+                p.cpu.regs[0]&=!255;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+                Ok(None)
+            }
         },
         (0x21,0x5f) if !matches!(p.cpu.regs[0]as u8,7|8)=>{
             // Redirector calls go to INT 2Fh AX=111Eh. With no network

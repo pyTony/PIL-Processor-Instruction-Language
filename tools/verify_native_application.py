@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,9 @@ def check(engine, runtime, work, name, data, tail, expected, exit_code):
     metadata = json.loads(executable.with_suffix('.native.json').read_text())
     assert metadata['original_file_required_at_runtime'] is False
     assert metadata['retained_executable_resources'] is True
+    assert 'shared_runtime_dir' in metadata and metadata['shared_runtime_dir']
+    assert not Path(metadata['shared_runtime_dir']).is_absolute(), metadata['shared_runtime_dir']
+    assert not (output / runtime.name).exists(), f'{runtime.name} should not be copied by default'
     source.unlink()
     assert not source.exists()
     config = work / 'empty.conf'
@@ -79,6 +83,51 @@ def main():
         check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFM.EXE',
               (ROOT / 'programs' / 'dos' / 'MZARGS.EXE').read_bytes(),
               ['A', 'B'], 'PIL MZ:  A B\n', 0)
+
+        # Verify dine.latest.json pointer resolution via DINE_RUNTIME=<dir>.
+        suffix = '.exe' if os.name == 'nt' else ''
+        proofc = work / 'output' / f'Native_PROOFC{suffix}'
+        config = work / 'empty.conf'
+        latest_dir = work / 'latest-dir'
+        version_dir = latest_dir / 'builds' / 'latest'
+        version_dir.mkdir(parents=True)
+        shutil.copy2(args.runtime.resolve(), version_dir / args.runtime.name)
+        (latest_dir / 'dine.latest.json').write_text(json.dumps({
+            'format': 1,
+            'shared_runtime': args.runtime.name,
+            'shared_runtime_dir': 'builds/latest',
+        }) + '\n', encoding='utf-8')
+        env_latest = {**os.environ, 'DINE_TEXT': 'headless', 'DINE_PROTOCOL': '0',
+                      'PILDOS_CONFIG': str(config), 'DINE_RUNTIME': str(latest_dir)}
+        result = subprocess.run([str(proofc)], cwd=work, env=env_latest,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        assert result.returncode == 42, (result.returncode, result.stderr)
+        assert result.stdout.replace(b'\r\n', b'\n') == b'Native proof\n', result.stdout
+
+        # Verify --copy-runtime standalone mode (works even without .native.json) and --force.
+        standalone_src = work / 'PROOFC.COM'
+        standalone_src.write_bytes(bytes.fromhex('ba0c01b409cd21b82a4ccd21') + b'Native proof\r\n$')
+        standalone_out = work / 'standalone'
+        subprocess.run([sys.executable, str(ROOT / 'tools' / 'compile_application.py'),
+                        str(standalone_src), '--engine', str(args.engine.resolve()),
+                        '--runtime', str(args.runtime.resolve()), '--copy-runtime',
+                        '--output-dir', str(standalone_out)], cwd=ROOT, check=True)
+        subprocess.run([sys.executable, str(ROOT / 'tools' / 'compile_application.py'),
+                        str(standalone_src), '--engine', str(args.engine.resolve()),
+                        '--runtime', str(args.runtime.resolve()), '--copy-runtime', '--force',
+                        '--output-dir', str(standalone_out)], cwd=ROOT, check=True)
+        standalone_src.unlink()
+        standalone_exe = standalone_out / f'Native_PROOFC{suffix}'
+        standalone_meta = standalone_exe.with_suffix('.native.json')
+        assert json.loads(standalone_meta.read_text())['shared_runtime_dir'] == '.'
+        assert (standalone_out / args.runtime.name).is_file()
+        standalone_meta.unlink()
+        env_plain = {**os.environ, 'DINE_TEXT': 'headless', 'DINE_PROTOCOL': '0',
+                     'PILDOS_CONFIG': str(config)}
+        result = subprocess.run([str(standalone_exe)], cwd=work, env=env_plain,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        assert result.returncode == 42, (result.returncode, result.stderr)
+        assert result.stdout.replace(b'\r\n', b'\n') == b'Native proof\n', result.stdout
     print('Native application integration checks passed.')
 
 

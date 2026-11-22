@@ -836,21 +836,348 @@ pub(crate) fn emit(input: &str, output: &str) -> Result<String, String> {
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or("invalid application map filename")?;
-    let mut source=String::from("// Generated application calls; CPU and DOS implementation is in Dine.\nuse std::ffi::{c_char,CString};\n#[cfg_attr(windows,link(name=\"dine\",kind=\"raw-dylib\"))]\n#[cfg_attr(not(windows),link(name=\"dine\"))]\nextern \"C\" { fn dine_run_application_v1(data:*const u8,len:usize,name:*const c_char,tail:*const c_char,dispatch:unsafe extern \"C\" fn(u32)->u32)->i32; fn dine_session_application_v1(data:*const u8,len:usize,name:*const c_char,tail:*const c_char,dispatch:unsafe extern \"C\" fn(u32)->u32)->i32; }\n");
-    source.push_str(&format!("unsafe extern \"C\" fn dispatch(offset:u32)->u32{{\nlet map=include_bytes!({map_include:?});\nlet n=(offset&0x7fffffff)as usize;\nlet at=if offset&0x80000000==0{{if n>={initial_len}{{return u32::MAX;}}n}}else{{if n>={resource_len}{{return u32::MAX;}}n+{initial_len}}};\nu32::from_le_bytes(map[at*4..at*4+4].try_into().unwrap())\n}}\n"));
-    source.push_str(&format!("fn main(){{\nlet data=include_bytes!({include:?});\nlet name=CString::new({name:?}).unwrap();\n"));
+    let mut source = String::from(
+        "// Generated application calls; CPU and DOS implementation is in Dine.\n",
+    );
     source.push_str(
-        r#"let protocol=std::env::var("DINE_PROTOCOL").is_ok_and(|v|v=="1");
-let tail=std::env::args().skip(1).map(|arg| {
+        r####"use std::ffi::{c_char, c_void, CStr, CString};
+use std::path::{Component, Path, PathBuf};
+
+#[cfg(windows)]
+const DEFAULT_LIBRARY: &str = "dine.dll";
+#[cfg(target_os = "macos")]
+const DEFAULT_LIBRARY: &str = "libdine.dylib";
+#[cfg(all(unix, not(target_os = "macos")))]
+const DEFAULT_LIBRARY: &str = "libdine.so";
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn LoadLibraryW(name: *const u16) -> *mut c_void;
+    fn GetProcAddress(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    fn FreeLibrary(handle: *mut c_void) -> i32;
+}
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), link(name = "dl"))]
+extern "C" {
+    fn dlopen(name: *const c_char, flags: i32) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    fn dlclose(handle: *mut c_void) -> i32;
+    fn dlerror() -> *const c_char;
+}
+#[cfg(not(any(windows, unix)))]
+compile_error!("Dine native applications currently support Windows and Unix hosts");
+
+struct Runtime {
+    handle: *mut c_void,
+}
+impl Runtime {
+    fn open(path: &Path) -> Result<Self, String> {
+        #[cfg(windows)]
+        let (handle, detail) = {
+            use std::os::windows::ffi::OsStrExt;
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            let handle = unsafe { LoadLibraryW(wide.as_ptr()) };
+            let err = std::io::Error::last_os_error();
+            (handle, err.to_string())
+        };
+        #[cfg(unix)]
+        let (handle, detail) = {
+            use std::os::unix::ffi::OsStrExt;
+            let cpath = CString::new(path.as_os_str().as_bytes())
+                .map_err(|_| "invalid native library path")?;
+            let handle = unsafe { dlopen(cpath.as_ptr(), 2) }; // RTLD_NOW
+            let msg = if handle.is_null() {
+                let err = unsafe { dlerror() };
+                if err.is_null() {
+                    std::io::Error::last_os_error().to_string()
+                } else {
+                    unsafe { CStr::from_ptr(err) }.to_string_lossy().into_owned()
+                }
+            } else {
+                String::new()
+            };
+            (handle, msg)
+        };
+        if handle.is_null() {
+            return Err(format!("cannot load Dine runtime {}: {}", path.display(), detail));
+        }
+        Ok(Self { handle })
+    }
+    fn symbol(&self, name: &CStr) -> Result<*mut c_void, String> {
+        #[cfg(windows)]
+        let sym = unsafe { GetProcAddress(self.handle, name.as_ptr()) };
+        #[cfg(unix)]
+        let sym = unsafe { dlsym(self.handle, name.as_ptr()) };
+        if sym.is_null() {
+            return Err(format!("Dine runtime does not export {}", name.to_string_lossy()));
+        }
+        Ok(sym)
+    }
+}
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            FreeLibrary(self.handle);
+        }
+        #[cfg(unix)]
+        unsafe {
+            dlclose(self.handle);
+        }
+    }
+}
+
+fn skip_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+        i += 1;
+    }
+    i
+}
+fn parse_hex4(b: &[u8], i: usize) -> Option<(u32, usize)> {
+    let hex = b.get(i..i + 4)?;
+    let s = std::str::from_utf8(hex).ok()?;
+    Some((u32::from_str_radix(s, 16).ok()?, i + 4))
+}
+fn parse_json_str(b: &[u8], mut i: usize) -> Option<(String, usize)> {
+    if b.get(i) != Some(&b'"') {
+        return None;
+    }
+    i += 1;
+    let mut out = String::new();
+    while i < b.len() {
+        match b[i] {
+            b'"' => return Some((out, i + 1)),
+            b'\\' => {
+                i += 1;
+                match *b.get(i)? {
+                    b'"' => out.push('"'),
+                    b'\\' => out.push('\\'),
+                    b'/' => out.push('/'),
+                    b'b' => out.push('\x08'),
+                    b'f' => out.push('\x0c'),
+                    b'n' => out.push('\n'),
+                    b'r' => out.push('\r'),
+                    b't' => out.push('\t'),
+                    b'u' => {
+                        let (hi, next) = parse_hex4(b, i + 1)?;
+                        i = next;
+                        let code = if (0xD800..=0xDBFF).contains(&hi) && b.get(i..i + 2) == Some(b"\\u") {
+                            let (lo, next2) = parse_hex4(b, i + 2)?;
+                            if !(0xDC00..=0xDFFF).contains(&lo) {
+                                return None;
+                            }
+                            i = next2;
+                            0x10000 + (((hi - 0xD800) << 10) | (lo - 0xDC00))
+                        } else {
+                            hi
+                        };
+                        out.push(char::from_u32(code)?);
+                        continue;
+                    }
+                    _ => return None,
+                }
+                i += 1;
+            }
+            0..=0x1f => return None,
+            _ => {
+                let ch = std::str::from_utf8(&b[i..]).ok()?.chars().next()?;
+                out.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+    }
+    None
+}
+fn skip_json_value(b: &[u8], mut i: usize) -> Option<usize> {
+    i = skip_ws(b, i);
+    match *b.get(i)? {
+        b'"' => parse_json_str(b, i).map(|(_, next)| next),
+        b'{' => {
+            i += 1;
+            loop {
+                i = skip_ws(b, i);
+                if b.get(i) == Some(&b'}') {
+                    return Some(i + 1);
+                }
+                let (_, next) = parse_json_str(b, i)?;
+                i = skip_ws(b, next);
+                if b.get(i) != Some(&b':') {
+                    return None;
+                }
+                i = skip_json_value(b, i + 1)?;
+                i = skip_ws(b, i);
+                match b.get(i) {
+                    Some(&b',') => i += 1,
+                    Some(&b'}') => return Some(i + 1),
+                    _ => return None,
+                }
+            }
+        }
+        b'[' => {
+            i += 1;
+            loop {
+                i = skip_ws(b, i);
+                if b.get(i) == Some(&b']') {
+                    return Some(i + 1);
+                }
+                i = skip_json_value(b, i)?;
+                i = skip_ws(b, i);
+                match b.get(i) {
+                    Some(&b',') => i += 1,
+                    Some(&b']') => return Some(i + 1),
+                    _ => return None,
+                }
+            }
+        }
+        _ => {
+            while i < b.len() && !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n' | b',' | b'}' | b']') {
+                i += 1;
+            }
+            Some(i)
+        }
+    }
+}
+fn json_string(text: &str, wanted: &str) -> Option<String> {
+    let b = text.trim_start_matches('\u{FEFF}').as_bytes();
+    let mut i = skip_ws(b, 0);
+    if b.get(i) != Some(&b'{') {
+        return None;
+    }
+    i += 1;
+    loop {
+        i = skip_ws(b, i);
+        if b.get(i) == Some(&b'}') {
+            return None;
+        }
+        let (key, next) = parse_json_str(b, i)?;
+        i = skip_ws(b, next);
+        if b.get(i) != Some(&b':') {
+            return None;
+        }
+        i = skip_ws(b, i + 1);
+        if key == wanted {
+            return if b.get(i) == Some(&b'"') {
+                parse_json_str(b, i).map(|(v, _)| v)
+            } else {
+                None
+            };
+        }
+        i = skip_json_value(b, i)?;
+        i = skip_ws(b, i);
+        match b.get(i) {
+            Some(&b',') => i += 1,
+            _ => return None,
+        }
+    }
+}
+fn safe_filename(raw: &str) -> Option<&str> {
+    (!raw.is_empty() && !raw.contains(['/', '\\', ':']) && raw != "." && raw != "..").then_some(raw)
+}
+fn resolve_path(base: &Path, raw: &str) -> PathBuf {
+    let p = Path::new(raw);
+    let joined = if p.is_absolute() { p.to_path_buf() } else { base.join(p) };
+    let mut out = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !matches!(
+                    out.components().next_back(),
+                    None | Some(Component::Prefix(_)) | Some(Component::RootDir) | Some(Component::ParentDir)
+                ) {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push(c);
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+fn from_dir(dir: &Path, lib_name: &str) -> Option<PathBuf> {
+    let direct = dir.join(lib_name);
+    if let Ok(text) = std::fs::read_to_string(dir.join("dine.latest.json")) {
+        if let Some(rel_dir) = json_string(&text, "shared_runtime_dir") {
+            let latest_lib = json_string(&text, "shared_runtime")
+                .as_deref()
+                .and_then(safe_filename)
+                .map(str::to_owned)
+                .unwrap_or_else(|| lib_name.to_owned());
+            let candidate = resolve_path(dir, &rel_dir).join(latest_lib);
+            if candidate.is_file() {
+                let direct_newer = direct.is_file()
+                    && match (
+                        std::fs::metadata(&direct).and_then(|m| m.modified()),
+                        std::fs::metadata(&candidate).and_then(|m| m.modified()),
+                    ) {
+                        (Ok(a), Ok(b)) => a > b,
+                        _ => false,
+                    };
+                return Some(if direct_newer { direct } else { candidate });
+            }
+        }
+    }
+    direct.is_file().then_some(direct)
+}
+fn resolve_runtime_path() -> Result<PathBuf, String> {
+    if let Some(raw) = std::env::var_os("DINE_RUNTIME").filter(|v| !v.is_empty()) {
+        let p = PathBuf::from(raw);
+        return Ok(if p.is_dir() {
+            from_dir(&p, DEFAULT_LIBRARY).unwrap_or_else(|| p.join(DEFAULT_LIBRARY))
+        } else {
+            p
+        });
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_dir = exe.parent().ok_or("native application has no parent directory")?;
+    if let Ok(text) = std::fs::read_to_string(exe.with_extension("native.json")) {
+        let lib_name = json_string(&text, "shared_runtime")
+            .as_deref()
+            .and_then(safe_filename)
+            .map(str::to_owned)
+            .unwrap_or_else(|| DEFAULT_LIBRARY.to_owned());
+        if let Some(rel_dir) = json_string(&text, "shared_runtime_dir") {
+            let dir = resolve_path(exe_dir, &rel_dir);
+            if let Some(found) = from_dir(&dir, &lib_name) {
+                return Ok(found);
+            }
+        }
+    }
+    if let Some(found) = from_dir(exe_dir, DEFAULT_LIBRARY) {
+        return Ok(found);
+    }
+    for anc in exe.ancestors().skip(1) {
+        if anc.join("Cargo.toml").is_file() {
+            if let Some(found) = from_dir(&anc.join("target").join("release"), DEFAULT_LIBRARY) {
+                return Ok(found);
+            }
+        }
+    }
+    Ok(PathBuf::from(DEFAULT_LIBRARY))
+}
+"####,
+    );
+    source.push_str(&format!("unsafe extern \"C\" fn dispatch(offset:u32)->u32{{\nlet map=include_bytes!({map_include:?});\nlet n=(offset&0x7fffffff)as usize;\nlet at=if offset&0x80000000==0{{if n>={initial_len}{{return u32::MAX;}}n}}else{{if n>={resource_len}{{return u32::MAX;}}n+{initial_len}}};\nu32::from_le_bytes(map[at*4..at*4+4].try_into().unwrap())\n}}\n"));
+    source.push_str(&format!("fn run()->Result<i32,String>{{\nlet data=include_bytes!({include:?});\nlet name=CString::new({name:?}).unwrap();\n"));
+    source.push_str(
+        r#"let runtime_path=resolve_runtime_path()?;
+let runtime=Runtime::open(&runtime_path)?;
+let protocol=std::env::var("DINE_PROTOCOL").is_ok_and(|v|v=="1");
+type Entry=unsafe extern "C" fn(*const u8,usize,*const c_char,*const c_char,unsafe extern "C" fn(u32)->u32)->i32;
+let entry:Entry=unsafe{std::mem::transmute(runtime.symbol(if protocol{c"dine_session_application_v1"}else{c"dine_run_application_v1"})?)};
+let tail=std::env::args().skip(1).map(|arg|{
     if arg.is_empty()||arg.chars().any(char::is_whitespace){format!("\"{arg}\"")}else{arg}
 }).collect::<Vec<_>>().join(" ");
-let tail=CString::new(tail).expect("command tail contains NUL");
-let status=unsafe{if protocol{
-    dine_session_application_v1(data.as_ptr(),data.len(),name.as_ptr(),tail.as_ptr(),dispatch)
-}else{
-    dine_run_application_v1(data.as_ptr(),data.len(),name.as_ptr(),tail.as_ptr(),dispatch)
-}};
-std::process::exit(if status<0{1}else{status});
+let tail=CString::new(tail).map_err(|_|"command tail contains NUL".to_string())?;
+Ok(unsafe{entry(data.as_ptr(),data.len(),name.as_ptr(),tail.as_ptr(),dispatch)})
+}
+fn main(){
+    match run(){
+        Ok(status)=>std::process::exit(if status<0{1}else{status}),
+        Err(e)=>{eprintln!("Dine native application: {e}");std::process::exit(1);},
+    }
 }
 "#,
     );
@@ -1144,5 +1471,31 @@ mod tests {
         let mut invalid = bytes;
         invalid.push(0);
         assert!(Application::read(&invalid).is_err());
+    }
+    #[test]
+    fn emitted_native_application_uses_dynamic_runtime_pointer_not_static_link() {
+        if precompiled::forms() == 0 {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "pil-emit-dyn-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("PROOF.COM");
+        std::fs::write(&input, [0xb8, 0, 0x4c, 0xcd, 0x21]).unwrap();
+        let out = dir.join("application.rs");
+        emit(input.to_str().unwrap(), out.to_str().unwrap()).unwrap();
+        let source = std::fs::read_to_string(&out).unwrap();
+        assert!(!source.contains("link(name=\"dine\""));
+        assert!(source.contains("LoadLibraryW"));
+        assert!(source.contains("dlopen"));
+        assert!(source.contains("shared_runtime_dir"));
+        assert!(source.contains("dine.latest.json"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

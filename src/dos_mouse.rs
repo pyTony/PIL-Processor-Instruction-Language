@@ -81,6 +81,13 @@ impl Mouse{
         self.x=(self.screen_x+1)/2;self.y=(self.screen_y+1)/2;self.clamp();
     }
     fn sync(&mut self,mode:u8){if self.ready&&self.mode!=mode{self.reset(mode);}}
+    pub(super) fn sync_text_rows(&mut self,rows:u8){
+        if !self.ready||!matches!(self.mode&0x7f,0..=3|7){return;}
+        let new_y=u16::from(rows.max(1))*8-1;
+        if self.ymax==self.screen_y{self.ymax=new_y;}
+        self.screen_y=new_y;
+        self.clamp();
+    }
     fn clamp(&mut self){
         self.x=self.x.clamp(self.xmin,self.xmax);self.y=self.y.clamp(self.ymin,self.ymax);
         if self.mode&0x7f<=3{self.x=self.x/8*8;self.y=self.y/8*8;}
@@ -262,6 +269,10 @@ pub(super) fn service(p:&mut Loaded)->Result<(),String>{
     if let Some(es)=p.dos.mouse.call(&mut p.cpu.regs,mode,es,page)?{
         let i=SegmentRegister::Es.index();
         p.selectors[i]=es;p.image.selectors[i]=es;p.image.segments[i]=p.image.segments[i].real_mode_reload(es);
+    }
+    if p.dos.mouse.enabled&&(f==0||f==0x21){
+        let rows=(p.ram.load(0x484,MemWidth::Byte).unwrap_or(24)+1).clamp(1,100) as u8;
+        p.dos.mouse.sync_text_rows(rows);
     }
     Ok(())
 }

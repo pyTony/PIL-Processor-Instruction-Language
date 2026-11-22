@@ -288,12 +288,20 @@ pub(crate) fn ansi_frame(cells:&[u8],columns:u32,cursor:(u32,u32),cursor_visible
 
 #[cfg(any(windows,test))]
 pub(crate) use super::vga_text::text_pixels;
-/// The BIOS cursor (0040:0050 for the page, shape at 0040:0060) on a 16-line
-/// cell, or None when it is off.
+fn cell_height(p:&Loaded)->usize{
+    p.ram.load(0x485,MemWidth::Word).ok().map(|h|h as usize).filter(|&h|matches!(h,1..=32)).unwrap_or(16)
+}
+/// The BIOS cursor (0040:0050 for the page, shape at 0040:0060) on the
+/// current cell height, or None when it is off.
 fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
     let byte=|at|p.ram.load(at,MemWidth::Byte).ok();
     let (end,start)=(byte(0x460)?,byte(0x461)?);
-    super::vga_text::cursor_lines(start as u8,end as u8)
+    let height=cell_height(p);
+    if height==16{return super::vga_text::cursor_lines(start as u8,end as u8);}
+    let (start,end)=((start&0x3f) as u8,(end&0x1f) as u8);
+    if start&0x20!=0||start&0x1f>end{return None;}
+    let max=height as u32-1;
+    Some((u32::from(start&0x1f).min(max),u32::from(end).min(max)))
 }
 pub(crate) fn graphics_mode(p:&Loaded)->bool{
     p.ram.load(0x449,MemWidth::Byte).is_ok_and(|m|!matches!(m&0x7f,0..=3|7))
@@ -412,6 +420,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     else if id==8{note=Some(session.stop_text_write_watch().map(|_|"Text memory write watch disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id==9{note=Some(session.enable_service_trace().map(|_|"INT 10h/16h/21h service trace enabled".to_string()).unwrap_or_else(|e|e));}
                     else if id==10{note=Some(session.disable_service_trace().map(|_|"Service trace disabled".to_string()).unwrap_or_else(|e|e));}
+                    else if let Some((mode,msg))=host_pointer_command(id){front.host_pointer=mode;note=Some(msg.into());}
                     else if id!=0{note=front.media_command(session,id);}
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
@@ -530,6 +539,23 @@ fn clipboard_mount_path(text:&str)->Result<&str,String>{
     Ok(path)
 }
 
+pub(crate) fn host_pointer_menu_items(current:HostPointer)->Vec<(u16,String)>{
+    let label=|mode:HostPointer,text:&str|if current==mode{format!("* {text}")}else{text.into()};
+    vec![
+        (11,label(HostPointer::Auto,"Auto (hide while DOS cursor shows)")),
+        (12,label(HostPointer::Show,"Always show host pointer")),
+        (13,label(HostPointer::Hide,"Always hide host pointer")),
+    ]
+}
+pub(crate) fn host_pointer_command(id:u16)->Option<(HostPointer,&'static str)>{
+    match id{
+        11=>Some((HostPointer::Auto,"Host pointer: auto")),
+        12=>Some((HostPointer::Show,"Host pointer: always shown")),
+        13=>Some((HostPointer::Hide,"Host pointer: always hidden")),
+        _=>None,
+    }
+}
+
 impl Front{
     pub(crate) fn title(&self,title:&str){
         #[cfg(windows)]
@@ -547,6 +573,7 @@ impl Front{
                 items.push((base+8,"Mount clipboard path".into()));
                 items.push((base+7,"Unmount".into()));groups.push((format!("Drive {drive}:"),items));
             }
+            groups.push(("Mouse pointer".into(),host_pointer_menu_items(self.host_pointer)));
             groups.push(("Diagnostics".into(),vec![
                 (3,"Save live guest snapshot".into()),
                 (4,"Disable instruction history".into()),
@@ -731,14 +758,30 @@ impl Front{
 
 // Programs can upload an alternate CP437 glyph set to VGA plane 2. Preserve
 // the built-in ROM font for untouched glyphs: text font VRAM is initially zero.
-#[cfg(any(windows,test))]
+#[cfg(test)]
 fn visible_text_font(p:&Loaded,rom:&[u8])->Vec<u8>{
-    let mut font=rom.to_vec();
+    visible_text_font_height(p,rom,16)
+}
+#[cfg(any(windows,test))]
+fn visible_text_font_height(p:&Loaded,rom:&[u8],height:usize)->Vec<u8>{
+    let mut font=match height{
+        8=>super::console::graphics_text::font().unwrap_or_else(|_|vec![0;256*8]),
+        14=>vga_text::font14().unwrap_or_else(|_|vec![0;256*14]),
+        16=>rom.to_vec(),
+        _=>{
+            let mut out=vec![0;256*height];
+            let copy=height.min(16);
+            for g in 0..256{out[g*height..g*height+copy].copy_from_slice(&rom[g*16..g*16+copy]);}
+            out
+        }
+    };
     let Some(planes)=p.ram.planar().or(p.vga.font.as_ref()) else{return font;};
+    let seq3=p.vga.idle.seq[3];
+    let block=usize::from((seq3&0x03)|((seq3&0x10)>>2))*0x2000;
     for glyph in 0..256{
-        let at=glyph*32;
-        if (0..16).any(|row|planes.peek(2,at+row)!=0){
-            for row in 0..16{font[glyph*16+row]=planes.peek(2,at+row);}
+        let at=block+glyph*32;
+        if (0..height).any(|row|planes.peek(2,at+row)!=0){
+            for row in 0..height{font[glyph*height+row]=planes.peek(2,at+row);}
         }
     }
     font
@@ -777,11 +820,12 @@ impl WindowFront{
         let p=session.machine().ok_or("session state lost")?;
         let frame=if graphics_mode(p){desktop_vga_frame(p)}else{
             let (cells,columns,(row,column))=session.screen()?;
-            let font=visible_text_font(p,&self.font);
+            let height=cell_height(p);
+            let font=visible_text_font_height(p,&self.font,height);
             // The hardware cursor blinks at about 3.75 Hz (16 frames of 60).
             let on=self.started.elapsed().as_millis()/267%2==0;
             let cursor=cursor_shape(p).filter(|_|on).map(|(a,b)|(row,column,a,b));
-            Some(text_pixels(&cells,columns,&font,cursor))
+            Some(vga_text::text_pixels_height(&cells,columns,height,&font,cursor))
         };
         let Some(mut frame)=frame else{self.window.no_frame();return Ok(());};
         if let Some((s,columns,rows))=selection{select::highlight(&mut frame,columns,rows,s);}
@@ -891,7 +935,7 @@ pub(crate) mod catalog;
 fn grid(p:&Loaded)->Result<(u32,u32),String>{
     let read=|at,w|p.ram.load(at,w).map_err(|e|format!("BIOS screen size read: {e:?}"));
     let columns=read(0x44a,MemWidth::Word)?.clamp(1,80);
-    let rows=if graphics_mode(p){read(0x484,MemWidth::Byte)?+1}else{25};
+    let rows=(read(0x484,MemWidth::Byte)?+1).clamp(1,100);
     Ok((columns,rows))
 }
 

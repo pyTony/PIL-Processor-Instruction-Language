@@ -60,21 +60,100 @@ def stamp_path(root: Path, output: Path) -> Path:
     return root / "target" / "runtime-checks" / (identity + ".json")
 
 
-def current(root: Path, output: Path, kind: str) -> bool:
-    if (root / "target" / "pil-build-in-progress").exists() or not output.is_file():
+def last_error_path(root: Path) -> Path:
+    return root / "target" / "runtime-checks" / "last-error.txt"
+
+
+def _cli_newer_than_inputs(root: Path, output: Path) -> bool:
+    inputs = [root / n for n in ("Cargo.toml", "Cargo.lock", "build.rs")]
+    inputs += [p for folder in ("src", "isa", ".cargo") for p in (root / folder).rglob("*") if p.is_file()]
+    return not any(p.is_file() and p.stat().st_mtime_ns > output.stat().st_mtime_ns for p in inputs)
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        kernel.GetExitCodeProcess.restype = ctypes.c_int
+        kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+        kernel.CloseHandle.restype = ctypes.c_int
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == 5
+        try:
+            exit_code = ctypes.c_ulong()
+            if kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == 259
+            return False
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+
+
+def _active_build_marker(root: Path) -> bool:
+    marker = root / "target" / "pil-build-in-progress"
+    if not marker.exists():
+        return False
+    pid_file = marker / "pid"
+    if not pid_file.is_file():
+        return True
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return True
+    return _pid_alive(pid)
+
+
+def _file_in_use(path: Path) -> bool:
+    if os.name != "nt" or not path.is_file():
         return False
     try:
-        stamp = json.loads(stamp_path(root, output).read_text(encoding="utf-8"))
-        return (isinstance(stamp, dict) and stamp.get("kind") == kind
-                and stamp.get("inputs") == fingerprint(root)
-                and stamp.get("output") == hashlib.sha256(output.read_bytes()).hexdigest())
+        with open(path, "r+b"):
+            return False
+    except PermissionError:
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _write_stamp(root: Path, output: Path, kind: str, inputs_fp: str, output_sha: str) -> None:
+    stamp = stamp_path(root, output)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(json.dumps({"kind": kind, "inputs": inputs_fp,
+                                 "output": output_sha}) + "\n", encoding="utf-8")
+
+
+def current(root: Path, output: Path, kind: str) -> bool:
+    if _active_build_marker(root) or not output.is_file():
+        return False
+    stamp_file = stamp_path(root, output)
+    try:
+        stamp = json.loads(stamp_file.read_text(encoding="utf-8"))
+        output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
+        if isinstance(stamp, dict) and stamp.get("kind") == kind:
+            if stamp.get("inputs") == fingerprint(root) and stamp.get("output") == output_sha:
+                return True
+            if (kind == "cli" and stamp.get("output") != output_sha
+                    and output.stat().st_mtime_ns >= stamp_file.stat().st_mtime_ns
+                    and _cli_newer_than_inputs(root, output)):
+                return True
+        return False
     except (OSError, ValueError):
         # Adopt a pre-existing CLI build using the Retro launcher's original
         # timestamp check. A library needs one Cargo check to verify its feature.
         if kind == "cli":
-            inputs = [root / n for n in ("Cargo.toml", "Cargo.lock", "build.rs")]
-            inputs += [p for folder in ("src", "isa", ".cargo") for p in (root / folder).rglob("*") if p.is_file()]
-            return not any(p.is_file() and p.stat().st_mtime_ns > output.stat().st_mtime_ns for p in inputs)
+            return _cli_newer_than_inputs(root, output)
         return False
 
 
@@ -88,6 +167,43 @@ def record_copy(root: Path, source: Path, output: Path) -> None:
         destination = stamp_path(root, output)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(data, encoding="utf-8")
+
+
+def publish_latest(root: Path, source: Path) -> Path:
+    """Copy a verified shared library to target/runtime-builds/<sha>/ and update dine.latest.json."""
+    if not source.is_file():
+        raise ValueError(f"cannot publish missing shared library: {source}")
+    data = source.read_bytes()
+    full_sha = hashlib.sha256(data).hexdigest()
+    short = full_sha[:16]
+    builds_dir = root / "target" / "runtime-builds"
+    version_dir = builds_dir / short
+    version_dir.mkdir(parents=True, exist_ok=True)
+    copy = version_dir / source.name
+    if not copy.is_file() or hashlib.sha256(copy.read_bytes()).hexdigest() != full_sha:
+        pending = copy.with_name(copy.name + ".pending")
+        shutil.copy2(source, pending)
+        pending.replace(copy)
+    latest = source.parent / "dine.latest.json"
+    record = {
+        "format": 1,
+        "shared_runtime": source.name,
+        "shared_runtime_dir": Path(os.path.relpath(version_dir, source.parent)).as_posix(),
+        "sha256": full_sha,
+    }
+    pending_json = latest.with_name(latest.name + ".pending")
+    pending_json.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    pending_json.replace(latest)
+    for entry in builds_dir.iterdir():
+        if entry.name != short:
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except OSError:
+                pass
+    return latest
 
 
 def show_build_progress() -> None:
@@ -122,22 +238,34 @@ def ensure(root: Path, output: Path, kind: str, *, check_only: bool = False, gui
         print(f"Using explicitly selected external runtime: {output}", file=sys.stderr)
         return output
     if current(root, output, kind):
-        stamp = stamp_path(root, output)
-        if kind == "cli" and not stamp.exists() and not check_only and (root / "Cargo.toml").is_file():
-            stamp.parent.mkdir(parents=True, exist_ok=True)
-            stamp.write_text(json.dumps({"kind": kind, "inputs": fingerprint(root),
-                                        "output": hashlib.sha256(output.read_bytes()).hexdigest()}) + "\n", encoding="utf-8")
+        if kind == "cli" and not check_only and (root / "Cargo.toml").is_file():
+            inputs_fp = fingerprint(root)
+            output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
+            stamp = None
+            try:
+                stamp = json.loads(stamp_path(root, output).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            if not (isinstance(stamp, dict) and stamp.get("kind") == kind
+                    and stamp.get("inputs") == inputs_fp and stamp.get("output") == output_sha):
+                _write_stamp(root, output, kind, inputs_fp, output_sha)
+        if kind == "library" and not check_only and output.is_relative_to((root / "target").resolve()):
+            publish_latest(root, output)
         print(f"Runtime up to date: {output}", file=sys.stderr)
         return output
     marker = root / "target" / "pil-build-in-progress"
     if marker.exists():
-        raise ValueError("A shared runtime build is in progress; wait for it to finish.")
+        if _active_build_marker(root):
+            raise ValueError("A shared runtime build is in progress; wait for it to finish.")
+        shutil.rmtree(marker, ignore_errors=True)
     if check_only:
         raise ValueError(f"Runtime needs a freshness/build check: {output}")
     if not (root / "Cargo.toml").is_file() and output.is_file():
         return output  # Installed binary without a source checkout.
     if shutil.which("cargo") is None:
         raise ValueError("Runtime is missing or stale; install Cargo to build it.")
+    if _file_in_use(output):
+        raise ValueError(f"{output.name} is currently in use. Close any running PIL DOS window and try again.")
     inputs = fingerprint(root)
     output.parent.mkdir(parents=True, exist_ok=True)
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +279,7 @@ def ensure(root: Path, output: Path, kind: str, *, check_only: bool = False, gui
     env.pop("CARGO_BUILD_TARGET", None)
     env.pop("CARGO_TARGET_DIR", None)
     try:
+        (marker / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
         if gui:
             show_build_progress()
         print(f"Checking/building shared {kind} runtime: {output}", file=sys.stderr)
@@ -161,13 +290,12 @@ def ensure(root: Path, output: Path, kind: str, *, check_only: bool = False, gui
             raise ValueError(f"Build did not produce {built}")
         if built != output:
             shutil.copy2(built, output)
-        stamp = stamp_path(root, output)
-        stamp.parent.mkdir(parents=True, exist_ok=True)
-        stamp.write_text(json.dumps({"kind": kind, "inputs": inputs,
-                                    "output": hashlib.sha256(output.read_bytes()).hexdigest()}) + "\n", encoding="utf-8")
+        _write_stamp(root, output, kind, inputs, hashlib.sha256(output.read_bytes()).hexdigest())
+        if kind == "library" and output.is_relative_to((root / "target").resolve()):
+            publish_latest(root, output)
         return output
     finally:
-        marker.rmdir()
+        shutil.rmtree(marker, ignore_errors=True)
 
 
 def main() -> int:
@@ -178,12 +306,27 @@ def main() -> int:
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
+    err_file = last_error_path(args.root)
+    if not args.check_only:
+        try:
+            err_file.unlink(missing_ok=True)
+        except OSError:
+            pass
     try:
         git_status(args.root, gui=args.gui)
         ensure(args.root, args.engine, args.kind, check_only=args.check_only, gui=args.gui)
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
-        print(f"PIL startup: {error}", file=sys.stderr)
+        message = f"PIL startup: {error}"
+        if isinstance(error, subprocess.CalledProcessError) and _file_in_use(args.engine.resolve()):
+            message += f"\n{args.engine.name} is currently in use. Close any running PIL DOS window and try again."
+        print(message, file=sys.stderr)
+        if not args.check_only:
+            try:
+                err_file.parent.mkdir(parents=True, exist_ok=True)
+                err_file.write_text(message + "\n", encoding="utf-8")
+            except OSError:
+                pass
         return 1
 
 

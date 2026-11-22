@@ -68,8 +68,11 @@ pub(crate) fn cursor_lines(start:u8,end:u8)->Option<(u32,u32)>{
 /// first line, last line) when it is to be drawn. Attribute bit 7 (blink,
 /// the VGA default) is not drawn: the background takes bits 4-6 only.
 pub(crate) fn text_pixels(cells:&[u8],columns:u32,font:&[u8],cursor:Option<(u32,u32,u32,u32)>)->(usize,usize,Vec<u32>){
-    let columns=columns.max(1) as usize;let rows=cells.len()/(columns*2);
-    let (width,height)=(columns*CELL_WIDTH,rows*CELL_HEIGHT);
+    text_pixels_height(cells,columns,CELL_HEIGHT,font,cursor)
+}
+pub(crate) fn text_pixels_height(cells:&[u8],columns:u32,cell_height:usize,font:&[u8],cursor:Option<(u32,u32,u32,u32)>)->(usize,usize,Vec<u32>){
+    let columns=columns.max(1) as usize;let cell_height=cell_height.max(1);let rows=cells.len()/(columns*2);
+    let (width,height)=(columns*CELL_WIDTH,rows*cell_height);
     let mut pixels=vec![0u32;width*height];
     for row in 0..rows{for column in 0..columns{
         let at=(row*columns+column)*2;
@@ -77,10 +80,10 @@ pub(crate) fn text_pixels(cells:&[u8],columns:u32,font:&[u8],cursor:Option<(u32,
         let (fg,bg)=(COLORS[usize::from(attr&15)],COLORS[usize::from((attr>>4)&7)]);
         let under=cursor.filter(|c|(c.0 as usize,c.1 as usize)==(row,column));
         let line_graphics=(0xc0..=0xdf).contains(&ch);
-        for y in 0..CELL_HEIGHT{
-            let bits=font.get(ch*CELL_HEIGHT+y).copied().unwrap_or(0);
+        for y in 0..cell_height{
+            let bits=font.get(ch*cell_height+y).copied().unwrap_or(0);
             let solid=under.is_some_and(|c|(c.2 as usize..=c.3 as usize).contains(&y));
-            let line=&mut pixels[(row*CELL_HEIGHT+y)*width+column*CELL_WIDTH..][..CELL_WIDTH];
+            let line=&mut pixels[(row*cell_height+y)*width+column*CELL_WIDTH..][..CELL_WIDTH];
             for (x,p) in line.iter_mut().enumerate(){
                 let lit=if x<8{bits&(0x80>>x)!=0}else{line_graphics&&bits&1!=0};
                 *p=if solid||lit{fg}else{bg};

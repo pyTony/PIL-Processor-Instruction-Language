@@ -97,7 +97,11 @@ impl Vga {
     /// Legacy CGA latch. Port 3D8h is output-only; BIOS 0040:0065 is
     /// software's shadow and direct OUT must not update that RAM byte.
     pub fn cga_mode(&self)->u8{self.cga_mode}
-    pub fn bios_cga_mode(&mut self,mode:u32){self.cga_mode=match mode{4=>0x2a,5=>0x2e,6=>0x1e,_=>0x29};self.attr[16]=(self.attr[16]&!8)|((self.cga_mode&0x20)>>2);}
+    pub fn bios_cga_mode(&mut self,mode:u32){
+        self.cga_mode=match mode{4=>0x2a,5=>0x2e,6=>0x1e,_=>0x29};
+        self.attr[16]=(self.attr[16]&!8)|((self.cga_mode&0x20)>>2);
+        if matches!(mode,0..=3|7){self.regs[9]=0x4f;self.regs[10]=6;self.regs[11]=7;}
+    }
     pub fn reset_palette(&mut self){self.dac=default_palette();self.dac_mask=255;}
     /// BIOS palette load for a 16-colour planar mode (EGA layout for 350 and
     /// 480 lines, CGA-compatible for 200 lines).
@@ -203,6 +207,11 @@ impl Vga {
         if let Some(v)=start{let [hi,lo]=v.to_be_bytes();self.regs[12]=hi;self.regs[13]=lo;self.start_override=false;}
         if let Some(v)=cursor{let [hi,lo]=v.to_be_bytes();self.regs[14]=hi;self.regs[15]=lo;self.cursor_override=false;}
         if let Some(v)=shape{let [hi,lo]=v.to_be_bytes();self.regs[10]=hi;self.regs[11]=lo;}
+    }
+    /// Updates CRTC maximum scan line and cursor shape for a BIOS font load.
+    pub fn set_char_height(&mut self,height:u8,cursor:u16){
+        self.regs[9]=(self.regs[9]&0xe0)|(height.saturating_sub(1)&0x1f);
+        self.bios_sync(None,None,Some(cursor));
     }
 }
 #[cfg(test)]

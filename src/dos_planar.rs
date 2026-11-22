@@ -165,9 +165,15 @@ pub(super) fn graphics_font(cell:u32)->u32{
 /// AL) is not modelled.
 pub(super) fn font(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
-    if al==0{return super::vga_font::load_user_patterns(p);}
-    if al==3{return super::vga_font::select_blocks(p);}
-    if al!=0x30{return Err(format!("INT 10h AX=11{al:02X}h (font load) is not modelled"));}
+    match al{
+        0|0x10=>return super::vga_font::load_user_patterns(p,al==0x10),
+        1|0x11=>return super::vga_font::load_rom_font(p,14,al==0x11),
+        2|0x12=>return super::vga_font::load_rom_font(p,8,al==0x12),
+        3=>return super::vga_font::select_blocks(p),
+        4|0x14=>return super::vga_font::load_rom_font(p,16,al==0x14),
+        0x30=>{},
+        _=>return Err(format!("INT 10h AX=11{al:02X}h (font load) is not modelled")),
+    }
     let bh=(p.cpu.regs[3]>>8)&255;
     let pointer=match bh{
         0|1=>p.ram.load(if bh==0{0x1f*4}else{0x43*4},MemWidth::Dword).map_err(|e|format!("{e:?}"))?,

@@ -10,11 +10,15 @@ python tools/compile_application.py path/to/application.exe
 ```
 
 The default output is `programs/compiled/Native_application.exe` on Windows
-(no `.exe` suffix on Unix), plus the shared Dine library and a `.native.json`
-description. Keep the library beside the native executable. Multiple native
-applications in the same output folder use that one library. Rust and Cargo
-are needed to build; the original DOS executable is not an external dependency
-when running the result.
+(no `.exe` suffix on Unix) plus a `.native.json` description pointing to the
+shared Dine runtime directory (`shared_runtime_dir`), so the shared library does
+not need to be copied into every output folder. When `dine.latest.json` is
+present in that directory, the launcher loads the newest build recorded there
+without rebuilding or copying the application. Pass `--copy-runtime` if you want
+a copy of the library placed beside the native executable for standalone use, or
+`--force` to replace an existing native output. Rust and Cargo are needed to
+build; the original DOS executable is not an external dependency when running
+the result.
 
 ## Where the program finds its files
 
@@ -47,14 +51,16 @@ present there, the native launcher searches its executable's parent folders
 for `pildos.conf`, so an application in a nested output directory can still
 find the checkout configuration. On Windows the native application uses the
 DOS window frontend; `mouse=true` enables the guest mouse driver and host
-pointer input. Keep the application's `dine.dll` beside it when rebuilding the
-shared runtime.
+pointer input. With `--copy-runtime`, keep the copied library beside the
+executable when rebuilding the shared runtime; otherwise `.native.json`
+resolves the shared runtime directory (and `dine.latest.json`) automatically,
+and `DINE_RUNTIME` overrides the library or runtime directory when needed.
 
 For a local compiler/runtime build, pass `--engine` and `--runtime`. Use
-`--output-dir` for a separate destination. The helper refuses existing native
-application outputs and a destination containing a different shared runtime.
-Compiler intermediates live under `target/native-applications/` and are not
-runtime dependencies. Paths in generated Rust are relative to those files.
+`--output-dir` for a separate destination and `--force` to overwrite an
+existing native output in that destination. Compiler intermediates live under
+`target/native-applications/` and are not runtime dependencies. Paths in
+generated Rust and `.native.json` stay relative when possible.
 
 ## What executes
 

@@ -33,8 +33,10 @@ SLICE = 'run 1000000 buffered'
 
 
 class NativeSession(Session):
-    def __init__(self, executable, directory, config, args):
+    def __init__(self, executable, directory, config, args, runtime=None):
         env = {**os.environ, 'PILDOS_CONFIG': str(config), 'DINE_PROTOCOL': '1'}
+        if runtime is not None:
+            env['DINE_RUNTIME'] = str(runtime)
         self.process = subprocess.Popen(
             [str(executable), *args.split()], cwd=directory, env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -68,6 +70,33 @@ def prepare(out, files):
     return directory, config
 
 
+def resolve_native_runtime(native: Path, runtime_name: str) -> Path | None:
+    sibling = native.parent / runtime_name
+    meta_path = native.with_suffix('.native.json')
+    if meta_path.is_file():
+        meta = json.loads(meta_path.read_text(encoding='utf-8'))
+        lib = meta.get('shared_runtime') or runtime_name
+        rel_dir = meta.get('shared_runtime_dir')
+        if rel_dir:
+            runtime_dir = (native.parent / rel_dir).resolve()
+            latest = runtime_dir / 'dine.latest.json'
+            if latest.is_file():
+                latest_meta = json.loads(latest.read_text(encoding='utf-8'))
+                latest_dir = latest_meta.get('shared_runtime_dir')
+                latest_lib = latest_meta.get('shared_runtime') or lib
+                if latest_dir:
+                    candidate = (runtime_dir / latest_dir / latest_lib).resolve()
+                    if candidate.is_file():
+                        return candidate
+            direct = runtime_dir / lib
+            if direct.is_file():
+                return direct
+    if sibling.is_file():
+        return sibling
+    fallback = ROOT / 'target' / 'release' / runtime_name
+    return fallback if fallback.is_file() else None
+
+
 def one(kind, args, files, limit):
     directory, config = prepare(args.out, files)
     if kind == 'original':
@@ -78,8 +107,13 @@ def one(kind, args, files, limit):
     else:
         native = directory / args.native.name
         shutil.copy2(args.native, native)
-        shutil.copy2(args.native.parent / args.runtime_name, directory / args.runtime_name)
-        session = NativeSession(native, directory, config, args.args)
+        sibling = args.native.parent / args.runtime_name
+        runtime = None
+        if sibling.is_file():
+            shutil.copy2(sibling, directory / args.runtime_name)
+        else:
+            runtime = resolve_native_runtime(args.native, args.runtime_name)
+        session = NativeSession(native, directory, config, args.args, runtime=runtime)
     try:
         elapsed, reply = finish(session, limit)
     finally:

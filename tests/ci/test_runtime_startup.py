@@ -1,9 +1,13 @@
 """Shared runtime checks must track system inputs and report Git state."""
 import contextlib
+import hashlib
 import importlib.util
 import io
+import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -82,6 +86,120 @@ class RuntimeStartupTests(unittest.TestCase):
             self.assertIn("+2 -1", text)
             self.assertEqual("not dev/main" in text, branch not in ("dev", "main"))
             self.assertEqual(run.call_args.args[0], ["git", "status", "--porcelain=v2", "--branch"])
+
+    def test_publish_latest_updates_pointer_and_prunes_older_unlocked_builds(self):
+        def build(command, **kwargs):
+            self.output.write_bytes(self.source.read_bytes())
+            return subprocess.CompletedProcess(command, 0)
+        with mock.patch.object(startup.shutil, "which", return_value="cargo"), \
+             mock.patch.object(startup.subprocess, "run", side_effect=build):
+            startup.ensure(self.root, self.output, "library")
+            first_sha = hashlib.sha256(self.output.read_bytes()).hexdigest()
+            latest_file = self.output.parent / "dine.latest.json"
+            first_record = json.loads(latest_file.read_text(encoding="utf-8"))
+            self.assertEqual(first_record["shared_runtime"], self.output.name)
+            self.assertFalse(Path(first_record["shared_runtime_dir"]).is_absolute())
+            self.assertEqual(first_record["shared_runtime_dir"], f"../runtime-builds/{first_sha[:16]}")
+            self.assertEqual(first_record["sha256"], first_sha)
+            first_copy = (self.output.parent / first_record["shared_runtime_dir"] / first_record["shared_runtime"]).resolve()
+            self.assertTrue(first_copy.is_file())
+
+            self.source.write_text("// second build\n")
+            startup.ensure(self.root, self.output, "library")
+            second_sha = hashlib.sha256(self.output.read_bytes()).hexdigest()
+            self.assertNotEqual(first_sha, second_sha)
+            second_record = json.loads(latest_file.read_text(encoding="utf-8"))
+            self.assertEqual(second_record["shared_runtime_dir"], f"../runtime-builds/{second_sha[:16]}")
+            self.assertTrue((self.root / "target/runtime-builds" / second_sha[:16] / self.output.name).is_file())
+            self.assertFalse((self.root / "target/runtime-builds" / first_sha[:16]).exists())
+
+    def test_cli_adopts_newer_manual_build_and_refreshes_stamp(self):
+        cli = self.root / "target/release" / ("pil.exe" if os.name == "nt" else "pil")
+
+        def build(command, **kwargs):
+            cli.parent.mkdir(parents=True, exist_ok=True)
+            cli.write_bytes(self.source.read_bytes())
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(startup.shutil, "which", return_value="cargo"), \
+             mock.patch.object(startup.subprocess, "run", side_effect=build) as run:
+            startup.ensure(self.root, cli, "cli")
+            self.assertEqual(run.call_count, 1)
+
+            stamp_file = startup.stamp_path(self.root, cli)
+            t0 = max(stamp_file.stat().st_mtime_ns, (self.root / "Cargo.toml").stat().st_mtime_ns, cli.stat().st_mtime_ns) + 10_000_000
+            os.utime(stamp_file, ns=(t0, t0))
+            self.source.write_text("// manual source change\n")
+            os.utime(self.source, ns=(t0 + 1_000_000, t0 + 1_000_000))
+            cli.write_bytes(b"manually rebuilt cli binary")
+            os.utime(cli, ns=(t0 + 2_000_000, t0 + 2_000_000))
+
+            startup.ensure(self.root, cli, "cli")
+            self.assertEqual(run.call_count, 1)
+            refreshed = json.loads(stamp_file.read_text(encoding="utf-8"))
+            self.assertEqual(refreshed["output"], hashlib.sha256(cli.read_bytes()).hexdigest())
+            self.assertEqual(refreshed["inputs"], startup.fingerprint(self.root))
+
+            self.source.write_text("// edited without rebuilding\n")
+            os.utime(self.source, ns=(t0 + 3_000_000, t0 + 3_000_000))
+            startup.ensure(self.root, cli, "cli")
+            self.assertEqual(run.call_count, 2)
+
+    def test_stale_build_marker_with_dead_pid_is_recovered(self):
+        marker = self.root / "target/pil-build-in-progress"
+        marker.mkdir(parents=True)
+        (marker / "pid").write_text("999999\n", encoding="utf-8")
+
+        def build(command, **kwargs):
+            self.output.parent.mkdir(parents=True, exist_ok=True)
+            self.output.write_bytes(self.source.read_bytes())
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(startup, "_pid_alive", return_value=True):
+            with self.assertRaisesRegex(ValueError, "in progress"):
+                startup.ensure(self.root, self.output, "library")
+        self.assertTrue(marker.exists())
+
+        with mock.patch.object(startup, "_pid_alive", return_value=False), \
+             mock.patch.object(startup.shutil, "which", return_value="cargo"), \
+             mock.patch.object(startup.subprocess, "run", side_effect=build):
+            startup.ensure(self.root, self.output, "library")
+        self.assertTrue(self.output.is_file())
+        self.assertFalse(marker.exists())
+
+    def test_locked_output_fails_fast_with_clear_message(self):
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        self.output.write_bytes(b"locked")
+        with mock.patch.object(startup, "_file_in_use", return_value=True), \
+             mock.patch.object(startup.shutil, "which", return_value="cargo"), \
+             mock.patch.object(startup.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "in use"):
+                startup.ensure(self.root, self.output, "library")
+        run.assert_not_called()
+
+    def test_main_writes_and_clears_last_error(self):
+        marker = self.root / "target/pil-build-in-progress"
+        marker.mkdir(parents=True)
+        argv = ["runtime_startup.py", "--root", str(self.root), "--engine", str(self.output), "--kind", "library"]
+        with mock.patch.object(sys, "argv", argv), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(startup.main(), 1)
+        err_file = startup.last_error_path(self.root)
+        self.assertTrue(err_file.is_file())
+        self.assertIn("in progress", err_file.read_text(encoding="utf-8"))
+
+        marker.rmdir()
+
+        def build(command, **kwargs):
+            self.output.parent.mkdir(parents=True, exist_ok=True)
+            self.output.write_bytes(self.source.read_bytes())
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(startup.shutil, "which", return_value="cargo"), \
+             mock.patch.object(startup.subprocess, "run", side_effect=build), \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(startup.main(), 0)
+        self.assertFalse(err_file.exists())
 
 
 if __name__ == "__main__":

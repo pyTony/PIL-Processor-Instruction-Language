@@ -7,6 +7,15 @@ uses Dos;
 const
   Width = 320;
   Height = 200;
+  ActNone    = 0;
+  ActZoomIn  = 1;
+  ActZoomOut = 2;
+  ActReset   = 3;
+  ActQuit    = 4;
+
+type
+  TFrame = array[0..Height - 1, 0..Width - 1] of Byte;
+  PFrame = ^TFrame;
 
 var
   Regs: Registers;
@@ -16,9 +25,12 @@ var
   Col, Row, Iter, MaxIter, I, ZoomLevel: Integer;
   Color, R, G, B: Byte;
   HasMouse: Boolean;
-  MouseX, MouseY, Buttons: Word;
-  Key: Byte;
-  StatusStr: string[32];
+  FrameCs: LongInt;
+  FrameBuf, TempBuf: PFrame;
+  PendingAct, Act: Byte;
+  PendingX, PendingY: Word;
+  HasBox: Boolean;
+  BoxX0, BoxX1, BoxY0, BoxY1: Integer;
 
 procedure SetVideoMode(Mode: Word);
 begin
@@ -93,22 +105,81 @@ begin
   end;
 end;
 
-procedure MouseRead(var MX, MY, Btn: Word);
+procedure ClearMousePresses;
 begin
   if HasMouse then
   begin
-    Regs.AX := $0003;
+    Regs.AX := $0005;
+    Regs.BX := 0;
     Intr($33, Regs);
-    MX := Regs.CX div 2;
-    MY := Regs.DX;
-    Btn := Regs.BX;
-  end
-  else
-  begin
-    MX := Width div 2;
-    MY := Height div 2;
-    Btn := 0;
+    Regs.AX := $0005;
+    Regs.BX := 1;
+    Intr($33, Regs);
   end;
+end;
+
+function PollInput(var PAct: Byte; var ClickX, ClickY: Word): Boolean;
+var
+  Key: Byte;
+  MX, MY: Word;
+begin
+  if HasMouse then
+  begin
+    Regs.AX := $0005;
+    Regs.BX := 0;
+    Intr($33, Regs);
+    if Regs.BX > 0 then
+    begin
+      MX := Regs.CX div 2;
+      MY := Regs.DX;
+      if MX >= Width then MX := Width - 1;
+      if MY >= Height then MY := Height - 1;
+      PAct := ActZoomIn;
+      ClickX := MX;
+      ClickY := MY;
+      PollInput := True;
+      Exit;
+    end;
+    Regs.AX := $0005;
+    Regs.BX := 1;
+    Intr($33, Regs);
+    if (Regs.BX > 0) and (SpanX < 25.0) then
+    begin
+      MX := Regs.CX div 2;
+      MY := Regs.DX;
+      if MX >= Width then MX := Width - 1;
+      if MY >= Height then MY := Height - 1;
+      PAct := ActZoomOut;
+      ClickX := MX;
+      ClickY := MY;
+      PollInput := True;
+      Exit;
+    end;
+  end;
+
+  Regs.AH := $01;
+  Intr($16, Regs);
+  if (Regs.Flags and FZero) = 0 then
+  begin
+    Regs.AH := $00;
+    Intr($16, Regs);
+    Key := Regs.AL;
+    if (Key = 27) or (Key = Ord('q')) or (Key = Ord('Q')) then
+    begin
+      PAct := ActQuit;
+      PollInput := True;
+      Exit;
+    end
+    else if (Key = Ord('r')) or (Key = Ord('R')) then
+    begin
+      PAct := ActReset;
+      PollInput := True;
+      Exit;
+    end;
+  end;
+
+  PAct := ActNone;
+  PollInput := False;
 end;
 
 procedure DrawHudLine(Row: Byte; const S: string);
@@ -168,19 +239,132 @@ begin
   FmtFixed := S;
 end;
 
+function NowCs: LongInt;
+var
+  H, M, S, S100: Word;
+begin
+  GetTime(H, M, S, S100);
+  NowCs := ((LongInt(H) * 60 + LongInt(M)) * 60 + LongInt(S)) * 100 + LongInt(S100);
+end;
+
+function FmtTimeCs(Cs: LongInt): string;
+var
+  SecStr, CStr: string[12];
+begin
+  if Cs < 0 then
+  begin
+    FmtTimeCs := '...';
+    Exit;
+  end;
+  Str(Cs div 100, SecStr);
+  Str(Cs mod 100, CStr);
+  if Length(CStr) < 2 then
+    CStr := '0' + CStr;
+  FmtTimeCs := SecStr + '.' + CStr + 's';
+end;
+
+procedure PreviewZoom(ZoomIn: Boolean; ClickX, ClickY: Integer);
+var
+  RIdx, CIdx, SX, SY: Integer;
+begin
+  HasBox := False;
+  BoxX0 := Width;
+  BoxX1 := -1;
+  BoxY0 := Height;
+  BoxY1 := -1;
+  if (FrameBuf = nil) or (TempBuf = nil) then
+    Exit;
+  for RIdx := 0 to Height - 1 do
+  begin
+    if ZoomIn then
+      SY := ClickY - 33 + (RIdx div 3)
+    else
+      SY := ClickY + (RIdx - 100) * 3;
+    if (SY < 0) or (SY >= Height) then
+      FillChar(TempBuf^[RIdx], Width, 0)
+    else
+    begin
+      for CIdx := 0 to Width - 1 do
+      begin
+        if ZoomIn then
+          SX := ClickX - 53 + (CIdx div 3)
+        else
+          SX := ClickX + (CIdx - 160) * 3;
+        if (SX >= 0) and (SX < Width) then
+        begin
+          TempBuf^[RIdx, CIdx] := FrameBuf^[SY, SX];
+          if not ZoomIn then
+          begin
+            if not HasBox then
+            begin
+              HasBox := True;
+              BoxX0 := CIdx;
+              BoxX1 := CIdx;
+              BoxY0 := RIdx;
+              BoxY1 := RIdx;
+            end
+            else
+            begin
+              if CIdx < BoxX0 then BoxX0 := CIdx;
+              if CIdx > BoxX1 then BoxX1 := CIdx;
+              if RIdx < BoxY0 then BoxY0 := RIdx;
+              if RIdx > BoxY1 then BoxY1 := RIdx;
+            end;
+          end;
+        end
+        else
+          TempBuf^[RIdx, CIdx] := 0;
+      end;
+    end;
+  end;
+  Move(TempBuf^, FrameBuf^, SizeOf(TFrame));
+  MouseHide;
+  Move(FrameBuf^[9, 0], Mem[$A000:9 * Width], (Height - 9) * Width);
+  MouseShow;
+end;
+
 procedure DrawHud;
 var
   S1, S2: string[12];
 begin
+  MouseHide;
+  FillChar(Mem[$A000:0], 9 * Width, 0);
   Str(ZoomLevel, S1);
   Str(MaxIter, S2);
-  DrawHudLine(0, 'Z:' + S1 + ' MaxIter:' + S2 + ' W:' + FmtFixed(SpanX, 4));
-  DrawHudLine(1, 'C:(' + FmtFixed(CenterX, 5) + ',' + FmtFixed(CenterY, 5) + ')');
+  DrawHudLine(0, 'Z' + S1 + ' I' + S2 + ' T:' + FmtTimeCs(FrameCs) +
+                 ' (' + FmtFixed(CenterX, 3) + ',' + FmtFixed(CenterY, 3) + ')');
+  MouseShow;
 end;
 
-procedure Render;
+function CalcColor(PxCx, PxCy: Extended): Byte;
 begin
-  MouseHide;
+  X := 0.0;
+  Y := 0.0;
+  Iter := 0;
+  while Iter < MaxIter do
+  begin
+    XX := X * X;
+    YY := Y * Y;
+    if XX + YY > 4.0 then
+      Break;
+    NewX := XX - YY + PxCx;
+    Y := 2.0 * X * Y + PxCy;
+    X := NewX;
+    Inc(Iter);
+  end;
+  if Iter = MaxIter then
+    CalcColor := 0
+  else
+    CalcColor := 1 + (((Iter * 12) + 24) mod 254);
+end;
+
+procedure Render(CoarseFirst: Boolean);
+var
+  T0, T1: LongInt;
+  RowOff: Word;
+  BR, BC, R2, C2, RMax, CMax: Integer;
+  Interrupted: Boolean;
+begin
   XMin := CenterX - SpanX * 0.5;
   XMax := CenterX + SpanX * 0.5;
   YMin := CenterY - SpanY * 0.5;
@@ -188,36 +372,114 @@ begin
   DX := (XMax - XMin) / Width;
   DY := (YMax - YMin) / Height;
 
-  for Row := 0 to Height - 1 do
+  FrameCs := -1;
+  DrawHud;
+  T0 := NowCs;
+  PendingAct := ActNone;
+  Interrupted := False;
+
+  if CoarseFirst then
   begin
-    Cy := YMin + Row * DY;
-    for Col := 0 to Width - 1 do
+    BR := 0;
+    while BR < Height do
     begin
-      Cx := XMin + Col * DX;
-      X := 0.0;
-      Y := 0.0;
-      Iter := 0;
-      while Iter < MaxIter do
+      Cy := YMin + BR * DY;
+      RMax := BR + 2;
+      if RMax >= Height then RMax := Height - 1;
+      BC := 0;
+      while BC < Width do
       begin
-        XX := X * X;
-        YY := Y * Y;
-        if XX + YY > 4.0 then
-          Break;
-        NewX := XX - YY + Cx;
-        Y := 2.0 * X * Y + Cy;
-        X := NewX;
-        Inc(Iter);
+        if not (HasBox and (BC >= BoxX0) and (BC <= BoxX1) and
+                (BR >= BoxY0) and (BR <= BoxY1)) then
+        begin
+          Cx := XMin + BC * DX;
+          Color := CalcColor(Cx, Cy);
+          CMax := BC + 2;
+          if CMax >= Width then CMax := Width - 1;
+          for R2 := BR to RMax do
+          begin
+            RowOff := Word(R2) * Width;
+            for C2 := BC to CMax do
+            begin
+              if not (HasBox and (C2 >= BoxX0) and (C2 <= BoxX1) and
+                      (R2 >= BoxY0) and (R2 <= BoxY1)) then
+              begin
+                if FrameBuf <> nil then
+                  FrameBuf^[R2, C2] := Color;
+                if R2 >= 9 then
+                  Mem[$A000:RowOff + Word(C2)] := Color;
+              end;
+            end;
+          end;
+        end;
+        if (MaxIter >= 64) and ((BC and 31) = 0) then
+        begin
+          if PollInput(PendingAct, PendingX, PendingY) then
+          begin
+            Interrupted := True;
+            Break;
+          end;
+        end;
+        Inc(BC, 3);
       end;
-      if Iter = MaxIter then
-        Color := 0
-      else
-        Color := 1 + (((Iter * 12) + 24) mod 254);
-      Mem[$A000:Row * Width + Col] := Color;
+      if Interrupted then
+        Break;
+      if PollInput(PendingAct, PendingX, PendingY) then
+      begin
+        Interrupted := True;
+        Break;
+      end;
+      Inc(BR, 3);
     end;
   end;
 
-  DrawHud;
-  MouseShow;
+  if not Interrupted then
+  begin
+    for Row := 0 to Height - 1 do
+    begin
+      RowOff := Word(Row) * Width;
+      Cy := YMin + Row * DY;
+      for Col := 0 to Width - 1 do
+      begin
+        if not (CoarseFirst and ((Row mod 3) = 0) and ((Col mod 3) = 0) and
+                not (HasBox and (Col >= BoxX0) and (Col <= BoxX1) and
+                     (Row >= BoxY0) and (Row <= BoxY1))) then
+        begin
+          Cx := XMin + Col * DX;
+          Color := CalcColor(Cx, Cy);
+          if Row >= 9 then
+            Mem[$A000:RowOff + Word(Col)] := Color;
+          if FrameBuf <> nil then
+            FrameBuf^[Row, Col] := Color;
+        end;
+        if (MaxIter >= 64) and ((Col and 31) = 31) then
+        begin
+          if PollInput(PendingAct, PendingX, PendingY) then
+          begin
+            Interrupted := True;
+            Break;
+          end;
+        end;
+      end;
+      if Interrupted then
+        Break;
+      if PollInput(PendingAct, PendingX, PendingY) then
+      begin
+        Interrupted := True;
+        Break;
+      end;
+    end;
+  end;
+
+  if not Interrupted then
+  begin
+    T1 := NowCs;
+    FrameCs := T1 - T0;
+    if FrameCs < 0 then
+      FrameCs := FrameCs + 8640000;
+    HasBox := False;
+    DrawHud;
+  end;
 end;
 
 procedure ResetView;
@@ -231,62 +493,85 @@ begin
 end;
 
 begin
+  FrameBuf := nil;
+  TempBuf := nil;
+  if MaxAvail >= SizeOf(TFrame) then
+    New(FrameBuf);
+  if MaxAvail >= SizeOf(TFrame) then
+    New(TempBuf);
+  if FrameBuf <> nil then
+    FillChar(FrameBuf^, SizeOf(TFrame), 0);
+
   ResetView;
+  HasBox := False;
   SetVideoMode($0013);
   SetPalette;
   MouseInit;
-  Render;
+  ClearMousePresses;
+  MouseShow;
+  PendingAct := ActNone;
+  Render(True);
 
   repeat
-    MouseRead(MouseX, MouseY, Buttons);
-    if (Buttons and 1) <> 0 then
+    if PendingAct = ActNone then
+      if PollInput(PendingAct, PendingX, PendingY) then ;
+    if PendingAct <> ActNone then
     begin
-      CenterX := XMin + MouseX * DX;
-      CenterY := YMin + MouseY * DY;
-      SpanX := SpanX * 0.5;
-      SpanY := SpanY * 0.5;
-      Inc(ZoomLevel);
-      MaxIter := 32 + ZoomLevel * 24;
-      if MaxIter > 512 then MaxIter := 512;
-      repeat
-        MouseRead(MouseX, MouseY, Buttons);
-      until (Buttons and 1) = 0;
-      Render;
-    end
-    else if (Buttons and 2) <> 0 then
-    begin
-      if ZoomLevel > 0 then
-      begin
-        CenterX := XMin + MouseX * DX;
-        CenterY := YMin + MouseY * DY;
-        SpanX := SpanX * 2.0;
-        SpanY := SpanY * 2.0;
-        Dec(ZoomLevel);
-        MaxIter := 32 + ZoomLevel * 24;
-      end;
-      repeat
-        MouseRead(MouseX, MouseY, Buttons);
-      until (Buttons and 2) = 0;
-      Render;
-    end;
-
-    Regs.AH := $01;
-    Intr($16, Regs);
-    if (Regs.Flags and FZero) = 0 then
-    begin
-      Regs.AH := $00;
-      Intr($16, Regs);
-      Key := Regs.AL;
-      if (Key = 27) or (Key = Ord('q')) or (Key = Ord('Q')) then
-        Break
-      else if (Key = Ord('r')) or (Key = Ord('R')) then
-      begin
-        ResetView;
-        Render;
+      Act := PendingAct;
+      PendingAct := ActNone;
+      case Act of
+        ActZoomIn:
+        begin
+          PreviewZoom(True, PendingX, PendingY);
+          CenterX := XMin + PendingX * DX;
+          CenterY := YMin + PendingY * DY;
+          SpanX := SpanX / 3.0;
+          SpanY := SpanY / 3.0;
+          Inc(ZoomLevel);
+          MaxIter := 32 + ZoomLevel * 32;
+          if MaxIter > 512 then MaxIter := 512;
+          FrameCs := -1;
+          DrawHud;
+          Render(False);
+        end;
+        ActZoomOut:
+        begin
+          if SpanX < 25.0 then
+          begin
+            PreviewZoom(False, PendingX, PendingY);
+            CenterX := XMin + PendingX * DX;
+            CenterY := YMin + PendingY * DY;
+            SpanX := SpanX * 3.0;
+            SpanY := SpanY * 3.0;
+            Dec(ZoomLevel);
+            MaxIter := 32 + ZoomLevel * 32;
+            if MaxIter < 32 then MaxIter := 32;
+            if MaxIter > 512 then MaxIter := 512;
+            FrameCs := -1;
+            DrawHud;
+            Render(True);
+          end;
+        end;
+        ActReset:
+        begin
+          ResetView;
+          HasBox := False;
+          if FrameBuf <> nil then
+            FillChar(FrameBuf^, SizeOf(TFrame), 0);
+          FrameCs := -1;
+          DrawHud;
+          Render(True);
+        end;
+        ActQuit:
+          Break;
       end;
     end;
   until False;
 
   MouseHide;
   SetVideoMode($0003);
+  if TempBuf <> nil then
+    Dispose(TempBuf);
+  if FrameBuf <> nil then
+    Dispose(FrameBuf);
 end.

@@ -90,6 +90,13 @@ pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
         _=>Err(format!("unimplemented BIOS keyboard AH={ah:02x}")),
     }
 }
+fn text_rows(p:&Loaded)->Result<u32,String>{
+    Ok((byte(p,0x484)?+1).clamp(1,100))
+}
+fn page_size(p:&Loaded)->Result<u32,String>{
+    let size=read(p,0x44c)?;
+    Ok(if size==0{PAGE}else{size})
+}
 pub(super) fn video(p:&mut Loaded,ah:u8)->Result<(),String>{
     if graphics_text::is_graphics(byte(p,0x449)?){
         if ah==8{let ch=graphics_text::read_char(p)?;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|ch;return Ok(());}
@@ -97,17 +104,18 @@ pub(super) fn video(p:&mut Loaded,ah:u8)->Result<(),String>{
     }
     let page=(p.cpu.regs[3]>>8)&255;
     if page>=8{return Err("BIOS video page must be 0..7".into());}
+    let rows=text_rows(p)?;let psize=page_size(p)?;
     let position=read(p,0x450+page*2)?;
     let(row,col)=(position>>8,position&255);
-    if row>=25||col>=80{return Err("BIOS video cursor outside 80x25 profile".into());}
-    let first=row*80+col;let base=VIDEO+page*PAGE;
+    if row>=rows||col>=COLS{return Err("BIOS video cursor outside text page".into());}
+    let first=row*COLS+col;let base=VIDEO+page*psize;
     if ah==8{
         let value=read(p,base+first*2)?;
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|value;return Ok(());
     }
     let count=p.cpu.regs[1]&0xffff;
     // Do not invent a BIOS-dependent overflow policy or spill into another page.
-    if count>CELLS-first{return Err("BIOS repeated write exceeds text page".into());}
+    if count>COLS*rows-first{return Err("BIOS repeated write exceeds text page".into());}
     let ch=p.cpu.regs[0]&255;let attr=p.cpu.regs[3]&255;
     let writes:Vec<_>=(first..first+count).map(|cell|if ah==9{
         (base+cell*2,MemWidth::Word,ch|(attr<<8))
@@ -122,13 +130,15 @@ fn active_page(p:&Loaded)->Result<u32,String>{
     if page>=8{return Err("BIOS active page outside 0..7".into());}Ok(page)
 }
 fn cursor(p:&Loaded,page:u32)->Result<(u32,u32),String>{
+    let rows=text_rows(p)?;
     let position=read(p,0x450+page*2)?;
     let(row,col)=(position>>8,position&255);
-    if row>=ROWS||col>=COLS{return Err("BIOS video cursor outside 80x25 profile".into());}
+    if row>=rows||col>=COLS{return Err("BIOS video cursor outside text page".into());}
     Ok((row,col))
 }
 fn page_cells(p:&Loaded,page:u32)->Result<Vec<u32>,String>{
-    (0..CELLS).map(|cell|read(p,VIDEO+page*PAGE+cell*2)).collect()
+    let base=VIDEO+page*page_size(p)?;
+    (0..COLS*text_rows(p)?).map(|cell|read(p,base+cell*2)).collect()
 }
 /// Move rows inside an inclusive window; vacated rows become blanks in `attr`.
 /// Zero or more lines than the window height clears the whole window.
@@ -144,10 +154,10 @@ fn scroll(cells:&mut [u32],window:(u32,u32,u32,u32),lines:u32,attr:u32,up:bool){
         }
     }
 }
-fn window_writes(page:u32,cells:&[u32],window:(u32,u32,u32,u32))->Vec<(u32,MemWidth,u32)>{
-    let(top,left,bottom,right)=window;
+fn window_writes(page:u32,psize:u32,cells:&[u32],window:(u32,u32,u32,u32))->Vec<(u32,MemWidth,u32)>{
+    let(top,left,bottom,right)=window;let base=VIDEO+page*psize;
     (top..=bottom).flat_map(|row|(left..=right).map(move|col|row*COLS+col))
-        .map(|cell|(VIDEO+page*PAGE+cell*2,MemWidth::Word,cells[cell as usize])).collect()
+        .map(|cell|(base+cell*2,MemWidth::Word,cells[cell as usize])).collect()
 }
 type Writes=Vec<(u32,MemWidth,u32)>;
 /// Teletype bytes onto a copy of `page`. Text mode keeps cell attributes; a
@@ -157,6 +167,7 @@ type Writes=Vec<(u32,MemWidth,u32)>;
 fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,String>{
     if page>=8{return Err("BIOS video page must be 0..7".into());}
     if !dos_tabs&&bytes.contains(&9){return Err("BIOS teletype TAB policy is not part of this profile".into());}
+    let rows=text_rows(p)?;let psize=page_size(p)?;
     let(mut row,mut col)=cursor(p,page)?;let mut cells=page_cells(p,page)?;
     let(mut dirty,mut scrolled)=(Vec::new(),false);
     for &b in bytes{
@@ -170,14 +181,14 @@ fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,St
                 13=>col=0,
                 _=>{cells[incoming]=(cells[incoming]&0xff00)|ch;dirty.push(incoming);col+=1;if col==COLS{col=0;row+=1;}},
             }
-            if row==ROWS{
+            if row==rows{
                 let attr=cells[incoming]>>8;
-                scroll(&mut cells,(0,0,ROWS-1,COLS-1),1,attr,true);row=ROWS-1;scrolled=true;
+                scroll(&mut cells,(0,0,rows-1,COLS-1),1,attr,true);row=rows-1;scrolled=true;
             }
         }
     }
-    let base=VIDEO+page*PAGE;
-    let mut writes=if scrolled{window_writes(page,&cells,(0,0,ROWS-1,COLS-1))}
+    let base=VIDEO+page*psize;
+    let mut writes=if scrolled{window_writes(page,psize,&cells,(0,0,rows-1,COLS-1))}
         else{dirty.into_iter().map(|cell|(base+cell as u32*2,MemWidth::Byte,cells[cell]&255)).collect()};
     writes.push((0x450+page*2,MemWidth::Word,(row<<8)|col));
     Ok(writes)
@@ -257,13 +268,13 @@ pub(super) fn dos_flush_writes(p:&Loaded)->Result<Writes,String>{
 /// beyond the text page are clamped; an inverted window changes nothing.
 fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
     if graphics_text::is_graphics(byte(p,0x449)?){let writes=graphics_text::scroll(p,up)?;return commit(p,&writes);}
-    let page=active_page(p)?;
+    let page=active_page(p)?;let rows=text_rows(p)?;let psize=page_size(p)?;
     let(cx,dx)=(p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
-    let(top,left)=(cx>>8,cx&255);let(bottom,right)=((dx>>8).min(ROWS-1),(dx&255).min(COLS-1));
+    let(top,left)=(cx>>8,cx&255);let(bottom,right)=((dx>>8).min(rows-1),(dx&255).min(COLS-1));
     if top>bottom||left>right{return Ok(());}
     let mut cells=page_cells(p,page)?;
     scroll(&mut cells,(top,left,bottom,right),p.cpu.regs[0]&255,(p.cpu.regs[3]>>8)&255,up);
-    commit(p,&window_writes(page,&cells,(top,left,bottom,right)))
+    commit(p,&window_writes(page,psize,&cells,(top,left,bottom,right)))
 }
 /// Bounded 80x25 text modes 02h (monochrome colour-adapter text) and 03h,
 /// CGA 4/5/6, EGA/VGA planar 0Dh/0Eh/10h/12h and VGA 13h.
@@ -323,7 +334,7 @@ fn select_page(p:&mut Loaded)->Result<(),String>{
     // These graphics modes expose only one framebuffer in this profile.
     // Ignore requests for another display page, keeping the BIOS state usable.
     if matches!(mode,4|5|6|0x13)&&page!=0{return Ok(());}
-    let offset=if super::planar::geometry(mode).is_some(){super::planar::page_offset(mode,page)? as u32}else{page*PAGE};
+    let offset=if super::planar::geometry(mode).is_some(){super::planar::page_offset(mode,page)? as u32}else{page*page_size(p)?};
     commit(p,&[(0x462,MemWidth::Byte,page),(0x44e,MemWidth::Word,offset)])?;
     if super::planar::geometry(mode).is_some(){p.vga.bios_sync(Some(offset as u16),None,None);}
     Ok(())

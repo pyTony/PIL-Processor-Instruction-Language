@@ -22,6 +22,7 @@ pub(super) fn plan(p:&Loaded,page:u32,bytes:&[u8])->Result<Writes,String>{
     // Guest RAM is writable: validate the count before indexing the fixed parameter array.
     if state[5]>MAXP{return Err("invalid ANSI driver parameter count".into());}
     let mut params:Vec<u32>=(0..MAXP).map(|i|read(p,BASE+8+2*i)).collect::<Result<_,_>>()?;
+    let rows=text_rows(p)?;let psize=page_size(p)?;let page_cells_len=COLS*rows;
     let(mut row,mut col)=cursor(p,page)?;let mut cells=page_cells(p,page)?;
     let(mut dirty,mut whole)=(Vec::new(),false);
     let blank=|attr:u32|0x20|(attr<<8);
@@ -30,7 +31,7 @@ pub(super) fn plan(p:&Loaded,page:u32,bytes:&[u8])->Result<Writes,String>{
         match state[1]{
             1 if b==b'['=>{state[1]=2;state[5]=0;state[6]=0;params.fill(0);continue;},
             // ESC without '[' is no sequence: both bytes are shown.
-            1=>{state[1]=0;put(&mut cells,&mut dirty,&mut whole,&mut row,&mut col,27,attr);},
+            1=>{state[1]=0;put(&mut cells,&mut dirty,&mut whole,&mut row,&mut col,27,attr,rows);},
             2=>{
                 let n=state[5];
                 match b{
@@ -42,16 +43,16 @@ pub(super) fn plan(p:&Loaded,page:u32,bytes:&[u8])->Result<Writes,String>{
                         let got=&params[..n as usize];
                         let first=got.first().copied().unwrap_or(0);let count=first.max(1);
                         match b{
-                            b'H'|b'f'=>{row=(first.max(1)-1).min(ROWS-1);col=(got.get(1).copied().unwrap_or(0).max(1)-1).min(COLS-1);},
+                            b'H'|b'f'=>{row=(first.max(1)-1).min(rows-1);col=(got.get(1).copied().unwrap_or(0).max(1)-1).min(COLS-1);},
                             b'A'=>row=row.saturating_sub(count),
-                            b'B'=>row=(row+count).min(ROWS-1),
+                            b'B'=>row=(row+count).min(rows-1),
                             b'C'=>col=(col+count).min(COLS-1),
                             b'D'=>col=col.saturating_sub(count),
                             b's'=>{state[3]=row;state[4]=col;},
-                            b'u'=>{row=state[3].min(ROWS-1);col=state[4].min(COLS-1);},
+                            b'u'=>{row=state[3].min(rows-1);col=state[4].min(COLS-1);},
                             b'J'=>{
                                 let at=row*COLS+col;
-                                let range=match first{0=>at..CELLS,1=>0..at+1,_=>0..CELLS};
+                                let range=match first{0=>at..page_cells_len,1=>0..at+1,_=>0..page_cells_len};
                                 for cell in range{cells[cell as usize]=blank(attr);}
                                 whole=true;if first==2{row=0;col=0;}
                             },
@@ -89,10 +90,10 @@ pub(super) fn plan(p:&Loaded,page:u32,bytes:&[u8])->Result<Writes,String>{
             _ if b==27=>{state[1]=1;continue;},
             _=>{},
         }
-        put(&mut cells,&mut dirty,&mut whole,&mut row,&mut col,b,attr);
+        put(&mut cells,&mut dirty,&mut whole,&mut row,&mut col,b,attr,rows);
     }
-    let base=VIDEO+page*PAGE;
-    let mut writes=if whole{window_writes(page,&cells,(0,0,ROWS-1,COLS-1))}
+    let base=VIDEO+page*psize;
+    let mut writes=if whole{window_writes(page,psize,&cells,(0,0,rows-1,COLS-1))}
         else{dirty.into_iter().map(|cell|(base+cell as u32*2,MemWidth::Word,cells[cell])).collect()};
     writes.push((0x450+page*2,MemWidth::Word,(row<<8)|col));
     writes.extend(state.iter().enumerate().skip(1).map(|(i,&v)|(BASE+i as u32,MemWidth::Byte,v)));
@@ -102,7 +103,7 @@ pub(super) fn plan(p:&Loaded,page:u32,bytes:&[u8])->Result<Writes,String>{
 /// One shown byte: characters take the driver's attribute; BEL, BS, LF,
 /// CR and TAB act as in teletype output, and the bottom line scrolls in
 /// the driver's attribute.
-fn put(cells:&mut [u32],dirty:&mut Vec<usize>,whole:&mut bool,row:&mut u32,col:&mut u32,b:u8,attr:u32){
+fn put(cells:&mut [u32],dirty:&mut Vec<usize>,whole:&mut bool,row:&mut u32,col:&mut u32,b:u8,attr:u32,rows:u32){
     let n=if b==9{8-*col%8}else{1};
     for _ in 0..n{
         match b{
@@ -115,6 +116,6 @@ fn put(cells:&mut [u32],dirty:&mut Vec<usize>,whole:&mut bool,row:&mut u32,col:&
                 cells[cell]=ch|(attr<<8);dirty.push(cell);*col+=1;if *col==COLS{*col=0;*row+=1;}
             },
         }
-        if *row==ROWS{scroll(cells,(0,0,ROWS-1,COLS-1),1,attr,true);*row=ROWS-1;*whole=true;}
+        if *row==rows{scroll(cells,(0,0,rows-1,COLS-1),1,attr,true);*row=rows-1;*whole=true;}
     }
 }

@@ -457,6 +457,38 @@ fn cursor_shape_roundtrip_uses_bda_and_faults_atomically(){
  service(&mut p,0x10,&mut out).unwrap();assert_eq!(p.cpu,expected);
 }
 #[test]
+fn bios_cursor_position_and_shape_sync_crtc_and_clear_override(){
+ let mut p=load(&[0xcd,0x10],"cursor-sync.com").unwrap();let mut out=vec![];
+ let set_crtc_cursor=|p:&mut Loaded,cell:u16|{
+  let [hi,lo]=cell.to_be_bytes();
+  p.vga.io(0x3d4,false,0x0e).unwrap();p.vga.io(0x3d5,false,hi).unwrap();
+  p.vga.io(0x3d4,false,0x0f).unwrap();p.vga.io(0x3d5,false,lo).unwrap();
+ };
+ let crtc_reg=|p:&mut Loaded,index:u8|->u8{
+  p.vga.io(0x3d4,false,index).unwrap();p.vga.io(0x3d5,true,0).unwrap().unwrap()
+ };
+ let cell:u16=49*80+76;
+ set_crtc_cursor(&mut p,cell);
+ assert!(p.vga.cursor_override);
+ assert_eq!(session::Session::new(p.clone()).screen().unwrap().2,(49,76));
+ p.cpu.regs[0]=0x0200;p.cpu.regs[3]=0x0000;p.cpu.regs[2]=0x050a;
+ service(&mut p,0x10,&mut out).unwrap();
+ assert_eq!(p.ram.load(0x450,MemWidth::Word).unwrap(),0x050a);
+ assert!(!p.vga.cursor_override);
+ assert_eq!(p.vga.cursor(),5*80+10);
+ assert_eq!(session::Session::new(p.clone()).screen().unwrap().2,(5,10));
+ set_crtc_cursor(&mut p,cell);
+ p.cpu.regs[0]=0x0200;p.cpu.regs[3]=0x0100;p.cpu.regs[2]=0x0203;
+ service(&mut p,0x10,&mut out).unwrap();
+ assert_eq!(p.ram.load(0x452,MemWidth::Word).unwrap(),0x0203);
+ assert!(p.vga.cursor_override);
+ assert_eq!(p.vga.cursor(),cell);
+ p.cpu.regs[0]=0x0100;p.cpu.regs[1]=0x0407;
+ service(&mut p,0x10,&mut out).unwrap();
+ assert_eq!(p.ram.load(0x460,MemWidth::Word).unwrap(),0x0407);
+ assert_eq!((crtc_reg(&mut p,0x0a),crtc_reg(&mut p,0x0b)),(0x04,0x07));
+}
+#[test]
 fn bios_screen_reads_guest_vram_and_writes_last_cell_without_moving_cursor(){
  let mut p=load(&[0xcd,0x10],"screen.com").unwrap();let mut out=vec![];
  // Video is not DOS-allocatable conventional memory; with upper memory

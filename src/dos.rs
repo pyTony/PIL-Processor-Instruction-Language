@@ -49,6 +49,8 @@ pub(crate) mod vga_text;
 pub(crate) mod setup;
 #[path="dos_files.rs"]
 mod files;
+#[path="dos_lfn.rs"]
+mod lfn;
 #[path="dos_nls.rs"]
 mod nls;
 #[path="dos_exec.rs"]
@@ -717,6 +719,15 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
     Some((width,height,pixels))
 }
 
+/// Standard 16x16 white arrow with a black outline (hot spot 0,0) when a DOS
+/// program uses graphics mouse mode without defining a custom shape (AX=0009h).
+#[cfg(any(windows,unix,test))]
+const DEFAULT_GRAPHICS_MOUSE_ARROW:(i16,i16,[u16;32])=(0,0,[
+    0x3fff,0x1fff,0x0fff,0x07ff,0x03ff,0x01ff,0x00ff,0x007f,
+    0x003f,0x003f,0x01ff,0x10ff,0x30ff,0xf87f,0xf87f,0xfcff,
+    0x0000,0x4000,0x6000,0x7000,0x7800,0x7c00,0x7e00,0x7f00,
+    0x7f80,0x7c00,0x6c00,0x4600,0x0600,0x0300,0x0300,0x0000,
+]);
 /// Native desktop scanout of the *existing* emulated VGA framebuffer.
 /// All text drawn by BIOS in a graphics mode has already reached these pixels
 /// via dos_graphics_text, so the host renderer needs no duplicate font logic.
@@ -725,7 +736,7 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
 fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
     let view=p.dos.mouse.view();
     if !view.visible{return;}
-    let Some((hx,hy,rows))=p.dos.mouse.shape() else {return;};
+    let (hx,hy,rows)=p.dos.mouse.shape().unwrap_or(DEFAULT_GRAPHICS_MOUSE_ARROW);
     let mx=i32::from(view.x)*(width as i32)/(i32::from(view.max_x)+1);
     let my=i32::from(view.y)*(height as i32)/(i32::from(view.max_y)+1);
     for dy in 0..16i32{
@@ -875,6 +886,34 @@ mod desktop_scanout_tests{
         let expected=(u32::from(rgb[0])*255/63)<<16|
             (u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63);
         assert_eq!(pixels[0],expected);
+    }
+    #[test]
+    fn mode13_visible_mouse_draws_default_arrow_without_custom_shape(){
+        let mut p=load(&[0xcd,0x20],"PIX.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,0x13).unwrap();
+        for at in 0xa0000u32..0xa0000+320*200{
+            p.ram.store(at,MemWidth::Byte,1).unwrap();
+        }
+        p.dos.mouse.enable(0);
+        p.cpu.regs[0]=0;
+        mouse::service(&mut p).unwrap();
+        p.cpu.regs[0]=1;
+        mouse::service(&mut p).unwrap();
+        p.dos.mouse.host(100,50,0,0x13);
+        assert!(p.dos.mouse.shape().is_none());
+        let bg={
+            let rgb=p.vga.dac(1);
+            (u32::from(rgb[0])*255/63)<<16|(u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63)
+        };
+        let (_,_,pixels)=desktop_vga_frame(&p).unwrap();
+        // Mouse x=100 in 640 virtual width maps to pixel x=50, y=50.
+        assert_eq!(pixels[50*320+50],0x000000);
+        assert_eq!(pixels[51*320+51],0xffffff);
+        p.cpu.regs[0]=2;
+        mouse::service(&mut p).unwrap();
+        let (_,_,hidden)=desktop_vga_frame(&p).unwrap();
+        assert_eq!(hidden[50*320+50],bg);
+        assert_eq!(hidden[51*320+51],bg);
     }
 }
 

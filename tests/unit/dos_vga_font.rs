@@ -68,3 +68,46 @@ fn bios_font_block_select_records_the_character_map_in_text_modes(){
  let mut p=load(&[0xcd,0x10],"block13.com").unwrap();p.cpu.regs[0]=0x0013;service(&mut p,0x10,&mut Vec::new()).unwrap();
  p.cpu.regs[0]=0x1103;p.cpu.regs[3]=0;assert!(service(&mut p,0x10,&mut Vec::new()).unwrap_err().contains("1103h"));
 }
+#[test]
+fn rom_font_load_1112_switches_to_80x50_and_1114_restores_80x25(){
+ let mut p=load(&[0xcd,0x10],"font50.com").unwrap();
+ // AX=1112h BL=00h: 8x8 ROM font + 80x50 recalculation.
+ p.cpu.regs[0]=0x1112;p.cpu.regs[3]=0;
+ service(&mut p,0x10,&mut Vec::new()).unwrap();
+ assert_eq!(p.ram.load(0x484,MemWidth::Byte).unwrap(),49);
+ assert_eq!(p.ram.load(0x485,MemWidth::Word).unwrap(),8);
+ assert_eq!(p.ram.load(0x44c,MemWidth::Word).unwrap(),0x2000);
+ assert_eq!(p.ram.load(0x460,MemWidth::Word).unwrap(),0x0607);
+ // Write a character on row 49 via INT 10h AH=02h + AH=09h.
+ p.cpu.regs[0]=0x0200;p.cpu.regs[3]=0;p.cpu.regs[2]=(49<<8)|5;
+ service(&mut p,0x10,&mut Vec::new()).unwrap();
+ p.cpu.regs[0]=0x0941;p.cpu.regs[3]=0x000e;p.cpu.regs[1]=1;
+ service(&mut p,0x10,&mut Vec::new()).unwrap();
+ assert_eq!(p.ram.load(0xb8000+(49*80+5)*2,MemWidth::Word).unwrap(),0x0e41);
+ // Plane 2 holds the 8x8 ROM glyph for 'A' (41h) with rows 8..31 zeroed.
+ let font=p.vga.font.as_ref().unwrap();
+ assert!((0..8).any(|r|font.peek(2,0x41*32+r)!=0));
+ assert!((8..32).all(|r|font.peek(2,0x41*32+r)==0));
+ // AX=1114h BL=00h restores 80x25 (height 16).
+ p.cpu.regs[0]=0x1114;p.cpu.regs[3]=0;
+ service(&mut p,0x10,&mut Vec::new()).unwrap();
+ assert_eq!(p.ram.load(0x484,MemWidth::Byte).unwrap(),24);
+ assert_eq!(p.ram.load(0x485,MemWidth::Word).unwrap(),16);
+ assert_eq!(p.ram.load(0x44c,MemWidth::Word).unwrap(),0x1000);
+}
+#[test]
+fn rom_font_load_01_02_04_keeps_rows_and_1111_sets_28_rows(){
+ let mut p=load(&[0xcd,0x10],"font28.com").unwrap();
+ // AX=1102h BL=01h loads 8x8 into block 1 without changing 80x25 BDA.
+ p.cpu.regs[0]=0x1102;p.cpu.regs[3]=1;
+ service(&mut p,0x10,&mut Vec::new()).unwrap();
+ assert_eq!(p.ram.load(0x484,MemWidth::Byte).unwrap(),24);
+ assert_eq!(p.ram.load(0x485,MemWidth::Word).unwrap(),16);
+ let font=p.vga.font.as_ref().unwrap();
+ assert!((0..8).any(|r|font.peek(2,0x2000+0x41*32+r)!=0));
+ // AX=1111h BL=00h loads 8x14 -> 400/14 = 28 rows.
+ p.cpu.regs[0]=0x1111;p.cpu.regs[3]=0;
+ service(&mut p,0x10,&mut Vec::new()).unwrap();
+ assert_eq!(p.ram.load(0x484,MemWidth::Byte).unwrap(),27);
+ assert_eq!(p.ram.load(0x485,MemWidth::Word).unwrap(),14);
+}
