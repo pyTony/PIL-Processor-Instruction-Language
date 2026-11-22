@@ -220,6 +220,12 @@ impl Ram {
     /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
     /// modelled: every access walks the tables as they are in memory.
     #[inline]
+    /// Runs `f` on physical addresses, with paging off for its accesses
+    /// (a DMA transfer, which bypasses the CPU's page tables).
+    pub(crate) fn physical<R>(&mut self,f:impl FnOnce(&mut Self)->R)->R{
+        let saved=self.paging.get();self.set_paging(None);
+        let result=f(self);self.set_paging(saved);result
+    }
     pub fn set_paging(&mut self, paging: Option<Paging>) {
         if !self.marks.get_mut().is_empty() {
             self.settle();

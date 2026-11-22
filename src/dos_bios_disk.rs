@@ -64,6 +64,16 @@ impl Disks{
     }
     /// The number of floppy drives, for the equipment word.
     pub(crate) fn floppies(&self)->u16{self.floppy.iter().filter(|d|d.is_some()).count() as u16}
+    pub(crate) fn has_floppy(&self,drive:u8)->bool{drive<2&&self.floppy[usize::from(drive)].is_some()}
+    /// Cylinders, heads and sectors per track of a diskette drive's image.
+    pub(crate) fn floppy_geometry(&self,drive:u8)->Option<(u32,u32,u32)>{
+        let d=if drive<2{self.floppy[usize::from(drive)].as_ref()}else{None}?;Some((d.cylinders,d.heads,d.sectors))
+    }
+    pub(crate) fn write_sector(&mut self,drive:u8,lba:u32,data:&[u8])->Result<(),String>{
+        let d=self.get_mut(drive).ok_or("no disk in the drive")?;
+        let at=lba as usize*512;
+        d.data.get_mut(at..at+512).ok_or("sector outside the image")?.copy_from_slice(data);Ok(())
+    }
     pub(crate) fn sector(&self,drive:u8,lba:u32)->Option<&[u8]>{
         let d=self.get(drive)?;d.data.get(lba as usize*512..lba as usize*512+512)
     }

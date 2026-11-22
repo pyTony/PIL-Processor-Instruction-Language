@@ -9,9 +9,9 @@ use super::*;
 /// video, equipment, memory size, disk, serial, system services, keyboard,
 /// printer, bootstrap, clock, Ctrl-Break and the user timer hook.
 pub(super) const BIOS:[u8;14]=[0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x19,0x1a,0x1b,0x1c];
-/// Vectors a BIOS points at a bare IRET: the CPU exceptions 00h-07h and
-/// the slave PIC's IRQs 70h-77h.
-fn dummy(n:u8)->bool{n<8||(0x70..=0x77).contains(&n)}
+/// Vectors a BIOS points at a bare IRET: the CPU exceptions 00h-07h, the
+/// master PIC's IRQs 2-7 (0Ah-0Fh) and the slave PIC's IRQs 70h-77h.
+fn dummy(n:u8)->bool{n<8||(0x0a..=0x0f).contains(&n)||(0x70..=0x77).contains(&n)}
 
 /// A machine that has booted `image` from BIOS drive `drive` (00h, the
 /// first diskette, or 80h, the first fixed disk).

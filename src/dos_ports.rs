@@ -228,6 +228,12 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         return Ok(());
     }
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
+    // The diskette controller and DMA channel 2. Writes to the DMA
+    // registers channels share also reach the channel-1 model below.
+    if let Some(value)=fdc::Fdc::io(p,port,input,p.cpu.regs[0]as u8)?{
+        if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
+        return Ok(());
+    }
     if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
         return Ok(());
