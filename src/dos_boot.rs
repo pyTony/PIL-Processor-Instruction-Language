@@ -48,11 +48,14 @@ pub fn boot(image:&[u8],drive:u8)->Result<Loaded,String>{
     Ok(p)
 }
 
-/// The first 80x25 text page as lines, for a headless run.
+/// The shown 80x25 text page as lines, for a headless run: from the CRTC
+/// start address when a program set it (an OS console scrolls that way),
+/// else from the BIOS page.
 pub(crate) fn screen_lines(p:&Loaded)->Vec<String>{
+    let origin=if p.vga.start_override{u32::from(p.vga.start())*2}else{0};
     (0..25u32).map(|row|{
         let line:String=(0..80u32).map(|col|{
-            let c=p.ram.load(0xb8000+(row*80+col)*2,MemWidth::Byte).unwrap_or(0x20) as u8;
+            let c=p.ram.load(0xb8000+((origin+(row*80+col)*2)&0x7fff),MemWidth::Byte).unwrap_or(0x20) as u8;
             if (0x20..0x7f).contains(&c){char::from(c)}else{' '}
         }).collect();
         line.trim_end().to_string()

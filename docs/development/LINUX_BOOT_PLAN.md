@@ -65,6 +65,12 @@ docs/BOOT.md. The FreeDOS kernel boot was not tried yet.
   DOS kernel next to Dine's own DOS.
 
 ### 3. Hardware a protected-mode OS drives itself
+Partly done (22 November 2026, `feat/pc-devices-20261122`): keyboard
+commands, absent UARTs, ISA open bus when booted, the diskette controller
+with DMA channel 2 and IRQ6, and a TLB. Linux 0.99 initializes its drivers
+and reads its root floppy. Not done: the 8042 controller commands beyond
+A20/reset, the AT hard-disk controller.
+
 - **IRQs:** every IRQ 0-15 through the PIC to the IDT, real and protected
   mode (today only IRQ0/1/5/7 and the mouse callback reach guests).
 - **8042:** command byte, self-test, output port (A20, reset through
