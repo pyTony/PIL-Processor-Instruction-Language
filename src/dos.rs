@@ -63,6 +63,8 @@ mod rtc;
 mod block_move;
 #[path="dos_bios_disk.rs"]
 mod bios_disk;
+#[path="dos_fdc.rs"]
+mod fdc;
 #[path="dos_boot.rs"]
 mod boot;
 pub use boot::{boot,probe as boot_probe};
@@ -163,6 +165,8 @@ pub struct Loaded{
     /// A disk was booted: no DOS runs on this machine, only the BIOS answers
     /// INT n, and a zero vector is a real 0000:0000.
     pub(crate) booted:bool,
+    /// The diskette controller and its DMA channel, for a booted OS.
+    pub(crate) fdc:fdc::Fdc,
 }
 /// DOS state Dine keeps for the program it runs, apart from the machine
 /// (CPU, memory, devices) it runs on.
@@ -231,7 +235,7 @@ impl Clone for Loaded{
         
         speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),com1:self.com1.clone(),
-        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),disks:self.disks.clone(),booted:self.booted}}
+        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),disks:self.disks.clone(),booted:self.booted,fdc:self.fdc.clone()}}
 }
 impl std::fmt::Debug for Loaded{
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("Loaded{..}")}
@@ -566,7 +570,7 @@ fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compi
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default(),disks:Default::default(),booted:false}.with_upper_memory()
+    Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default(),disks:Default::default(),booted:false,fdc:Default::default()}.with_upper_memory()
 }
 impl Loaded{
     /// DOS=UMB comes with the XMS driver (dos_memory_arena::set_umbs).
@@ -1026,6 +1030,20 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                         }
                     },
                     Ok(false)=>{}, // no guest handler: preserve IRR for polling
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+        }
+        // IRQ6 from the diskette controller, through the master PIC.
+        if p.fdc.irq&&p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0{
+            p.speaker.pic.raise(6);
+            if p.speaker.pic.master_ready(6){
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                let vector=p.speaker.pic.master_vector(6);
+                match vectors::deliver_irq(&mut p,vector){
+                    Ok(())=>{
+                        p.fdc.irq=false;p.speaker.pic.acknowledge_master(6);execution_steps+=1;
+                        *instructions.entry(format!("IRQ6 to INT {vector:02X}h")).or_insert(0)+=1;continue;},
                     Err(message)=>break Stop::Service(message),
                 }
             }

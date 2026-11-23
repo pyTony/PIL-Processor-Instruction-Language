@@ -9,9 +9,9 @@ use super::*;
 /// video, equipment, memory size, disk, serial, system services, keyboard,
 /// printer, bootstrap, clock, Ctrl-Break and the user timer hook.
 pub(super) const BIOS:[u8;14]=[0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x19,0x1a,0x1b,0x1c];
-/// Vectors a BIOS points at a bare IRET: the CPU exceptions 00h-07h and
-/// the slave PIC's IRQs 70h-77h.
-fn dummy(n:u8)->bool{n<8||(0x70..=0x77).contains(&n)}
+/// Vectors a BIOS points at a bare IRET: the CPU exceptions 00h-07h, the
+/// master PIC's IRQs 2-7 (0Ah-0Fh) and the slave PIC's IRQs 70h-77h.
+fn dummy(n:u8)->bool{n<8||(0x0a..=0x0f).contains(&n)||(0x70..=0x77).contains(&n)}
 
 /// A machine that has booted `image` from BIOS drive `drive` (00h, the
 /// first diskette, or 80h, the first fixed disk).
@@ -48,11 +48,14 @@ pub fn boot(image:&[u8],drive:u8)->Result<Loaded,String>{
     Ok(p)
 }
 
-/// The first 80x25 text page as lines, for a headless run.
+/// The shown 80x25 text page as lines, for a headless run: from the CRTC
+/// start address when a program set it (an OS console scrolls that way),
+/// else from the BIOS page.
 pub(crate) fn screen_lines(p:&Loaded)->Vec<String>{
+    let origin=if p.vga.start_override{u32::from(p.vga.start())*2}else{0};
     (0..25u32).map(|row|{
         let line:String=(0..80u32).map(|col|{
-            let c=p.ram.load(0xb8000+(row*80+col)*2,MemWidth::Byte).unwrap_or(0x20) as u8;
+            let c=p.ram.load(0xb8000+((origin+(row*80+col)*2)&0x7fff),MemWidth::Byte).unwrap_or(0x20) as u8;
             if (0x20..0x7f).contains(&c){char::from(c)}else{' '}
         }).collect();
         line.trim_end().to_string()

@@ -33,4 +33,17 @@ the diskette types, the equipment word, INT 19h. XMS and upper memory belong
 to Dine's DOS and are off; CPU exceptions and IRQ 8-15 vectors point at a
 bare IRET, DOS vectors are 0000:0000.
 
+Hardware an operating system drives itself, beyond the BIOS:
+- **Diskette controller** (3F2h-3F7h, uPD765/82077 commands: specify,
+  sense drive status, recalibrate, sense interrupt, seek, read/write data
+  with multi-track, read ID, version) with **DMA channel 2** and **IRQ6**.
+  Only a booted machine has it.
+- **Keyboard commands** through port 60h (ACK FAh, reset FAh AAh, echo,
+  identify, FEh for unknown commands), for Dine's DOS too.
+- **Absent devices**: COM2-COM4 (and COM1 without a session) read FFh; in a
+  booted machine every port no known device answers is an open bus (FFh),
+  as ISA probes expect. Printer ports read 80h, so a printer probe still
+  finds three ports (Linux: "lp0 exists").
+- **Paging** with a TLB.
+
 Status: docs/development/LINUX_BOOT_PLAN.md.
