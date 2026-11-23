@@ -6,7 +6,7 @@ fn clocked_native_block_budget_stops_at_each_irq_poll_boundary() {
     #[derive(Default)]
     struct Observe(Vec<usize>);
     impl InstructionBackend for Observe {
-        fn block(&mut self,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,budget:usize)->Option<(usize,Result<(),crate::ExecError>)>{
+        fn block(&mut self,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,budget:usize,_chain:bool)->Option<(usize,Result<(),crate::ExecError>)>{
             self.0.push(budget);
             None
         }
@@ -37,7 +37,7 @@ fn unsupported_native_sites_skip_hooks_and_preserve_lazy_interpreter_state(){
     impl InstructionBackend for Unavailable{
         fn may_block(&mut self,_:&Image,_:&Ram,_:u32)->bool{false}
         fn may_execute(&mut self,_:&Image,_:&Ram,_:u32)->bool{false}
-        fn block(&mut self,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,_:usize)->Option<(usize,Result<(),crate::ExecError>)>{panic!("unavailable native block must not run")}
+        fn block(&mut self,_:&Image,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState,_:usize,_:bool)->Option<(usize,Result<(),crate::ExecError>)>{panic!("unavailable native block must not run")}
         fn execute(&mut self,_:&Image,_:&std::rc::Rc<crate::guest::Decoded>,_:&mut Cpu,_:&mut Ram,_:&mut crate::address::SegmentState)->Option<Result<(),crate::ExecError>>{panic!("unavailable native instruction must not run")}
     }
     let bytes=[0xb9,32,0,0xb8,0,0,0x83,0xc0,1,0xe2,0xfb,0xb8,0,0x4c,0xcd,0x21];

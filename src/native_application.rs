@@ -475,6 +475,38 @@ fn context(
         });
     (flow, address)
 }
+impl Backend {
+    fn block_one(
+        &mut self,
+        image: &Image,
+        cpu: &mut Cpu,
+        ram: &mut Ram,
+        machine: &mut address::SegmentState,
+    ) -> Option<(usize, Result<(), ExecError>)> {
+        let record = self.record(image, ram, cpu.eip)?.ok()?;
+        if record.partial {
+            return None;
+        }
+        let (flow, address) = context(record, image, cpu.eip);
+        let dst = record.dst;
+        let src = record.src;
+        let native = &record.native;
+        let result = (native.form)(
+            &mut cpu.regs,
+            &mut cpu.eflags,
+            &mut cpu.undefined_flags,
+            &mut cpu.eip,
+            (dst.register, dst.low),
+            (src.register, src.low),
+            flow,
+            ram,
+            address,
+            machine,
+            &native.consts,
+        );
+        Some((usize::from(result.is_ok()), result))
+    }
+}
 impl dos::InstructionBackend for Backend {
     fn reference_instruction(&mut self, image: &Image, ram: &Ram, ip: u32, decoded: &Decoded) {
         self.pending = Some((
@@ -540,35 +572,42 @@ impl dos::InstructionBackend for Backend {
         ram: &mut Ram,
         machine: &mut address::SegmentState,
         budget: usize,
+        chain: bool,
     ) -> Option<(usize, Result<(), ExecError>)> {
         if budget == 0 {
             return None;
         }
-        let record = self.record(image, ram, cpu.eip)?.ok()?;
-        if record.partial {
-            return None;
+        let entry = *machine;
+        let entry_eflags = cpu.eflags;
+        let (mut total, mut result) = self.block_one(image, cpu, ram, machine)?;
+        // Keep going through consecutive prepared instructions without a trip
+        // round the DOS loop each. `image` is only refreshed by the caller, so
+        // stop at any change to segment/mode/flag state it holds, at an
+        // interrupt shadow, at a fault, and at the caller's step budget.
+        while chain && result.is_ok() && total < budget {
+            if machine.ss_shadow != 0
+                || machine.sti_shadow != 0
+                || machine.flag_checkpoint.is_some()
+                || machine.segments != entry.segments
+                || machine.selectors != entry.selectors
+                || machine.msw != entry.msw
+                || machine.real_mode != entry.real_mode
+                || machine.paging != entry.paging
+                || (cpu.eflags ^ entry_eflags) & 0x300 != 0
+            {
+                break;
+            }
+            match self.block_one(image, cpu, ram, machine) {
+                Some((n, r)) => {
+                    total += n;
+                    result = r;
+                }
+                None => break,
+            }
         }
-        let (flow, address) = context(record, image, cpu.eip);
-        let dst = record.dst;
-        let src = record.src;
-        let native = &record.native;
-        let result = (native.form)(
-            &mut cpu.regs,
-            &mut cpu.eflags,
-            &mut cpu.undefined_flags,
-            &mut cpu.eip,
-            (dst.register, dst.low),
-            (src.register, src.low),
-            flow,
-            ram,
-            address,
-            machine,
-            &native.consts,
-        );
-        let retired = usize::from(result.is_ok());
         self.blocks += 1;
-        self.instructions += retired as u64;
-        Some((retired, result))
+        self.instructions += total as u64;
+        Some((total, result))
     }
     fn decode(
         &mut self,
@@ -1272,5 +1311,50 @@ mod tests {
         assert!(app.records.iter().zip(&offsets).all(|(r, &o)| r.offset == o));
         // Deduplicated forms should keep 64+ records well below 64 * ~30 bytes.
         assert!(encoded.len() < 1024, "encoded len={}", encoded.len());
+    }
+    #[test]
+    fn prepared_backend_chains_consecutive_instructions_and_matches_reference() {
+        if precompiled::forms() == 0 {
+            return;
+        }
+        // MOV CX, 20; XOR AX, AX; INC AX; LOOP -3; MOV AX, 4C00h; INT 21h
+        let com = [
+            0xb9, 20, 0x00, 0x31, 0xc0, 0x40, 0xe2, 0xfd, 0xb8, 0x00, 0x4c, 0xcd, 0x21,
+        ];
+        let (bytes, _) = compile(&com, "CHAIN.COM").unwrap();
+        let app = Application::read(&bytes).unwrap();
+        let mut reference = dos::load(&com, "CHAIN.COM").unwrap();
+        reference.blocks.mode = Some(precompiled::Mode::Off);
+        let mut ref_session = dos::session::Session::new(reference);
+        let mut prepared = dos::session::Session::new(dos::load(&app.image, "CHAIN.COM").unwrap());
+        app.attach(&mut prepared, None).unwrap();
+        ref_session.run(500).unwrap();
+        prepared.run(500).unwrap();
+        assert_eq!(ref_session.exit_code(), Some(0));
+        assert_eq!(prepared.exit_code(), Some(0));
+        assert_eq!(
+            prepared.machine().unwrap().cpu.regs[0] & 0xffff,
+            ref_session.machine().unwrap().cpu.regs[0] & 0xffff
+        );
+        assert_eq!(
+            prepared.machine().unwrap().ram.bytes(),
+            ref_session.machine().unwrap().ram.bytes()
+        );
+        let (reply, _) = prepared.command(0, "snapshot").unwrap();
+        let blocks: u64 = reply
+            .split("\"native_blocks\":")
+            .nth(1)
+            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.parse().ok())
+            .unwrap();
+        let total: u64 = reply
+            .split("\"native_total_instructions\":")
+            .nth(1)
+            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.parse().ok())
+            .unwrap();
+        assert!(total >= 40, "expected >=40 native instructions, got {reply}");
+        assert!(blocks < total, "expected block chaining (blocks={blocks} < total={total})");
+        assert!(reply.contains("\"interpreter_instructions\":0"), "{reply}");
     }
 }
