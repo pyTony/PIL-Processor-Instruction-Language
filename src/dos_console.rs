@@ -33,30 +33,21 @@ pub(super) fn initialize(ram:&mut Ram)->Result<(),String>{
         ram.store(at,width,value).map_err(|e|format!("console initialization: {e:?}"))?;
     }Ok(())
 }
-/// Keeps the video BIOS's copy of its data area in a booted machine. An
-/// operating system may reuse 0040:0049-0040:0085 once it drives the screen
-/// itself (Linux 0.99 has its kernel at physical 0), while the front ends
-/// still need the layout the BIOS last set up.
-pub(super) fn keep_bios_video(p:&mut Loaded){
-    if !p.booted{return;}
-    let mut data=[0u8;super::vga::BIOS_DATA];
-    for (i,b) in data.iter_mut().enumerate(){
-        match p.ram.load(0x449+i as u32,MemWidth::Byte){Ok(v)=>*b=v as u8,Err(_)=>return}
+/// Records the mode a BIOS mode set has just programmed into the display
+/// hardware (see vga::Display), from the BIOS data it wrote with it.
+fn program_display(p:&mut Loaded){
+    if let (Ok(mode),Ok(columns),Ok(rows))=(byte(p,0x449),read(p,0x44a),byte(p,0x484)){
+        p.vga.display=super::vga::Display{mode:mode as u8,columns:columns.clamp(1,80),rows:rows+1};
     }
-    p.vga.bios_data=Some(data);
 }
-/// The BIOS video data at `at` (0040:0049-0040:0085) as the front ends read
-/// it to lay out the screen: in a booted machine the copy the video BIOS
-/// kept at its last call, elsewhere the data area itself.
-pub(crate) fn bios_video(p:&Loaded,at:u32,width:MemWidth)->Result<u32,crate::memory::AccessFault>{
-    let bytes=match width{MemWidth::Byte=>1,MemWidth::Word=>2,MemWidth::Dword=>4};
-    if let Some(data)=p.vga.bios_data.as_ref().filter(|_|p.booted){
-        if at>=0x449&&(at+bytes) as usize<=0x449+data.len(){
-            let i=(at-0x449) as usize;
-            return Ok(data[i..i+bytes as usize].iter().rev().fold(0,|v,b|v<<8|u32::from(*b)));
-        }
-    }
-    p.ram.load(at,width)
+/// The display mode the front ends lay the screen out by. In a booted
+/// machine it is the one the hardware was programmed for: an operating
+/// system may reuse 0040:0049-0040:0085 once it drives the screen itself
+/// (Linux 0.99 has its kernel at physical 0), and the display hardware
+/// never reads that area. Dine's own DOS reads the data area, as before.
+pub(crate) fn shown_mode(p:&Loaded)->Result<super::vga::Display,crate::memory::AccessFault>{
+    if p.booted{return Ok(p.vga.display);}
+    Ok(super::vga::Display{mode:p.ram.load(0x449,MemWidth::Byte)? as u8,columns:p.ram.load(0x44a,MemWidth::Word)?.clamp(1,80),rows:p.ram.load(0x484,MemWidth::Byte)?+1})
 }
 fn ring(p:&Loaded)->Result<(u32,u32),String>{
     let head=read(p,0x41a)?;let tail=read(p,0x41c)?;
@@ -299,8 +290,13 @@ fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
 /// Bit 7 keeps video RAM.
 fn set_mode(p:&mut Loaded)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
-    if super::planar::geometry(al&0x7f).is_some(){return super::planar::set_mode(p,al&0x7f,al&0x80!=0);}
+    if super::planar::geometry(al&0x7f).is_some(){
+        let result=super::planar::set_mode(p,al&0x7f,al&0x80!=0);
+        if result.is_ok(){program_display(p);}
+        return result;
+    }
     let result=set_other_mode(p,al);
+    if result.is_ok(){program_display(p);}
     // Leaving a planar mode unmaps the planes; A000h is ordinary RAM again.
     if result.is_ok(){
         p.vga.bios_cga_mode(al&0x7f);

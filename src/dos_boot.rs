@@ -58,7 +58,6 @@ fn start(floppy:Option<(u8,bios_disk::Disk)>,fixed:Option<bios_disk::Disk>,drive
     // All of memory may hold code once an operating system is running.
     p.image.fetch_base=0;p.image.start=0;p.image.end=p.ram.bytes().len() as u32;
     bios_disk::load_boot_sector(&mut p,drive)?;
-    console::keep_bios_video(&mut p);
     Ok(p)
 }
 

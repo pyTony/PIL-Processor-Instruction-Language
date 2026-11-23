@@ -260,9 +260,6 @@ impl Ram {
         };
         writes == stamp.writes
     }
-    /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
-    /// modelled: every access walks the tables as they are in memory.
-    #[inline]
     /// Runs `f` on physical addresses, with paging off for its accesses
     /// (a DMA transfer, which bypasses the CPU's page tables).
     pub(crate) fn physical<R>(&mut self,f:impl FnOnce(&mut Self)->R)->R{
@@ -271,14 +268,18 @@ impl Ram {
     }
     /// Paging off for host-side accesses (a front end reading video memory
     /// or the BIOS data area, as the display hardware does), keeping the
-    /// TLB: writes to page-table frames are tracked whatever the paging
-    /// state, and `set_paging` with the same directory turns it back on.
+    /// TLB: writes to page-table frames flush it whatever the paging state
+    /// (`store` and `write_bytes` call `table_write` on both paths), and
+    /// `set_paging` with the same directory turns it back on.
     pub(crate) fn host_access(&mut self){
         if !self.marks.get_mut().is_empty(){self.settle();}
         self.paging.set(None);
     }
     /// A CPU write to a frame holding a page table the TLB has used.
     fn table_write(&mut self,index:usize){let tlb=self.tlb.get_mut();if tlb.used&&tlb.holds_table(index){tlb.flush();}}
+    /// Turns paging on or off (CR0.PG, CR3, CPL). Paging off, or another
+    /// page directory, flushes the TLB.
+    #[inline]
     pub fn set_paging(&mut self, paging: Option<Paging>) {
         if !self.marks.get_mut().is_empty() {
             self.settle();
@@ -527,7 +528,7 @@ impl Ram {
         for shift in 0..bytes {
             let index=self.physical_address(address+shift as u32)as usize;let byte=(value>>(shift*8)) as u8;
             if self.video_watch.is_some() && !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
-                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
+                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;self.table_write(index);}}
         }
         Ok(())
     }
@@ -542,7 +543,7 @@ impl Ram {
         }
         let mut done=0;while done<data.len(){let guest=address+done as u32;let chunk=if self.a20_enabled{data.len()-done}else{(data.len()-done).min(0x100000-(guest as usize&0xfffff))};let start=self.physical_address(guest)as usize;self.code_watch.write(start,chunk);
             // ROM bytes stay as they are, as for `store`.
-            for i in 0..chunk{if !self.in_rom(start+i){self.note_video_write(start+i,Some(self.data[start+i]!=data[done+i]));if let Some(w)=self.text_watch.as_mut(){w.write(start+i,self.data[start+i],data[done+i]);}self.data[start+i]=data[done+i];}}
+            for i in 0..chunk{if !self.in_rom(start+i){self.note_video_write(start+i,Some(self.data[start+i]!=data[done+i]));if let Some(w)=self.text_watch.as_mut(){w.write(start+i,self.data[start+i],data[done+i]);}self.data[start+i]=data[done+i];self.table_write(start+i);}}
             done+=chunk;}Ok(())
     }
 }

@@ -17,6 +17,41 @@ by a boot sector). MCC Interim from a copy of the installed 40 MB image,
 `--boot-probe ... --rtc-year 1993`: the prompt shows the time and `date`
 answers "Tue Nov 23 20:37:36 1993" (the probe runs on UTC). The console
 window was not driven here.
+# Review fixes for the MCC Interim work: console from the CRTC, TLB, FDC — 23 November 2026
+
+Tony asked for a review of the Linux boot work (#294-#304) and said yes to
+fixing what it found.
+- Console layout (replaces the video BIOS copy of #303/#304; a real VGA
+  BIOS keeps no such copy). In a booted machine the front ends now take
+  the page start and cursor from the CRTC start (0Ch/0Dh) and cursor
+  location (0Eh/0Fh) registers, the cursor shape from 0Ah/0Bh, and the
+  mode, columns and rows from vga::Display, which only a BIOS mode set
+  changes (the model refuses CRTC timing writes, so it keeps the mode they
+  describe). A program writing the CRTC itself (cursor off through 0Ah)
+  is shown; a write to 0040:004A changes nothing on screen, as on the
+  hardware. Dine's own DOS reads the data area as before.
+  `console::shown_mode` replaces `console::bios_video`; desktop_vga_raw
+  uses it too.
+- TLB (memory.rs): `store` and `write_bytes` without paging now flush the
+  TLB on a write to a page-table frame it used. Before, a host-side write
+  between runs (RAM in host view) left it stale. The misplaced doc comment
+  and `#[inline]` are back on `set_paging`.
+- Diskette controller: a READ/WRITE DATA without MT that ends at EOT
+  reports C+1, H, R=1 (uPD765 result ID table; it reported C). MT on a
+  one-sided track reports side 1 of the same cylinder. DMA master clear
+  (0Dh) leaves the channel-2 page register, a separate latch on the AT.
+- AT disk: an error loading the next sector of a multi-sector read now
+  stops the run instead of being dropped (the next data read would have
+  indexed past the sector buffer). The image file is opened once, at the
+  first write, and kept open.
+
+Cloud Linux, release: 1048 Rust tests pass, 2 ignored (3 new: a booted
+screen following the CRTC registers and not 0040:004A, host writes to
+page tables flushing the TLB, the FDC result ID without MT; 2 boot tests
+and 1 FDC expectation updated); no rustc warnings in the release build;
+program-specific and portable-path checks pass. MCC Interim, the console
+window and Windows were not run here.
+
 # The console cursor keeps its BIOS shape under Linux — 23 November 2026
 
 Tony, after #303: MCC Interim ran from /dev/hda1 to a root shell in the

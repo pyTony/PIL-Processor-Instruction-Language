@@ -789,7 +789,7 @@ pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
 }
 #[cfg(any(windows,unix,test))]
 fn desktop_vga_raw(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
-    let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
+    let mode=u32::from(console::shown_mode(p).ok()?.mode);
     if matches!(mode,4|5|6){return desktop_cga_frame(p,mode);}
     let color=|rgb:[u8;3]|u32::from(rgb[0])<<16|u32::from(rgb[1])<<8|u32::from(rgb[2]);
     if mode==0x13 {
