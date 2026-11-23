@@ -112,6 +112,11 @@ about 1.5 billion guest steps (10.5 minutes headless).
   - The kernel then reads the same floppy through the floppy controller
     (/dev/fd0); no disk swap is needed.
 - **Done when:** the root floppy mounts and a shell answers on the console.
+- **Done (23 November 2026), hard disk:** the AT hard-disk controller
+  (1F0h-1F7h, 3F6h, IRQ14), the INT 41h table and CMOS types. MCC's menu
+  partitions, formats (Minix) and installs Base onto a 40 MB image; booting
+  the diskette with `rw root=301` runs Linux from /dev/hda1 to a root shell.
+  Packages beyond Base need MCC's other disks.
 - **Later:** Linux 2.0/2.2 with an initrd and a serial console. Linux 3.8
   and later dropped the 386.
 

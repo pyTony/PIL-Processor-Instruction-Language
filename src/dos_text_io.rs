@@ -83,6 +83,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME};
     let mut plain=false;
     let mut boot:Option<(String,u8)>=None;
+    let mut hard_disk:Option<String>=None;
     let mut host_pointer=None;
     let mut speaker_volume=None;
     let mut at=0;
@@ -98,6 +99,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
                 let value=args.get(at+1).ok_or("missing DOS console option value")?;
                 speaker_volume=Some(value.parse::<u8>().ok().filter(|v|*v<=100).ok_or("--speaker-volume takes 0..100")?);at+=1;
             },
+            "--hd-image"=>{hard_disk=Some(args.get(at+1).ok_or("--hd-image takes a fixed-disk image")?.clone());at+=1;},
             "--boot"|"--boot-hd"=>{
                 let value=args.get(at+1).ok_or("--boot takes a disk image")?;
                 boot=Some((value.clone(),if args[at]=="--boot-hd"{0x80}else{0}));at+=1;
@@ -118,12 +120,21 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     if let Some((image,drive))=boot{
         // A booted disk: the machine without Dine's DOS (no program, drives
         // or configuration file of its own).
-        let bytes=std::fs::read(&image).map_err(|e|format!("{image}: {e}"))?;
-        let mut session=dos::session::Session::new(dos::boot(&bytes,drive)?);
+        // A fixed disk is written back to its file; a diskette is not.
+        let machine=match(drive,hard_disk){
+            (0x80,None)=>dos::boot_with_hard_disk(None,std::path::Path::new(&image),0x80)?,
+            (0x80,Some(_))=>return Err("--boot-hd boots from a fixed disk; --hd-image adds one next to a --boot diskette".into()),
+            (_,hard_disk)=>{
+                let bytes=std::fs::read(&image).map_err(|e|format!("{image}: {e}"))?;
+                match hard_disk{Some(disk)=>dos::boot_with_hard_disk(Some(&bytes),std::path::Path::new(&disk),0)?,None=>dos::boot(&bytes,0)?}
+            },
+        };
+        let mut session=dos::session::Session::new(machine);
         let result=run(&mut session,&options,plain);
         session.log_stop(&mut dos::stoplog::Logger::new(log_path,&image));
         return result;
     }
+    if hard_disk.is_some(){return Err("--hd-image needs --boot (a booted machine)".into());}
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
     let tail=tail.or_else(||startup.as_ref().and_then(|s|s.1.as_deref()));

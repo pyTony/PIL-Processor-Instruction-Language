@@ -1,3 +1,43 @@
+# AT hard-disk controller: MCC Interim installs onto a hard disk — 23 November 2026
+
+Tony chose the hard disk ("hd") over register-level VGA modes, so that MCC
+Interim can install a full system (SVGAlib would come later). In a booted
+machine with a fixed disk:
+- src/dos_ata.rs: the WD1003/ATA-1 task file at 1F0h-1F7h and 3F6h with
+  IRQ14 through the slave PIC (new Pair::raise_slave/slave_ready/
+  slave_vector/acknowledge_slave; the loop delivers it after the diskette
+  IRQ6). Recalibrate, read and write sectors (one IRQ per sector, the first
+  write sector without one), verify, seek, diagnostics, initialize drive
+  parameters (its geometry is used for CHS), identify (ATA-1 words, LBA
+  supported, no multiple mode), power and set-features as no-ops, others
+  aborted; CHS or LBA; SRST and nIEN. The absent slave reads 0 and takes no
+  command. Without a booted fixed disk the ports stay an open bus.
+- src/dos_bios_disk.rs: a fixed disk read from a file writes each changed
+  sector back to it (INT 13h and the controller); diskettes stay in memory.
+  INT 41h points at a 16-byte fixed disk parameter table at F000:E401;
+  0040:0075 counts one fixed disk; CMOS 12h = F0h, 19h = 47.
+- dos::boot_with_hard_disk; `--hd-image DISK` next to `--boot` (console)
+  or a probe image; `--boot-hd`/`--hd` now write back to the file;
+  `pil --new-hd-image FILE MB` makes an empty image (16 heads, 63 sectors,
+  whole cylinders, refuses an existing file).
+- `--boot-probe --type STEPS:TEXT` (repeatable) types at a step count, with
+  Shift for capitals and shifted symbols; typing waits for room in the
+  keyboard queue (keys were dropped when it was full).
+
+Local Windows, release: 1043 Rust tests pass, 2 ignored (7 new: 6 in
+tests/unit/dos_ata.rs, the BIOS table and CMOS, reset and identify, a CHS
+read across heads, an LBA write and errors, IRQ14 to a guest handler, the
+port ownership, write-back to a temporary file; 1 typing test in
+tests/unit/dos_boot.rs); 0 rustc warnings. MCC Interim (local) with a
+40 MB image, scripted through the probe: "hda: bad partition table", then
+fdisk (one primary partition, written; "hda: hda1"), mkfs (Minix, long
+names), install Base (CRC verified, 1952 KB used) and a clean unmount;
+booting again with `rw root=301` fsck'd and mounted /dev/hda1 as `/`, `7`
+skipped the package disks, `root` logged in, and `ls /`, `df` and
+/proc/meminfo answered. The console window path (`--dos-console --boot
+... --hd-image`) uses the same functions but was not driven by hand. Not
+run on Linux.
+
 # Compiled blocks in protected mode and with paging (Linux plan milestone 5) — 23 November 2026
 
 Tony: "yes" to milestone 5, to make the Linux boot fast. Protected-mode code

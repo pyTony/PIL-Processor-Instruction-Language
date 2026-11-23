@@ -68,3 +68,21 @@ fn images_of_other_sizes_are_refused(){
     assert!(bios_disk::Disk::fixed(vec![0;16*63*512*20]).is_ok());
     assert!(bios_disk::Disk::fixed(vec![0;1024]).is_err());
 }
+
+#[test]
+fn typed_text_reaches_int_16h_with_shift_for_capitals(){
+    // Three INT 16h AH=00h reads, their AX words stored at 0000:0600; CLI; HLT.
+    let code:&[u8]=&[
+        0x31,0xc0,0xcd,0x16,0xa3,0x00,0x06,
+        0x31,0xc0,0xcd,0x16,0xa3,0x02,0x06,
+        0x31,0xc0,0xcd,0x16,0xa3,0x04,0x06,0xfa,0xf4,
+    ];
+    let mut disk=vec![0u8;1_474_560];disk[..code.len()].copy_from_slice(code);disk[510]=0x55;disk[511]=0xaa;
+    let mut session=session::Session::new(boot(&disk,0).unwrap());
+    // More keys than the keyboard queue holds: typing waits for room.
+    type_text(&mut session,"aB?").unwrap();
+    session.run(10_000).unwrap();
+    let p=session.machine().unwrap();
+    let words:Vec<u32>=(0..3).map(|i|p.ram.load(0x600+2*i,MemWidth::Word).unwrap()).collect();
+    assert_eq!(words,vec![0x1e61,0x3042,0x353f]);
+}
