@@ -1,3 +1,22 @@
+# The console window keeps the BIOS screen layout under Linux — 23 November 2026
+
+Tony, after #302, booting MCC Interim from the hard disk in the console
+window: Linux's messages ran down the screen one character per row. The
+window took the text width from 0040:004A, and Linux 0.99 has its kernel at
+physical 0, so once it runs that word is kernel code (1 column).
+- src/dos_console.rs: in a booted machine the video BIOS keeps its own copy
+  of its data at 0040:0049-0040:0085 after each INT 10h call (and at boot);
+  `console::bios_video` gives the front ends that copy, elsewhere the data
+  area itself. Dine's own DOS reads as before.
+- The window and terminal (`grid`, the graphics-mode check and notes) and
+  the session screen (columns, page, page size, cursor words, the mouse
+  cell's mode) read through it.
+
+Local Windows, release: 1050 Rust tests pass, 2 ignored (1 new in
+tests/unit/dos_boot.rs: a boot sector prints, then fills 0000:0400-04FF;
+the session screen still has 80 columns and the character); 0 rustc
+warnings. The console window with MCC was not driven here.
+
 # AT hard-disk controller: MCC Interim installs onto a hard disk — 23 November 2026
 
 Tony chose the hard disk ("hd") over register-level VGA modes, so that MCC

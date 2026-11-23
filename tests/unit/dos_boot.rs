@@ -86,3 +86,30 @@ fn typed_text_reaches_int_16h_with_shift_for_capitals(){
     let words:Vec<u32>=(0..3).map(|i|p.ram.load(0x600+2*i,MemWidth::Word).unwrap()).collect();
     assert_eq!(words,vec![0x1e61,0x3042,0x353f]);
 }
+
+/// An operating system may reuse the BIOS data area (Linux 0.99 has its
+/// kernel at physical 0); the screen layout the front ends read is the copy
+/// the video BIOS kept. The boot sector prints 'L', fills 0000:0400-04FF
+/// with 01h and stops.
+#[test]
+fn the_screen_layout_survives_an_os_writing_over_the_bios_data_area(){
+    let code:&[u8]=&[
+        0xb4,0x0e,0xb0,b'L',0xcd,0x10,             // mov ah,0Eh; mov al,'L'; int 10h
+        0x31,0xdb,0x8e,0xc3,                       // xor bx,bx; mov es,bx
+        0xbf,0x00,0x04,0xb9,0x00,0x01,0xb0,0x01,   // mov di,400h; mov cx,100h; mov al,1
+        0xfc,0xf3,0xaa,0xfa,0xf4,                  // cld; rep stosb; cli; hlt
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);
+    disk[510]=0x55;disk[511]=0xaa;
+    let r=run(boot(&disk,0).unwrap(),2000).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    let p=r.loaded;
+    assert_eq!(p.ram.load(0x44a,MemWidth::Word).unwrap(),0x0101);
+    assert_eq!(console::bios_video(&p,0x449,MemWidth::Byte).unwrap(),3);
+    assert_eq!(console::bios_video(&p,0x44a,MemWidth::Word).unwrap(),80);
+    let session=session::Session::new(p);
+    let (cells,columns,_)=session.screen().unwrap();
+    assert_eq!(columns,80);
+    assert_eq!(cells[0],b'L');
+}

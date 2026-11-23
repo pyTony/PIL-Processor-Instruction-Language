@@ -29,8 +29,13 @@ fn default_palette()->[[u8;3];256]{
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, cga_mode:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(super) idle:Controllers,
     /// Text-mode font memory (plane 2, see dos_vga_font) while A0000h does not show it.
-    pub(super) font:Option<crate::vga_planar::Planar> }
-impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;a},attr_index:0x20,attr_data:false,cga_color:0x30,cga_mode:0x29,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None}}}
+    pub(super) font:Option<crate::vga_planar::Planar>,
+    /// The video BIOS's own copy of its data at 0040:0049-0040:0085 (mode,
+    /// columns, page, cursors, rows), taken after each INT 10h call in a
+    /// booted machine; see console::bios_video.
+    pub(super) bios_data:Option<[u8;BIOS_DATA]> }
+pub(super) const BIOS_DATA:usize=0x486-0x449;
+impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;a},attr_index:0x20,attr_data:false,cga_color:0x30,cga_mode:0x29,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None,bios_data:None}}}
 /// Sequencer and graphics controller registers outside the planar modes,
 /// where the planes are not mapped. The BIOS mode set loads the mode's
 /// standard values. Programs may write the registers that only steer planar

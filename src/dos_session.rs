@@ -191,8 +191,9 @@ impl Session{
     pub fn screen(&self)->Result<(Vec<u8>,u32,(u32,u32)),String>{
         let p=self.loaded.as_ref().ok_or("session state lost")?;
         let byte=|at|p.ram.load(at,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"));
-        let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("screen read: {e:?}"));
-        let(columns,page)=(word(0x44a)?.clamp(1,80),byte(0x462)?&7);
+        let word=|at|super::console::bios_video(p,at,MemWidth::Word).map_err(|e|format!("screen read: {e:?}"));
+        let bios_byte=|at|super::console::bios_video(p,at,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"));
+        let(columns,page)=(word(0x44a)?.clamp(1,80),bios_byte(0x462)?&7);
         let origin=if p.vga.start_override{u32::from(p.vga.start())*2}else{page*word(0x44c)?};
         let base=0xb8000;
         let cells=(0..columns*25*2).map(|i|byte(base+(origin+i)%32768).map(|b|b as u8)).collect::<Result<Vec<_>,_>>()?;
@@ -212,7 +213,7 @@ impl Session{
     /// mouse cursor, in text modes only.
     fn mouse_cell(p:&Loaded,columns:u32)->Result<Option<usize>,String>{
         let view=p.dos.mouse.view();
-        let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"))?&0x7f;
+        let mode=super::console::bios_video(p,0x449,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"))?&0x7f;
         if !view.visible||!matches!(mode,0..=3|7)||p.dos.mouse.text_masks().is_none(){return Ok(None);}
         // Virtual X spans 640 for 40 and 80 columns alike; rows are 8 high.
         let (column,row)=((u32::from(view.x)*columns/640).min(columns-1),(u32::from(view.y)/8).min(24));
