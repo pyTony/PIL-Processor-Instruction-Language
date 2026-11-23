@@ -1,3 +1,23 @@
+# --rtc-year: a real-time clock in another year — 23 November 2026
+
+Tony's MCC Interim shell showed 23:59:59 in its prompt. Linux 0.99 reads
+only the last two digits of the CMOS year (26) and computes a time before
+1970, as it would on a 2026 PC. Tony: "Yes, add it".
+- `--rtc-year YEAR` (1980-2099) for `pil --dos-console` and
+  `pil --boot-probe`, and the session command `rtc-year YEAR`: the RTC and
+  DOS's date run in that year from today's month, day and time (29 February
+  becomes 28 February in a common year). Rtc::date_in_year,
+  Loaded::set_rtc_year; host_console::Options gains rtc_year.
+- docs/BOOT.md: the option and the MCC install note; `pil --help` lists it
+  with the --boot options.
+
+Local Windows, release: 1052 Rust tests pass, 2 ignored (2 new: the RTC in
+another year with the leap-day case, and CMOS year and century 1993 read
+by a boot sector). MCC Interim from a copy of the installed 40 MB image,
+`--boot-probe ... --rtc-year 1993`: the prompt shows the time and `date`
+answers "Tue Nov 23 20:37:36 1993" (the probe runs on UTC). The console
+window was not driven here.
+
 # The console window keeps the BIOS screen layout under Linux — 23 November 2026
 
 Tony, after #302, booting MCC Interim from the hard disk in the console

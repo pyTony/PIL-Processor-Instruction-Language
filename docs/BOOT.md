@@ -27,6 +27,11 @@ steps, about 11 s headless here.
   has made STEPS steps (an operating system idles in its own loop, so the
   probe cannot see it wait). `\r` is Enter; capitals and shifted symbols
   are typed with Shift (US layout).
+- `--rtc-year YEAR` (console and probe, 1980-2099) runs the real-time
+  clock in that year from today's date and time. Linux 0.99 reads only the
+  CMOS year's last two digits and takes `26` as 1926, a date before 1970,
+  so its clock shows 23:59:59 of 31 December 1969; with `--rtc-year 1993`
+  `date` gives today's date and time in 1993, as on a machine of its time.
 - `pil --new-hd-image FILE MEGABYTES` creates an empty fixed-disk image of
   whole cylinders (16 heads, 63 sectors; 1-504 MB). It refuses an existing
   file.
@@ -53,7 +58,8 @@ Enter at `boot:`, then in MCC's menu: `f` (fdisk on /dev/hda: `n`, `p`,
 (a Minix file system with long names on /dev/hda1), `i` (install Base onto
 /dev/hda1, no swap, no other partition) and `y` to reboot. Booting the
 diskette again with `rw root=301` at `boot:` mounts /dev/hda1 as `/`; `7`
-skips the package floppies and `root` logs in.
+skips the package floppies and `root` logs in. Add `--rtc-year 1993` to
+the console command for a working clock.
 
 The BIOS side: INT 13h 00h-04h, 08h, 15h-18h on drives 00h, 01h and 80h
 (status at 0040:0041 and 0040:0074, the 64 KiB DMA limit on diskettes), the

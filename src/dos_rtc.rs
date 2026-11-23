@@ -82,6 +82,14 @@ impl Rtc{
         let d=self.date_at(now);
         self.adjust_seconds+=(days(c*100+y,m,dd)-days(d.year,d.month,d.day))*86400;self.weekday_adjust=0;Ok(())
     }
+    /// Today's month and day in `year` (28 February for 29 February in a
+    /// common year), for a clock that runs in another year.
+    pub fn date_in_year(&self,offset:Option<i64>,year:u32)->(u32,u32,u32){self.date_in_year_at(base(offset),year)}
+    fn date_in_year_at(&self,now:i64,year:u32)->(u32,u32,u32){
+        let d=self.date_at(now);let year=i64::from(year);
+        let day=if valid(year,d.month,d.day){d.day}else{d.day-1};
+        (year as u32,d.month as u32,day as u32)
+    }
     /// Set the RTC and DOS calendar date, preserving their time of day.
     pub fn set_dos_date(&mut self,offset:Option<i64>,adjust:i64,year:u32,month:u32,day:u32)->i64{
         let now=base(offset);let d=self.date_at(now);let before=days(d.year,d.month,d.day);let after=days(i64::from(year),i64::from(month),i64::from(day));
@@ -96,6 +104,16 @@ impl Rtc{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn a_clock_in_another_year_keeps_the_month_day_and_time(){
+        let mut r=Rtc::default();
+        let now=days(2026,11,23)*86400+3600;
+        let (y,m,d)=r.date_in_year_at(now,1993);assert_eq!((y,m,d),(1993,11,23));
+        let before=r.date_at(now);
+        r.adjust_seconds+=(days(1993,11,23)-days(2026,11,23))*86400;
+        assert_eq!(r.bios_at(now),[0x19,0x93,0x11,0x23,0x01,0,0]);
+        assert_eq!(r.date_at(now).seconds,before.seconds);
+        let leap=days(2024,2,29)*86400;assert_eq!(Rtc::default().date_in_year_at(leap,1993),(1993,2,28));
+    }
     #[test]fn bios_snapshot_rolls_over_the_whole_date_at_midnight(){
         let r=Rtc::default();let last=days(2024,2,29)*86400+86399;
         assert_eq!(r.bios_at(last),[0x20,0x24,0x02,0x29,0x23,0x59,0x59]);

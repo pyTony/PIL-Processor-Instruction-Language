@@ -578,6 +578,15 @@ fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compi
     Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default(),disks:Default::default(),booted:false,fdc:Default::default(),ata:Default::default()}.with_upper_memory()
 }
 impl Loaded{
+    /// Run the RTC and DOS's date in `year` (1980-2099), from today's month,
+    /// day and time on the session clock: for systems that cannot read a
+    /// date in this century (Linux 0.99 takes CMOS year 26 as 1926).
+    pub(crate) fn set_rtc_year(&mut self,year:u32)->Result<(),String>{
+        if !(1980..=2099).contains(&year){return Err(format!("RTC year {year} is outside 1980..2099"));}
+        let (year,month,day)=self.rtc.date_in_year(self.clock_offset,year);
+        self.dos.dos_date_adjust=self.rtc.set_dos_date(self.clock_offset,self.dos.dos_date_adjust,year,month,day);
+        Ok(())
+    }
     /// DOS=UMB comes with the XMS driver (dos_memory_arena::set_umbs).
     fn with_upper_memory(mut self)->Result<Self,String>{
         if self.dos.xms.installed(){memory_arena::set_umbs(&mut self,true)?;}

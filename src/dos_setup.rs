@@ -393,7 +393,7 @@ fn launch(path:&Path,window:bool,stop_log:&str,front:&mut Front,rx:&mpsc::Receiv
     #[cfg(not(windows))]
     let _=started;
     let mut logger=super::stoplog::Logger::new(stop_log,&program);
-    let options=Options{window,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(super::host_console::speaker::DEFAULT_VOLUME)};
+    let options=Options{window,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(super::host_console::speaker::DEFAULT_VOLUME),rtc_year:None};
     let result=host_console::run_on(&mut session,&options,front,rx);
     session.log_stop(&mut logger);
     let line=match &result{Ok(line)=>line.clone(),Err(e)=>e.clone()};

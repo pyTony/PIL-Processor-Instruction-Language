@@ -360,6 +360,12 @@ impl Session{
                 Ok(offset) if offset.abs()<=14*3600=>{self.loaded.as_mut().ok_or("session state lost")?.clock_offset=Some(offset);(true,String::new(),false)},
                 _=>(false,"clock needs a UTC offset in seconds (-50400..50400)".into(),false),
             },
+            // `rtc-year YEAR`: the RTC and DOS's date run in YEAR from today's
+            // month, day and time (after `clock`).
+            ["rtc-year",year]=>match year.parse::<u32>(){
+                Ok(year)=>match self.loaded.as_mut().ok_or("session state lost")?.set_rtc_year(year){Ok(())=>(true,String::new(),false),Err(e)=>(false,e,false)},
+                _=>(false,"rtc-year needs a year (1980..2099)".into(),false),
+            },
             // `country CODE`: the DOS country, as AH38 with DX=FFFFh would set it.
             ["country",code]=>match code.parse::<u16>(){
                 Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.dos.country=code;(true,String::new(),false)},
