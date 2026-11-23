@@ -19,7 +19,7 @@ pub(crate) fn run(shell:&str,media:Option<&str>,log_path:&str)->Result<(),String
     };
     println!("{text}\nD: is the writable install destination. Ctrl+Shift+M opens host drive controls.");
     let settings=crate::dos_config::console_settings(None)?;
-    let options=super::Options{window:true,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(super::speaker::DEFAULT_VOLUME)};
+    let options=super::Options{window:true,mouse:settings.mouse,ansi:settings.ansi,country:None,utc_offset:settings.utc_offset,host_pointer:settings.host_pointer.unwrap_or_default(),speaker_volume:settings.speaker_volume.unwrap_or(super::speaker::DEFAULT_VOLUME),rtc_year:None};
     let result=super::run(&mut session,&options);
     session.log_stop(&mut crate::dos::stoplog::Logger::new(log_path,shell));
     println!("{}",result?);Ok(())

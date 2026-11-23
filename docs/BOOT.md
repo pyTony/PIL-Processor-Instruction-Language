@@ -34,6 +34,11 @@ steps, about 11 s headless here.
   Ctrl+Shift+F2 back to the previous. Either way the drive's change line
   goes active (FDC 3F7h bit 7 until the head steps; INT 13h AH=16h returns
   06h once), as when a hand changes the disk.
+- `--rtc-year YEAR` (console and probe, 1980-2099) runs the real-time
+  clock in that year from today's date and time. Linux 0.99 reads only the
+  CMOS year's last two digits and takes `26` as 1926, a date before 1970,
+  so its clock shows 23:59:59 of 31 December 1969; with `--rtc-year 1993`
+  `date` gives today's date and time in 1993, as on a machine of its time.
 - `pil --new-hd-image FILE MEGABYTES` creates an empty fixed-disk image of
   whole cylinders (16 heads, 63 sectors; 1-504 MB). It refuses an existing
   file.
@@ -60,14 +65,15 @@ Enter at `boot:`, then in MCC's menu: `f` (fdisk on /dev/hda: `n`, `p`,
 (a Minix file system with long names on /dev/hda1), `i` (install Base onto
 /dev/hda1, no swap, no other partition) and `y` to reboot. Booting the
 diskette again with `rw root=301` at `boot:` mounts /dev/hda1 as `/`; `7`
-skips the package floppies and `root` logs in.
+skips the package floppies and `root` logs in. Add `--rtc-year 1993` to
+the console command for a working clock.
 
 MCC Interim 1.0+ (Linux 1.0.4, March 1994) comes as a boot disk and a
 root disk, 1.2 MB each (`nocdboot` and `root` from the `images` folder of
 the release, gunzipped; not the copies padded to 1.44 MB for a GoTek):
 
 ```powershell
-pil --dos-console --boot images/mcc-1.0/nocdboot --floppy images/mcc-1.0/root --hd-image images/mcc-1.0/hd40.img
+pil --dos-console --boot images/mcc-1.0/nocdboot --floppy images/mcc-1.0/root --hd-image images/mcc-1.0/hd40.img --rtc-year 1994
 ```
 
 Type `ramdisk` at `boot:`; when the kernel asks for the root disk, press

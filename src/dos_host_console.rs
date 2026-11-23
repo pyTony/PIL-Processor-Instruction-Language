@@ -289,15 +289,17 @@ pub(crate) fn ansi_frame(cells:&[u8],columns:u32,cursor:(u32,u32),cursor_visible
 #[cfg(any(windows,test))]
 pub(crate) use super::vga_text::text_pixels;
 /// The BIOS cursor (0040:0050 for the page, shape at 0040:0060) on a 16-line
-/// cell, or None when it is off. In a booted machine the shape is the video
-/// BIOS's own copy (see console::bios_video).
+/// cell, or None when it is off. In a booted machine the shape is the CRTC's
+/// cursor start and end registers, as the display hardware draws it.
 pub(crate) fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
-    let byte=|at|super::console::bios_video(p,at,MemWidth::Byte).ok();
-    let (end,start)=(byte(0x460)?,byte(0x461)?);
-    super::vga_text::cursor_lines(start as u8,end as u8)
+    let (start,end)=if p.booted{p.vga.cursor_registers()}else{
+        let byte=|at|p.ram.load(at,MemWidth::Byte).ok();
+        (byte(0x461)? as u8,byte(0x460)? as u8)
+    };
+    super::vga_text::cursor_lines(start,end)
 }
 pub(crate) fn graphics_mode(p:&Loaded)->bool{
-    super::console::bios_video(p,0x449,MemWidth::Byte).is_ok_and(|m|!matches!(m&0x7f,0..=3|7))
+    super::console::shown_mode(p).is_ok_and(|d|!matches!(d.mode&0x7f,0..=3|7))
 }
 
 /// Options of `pil --dos-console`.
@@ -305,7 +307,9 @@ pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate
     /// The host pointer over the window (Windows); the terminal ignores it.
     pub(crate) host_pointer:HostPointer,
     /// PC speaker volume 0..100, 0 silent (`speaker_volume`).
-    pub(crate) speaker_volume:u8}
+    pub(crate) speaker_volume:u8,
+    /// The year the RTC runs in (`--rtc-year`), else this computer's.
+    pub(crate) rtc_year:Option<u32>}
 
 /// Run the session until the program ends, it stops, or the user quits.
 /// Returns the closing text for the host terminal: when the program ended
@@ -335,7 +339,7 @@ pub(crate) fn last_lines(text:&[u8],columns:u32,count:usize)->String{
 pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String>{
     let offset=options.utc_offset.unwrap_or_else(local_utc_offset);
     for command in [Some(format!("clock {offset}")),options.country.map(|c|format!("country {c}")),
-        options.ansi.then(||"ansi on".to_string()),options.mouse.then(||"mouse on".to_string())].into_iter().flatten(){
+        options.rtc_year.map(|y|format!("rtc-year {y}")),options.ansi.then(||"ansi on".to_string()),options.mouse.then(||"mouse on".to_string())].into_iter().flatten(){
         let (reply,_)=session.command(0,&command)?;
         if reply.contains("\"ok\":false"){return Err(format!("{command}: {reply}"));}
     }
@@ -704,7 +708,7 @@ impl Front{
                         }
                         self.graphics_note=true;
                     }else if !self.graphics_note{
-                        let mode=super::console::bios_video(p,0x449,MemWidth::Byte).unwrap_or(0);
+                        let mode=super::console::shown_mode(p).map_or(0,|d|d.mode);
                         t.write(&format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: scanout unavailable; keys still reach DOS."))?;
                         self.graphics_note=true;
                     }
@@ -712,7 +716,7 @@ impl Front{
                 #[cfg(windows)]
                 if !self.graphics_note{
                     self.graphics_note=true;self.previous=None;
-                    let mode=super::console::bios_video(p,0x449,MemWidth::Byte).unwrap_or(0);
+                    let mode=super::console::shown_mode(p).map_or(0,|d|d.mode);
                     t.write(&format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: shown in the Dine window; keys work there and here."))?;
                 }
             }else{
@@ -890,10 +894,9 @@ pub(crate) mod catalog;
 
 /// The character grid of the screen shown now: (columns, rows).
 fn grid(p:&Loaded)->Result<(u32,u32),String>{
-    let read=|at,w|super::console::bios_video(p,at,w).map_err(|e|format!("BIOS screen size read: {e:?}"));
-    let columns=read(0x44a,MemWidth::Word)?.clamp(1,80);
-    let rows=if graphics_mode(p){read(0x484,MemWidth::Byte)?+1}else{25};
-    Ok((columns,rows))
+    let display=super::console::shown_mode(p).map_err(|e|format!("BIOS screen size read: {e:?}"))?;
+    let rows=if graphics_mode(p){display.rows}else{25};
+    Ok((display.columns,rows))
 }
 
 #[cfg(test)]

@@ -25,7 +25,60 @@ device 2/0", the menu; fdisk (hda1), mkfs ext2, install Base (CRC verified)
 and the follow-up questions; then the boot disk with `ro root=301`: "This
 is Linux 1.0", root login, `uname -a`, `df`, `ls /`, `free` answered. The
 console window path was not driven. The shell prompt's clock read
-23:59:59. Not run on Windows.
+23:59:59 without `--rtc-year` (#305). Not run on Windows.
+# --rtc-year: a real-time clock in another year — 23 November 2026
+
+Tony's MCC Interim shell showed 23:59:59 in its prompt. Linux 0.99 reads
+only the last two digits of the CMOS year (26) and computes a time before
+1970, as it would on a 2026 PC. Tony: "Yes, add it".
+- `--rtc-year YEAR` (1980-2099) for `pil --dos-console` and
+  `pil --boot-probe`, and the session command `rtc-year YEAR`: the RTC and
+  DOS's date run in that year from today's month, day and time (29 February
+  becomes 28 February in a common year). Rtc::date_in_year,
+  Loaded::set_rtc_year; host_console::Options gains rtc_year.
+- docs/BOOT.md: the option and the MCC install note; `pil --help` lists it
+  with the --boot options.
+
+Local Windows, release: 1052 Rust tests pass, 2 ignored (2 new: the RTC in
+another year with the leap-day case, and CMOS year and century 1993 read
+by a boot sector). MCC Interim from a copy of the installed 40 MB image,
+`--boot-probe ... --rtc-year 1993`: the prompt shows the time and `date`
+answers "Tue Nov 23 20:37:36 1993" (the probe runs on UTC). The console
+window was not driven here.
+# Review fixes for the MCC Interim work: console from the CRTC, TLB, FDC — 23 November 2026
+
+Tony asked for a review of the Linux boot work (#294-#304) and said yes to
+fixing what it found.
+- Console layout (replaces the video BIOS copy of #303/#304; a real VGA
+  BIOS keeps no such copy). In a booted machine the front ends now take
+  the page start and cursor from the CRTC start (0Ch/0Dh) and cursor
+  location (0Eh/0Fh) registers, the cursor shape from 0Ah/0Bh, and the
+  mode, columns and rows from vga::Display, which only a BIOS mode set
+  changes (the model refuses CRTC timing writes, so it keeps the mode they
+  describe). A program writing the CRTC itself (cursor off through 0Ah)
+  is shown; a write to 0040:004A changes nothing on screen, as on the
+  hardware. Dine's own DOS reads the data area as before.
+  `console::shown_mode` replaces `console::bios_video`; desktop_vga_raw
+  uses it too.
+- TLB (memory.rs): `store` and `write_bytes` without paging now flush the
+  TLB on a write to a page-table frame it used. Before, a host-side write
+  between runs (RAM in host view) left it stale. The misplaced doc comment
+  and `#[inline]` are back on `set_paging`.
+- Diskette controller: a READ/WRITE DATA without MT that ends at EOT
+  reports C+1, H, R=1 (uPD765 result ID table; it reported C). MT on a
+  one-sided track reports side 1 of the same cylinder. DMA master clear
+  (0Dh) leaves the channel-2 page register, a separate latch on the AT.
+- AT disk: an error loading the next sector of a multi-sector read now
+  stops the run instead of being dropped (the next data read would have
+  indexed past the sector buffer). The image file is opened once, at the
+  first write, and kept open.
+
+Cloud Linux, release: 1048 Rust tests pass, 2 ignored (3 new: a booted
+screen following the CRTC registers and not 0040:004A, host writes to
+page tables flushing the TLB, the FDC result ID without MT; 2 boot tests
+and 1 FDC expectation updated); no rustc warnings in the release build;
+program-specific and portable-path checks pass. MCC Interim, the console
+window and Windows were not run here.
 
 # The console cursor keeps its BIOS shape under Linux — 23 November 2026
 

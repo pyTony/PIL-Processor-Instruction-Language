@@ -206,13 +206,16 @@ impl Session{
     pub fn screen(&self)->Result<(Vec<u8>,u32,(u32,u32)),String>{
         let p=self.loaded.as_ref().ok_or("session state lost")?;
         let byte=|at|p.ram.load(at,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"));
-        let word=|at|super::console::bios_video(p,at,MemWidth::Word).map_err(|e|format!("screen read: {e:?}"));
-        let bios_byte=|at|super::console::bios_video(p,at,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"));
-        let(columns,page)=(word(0x44a)?.clamp(1,80),bios_byte(0x462)?&7);
-        let origin=if p.vga.start_override{u32::from(p.vga.start())*2}else{page*word(0x44c)?};
+        let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("screen read: {e:?}"));
+        let columns=super::console::shown_mode(p).map_err(|e|format!("screen read: {e:?}"))?.columns;
+        // In a booted machine the CRTC start and cursor registers place the
+        // page and the cursor, as the display hardware does (the BIOS keeps
+        // them in step with its data area at each call).
+        let page=if p.booted{0}else{byte(0x462)?&7};
+        let origin=if p.booted||p.vga.start_override{u32::from(p.vga.start())*2}else{page*word(0x44c)?};
         let base=0xb8000;
         let cells=(0..columns*25*2).map(|i|byte(base+(origin+i)%32768).map(|b|b as u8)).collect::<Result<Vec<_>,_>>()?;
-        let cursor=if p.vga.cursor_override{let cell=u32::from(p.vga.cursor()).wrapping_sub(origin/2)&0x3fff;((cell/columns)<<8)|(cell%columns)}else{word(0x450+page*2)?};
+        let cursor=if p.booted||p.vga.cursor_override{let cell=u32::from(p.vga.cursor()).wrapping_sub(origin/2)&0x3fff;((cell/columns)<<8)|(cell%columns)}else{word(0x450+page*2)?};
         let mut cells=cells;
         if let Some(at)=Self::mouse_cell(p,columns)?{
             // The software text cursor: the cell's character/attribute word
@@ -228,7 +231,7 @@ impl Session{
     /// mouse cursor, in text modes only.
     fn mouse_cell(p:&Loaded,columns:u32)->Result<Option<usize>,String>{
         let view=p.dos.mouse.view();
-        let mode=super::console::bios_video(p,0x449,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"))?&0x7f;
+        let mode=super::console::shown_mode(p).map_err(|e|format!("screen read: {e:?}"))?.mode&0x7f;
         if !view.visible||!matches!(mode,0..=3|7)||p.dos.mouse.text_masks().is_none(){return Ok(None);}
         // Virtual X spans 640 for 40 and 80 columns alike; rows are 8 high.
         let (column,row)=((u32::from(view.x)*columns/640).min(columns-1),(u32::from(view.y)/8).min(24));
@@ -374,6 +377,12 @@ impl Session{
             ["clock",offset]=>match offset.parse::<i64>(){
                 Ok(offset) if offset.abs()<=14*3600=>{self.loaded.as_mut().ok_or("session state lost")?.clock_offset=Some(offset);(true,String::new(),false)},
                 _=>(false,"clock needs a UTC offset in seconds (-50400..50400)".into(),false),
+            },
+            // `rtc-year YEAR`: the RTC and DOS's date run in YEAR from today's
+            // month, day and time (after `clock`).
+            ["rtc-year",year]=>match year.parse::<u32>(){
+                Ok(year)=>match self.loaded.as_mut().ok_or("session state lost")?.set_rtc_year(year){Ok(())=>(true,String::new(),false),Err(e)=>(false,e,false)},
+                _=>(false,"rtc-year needs a year (1980..2099)".into(),false),
             },
             // `country CODE`: the DOS country, as AH38 with DX=FFFFh would set it.
             ["country",code]=>match code.parse::<u16>(){

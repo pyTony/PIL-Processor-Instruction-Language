@@ -30,12 +30,17 @@ fn default_palette()->[[u8;3];256]{
 pub(super) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, cga_mode:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(super) idle:Controllers,
     /// Text-mode font memory (plane 2, see dos_vga_font) while A0000h does not show it.
     pub(super) font:Option<crate::vga_planar::Planar>,
-    /// The video BIOS's own copy of its data at 0040:0049-0040:0085 (mode,
-    /// columns, page, cursors, rows), taken after each INT 10h call in a
-    /// booted machine; see console::bios_video.
-    pub(super) bios_data:Option<[u8;BIOS_DATA]> }
-pub(super) const BIOS_DATA:usize=0x486-0x449;
-impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;a},attr_index:0x20,attr_data:false,cga_color:0x30,cga_mode:0x29,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None,bios_data:None}}}
+    /// The mode the last BIOS mode set programmed into the CRTC, sequencer
+    /// and attribute controller; see console::shown_mode.
+    pub(super) display:Display }
+/// A display mode as the hardware shows it: BIOS mode number, character
+/// columns and rows. The model keeps no per-mode CRTC timing values (it
+/// refuses timing changes), so it keeps the mode they describe; only a
+/// BIOS mode set changes it, never a write to the BIOS data area.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub(crate) struct Display{pub(crate) mode:u8,pub(crate) columns:u32,pub(crate) rows:u32}
+impl Default for Display{fn default()->Self{Self{mode:3,columns:80,rows:25}}}
+impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;a},attr_index:0x20,attr_data:false,cga_color:0x30,cga_mode:0x29,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None,display:Display::default()}}}
 /// Sequencer and graphics controller registers outside the planar modes,
 /// where the planes are not mapped. The BIOS mode set loads the mode's
 /// standard values. Programs may write the registers that only steer planar
@@ -154,6 +159,8 @@ impl Vga {
     pub fn select_color(&mut self){self.misc_output|=1;}
     pub fn start(&self)->u16{u16::from_be_bytes([self.regs[12],self.regs[13]])}
     pub fn cursor(&self)->u16{u16::from_be_bytes([self.regs[14],self.regs[15]])}
+    /// CRTC cursor start (0Ah, bit 5 off) and end (0Bh) registers.
+    pub fn cursor_registers(&self)->(u8,u8){(self.regs[10],self.regs[11])}
     pub fn io(&mut self,port:u16,input:bool,value:u8)->Result<Option<u8>,String>{
         match (port,input) {
             (0x3d8,true)=>return Ok(Some(0xff)),

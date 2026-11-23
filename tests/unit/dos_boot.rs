@@ -88,9 +88,9 @@ fn typed_text_reaches_int_16h_with_shift_for_capitals(){
 }
 
 /// An operating system may reuse the BIOS data area (Linux 0.99 has its
-/// kernel at physical 0); the screen layout the front ends read is the copy
-/// the video BIOS kept. The boot sector prints 'L', fills 0000:0400-04FF
-/// with 01h and stops.
+/// kernel at physical 0); the front ends lay the screen out by the mode the
+/// hardware was programmed for. The boot sector prints 'L', fills
+/// 0000:0400-04FF with 01h and stops.
 #[test]
 fn the_screen_layout_survives_an_os_writing_over_the_bios_data_area(){
     let code:&[u8]=&[
@@ -106,15 +106,17 @@ fn the_screen_layout_survives_an_os_writing_over_the_bios_data_area(){
     assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     let p=r.loaded;
     assert_eq!(p.ram.load(0x44a,MemWidth::Word).unwrap(),0x0101);
-    assert_eq!(console::bios_video(&p,0x449,MemWidth::Byte).unwrap(),3);
-    assert_eq!(console::bios_video(&p,0x44a,MemWidth::Word).unwrap(),80);
+    let display=console::shown_mode(&p).unwrap();
+    assert_eq!((display.mode,display.columns),(3,80));
     let session=session::Session::new(p);
-    let (cells,columns,_)=session.screen().unwrap();
+    let (cells,columns,cursor)=session.screen().unwrap();
     assert_eq!(columns,80);
     assert_eq!(cells[0],b'L');
+    // The cursor after 'L', from the CRTC cursor location register.
+    assert_eq!(cursor,(0,1));
 }
 
-/// The cursor shape the window draws comes from the same copy.
+/// The cursor shape the window draws comes from the CRTC cursor registers.
 #[test]
 fn the_cursor_shape_survives_an_os_writing_over_the_bios_data_area(){
     let code:&[u8]=&[
@@ -217,4 +219,54 @@ fn the_console_changes_a_booted_machines_diskette(){
     let dos=crate::dos::load(&[0xc3],"x.com").unwrap();
     assert!(session::Session::new(dos).boot_diskettes(vec![dir.join("boot.img")]).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `--rtc-year`: the CMOS year and century read through ports 70h/71h are
+/// the chosen year's, for kernels that cannot read this century.
+#[test]
+fn the_rtc_runs_in_the_chosen_year(){
+    let code:&[u8]=&[
+        0xb0,0x09,0xe6,0x70,0xe4,0x71,0xa2,0x00,0x90,   // year -> [9000h]
+        0xb0,0x32,0xe6,0x70,0xe4,0x71,0xa2,0x01,0x90,   // century -> [9001h]
+        0xfa,0xf4,                                      // cli; hlt
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);
+    disk[510]=0x55;disk[511]=0xaa;
+    let mut p=boot(&disk,0).unwrap();
+    p.clock_offset=Some(0);
+    assert!(p.set_rtc_year(1979).is_err());
+    p.set_rtc_year(1993).unwrap();
+    let r=run(p,1000).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(0x9000,MemWidth::Word).unwrap(),0x1993);
+}
+
+/// A boot sector that programs the CRTC itself: cursor off through register
+/// 0Ah (bit 5) and the start address through 0Ch/0Dh, then a word written
+/// to 0040:004A. The display follows the registers and ignores the data
+/// area, as the hardware does.
+#[test]
+fn a_booted_screen_follows_the_crtc_registers_not_the_bios_data_area(){
+    let code:&[u8]=&[
+        0xba,0xd4,0x03,                            // mov dx,3D4h
+        0xb8,0x0a,0x20,0xef,                       // mov ax,200Ah; out dx,ax (cursor off)
+        0xb8,0x0c,0x00,0xef,                       // mov ax,000Ch; out dx,ax (start high 00h)
+        0xb8,0x0d,0x50,0xef,                       // mov ax,500Dh; out dx,ax (start low 50h: row 1)
+        0x31,0xdb,0x8e,0xc3,                       // xor bx,bx; mov es,bx
+        0x26,0xc7,0x06,0x4a,0x04,0x28,0x00,        // mov word [es:44Ah],40
+        0xb8,0x00,0xb8,0x8e,0xc0,                  // mov ax,0B800h; mov es,ax
+        0x26,0xc6,0x06,0xa0,0x00,b'R',             // mov byte [es:0A0h],'R' (row 1, column 0)
+        0xfa,0xf4,                                 // cli; hlt
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);
+    disk[510]=0x55;disk[511]=0xaa;
+    let r=run(boot(&disk,0).unwrap(),2000).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(host_console::cursor_shape(&r.loaded),None);
+    let session=session::Session::new(r.loaded);
+    let (cells,columns,_)=session.screen().unwrap();
+    assert_eq!(columns,80);
+    assert_eq!(cells[0],b'R');
 }

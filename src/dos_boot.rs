@@ -58,7 +58,6 @@ fn start(floppy:Option<(u8,bios_disk::Disk)>,fixed:Option<bios_disk::Disk>,drive
     // All of memory may hold code once an operating system is running.
     p.image.fetch_base=0;p.image.start=0;p.image.end=p.ram.bytes().len() as u32;
     bios_disk::load_boot_sector(&mut p,drive)?;
-    console::keep_bios_video(&mut p);
     Ok(p)
 }
 
@@ -86,10 +85,11 @@ pub(crate) fn screen_lines(p:&Loaded)->Vec<String>{
 /// Each `changes` (STEPS, IMAGE) puts another diskette into drive A: once
 /// the run has made STEPS steps, as for a boot disk that asks for its root
 /// disk.
-pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)],changes:&[(usize,Vec<u8>)])->Result<String,String>{
+pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)],changes:&[(usize,Vec<u8>)],rtc_year:Option<u32>)->Result<String,String>{
     // The host clock drives the timer, so BIOS time-outs (a boot loader's
     // prompt) pass as they would on the machine.
     p.clock_offset=Some(0);
+    if let Some(year)=rtc_year{p.set_rtc_year(year)?;}
     let mut session=session::Session::new(p);
     let (mut left,mut done,mut typed)=(steps,0usize,keys.is_empty());
     enum Event<'a>{Type(&'a str),Floppy(&'a [u8])}
