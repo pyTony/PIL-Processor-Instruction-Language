@@ -49,6 +49,8 @@ pub(crate) mod vga_text;
 pub(crate) mod setup;
 #[path="dos_files.rs"]
 mod files;
+#[path="dos_lfn.rs"]
+mod lfn;
 #[path="dos_nls.rs"]
 mod nls;
 #[path="dos_exec.rs"]
