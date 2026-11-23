@@ -61,6 +61,11 @@ mod soundblaster;
 mod rtc;
 #[path="dos_block_move.rs"]
 mod block_move;
+#[path="dos_bios_disk.rs"]
+mod bios_disk;
+#[path="dos_boot.rs"]
+mod boot;
+pub use boot::{boot,probe as boot_probe};
 #[path="dos_xms.rs"]
 mod xms;
 #[path="dos_vga.rs"]
@@ -153,6 +158,11 @@ pub struct Loaded{
     pub(crate) history:history::History,
     /// Opt-in BIOS and DOS service call trace, independent of instruction history.
     pub(crate) services_trace:history::ServiceTrace,
+    /// Disk images the BIOS reads as sector devices (INT 13h), for a boot.
+    pub(crate) disks:bios_disk::Disks,
+    /// A disk was booted: no DOS runs on this machine, only the BIOS answers
+    /// INT n, and a zero vector is a real 0000:0000.
+    pub(crate) booted:bool,
 }
 /// DOS state Dine keeps for the program it runs, apart from the machine
 /// (CPU, memory, devices) it runs on.
@@ -221,8 +231,7 @@ impl Clone for Loaded{
         
         speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,
         cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),com1:self.com1.clone(),
-        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),
-    }}
+        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),disks:self.disks.clone(),booted:self.booted}}
 }
 impl std::fmt::Debug for Loaded{
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("Loaded{..}")}
@@ -557,7 +566,7 @@ fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compi
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default()}.with_upper_memory()
+    Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default(),disks:Default::default(),booted:false}.with_upper_memory()
 }
 impl Loaded{
     /// DOS=UMB comes with the XMS driver (dos_memory_arena::set_umbs).
@@ -950,6 +959,9 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         if !p.rom_mode {
         // A callback returns by RETF to the private BIOS continuation.
         // Its scratch registers/flags are discarded; guest memory writes remain.
+        // A booted OS has none of Dine's DOS: its return points are
+        // ordinary memory there (Linux runs its kernel at physical 0).
+        if !p.booted{
         match mouse::returned(&mut p){
             Ok(true)=>{lazy=super::LazyFlags::None;execution_steps+=1;
                 *instructions.entry("DOS mouse callback RETF".into()).or_insert(0)+=1;continue;},
@@ -974,6 +986,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 continue;
             },
             Err(message)=>break Stop::Service(message),
+        }
         }
         // The host clock is checked every 256 steps (about 0.1 ms of work here).
         if execution_steps%256==0{

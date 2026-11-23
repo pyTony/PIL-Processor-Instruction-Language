@@ -1,3 +1,35 @@
+# Booting disk images through the BIOS (Linux plan milestone 2) — 22 November 2026
+
+Tony's goal: early Linux, MCC Interim 0.99.p10+ (one 1.2 MB boot floppy,
+git-ignored images/mcc-interim/boot). Dine can now start the PC from a disk
+image without its own DOS (docs/BOOT.md):
+- src/dos_bios_disk.rs: images as BIOS drives 00h/01h/80h (floppy geometry
+  by size; fixed disks 16 heads, 63 sectors). INT 13h 00h-04h, 08h, 15h-18h,
+  no-op 0Ch/0Dh/10h/11h/14h, others AH=01h; status at 0040:0041/0074; the
+  64 KiB DMA limit on diskettes (09h); diskette parameter table at
+  F000:EFC7 (INT 1Eh, written as ROM contents); CMOS 10h diskette types.
+- src/dos_boot.rs: dos::boot (XMS/UMBs off, Dine's DOS data cleared from
+  0500h-9FFFFh, BIOS vectors only, exceptions and IRQ 8-15 at a bare IRET,
+  DOS vectors 0, equipment word, all RAM fetchable, boot sector at
+  0000:7C00 with DL=drive), INT 19h, and a headless probe. Loaded gains
+  `disks` and `booted`; when booted a zero vector is a real 0000:0000 and
+  the INT 23h/XMS/mouse return traps are off (Linux runs code at physical 0).
+- `pil --dos-console --boot IMAGE` / `--boot-hd IMAGE`; `pil --boot-probe
+  IMAGE [--hd] [--steps N] [--keys TEXT] [--keys-after N]`.
+- INT 16h AH=03h (typematic rate) is accepted with no effect (Linux setup
+  calls it). Port 80h writes are traced only in ROM mode (an OS uses the
+  port as an I/O delay).
+
+Local Windows, release: 1030 Rust tests pass, 2 ignored (4 new in
+tests/unit/dos_boot.rs: an original boot sector reading sector 2 through
+INT 13h and printing through INT 10h, the DMA-page refusal, AH=08h and CMOS
+for a 1.2M image, image sizes); 0 rustc warnings; portable-path and
+program-specific checks pass. MCC Interim (local, not in the repo): LILO
+shows its `boot:` prompt; with Enter it prints "Loading read-only....", the
+kernel switches to protected mode, uncompresses and prints "Console:
+colour", then stops on OUT 60h (a keyboard command, milestone 3), 5.5 s.
+FreeDOS kernel boot not tried. Not run on Linux.
+
 # DOS state apart from the machine (Linux boot plan, milestone 1) — 21 November 2026
 
 Tony: "Boot early linux and implement the compiled protected code. First

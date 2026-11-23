@@ -371,8 +371,11 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 if s.access==3{s.high_next=!s.high_next;}
                 s.sound(now);
             },
+            // The POST diagnostic port: writes go nowhere on a PC. The ROM
+            // runner traces them (test386 reports its stages there); an
+            // operating system uses port 80h only as an I/O delay.
             0x80 | 0x190 => {
-                eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
+                if p.rom_mode{eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);}
             },
             // Port E9h (the Bochs debug port): the ROM runner passes its bytes to
             // stdout, so test386 built with OUT_PORT equ 0E9h prints its POST EEh
@@ -416,7 +419,9 @@ fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
         0x0a=>0x26,0x0b=>0x02,0x0c=>0x00,0x0d=>0x80,
         // Diagnostics passed, normal shutdown, no diskette, no hard disk.
-        0x0e|0x10|0x11|0x12|0x13=>0,0x0f=>p.cmos_shutdown,
+        0x0e|0x11|0x12|0x13=>0,0x0f=>p.cmos_shutdown,
+        // Diskette drive types (A: high nibble, B: low) of attached BIOS disks.
+        0x10=>p.disks.cmos_floppy_types(),
         // Equipment: CGA 80 columns, no diskette, no coprocessor.
         0x14=>p.fpu.equipment(0x20) as u8,
         0x15=>0x80,0x16=>0x02,
