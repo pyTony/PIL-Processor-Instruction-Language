@@ -6,7 +6,8 @@
 //!
 //! Function numbers, register use, status codes and the 11-byte parameter
 //! table follow the IBM PC AT BIOS technical reference and RBIL INT 13h.
-//! Writes change the image held in memory only; the file is never written.
+//! Diskette writes change the image held in memory only; a fixed disk read
+//! from a file writes each changed sector back to that file.
 use super::*;
 
 /// Where the diskette parameter table lives in the BIOS area (F000:EFC7, the
@@ -16,7 +17,9 @@ const DPT_SEGMENT:u16=0xf000;
 const DPT_OFFSET:u16=0xefc7;
 
 #[derive(Clone,Debug)]
-pub(crate) struct Disk{data:Vec<u8>,cylinders:u32,heads:u32,sectors:u32}
+pub(crate) struct Disk{data:Vec<u8>,cylinders:u32,heads:u32,sectors:u32,
+    /// The file a fixed disk came from: written sectors go back to it.
+    file:Option<std::path::PathBuf>}
 impl Disk{
     /// A floppy image, its geometry from its size (the PC formats).
     pub(crate) fn floppy(data:Vec<u8>)->Result<Self,String>{
@@ -25,15 +28,33 @@ impl Disk{
             737_280=>(80,2,9),1_228_800=>(80,2,15),1_474_560=>(80,2,18),2_949_120=>(80,2,36),
             n=>return Err(format!("{n} bytes is not a PC floppy image size (160K-2.88M)")),
         };
-        Ok(Self{data,cylinders,heads,sectors})
+        Ok(Self{data,cylinders,heads,sectors,file:None})
     }
     /// A fixed-disk image: 16 heads and 63 sectors per track, the usual
     /// BIOS translation, and as many whole cylinders as the image holds.
     pub(crate) fn fixed(data:Vec<u8>)->Result<Self,String>{
         let cylinders=(data.len()/(16*63*512)) as u32;
         if cylinders==0||cylinders>1024{return Err(format!("{} bytes is not a fixed-disk image of 1-1024 cylinders (16 heads, 63 sectors)",data.len()));}
-        Ok(Self{data,cylinders,heads:16,sectors:63})
+        Ok(Self{data,cylinders,heads:16,sectors:63,file:None})
     }
+    /// A fixed disk from a file, written back to it sector by sector.
+    pub(crate) fn fixed_file(path:&std::path::Path)->Result<Self,String>{
+        let data=std::fs::read(path).map_err(|e|format!("{}: {e}",path.display()))?;
+        Ok(Self{file:Some(path.to_path_buf()),..Self::fixed(data)?})
+    }
+    /// Write whole sectors from `lba` on, in memory and to the file.
+    fn write(&mut self,lba:u32,bytes:&[u8])->Result<(),String>{
+        let at=lba as usize*512;
+        self.data.get_mut(at..at+bytes.len()).ok_or("sector outside the image")?.copy_from_slice(bytes);
+        if let Some(path)=&self.file{
+            use std::io::{Seek,SeekFrom,Write};
+            let fail=|e:std::io::Error|format!("{}: {e}",path.display());
+            let mut f=std::fs::OpenOptions::new().write(true).open(path).map_err(fail)?;
+            f.seek(SeekFrom::Start(at as u64)).map_err(fail)?;f.write_all(bytes).map_err(fail)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn geometry(&self)->(u32,u32,u32){(self.cylinders,self.heads,self.sectors)}
     /// The CMOS drive type of a floppy (register 10h): 1 360K, 2 1.2M,
     /// 3 720K, 4 1.44M, 5 2.88M.
     fn cmos_type(&self)->u8{
@@ -70,10 +91,10 @@ impl Disks{
         let d=if drive<2{self.floppy[usize::from(drive)].as_ref()}else{None}?;Some((d.cylinders,d.heads,d.sectors))
     }
     pub(crate) fn write_sector(&mut self,drive:u8,lba:u32,data:&[u8])->Result<(),String>{
-        let d=self.get_mut(drive).ok_or("no disk in the drive")?;
-        let at=lba as usize*512;
-        d.data.get_mut(at..at+512).ok_or("sector outside the image")?.copy_from_slice(data);Ok(())
+        self.get_mut(drive).ok_or("no disk in the drive")?.write(lba,&data[..512])
     }
+    /// The fixed disk (80h), when one is attached.
+    pub(crate) fn fixed(&self)->Option<&Disk>{self.fixed.as_ref()}
     pub(crate) fn sector(&self,drive:u8,lba:u32)->Option<&[u8]>{
         let d=self.get(drive)?;d.data.get(lba as usize*512..lba as usize*512+512)
     }
@@ -94,6 +115,26 @@ pub(super) fn install_table(p:&mut Loaded)->Result<(),String>{
     p.ram.write_bytes(DPT,&table).map_err(rom)?;
     p.ram.rom(DPT,table.len()).map_err(rom)?;
     p.ram.store(0x1e*4,MemWidth::Dword,u32::from(DPT_SEGMENT)<<16|u32::from(DPT_OFFSET)).map_err(|e|format!("INT 1Eh vector: {e:?}"))?;
+    Ok(())
+}
+
+/// The fixed disk parameter table (F000:E401, where the IBM AT BIOS kept
+/// its drive-type table) for drive 80h, behind INT 41h, and the number of
+/// fixed disks at 0040:0075. Layout: cylinders (word), heads, reduced
+/// write current cylinder (word), write precompensation cylinder (word,
+/// FFFFh none), ECC burst, control byte (bit 3: more than 8 heads), three
+/// time-outs, landing zone (word), sectors per track, reserved.
+const FDPT:u32=0xfe401;
+pub(super) fn install_fixed_table(p:&mut Loaded)->Result<(),String>{
+    let Some((cylinders,heads,sectors))=p.disks.fixed.as_ref().map(Disk::geometry)else{return Ok(())};
+    let c=cylinders as u16;let mut table=[0u8;16];
+    table[0..2].copy_from_slice(&c.to_le_bytes());table[2]=heads as u8;
+    table[3..5].copy_from_slice(&c.to_le_bytes());table[5..7].copy_from_slice(&0xffffu16.to_le_bytes());
+    table[8]=if heads>8{8}else{0};table[12..14].copy_from_slice(&c.to_le_bytes());table[14]=sectors as u8;
+    let rom=|e|format!("fixed disk parameter table: {e:?}");
+    p.ram.unrom(FDPT,16).map_err(rom)?;p.ram.write_bytes(FDPT,&table).map_err(rom)?;p.ram.rom(FDPT,16).map_err(rom)?;
+    p.ram.store(0x41*4,MemWidth::Dword,0xf000_0000|(FDPT-0xf0000)).map_err(|e|format!("INT 41h vector: {e:?}"))?;
+    p.ram.store(0x475,MemWidth::Byte,1).map_err(|e|format!("BIOS fixed disk count: {e:?}"))?;
     Ok(())
 }
 
@@ -142,7 +183,7 @@ pub(super) fn int13(p:&mut Loaded)->Result<Option<u8>,String>{
                 0x02=>{let bytes=disk.data[range].to_vec();p.ram.write_bytes(buffer,&bytes).map_err(|e|format!("INT 13h read into {buffer:05x}h: {e:?}"))?;},
                 0x03=>{
                     let bytes:Vec<u8>=(0..count*512).map(|i|p.ram.load(buffer+i,MemWidth::Byte).map(|b|b as u8)).collect::<Result<_,_>>().map_err(|e|format!("INT 13h write from {buffer:05x}h: {e:?}"))?;
-                    p.disks.get_mut(drive).unwrap().data[range].copy_from_slice(&bytes);
+                    p.disks.get_mut(drive).unwrap().write(first,&bytes)?;
                 },
                 _=>{},
             }

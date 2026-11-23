@@ -112,18 +112,35 @@ about 1.5 billion guest steps (10.5 minutes headless).
   - The kernel then reads the same floppy through the floppy controller
     (/dev/fd0); no disk swap is needed.
 - **Done when:** the root floppy mounts and a shell answers on the console.
+- **Done (23 November 2026), hard disk:** the AT hard-disk controller
+  (1F0h-1F7h, 3F6h, IRQ14), the INT 41h table and CMOS types. MCC's menu
+  partitions, formats (Minix) and installs Base onto a 40 MB image; booting
+  the diskette with `rw root=301` runs Linux from /dev/hda1 to a root shell.
+  Packages beyond Base need MCC's other disks.
 - **Later:** Linux 2.0/2.2 with an initrd and a serial console. Linux 3.8
   and later dropped the 386.
 
 ### 5. Compiled protected-mode code
-- **Forms:** enumerate the decoder for a 32-bit default code segment and
-  protected-mode segment semantics as well (forms already take the segment
-  state at run time; their enumeration fixes real mode).
-- **Blocks with paging:** plan in protected mode and with paging. The guard
-  adds CPL, CR0/CR3 and the code segment's descriptor; code watches use
-  physical pages. A page-table write or CR3 load invalidates by version.
-- **Checks:** generated-backend comparisons on pm_* cases; test386 with
-  blocks against without; DOS/4GW Doom and the Linux boot as workloads.
+- **Done (23 November 2026), blocks with paging:** blocks are planned in
+  protected mode and with paging, keyed by linear address as before. Under
+  paging a block stays in one page. Code stamps (blocks and the decode
+  cache) record the bus address the code was found at; each check
+  translates the linear address again with the current CR3 and CPL (a TLB
+  hit, or a walk that sets the accessed bits a fetch sets) and compares it,
+  then the 64-byte line counters of that bus range. A changed mapping, a
+  fault, or a write to the code (through any alias) replans the block. In
+  real and V86 mode the old linear exclusions stay; elsewhere video memory
+  and the ROM/BIOS area (by bus address) never join a block.
+  MCC Interim to its menu: about 80 s -> 11 s (200 million steps).
+- **Not done, forms:** the precompiled table still enumerates the real-mode
+  decoder. A 32-bit protected-mode instruction runs its native form when
+  its PIL program is one of those forms (they take the segment state at
+  run time), else the interpreter inside the block. Enumerating a 32-bit
+  default code segment is the next step.
+- **Checks:** a paged 32-bit boot-sector fixture against the interpreter
+  per slice, with a remapped page and code rewritten through an alias page
+  (tests/unit/precompiled.rs); DOS/4GW Doom and the Linux boot as
+  workloads. test386 with blocks against without is not done.
 
 ## Principles
 - **Program independence:** PIL and Dine stay program-independent. Every
