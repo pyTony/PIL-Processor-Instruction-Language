@@ -107,6 +107,36 @@ impl Pair{
     pub fn acknowledge_soundblaster(&mut self,irq:u8){
         if matches!(irq,5|7){self.master.acknowledge(1<<irq);}
     }
+    /// Any master IRQ (2-7, a device without its own helpers): its vector,
+    /// raising it, whether it can be taken (requested, unmasked, nothing of
+    /// equal or higher priority in service or requested), and taking it.
+    pub fn master_vector(&self,irq:u8)->u8{self.master.base|irq}
+    pub fn raise(&mut self,irq:u8){if irq<8{self.master.request|=1<<irq;}}
+    pub fn master_ready(&self,irq:u8)->bool{
+        if irq>=8||!self.ready(){return false;}
+        let bit=1u8<<irq;let higher=bit-1;
+        self.master.request&bit!=0&&self.master.mask&bit==0
+            &&self.master.in_service&(higher|bit)==0
+            &&self.master.request&!self.master.mask&higher==0
+    }
+    pub fn acknowledge_master(&mut self,irq:u8){if irq<8{self.master.acknowledge(1<<irq);}}
+    /// A slave IRQ (8-15 as slave lines 0-7): its vector, raising it, whether
+    /// it can be taken (as `master_ready` on the slave, and the master's IR2
+    /// unmasked with nothing of equal or higher priority in service or
+    /// requested there), and taking it, which puts IR2 in service on the
+    /// master too.
+    pub fn slave_vector(&self,irq:u8)->u8{self.slave.base|irq}
+    pub fn raise_slave(&mut self,irq:u8){if irq<8{self.slave.request|=1<<irq;}}
+    pub fn slave_ready(&self,irq:u8)->bool{
+        if irq>=8||!self.ready()||self.slave.init!=Init::Ready{return false;}
+        let bit=1u8<<irq;let higher=bit-1;
+        self.slave.request&bit!=0&&self.slave.mask&bit==0
+            &&self.slave.in_service&(higher|bit)==0
+            &&self.slave.request&!self.slave.mask&higher==0
+            &&self.master.mask&4==0&&self.master.in_service&7==0
+            &&self.master.request&!self.master.mask&3==0
+    }
+    pub fn acknowledge_slave(&mut self,irq:u8){if irq<8{self.slave.acknowledge(1<<irq);self.master.acknowledge(4);}}
     fn ready(&self)->bool{self.master.init==Init::Ready}
 }
 #[cfg(test)]

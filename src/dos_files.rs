@@ -3,7 +3,8 @@
 //! the host folder itself), and Z:, a drive held in memory for the session.
 //! C: is the first image or folder; with none, A: is an empty drive. Host names that are
 //! not valid 8.3 names get BASIS~N aliases per directory, the way a DOS 7
-//! volume shows them to DOS 6; the long-name API (AH71) stays unsupported.
+//! volume shows them to DOS 6, while INT 21h AH=71h (`dos_lfn`) serves long
+//! names when a host folder is mounted.
 //! Symbolic links in a host folder are not followed.
 use super::*;
 use super::services::jft;
@@ -19,7 +20,7 @@ const MAX_SEARCHES:usize=64;
 const MAX_OPEN:u64=16*1024*1024;
 /// LASTDRIVE: AH0E reports drives A: to E:, as FreeDOS does by default.
 const LAST_DRIVE:u8=5;
-type Name=[u8;11];
+pub(super) type Name=[u8;11];
 /// Bytes the memory drive holds, in 2 KiB clusters.
 const MEMORY_BYTES:u32=32*1024*1024;
 const MEMORY_CLUSTER:u32=2048;
@@ -53,13 +54,14 @@ impl MemDir{
 /// Where a file or directory DOS can change lies: a host path, or a path on
 /// the memory drive (list index).
 #[derive(Clone,Debug,PartialEq)]
-enum Loc{Host(PathBuf),Memory(usize,Vec<Name>)}
+pub(super) enum Loc{Host(PathBuf),Memory(usize,Vec<Name>)}
 #[derive(Clone,Debug)]
-struct Drive{letter:u8,source:Source,cwd:Vec<Name>}
+pub(super) struct Drive{pub(super) letter:u8,pub(super) source:Source,pub(super) cwd:Vec<Name>}
 #[derive(Clone,Debug)]
 pub struct Drives{
-    list:Vec<Drive>,current:usize,
-    files:Vec<OpenFile>,searches:Vec<Search>,next_search:usize,
+    pub(super) list:Vec<Drive>,pub(super) current:usize,
+    pub(super) files:Vec<OpenFile>,searches:Vec<Search>,next_search:usize,
+    pub(super) lfn_searches:Vec<Option<super::lfn::LfnSearch>>,
 }
 #[derive(Clone,Debug)]
 /// An open file by its system file number (the JFT entry), which handles
@@ -67,7 +69,7 @@ pub struct Drives{
 /// `data` is the whole file; a host or memory file (`loc`) opened for
 /// writing is written through at each AH40. `mode` is the AH3D access mode:
 /// 0 read, 1 write, 2 both. `stamp` is the time and date an image file shows.
-struct OpenFile{sft:u8,data:Arc<Vec<u8>>,pos:u32,drive:u8,loc:Option<Loc>,mode:u8,written:bool,stamp:(u16,u16)}
+pub(super) struct OpenFile{pub(super) sft:u8,pub(super) data:Arc<Vec<u8>>,pub(super) pos:u32,pub(super) drive:u8,pub(super) loc:Option<Loc>,pub(super) mode:u8,pub(super) written:bool,pub(super) stamp:(u16,u16)}
 /// An AH4E search: drive, directory and the sort key (host name bytes or
 /// 8.3 name) last found there, so AH4F goes on after it when files were
 /// deleted or made in between.
@@ -75,18 +77,18 @@ struct OpenFile{sft:u8,data:Arc<Vec<u8>>,pos:u32,drive:u8,loc:Option<Loc>,mode:u
 struct Search{drive:usize,path:Vec<Name>,last:Option<Vec<u8>>}
 /// A directory on some drive.
 #[derive(Clone,Debug)]
-enum Dir{Empty,Host(PathBuf),Image(usize),Memory(Vec<Name>)}
+pub(super) enum Dir{Empty,Host(PathBuf),Image(usize),Memory(Vec<Name>)}
 #[derive(Clone,Debug)]
-enum Node{Host(PathBuf),Image(FatNode),Memory(Vec<Name>)}
+pub(super) enum Node{Host(PathBuf),Image(FatNode),Memory(Vec<Name>)}
 #[derive(Clone,Debug)]
-struct Entry{name:Name,attr:u8,size:u32,time:u16,date:u16,node:Node}
+pub(super) struct Entry{pub(super) name:Name,pub(super) attr:u8,pub(super) size:u32,pub(super) time:u16,pub(super) date:u16,pub(super) node:Node}
 impl Entry{
-    fn dir(&self)->Option<Dir>{
+    pub(super) fn dir(&self)->Option<Dir>{
         if self.attr&0x10==0{return None;}
         match &self.node{Node::Host(path)=>Some(Dir::Host(path.clone())),Node::Image(FatNode::Dir(i))=>Some(Dir::Image(*i)),Node::Image(FatNode::File(_))=>None,Node::Memory(path)=>Some(Dir::Memory(path.clone()))}
     }
     /// Where DOS can change this entry, on drive `drive`; None on an image.
-    fn loc(&self,drive:usize)->Option<Loc>{
+    pub(super) fn loc(&self,drive:usize)->Option<Loc>{
         match &self.node{Node::Host(path)=>Some(Loc::Host(path.clone())),Node::Memory(path)=>Some(Loc::Memory(drive,path.clone())),Node::Image(_)=>None}
     }
     /// The order key AH4F resumes by: host name bytes, or the 8.3 name in memory.
@@ -102,7 +104,10 @@ impl Drives{
         let mut list:Vec<Drive>=if disks.is_empty(){vec![Drive{letter:b'A',source:Source::Empty,cwd:Vec::new()}]}
             else{disks.into_iter().zip(b'C'..).map(|(source,letter)|Drive{letter,source,cwd:Vec::new()}).collect()};
         list.extend(memory.into_iter().take(1).map(|source|Drive{letter:b'Z',source,cwd:Vec::new()}));
-        Self{list,current:0,files:Vec::new(),searches:Vec::new(),next_search:0}
+        Self{list,current:0,files:Vec::new(),searches:Vec::new(),next_search:0,lfn_searches:Vec::new()}
+    }
+    pub(super) fn lfn_available(&self)->bool{
+        self.list.iter().any(|d|matches!(d.source,Source::Host(_)))
     }
     /// The default drive's letter.
     pub fn letter(&self)->u8{self.list[self.current].letter}
@@ -123,7 +128,7 @@ impl Drives{
     fn memory(&self,drive:usize)->Option<&MemDir>{match &self.list.get(drive)?.source{Source::Memory(m)=>Some(m),_=>None}}
     fn memory_mut(&mut self,drive:usize)->Option<&mut MemDir>{match &mut self.list.get_mut(drive)?.source{Source::Memory(m)=>Some(m),_=>None}}
     /// The drive with DOS number `n` (0 default, 1 A:), as a list index.
-    fn number(&self,n:u8)->Option<usize>{
+    pub(super) fn number(&self,n:u8)->Option<usize>{
         if n==0{return Some(self.current);}
         self.list.iter().position(|d|d.letter-b'A'+1==n)
     }
@@ -136,6 +141,7 @@ impl Drives{
         if let Some(i)=self.list.iter().position(|d|d.letter==letter){
             self.list[i].source=source;self.list[i].cwd.clear();
             for s in &mut self.searches{if s.drive==i{s.drive=usize::MAX;}}
+            for s in &mut self.lfn_searches{if s.as_ref().is_some_and(|x|x.drive==i){*s=None;}}
         }else{
             self.list.push(Drive{letter,source,cwd:Vec::new()});
         }
@@ -152,18 +158,22 @@ impl Drives{
             if matches!(self.list[0].source,Source::Empty){return Err("drive A: is not mounted".into());}
             self.list[0].source=Source::Empty;self.list[0].cwd.clear();
             for s in &mut self.searches{if s.drive==0{s.drive=usize::MAX;}}
+            for s in &mut self.lfn_searches{if s.as_ref().is_some_and(|x|x.drive==0){*s=None;}}
             return Ok(());
         }
         self.list.remove(i);
         if self.current==i{self.current=0;}else if self.current>i{self.current-=1;}
         for s in &mut self.searches{if s.drive==i{s.drive=usize::MAX;}else if s.drive!=usize::MAX&&s.drive>i{s.drive-=1;}}
+        for slot in &mut self.lfn_searches{
+            match slot{Some(s) if s.drive==i=>*slot=None,Some(s) if s.drive>i=>s.drive-=1,_=>{}}
+        }
         for f in &mut self.files{if let Some(Loc::Memory(d,_))=&mut f.loc{if *d>i{*d-=1;}}}
         Ok(())
     }
 }
-fn ok(p:&mut Loaded){p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;}
-fn fail(p:&mut Loaded,code:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(code);p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;}
-fn set_ax(p:&mut Loaded,ax:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(ax&0xffff);}
+pub(super) fn ok(p:&mut Loaded){p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;}
+pub(super) fn fail(p:&mut Loaded,code:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(code);p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;}
+pub(super) fn set_ax(p:&mut Loaded,ax:u32){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(ax&0xffff);}
 fn ds()->SegmentRegister{SegmentRegister::Ds}
 /// ASCIIZ path at DS:offset, at most 128 bytes before the NUL.
 pub(super) fn asciiz(p:&Loaded,offset:u32)->Result<Vec<u8>,String>{asciiz_in(p,ds(),offset)}
@@ -180,8 +190,8 @@ pub(super) fn asciiz_in(p:&Loaded,segment:SegmentRegister,offset:u32)->Result<Ve
     Err("DOS path has no NUL terminator within 128 bytes".into())
 }
 /// Writes `bytes` at DS:offset after checking every byte can be written.
-fn store_ds(p:&mut Loaded,offset:u32,bytes:&[u8])->Result<(),String>{store(p,ds(),offset,bytes)}
-fn store(p:&mut Loaded,segment:SegmentRegister,offset:u32,bytes:&[u8])->Result<(),String>{
+pub(super) fn store_ds(p:&mut Loaded,offset:u32,bytes:&[u8])->Result<(),String>{store(p,ds(),offset,bytes)}
+pub(super) fn store(p:&mut Loaded,segment:SegmentRegister,offset:u32,bytes:&[u8])->Result<(),String>{
     if offset as usize+bytes.len()>0x10000{return Err("DOS buffer exceeds segment end".into());}
     let context=MemoryContext{segment,cache:p.image.segments[segment.index()]};
     let mut addrs=Vec::with_capacity(bytes.len());
@@ -273,7 +283,7 @@ pub(super) fn stamp(modified:Option<SystemTime>)->(u16,u16){
     (time as u16,((year-1980)<<9|month<<5|day)as u16)
 }
 /// One host directory as DOS sees it, sorted by host name.
-fn host_listing(dir:&Path)->Result<Vec<Entry>,u16>{
+pub(super) fn host_listing(dir:&Path)->Result<Vec<Entry>,u16>{
     let mut hosts=Vec::new();
     for item in std::fs::read_dir(dir).map_err(|_|3u16)?{
         let Ok(item)=item else{continue};
@@ -294,7 +304,7 @@ fn host_listing(dir:&Path)->Result<Vec<Entry>,u16>{
         Some(Entry{name:name?,attr:if meta.is_dir(){0x10}else{0x20},size:if meta.is_dir(){0}else{meta.len().min(u64::from(u32::MAX))as u32},time,date,node:Node::Host(host)})
     }).collect())
 }
-fn listing(d:&Drive,dir:&Dir)->Result<Vec<Entry>,u16>{
+pub(super) fn listing(d:&Drive,dir:&Dir)->Result<Vec<Entry>,u16>{
     match(dir,&d.source){
         (Dir::Host(path),_)=>host_listing(path),
         (Dir::Image(i),Source::Image(tree))=>Ok(tree.dirs.get(*i).ok_or(3u16)?.iter().map(|e|Entry{name:e.name,attr:e.attr,size:e.size,time:e.time,date:e.date,node:Node::Image(e.node)}).collect()),
@@ -377,7 +387,7 @@ impl Drives {
 }
 /// The drive (list index) and absolute 8.3 components of a guest path;
 /// `Err(3)` for a drive that does not exist or `..` above the root.
-fn components(d:&Drives,raw:&[u8])->Result<(usize,Vec<Name>),u16>{
+pub(super) fn components(d:&Drives,raw:&[u8])->Result<(usize,Vec<Name>),u16>{
     let mut rest=raw;let mut drive=d.current;
     if rest.len()>=2&&rest[1]==b':'{
         drive=d.list.iter().position(|x|rest[0].eq_ignore_ascii_case(&x.letter)).ok_or(3u16)?;
@@ -391,7 +401,7 @@ fn components(d:&Drives,raw:&[u8])->Result<(usize,Vec<Name>),u16>{
 }
 /// The directory an absolute component list names, with its own time and
 /// date (01-01-1980 for the root), or `Err(3)`.
-fn dir_of(d:&Drive,path:&[Name])->Result<(Dir,u16,u16),u16>{
+pub(super) fn dir_of(d:&Drive,path:&[Name])->Result<(Dir,u16,u16),u16>{
     let mut dir=match &d.source{Source::Empty=>Dir::Empty,Source::Host(root)=>Dir::Host(root.clone()),Source::Image(_)=>Dir::Image(0),Source::Memory(_)=>Dir::Memory(Vec::new())};
     let mut stamp=(0,0x21);
     for name in path{
@@ -483,7 +493,7 @@ fn used_clusters(root:&Path)->u32{
     }
     clusters.min(0xffff)as u32
 }
-fn read_entry(d:&Drive,entry:&Entry)->Result<Arc<Vec<u8>>,String>{
+pub(super) fn read_entry(d:&Drive,entry:&Entry)->Result<Arc<Vec<u8>>,String>{
     match(&entry.node,&d.source){
         (Node::Image(FatNode::File(i)),Source::Image(tree))=>tree.files.get(*i).cloned().ok_or_else(||"DOS open of a missing image file".into()),
         (Node::Host(path),_)=>{
@@ -529,7 +539,7 @@ fn open(p:&mut Loaded)->Result<(),String>{
 }
 /// Gives a device (system file 0..4) the lowest free handle, as opening a
 /// device name does; error 4 when none is free.
-fn device(p:&mut Loaded,sft:u8)->Result<(),String>{
+pub(super) fn device(p:&mut Loaded,sft:u8)->Result<(),String>{
     let limit=p.ram.load(u32::from(p.dos.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
     let Some(handle)=(0..limit).find(|&h|p.dos.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
     p.ram.store(jft(p,handle)?,MemWidth::Byte,u32::from(sft)).map_err(|e|format!("DOS open JFT write: {e:?}"))?;
@@ -537,7 +547,7 @@ fn device(p:&mut Loaded,sft:u8)->Result<(),String>{
 }
 /// Gives an open file the lowest free handle and system file number, and
 /// returns the handle in AX; error 4 when either runs out.
-fn install(p:&mut Loaded,mut file:OpenFile)->Result<(),String>{
+pub(super) fn install(p:&mut Loaded,mut file:OpenFile)->Result<(),String>{
     let limit=p.ram.load(u32::from(p.dos.psp)*16+0x32,MemWidth::Word).map_err(|e|format!("DOS JFT size read: {e:?}"))?.min(20)as u16;
     // A shell redirects by closing handle 0 or 1 and opening: the file takes it.
     let Some(handle)=(0..limit).find(|&h|p.dos.open_handles&(1<<h)==0)else{fail(p,4);return Ok(())};
@@ -572,20 +582,20 @@ impl Drives{
         Ok((self.memory_mut(drive).and_then(|m|m.dir_mut(parent)).ok_or(3u16)?,*last))
     }
     /// Creates a file, or empties the one there.
-    fn make_file(&mut self,loc:&Loc)->Result<(),u16>{
+    pub(super) fn make_file(&mut self,loc:&Loc)->Result<(),u16>{
         match loc{
             Loc::Host(path)=>std::fs::File::create(path).map(|_|()).map_err(|_|5),
             Loc::Memory(drive,path)=>{let(dir,name)=self.memory_parent(*drive,path)?;let(time,date)=now();dir.entries.insert(name,MemNode::File{data:Arc::new(Vec::new()),time,date});Ok(())},
         }
     }
-    fn make_dir(&mut self,loc:&Loc)->Result<(),u16>{
+    pub(super) fn make_dir(&mut self,loc:&Loc)->Result<(),u16>{
         match loc{
             Loc::Host(path)=>std::fs::create_dir(path).map_err(|_|5),
             Loc::Memory(drive,path)=>{let(dir,name)=self.memory_parent(*drive,path)?;let(time,date)=now();dir.entries.insert(name,MemNode::Dir{dir:MemDir::default(),time,date});Ok(())},
         }
     }
     /// Removes a file, or an empty directory (error 5 if it is not empty).
-    fn remove(&mut self,loc:&Loc,directory:bool)->Result<(),u16>{
+    pub(super) fn remove(&mut self,loc:&Loc,directory:bool)->Result<(),u16>{
         match loc{
             Loc::Host(path)=>if directory{std::fs::remove_dir(path)}else{std::fs::remove_file(path)}.map_err(|_|5),
             Loc::Memory(drive,path)=>{
@@ -595,7 +605,7 @@ impl Drives{
             },
         }
     }
-    fn rename(&mut self,from:&Loc,to:&Loc)->Result<(),u16>{
+    pub(super) fn rename(&mut self,from:&Loc,to:&Loc)->Result<(),u16>{
         match(from,to){
             (Loc::Host(from),Loc::Host(to))=>std::fs::rename(from,to).map_err(|_|5),
             (Loc::Memory(drive,from),Loc::Memory(_,to))=>{
@@ -610,13 +620,13 @@ impl Drives{
             _=>Err(0x11),
         }
     }
-    fn time(&self,loc:&Loc)->Option<(u16,u16)>{
+    pub(super) fn time(&self,loc:&Loc)->Option<(u16,u16)>{
         match loc{
             Loc::Host(path)=>Some(stamp(std::fs::metadata(path).and_then(|m|m.modified()).ok())),
             Loc::Memory(drive,path)=>match self.memory(*drive)?.node(path)?{MemNode::File{time,date,..}|MemNode::Dir{time,date,..}=>Some((*time,*date))},
         }
     }
-    fn set_time(&mut self,loc:&Loc,when:(u16,u16))->Result<(),u16>{
+    pub(super) fn set_time(&mut self,loc:&Loc,when:(u16,u16))->Result<(),u16>{
         match loc{
             Loc::Host(path)=>std::fs::OpenOptions::new().write(true).open(path).and_then(|f|f.set_modified(unstamp(when.0,when.1))).map_err(|_|5),
             Loc::Memory(drive,path)=>{

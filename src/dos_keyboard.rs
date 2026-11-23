@@ -24,16 +24,50 @@ pub(super) struct Code{pub raw:u8,pub word:Option<u16>}
 #[derive(Clone,Debug,Default,PartialEq,Eq)]
 pub(super) struct Keyboard{
     queue:VecDeque<Code>,
-    /// The code in port 60h (the last one IRQ1 announced) and whether the
-    /// controller's output buffer still holds it (port 64h bit 0).
-    latch:Option<Code>,unread:bool,
+    /// The code in port 60h and whether the controller's output buffer
+    /// still holds it (port 64h bit 0), and whether IRQ1 has announced it.
+    latch:Option<Code>,unread:bool,signalled:bool,
+    /// A keyboard command that waits for its data byte (EDh, F3h, F0h).
+    expect:Option<u8>,
 }
 /// Codes queued at most: 16 keys with their releases.
 const LIMIT:usize=32;
 const CTRL:u8=0x1d;
 const BREAK:u8=0x46;
 impl Keyboard{
-    pub(super) fn pending(&self)->bool{!self.queue.is_empty()}
+    /// A code waits for the output buffer, or the buffer holds one IRQ1 has
+    /// not announced yet.
+    pub(super) fn pending(&self)->bool{!self.queue.is_empty()||self.unread&&!self.signalled}
+    /// A byte the CPU wrote to port 60h that is not for the controller goes
+    /// to the keyboard, which answers through the output buffer like a key:
+    /// FAh (ACK) to a command it knows, FEh (resend) to one it does not. Set
+    /// LEDs (EDh), typematic (F3h) and scan code set (F0h) take a data byte
+    /// that is acknowledged in turn. The LEDs, rate and set change nothing
+    /// here: the host keyboard supplies the keys (IBM PC AT Technical
+    /// Reference, keyboard commands). The first reply enters an empty output
+    /// buffer at once; IRQ1 announces it only when `announce` (a guest
+    /// handler owns IRQ1, as an OS keyboard driver does), else it waits there
+    /// for a program polling port 64h. Further replies follow it.
+    pub(super) fn command(&mut self,value:u8,announce:bool){
+        let replies:&[u8]=if self.expect.take().is_some(){&[0xfa]}else{match value{
+            0xed|0xf3|0xf0=>{self.expect=Some(value);&[0xfa]},
+            // Identify: an MF II keyboard (ABh 41h through the controller's
+            // scan code translation).
+            0xf2=>&[0xfa,0xab,0x41],
+            0xee=>&[0xee],
+            // Reset: the keyboard drops its buffer and passes its self-test.
+            0xff=>{self.queue.clear();&[0xfa,0xaa]},
+            0xf4..=0xfd=>&[0xfa],
+            _=>&[0xfe],
+        }};
+        let mut rest=replies;
+        if !self.unread{
+            if let Some((&first,more))=replies.split_first(){
+                self.latch=Some(Code{raw:first,word:None});self.unread=true;self.signalled=!announce;rest=more;
+            }
+        }
+        for &raw in rest.iter().rev(){self.queue.push_front(Code{raw,word:None});}
+    }
     /// Port 60h: the latched code (0 before any key).
     pub(super) fn read(&mut self)->u8{self.unread=false;self.latch.map_or(0,|c|c.raw)}
     /// Port 64h bit 0: the output buffer holds a code.
@@ -104,14 +138,27 @@ pub(super) fn ctrl_break(p:&mut Loaded)->Result<bool,String>{
 /// interrupts are enabled (`force` stands for the BIOS's own STI while a
 /// blocking INT 16h or DOS read waits). The frame returns to the current IP.
 pub(super) fn interrupt(p:&mut Loaded,force:bool)->Result<bool,String>{
-    if p.speaker.kbd.queue.is_empty(){return Ok(false);}
+    // A code a polling driver already brought into the output buffer is
+    // announced as it stands; otherwise the next code enters it with IRQ1.
+    let filled=p.speaker.kbd.unread&&!p.speaker.kbd.signalled;
+    if !filled&&p.speaker.kbd.queue.is_empty(){return Ok(false);}
     if !force&&(p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0){return Ok(false);}
     if !p.speaker.pic.keyboard_ready(){return Ok(false);}
     vectors::deliver_irq(p,p.speaker.pic.keyboard_vector())?;
     let k=&mut p.speaker.kbd;
-    k.latch=k.queue.pop_front();k.unread=true;
+    if !filled{k.latch=k.queue.pop_front();k.unread=true;}
+    k.signalled=true;
     p.speaker.pic.acknowledge_keyboard();
     Ok(true)
+}
+impl Keyboard{
+    /// Port 64h read while IRQ1 cannot be taken (interrupts off or IRQ1
+    /// masked): the next code is in the output buffer by now, as for a
+    /// driver that polls the controller.
+    pub(super) fn poll(&mut self,irq_possible:bool){
+        if irq_possible||self.unread{return;}
+        if let Some(code)=self.queue.pop_front(){self.latch=Some(code);self.unread=true;self.signalled=false;}
+    }
 }
 /// What the BIOS INT 09h handler at its entry decided.
 pub(super) enum Bios{Done,Break}

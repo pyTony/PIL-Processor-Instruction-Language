@@ -62,6 +62,9 @@ pub(super) fn install(ram:&mut Ram)->Result<(),String>{
 pub(super) fn answered(p:&Loaded,n:u8)->Result<bool,String>{
     // A raw ROM has no Dine behind its vectors: 0000:0000 is an address too.
     if p.rom_mode{return Ok(false);}
+    // A booted machine has only its BIOS behind vectors: 0000:0000 is an
+    // address too, and a vector answers only while it holds its entry.
+    if p.booted{return Ok(p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?==entry(n));}
     let vector=p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?;
     Ok(vector==0||vector==entry(n))
 }

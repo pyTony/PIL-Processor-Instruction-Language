@@ -1,3 +1,140 @@
+# AT hard-disk controller: MCC Interim installs onto a hard disk — 23 November 2026
+
+Tony chose the hard disk ("hd") over register-level VGA modes, so that MCC
+Interim can install a full system (SVGAlib would come later). In a booted
+machine with a fixed disk:
+- src/dos_ata.rs: the WD1003/ATA-1 task file at 1F0h-1F7h and 3F6h with
+  IRQ14 through the slave PIC (new Pair::raise_slave/slave_ready/
+  slave_vector/acknowledge_slave; the loop delivers it after the diskette
+  IRQ6). Recalibrate, read and write sectors (one IRQ per sector, the first
+  write sector without one), verify, seek, diagnostics, initialize drive
+  parameters (its geometry is used for CHS), identify (ATA-1 words, LBA
+  supported, no multiple mode), power and set-features as no-ops, others
+  aborted; CHS or LBA; SRST and nIEN. The absent slave reads 0 and takes no
+  command. Without a booted fixed disk the ports stay an open bus.
+- src/dos_bios_disk.rs: a fixed disk read from a file writes each changed
+  sector back to it (INT 13h and the controller); diskettes stay in memory.
+  INT 41h points at a 16-byte fixed disk parameter table at F000:E401;
+  0040:0075 counts one fixed disk; CMOS 12h = F0h, 19h = 47.
+- dos::boot_with_hard_disk; `--hd-image DISK` next to `--boot` (console)
+  or a probe image; `--boot-hd`/`--hd` now write back to the file;
+  `pil --new-hd-image FILE MB` makes an empty image (16 heads, 63 sectors,
+  whole cylinders, refuses an existing file).
+- `--boot-probe --type STEPS:TEXT` (repeatable) types at a step count, with
+  Shift for capitals and shifted symbols; typing waits for room in the
+  keyboard queue (keys were dropped when it was full).
+
+Local Windows, release: 1043 Rust tests pass, 2 ignored (7 new: 6 in
+tests/unit/dos_ata.rs, the BIOS table and CMOS, reset and identify, a CHS
+read across heads, an LBA write and errors, IRQ14 to a guest handler, the
+port ownership, write-back to a temporary file; 1 typing test in
+tests/unit/dos_boot.rs); 0 rustc warnings. MCC Interim (local) with a
+40 MB image, scripted through the probe: "hda: bad partition table", then
+fdisk (one primary partition, written; "hda: hda1"), mkfs (Minix, long
+names), install Base (CRC verified, 1952 KB used) and a clean unmount;
+booting again with `rw root=301` fsck'd and mounted /dev/hda1 as `/`, `7`
+skipped the package disks, `root` logged in, and `ls /`, `df` and
+/proc/meminfo answered. The console window path (`--dos-console --boot
+... --hd-image`) uses the same functions but was not driven by hand. Not
+run on Linux.
+
+# Compiled blocks in protected mode and with paging (Linux plan milestone 5) — 23 November 2026
+
+Tony: "yes" to milestone 5, to make the Linux boot fast. Protected-mode code
+ran one instruction at a time, and under paging the decode cache refetched
+every instruction byte by byte through the page walk.
+- src/memory.rs: code stamps (decode cache and blocks) record the bus
+  address the code was found at. With paging the code must lie in one page;
+  each check translates the linear address again with the current CR3 and
+  CPL (a TLB hit, or a walk that sets the accessed bits a fetch sets) and
+  compares the frame before the 64-byte line counters. A remapped page, a
+  page the CPL may not read, or a write to the code through any alias fails
+  the check. src/cache.rs now stamps paged entries too.
+- src/block_compiler/engine.rs: blocks are planned in protected mode and
+  with paging; under paging a block stays in its first instruction's page;
+  a 16-bit code segment still ends a block at IP FFFFh. Real and V86 mode
+  keep the linear exclusions (Dine's low memory, video, ROM, above 1 MiB);
+  other protected-mode code excludes video memory and the ROM/BIOS area by
+  bus address. `run` sets the RAM's paging state first.
+- Not done: the precompiled forms still enumerate the real-mode decoder; a
+  32-bit instruction uses a native form when its PIL program matches one,
+  else the interpreter inside the block.
+
+Local Windows, release: 1036 Rust tests pass, 2 ignored (1 new in
+tests/unit/precompiled.rs: an original boot sector entering paged 32-bit
+protected mode, remapping a called page and rewriting its own code through
+an alias page, blocks against the interpreter per slice plus the stored sum
+checked against the round count; it fails with the remap check removed);
+0 rustc warnings. MCC Interim to its menu (200 million steps): 80 s -> 11 s.
+Doom v1.9 (DOS/4GW, Tony's files, local), 300 million steps through
+`--dos-session`: 90 s -> 24 s, still running. Runs use the host clock, so
+step-for-step comparisons of these workloads were not possible. test386
+with blocks was not run. Not run on Linux.
+
+# Linux 0.99.10 boots to MCC Interim's menu (Linux plan milestones 3-4) — 22 November 2026
+
+Tony's goal from 21 November: boot early Linux, MCC Interim 0.99.p10+
+(git-ignored images/mcc-interim/boot). `pil --boot-probe ... --keys "\r"`
+now runs LILO, the kernel and MCC's install menu: "VFS: Mounted root (minix
+filesystem) readonly", "Linux version 0.99.10 ... Jul 7 1993", the menu
+(fdisk, swap, mkfs, install, /bin/sh, quit) waiting at "?". What it took:
+- Keyboard commands through port 60h (ACK FAh, reset FAh AAh, echo,
+  identify, FEh otherwise); the reply fills an empty output buffer, IRQ1
+  announces it when a guest owns IRQ1; a polling read of port 64h with
+  IRQ1 not deliverable takes the next code in.
+- COM2-COM4 (and COM1 without a session) are an open bus; 3BCh-3BEh like
+  the other printer ports; in a booted machine any port no known device
+  answers is an open bus (SCSI, Ethernet and other ISA probes).
+- src/dos_fdc.rs: the diskette controller with DMA channel 2 and IRQ6
+  (booted machine only), through a general master-PIC IRQ helper; IRQ
+  2-7 vectors at a bare IRET when booted. DMA works on physical addresses
+  (Ram::physical).
+- A 256-entry TLB for the page walk (flushed on a directory change, paging
+  off, or a CPU write into a cached page-table frame): 100 million Linux
+  steps 194 s -> 51 s.
+- The boot probe reads the screen from the CRTC start address (the Linux
+  console scrolls that way), as the session screen already did.
+
+Local Windows, release: 1035 Rust tests pass, 2 ignored (4 FDC, 1 TLB, 1
+keyboard-command test; the echo test now queues the second reply); 0 rustc
+warnings; portable-path and program-specific checks pass. MCC to its menu:
+about 1.5 billion steps, 10.5 minutes headless (protected-mode code runs
+in the interpreter, with no blocks; milestone 5). Printer ports still read
+80h, so Linux reports lp0-lp2 and PLIP on them. The menu itself was not
+driven further (no key after the LILO prompt). Not run on Linux.
+
+# Booting disk images through the BIOS (Linux plan milestone 2) — 22 November 2026
+
+Tony's goal: early Linux, MCC Interim 0.99.p10+ (one 1.2 MB boot floppy,
+git-ignored images/mcc-interim/boot). Dine can now start the PC from a disk
+image without its own DOS (docs/BOOT.md):
+- src/dos_bios_disk.rs: images as BIOS drives 00h/01h/80h (floppy geometry
+  by size; fixed disks 16 heads, 63 sectors). INT 13h 00h-04h, 08h, 15h-18h,
+  no-op 0Ch/0Dh/10h/11h/14h, others AH=01h; status at 0040:0041/0074; the
+  64 KiB DMA limit on diskettes (09h); diskette parameter table at
+  F000:EFC7 (INT 1Eh, written as ROM contents); CMOS 10h diskette types.
+- src/dos_boot.rs: dos::boot (XMS/UMBs off, Dine's DOS data cleared from
+  0500h-9FFFFh, BIOS vectors only, exceptions and IRQ 8-15 at a bare IRET,
+  DOS vectors 0, equipment word, all RAM fetchable, boot sector at
+  0000:7C00 with DL=drive), INT 19h, and a headless probe. Loaded gains
+  `disks` and `booted`; when booted a zero vector is a real 0000:0000 and
+  the INT 23h/XMS/mouse return traps are off (Linux runs code at physical 0).
+- `pil --dos-console --boot IMAGE` / `--boot-hd IMAGE`; `pil --boot-probe
+  IMAGE [--hd] [--steps N] [--keys TEXT] [--keys-after N]`.
+- INT 16h AH=03h (typematic rate) is accepted with no effect (Linux setup
+  calls it). Port 80h writes are traced only in ROM mode (an OS uses the
+  port as an I/O delay).
+
+Local Windows, release: 1030 Rust tests pass, 2 ignored (4 new in
+tests/unit/dos_boot.rs: an original boot sector reading sector 2 through
+INT 13h and printing through INT 10h, the DMA-page refusal, AH=08h and CMOS
+for a 1.2M image, image sizes); 0 rustc warnings; portable-path and
+program-specific checks pass. MCC Interim (local, not in the repo): LILO
+shows its `boot:` prompt; with Enter it prints "Loading read-only....", the
+kernel switches to protected mode, uncompresses and prints "Console:
+colour", then stops on OUT 60h (a keyboard command, milestone 3), 5.5 s.
+FreeDOS kernel boot not tried. Not run on Linux.
+
 # DOS state apart from the machine (Linux boot plan, milestone 1) — 21 November 2026
 
 Tony: "Boot early linux and implement the compiled protected code. First

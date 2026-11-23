@@ -84,6 +84,10 @@ pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
             let inserted=enqueue(p,p.cpu.regs[1]as u16)?;
             p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(!inserted);Ok(())
         },
+        // Set typematic rate and delay (AL=05h, BH delay, BL rate; AL=00h-04h
+        // on PC/AT BIOSes of 1986 and later): returns nothing. Key repeat is
+        // the host's, so the setting is accepted and has no effect.
+        3=>Ok(()),
         // A Compaq speed probe starts with AL=FFh. No Compaq extension is
         // installed, so preserve its sentinel rather than inventing a speed.
         0xf1 if p.cpu.regs[0]as u8==0xff=>Ok(()),

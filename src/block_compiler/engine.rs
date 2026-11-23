@@ -105,11 +105,17 @@ fn opcode(bytes:&[u8])->Option<u8>{
 pub(crate) fn answered_by_loop(bytes:&[u8])->bool{
     matches!(opcode(bytes),None|Some(0xe4..=0xe7|0xec..=0xef|0x6c..=0x6f|0xd8..=0xdf|0x9b|0xcc..=0xce|0xf4))
 }
-/// Linear code addresses blocks never cover: Dine's own low memory (vector
-/// table, BIOS data and the DOS data area with its break-handler stubs,
-/// whose return points the DOS loop watches), video memory, the ROM/BIOS
-/// area with Dine's interrupt entries, and anything above 1 MiB.
-fn excluded(linear:u32)->bool{ !(0x1000..0xa0000).contains(&linear) }
+/// Code addresses blocks never cover. In real and virtual-8086 mode,
+/// linear: Dine's own low memory (vector table, BIOS data and the DOS data
+/// area with its break-handler stubs, whose return points the DOS loop
+/// watches), video memory, the ROM/BIOS area with Dine's interrupt entries,
+/// and anything above 1 MiB. Otherwise, bus addresses (after paging): video
+/// memory and the ROM/BIOS area; Dine watches no return points in 16- or
+/// 32-bit protected-mode code.
+fn excluded(image:&Image,ram:&Ram,linear:u32)->bool{
+    if image.real_mode||image.segment_state().v86(){return !(0x1000..0xa0000).contains(&linear);}
+    ram.bus_address(linear,false).map_or(true,|bus|(0xa0000..0x100000).contains(&bus))
+}
 
 /// Does `p` end a block after it runs?
 fn boundary(p:&crate::Program)->bool{
@@ -143,14 +149,18 @@ impl Blocks {
     }
 
     fn plan(cache:&mut DecodeCache,image:&Image,ram:&Ram,eip:u32,required:bool)->Option<Block>{
-        if image.paging||!image.real_mode{return None;}
         let base=image.segments[1].base;
         let linear=base.checked_add(eip)?;
+        // An IP past FFFFh wraps in a 16-bit code segment: a block ends there.
+        let wrap=if image.segments[1].default_32(){u32::MAX}else{0xffff};
         let mut steps=Vec::new();let mut bytes=Vec::new();let mut ip=eip;
         while steps.len()<MAX_BLOCK_INSTRUCTIONS {
             let at=base.checked_add(ip)?;
-            if excluded(at){break;}
+            if excluded(image,ram,at){break;}
             let Ok(decoded)=cache.fetch(image,ram,ip)else{break};
+            // With paging a block stays in one page, so one translation
+            // covers its code (see Ram::watch_code).
+            if image.paging&&(at>>12!=linear>>12||at.checked_add(decoded.length-1).is_none_or(|end|end>>12!=linear>>12)){break;}
             let Ok(signature)=image.fetch_signature(ram,ip,decoded.length)else{break};
             let code=&signature[..decoded.length as usize];
             if answered_by_loop(code){break;}
@@ -159,7 +169,7 @@ impl Blocks {
             if program.partial{break;}
             let last=boundary(program);let next=flow.next_eip;
             bytes.extend_from_slice(code);steps.push(decoded.clone());
-            if last||next<=ip||next>0xffff{break;}
+            if last||next<=ip||next>wrap{break;}
             ip=next;
         }
         if steps.is_empty(){return None;}
@@ -189,6 +199,8 @@ impl Blocks {
     pub(crate) fn run(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,chain:bool)->Option<(usize,Result<(),ExecError>)>{
         let mut total=0usize;let mut from=None;
         let mut flags = crate::LazyFlags::None;
+        // Code guards translate with the current CR3 and privilege level.
+        ram.set_paging(machine.ram_paging());
         loop {
             let Some((slot,n,result,more))=self.enter(cache,image,cpu,ram,machine,budget-total,from,chain,&mut flags)else{
                 if total>0{self.runs+=1;}
