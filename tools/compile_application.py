@@ -64,7 +64,9 @@ def main(argv=None):
     output.mkdir(parents=True, exist_ok=True)
     staged_executable = build / ('application' + binary_suffix)
     command = ['rustc', '--edition=2021', '--crate-name', 'native_application',
-               '-C', 'opt-level=1', '-L', 'native=' + str(runtime.parent),
+               '-C', 'opt-level=s', '-C', 'strip=symbols', '-C', 'panic=abort',
+               '-C', 'lto=fat', '-C', 'codegen-units=1',
+               '-L', 'native=' + str(runtime.parent),
                rust_source, '-o', staged_executable]
     if os.name != 'nt':
         command += ['-C', 'link-arg=-Wl,-rpath,@loader_path' if sys.platform == 'darwin'
