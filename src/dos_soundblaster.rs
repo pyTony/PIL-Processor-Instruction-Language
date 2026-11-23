@@ -239,6 +239,11 @@ impl SoundBlaster{
             },
             (0x0f,true)=>{self.irq_pending=false;0}, // 16-bit acknowledge (no 16-bit DMA)
             (0x0e|0x0f,false)=>0,
+            // Nothing on this card decodes 220h-223h (the C/MS chips are
+            // not fitted), 227h, 22Bh or 22Dh: an ISA probe of another card
+            // there reads the open bus and its writes go nowhere.
+            (0x00..=0x03|0x07|0x0b|0x0d,true)=>0xff,
+            (0x00..=0x03|0x07|0x0b|0x0d,false)=>0,
             _=>return Err(format!("Sound Blaster port {port:03X}h {} is not modelled",if input{"read"}else{"write"})),
         };
         Ok(Some(result))

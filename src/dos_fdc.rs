@@ -109,8 +109,8 @@ impl Fdc{
                 }
                 0
             },
-            // Disk change line clear: the disk in the drive stays.
-            (0x3f7,true)=>0x00,
+            // Digital input: bit 7 is the change line of the drive DOR selects.
+            (0x3f7,true)=>if p.disks.changed(p.fdc.dor&3){0x80}else{0},
             (0x3f7,false)=>0,
             _=>unreachable!(),
         }))
@@ -131,7 +131,7 @@ fn execute(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
         },
         0x07=>{
             // RECALIBRATE: to cylinder 0, seek end.
-            p.fdc.cylinder[usize::from(drive)]=0;
+            p.fdc.cylinder[usize::from(drive)]=0;p.disks.stepped(drive);
             let st0=0x20|drive|if p.disks.has_floppy(drive){0}else{0x50};
             p.fdc.sense.push_back((st0,0));p.fdc.raise();
         },
@@ -143,7 +143,7 @@ fn execute(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
             }
         },
         0x0f=>{
-            p.fdc.cylinder[usize::from(drive)]=cmd[2];
+            p.fdc.cylinder[usize::from(drive)]=cmd[2];p.disks.stepped(drive);
             p.fdc.sense.push_back((0x20|head<<2|drive,cmd[2]));p.fdc.raise();
         },
         0x05|0x06=>transfer(p,cmd)?,

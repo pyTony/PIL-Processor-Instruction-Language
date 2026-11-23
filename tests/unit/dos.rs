@@ -2794,7 +2794,7 @@ fn unsupported_scalar_and_string_port_accesses_stop_without_committing(){
  // open bus. Devices or widths with no implementation still stop explicitly.
  for (bytes,port,diagnostic) in [
   (vec![0x66,0xe5,0x60],0x60u32,"dword I/O"), // IN EAX,60h
-  (vec![0x6c],0x227u32,"not modelled"),        // INSB, unsupported SB reserved port
+  (vec![0x6c],0x300u32,"not modelled"),        // INSB, no device at 300h in Dine's DOS
   (vec![0xf3,0x6f],0x226u32,"word OUT"),      // REP OUTSW, unsupported DSP width
  ]{
   let mut p=load(&bytes,"port.com").unwrap();

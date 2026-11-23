@@ -117,6 +117,16 @@ about 1.5 billion guest steps (10.5 minutes headless).
   partitions, formats (Minix) and installs Base onto a 40 MB image; booting
   the diskette with `rw root=301` runs Linux from /dev/hda1 to a root shell.
   Packages beyond Base need MCC's other disks.
+- **Done (23 November 2026), MCC Interim 1.0+ (Linux 1.0.4):** from the
+  oldlinux repository (github.com/youngd24/oldlinux, mcc-linux/MCC-1.0, the
+  only MCC release there; no svgalib or X server in it). Boot and root
+  disks: the diskette change line and a disk change in the probe and the
+  console; 8042 ADh/AEh; open-bus word probes and unused Sound Blaster
+  addresses. Installed onto an ext2 /dev/hda1 and booted with `ro
+  root=301` to a root login.
+- **Next:** MCC's package floppies (raw tar streams on the GoTek images,
+  read from drive B: or after a reboot), then svgalib (Tony's choice over
+  X, 23 November 2026), which needs a Linux with svgalib from elsewhere.
 - **Later:** Linux 2.0/2.2 with an initrd and a serial console. Linux 3.8
   and later dropped the 386.
 

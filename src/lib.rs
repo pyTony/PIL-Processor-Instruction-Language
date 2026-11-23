@@ -2635,9 +2635,9 @@ pub fn run_cli() -> Result<(), String> {
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--boot-probe"){
-        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]...";
+        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]...";
         let(mut image,mut drive,mut steps,mut at,mut keys,mut keys_after)=(None,0u8,10_000_000usize,2,String::new(),5_000_000usize);
-        let mut hard_disk=None;let mut typed=Vec::new();
+        let mut hard_disk=None;let mut typed=Vec::new();let mut changes=Vec::new();
         while at<dos_args.len(){
             match dos_args[at].as_str(){
                 "--hd"=>drive=0x80,
@@ -2645,6 +2645,12 @@ pub fn run_cli() -> Result<(), String> {
                     let value=dos_args.get(at+1).ok_or(usage)?;
                     let (when,text)=value.split_once(':').ok_or("--type takes STEPS:TEXT")?;
                     typed.push((usize::try_from(number(when)?).map_err(|_|"step count out of range")?,text.replace("\\r","\r")));at+=1;
+                },
+                "--change-floppy"=>{
+                    let value=dos_args.get(at+1).ok_or(usage)?;
+                    let (when,file)=value.split_once(':').ok_or("--change-floppy takes STEPS:IMAGE")?;
+                    let bytes=std::fs::read(file).map_err(|e|format!("{file}: {e}"))?;
+                    changes.push((usize::try_from(number(when)?).map_err(|_|"step count out of range")?,bytes));at+=1;
                 },
                 "--hd-image"=>{hard_disk=Some(dos_args.get(at+1).ok_or(usage)?.clone());at+=1;},
                 "--keys"=>{keys=dos_args.get(at+1).ok_or(usage)?.replace("\\r","\r");at+=1;},
@@ -2666,7 +2672,7 @@ pub fn run_cli() -> Result<(), String> {
                 match hard_disk{Some(disk)=>dos::boot_with_hard_disk(Some(&bytes),std::path::Path::new(&disk),0)?,None=>dos::boot(&bytes,0)?}
             },
         };
-        print!("{}",dos::boot_probe(machine,steps,&keys,keys_after,&typed)?);return Ok(());
+        print!("{}",dos::boot_probe(machine,steps,&keys,keys_after,&typed,&changes)?);return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--new-hd-image"){
         let usage="usage: pil --new-hd-image FILE MEGABYTES (a new, empty fixed-disk image: 16 heads, 63 sectors, up to 1024 cylinders)";

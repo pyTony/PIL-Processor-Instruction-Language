@@ -69,7 +69,11 @@ impl Disk{
 
 /// The BIOS drives: floppies 00h and 01h, fixed disk 80h.
 #[derive(Clone,Debug,Default)]
-pub(crate) struct Disks{floppy:[Option<Disk>;2],fixed:Option<Disk>}
+pub(crate) struct Disks{floppy:[Option<Disk>;2],fixed:Option<Disk>,
+    /// Each diskette drive's change line: set when another disk goes in,
+    /// cleared by a step of the head (a seek or recalibrate) or by the
+    /// BIOS's change check.
+    changed:[bool;2]}
 impl Disks{
     pub(crate) fn is_empty(&self)->bool{self.floppy.iter().all(Option::is_none)&&self.fixed.is_none()}
     pub(crate) fn attach(&mut self,drive:u8,disk:Disk)->Result<(),String>{
@@ -78,6 +82,18 @@ impl Disks{
     }
     fn get(&self,drive:u8)->Option<&Disk>{match drive{0|1=>self.floppy[usize::from(drive)].as_ref(),0x80=>self.fixed.as_ref(),_=>None}}
     fn get_mut(&mut self,drive:u8)->Option<&mut Disk>{match drive{0|1=>self.floppy[usize::from(drive)].as_mut(),0x80=>self.fixed.as_mut(),_=>None}}
+    /// Put another diskette of the same format into drive 00h or 01h (the
+    /// drive type in CMOS stays). Its change line goes active.
+    pub(crate) fn change_floppy(&mut self,drive:u8,disk:Disk)->Result<(),String>{
+        let slot=self.floppy.get_mut(usize::from(drive)).ok_or_else(||format!("BIOS drive {drive:02x}h is not a diskette drive"))?;
+        let old=slot.as_ref().ok_or_else(||format!("there is no diskette drive {drive:02x}h"))?;
+        if old.geometry()!=disk.geometry(){return Err(format!("the new diskette is {}K, the drive's is {}K",disk.data.len()/1024,old.data.len()/1024));}
+        *slot=Some(disk);self.changed[usize::from(drive)]=true;Ok(())
+    }
+    /// The drive's change line (a diskette went in since the last step).
+    pub(crate) fn changed(&self,drive:u8)->bool{drive<2&&self.changed[usize::from(drive)]}
+    /// A step of the head with a diskette in the drive clears its change line.
+    pub(crate) fn stepped(&mut self,drive:u8){if self.has_floppy(drive){self.changed[usize::from(drive)]=false;}}
     /// CMOS register 10h: drive A: type in the high nibble, B: in the low.
     pub(crate) fn cmos_floppy_types(&self)->u8{
         let t=|d:&Option<Disk>|d.as_ref().map_or(0,Disk::cmos_type);
@@ -210,7 +226,9 @@ pub(super) fn int13(p:&mut Loaded)->Result<Option<u8>,String>{
                 p.cpu.regs[1]=(p.cpu.regs[1]&!0xffff)|d.total()>>16;p.cpu.regs[2]=(p.cpu.regs[2]&!0xffff)|(d.total()&0xffff);3}};
             p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|kind<<8;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
         },
-        // The disk in the drive has not changed.
+        // Change line: 06h once after another diskette went in (the BIOS
+        // then steps the head, which clears the line).
+        0x16 if p.disks.changed(drive)=>{p.disks.stepped(drive);finish(p,drive,6)?;},
         0x16=>finish(p,drive,if present{0}else{missing})?,
         0x17|0x18=>{
             if ah==0x18{p.cpu.regs[7]=(p.cpu.regs[7]&!0xffff)|u32::from(DPT_OFFSET);load_es(p,DPT_SEGMENT);}

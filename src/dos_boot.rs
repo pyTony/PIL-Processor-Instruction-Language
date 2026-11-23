@@ -83,20 +83,34 @@ pub(crate) fn screen_lines(p:&Loaded)->Vec<String>{
 /// waits); a second wait for input ends the run. Each `typed` (STEPS, TEXT)
 /// is typed once the run has made STEPS steps (an operating system that
 /// idles in its own loop never waits as the BIOS does).
-pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)])->Result<String,String>{
+/// Each `changes` (STEPS, IMAGE) puts another diskette into drive A: once
+/// the run has made STEPS steps, as for a boot disk that asks for its root
+/// disk.
+pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)],changes:&[(usize,Vec<u8>)])->Result<String,String>{
     // The host clock drives the timer, so BIOS time-outs (a boot loader's
     // prompt) pass as they would on the machine.
     p.clock_offset=Some(0);
     let mut session=session::Session::new(p);
     let (mut left,mut done,mut typed)=(steps,0usize,keys.is_empty());
-    let mut later:Vec<&(usize,String)>=typed_at.iter().collect();later.sort_by_key(|t|t.0);
+    enum Event<'a>{Type(&'a str),Floppy(&'a [u8])}
+    let mut later:Vec<(usize,Event)>=typed_at.iter().map(|(at,text)|(*at,Event::Type(text)))
+        .chain(changes.iter().map(|(at,image)|(*at,Event::Floppy(image)))).collect();
+    later.sort_by_key(|t|t.0);
     let mut later=later.into_iter().peekable();
     let mut reason=String::from("budget");
     while left>0{
         let next=later.peek().map_or(usize::MAX,|t|t.0.saturating_sub(done).max(1));
         let slice=left.min(1_000_000).min(next).min(if typed{usize::MAX}else{keys_after.saturating_sub(done).max(1)});
         session.run(slice)?;done+=slice;left-=slice;
-        while later.peek().is_some_and(|t|t.0<=done){let ran=type_text(&mut session,&later.next().unwrap().1)?;done+=ran;left=left.saturating_sub(ran);}
+        while later.peek().is_some_and(|t|t.0<=done){
+            match later.next().unwrap().1{
+                Event::Type(text)=>{let ran=type_text(&mut session,text)?;done+=ran;left=left.saturating_sub(ran);},
+                Event::Floppy(image)=>{
+                    let disk=bios_disk::Disk::floppy(image.to_vec())?;
+                    session.machine_mut().ok_or("session state lost")?.disks.change_floppy(0,disk)?;
+                },
+            }
+        }
         let (status,detail)=session.status();
         let due=!typed&&(status=="waiting_input"||(status=="running"&&done>=keys_after));
         match status{

@@ -233,6 +233,13 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!0xffff)|u32::from(lo)|(u32::from(hi)<<8);}
         return Ok(());
     }
+    // A booted OS's word probe of an ISA card that is not there (an
+    // Ethernet card's data port, for one) reads the open bus, FFFFh, and its
+    // writes go nowhere, as the byte accesses below do.
+    if first&1!=0&&p.booted&&assigned.is_none(){
+        if input{p.cpu.regs[0]|=0xffff;}
+        return Ok(());
+    }
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
     // The diskette controller and DMA channel 2. Writes to the DMA
     // registers channels share also reach the channel-1 model below.
@@ -311,6 +318,10 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 0x64=>match value{
                     0xd0=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(1|u8::from(s.kbc_a20)<<1);},
                     0xd1=>s.kbc_write_output=true,
+                    // Disable and enable the keyboard interface (an OS
+                    // keyboard handler brackets its port 60h read so).
+                    0xad=>s.kbd.disabled=true,
+                    0xae=>s.kbd.disabled=false,
                     // F0h-FFh pulse the output-port lines whose bits 3-0 are
                     // clear low for about 6 us. Bit 0 is the CPU reset line,
                     // which stays an explicit stop. A pulse of the A20 line

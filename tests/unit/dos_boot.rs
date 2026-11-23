@@ -130,3 +130,91 @@ fn the_cursor_shape_survives_an_os_writing_over_the_bios_data_area(){
     // BIOS shape 06h-07h in 8 lines is 13-14 in a 16-line cell.
     assert_eq!(host_console::cursor_shape(&r.loaded),Some((13,14)));
 }
+
+/// IN or OUT through DX in a booted machine: EC/ED in, EE out; AL or AX.
+fn port_io(p:&mut Loaded,first:u8,port:u16,value:u32)->u32{
+    p.cpu.regs[0]=value;ports::transfer(p,first,port,if first&1==0{1}else{2}).unwrap();p.cpu.regs[0]
+}
+
+#[test]
+fn probes_of_absent_isa_cards_read_the_open_bus(){
+    let mut disk=vec![0u8;1_228_800];disk[510]=0x55;disk[511]=0xaa;
+    let mut p=boot(&disk,0).unwrap();
+    // A word probe of an Ethernet card's data port: FFFFh, writes go nowhere.
+    assert_eq!(port_io(&mut p,0xed,0x300,0x1234_0000),0x1234_ffff);
+    port_io(&mut p,0xef,0x300,0x5555);
+    // Sound Blaster addresses the card does not decode: FFh, writes ignored,
+    // and its DSP still answers a reset.
+    for port in [0x220,0x223,0x227,0x22b,0x22d]{
+        assert_eq!(port_io(&mut p,0xec,port,0)&0xff,0xff,"{port:03x}h");
+        port_io(&mut p,0xee,port,0x5a);
+    }
+    port_io(&mut p,0xee,0x226,1);port_io(&mut p,0xee,0x226,0);
+    assert_eq!(port_io(&mut p,0xec,0x22a,0)&0xff,0xaa);
+    // Outside a booted machine an unassigned word port still stops.
+    let mut q=boot(&disk,0).unwrap();q.booted=false;q.cpu.regs[0]=0;
+    assert!(ports::transfer(&mut q,0xed,0x300,2).is_err());
+}
+
+#[test]
+fn the_keyboard_interface_holds_keys_while_the_controller_disables_it(){
+    let mut disk=vec![0u8;1_228_800];disk[510]=0x55;disk[511]=0xaa;
+    let mut p=boot(&disk,0).unwrap();
+    // Interrupts off: a port 64h read brings a waiting code in (polling).
+    p.cpu.eflags&=!0x200;
+    port_io(&mut p,0xee,0x64,0xad);
+    assert!(keyboard::key(&mut p,0x1e61).unwrap());
+    assert_eq!(port_io(&mut p,0xec,0x64,0)&1,0,"held while the interface is off");
+    assert!(!keyboard::interrupt(&mut p,true).unwrap(),"no IRQ1 for a held code");
+    port_io(&mut p,0xee,0x64,0xae);
+    assert_eq!(port_io(&mut p,0xec,0x64,0)&1,1);
+    assert_eq!(port_io(&mut p,0xec,0x60,0)&0xff,0x1e);
+}
+
+#[test]
+fn a_diskette_change_raises_the_change_line_until_the_head_steps(){
+    let mut disk=vec![0u8;1_228_800];disk[510]=0x55;disk[511]=0xaa;
+    let mut p=boot(&disk,0).unwrap();
+    let mut other=vec![0u8;1_228_800];other[512]=0x77;
+    // Only a diskette of the drive's format, into a drive that is there.
+    assert!(p.disks.change_floppy(0,bios_disk::Disk::floppy(vec![0;1_474_560]).unwrap()).is_err());
+    assert!(p.disks.change_floppy(1,bios_disk::Disk::floppy(other.clone()).unwrap()).is_err());
+    assert!(!p.disks.changed(0));
+    p.disks.change_floppy(0,bios_disk::Disk::floppy(other).unwrap()).unwrap();
+    assert_eq!(p.disks.sector(0,1).unwrap()[0],0x77,"the new diskette's data");
+    // INT 13h AH=16h: 06h (CF set) once, then 00h.
+    for expect in [(6,1),(0,0)]{
+        p.cpu.regs[0]=0x1600;p.cpu.regs[2]=0;bios_disk::int13(&mut p).unwrap();
+        assert_eq!(((p.cpu.regs[0]>>8)&0xff,p.cpu.eflags&1),expect);
+    }
+    // The controller's digital input register (3F7h bit 7) for the drive
+    // the DOR selects, until a seek.
+    p.disks.change_floppy(0,bios_disk::Disk::floppy(vec![0;1_228_800]).unwrap()).unwrap();
+    fdc::Fdc::io(&mut p,0x3f2,false,0x1c).unwrap();
+    assert_eq!(fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0x80));
+    fdc::Fdc::io(&mut p,0x3f2,false,0x1d).unwrap();
+    assert_eq!(fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0),"drive B: selected");
+    fdc::Fdc::io(&mut p,0x3f2,false,0x1c).unwrap();
+    for b in [0x0f,0x00,0x01]{fdc::Fdc::io(&mut p,0x3f5,false,b).unwrap();}
+    assert_eq!(fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0));
+}
+
+#[test]
+fn the_console_changes_a_booted_machines_diskette(){
+    let mut disk=vec![0u8;1_228_800];disk[510]=0x55;disk[511]=0xaa;
+    let dir=std::env::temp_dir().join(format!("pil-diskettes-{}",std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (first,second)=(dir.join("boot.img"),dir.join("root.img"));
+    let mut root=vec![0u8;1_228_800];root[0]=0x42;
+    std::fs::write(&first,&disk).unwrap();std::fs::write(&second,&root).unwrap();
+    let mut session=session::Session::new(boot(&disk,0).unwrap());
+    session.boot_diskettes(vec![first,second]).unwrap();
+    assert!(session.disk(b'A',Some("next")).unwrap().contains("2/2"));
+    let p=session.machine().unwrap();
+    assert!(p.disks.changed(0));assert_eq!(p.disks.sector(0,0).unwrap()[0],0x42);
+    assert!(session.disk(b'A',Some("next")).is_err(),"no third diskette");
+    // Dine's own DOS has no BIOS diskette to change this way.
+    let dos=crate::dos::load(&[0xc3],"x.com").unwrap();
+    assert!(session::Session::new(dos).boot_diskettes(vec![dir.join("boot.img")]).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

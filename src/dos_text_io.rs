@@ -84,6 +84,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     let mut plain=false;
     let mut boot:Option<(String,u8)>=None;
     let mut hard_disk:Option<String>=None;
+    let mut floppies:Vec<std::path::PathBuf>=Vec::new();
     let mut host_pointer=None;
     let mut speaker_volume=None;
     let mut at=0;
@@ -99,6 +100,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
                 let value=args.get(at+1).ok_or("missing DOS console option value")?;
                 speaker_volume=Some(value.parse::<u8>().ok().filter(|v|*v<=100).ok_or("--speaker-volume takes 0..100")?);at+=1;
             },
+            "--floppy"=>{floppies.push(std::path::PathBuf::from(args.get(at+1).ok_or("--floppy takes a diskette image")?));at+=1;},
             "--hd-image"=>{hard_disk=Some(args.get(at+1).ok_or("--hd-image takes a fixed-disk image")?.clone());at+=1;},
             "--boot"|"--boot-hd"=>{
                 let value=args.get(at+1).ok_or("--boot takes a disk image")?;
@@ -130,11 +132,17 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
             },
         };
         let mut session=dos::session::Session::new(machine);
+        if !floppies.is_empty(){
+            if drive!=0{return Err("--floppy changes the diskette a --boot started from".into());}
+            floppies.insert(0,std::path::PathBuf::from(&image));
+            session.boot_diskettes(floppies)?;
+        }
         let result=run(&mut session,&options,plain);
         session.log_stop(&mut dos::stoplog::Logger::new(log_path,&image));
         return result;
     }
     if hard_disk.is_some(){return Err("--hd-image needs --boot (a booted machine)".into());}
+    if !floppies.is_empty(){return Err("--floppy needs --boot (a booted machine)".into());}
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
     let tail=tail.or_else(||startup.as_ref().and_then(|s|s.1.as_deref()));
