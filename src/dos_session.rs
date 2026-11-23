@@ -77,8 +77,8 @@ impl Session{
         let loaded=self.loaded.take().ok_or("session state lost")?;
         let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
         let mut probe=match self.backend.as_mut(){
-            Some(backend)=>run_with_backend(loaded,budget,&mut output,Some(backend.as_mut()))?,
-            None=>run_with_backend(loaded,budget,&mut output,None)?,
+            Some(backend)=>run_with_backend_session(loaded,budget,&mut output,Some(backend.as_mut()))?,
+            None=>run_with_backend_session(loaded,budget,&mut output,None)?,
         };
         probe.output=output.into_bytes();
         // A hint only: polling programs continue running, but a frontend may
