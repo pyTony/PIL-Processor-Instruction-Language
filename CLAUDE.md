@@ -1,3 +1,36 @@
+# Compiled blocks in protected mode and with paging (Linux plan milestone 5) — 23 November 2026
+
+Tony: "yes" to milestone 5, to make the Linux boot fast. Protected-mode code
+ran one instruction at a time, and under paging the decode cache refetched
+every instruction byte by byte through the page walk.
+- src/memory.rs: code stamps (decode cache and blocks) record the bus
+  address the code was found at. With paging the code must lie in one page;
+  each check translates the linear address again with the current CR3 and
+  CPL (a TLB hit, or a walk that sets the accessed bits a fetch sets) and
+  compares the frame before the 64-byte line counters. A remapped page, a
+  page the CPL may not read, or a write to the code through any alias fails
+  the check. src/cache.rs now stamps paged entries too.
+- src/block_compiler/engine.rs: blocks are planned in protected mode and
+  with paging; under paging a block stays in its first instruction's page;
+  a 16-bit code segment still ends a block at IP FFFFh. Real and V86 mode
+  keep the linear exclusions (Dine's low memory, video, ROM, above 1 MiB);
+  other protected-mode code excludes video memory and the ROM/BIOS area by
+  bus address. `run` sets the RAM's paging state first.
+- Not done: the precompiled forms still enumerate the real-mode decoder; a
+  32-bit instruction uses a native form when its PIL program matches one,
+  else the interpreter inside the block.
+
+Local Windows, release: 1036 Rust tests pass, 2 ignored (1 new in
+tests/unit/precompiled.rs: an original boot sector entering paged 32-bit
+protected mode, remapping a called page and rewriting its own code through
+an alias page, blocks against the interpreter per slice plus the stored sum
+checked against the round count; it fails with the remap check removed);
+0 rustc warnings. MCC Interim to its menu (200 million steps): 80 s -> 11 s.
+Doom v1.9 (DOS/4GW, Tony's files, local), 300 million steps through
+`--dos-session`: 90 s -> 24 s, still running. Runs use the host clock, so
+step-for-step comparisons of these workloads were not possible. test386
+with blocks was not run. Not run on Linux.
+
 # Linux 0.99.10 boots to MCC Interim's menu (Linux plan milestones 3-4) — 22 November 2026
 
 Tony's goal from 21 November: boot early Linux, MCC Interim 0.99.p10+

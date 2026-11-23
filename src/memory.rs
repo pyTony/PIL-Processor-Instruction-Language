@@ -45,6 +45,10 @@ pub(crate) struct CodeStamp {
     owner: u64,
     address: u32,
     bytes: usize,
+    /// The bus address the code was found at, and whether paging was on:
+    /// with paging the linear address is translated again at each check.
+    bus: u32,
+    paged: bool,
     a20: bool,
     planar: bool,
     first_line: usize,
@@ -199,22 +203,35 @@ impl Ram {
             ranges.insert(start,(end,offset+done as u32));done+=count;
         }
     }
-    fn code_pages(&self,address:u32,bytes:usize)->Option<std::ops::RangeInclusive<usize>>{
+    /// The bus address and lines of `bytes` of code at linear `address`.
+    /// With paging on the code must lie in one page, which the current
+    /// privilege level may read (a fetch would fault otherwise).
+    fn code_pages(&self,address:u32,bytes:usize)->Option<(u32,std::ops::RangeInclusive<usize>)>{
         if bytes==0{return None;}
-        self.contiguous_slice(address,bytes)?;
-        let start=self.physical_address(address)as usize;let end=start+bytes;
+        let start=if self.paging.get().is_some(){
+            if (address as usize&0xfff)+bytes>0x1000{return None;}
+            let bus=self.locate(address,false).ok()?;
+            self.data.get(bus as usize..bus as usize+bytes)?;
+            bus as usize
+        }else{
+            self.contiguous_slice(address,bytes)?;
+            self.physical_address(address)as usize
+        };
+        let end=start+bytes;
         if self.planar.is_some()&&start<0xb0000&&end>0xa0000{return None;}
-        Some(start/CODE_LINE..=(end-1)/CODE_LINE)
+        Some((start as u32,start/CODE_LINE..=(end-1)/CODE_LINE))
     }
     /// A stamp for code at `address`: valid until a write reaches one of
     /// its lines (or A20 or the RAM object changes). The caller must have
     /// read the bytes it trusts after the last such write.
     pub(crate) fn watch_code(&self,address:u32,bytes:usize)->Option<CodeStamp>{
-        let lines=self.code_pages(address,bytes)?;
+        let (bus,lines)=self.code_pages(address,bytes)?;
         Some(CodeStamp {
             owner: self.code_watch.owner,
             address,
             bytes,
+            bus,
+            paged: self.paging.get().is_some(),
             a20: self.a20_enabled,
             planar: self.planar.is_some(),
             first_line: *lines.start(),
@@ -226,10 +243,14 @@ impl Ram {
     pub(crate) fn code_unchanged(&self, stamp: CodeStamp, address: u32, bytes: usize) -> bool {
         if stamp.owner != self.code_watch.owner || stamp.address != address
             || stamp.bytes != bytes || stamp.a20 != self.a20_enabled
-            || stamp.planar != self.planar.is_some() || self.paging.get().is_some()
+            || stamp.planar != self.planar.is_some() || stamp.paged != self.paging.get().is_some()
         {
             return false;
         }
+        // With paging the same linear page must still map to the same
+        // frame (a TLB hit, or a walk that sets the accessed bits a fetch
+        // would set).
+        if stamp.paged && self.locate(address,false).ok()!=Some(stamp.bus){return false;}
         // The owner fixes the backing RAM and the stamp was issued for this
         // exact address, length, and mapping.
         let writes = if stamp.first_line == stamp.last_line {

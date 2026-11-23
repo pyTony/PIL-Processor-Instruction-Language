@@ -312,3 +312,97 @@ fn fused_subtract_branch_loop_preserves_partial_slices() {
     assert_eq!(run.stop, Stop::Exit(0));
     assert!(run.loaded.blocks.compare_branches > 900);
 }
+
+/// A boot sector (original, hand-assembled) that enters 32-bit protected
+/// mode with paging and then loops: CALL to linear 50000h, whose page maps
+/// frame 40000h (MOV EAX,1; RET) and 41000h (MOV EAX,2; RET) in turn (the
+/// PTE is rewritten and CR3 reloaded each round), and a store through
+/// linear 20000h, an alias of the code's own page, rewrites the immediate
+/// of the ADD after it. IF stays clear, so the run does not depend on the
+/// host clock.
+const PAGED_32:&[u8]=&[
+    0xfa,                                           // 7c00 cli
+    0x31,0xc0,                                      // 7c01 xor ax,ax
+    0x8e,0xd8,                                      // 7c03 mov ds,ax
+    0x0f,0x01,0x16,0xe0,0x7c,                       // 7c05 lgdt [gdtr]
+    0x0f,0x20,0xc0,                                 // 7c0a mov eax,cr0
+    0x0c,0x01,                                      // 7c0d or al,1
+    0x0f,0x22,0xc0,                                 // 7c0f mov cr0,eax
+    0x66,0xea,0x1a,0x7c,0x00,0x00,0x08,0x00,        // 7c12 jmp dword 08h:pm32
+    0x66,0xb8,0x10,0x00,                            // 7c1a mov ax,10h
+    0x8e,0xd8,                                      // 7c1e mov ds,ax
+    0x8e,0xc0,                                      // 7c20 mov es,ax
+    0x8e,0xd0,                                      // 7c22 mov ss,ax
+    0xbc,0x00,0x90,0x00,0x00,                       // 7c24 mov esp,9000h
+    0xbf,0x00,0x10,0x01,0x00,                       // 7c29 mov edi,11000h
+    0xb8,0x03,0x00,0x00,0x00,                       // 7c2e mov eax,3
+    0xb9,0x00,0x04,0x00,0x00,                       // 7c33 mov ecx,1024
+    0xab,                                           // 7c38 stosd
+    0x05,0x00,0x10,0x00,0x00,                       // 7c39 add eax,1000h
+    0xe2,0xf8,                                      // 7c3e loop fill
+    0xc7,0x05,0x00,0x00,0x01,0x00,0x03,0x10,0x01,0x00,// 7c40 mov dword [10000h],11003h  ; PDE 0
+    0xc7,0x05,0x80,0x10,0x01,0x00,0x03,0x70,0x00,0x00,// 7c4a mov dword [11080h],7003h  ; linear 20000h -> frame 7000h (this code)
+    0xc7,0x05,0x00,0x00,0x04,0x00,0xb8,0x01,0x00,0x00,// 7c54 mov dword [40000h] ; MOV EAX,1
+    0xc7,0x05,0x04,0x00,0x04,0x00,0x00,0xc3,0x00,0x00,// 7c5e mov dword [40004h] ; RET
+    0xc7,0x05,0x00,0x10,0x04,0x00,0xb8,0x02,0x00,0x00,// 7c68 mov dword [41000h] ; MOV EAX,2
+    0xc7,0x05,0x04,0x10,0x04,0x00,0x00,0xc3,0x00,0x00,// 7c72 mov dword [41004h] ; RET
+    0xc7,0x05,0x40,0x11,0x01,0x00,0x03,0x00,0x04,0x00,// 7c7c mov dword [11140h],40003h ; linear 50000h -> frame 40000h
+    0xb8,0x00,0x00,0x01,0x00,                       // 7c86 mov eax,10000h
+    0x0f,0x22,0xd8,                                 // 7c8b mov cr3,eax
+    0x0f,0x20,0xc0,                                 // 7c8e mov eax,cr0
+    0x0d,0x00,0x00,0x00,0x80,                       // 7c91 or eax,80000000h
+    0x0f,0x22,0xc0,                                 // 7c96 mov cr0,eax
+    0x31,0xdb,                                      // 7c99 xor ebx,ebx
+    0x31,0xf6,                                      // 7c9b xor esi,esi
+    0xe8,0x5e,0x83,0x04,0x00,                       // 7c9d call 50000h
+    0x01,0xc3,                                      // 7ca2 add ebx,eax
+    0x81,0x35,0x40,0x11,0x01,0x00,0x00,0x10,0x00,0x00,// 7ca4 xor dword [11140h],1000h ; the other frame
+    0x0f,0x20,0xd8,                                 // 7cae mov eax,cr3
+    0x0f,0x22,0xd8,                                 // 7cb1 mov cr3,eax
+    0x46,                                           // 7cb4 inc esi
+    0x89,0xf0,                                      // 7cb5 mov eax,esi
+    0xa2,0xbe,0x0c,0x02,0x00,                       // 7cb7 mov [alias of imm],al
+    0x83,0xc3,                                      // 7cbc add ebx,imm8 (rewritten)
+    0x00,                                           // 7cbe   imm8
+    0x89,0x1d,0x00,0x00,0x30,0x00,                  // 7cbf mov [300000h],ebx
+    0xeb,0xd6,                                      // 7cc5 jmp again
+    0x90,                                           // 7cc7 nop
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,        // 7cc8 null descriptor
+    0xff,0xff,0x00,0x00,0x00,0x9a,0xcf,0x00,        // 7cd0 08h: code, base 0, 4 GiB, 32-bit
+    0xff,0xff,0x00,0x00,0x00,0x92,0xcf,0x00,        // 7cd8 10h: data, base 0, 4 GiB
+    0x17,0x00,0xc8,0x7c,0x00,0x00,                  // 7ce0 GDTR
+];
+
+fn booted(sector:&[u8],mode:Mode)->dos::Loaded{
+    let mut disk=vec![0u8;1_474_560];
+    disk[..sector.len()].copy_from_slice(sector);disk[510]=0x55;disk[511]=0xaa;
+    let mut p=dos::boot(&disk,0).unwrap();p.blocks.mode=Some(mode);p
+}
+
+#[test]
+fn blocks_match_the_interpreter_in_paged_32_bit_protected_mode(){
+    let mut a=booted(PAGED_32,Mode::Off);let mut b=booted(PAGED_32,Mode::On);
+    let mut out_a=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);let mut out_b=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    for budget in [1usize,3,7,16,17,100,255,256,1000,4099].into_iter().cycle().take(300){
+        let left=dos::run_with_backend(a,budget,&mut out_a,None).unwrap();
+        let right=dos::run_with_backend(b,budget,&mut out_b,None).unwrap();
+        assert_eq!(left.stop,Stop::Budget);assert_eq!(right.stop,Stop::Budget);
+        assert_eq!(left.loaded.cpu,right.loaded.cpu);assert_eq!(left.loaded.image,right.loaded.image);
+        assert!(left.loaded.ram.bytes()==right.loaded.ram.bytes(),"RAM differs");
+        assert_eq!(left.completed,right.completed);assert_eq!(left.instructions,right.instructions);
+        a=left.loaded;b=right.loaded;a.blocks.mode=Some(Mode::Off);b.blocks.mode=Some(Mode::On);
+    }
+    assert!(!b.image.real_mode&&b.image.paging,"the loop runs with paging");
+    // Rounds: EBX gains 1 or 2 from the mapped routine and the round number
+    // (low byte) from the rewritten immediate.
+    let rounds=b.cpu.regs[6];assert!(rounds>1000,"{rounds}");
+    // The sum each round stores at 300000h (the ADD's imm8 is sign-extended):
+    // the interpreter and the blocks both run through the decode cache, so
+    // check it against the rounds.
+    let sum=|r:u32|(1..=r).fold(0u32,|s,i|s.wrapping_add(if i%2==1{1}else{2}).wrapping_add(i as u8 as i8 as u32));
+    for p in [&a,&b]{
+        let stored=p.ram.load(0x300000,crate::MemWidth::Dword).unwrap();
+        assert!(stored==sum(rounds)||stored==sum(rounds-1),"stored {stored:x} after {rounds} rounds");
+    }
+    assert!(b.blocks.blocks>1000,"blocks ran: {} entries",b.blocks.blocks);
+}

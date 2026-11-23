@@ -9,8 +9,11 @@ and Linux) runs as on a PC.
 pil --dos-console --boot images/mcc-interim/boot
 ```
 ```powershell
-pil --boot-probe images/mcc-interim/boot --steps 30000000 --keys "\r"
+pil --boot-probe images/mcc-interim/boot --steps 200000000 --keys "\r"
 ```
+
+MCC Interim (Linux 0.99.10) reaches its install menu within 200 million
+steps, about 11 s headless here.
 
 - `--dos-console --boot IMAGE` (or `--boot-hd IMAGE` for a fixed-disk
   image) opens the usual console: the Dine window on Windows, the terminal
@@ -44,6 +47,8 @@ Hardware an operating system drives itself, beyond the BIOS:
   booted machine every port no known device answers is an open bus (FFh),
   as ISA probes expect. Printer ports read 80h, so a printer probe still
   finds three ports (Linux: "lp0 exists").
-- **Paging** with a TLB.
+- **Paging** with a TLB. Protected-mode code, paged or not, runs in the
+  same compiled blocks as real-mode code; a block's code guard follows the
+  page mapping.
 
 Status: docs/development/LINUX_BOOT_PLAN.md.
