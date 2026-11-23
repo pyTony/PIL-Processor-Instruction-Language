@@ -289,9 +289,10 @@ pub(crate) fn ansi_frame(cells:&[u8],columns:u32,cursor:(u32,u32),cursor_visible
 #[cfg(any(windows,test))]
 pub(crate) use super::vga_text::text_pixels;
 /// The BIOS cursor (0040:0050 for the page, shape at 0040:0060) on a 16-line
-/// cell, or None when it is off.
-fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
-    let byte=|at|p.ram.load(at,MemWidth::Byte).ok();
+/// cell, or None when it is off. In a booted machine the shape is the video
+/// BIOS's own copy (see console::bios_video).
+pub(crate) fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
+    let byte=|at|super::console::bios_video(p,at,MemWidth::Byte).ok();
     let (end,start)=(byte(0x460)?,byte(0x461)?);
     super::vga_text::cursor_lines(start as u8,end as u8)
 }

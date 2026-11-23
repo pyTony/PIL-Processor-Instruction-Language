@@ -17,6 +17,16 @@ by a boot sector). MCC Interim from a copy of the installed 40 MB image,
 `--boot-probe ... --rtc-year 1993`: the prompt shows the time and `date`
 answers "Tue Nov 23 20:37:36 1993" (the probe runs on UTC). The console
 window was not driven here.
+# The console cursor keeps its BIOS shape under Linux — 23 November 2026
+
+Tony, after #303: MCC Interim ran from /dev/hda1 to a root shell in the
+console window, with the cursor drawn at the top of its cell. The window
+read the cursor shape from 0040:0060, which Linux 0.99's kernel overwrites;
+it now reads the video BIOS's copy (console::bios_video, #303).
+
+Local Windows, release: 1051 Rust tests pass, 2 ignored (1 new in
+tests/unit/dos_boot.rs: the shape after a boot sector fills
+0000:0400-04FF). The window itself was not driven here.
 
 # The console window keeps the BIOS screen layout under Linux — 23 November 2026
 

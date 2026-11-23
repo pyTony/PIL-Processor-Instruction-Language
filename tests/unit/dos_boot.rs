@@ -114,6 +114,23 @@ fn the_screen_layout_survives_an_os_writing_over_the_bios_data_area(){
     assert_eq!(cells[0],b'L');
 }
 
+/// The cursor shape the window draws comes from the same copy.
+#[test]
+fn the_cursor_shape_survives_an_os_writing_over_the_bios_data_area(){
+    let code:&[u8]=&[
+        0x31,0xdb,0x8e,0xc3,                       // xor bx,bx; mov es,bx
+        0xbf,0x00,0x04,0xb9,0x00,0x01,0xb0,0x01,   // mov di,400h; mov cx,100h; mov al,1
+        0xfc,0xf3,0xaa,0xfa,0xf4,                  // cld; rep stosb; cli; hlt
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);
+    disk[510]=0x55;disk[511]=0xaa;
+    let r=run(boot(&disk,0).unwrap(),2000).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    // BIOS shape 06h-07h in 8 lines is 13-14 in a 16-line cell.
+    assert_eq!(host_console::cursor_shape(&r.loaded),Some((13,14)));
+}
+
 /// `--rtc-year`: the CMOS year and century read through ports 70h/71h are
 /// the chosen year's, for kernels that cannot read this century.
 #[test]
