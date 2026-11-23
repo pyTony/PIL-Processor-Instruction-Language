@@ -269,6 +269,14 @@ impl Ram {
         let saved=self.paging.get();self.set_paging(None);
         let result=f(self);self.set_paging(saved);result
     }
+    /// Paging off for host-side accesses (a front end reading video memory
+    /// or the BIOS data area, as the display hardware does), keeping the
+    /// TLB: writes to page-table frames are tracked whatever the paging
+    /// state, and `set_paging` with the same directory turns it back on.
+    pub(crate) fn host_access(&mut self){
+        if !self.marks.get_mut().is_empty(){self.settle();}
+        self.paging.set(None);
+    }
     /// A CPU write to a frame holding a page table the TLB has used.
     fn table_write(&mut self,index:usize){let tlb=self.tlb.get_mut();if tlb.used&&tlb.holds_table(index){tlb.flush();}}
     pub fn set_paging(&mut self, paging: Option<Paging>) {

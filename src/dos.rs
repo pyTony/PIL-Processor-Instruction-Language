@@ -956,6 +956,9 @@ pub(crate) fn run_with_backend_session(p:Loaded,budget:usize,output:&mut impl cr
 fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,mut backend:Option<&mut dyn InstructionBackend>,collect_mnemonic_mix:bool)->Result<Probe,String>{
     if !(1..=if p.rom_mode{MAX_ROM_STEPS}else{MAX_STEPS}).contains(&budget){return Err(if p.rom_mode{"ROM step budget must be 1..1000000000"}else{"DOS step budget must be 1..1000000"}.into());}
     let _profile_run=crate::profile::span("dos_run");
+    // Between runs RAM is in host view (see Ram::host_access); the CPU's
+    // paging comes back here.
+    p.ram.set_paging(p.image.segment_state().ram_paging());
     let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();let mut native_block_count=0usize;
     let mut exceptions=Vec::new();let mut exception_count=0;
     let mut lazy=super::LazyFlags::None;
@@ -1476,6 +1479,9 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
     p.blocks.report(&mut instructions);
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
     let file_offset=linear.and_then(|a|a.checked_sub(p.dos.module_base)).filter(|n|(*n as usize)<p.dos.module_bytes).map(|n|n as usize+p.dos.header_bytes);
+    // Front ends read video memory and the BIOS data area between runs at
+    // their physical addresses, as the display hardware does.
+    p.ram.host_access();
     Ok(Probe{exceptions,exception_count,loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})
 }
 fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_>=counts.iter().collect();v.sort_by(|a,b|b.1.cmp(a.1).then(a.0.cmp(b.0)));v}
