@@ -82,10 +82,11 @@ pub(crate) fn screen_lines(p:&Loaded)->Vec<String>{
 /// waits); a second wait for input ends the run. Each `typed` (STEPS, TEXT)
 /// is typed once the run has made STEPS steps (an operating system that
 /// idles in its own loop never waits as the BIOS does).
-pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)])->Result<String,String>{
+pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)],rtc_year:Option<u32>)->Result<String,String>{
     // The host clock drives the timer, so BIOS time-outs (a boot loader's
     // prompt) pass as they would on the machine.
     p.clock_offset=Some(0);
+    if let Some(year)=rtc_year{p.set_rtc_year(year)?;}
     let mut session=session::Session::new(p);
     let (mut left,mut done,mut typed)=(steps,0usize,keys.is_empty());
     let mut later:Vec<&(usize,String)>=typed_at.iter().collect();later.sort_by_key(|t|t.0);

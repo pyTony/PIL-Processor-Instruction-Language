@@ -133,6 +133,27 @@ fn the_cursor_shape_survives_an_os_writing_over_the_bios_data_area(){
     assert_eq!(host_console::cursor_shape(&r.loaded),Some((13,14)));
 }
 
+/// `--rtc-year`: the CMOS year and century read through ports 70h/71h are
+/// the chosen year's, for kernels that cannot read this century.
+#[test]
+fn the_rtc_runs_in_the_chosen_year(){
+    let code:&[u8]=&[
+        0xb0,0x09,0xe6,0x70,0xe4,0x71,0xa2,0x00,0x90,   // year -> [9000h]
+        0xb0,0x32,0xe6,0x70,0xe4,0x71,0xa2,0x01,0x90,   // century -> [9001h]
+        0xfa,0xf4,                                      // cli; hlt
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);
+    disk[510]=0x55;disk[511]=0xaa;
+    let mut p=boot(&disk,0).unwrap();
+    p.clock_offset=Some(0);
+    assert!(p.set_rtc_year(1979).is_err());
+    p.set_rtc_year(1993).unwrap();
+    let r=run(p,1000).unwrap();
+    assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+    assert_eq!(r.loaded.ram.load(0x9000,MemWidth::Word).unwrap(),0x1993);
+}
+
 /// A boot sector that programs the CRTC itself: cursor off through register
 /// 0Ah (bit 5) and the start address through 0Ch/0Dh, then a word written
 /// to 0040:004A. The display follows the registers and ignores the data

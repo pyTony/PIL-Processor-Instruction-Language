@@ -80,7 +80,7 @@ pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool
 }
 pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,String>{
     let(mut config,mut mount,mut tail,mut fpu,mut program)=(None,None,None,None,None);
-    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME};
+    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME,rtc_year:None};
     let mut plain=false;
     let mut boot:Option<(String,u8)>=None;
     let mut hard_disk:Option<String>=None;
@@ -100,6 +100,10 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
                 speaker_volume=Some(value.parse::<u8>().ok().filter(|v|*v<=100).ok_or("--speaker-volume takes 0..100")?);at+=1;
             },
             "--hd-image"=>{hard_disk=Some(args.get(at+1).ok_or("--hd-image takes a fixed-disk image")?.clone());at+=1;},
+            "--rtc-year"=>{
+                let value=args.get(at+1).ok_or("--rtc-year takes a year")?;
+                options.rtc_year=Some(value.parse::<u32>().ok().filter(|y|(1980..=2099).contains(y)).ok_or("--rtc-year takes a year 1980..2099")?);at+=1;
+            },
             "--boot"|"--boot-hd"=>{
                 let value=args.get(at+1).ok_or("--boot takes a disk image")?;
                 boot=Some((value.clone(),if args[at]=="--boot-hd"{0x80}else{0}));at+=1;
