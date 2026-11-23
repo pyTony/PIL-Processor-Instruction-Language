@@ -23,3 +23,5 @@ dine-library = []
 # Omit the generated native PIL instruction-form table. The generic interpreter
 # remains available for both real and protected mode; the default build is unchanged.
 compact-interpreter = []
+# Keep per-instruction labels from native applications (debugging only).
+debug-labels = []
