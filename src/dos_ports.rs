@@ -184,10 +184,16 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         return Ok(());
     }
     let word=first&1!=0;
+    // The hard-disk controller of a booted machine with a fixed disk.
+    if let Some(value)=ata::Ata::io(p,port,input,word,p.cpu.regs[0] as u16)?{
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
+        return Ok(());
+    }
     // ATA task-file and device-control ports at the primary (1F0h/3F6h),
     // secondary (170h/376h), third (1E8h/3EEh) and fourth (168h/36Eh)
-    // addresses. This AT has no hard-disk controller (CMOS register 12h says
-    // no hard disk; drives are DOS-level) and no COM3 card at 3E8h, so
+    // addresses. Without a booted fixed disk this AT has no hard-disk
+    // controller (CMOS register 12h says no hard disk; drives are DOS-level),
+    // the other channels have none at all, and there is no COM3 card at 3E8h, so
     // nothing answers on the bus: reads float high, as on an ISA bus with no
     // card at the address, and writes reach nothing. A driver that polls the
     // status for BSY clear or DRDY sees FFh and gives up.
@@ -228,6 +234,12 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         return Ok(());
     }
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
+    // The diskette controller and DMA channel 2. Writes to the DMA
+    // registers channels share also reach the channel-1 model below.
+    if let Some(value)=fdc::Fdc::io(p,port,input,p.cpu.regs[0]as u8)?{
+        if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
+        return Ok(());
+    }
     if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
         return Ok(());
@@ -279,7 +291,10 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
     // Bounded AT keyboard-controller output-port interface and fast A20 gate.
     // CPU reset requests remain explicit stops rather than being ignored.
     if matches!(port,0x60|0x64|0x92){
+        let irq_possible=p.cpu.eflags&0x200!=0&&p.speaker.pic.keyboard_ready();
+        let announce=port==0x60&&!input&&keyboard::hooked(p)?;
         let s=&mut p.speaker;
+        if input&&port==0x64{s.kbd.poll(irq_possible);}
         if input{
             let value=match port{
                 // Output full (a controller reply or a scan code); input always ready.
@@ -308,9 +323,9 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                     _=>return Err(format!("keyboard-controller command {value:02x}h is not modelled")),
                 },
                 0x60 if s.kbc_write_output=>{if value&1==0{return Err("keyboard-controller CPU reset is not modelled".into());}s.kbc_write_output=false;s.kbc_a20=value&2!=0;s.update_a20(&mut p.ram);},
-                // AT keyboard diagnostic echo: no ACK precedes the EE reply.
-                0x60 if value==0xee=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(0xee);},
-                _=>return Err("OUT 60h without a keyboard-controller output-port command is not modelled".into()),
+                // Any other byte goes to the keyboard itself.
+                0x60=>s.kbd.command(value,announce),
+                _=>unreachable!("port 60h, 64h or 92h"),
             }
         }
         return Ok(());
@@ -318,6 +333,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
     // DOS benchmarks turn off diskette motors while measuring. This does
     // not issue a disk command; controller/data accesses remain unsupported.
     if port==0x3f2&&!input&&p.cpu.regs[0]&0xf0==0{return Ok(());}
+    let booted=p.booted;
     let s=&mut p.speaker;
     if input{
         let value=match port{
@@ -344,7 +360,11 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             },
             0x40=>{let now=s.pit_io(p.clock_offset);s.pit.read(now)},
             0x42=>{let now=s.pit_io(p.clock_offset);s.counter2.read(now)?},
-                        0x378..=0x37a | 0x278..=0x27a => 0x80,
+                        0x378..=0x37a | 0x278..=0x27a | 0x3bc..=0x3be => 0x80,
+            // A booted OS probes for ISA cards that are not there (SCSI,
+            // sound, network); an address no device answers is an open bus.
+            // A device the table knows but Dine does not model still stops.
+            _ if booted&&device(port).is_none()=>0xff,
             _=>return Err(format!("IN from port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         };
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
@@ -371,8 +391,11 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 if s.access==3{s.high_next=!s.high_next;}
                 s.sound(now);
             },
+            // The POST diagnostic port: writes go nowhere on a PC. The ROM
+            // runner traces them (test386 reports its stages there); an
+            // operating system uses port 80h only as an I/O delay.
             0x80 | 0x190 => {
-                eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);
+                if p.rom_mode{eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);}
             },
             // Port E9h (the Bochs debug port): the ROM runner passes its bytes to
             // stdout, so test386 built with OUT_PORT equ 0E9h prints its POST EEh
@@ -381,7 +404,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             // 279h is also the ISA Plug and Play address port; the register
             // it selects matters only for a write to A79h below.
             0x279 => s.pnp_register=value,
-            0xe9 | 0x378..=0x37a | 0x278..=0x27a => {},
+            0xe9 | 0x378..=0x37a | 0x278..=0x27a | 0x3bc..=0x3be => {},
             // Port EDh is unassigned on the AT; software writes to it as an
             // I/O delay (one bus cycle), like port 80h. Nothing receives it.
             0xed => {},
@@ -397,6 +420,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             // changes nothing, with or without a coprocessor. F1h resets it.
             0xf0 => {},
             0xf1 => p.fpu.reset(),
+            _ if booted&&device(port).is_none()=>{},
             _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
         }
     }
@@ -408,15 +432,21 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
 /// Tuesday 1 January 1980. Direct RTC year changes are session-local and do
 /// not alter the DOS-maintained clock or the host clock. Bit 7 of register
 /// 0Ah (update in progress) stays clear, so a read never has to wait.
-fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
+pub(super) fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
     if let Some(value)=p.rtc.read(p.clock_offset,index){return Ok(value);}
     Ok(match index{
         // Alarm registers: no alarm set.
         0x01|0x03|0x05=>0,
         // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
         0x0a=>0x26,0x0b=>0x02,0x0c=>0x00,0x0d=>0x80,
-        // Diagnostics passed, normal shutdown, no diskette, no hard disk.
-        0x0e|0x10|0x11|0x12|0x13=>0,0x0f=>p.cmos_shutdown,
+        // Diagnostics passed, normal shutdown.
+        0x0e|0x11|0x13=>0,0x0f=>p.cmos_shutdown,
+        // Fixed disk types: drive C: in the high nibble, Fh meaning the
+        // extended type in register 19h (47, user-defined geometry); D: none.
+        0x12=>if p.disks.fixed().is_some(){0xf0}else{0},
+        0x19=>if p.disks.fixed().is_some(){47}else{0},0x1a=>0,
+        // Diskette drive types (A: high nibble, B: low) of attached BIOS disks.
+        0x10=>p.disks.cmos_floppy_types(),
         // Equipment: CGA 80 columns, no diskette, no coprocessor.
         0x14=>p.fpu.equipment(0x20) as u8,
         0x15=>0x80,0x16=>0x02,

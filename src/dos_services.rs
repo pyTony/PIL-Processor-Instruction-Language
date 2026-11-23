@@ -6,7 +6,7 @@ use crate::host_io::Output;
 pub(super) fn dispatch(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u8>,String>{
     let ah=(p.cpu.regs[0]>>8)as u8;
     let result=dispatch_inner(p,vector,out);
-    if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x5f|0x60|0x65..=0x67|0x69) && p.cpu.eflags&1!=0 {
+    if result.is_ok() && vector==0x21 && matches!(ah,0x38..=0x4b|0x4e|0x4f|0x56|0x57|0x5a|0x5b|0x5f|0x60|0x65..=0x67|0x69|0x71) && p.cpu.eflags&1!=0 {
         p.dos.dos_error=p.cpu.regs[0]as u16;
     }
     result
@@ -249,6 +249,10 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
             Ok(None)
         },
+        (0x19,_) if p.booted=>bios_disk::bootstrap(p),
+        (0x18,_) if p.booted=>Err("INT 18h: no bootable disk and no ROM BASIC".into()),
+        // Booted disks are BIOS sector devices.
+        (0x13,_) if !p.disks.is_empty()=>bios_disk::int13(p),
         (0x13,0x08)=>{
             // DOS-mounted images and folders are not BIOS sector devices.
             // Report this unimplemented BIOS operation as an error, not a
@@ -541,9 +545,12 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.cpu.undefined_flags&=!1;Ok(None)
         },
         (0x21,0x71)=>{
-            // No long-file-name API: AL=00h, CF=1, so AX=7100h (FreeDOS without LFN).
-            p.cpu.regs[0]&=!255;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
-            Ok(None)
+            if p.dos.drive.lfn_available(){lfn::service(p)?;Ok(None)}
+            else{
+                // No host folder mounted: keep AL=00h, CF=1 (AX=7100h).
+                p.cpu.regs[0]&=!255;p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
+                Ok(None)
+            }
         },
         (0x21,0x5f) if !matches!(p.cpu.regs[0]as u8,7|8)=>{
             // Redirector calls go to INT 2Fh AX=111Eh. With no network

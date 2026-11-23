@@ -58,9 +58,15 @@ pub(super) fn bios(p:&mut Loaded,ah:u8)->Result<(),String>{
     };
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|ax;Ok(())
 }
-/// One byte IN or OUT at 3F8h-3FFh; `None` when the port is not COM1's.
+/// One byte IN or OUT at a serial port; `None` when the port is not one.
+/// A UART that is not there (COM2-COM4 always, COM1 unless a session
+/// attached it) is an open bus: reads give FFh and writes go nowhere, which
+/// is how drivers find that the port is absent.
 pub(super) fn io(p:&mut Loaded,port_number:u16,input:bool,value:u8)->Result<Option<u8>,String>{
-    if !(BASE..BASE+8).contains(&port_number){return Ok(None);}
+    let com1=(BASE..BASE+8).contains(&port_number);
+    let other=matches!(port_number,0x2f8..=0x2ff|0x3e8..=0x3ef|0x2e8..=0x2ef);
+    if !com1&&!other{return Ok(None);}
+    if other||p.com1.is_none(){return Ok(Some(0xff));}
     let s=port(p)?;let latch=s.lcr&0x80!=0;
     Ok(Some(match(port_number-BASE,input){
         (0,true) if latch=>s.divisor as u8,
