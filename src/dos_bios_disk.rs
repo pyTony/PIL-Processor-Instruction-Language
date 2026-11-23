@@ -19,7 +19,10 @@ const DPT_OFFSET:u16=0xefc7;
 #[derive(Clone,Debug)]
 pub(crate) struct Disk{data:Vec<u8>,cylinders:u32,heads:u32,sectors:u32,
     /// The file a fixed disk came from: written sectors go back to it.
-    file:Option<std::path::PathBuf>}
+    file:Option<std::path::PathBuf>,
+    /// That file, opened for writing at the first write and kept open (a
+    /// copy of the machine shares it).
+    handle:Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>>}
 impl Disk{
     /// A floppy image, its geometry from its size (the PC formats).
     pub(crate) fn floppy(data:Vec<u8>)->Result<Self,String>{
@@ -28,14 +31,14 @@ impl Disk{
             737_280=>(80,2,9),1_228_800=>(80,2,15),1_474_560=>(80,2,18),2_949_120=>(80,2,36),
             n=>return Err(format!("{n} bytes is not a PC floppy image size (160K-2.88M)")),
         };
-        Ok(Self{data,cylinders,heads,sectors,file:None})
+        Ok(Self{data,cylinders,heads,sectors,file:None,handle:None})
     }
     /// A fixed-disk image: 16 heads and 63 sectors per track, the usual
     /// BIOS translation, and as many whole cylinders as the image holds.
     pub(crate) fn fixed(data:Vec<u8>)->Result<Self,String>{
         let cylinders=(data.len()/(16*63*512)) as u32;
         if cylinders==0||cylinders>1024{return Err(format!("{} bytes is not a fixed-disk image of 1-1024 cylinders (16 heads, 63 sectors)",data.len()));}
-        Ok(Self{data,cylinders,heads:16,sectors:63,file:None})
+        Ok(Self{data,cylinders,heads:16,sectors:63,file:None,handle:None})
     }
     /// A fixed disk from a file, written back to it sector by sector.
     pub(crate) fn fixed_file(path:&std::path::Path)->Result<Self,String>{
@@ -49,7 +52,11 @@ impl Disk{
         if let Some(path)=&self.file{
             use std::io::{Seek,SeekFrom,Write};
             let fail=|e:std::io::Error|format!("{}: {e}",path.display());
-            let mut f=std::fs::OpenOptions::new().write(true).open(path).map_err(fail)?;
+            if self.handle.is_none(){
+                let f=std::fs::OpenOptions::new().write(true).open(path).map_err(fail)?;
+                self.handle=Some(std::sync::Arc::new(std::sync::Mutex::new(f)));
+            }
+            let mut f=self.handle.as_ref().unwrap().lock().map_err(|_|format!("{}: write lock poisoned",path.display()))?;
             f.seek(SeekFrom::Start(at as u64)).map_err(fail)?;f.write_all(bytes).map_err(fail)?;
         }
         Ok(())
