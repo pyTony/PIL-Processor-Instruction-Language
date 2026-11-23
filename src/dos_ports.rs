@@ -268,7 +268,8 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 // BIOS shutdown byte: a subsequent CPU reset is separate.
                 0x0f=>p.cmos_shutdown=p.cpu.regs[0]as u8,
                 // BCD calendar-year writes adjust only this virtual RTC.
-                0x09|0x32=>p.rtc.write_year(p.clock_offset,p.cmos_index,p.cpu.regs[0]as u8)?,
+                // The clock registers and status B (SET freezes the clock).
+                0x00|0x02|0x04|0x06..=0x0b|0x32=>p.rtc.write(p.clock_offset,p.cmos_index,p.cpu.regs[0]as u8)?,
                 _=>return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index)),
             }
             return Ok(());
@@ -449,7 +450,7 @@ pub(super) fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         // Alarm registers: no alarm set.
         0x01|0x03|0x05=>0,
         // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
-        0x0a=>0x26,0x0b=>0x02,0x0c=>0x00,0x0d=>0x80,
+        0x0a=>p.rtc.status_a(),0x0b=>p.rtc.status_b(),0x0c=>0x00,0x0d=>0x80,
         // Diagnostics passed, normal shutdown.
         0x0e|0x11|0x13=>0,0x0f=>p.cmos_shutdown,
         // Fixed disk types: drive C: in the high nibble, Fh meaning the

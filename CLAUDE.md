@@ -14,18 +14,25 @@ Slackware, and svgalib before X. That repository holds one MCC release,
   AH=16h 06h once), `--boot-probe --change-floppy STEPS:IMAGE` and
   `--dos-console --boot IMAGE --floppy IMAGE2...` with Ctrl+Shift+F1/F2
   (Session::boot_diskettes). Same format only.
+- With `--rtc-year 1994` (#305) Linux 1.0 writes the RTC through CMOS
+  status A and B: SET (status B bit 7) now freezes the clock registers and
+  stages writes until it clears; a write outside SET takes effect at once;
+  status A's divider reset (DV 11xb) is accepted. Binary/12-hour modes and
+  RTC interrupts still stop.
 
-Local Linux (cloud), release: 1049 Rust tests pass, 2 ignored (4 new in
+Local Linux (cloud), release: 1055 Rust tests pass, 2 ignored (after merging dev; 4 new in
 tests/unit/dos_boot.rs: open-bus probes, ADh/AEh, the change line, the
-console's disk change; the INSB stop test now uses port 300h); 0 rustc
+console's disk change; 1 RTC SET unit test; the INSB stop test now uses
+port 300h); 0 rustc
 warnings. MCC 1.0+ nocdboot (SHA256 9ae65a42...b59048c) and root (SHA256
 0959510f...a3f9f), gunzipped from the release, scripted through the probe
 with a 40 MB image: `ramdisk`, root disk, "VFS: Disk change detected on
 device 2/0", the menu; fdisk (hda1), mkfs ext2, install Base (CRC verified)
 and the follow-up questions; then the boot disk with `ro root=301`: "This
-is Linux 1.0", root login, `uname -a`, `df`, `ls /`, `free` answered. The
-console window path was not driven. The shell prompt's clock read
-23:59:59 without `--rtc-year` (#305). Not run on Windows.
+is Linux 1.0", root login, `uname -a`, `df`, `ls /`, `free` answered;
+with `--rtc-year 1994`, `date` gave today's date and time in 1994 (the
+prompt read 23:59:59 without it). The console window path was not driven.
+Not run on Windows.
 # --rtc-year: a real-time clock in another year — 23 November 2026
 
 Tony's MCC Interim shell showed 23:59:59 in its prompt. Linux 0.99 reads

@@ -1,9 +1,20 @@
 //! Session-local CMOS clock. Calendar-year writes never change the host clock.
 //! INT 1Ah AH=03h/05h set its time and date the same way. Other RTC write
-//! modes, interrupt generation and SET/freeze remain unsupported.
+//! The SET bit of status register B freezes the clock registers: writes
+//! while it is set are staged and take effect together when it is cleared,
+//! as an OS's clock program sets the time. Other status B modes (binary,
+//! 12-hour) and RTC interrupts remain unsupported.
 use std::time::{SystemTime,UNIX_EPOCH};
 #[derive(Clone,Debug,Default,PartialEq,Eq)]
-pub(super) struct Rtc{adjust_seconds:i64,weekday_adjust:i64}
+pub(super) struct Rtc{adjust_seconds:i64,weekday_adjust:i64,
+    /// While status B's SET bit is on: the clock registers as frozen and
+    /// written (second, minute, hour, weekday, day, month, year, century).
+    frozen:Option<[u8;8]>,
+    /// Status A's divider-chain reset (DV 11xb): Linux holds it around a
+    /// clock write. The clock is not held for those few instructions.
+    divider_reset:bool}
+/// The position of a clock register in a frozen set.
+fn slot(index:u8)->Option<usize>{Some(match index{0=>0,2=>1,4=>2,6=>3,7=>4,8=>5,9=>6,0x32=>7,_=>return None})}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 struct Date{year:i64,month:i64,day:i64,weekday:i64,seconds:i64}
 // Gregorian civil-date conversion, with signed days relative to 1970-01-01.
@@ -43,6 +54,7 @@ impl Rtc{
     }
     /// BCD, 24-hour registers, with Sunday=1. Caller handles non-clock CMOS.
     pub fn read(&self,offset:Option<i64>,index:u8)->Option<u8>{
+        if let (Some(regs),Some(at))=(self.frozen,slot(index)){return Some(regs[at]);}
         let d=self.date_at(base(offset));let value=match index{0=>d.seconds%60,2=>d.seconds/60%60,4=>d.seconds/3600,6=>d.weekday,7=>d.day,8=>d.month,9=>d.year%100,0x32=>d.year/100,_=>return None};
         Some(((value/10)<<4|value%10)as u8)
     }
@@ -61,7 +73,44 @@ impl Rtc{
         let before=days(d.year,d.month,d.day);let after=days(year,d.month,d.day);
         self.adjust_seconds+=(after-before)*86400;self.weekday_adjust=(self.weekday_adjust+before-after).rem_euclid(7);Ok(())
     }
-    pub fn write_year(&mut self,offset:Option<i64>,index:u8,value:u8)->Result<(),String>{self.write_year_at(base(offset),index,value)}
+    /// Status register B: BCD, 24-hour, no interrupts; bit 7 is SET.
+    /// Status A: 32.768 kHz time base (DV 010b, or the reset written),
+    /// rate 6 (1024 Hz); update in progress (bit 7) never shows.
+    pub fn status_a(&self)->u8{if self.divider_reset{0x66}else{0x26}}
+    pub fn status_b(&self)->u8{0x02|if self.frozen.is_some(){0x80}else{0}}
+    /// A CPU write to a clock register or status B (other CMOS registers
+    /// are the caller's). Nothing changes when the write is refused.
+    pub fn write(&mut self,offset:Option<i64>,index:u8,value:u8)->Result<(),String>{self.write_at(base(offset),index,value)}
+    fn write_at(&mut self,now:i64,index:u8,value:u8)->Result<(),String>{
+        if index==0x0a{
+            // Rate 6, divider normal (010b) or held in reset (11xb).
+            if value&0x0f!=6||!matches!(value>>4&7,2|6|7){return Err(format!("CMOS status A value {value:02X}h is not modelled (32.768 kHz base, rate 6 only)"));}
+            self.divider_reset=value>>4&7!=2;return Ok(());
+        }
+        if index==0x0b{
+            if value&0x7f!=0x02{return Err(format!("CMOS status B value {value:02X}h is not modelled (BCD, 24-hour, no RTC interrupts only)"));}
+            match(value&0x80!=0,self.frozen){
+                (true,None)=>{let d=self.date_at(now);let b=self.bios_at(now);self.frozen=Some([b[6],b[5],b[4],d.weekday as u8,b[3],b[2],b[1],b[0]]);},
+                (false,Some(regs))=>{let mut next=self.clone();next.frozen=None;next.commit(now,regs)?;*self=next;},
+                _=>{},
+            }
+            return Ok(());
+        }
+        let at=slot(index).ok_or_else(||format!("CMOS write to register {index:02x}h is not modelled"))?;
+        if let Some(regs)=self.frozen.as_mut(){regs[at]=value;return Ok(());}
+        if matches!(index,9|0x32){return self.write_year_at(now,index,value);}
+        // Outside SET a write takes effect at once, the other fields kept.
+        let d=self.date_at(now);let b=self.bios_at(now);
+        let mut regs=[b[6],b[5],b[4],d.weekday as u8,b[3],b[2],b[1],b[0]];regs[at]=value;
+        let mut next=self.clone();next.commit(now,regs)?;*self=next;Ok(())
+    }
+    fn commit(&mut self,now:i64,r:[u8;8])->Result<(),String>{
+        let weekday=bcd(r[3]).filter(|w|(1..=7).contains(w)).ok_or_else(||format!("RTC weekday {:02X}h is not 1-7",r[3]))?;
+        self.set_bios_date_at(now,r[7],r[6],r[5],r[4])?;
+        self.set_bios_time_at(now,r[2],r[1],r[0])?;
+        let day_count=(now+self.adjust_seconds).div_euclid(86400);
+        self.weekday_adjust=(weekday-1-(day_count+4)).rem_euclid(7);Ok(())
+    }
     /// INT 1Ah AH=03h: set the RTC's time of day (BCD hour, minute, second)
     /// and keep its date; the session-local clock then runs on from there.
     /// DOS's own clock and the BIOS tick count are separate and unchanged.
@@ -133,6 +182,33 @@ mod tests{
         assert!(r.set_bios_time_at(now,0x24,0,0).is_err());assert!(r.set_bios_time_at(now,0x1a,0,0).is_err());
         assert!(r.set_bios_date_at(now,0x20,0x25,0x02,0x29).is_err());assert!(r.set_bios_date_at(now,0x20,0x26,0x0a,1).is_err());
         assert_eq!(r,old);
+    }
+    #[test]fn the_set_bit_stages_clock_writes_until_it_is_cleared(){
+        let now=days(2026,11,23)*86400+3600;let mut r=Rtc::default();
+        assert_eq!(r.status_b(),0x02);
+        r.write_at(now,0x0b,0x82).unwrap();assert_eq!(r.status_b(),0x82);
+        // A clock program writes field by field; 31 January passes through
+        // 31 November without complaint while frozen.
+        for (index,value) in [(0,0x30),(2,0x15),(4,0x10),(6,0x02),(7,0x31),(8,0x01),(9,0x94),(0x32,0x19)]{r.write_at(now,index,value).unwrap();}
+        assert_eq!(r.read(None,7),Some(0x31));
+        assert_eq!(r.bios_at(now+5),[0x20,0x26,0x11,0x23,0x01,0,5],"the clock keeps its time until SET clears");
+        r.write_at(now,0x0b,0x02).unwrap();
+        assert_eq!(r.bios_at(now),[0x19,0x94,0x01,0x31,0x10,0x15,0x30]);
+        assert_eq!(r.bios_at(now+30),[0x19,0x94,0x01,0x31,0x10,0x16,0]);
+        assert_eq!(r.date_at(now).weekday,2,"the weekday written (31 January 1994 was a Monday)");
+        // An invalid date written under SET is refused when SET clears, and
+        // the clock stays frozen as it was.
+        r.write_at(now,0x0b,0x82).unwrap();r.write_at(now,7,0x30).unwrap();r.write_at(now,8,0x02).unwrap();
+        let old=r.clone();assert!(r.write_at(now,0x0b,0x02).is_err());assert_eq!(r,old);
+        // Binary or 12-hour mode and RTC interrupts are not modelled.
+        // Status A: the divider reset Linux writes around its update.
+        r.write_at(now,0x0a,0x76).unwrap();assert_eq!(r.status_a(),0x66);
+        r.write_at(now,0x0a,0x26).unwrap();assert_eq!(r.status_a(),0x26);
+        for v in [0x27,0x06,0x46]{assert!(r.write_at(now,0x0a,v).is_err());}
+        let mut q=Rtc::default();for v in [0x06,0x00,0x12,0x42]{assert!(q.write_at(now,0x0b,v).is_err());}
+        // Outside SET a single field takes effect at once.
+        q.write_at(now,2,0x45).unwrap();assert_eq!(q.bios_at(now)[5],0x45);
+        assert!(q.write_at(now,0x0c,0).is_err());
     }
     #[test]fn calendar_year_writes_preserve_other_fields_and_advance_at_the_new_rate(){
         let now=days(2026,11,7)*86400+12345;let mut r=Rtc::default();let old=r.date_at(now);
