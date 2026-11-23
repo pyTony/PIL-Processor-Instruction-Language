@@ -26,6 +26,25 @@ fn tables()->Ram{
  r
 }
 
+/// A host-side write between runs (RAM in host view, paging off but the
+/// TLB kept) to a page-table frame flushes the TLB too: `store` and
+/// `write_bytes` without paging used to skip the check.
+#[test]
+fn host_writes_to_page_tables_flush_the_tlb(){
+ for bulk in [false,true]{
+  let mut r=tables();
+  r.store(0x9010,MemWidth::Byte,0x99).unwrap();r.store(0x5010,MemWidth::Byte,0x55).unwrap();
+  let supervisor=Some(Paging{directory:PD,user:false});
+  r.set_paging(supervisor);
+  assert_eq!(r.load(0x2010,MemWidth::Byte).unwrap(),0x99);
+  r.host_access();
+  if bulk{r.write_bytes(PT0+8,&(0x5000u32|3).to_le_bytes()).unwrap();}
+  else{r.store(PT0+8,MemWidth::Dword,0x5000|3).unwrap();}
+  r.set_paging(supervisor);
+  assert_eq!(r.load(0x2010,MemWidth::Byte).unwrap(),0x55,"bulk {bulk}");
+ }
+}
+
 #[test]
 fn the_tlb_follows_page_table_writes_directory_changes_and_dirty_bits(){
  let mut r=tables();

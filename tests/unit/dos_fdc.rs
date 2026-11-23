@@ -61,7 +61,24 @@ fn a_multi_track_read_fills_memory_through_dma_channel_2(){
     for b in [0x00,0x00]{out(&mut p,0x04,b);}
     for b in [0xff,0xff]{out(&mut p,0x05,b);}
     command(&mut p,&[0x46,0x00,0x00,0x00,0x11,0x02,0x12,0x1b,0xff]);
-    assert_eq!(result(&mut p)[..2],[0x40,0x80]);
+    assert_eq!(result(&mut p),vec![0x40,0x80,0,1,0,1,2],"end of cylinder, next ID C+1, H, R=1");
+}
+
+/// Without MT a transfer that ends at EOT names cylinder C+1, the same
+/// head and sector 1 (uPD765 result ID table), here with terminal count.
+#[test]
+fn a_single_track_read_to_eot_names_the_next_cylinder(){
+    let mut p=machine();ready(&mut p);
+    out(&mut p,0x0c,0);out(&mut p,0x0b,0x46);
+    for b in [0x00,0x00]{out(&mut p,0x04,b);}
+    for b in [0xff,0x03]{out(&mut p,0x05,b);}
+    out(&mut p,0x81,0x02);out(&mut p,0x0a,0x02);
+    // READ DATA, no MT: cylinder 0, head 1, sectors 17-18.
+    command(&mut p,&[0x46,0x04,0x00,0x01,0x11,0x02,0x12,0x1b,0xff]);
+    assert_eq!(result(&mut p),vec![0x04,0,0,1,1,1,2]);
+    assert_eq!(p.ram.load(0x20000,MemWidth::Byte).unwrap(),18+16,"LBA 34");
+    // A master clear leaves the page register.
+    out(&mut p,0x0d,0);assert_eq!(inp(&mut p,0x81),0x02);
 }
 
 #[test]

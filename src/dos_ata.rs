@@ -42,7 +42,7 @@ impl Ata{
         // The slave is absent: its registers read 0 and it ignores commands.
         let slave=p.ata.head&0x10!=0;
         Ok(Some(match(port,input){
-            (0x1f0,true)=>data_in(p),
+            (0x1f0,true)=>data_in(p)?,
             (0x1f0,false)=>{data_out(p,value)?;0},
             (0x1f1,true)=>if slave{0}else{u16::from(p.ata.error)},
             (0x1f2,true)=>u16::from(p.ata.count),
@@ -113,7 +113,11 @@ fn done(p:&mut Loaded){p.ata.status=READY|SEEK;p.ata.transfer=Transfer::None;int
 /// Load the addressed sector for the host to read, and announce it.
 fn load_sector(p:&mut Loaded,left:u32)->Result<(),String>{
     let Some(lba)=target(p)else{fail(p,IDNF);return Ok(())};
-    let data=p.disks.sector(0x80,lba).ok_or("fixed disk sector outside the image")?;
+    // `target` keeps LBAs inside the whole cylinders the image holds.
+    let Some(data)=p.disks.sector(0x80,lba)else{
+        p.ata.transfer=Transfer::None;p.ata.status=READY|SEEK;
+        return Err(format!("fixed disk sector {lba} outside the image"));
+    };
     p.ata.buffer.copy_from_slice(data);p.ata.at=0;
     p.ata.transfer=Transfer::Read{left};p.ata.status=READY|SEEK|DRQ;interrupt(p);Ok(())
 }
@@ -142,17 +146,17 @@ fn command(p:&mut Loaded,cmd:u8)->Result<(),String>{
     Ok(())
 }
 
-fn data_in(p:&mut Loaded)->u16{
-    if p.ata.status&DRQ==0||!matches!(p.ata.transfer,Transfer::Read{..}|Transfer::Identify){return 0xffff;}
+fn data_in(p:&mut Loaded)->Result<u16,String>{
+    if p.ata.status&DRQ==0||!matches!(p.ata.transfer,Transfer::Read{..}|Transfer::Identify){return Ok(0xffff);}
     let a=&mut p.ata;let v=u16::from_le_bytes([a.buffer[a.at],a.buffer[a.at+1]]);a.at+=2;
     if a.at==512{
         match a.transfer{
-            Transfer::Read{left} if left>1=>{advance(p);let _=load_sector(p,left-1);},
+            Transfer::Read{left} if left>1=>{advance(p);load_sector(p,left-1)?;},
             Transfer::Read{..}=>{p.ata.status=READY|SEEK;p.ata.transfer=Transfer::None;p.ata.count=p.ata.count.wrapping_sub(1);},
             _=>{p.ata.status=READY|SEEK;p.ata.transfer=Transfer::None;},
         }
     }
-    v
+    Ok(v)
 }
 
 fn data_out(p:&mut Loaded,value:u16)->Result<(),String>{

@@ -36,7 +36,9 @@ impl Dma2{
             0x0a if value&3==2=>self.masked=value&4!=0,
             0x0b if value&3==2=>self.mode=value,
             0x0c=>self.flip=false,
-            0x0d=>*self=Self::default(),
+            // Master clear resets the 8237, not the page register (a
+            // separate latch on the AT).
+            0x0d=>*self=Self{page:self.page,..Self::default()},
             0x0e=>self.masked=false,
             0x0f=>self.masked=value&4!=0,
             _=>{},
@@ -172,7 +174,6 @@ fn transfer(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
     let Some((cylinders,heads,sectors))=geometry else{fail(p,0x48,0);return Ok(())};
     if n!=2||u32::from(c)>=cylinders||u32::from(h)>=heads||r==0||u32::from(r)>sectors{fail(p,0x40,0x04);return Ok(());}
     let (mut cur_h,mut cur_r)=(h,r);
-    let mut moved=0usize;
     loop{
         if p.fdc.dma.bytes_left()<512||p.fdc.dma.masked{break;}
         let lba=(u32::from(c)*heads+u32::from(cur_h))*sectors+u32::from(cur_r)-1;
@@ -187,21 +188,23 @@ fn transfer(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
             p.ram.physical(|ram|data.iter().enumerate().try_for_each(|(i,b)|ram.store(dma.at(i),MemWidth::Byte,u32::from(*b))))
                 .map_err(|e|format!("diskette DMA write: {e:?}"))?;
         }
-        p.fdc.dma.advance(512);moved+=1;
+        p.fdc.dma.advance(512);
         // Next sector: end of track goes to side 1 with MT, else ends.
         if cur_r==eot||u32::from(cur_r)==sectors{
             if multi&&cur_h==0&&heads>1{cur_h=1;cur_r=1;}else{cur_r=cur_r.wrapping_add(1);break;}
         }else{cur_r+=1;}
         if p.fdc.dma.terminal{break;}
     }
-    // The ID after the last sector moved; a transfer that ran past the
-    // track's end without terminal count ends abnormally (end of cylinder).
+    // The ID after the last sector moved (uPD765 result ID table). Past
+    // EOT the cylinder steps on: C+1 with H as it was without MT, C+1 and
+    // H back to 0 after side 1 with MT; MT on a one-sided track goes to
+    // side 1 of the same cylinder. A transfer that ran past the track's
+    // end without terminal count ends abnormally (end of cylinder).
     let (rc,rh,rr)=if u32::from(cur_r)>u32::from(eot).min(sectors){
-        if multi&&cur_h==1{(c.wrapping_add(1),0,1)}else{(c,cur_h,1)}}else{(c,cur_h,cur_r)};
+        if !multi{(c.wrapping_add(1),cur_h,1)}else if cur_h==1{(c.wrapping_add(1),0,1)}else{(c,1,1)}}else{(c,cur_h,cur_r)};
     // Terminal count ends the command normally; running out of track (or
     // of a masked or short DMA count) ends it abnormally.
     let (st0,st1)=if p.fdc.dma.terminal{(0,0)}else{(0x40,0x80)};
-    let _=moved;
     p.fdc.result.extend([st0|cur_h<<2|drive,st1,0,rc,rh,rr,n]);
     p.fdc.raise();
     Ok(())
