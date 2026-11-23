@@ -27,6 +27,13 @@ steps, about 11 s headless here.
   has made STEPS steps (an operating system idles in its own loop, so the
   probe cannot see it wait). `\r` is Enter; capitals and shifted symbols
   are typed with Shift (US layout).
+- `--boot-probe ... --change-floppy STEPS:IMAGE` (repeatable) puts another
+  diskette of the same format into drive A: once the run has made STEPS
+  steps. `--dos-console --boot IMAGE --floppy IMAGE2 [--floppy IMAGE3]...`
+  gives the console the other diskettes: Ctrl+Shift+F1 changes to the next,
+  Ctrl+Shift+F2 back to the previous. Either way the drive's change line
+  goes active (FDC 3F7h bit 7 until the head steps; INT 13h AH=16h returns
+  06h once), as when a hand changes the disk.
 - `--rtc-year YEAR` (console and probe, 1980-2099) runs the real-time
   clock in that year from today's date and time. Linux 0.99 reads only the
   CMOS year's last two digits and takes `26` as 1926, a date before 1970,
@@ -61,6 +68,20 @@ diskette again with `rw root=301` at `boot:` mounts /dev/hda1 as `/`; `7`
 skips the package floppies and `root` logs in. Add `--rtc-year 1993` to
 the console command for a working clock.
 
+MCC Interim 1.0+ (Linux 1.0.4, March 1994) comes as a boot disk and a
+root disk, 1.2 MB each (`nocdboot` and `root` from the `images` folder of
+the release, gunzipped; not the copies padded to 1.44 MB for a GoTek):
+
+```powershell
+pil --dos-console --boot images/mcc-1.0/nocdboot --floppy images/mcc-1.0/root --hd-image images/mcc-1.0/hd40.img --rtc-year 1994
+```
+
+Type `ramdisk` at `boot:`; when the kernel asks for the root disk, press
+Ctrl+Shift+F1 and then Enter. The menu is the same as above; `m` offers
+ext2. `i` installs Base onto /dev/hda1 and then asks about the keyboard
+map, networking, LILO and a boot floppy (`n` to each) and the package
+drive (`7`, none for now).
+
 The BIOS side: INT 13h 00h-04h, 08h, 15h-18h on drives 00h, 01h and 80h
 (status at 0040:0041 and 0040:0074, the 64 KiB DMA limit on diskettes), the
 diskette parameter table at F000:EFC7 behind INT 1Eh, CMOS register 10h with
@@ -83,10 +104,15 @@ Hardware an operating system drives itself, beyond the BIOS:
   primary master. Only a booted machine with a fixed disk has it; the
   other ATA channels and the absent slave stay empty.
 - **Keyboard commands** through port 60h (ACK FAh, reset FAh AAh, echo,
-  identify, FEh for unknown commands), for Dine's DOS too.
+  identify, FEh for unknown commands), for Dine's DOS too. Controller
+  commands ADh/AEh turn the keyboard interface off and on: while it is
+  off, keys wait in the keyboard (Linux 1.0's keyboard interrupt does so).
+- **Diskette change line** (3F7h bit 7, INT 13h AH=16h), see above.
 - **Absent devices**: COM2-COM4 (and COM1 without a session) read FFh; in a
-  booted machine every port no known device answers is an open bus (FFh),
-  as ISA probes expect. Printer ports read 80h, so a printer probe still
+  booted machine every port no known device answers is an open bus (FFh,
+  FFFFh for a word access), as ISA probes expect. So are the addresses the
+  Sound Blaster does not decode (220h-223h, 227h, 22Bh, 22Dh), where
+  Linux 1.0's network drivers probe. Printer ports read 80h, so a printer probe still
   finds three ports (Linux: "lp0 exists").
 - **Paging** with a TLB. Protected-mode code, paged or not, runs in the
   same compiled blocks as real-mode code; a block's code guard follows the

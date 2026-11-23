@@ -60,9 +60,24 @@ impl Session{
         let Some(selection)=selection else{return Ok(set.description(letter))};
         let index=set.select(selection)?;
         let path=set.images[index].to_str().ok_or("disk-set path is not Unicode")?;
-        let source=open_mount_source(path)?;
-        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.mount(letter,source)?;
+        let loaded=self.loaded.as_mut().ok_or("session state lost")?;
+        if loaded.booted{
+            // A booted machine's drive A: or B: gets the next diskette, with
+            // its change line, as a hand at the drive would do it.
+            let bytes=std::fs::read(path).map_err(|e|format!("{path}: {e}"))?;
+            loaded.disks.change_floppy(letter-b'A',super::bios_disk::Disk::floppy(bytes)?)?;
+        }else{
+            let source=open_mount_source(path)?;
+            loaded.dos.drive.mount(letter,source)?;
+        }
         let set=self.disk_sets.get_mut(&letter).unwrap();set.current=index;Ok(set.description(letter))
+    }
+    /// A booted machine's diskettes for drive A:, the one in the drive
+    /// first: the host's disk keys change among them.
+    pub(crate) fn boot_diskettes(&mut self,images:Vec<std::path::PathBuf>)->Result<(),String>{
+        if !self.loaded.as_ref().is_some_and(|p|p.booted){return Err("diskettes to change need a booted machine".into());}
+        if images.len()>1{self.disk_sets.insert(b'A',disk_set::DiskSet{images,current:0});}
+        Ok(())
     }
     /// Keep the executor for the whole session, including across frontend slices.
     #[allow(dead_code)]

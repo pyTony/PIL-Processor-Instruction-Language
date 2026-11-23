@@ -233,6 +233,13 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         if input{p.cpu.regs[0]=(p.cpu.regs[0]&!0xffff)|u32::from(lo)|(u32::from(hi)<<8);}
         return Ok(());
     }
+    // A booted OS's word probe of an ISA card that is not there (an
+    // Ethernet card's data port, for one) reads the open bus, FFFFh, and its
+    // writes go nowhere, as the byte accesses below do.
+    if first&1!=0&&p.booted&&assigned.is_none(){
+        if input{p.cpu.regs[0]|=0xffff;}
+        return Ok(());
+    }
     if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
     // The diskette controller and DMA channel 2. Writes to the DMA
     // registers channels share also reach the channel-1 model below.
@@ -261,7 +268,8 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 // BIOS shutdown byte: a subsequent CPU reset is separate.
                 0x0f=>p.cmos_shutdown=p.cpu.regs[0]as u8,
                 // BCD calendar-year writes adjust only this virtual RTC.
-                0x09|0x32=>p.rtc.write_year(p.clock_offset,p.cmos_index,p.cpu.regs[0]as u8)?,
+                // The clock registers and status B (SET freezes the clock).
+                0x00|0x02|0x04|0x06..=0x0b|0x32=>p.rtc.write(p.clock_offset,p.cmos_index,p.cpu.regs[0]as u8)?,
                 _=>return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index)),
             }
             return Ok(());
@@ -311,6 +319,10 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
                 0x64=>match value{
                     0xd0=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(1|u8::from(s.kbc_a20)<<1);},
                     0xd1=>s.kbc_write_output=true,
+                    // Disable and enable the keyboard interface (an OS
+                    // keyboard handler brackets its port 60h read so).
+                    0xad=>s.kbd.disabled=true,
+                    0xae=>s.kbd.disabled=false,
                     // F0h-FFh pulse the output-port lines whose bits 3-0 are
                     // clear low for about 6 us. Bit 0 is the CPU reset line,
                     // which stays an explicit stop. A pulse of the A20 line
@@ -438,7 +450,7 @@ pub(super) fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         // Alarm registers: no alarm set.
         0x01|0x03|0x05=>0,
         // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
-        0x0a=>0x26,0x0b=>0x02,0x0c=>0x00,0x0d=>0x80,
+        0x0a=>p.rtc.status_a(),0x0b=>p.rtc.status_b(),0x0c=>0x00,0x0d=>0x80,
         // Diagnostics passed, normal shutdown.
         0x0e|0x11|0x13=>0,0x0f=>p.cmos_shutdown,
         // Fixed disk types: drive C: in the high nibble, Fh meaning the

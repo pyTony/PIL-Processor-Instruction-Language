@@ -29,6 +29,9 @@ pub(super) struct Keyboard{
     latch:Option<Code>,unread:bool,signalled:bool,
     /// A keyboard command that waits for its data byte (EDh, F3h, F0h).
     expect:Option<u8>,
+    /// The controller's keyboard interface is off (8042 command ADh, until
+    /// AEh): the keyboard holds its codes, so none enters the output buffer.
+    pub(super) disabled:bool,
 }
 /// Codes queued at most: 16 keys with their releases.
 const LIMIT:usize=32;
@@ -141,7 +144,7 @@ pub(super) fn interrupt(p:&mut Loaded,force:bool)->Result<bool,String>{
     // A code a polling driver already brought into the output buffer is
     // announced as it stands; otherwise the next code enters it with IRQ1.
     let filled=p.speaker.kbd.unread&&!p.speaker.kbd.signalled;
-    if !filled&&p.speaker.kbd.queue.is_empty(){return Ok(false);}
+    if !filled&&(p.speaker.kbd.queue.is_empty()||p.speaker.kbd.disabled){return Ok(false);}
     if !force&&(p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0){return Ok(false);}
     if !p.speaker.pic.keyboard_ready(){return Ok(false);}
     vectors::deliver_irq(p,p.speaker.pic.keyboard_vector())?;
@@ -156,7 +159,7 @@ impl Keyboard{
     /// masked): the next code is in the output buffer by now, as for a
     /// driver that polls the controller.
     pub(super) fn poll(&mut self,irq_possible:bool){
-        if irq_possible||self.unread{return;}
+        if irq_possible||self.unread||self.disabled{return;}
         if let Some(code)=self.queue.pop_front(){self.latch=Some(code);self.unread=true;self.signalled=false;}
     }
 }
