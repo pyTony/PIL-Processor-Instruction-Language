@@ -296,7 +296,7 @@ fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
     super::vga_text::cursor_lines(start as u8,end as u8)
 }
 pub(crate) fn graphics_mode(p:&Loaded)->bool{
-    p.ram.load(0x449,MemWidth::Byte).is_ok_and(|m|!matches!(m&0x7f,0..=3|7))
+    super::console::bios_video(p,0x449,MemWidth::Byte).is_ok_and(|m|!matches!(m&0x7f,0..=3|7))
 }
 
 /// Options of `pil --dos-console`.
@@ -703,7 +703,7 @@ impl Front{
                         }
                         self.graphics_note=true;
                     }else if !self.graphics_note{
-                        let mode=p.ram.load(0x449,MemWidth::Byte).unwrap_or(0);
+                        let mode=super::console::bios_video(p,0x449,MemWidth::Byte).unwrap_or(0);
                         t.write(&format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: scanout unavailable; keys still reach DOS."))?;
                         self.graphics_note=true;
                     }
@@ -711,7 +711,7 @@ impl Front{
                 #[cfg(windows)]
                 if !self.graphics_note{
                     self.graphics_note=true;self.previous=None;
-                    let mode=p.ram.load(0x449,MemWidth::Byte).unwrap_or(0);
+                    let mode=super::console::bios_video(p,0x449,MemWidth::Byte).unwrap_or(0);
                     t.write(&format!("\x1b[0m\x1b[2J\x1b[1;1HGraphics mode {mode:02X}h: shown in the Dine window; keys work there and here."))?;
                 }
             }else{
@@ -889,7 +889,7 @@ pub(crate) mod catalog;
 
 /// The character grid of the screen shown now: (columns, rows).
 fn grid(p:&Loaded)->Result<(u32,u32),String>{
-    let read=|at,w|p.ram.load(at,w).map_err(|e|format!("BIOS screen size read: {e:?}"));
+    let read=|at,w|super::console::bios_video(p,at,w).map_err(|e|format!("BIOS screen size read: {e:?}"));
     let columns=read(0x44a,MemWidth::Word)?.clamp(1,80);
     let rows=if graphics_mode(p){read(0x484,MemWidth::Byte)?+1}else{25};
     Ok((columns,rows))

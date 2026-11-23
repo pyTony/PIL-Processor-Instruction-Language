@@ -36,7 +36,7 @@ const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
 #[path="dos_services.rs"]
 mod services;
 #[path="dos_console.rs"]
-mod console;
+pub(crate) mod console;
 #[path="dos_color_text.rs"]
 mod color_text;
 #[path="dos_session.rs"]
