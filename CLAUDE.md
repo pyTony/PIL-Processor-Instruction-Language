@@ -20,6 +20,13 @@ machine with a fixed disk:
   or a probe image; `--boot-hd`/`--hd` now write back to the file;
   `pil --new-hd-image FILE MB` makes an empty image (16 heads, 63 sectors,
   whole cylinders, refuses an existing file).
+- Tony's first console run stopped on "BIOS screen size read: AccessFault
+  ... page: Some(0)": the front ends read 0040:004A, B8000h and the like
+  through the guest's page tables, and a Linux process leaves page 0
+  unmapped. The run loop now leaves RAM in host view (Ram::host_access:
+  physical addresses, TLB kept) when it returns and restores the CPU's
+  paging when it starts, so screens and BIOS data are read as the display
+  hardware reads them (the headless probe showed blanks there before).
 - `--boot-probe --type STEPS:TEXT` (repeatable) types at a step count, with
   Shift for capitals and shifted symbols; typing waits for room in the
   keyboard queue (keys were dropped when it was full).

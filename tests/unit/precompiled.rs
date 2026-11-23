@@ -393,6 +393,10 @@ fn blocks_match_the_interpreter_in_paged_32_bit_protected_mode(){
         a=left.loaded;b=right.loaded;a.blocks.mode=Some(Mode::Off);b.blocks.mode=Some(Mode::On);
     }
     assert!(!b.image.real_mode&&b.image.paging,"the loop runs with paging");
+    // Between runs front ends see physical memory (Ram::host_access):
+    // 20CBEh is the code page's alias only through the guest's page tables.
+    assert_eq!(b.ram.load(0x20cbe,crate::MemWidth::Byte).unwrap(),0);
+    assert_ne!(b.ram.load(0x7cbe,crate::MemWidth::Byte).unwrap(),0);
     // Rounds: EBX gains 1 or 2 from the mapped routine and the round number
     // (low byte) from the rewritten immediate.
     let rounds=b.cpu.regs[6];assert!(rounds>1000,"{rounds}");
