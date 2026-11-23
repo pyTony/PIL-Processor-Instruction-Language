@@ -2634,6 +2634,51 @@ pub fn run_cli() -> Result<(), String> {
         println!("{}",dos::setup::run(config,window,&stop_log)?);
         return Ok(());
     }
+    if dos_args.get(1).map(String::as_str)==Some("--boot-probe"){
+        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]...";
+        let(mut image,mut drive,mut steps,mut at,mut keys,mut keys_after)=(None,0u8,10_000_000usize,2,String::new(),5_000_000usize);
+        let mut hard_disk=None;let mut typed=Vec::new();
+        while at<dos_args.len(){
+            match dos_args[at].as_str(){
+                "--hd"=>drive=0x80,
+                "--type"=>{
+                    let value=dos_args.get(at+1).ok_or(usage)?;
+                    let (when,text)=value.split_once(':').ok_or("--type takes STEPS:TEXT")?;
+                    typed.push((usize::try_from(number(when)?).map_err(|_|"step count out of range")?,text.replace("\\r","\r")));at+=1;
+                },
+                "--hd-image"=>{hard_disk=Some(dos_args.get(at+1).ok_or(usage)?.clone());at+=1;},
+                "--keys"=>{keys=dos_args.get(at+1).ok_or(usage)?.replace("\\r","\r");at+=1;},
+                "--keys-after"=>{keys_after=usize::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"step count out of range")?;at+=1;},
+                "--steps"=>{steps=usize::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"budget out of range")?;at+=1;},
+                a if a.starts_with("--")||image.is_some()=>return Err(usage.into()),
+                a=>image=Some(a),
+            }
+            at+=1;
+        }
+        let image=image.ok_or(usage)?;
+        // A fixed disk (--hd, or --hd-image next to a diskette) is written
+        // back to its file.
+        let machine=match(drive,hard_disk){
+            (0x80,None)=>dos::boot_with_hard_disk(None,std::path::Path::new(image),0x80)?,
+            (0x80,Some(_))=>return Err("--hd boots from IMAGE; --hd-image adds a disk next to a diskette".into()),
+            (_,hard_disk)=>{
+                let bytes=std::fs::read(image).map_err(|e|format!("{image}: {e}"))?;
+                match hard_disk{Some(disk)=>dos::boot_with_hard_disk(Some(&bytes),std::path::Path::new(&disk),0)?,None=>dos::boot(&bytes,0)?}
+            },
+        };
+        print!("{}",dos::boot_probe(machine,steps,&keys,keys_after,&typed)?);return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--new-hd-image"){
+        let usage="usage: pil --new-hd-image FILE MEGABYTES (a new, empty fixed-disk image: 16 heads, 63 sectors, up to 1024 cylinders)";
+        let (Some(file),Some(size),None)=(dos_args.get(2),dos_args.get(3),dos_args.get(4))else{return Err(usage.into())};
+        let megabytes:u64=size.parse().map_err(|_|usage)?;
+        let cylinders=megabytes*1024*1024/(16*63*512);
+        if !(1..=1024).contains(&cylinders){return Err(format!("{megabytes} MB gives {cylinders} cylinders; 1-1024 (1-504 MB) fit"));}
+        let bytes=cylinders*16*63*512;
+        let f=std::fs::OpenOptions::new().write(true).create_new(true).open(file).map_err(|e|format!("{file}: {e}"))?;
+        f.set_len(bytes).map_err(|e|format!("{file}: {e}"))?;
+        println!("{file}: {cylinders} cylinders, 16 heads, 63 sectors ({bytes} bytes)");return Ok(());
+    }
     if dos_args.get(1).map(String::as_str)==Some("--dos-probe"){
         let mut at=2;let mut budget=10000;
         if dos_args.get(at).map(String::as_str)==Some("--steps"){

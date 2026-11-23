@@ -50,6 +50,12 @@ kernel) is another.
   are.
 
 ### 2. Booting a disk image through the BIOS
+Done (22 November 2026, `feat/bios-boot-20261122`): MCC Interim's LILO
+reaches `boot:`, loads the kernel, and Linux 0.99pl10 switches to protected
+mode, decompresses and prints `Console: colour`. It then stops on OUT 60h
+(a command to the keyboard itself), which is milestone 3. Usage:
+docs/BOOT.md. The FreeDOS kernel boot was not tried yet.
+
 - **`pil --boot IMAGE`:** the boot sector at 0000:7C00, DL=00h/80h.
 - **INT 13h on the image:** AH 00, 02, 03, 08, 15, 41/42/48 (LBA), with
   geometry for floppy sizes and a hard-disk translation; INT 19h; INT 12h;
@@ -59,6 +65,12 @@ kernel) is another.
   DOS kernel next to Dine's own DOS.
 
 ### 3. Hardware a protected-mode OS drives itself
+Partly done (22 November 2026, `feat/pc-devices-20261122`): keyboard
+commands, absent UARTs, ISA open bus when booted, the diskette controller
+with DMA channel 2 and IRQ6, and a TLB. Linux 0.99 initializes its drivers
+and reads its root floppy. Not done: the 8042 controller commands beyond
+A20/reset, the AT hard-disk controller.
+
 - **IRQs:** every IRQ 0-15 through the PIC to the IDT, real and protected
   mode (today only IRQ0/1/5/7 and the mouse callback reach guests).
 - **8042:** command byte, self-test, output port (A20, reset through
@@ -73,6 +85,10 @@ kernel) is another.
 - **HLT** in protected mode idles until the next IRQ.
 
 ### 4. Early Linux: MCC Interim
+Reached (22 November 2026, `feat/pc-devices-20261122`): Linux 0.99.10
+mounts the root floppy and MCC's install menu waits at its prompt, after
+about 1.5 billion guest steps (10.5 minutes headless).
+
 - **Target (Tony's choice):** MCC Interim Linux (Manchester Computing
   Centre, 1992-93), Linux 0.97-0.99 on a boot floppy and a root floppy, 386
   only, minix file system.
@@ -96,18 +112,35 @@ kernel) is another.
   - The kernel then reads the same floppy through the floppy controller
     (/dev/fd0); no disk swap is needed.
 - **Done when:** the root floppy mounts and a shell answers on the console.
+- **Done (23 November 2026), hard disk:** the AT hard-disk controller
+  (1F0h-1F7h, 3F6h, IRQ14), the INT 41h table and CMOS types. MCC's menu
+  partitions, formats (Minix) and installs Base onto a 40 MB image; booting
+  the diskette with `rw root=301` runs Linux from /dev/hda1 to a root shell.
+  Packages beyond Base need MCC's other disks.
 - **Later:** Linux 2.0/2.2 with an initrd and a serial console. Linux 3.8
   and later dropped the 386.
 
 ### 5. Compiled protected-mode code
-- **Forms:** enumerate the decoder for a 32-bit default code segment and
-  protected-mode segment semantics as well (forms already take the segment
-  state at run time; their enumeration fixes real mode).
-- **Blocks with paging:** plan in protected mode and with paging. The guard
-  adds CPL, CR0/CR3 and the code segment's descriptor; code watches use
-  physical pages. A page-table write or CR3 load invalidates by version.
-- **Checks:** generated-backend comparisons on pm_* cases; test386 with
-  blocks against without; DOS/4GW Doom and the Linux boot as workloads.
+- **Done (23 November 2026), blocks with paging:** blocks are planned in
+  protected mode and with paging, keyed by linear address as before. Under
+  paging a block stays in one page. Code stamps (blocks and the decode
+  cache) record the bus address the code was found at; each check
+  translates the linear address again with the current CR3 and CPL (a TLB
+  hit, or a walk that sets the accessed bits a fetch sets) and compares it,
+  then the 64-byte line counters of that bus range. A changed mapping, a
+  fault, or a write to the code (through any alias) replans the block. In
+  real and V86 mode the old linear exclusions stay; elsewhere video memory
+  and the ROM/BIOS area (by bus address) never join a block.
+  MCC Interim to its menu: about 80 s -> 11 s (200 million steps).
+- **Not done, forms:** the precompiled table still enumerates the real-mode
+  decoder. A 32-bit protected-mode instruction runs its native form when
+  its PIL program is one of those forms (they take the segment state at
+  run time), else the interpreter inside the block. Enumerating a 32-bit
+  default code segment is the next step.
+- **Checks:** a paged 32-bit boot-sector fixture against the interpreter
+  per slice, with a remapped page and code rewritten through an alias page
+  (tests/unit/precompiled.rs); DOS/4GW Doom and the Linux boot as
+  workloads. test386 with blocks against without is not done.
 
 ## Principles
 - **Program independence:** PIL and Dine stay program-independent. Every

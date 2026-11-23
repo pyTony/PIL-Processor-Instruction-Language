@@ -603,12 +603,17 @@ fn keyboard_echo_uses_controller_response_without_consuming_bios_keys(){
  let r=run(p,40).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!(r.loaded.cpu.regs[3]&0xffff,0xee01);assert_eq!(r.loaded.cpu.regs[1]&0xff,0);
  let mut p=r.loaded;p.cpu.regs[0]=0x1000;service(&mut p,0x16,&mut vec![]).unwrap();assert_eq!(p.cpu.regs[0]&0xffff,0x1e61);
- // An unread response must not be silently replaced.
- let code=[0xb0,0xee,0xe6,0x60,0xe6,0x60,0xfa,0xf4];let r=run(load(&code,"full.com").unwrap(),20).unwrap();
- assert!(matches!(r.stop,Stop::Service(_)));let mut p=r.loaded;
- p.cpu.eip=0x106;p.ram.store(p.image.segments[1].base+0x106,MemWidth::Byte,0xe4).unwrap();
- p.ram.store(p.image.segments[1].base+0x107,MemWidth::Byte,0x60).unwrap();
- assert_eq!(ports::io(&mut p).unwrap(),Some(2));assert_eq!(p.cpu.regs[0]&255,0xee);
+ // An unread response is not replaced: the second echo waits behind it.
+ let code=[0xb0,0xee,0xe6,0x60,0xe6,0x60,0xe4,0x60,0x88,0xc3,0xfa,0xf4];let r=run(load(&code,"full.com").unwrap(),20).unwrap();
+ assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!(r.loaded.cpu.regs[3]&0xff,0xee);
+ // Keyboard commands are acknowledged (FAh), reset adds AAh, unknown ones get FEh.
+ let mut k=keyboard::Keyboard::default();
+ for (cmd,want) in [(0xed,vec![0xfa]),(0x02,vec![0xfa]),(0xff,vec![0xfa,0xaa]),(0x12,vec![0xfe])]{
+  k.command(cmd,false);
+  let got:Vec<u8>=std::iter::from_fn(||{if k.full(){Some(k.read())}else{k.poll(false);k.full().then(||k.read())}}).collect();
+  assert_eq!(got,want,"command {cmd:02x}");
+ }
 }
 fn cell(p:&Loaded,page:u32,row:u32,col:u32)->u32{p.ram.load(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word).unwrap()}
 fn put(p:&mut Loaded,page:u32,row:u32,col:u32,value:u32){p.ram.store(0xb8000+page*4096+(row*80+col)*2,MemWidth::Word,value).unwrap();}

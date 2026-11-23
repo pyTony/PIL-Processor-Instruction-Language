@@ -14,7 +14,7 @@ pub struct Stats {pub hits:u64,pub misses:u64,pub invalidations:u64,pub eviction
 struct Entry {image:Image,signature:[u8;15],decoded:Rc<Decoded>,code_stamp:Option<super::memory::CodeStamp>}
 impl Entry {
     fn unchanged(&self,image:&Image,ram:&Ram,eip:u32)->bool{
-        !image.paging&&self.code_stamp.is_some_and(|stamp|image.segments[1].base.checked_add(eip).is_some_and(|at|ram.code_unchanged(stamp,at,self.decoded.length as usize)))
+        self.code_stamp.is_some_and(|stamp|image.segments[1].base.checked_add(eip).is_some_and(|at|ram.code_unchanged(stamp,at,self.decoded.length as usize)))
     }
 }
 #[derive(Clone,Debug)]
@@ -44,7 +44,7 @@ impl DecodeCache {
                         // A write reached the instruction's line but left
                         // its bytes: trust them again from here.
                         let decoded=Rc::clone(&entry.decoded);let length=entry.decoded.length as usize;
-                        let stamp=if image.paging{None}else{image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,length))};
+                        let stamp=image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,length));
                         if let Some((_,entry))=&mut self.fast[slot]{entry.code_stamp=stamp;}
                         if let Some(entry)=self.entries.get_mut(&eip){entry.code_stamp=stamp;}
                         self.stats.hits+=1;return Ok(decoded);
@@ -61,7 +61,7 @@ impl DecodeCache {
                 // and trust them again from here if they are the same.
                 match image.fetch_signature(ram,eip,entry.decoded.length) {
                     Ok(signature) if signature==entry.signature=>{
-                        let stamp=if image.paging{None}else{image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,entry.decoded.length as usize))};
+                        let stamp=image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,entry.decoded.length as usize));
                         let mut entry=entry.clone();entry.code_stamp=stamp;
                         self.entries.insert(eip,entry.clone());
                         self.fast[slot]=Some((eip,entry.clone()));
@@ -83,7 +83,7 @@ impl DecodeCache {
         if self.entries.len()>=self.capacity {
             self.stats.evictions+=self.entries.len() as u64;self.entries.clear();self.fast.fill(None);
         }
-        let code_stamp=if image.paging{None}else{image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,decoded.length as usize))};
+        let code_stamp=image.segments[1].base.checked_add(eip).and_then(|at|ram.watch_code(at,decoded.length as usize));
         let entry=Entry{image:image.clone(),signature,decoded:Rc::clone(&decoded),code_stamp};
         self.fast[slot]=Some((eip,entry.clone()));
         self.entries.insert(eip,entry);

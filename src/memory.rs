@@ -45,6 +45,10 @@ pub(crate) struct CodeStamp {
     owner: u64,
     address: u32,
     bytes: usize,
+    /// The bus address the code was found at, and whether paging was on:
+    /// with paging the linear address is translated again at each check.
+    bus: u32,
+    paged: bool,
     a20: bool,
     planar: bool,
     first_line: usize,
@@ -124,6 +128,26 @@ impl VideoWatch{
 struct CodeOrigins{identity:Option<usize>,ranges:std::collections::BTreeMap<u32,(u32,u32)>}
 impl PartialEq for CodeOrigins{fn eq(&self,_:&Self)->bool{true}}
 impl Eq for CodeOrigins{}
+/// A translation lookaside buffer: 256 entries, direct-mapped by linear
+/// page. An entry keeps the page frame, the permission bits of PDE AND PTE
+/// (bit 1 writable, bit 2 user) and whether the PTE is already dirty. It
+/// is flushed when the page directory changes, when paging goes off, and
+/// when the CPU writes into a frame an entry's PDE or PTE came from. The
+/// 386 does not watch its tables (software reloads CR3 after changing
+/// them), so this TLB is never staler than the tables, only less stale
+/// than the 386's.
+#[derive(Clone,Debug)]
+struct Tlb{tags:Box<[u32;256]>,frames:Box<[u32;256]>,bits:Box<[u8;256]>,tables:Box<[u64;64]>,directory:Option<u32>,used:bool}
+impl Default for Tlb{fn default()->Self{Self{tags:Box::new([0;256]),frames:Box::new([0;256]),bits:Box::new([0;256]),tables:Box::new([0;64]),directory:None,used:false}}}
+impl PartialEq for Tlb{fn eq(&self,_:&Self)->bool{true}}
+impl Eq for Tlb{}
+impl Tlb{
+    fn flush(&mut self){if self.used{self.tags.fill(0);self.tables.fill(0);self.used=false;}}
+    /// Frames above 16 MiB are not tracked: their writes cannot be seen,
+    /// so their translations are not kept.
+    fn table(&mut self,physical:u32)->bool{let f=physical>>12;if f>=4096{return false;}self.tables[(f>>6)as usize]|=1<<(f&63);true}
+    fn holds_table(&self,index:usize)->bool{let f=index>>12;f<4096&&self.tables[f>>6]&(1<<(f&63))!=0}
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ram {
     data:Vec<u8>,
@@ -140,6 +164,8 @@ pub struct Ram {
     /// not yet write: (physical byte, bits to OR). Reads see them at once;
     /// `settle` writes them, and every `&mut` method settles first.
     marks:std::cell::RefCell<Vec<(usize,u8)>>,
+    /// Translations the page walk made, as the 386's TLB holds them.
+    tlb:std::cell::RefCell<Tlb>,
     code_watch:CodeWatch,
     text_watch:Option<TextWatch>,
     video_watch:Option<VideoWatch>,
@@ -150,7 +176,7 @@ pub struct Ram {
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,video_watch:None,code_origins:Default::default()}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),tlb:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,video_watch:None,code_origins:Default::default()}}
     pub(crate) fn track_resource(&mut self,identity:usize){self.code_origins=CodeOrigins{identity:Some(identity),ranges:Default::default()};}
     pub(crate) fn resource_origin(&self,address:u32)->Option<(usize,u32)>{
         if self.paging.get().is_some(){return None;}
@@ -177,22 +203,35 @@ impl Ram {
             ranges.insert(start,(end,offset+done as u32));done+=count;
         }
     }
-    fn code_pages(&self,address:u32,bytes:usize)->Option<std::ops::RangeInclusive<usize>>{
+    /// The bus address and lines of `bytes` of code at linear `address`.
+    /// With paging on the code must lie in one page, which the current
+    /// privilege level may read (a fetch would fault otherwise).
+    fn code_pages(&self,address:u32,bytes:usize)->Option<(u32,std::ops::RangeInclusive<usize>)>{
         if bytes==0{return None;}
-        self.contiguous_slice(address,bytes)?;
-        let start=self.physical_address(address)as usize;let end=start+bytes;
+        let start=if self.paging.get().is_some(){
+            if (address as usize&0xfff)+bytes>0x1000{return None;}
+            let bus=self.locate(address,false).ok()?;
+            self.data.get(bus as usize..bus as usize+bytes)?;
+            bus as usize
+        }else{
+            self.contiguous_slice(address,bytes)?;
+            self.physical_address(address)as usize
+        };
+        let end=start+bytes;
         if self.planar.is_some()&&start<0xb0000&&end>0xa0000{return None;}
-        Some(start/CODE_LINE..=(end-1)/CODE_LINE)
+        Some((start as u32,start/CODE_LINE..=(end-1)/CODE_LINE))
     }
     /// A stamp for code at `address`: valid until a write reaches one of
     /// its lines (or A20 or the RAM object changes). The caller must have
     /// read the bytes it trusts after the last such write.
     pub(crate) fn watch_code(&self,address:u32,bytes:usize)->Option<CodeStamp>{
-        let lines=self.code_pages(address,bytes)?;
+        let (bus,lines)=self.code_pages(address,bytes)?;
         Some(CodeStamp {
             owner: self.code_watch.owner,
             address,
             bytes,
+            bus,
+            paged: self.paging.get().is_some(),
             a20: self.a20_enabled,
             planar: self.planar.is_some(),
             first_line: *lines.start(),
@@ -204,10 +243,14 @@ impl Ram {
     pub(crate) fn code_unchanged(&self, stamp: CodeStamp, address: u32, bytes: usize) -> bool {
         if stamp.owner != self.code_watch.owner || stamp.address != address
             || stamp.bytes != bytes || stamp.a20 != self.a20_enabled
-            || stamp.planar != self.planar.is_some() || self.paging.get().is_some()
+            || stamp.planar != self.planar.is_some() || stamp.paged != self.paging.get().is_some()
         {
             return false;
         }
+        // With paging the same linear page must still map to the same
+        // frame (a TLB hit, or a walk that sets the accessed bits a fetch
+        // would set).
+        if stamp.paged && self.locate(address,false).ok()!=Some(stamp.bus){return false;}
         // The owner fixes the backing RAM and the stamp was issued for this
         // exact address, length, and mapping.
         let writes = if stamp.first_line == stamp.last_line {
@@ -220,10 +263,20 @@ impl Ram {
     /// Turns paging on or off (CR0.PG, CR3, CPL). The 386 TLB is not
     /// modelled: every access walks the tables as they are in memory.
     #[inline]
+    /// Runs `f` on physical addresses, with paging off for its accesses
+    /// (a DMA transfer, which bypasses the CPU's page tables).
+    pub(crate) fn physical<R>(&mut self,f:impl FnOnce(&mut Self)->R)->R{
+        let saved=self.paging.get();self.set_paging(None);
+        let result=f(self);self.set_paging(saved);result
+    }
+    /// A CPU write to a frame holding a page table the TLB has used.
+    fn table_write(&mut self,index:usize){let tlb=self.tlb.get_mut();if tlb.used&&tlb.holds_table(index){tlb.flush();}}
     pub fn set_paging(&mut self, paging: Option<Paging>) {
         if !self.marks.get_mut().is_empty() {
             self.settle();
         }
+        let tlb=self.tlb.get_mut();
+        match paging{None=>tlb.flush(),Some(p) if tlb.directory!=Some(p.directory)=>{tlb.flush();tlb.directory=Some(p.directory);},_=>{}}
         self.paging.set(paging);
     }
     /// Runs `f` with accesses at user level (`user`) or supervisor level,
@@ -268,6 +321,16 @@ impl Ram {
         let Some(paging)=self.paging.get() else{return Ok(linear);};
         let code=(u8::from(write)<<1)|(u8::from(paging.user)<<2);
         let fault=|p:u8|AccessFault{address:linear,bytes:1,write,page:Some(code|p)};
+        let page=linear>>12;let slot=(page&255)as usize;
+        {
+            let tlb=self.tlb.borrow();
+            if tlb.directory==Some(paging.directory)&&tlb.tags[slot]==(page<<1|1){
+                let bits=tlb.bits[slot];
+                if paging.user&&(bits&4==0||(write&&bits&2==0)){return Err(fault(1));}
+                // A write to a page not yet dirty walks, to set the D bit.
+                if !write||bits&0x40!=0{return Ok(tlb.frames[slot]|(linear&0xfff));}
+            }
+        }
         let pde_at=(paging.directory&!0xfff).wrapping_add((linear>>22)*4);
         let pde=self.entry(pde_at,linear,write)?;
         if pde&1==0{return Err(fault(0));}
@@ -280,6 +343,11 @@ impl Ram {
         if pde&0x20==0{marks.push((self.physical_address(pde_at)as usize,0x20));}
         let bits:u8=0x20|if write{0x40}else{0};
         if pte&u32::from(bits)!=u32::from(bits){marks.push((self.physical_address(pte_at)as usize,bits));}
+        let mut tlb=self.tlb.borrow_mut();
+        if tlb.directory==Some(paging.directory)&&tlb.table(self.physical_address(pde_at))&&tlb.table(self.physical_address(pte_at)){
+            tlb.tags[slot]=page<<1|1;tlb.frames[slot]=pte&!0xfff;
+            tlb.bits[slot]=(both&6) as u8|if write||pte&0x40!=0{0x40}else{0};tlb.used=true;
+        }
         Ok((pte&!0xfff)|(linear&0xfff))
     }
     /// The physical byte (A20 applied) behind a linear byte.
@@ -437,7 +505,7 @@ impl Ram {
             for shift in 0..bytes{
                 let index=self.locate(address+shift as u32,true)?as usize;let byte=(value>>(shift*8)) as u8;
                 if self.video_watch.is_some() && !self.in_rom(index){self.note_video_write(index,if self.window(index).is_some(){None}else{Some(self.data[index]!=byte)});}
-                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;}}
+                match self.window(index){Some(at)=>self.planar.as_deref_mut().unwrap().write(at,byte),None if self.in_rom(index)=>{},None=>{if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],byte);}self.code_watch.write(index,1);self.data[index]=byte;self.table_write(index);}}
             }
             self.settle();
             return Ok(());
@@ -460,7 +528,7 @@ impl Ram {
         self.settle();
         self.check_bus(address,data.len(),true)?;
         if self.paging.get().is_some(){
-            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;if !self.in_rom(index){self.note_video_write(index,Some(self.data[index]!=b));if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],b);}self.code_watch.write(index,1);self.data[index]=b;}}
+            for (i,&b) in data.iter().enumerate(){let index=self.locate(address+i as u32,true)?as usize;if !self.in_rom(index){self.note_video_write(index,Some(self.data[index]!=b));if let Some(w)=self.text_watch.as_mut(){w.write(index,self.data[index],b);}self.code_watch.write(index,1);self.data[index]=b;self.table_write(index);}}
             self.settle();
             return Ok(());
         }

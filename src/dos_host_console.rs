@@ -63,9 +63,9 @@ impl PendingKey{
 
 // US-layout set 1 scan codes of the keys that type ASCII.
 const ROWS:[(&str,u8);4]=[("1234567890-=",0x02),("qwertyuiop[]",0x10),("asdfghjkl;'`",0x1e),("zxcvbnm,./",0x2c)];
-const SHIFTED:&str="!@#$%^&*()_+{}:\"~<>?|";
+pub(super) const SHIFTED:&str="!@#$%^&*()_+{}:\"~<>?|";
 const UNSHIFTED:&str="1234567890-=[];'`,./\\";
-fn scan_of(c:char)->Option<u8>{
+pub(super) fn scan_of(c:char)->Option<u8>{
     let c=c.to_ascii_lowercase();
     let c=SHIFTED.find(c).and_then(|i|UNSHIFTED[i..].chars().next()).unwrap_or(c);
     match c{'\\'=>return Some(0x2b),' '=>return Some(0x39),_=>{}}
