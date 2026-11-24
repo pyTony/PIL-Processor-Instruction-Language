@@ -226,7 +226,7 @@ impl Blocks {
             .filter(|&(_,slot,version)|self.slots.get(slot).is_some_and(|s|s.0==version));
         let slot=match linked{
             Some((_,slot,_))=>Some(slot),
-            None=>self.map.get(&linear).and_then(|v|v.iter().copied().filter(|&i|i!=NONE).find(|&i|{let b=&self.slots[i].1;b.eip==eip&&b.machine==*machine&&b.window==window(image)})),
+            None=>self.map.get(&linear).and_then(|v|v.iter().copied().filter(|&i|i!=NONE).find(|&i|{let b=&self.slots[i].1;b.eip==eip&&b.machine.same_code_context(machine)&&b.window==window(image)})),
         };
         if let Some(i)=slot{
             let b=&mut self.slots[i].1;

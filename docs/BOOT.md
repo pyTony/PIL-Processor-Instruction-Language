@@ -82,6 +82,68 @@ ext2. `i` installs Base onto /dev/hda1 and then asks about the keyboard
 map, networking, LILO and a boot floppy (`n` to each) and the package
 drive (`7`, none for now).
 
+### Scripted runs: install, gcc 2.5.8 and a timed Mandelbrot
+
+`pil --boot-probe IMAGE --script FILE` runs a headless machine through a
+script, one step per line (`#` starts a comment):
+
+| Step | Meaning |
+|---|---|
+| `run N` | run N steps (`_` separators allowed) |
+| `type TEXT` | type TEXT (`\r` or `\n` is Enter, `\s` a space, `\\` a backslash) |
+| `prompt TEXT` | wait until the screen changed after the last `type` and its last line ends with TEXT |
+| `screen TEXT` | wait until TEXT is anywhere on the screen |
+| `floppy IMAGE` | change the diskette (same format) |
+| `show` | print the screen |
+| `mark NAME` | print the steps and host seconds since the last mark |
+
+The output streams as the script runs. A script ends at its last step,
+at `--steps` or when the guest waits for a key no step will give.
+`--script` replaces `--keys`, `--type` and `--change-floppy`.
+
+`pil --new-tar-floppy IMAGE [--size 360|720|1200|1440|2880] FILE...`
+writes a diskette image that holds one ustar archive with the files (by
+their names, without folders). Linux reads it with
+`cpio -imV -H ustar </dev/fd0`; that is how packages reach MCC before a
+network or a host folder. The MCC 1.0+ packages are in
+`mcc-linux/MCC-1.0/packages` of github.com/youngd24/oldlinux:
+gcca.tgz (SHA256 caf7ac51...c7eb) and gccb.tgz (445e35d6...dffdf),
+554,454 and 825,727 bytes, so each fits one 1.2 MB diskette.
+
+From the checkout's root folder, with `nocdboot`, `root`, `gcca.tgz` and
+`gccb.tgz` in images/mcc-1.0 (git-ignored), PowerShell:
+
+```powershell
+cargo build --release --locked
+$pil = ".\target\release\pil.exe"
+& $pil --new-tar-floppy images/mcc-1.0/gcca.flp images/mcc-1.0/gcca.tgz programs/linux/mandel.c
+& $pil --new-tar-floppy images/mcc-1.0/gccb.flp images/mcc-1.0/gccb.tgz
+& $pil --new-hd-image images/mcc-1.0/hd40.img 40
+& $pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img --script tools/mcc/install.txt --steps 4000000000 --rtc-year 1994
+& $pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img --script tools/mcc/gcc.txt --steps 4000000000 --rtc-year 1994
+& $pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img --script tools/mcc/mandel.txt --fpu 80387 --steps 9000000000 --rtc-year 1994
+```
+
+sh (Linux, Termux): the same lines with `pil=target/release/pil` and
+`$pil` in place of `& $pil`. The hard disk image keeps what each script
+wrote, so copy it between stages to repeat one.
+
+- tools/mcc/install.txt: fdisk (one Linux partition), mkfs (ext2 on
+  /dev/hda1), install Base (CRC checked), no swap, LILO or packages.
+- tools/mcc/gcc.txt: boots `ro root=301`, logs in as root, unpacks each
+  diskette at `/` and runs `mccinstall gcca.tgz` and `gccb.tgz` (CRCs
+  checked), then `gcc -v` (gcc version 2.5.8).
+- tools/mcc/mandel.txt: copies programs/linux/mandel.c into /tmp,
+  `time gcc -O2 -o mandel mandel.c`, then `./mandel i 1` (the picture),
+  `time ./mandel i 500` (fixed point, as MANDEL.COM) and
+  `time ./mandel f 100` (double precision).
+
+`--fpu 80387` gives the booted machine the 80387 with its AT error path:
+an unmasked exception sets the busy latch and raises IRQ13; FWAIT and the
+next coprocessor instruction wait until OUT F0h clears it. Linux 1.0
+checks this at boot ("Checking 386/387 coupling... Ok, fpu using irq13
+error reporting."). Without it, Linux emulates the coprocessor itself.
+
 The BIOS side: INT 13h 00h-04h, 08h, 15h-18h on drives 00h, 01h and 80h
 (status at 0040:0041 and 0040:0074, the 64 KiB DMA limit on diskettes), the
 diskette parameter table at F000:EFC7 behind INT 1Eh, CMOS register 10h with

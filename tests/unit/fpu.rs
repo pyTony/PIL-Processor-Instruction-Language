@@ -1415,3 +1415,79 @@ fn fucomp_missing_operand_and_signaling_nan_are_atomic(){
                Outcome::Unsupported);
     assert_eq!(fpu.state,before);assert_eq!(cpu,p.cpu);assert_eq!(ram,p.ram);
 }
+
+#[test]
+fn present_80387_dc_register_forms_write_st_i_without_popping() {
+    // FLD1; FLD1; FADD ST(1),ST (DC C1) => ST1=2; FDIV ST(1),ST (DC F9)
+    // => 2/1=2; FDIVR ST(1),ST (DC F1) => 1/2; FSUB ST(1),ST (DC E9)
+    // => 0.5-1; FMUL ST(1),ST (DC C9) => -0.5; FSUBR ST(1),ST (DC E1)
+    // => 1-(-0.5)=1.5; FSTP ST(0); FSTP m32 [200h]; INT 20h.
+    let bytes=[0xd9,0xe8, 0xd9,0xe8, 0xdc,0xc1, 0xdc,0xf9, 0xdc,0xf1,
+               0xdc,0xe9, 0xdc,0xc9, 0xdc,0xe1, 0xdd,0xd8,
+               0xd9,0x1e,0x00,0x02, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-dc.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    assert_eq!(result.loaded.ram.load(base+0x200,MemWidth::Dword).unwrap(),0x3fc0_0000); // 1.5f32
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_unmasked_zero_divide_signals_error_and_waits_on_the_busy_latch() {
+    // MOV AL,20h; OUT A1h,AL (IRQ13 masked at the slave PIC, so no
+    // handler runs); FLDCW [200h] (all exceptions unmasked); FLDZ; FLD1;
+    // FDIVR ST(1),ST = 1/0 (DC F1), as Linux 1.0's "386/387 coupling"
+    // check; FWAIT; INT 20h.
+    let bytes=[0xb0,0x20,0xe6,0xa1, 0xd9,0x2e,0x00,0x02, 0xd9,0xee, 0xd9,0xe8, 0xdc,0xf1,
+               0x9b, 0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-irq13.com").unwrap();
+    p.fpu=Fpu::present();
+    p.fpu.set_error_irq(true);
+    let base=p.image.segments[3].base;
+    p.ram.store(base+0x200,MemWidth::Word,0x0340).unwrap();
+    // The first FWAIT waits while the latch is set: no IRQ13 handler
+    // runs here, so the run stays before it.
+    let waiting=dos::run(p,40).unwrap();
+    assert_eq!(waiting.loaded.cpu.eip,0x10e,"{:?}",waiting.stop);
+    let state=waiting.loaded.fpu.state().unwrap();
+    // The destination and the stack are unchanged; ZE, ES and B are set.
+    assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
+    assert_eq!(state.st(1),Some(Extended80::default()));
+    assert_eq!(state.status&0x80ff,0x8084);
+    // With the latch cleared through port F0h the program goes on.
+    let mut p=dos::load(&[0xb0,0x20,0xe6,0xa1, 0xd9,0x2e,0x00,0x02, 0xd9,0xee, 0xd9,0xe8, 0xdc,0xf1,
+                          0xe6,0xf0, 0x9b, 0xcd,0x20],"x87-irq13b.com").unwrap();
+    p.fpu=Fpu::present();
+    p.fpu.set_error_irq(true);
+    p.ram.store(base+0x200,MemWidth::Word,0x0340).unwrap();
+    let done=dos::run(p,40).unwrap();
+    assert!(matches!(done.stop,dos::Stop::Exit(0)),"{:?}",done.stop);
+    assert_eq!(done.loaded.fpu.state().unwrap().status&0x0004,0x0004);
+}
+
+#[test]
+fn present_80387_fnsave_frstor_round_trip_and_fnsave_reinitialises() {
+    // FLD1; FLDPI; FNSAVE [200h]; FLDZ; FRSTOR [200h];
+    // FSTP m64 [300h] (pi); FSTP m64 [308h] (1.0); INT 20h.
+    let bytes=[0xd9,0xe8, 0xd9,0xeb, 0xdd,0x36,0x00,0x02, 0xd9,0xee,
+               0xdd,0x26,0x00,0x02, 0xdd,0x1e,0x00,0x03, 0xdd,0x1e,0x08,0x03,
+               0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-save.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let ram=&result.loaded.ram;
+    let q=|at:u32|u64::from(ram.load(base+at,MemWidth::Dword).unwrap())|u64::from(ram.load(base+at+4,MemWidth::Dword).unwrap())<<32;
+    // The 14-byte real-mode environment: control 037Fh, TOP=6, two tags valid.
+    assert_eq!(ram.load(base+0x200,MemWidth::Word).unwrap(),0x037f);
+    assert_eq!(ram.load(base+0x202,MemWidth::Word).unwrap()>>11&7,6);
+    assert_eq!(ram.load(base+0x204,MemWidth::Word).unwrap(),0x0fff);
+    // ST(0) = pi as 80 bits right after it.
+    assert_eq!(q(0x20e),0xc90f_daa2_2168_c235);
+    assert_eq!(q(0x300),0x4009_21fb_5444_2d18);
+    assert_eq!(q(0x308),0x3ff0_0000_0000_0000);
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}

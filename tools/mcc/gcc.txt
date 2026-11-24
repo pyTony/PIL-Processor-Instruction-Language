@@ -1,0 +1,30 @@
+# gcc 2.5.8 (packages gcca and gccb) onto an installed MCC hard disk, for
+#   pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img
+#       --script tools/mcc/gcc.txt --steps 4000000000 --rtc-year 1994
+# The two diskettes come from pil --new-tar-floppy (see docs/BOOT.md):
+# each holds a ustar archive with the package, read with cpio.
+run 3000000
+type ro root=301\r
+screen login:
+mark boot
+type root\r
+prompt >
+type cd /\r
+prompt >
+floppy images/mcc-1.0/gcca.flp
+type cpio -imV -H ustar </dev/fd0\r
+prompt >
+type mccinstall gcca.tgz\r
+prompt >
+mark gcca
+type rm gcca.tgz\r
+prompt >
+floppy images/mcc-1.0/gccb.flp
+type cpio -imV -H ustar </dev/fd0\r
+prompt >
+type mccinstall gccb.tgz\r
+prompt >
+mark gccb
+type rm gccb.tgz; sync; gcc -v\r
+prompt >
+show

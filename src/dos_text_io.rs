@@ -135,6 +135,8 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
                 match hard_disk{Some(disk)=>dos::boot_with_hard_disk(Some(&bytes),std::path::Path::new(&disk),0)?,None=>dos::boot(&bytes,0)?}
             },
         };
+        let mut machine=machine;
+        if fpu.or(defaults.fpu.map(|on|if on{"80387"}else{"none"}))==Some("80387"){machine.select_fpu(true)?;}
         let mut session=dos::session::Session::new(machine);
         if !floppies.is_empty(){
             if drive!=0{return Err("--floppy changes the diskette a --boot started from".into());}

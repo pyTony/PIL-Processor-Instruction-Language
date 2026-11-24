@@ -16,6 +16,10 @@ pub enum Operation {
     Fnstcw,
     /// Store the 14-byte (16-bit) or 28-byte (32-bit) x87 environment (D9 /6).
     Fnstenv,
+    /// FNSAVE: the environment and the eight registers, then FNINIT.
+    Fnsave,
+    /// FRSTOR: the environment and the eight registers.
+    Frstor,
     /// Load the 14-byte (16-bit) or 28-byte (32-bit) x87 environment (D9 /4).
     Fldenv,
     Fchs,
@@ -58,6 +62,8 @@ pub enum Operation {
     CompareMemory { bytes: u32, pop: bool },
     /// Register arithmetic, either ST(0) op ST(i) or ST(i) op ST(0), pop.
     Arithmetic { kind: Arithmetic, index: u8, pop: bool },
+    /// DC register forms: ST(i) op ST(0) into ST(i), no pop.
+    ArithmeticTo { kind: Arithmetic, index: u8 },
     /// ST(0) op IEEE m32/m64, source is read only.
     MemoryArithmetic { kind: Arithmetic, bytes: u32 },
     /// ST(0) op signed m16int/m32int; convert the integer to exact x87 format.
@@ -113,6 +119,14 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd8, 0xd0..=0xd7) => Some(Operation::Compare { index: rm, pop: false }),
             (0xd8, 0xd8..=0xdf) => Some(Operation::Compare { index: rm, pop: true }),
             (0xde, 0xd9) => Some(Operation::ComparePop2),
+            // DC: the destination is ST(i), as DE without the pop (Intel's
+            // FSUB/FSUBR and FDIV/FDIVR ST(i),ST(0) encodings).
+            (0xdc, 0xc0..=0xc7) => Some(Operation::ArithmeticTo { kind: Arithmetic::Add, index: rm }),
+            (0xdc, 0xc8..=0xcf) => Some(Operation::ArithmeticTo { kind: Arithmetic::Multiply, index: rm }),
+            (0xdc, 0xe0..=0xe7) => Some(Operation::ArithmeticTo { kind: Arithmetic::ReverseSubtract, index: rm }),
+            (0xdc, 0xe8..=0xef) => Some(Operation::ArithmeticTo { kind: Arithmetic::Subtract, index: rm }),
+            (0xdc, 0xf0..=0xf7) => Some(Operation::ArithmeticTo { kind: Arithmetic::ReverseDivide, index: rm }),
+            (0xdc, 0xf8..=0xff) => Some(Operation::ArithmeticTo { kind: Arithmetic::Divide, index: rm }),
             (0xde, 0xc0..=0xc7) => Some(Operation::Arithmetic { kind: Arithmetic::Add, index: rm, pop: true }),
             (0xde, 0xc8..=0xcf) => Some(Operation::Arithmetic { kind: Arithmetic::Multiply, index: rm, pop: true }),
             (0xde, 0xe0..=0xe7) => Some(Operation::Arithmetic { kind: Arithmetic::ReverseSubtract, index: rm, pop: true }),
@@ -131,6 +145,8 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd9, 7) => Some(Operation::Fnstcw),
             (0xdd, 0) => Some(Operation::FldM64),
             (0xdd, 3) => Some(Operation::FstpM64),
+            (0xdd, 4) => Some(Operation::Frstor),
+            (0xdd, 6) => Some(Operation::Fnsave),
             (0xdd, 7) => Some(Operation::FnstswM16),
             (0xdb, 0) => Some(Operation::FildM32),
             (0xdb, 3) => Some(Operation::FistpM32),

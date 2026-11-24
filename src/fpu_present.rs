@@ -19,6 +19,14 @@ fn supported_m80(value: Extended80) -> bool {
 #[derive(Clone, Debug, Default)]
 pub struct PresentFpu {
     pub state: X87State,
+    /// The machine reports unmasked exceptions as an AT does: the 387's
+    /// ERROR# sets a busy latch that raises IRQ13 (a booted machine with
+    /// its own IRQ13 handler). Without it an unmasked exception stops.
+    pub error_irq: bool,
+    /// The AT busy latch: set by an unmasked exception, cleared by OUT F0h
+    /// or the coprocessor reset (OUT F1h). While it is set the CPU waits on
+    /// BUSY# before the next coprocessor instruction.
+    pub busy: bool,
 }
 impl PresentFpu {
     pub fn execute(&mut self, instruction: &Instruction, cpu: &mut Cpu,
@@ -32,6 +40,7 @@ impl PresentFpu {
             msw & 0x0c != 0
         };
         if trap { return Outcome::NotAvailable; }
+        if self.busy { return Outcome::Busy; }
         if instruction.opcode == 0x9b { return Outcome::Completed; }
 
         let Some(modrm) = instruction.modrm else { return Outcome::Unsupported; };
@@ -53,6 +62,8 @@ impl PresentFpu {
                 return self.execute_word_memory(operation,instruction,cpu,ram,image),
             Operation::Fnstenv | Operation::Fldenv =>
                 return self.execute_env(operation == Operation::Fnstenv, instruction, cpu, ram, image),
+            Operation::Fnsave | Operation::Frstor =>
+                return self.execute_save(operation == Operation::Fnsave, instruction, cpu, ram, image),
             Operation::Fchs | Operation::Fabs => {
                 // Only the sign bit changes: no rounding, TOP and tags stay,
                 // and signed zero is kept. An empty ST(0) changes nothing.
@@ -191,6 +202,12 @@ impl PresentFpu {
             },
             Operation::Arithmetic { kind, index, pop } =>
                 return self.execute_arithmetic(kind, index, pop),
+            Operation::ArithmeticTo { kind, index } => {
+                let dst = usize::from(index);
+                let Some(lhs) = self.state.st(dst) else { return Outcome::StackFault(StackError::Underflow); };
+                let Some(rhs) = self.state.st(0) else { return Outcome::StackFault(StackError::Underflow); };
+                return self.commit_arithmetic(kind, lhs, rhs, dst, false);
+            },
             Operation::MemoryArithmetic { kind, bytes } =>
                 return self.execute_arithmetic_memory(kind, bytes, instruction, cpu, ram, image),
             Operation::IntegerMemoryArithmetic { kind, bytes } =>
@@ -344,6 +361,52 @@ impl PresentFpu {
         Outcome::Completed
     }
 
+    /// FNSAVE/FRSTOR: the 14- or 28-byte environment followed by ST(0) to
+    /// ST(7), ten bytes each. The whole area is checked before anything is
+    /// written or loaded; FNSAVE ends in the FNINIT state.
+    fn execute_save(&mut self, store: bool, instruction: &Instruction, cpu: &Cpu,
+                    ram: &mut Ram, image: &Image) -> Outcome {
+        let env = if instruction.operand_32 { 28u32 } else { 14u32 };
+        let Ok((offset, context)) = address::resolve(instruction, cpu, image) else {
+            return Outcome::MemoryFault;
+        };
+        let Ok(linear) = context.translate_span(u64::from(offset), env + 80, store, cpu.eip) else {
+            return Outcome::MemoryFault;
+        };
+        if store {
+            for i in 0..env + 80 {
+                if ram.check_write(linear + i, MemWidth::Byte).is_err() { return Outcome::MemoryFault; }
+            }
+            let registers: Vec<[u8; 10]> = (0..8).map(|i| self.state.raw_st(i).to_le_bytes()).collect();
+            let outcome = self.execute_env(true, instruction, cpu, ram, image);
+            if outcome != Outcome::Completed { return outcome; }
+            for (i, bytes) in registers.iter().enumerate() {
+                for (j, &b) in bytes.iter().enumerate() {
+                    if ram.store(linear + env + (i * 10 + j) as u32, MemWidth::Byte, u32::from(b)).is_err() {
+                        return Outcome::MemoryFault;
+                    }
+                }
+            }
+            self.state.finit();
+        } else {
+            let mut registers = [[0u8; 10]; 8];
+            for (i, value) in registers.iter_mut().enumerate() {
+                for (j, b) in value.iter_mut().enumerate() {
+                    let Ok(v) = ram.load(linear + env + (i * 10 + j) as u32, MemWidth::Byte) else {
+                        return Outcome::MemoryFault;
+                    };
+                    *b = v as u8;
+                }
+            }
+            let outcome = self.execute_env(false, instruction, cpu, ram, image);
+            if outcome != Outcome::Completed { return outcome; }
+            for (i, bytes) in registers.iter().enumerate() {
+                self.state.set_raw(i, Extended80::from_le_bytes(*bytes));
+            }
+        }
+        Outcome::Completed
+    }
+
     /// Register arithmetic validates both operands before any state change.
     fn execute_arithmetic(&mut self, kind: Arithmetic, index: u8, pop: bool) -> Outcome {
         let dst = if pop { usize::from(index) } else { 0 };
@@ -441,18 +504,24 @@ impl PresentFpu {
         self.commit_compare(lhs,rhs,u8::from(pop))
     }
 
-    /// Atomic retirement shared by register and memory arithmetic. For an
-    /// unmasked ZE or PE, report an unsupported operation until #MF is implemented.
+    /// Atomic retirement shared by register and memory arithmetic. An
+    /// unmasked ZE leaves the destination and the stack as they were (a
+    /// pre-computation exception); an unmasked PE stores the rounded result
+    /// and pops. Either sets ES and B and signals ERROR# (IRQ13 on an AT);
+    /// without that wiring it stops as unsupported.
     fn commit_arithmetic(&mut self, kind: Arithmetic, lhs: Extended80,
                          rhs: Extended80, dst: usize, pop: bool) -> Outcome {
         let Ok(computed) = math::calculate(kind, lhs, rhs, self.state.control) else {
             return Outcome::Unsupported;
         };
-        if computed.zero_divide && self.state.control & 0x0004 == 0 {
+        let zero_unmasked = computed.zero_divide && self.state.control & 0x0004 == 0;
+        let inexact_unmasked = computed.inexact && self.state.control & 0x0020 == 0;
+        if (zero_unmasked || inexact_unmasked) && !self.error_irq {
             return Outcome::Unsupported;
         }
-        if computed.inexact && self.state.control & 0x0020 == 0 {
-            return Outcome::Unsupported;
+        if zero_unmasked {
+            self.state.status |= 0x0004;
+            return self.signal_error();
         }
         self.state.store(dst, computed.value);
         if pop { self.state.pop().expect("checked arithmetic ST(0)"); }
@@ -461,7 +530,17 @@ impl PresentFpu {
         if computed.rounded_up { self.state.status |= 0x0200; }
         if computed.zero_divide { self.state.status |= 0x0004; }
         if computed.inexact { self.state.status |= 0x0020; }
+        if inexact_unmasked { return self.signal_error(); }
         Outcome::Completed
+    }
+
+    /// An unmasked exception: the error summary (ES) and busy (B) bits go
+    /// on and ERROR# is signalled; the AT busy latch holds BUSY# until the
+    /// IRQ13 handler writes port F0h.
+    fn signal_error(&mut self) -> Outcome {
+        self.state.status |= 0x8080;
+        self.busy = true;
+        Outcome::ErrorSignalled
     }
 
     /// Comparisons change only C0/C1/C2/C3 and optionally pop the stack.

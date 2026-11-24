@@ -1,3 +1,42 @@
+# gcc 2.5.8 and a timed Mandelbrot under MCC Linux 1.0 — 24 November 2026
+
+Tony asked for comparison software: gcc and a Mandelbrot inside Linux, so
+that PIL runs real 386 code from a 1994 compiler (Dine's DOS answers DOS
+calls on the host). Then svgalib, later.
+- `pil --boot-probe ... --script FILE` (dos::boot_script,
+  boot_script_probe): run/type/prompt/screen/floppy/show/mark steps,
+  output streamed; tools/mcc/install.txt, gcc.txt, mandel.txt.
+- `pil --new-tar-floppy IMAGE [--size KB] FILE...` (dos::tar_floppy): one
+  ustar archive on a diskette image, read in Linux with cpio. gcca.tgz
+  (SHA256 caf7ac51...c7eb) and gccb.tgz (445e35d6...dffdf) from
+  youngd24/oldlinux mcc-linux/MCC-1.0/packages, outside the repo.
+- programs/linux/mandel.c: MANDEL.COM's picture in C; `i` fixed point
+  (sum 15564, same characters as `pil --dos-text MANDEL.COM` on the
+  host), `f` double (sum 15584, as the host build).
+- Decode cache and blocks: their entries compared the whole SegmentState,
+  so every page fault (CR2), CR3 load and task switch (TR) threw them away.
+  SegmentState::same_code_context compares what decoding depends on (the
+  six segment caches and selectors, MSW, mode, paging, flag checkpoint);
+  code stamps still translate through the current CR3. Base install
+  390 s -> 60 s host time.
+- `--fpu 80387` for --boot-probe and booted consoles. AT error path: an
+  unmasked 387 exception (zero divide, precision so far; others still
+  stop) sets ES/B and the busy latch and raises IRQ13 (slave IRQ5); FWAIT
+  and ESC wait (Outcome::Busy, interrupts taken) until OUT F0h clears the
+  latch. Linux 1.0's check_fpu: "Ok, fpu using irq13 error reporting".
+  FNSAVE/FRSTOR (DD /6, /4) and DC C0-FF (FADD..FDIV ST(i),ST) are new.
+
+Local Linux (cloud), release: 1062 Rust tests pass, 2 ignored (6 new: the
+decode cache across page faults and task switches, DC register forms, the
+IRQ13 error and busy latch, FNSAVE/FRSTOR, script parsing and a scripted
+boot sector, the tar diskette). From an empty 40 MB image with the three
+scripts: install 95 s, gcc 80 s, mandel.txt 73 s host time (boot ~30 s
+each). In the guest: `gcc -O2` 10.3 s (7.18 user); `mandel i 500` 760
+ticks (7.6 s, about 400,000 instructions a picture, 24 million steps/s);
+`mandel f 100` 1150 ticks with --fpu 80387; float x20 without it 141 s
+(Linux's emulator). MANDEL.COM is 429,253 instructions a picture. The
+console window and Windows were not run.
+
 # MCC Interim 1.0+ (Linux 1.0.4) installs and boots — 23 November 2026
 
 Tony chose MCC from github.com/youngd24/oldlinux (mcc-linux) before

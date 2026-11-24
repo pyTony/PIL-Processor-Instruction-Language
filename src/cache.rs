@@ -37,7 +37,7 @@ impl DecodeCache {
         if !self.enabled {return image.decode(ram,eip).map(Rc::new);}
         let slot=((eip^(eip>>8)) as usize)&(CAPACITY-1);
         if let Some((cached_eip,entry))=&self.fast[slot] {
-            if *cached_eip==eip && entry.image==*image {
+            if *cached_eip==eip && entry.image.same_code_context(image) {
                 if entry.unchanged(image,ram,eip){self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));}
                 if let Ok(signature)=image.fetch_signature(ram,eip,entry.decoded.length) {
                     if signature==entry.signature {
@@ -53,7 +53,7 @@ impl DecodeCache {
             }
         }
         if let Some(entry)=self.entries.get(&eip) {
-            if entry.image==*image {
+            if entry.image.same_code_context(image) {
                 if entry.unchanged(image,ram,eip){
                     self.fast[slot]=Some((eip,entry.clone()));self.stats.hits+=1;return Ok(Rc::clone(&entry.decoded));
                 }

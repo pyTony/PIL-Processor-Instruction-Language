@@ -152,6 +152,12 @@ about 1.5 billion guest steps (10.5 minutes headless).
   (tests/unit/precompiled.rs); DOS/4GW Doom and the Linux boot as
   workloads. test386 with blocks against without is not done.
 
+## After the plan: comparison software (24 November 2026)
+MCC 1.0+ installs gcc 2.5.8 from tar diskettes and compiles
+programs/linux/mandel.c, timed in the guest (docs/BOOT.md, tools/mcc).
+Open: x87 code runs outside blocks (about 3.7M steps/s against 24M for
+integer code); svgalib from source; more 387 exceptions on the IRQ13 path.
+
 ## Principles
 - **Program independence:** PIL and Dine stay program-independent. Every
   device follows its datasheet or the documented PC/AT behaviour, tested

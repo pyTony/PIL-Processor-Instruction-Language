@@ -1,0 +1,64 @@
+# MCC Interim 1.0+ onto an empty hard disk image, for
+#   pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img
+#       --script tools/mcc/install.txt --steps 4000000000 --rtc-year 1994
+# Run from the checkout's root folder (the floppy path below is relative).
+# fdisk makes one Linux partition over the whole disk, mkfs an ext2 file
+# system on /dev/hda1, and the installer copies Base onto it (no swap, no
+# LILO, no packages), then reboots.
+run 3000000
+type ramdisk\r
+screen place the root disk
+floppy images/mcc-1.0/root
+type \r
+prompt ?
+mark menu
+type f\r
+prompt :
+type \r
+prompt :
+type n\r
+prompt )
+type p\r
+prompt :
+type 1\r
+prompt :
+type 1\r
+prompt :
+type 81\r
+prompt :
+type w\r
+prompt ?
+mark fdisk
+type m\r
+prompt :
+type y\r
+prompt :
+type \r
+prompt :
+type y\r
+prompt ?
+mark mkfs
+type i\r
+prompt :
+type \r
+prompt :
+type y\r
+prompt :
+type n\r
+prompt :
+type n\r
+prompt :
+mark base
+show
+type n\r
+prompt :
+type n\r
+prompt :
+type n\r
+prompt ?
+type 7\r
+prompt :
+type y\r
+run 100000000
+mark done
+show

@@ -52,7 +52,16 @@ impl Fpu {
     /// The AT coprocessor reset (any byte written to port F1h). A 387 leaves
     /// RESET in the FNINIT state; with no coprocessor nothing receives it.
     pub fn reset(&mut self) {
-        if let Self::Present(device) = self { device.state.finit(); }
+        if let Self::Present(device) = self { device.state.finit(); device.busy = false; }
+    }
+    /// Port F0h: clear the AT busy latch that an unmasked exception set.
+    pub fn clear_busy(&mut self) {
+        if let Self::Present(device) = self { device.busy = false; }
+    }
+    /// Report unmasked exceptions through ERROR# and IRQ13, as an AT does,
+    /// instead of stopping (a booted machine, whose own handler takes IRQ13).
+    pub fn set_error_irq(&mut self, on: bool) {
+        if let Self::Present(device) = self { device.error_irq = on; }
     }
     pub fn execute(&mut self, instruction: &Instruction, cpu: &mut Cpu,
                    ram: &mut Ram, image: &Image) -> Outcome {
@@ -64,7 +73,16 @@ impl Fpu {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome { Completed, NotAvailable, Unsupported, StackFault(StackError), MemoryFault }
+pub enum Outcome {
+    Completed, NotAvailable, Unsupported, StackFault(StackError), MemoryFault,
+    /// The instruction retired with an unmasked exception; ERROR# is
+    /// signalled (IRQ13 through the AT busy latch).
+    ErrorSignalled,
+    /// The AT busy latch is still set from an unmasked exception: the CPU
+    /// waits on BUSY# before this instruction (taking interrupts) until
+    /// port F0h is written; the instruction has not run.
+    Busy,
+}
 
 #[derive(Clone, Debug)]
 pub struct Instruction {

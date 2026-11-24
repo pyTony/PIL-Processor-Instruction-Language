@@ -220,6 +220,19 @@ pub const TR_RESET:SystemSegment=SystemSegment{selector:0,base:0,limit:0xffff,ki
 /// reaches: DR4 and DR5 are DR6 and DR7.
 pub fn debug_index(n:usize)->usize{match n{0..=3=>n,4|6=>4,_=>5}}
 impl SegmentState {
+    /// Whether decoded code and compiled blocks made under `other` serve
+    /// this state too. Decoding reads the segment caches (memory operands
+    /// carry them), the selectors (PUSH Sreg), the mode and CR0; the
+    /// descriptor tables, LDTR, TR, CR2, CR3, the debug registers and the
+    /// interrupt shadows are read when an instruction runs. Code bytes
+    /// under paging are checked through the current page tables by the
+    /// code stamps, so a task switch or a page fault keeps what was decoded.
+    pub fn same_code_context(&self,other:&Self)->bool{
+        self.segments==other.segments&&self.selectors==other.selectors
+            &&self.msw==other.msw&&self.real_mode==other.real_mode&&self.paging==other.paging&&self.flag_checkpoint==other.flag_checkpoint
+    }
+}
+impl SegmentState {
     // The mode bit is coherent with the existing normalized mode state.
     pub fn machine_status(&self)->u16{(self.msw&!1)|u16::from(!self.real_mode)}
     /// CR0, CR2, CR3 (`register` 0, 2, 3) or DR0-DR7 (8-15): CPL 0 only,

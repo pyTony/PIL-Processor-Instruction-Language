@@ -73,6 +73,12 @@ impl Image {
         (at>=u64::from(self.fetch_base)+u64::from(self.start)&&at<u64::from(self.fetch_base)+u64::from(self.end))
             ||self.system.iter().any(|&(s,e)|at>=u64::from(s)&&at<u64::from(e))
     }
+    /// Whether code decoded under `other` serves this image too (see
+    /// SegmentState::same_code_context); the fetch window must match.
+    pub fn same_code_context(&self,other:&Self)->bool{
+        self.fetch_base==other.fetch_base&&self.start==other.start&&self.end==other.end&&self.system==other.system
+            &&self.segment_state().same_code_context(&other.segment_state())
+    }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
     pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging,debug:self.debug}}
     pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;self.debug=s.debug;}
