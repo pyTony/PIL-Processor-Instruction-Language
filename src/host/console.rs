@@ -59,6 +59,18 @@ fn pasted(session:&Session,text:Option<String>)->Vec<PendingKey>{
         .map(|(scan,extended,down,word)|PendingKey::Native{scan,extended,down,word}).collect()
 }
 
+/// The keys for one host key (`--tty`, the window's untranslated keys).
+/// Dine's DOS takes its BIOS word; a booted machine, whose own IRQ1
+/// handler reads scan codes, gets the key presses on the guest's layout
+/// (Backspace as key 0Eh, not the DEL byte the terminal sent; arrows as
+/// E0h keys, not ESC [ A typed as text).
+fn typed(session:&Session,key:Key,mods:Mods)->Vec<PendingKey>{
+    let word=bios_word(key,mods);
+    if !session.machine().is_some_and(|p|p.booted){return word.into_iter().map(PendingKey::from).collect();}
+    super::guest_keymap::key_edges(session.keymap,key,mods,word).into_iter()
+        .map(|(scan,extended,down,word)|PendingKey::Native{scan,extended,down,word}).collect()
+}
+
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 enum PendingKey{Tap(u16),Native{scan:u8,extended:bool,down:bool,word:Option<u16>}}
 impl From<u16> for PendingKey{fn from(word:u16)->Self{Self::Tap(word)}}
@@ -406,7 +418,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     let letter=if n%2==1{b'A'}else{b'B'};
                     note=Some(session.disk(letter,Some(if n<=2{"next"}else{"prev"})).unwrap_or_else(|e|e));
                 },
-                Event::Key(key,mods)=>{front.clear_selection();if let Some(word)=bios_word(key,mods){pending.push_back(word.into());}},
+                Event::Key(key,mods)=>{front.clear_selection();pending.extend(typed(session,key,mods));},
                 Event::NativeKey{scan,extended,down,key}=>{
                     front.clear_selection();
                     pending.push_back(PendingKey::Native{scan,extended,down,word:native_bios_word(scan,key)});

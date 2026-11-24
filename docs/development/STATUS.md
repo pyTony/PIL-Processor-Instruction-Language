@@ -1,3 +1,31 @@
+# Terminal keys into a booted machine are key presses — 24 November 2026
+
+Tony, MCC Linux 1.0 in `pil --dos-console --tty --boot` on Termux: at the
+login prompt Backspace showed ^? and the up arrow ^[[A. The bytes were
+not passed through: crossterm turns them into keys, and Backspace already
+arrived as key 0Eh. Linux 1.0's keymap makes it DEL, and MCC's getty
+erases on DEL but echoes it as ^? (and an arrow as ^[[A), as on a PC.
+What --tty did get wrong in a booted machine: each key went to IRQ1 as
+the bare scan code of its BIOS word, so Shift, Ctrl and Alt were lost
+(capitals, shifted symbols, Ctrl+C), symbols used US key positions
+whatever `--guest-keymap` said, and the cursor block went as keypad keys
+without E0h.
+- host_console::typed: in a booted machine a terminal key becomes key
+  edges (guest_keymap::key_edges): Ctrl, Alt and Shift held around the
+  key, characters on the guest layout (as a paste), control codes as Ctrl
+  and the letter, arrows/Home/End/PgUp/PgDn/Ins/Del as E0h keys, F1-F12.
+  Dine's DOS still gets BIOS words. The window's own scan codes are
+  unchanged.
+- guest_keymap::edges: BS and DEL are Backspace (0Eh), ESC is Esc. Probe
+  scripts gain `\b` (Backspace) and `\e` (Esc) in `type`.
+
+Cloud Linux, release: 1075 Rust tests pass, 2 ignored (2 new); 0 rustc
+warnings; portable-path, program-specific and layer checks pass. Tony's
+MCC 1.0 images (nocdboot, a copy of his hd40.img) through the probe:
+`xx\b\broot\r` logged in as root (echo "xx^?^?root"), `echo abcd\b\bXY`
+printed abXY. The terminal itself and Termux were not driven here (no
+Android in the cloud); arrows reach Linux only through --tty, untested.
+
 # Machine apart from Dine's DOS and BIOS: pc::Machine and Firmware — 24 November 2026
 
 Step 2 of the staged library split Tony chose (#311 was step 1). No

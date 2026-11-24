@@ -653,3 +653,16 @@ fn clipboard_mount_path_accepts_windows_explorer_quotes_and_rejects_bad_input(){
         assert!(clipboard_mount_path(bad).is_err(),"bad clipboard contents: {bad:?}");
     }
 }
+
+#[test]
+fn terminal_keys_reach_a_booted_machine_as_key_presses(){
+    // Dine's DOS takes BIOS words; a booted machine gets scan-code edges,
+    // so Linux sees Backspace as key 0Eh and Up as E0 48h.
+    let mut disk=vec![0u8;1_474_560];disk[0]=0xfa;disk[1]=0xf4;disk[510]=0x55;disk[511]=0xaa;
+    let session=Session::new(crate::dos::boot::boot(&disk,0).unwrap());
+    assert_eq!(typed(&session,Key::Backspace,NONE),[PendingKey::Native{scan:0x0e,extended:false,down:true,word:Some(0x0e08)},
+        PendingKey::Native{scan:0x0e,extended:false,down:false,word:None}]);
+    assert_eq!(typed(&session,Key::Up,NONE)[0],PendingKey::Native{scan:0x48,extended:true,down:true,word:Some(0x4800)});
+    let mut dos=crate::dos::boot::boot(&disk,0).unwrap();dos.booted=false;
+    assert_eq!(typed(&Session::new(dos),Key::Backspace,NONE),[PendingKey::Tap(0x0e08)]);
+}
