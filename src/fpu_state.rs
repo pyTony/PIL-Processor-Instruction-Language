@@ -65,6 +65,12 @@ impl X87State {
     }
     pub fn tag(&self, logical: usize) -> Tag { self.tags[self.physical(logical)] }
     pub fn raw_st(&self, logical: usize) -> Extended80 { self.registers[self.physical(logical)] }
+    /// Write a logical register's bits and leave its tag (FRSTOR takes the
+    /// tags from the saved tag word).
+    pub fn set_raw(&mut self, logical: usize, value: Extended80) {
+        let physical = self.physical(logical);
+        self.registers[physical] = value;
+    }
     pub fn st(&self, logical: usize) -> Option<Extended80> {
         let p = self.physical(logical);
         if self.tags[p] == Tag::Empty { None } else { Some(self.registers[p]) }

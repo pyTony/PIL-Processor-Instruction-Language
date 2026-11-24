@@ -1,3 +1,70 @@
+# svgalib 1.1 under MCC Linux 1.0: VGA modes through the registers — 24 November 2026
+
+Tony's next step after gcc: svgalib. Era source: svgalib 1.1 (May 1994,
+svgalib111.tar.gz from slackware-2.0.0/source/d/svgalib of
+github.com/youngd24/oldlinux, SHA256 ea7b2157...df86, not in the repo),
+built in the guest with gcc 2.5.8 (tools/mcc/svgabld.sh, svgalib.txt).
+- svgalib's VGA driver sets modes by writing the misc output, sequencer,
+  CRTC, graphics controller and attribute registers, no BIOS. In a booted
+  machine (src/dos_vga_regs.rs) those registers now take any value; CPU
+  access to A0000h follows the live sequencer/GC values (Ram's planar
+  window or plain RAM, planes kept while unmapped for the font restore)
+  and vga::Display is read from the registers (13h, 0Dh/0Eh/10h/12h, text
+  with the CRTC's size; anything else is mode FFh, shown as nothing).
+  Dine's DOS keeps its stricter rules.
+- `shot FILE` script step: the graphics screen as a P6 PPM.
+- FUCOMPP (DA E9), which svgalib's build (gcc's float code) needed.
+- tools/mcc/ustar_repack.py, svgalib.txt, vgatest.txt, vgamand.txt;
+  programs/linux/vgamand.c.
+
+Local Linux (cloud), release: 1067 Rust tests pass, 2 ignored (5 new:
+three register-level mode sets in tests/unit/dos_vga_regs.rs, FUCOMPP,
+the shot step). In the guest: vgatest mode 5 (320x200x256: lines and the
+grey/red/green/blue ramps) and mode 4 (640x480x16: all 16 colours) drawn
+and back to text; vgamand 256 took 112 ticks (1.12 s), vgamand 16 622
+ticks, sums 1104757 and 5294314 as the host's, and every screenshot pixel
+has the colour of its iteration count. Mode X (vgatest 6-8), the 2-colour
+modes and SVGA chipsets were not tried. The console window and Windows
+were not run.
+
+# gcc 2.5.8 and a timed Mandelbrot under MCC Linux 1.0 — 24 November 2026
+
+Tony asked for comparison software: gcc and a Mandelbrot inside Linux, so
+that PIL runs real 386 code from a 1994 compiler (Dine's DOS answers DOS
+calls on the host). Then svgalib, later.
+- `pil --boot-probe ... --script FILE` (dos::boot_script,
+  boot_script_probe): run/type/prompt/screen/floppy/show/mark steps,
+  output streamed; tools/mcc/install.txt, gcc.txt, mandel.txt.
+- `pil --new-tar-floppy IMAGE [--size KB] FILE...` (dos::tar_floppy): one
+  ustar archive on a diskette image, read in Linux with cpio. gcca.tgz
+  (SHA256 caf7ac51...c7eb) and gccb.tgz (445e35d6...dffdf) from
+  youngd24/oldlinux mcc-linux/MCC-1.0/packages, outside the repo.
+- programs/linux/mandel.c: MANDEL.COM's picture in C; `i` fixed point
+  (sum 15564, same characters as `pil --dos-text MANDEL.COM` on the
+  host), `f` double (sum 15584, as the host build).
+- Decode cache and blocks: their entries compared the whole SegmentState,
+  so every page fault (CR2), CR3 load and task switch (TR) threw them away.
+  SegmentState::same_code_context compares what decoding depends on (the
+  six segment caches and selectors, MSW, mode, paging, flag checkpoint);
+  code stamps still translate through the current CR3. Base install
+  390 s -> 60 s host time.
+- `--fpu 80387` for --boot-probe and booted consoles. AT error path: an
+  unmasked 387 exception (zero divide, precision so far; others still
+  stop) sets ES/B and the busy latch and raises IRQ13 (slave IRQ5); FWAIT
+  and ESC wait (Outcome::Busy, interrupts taken) until OUT F0h clears the
+  latch. Linux 1.0's check_fpu: "Ok, fpu using irq13 error reporting".
+  FNSAVE/FRSTOR (DD /6, /4) and DC C0-FF (FADD..FDIV ST(i),ST) are new.
+
+Local Linux (cloud), release: 1062 Rust tests pass, 2 ignored (6 new: the
+decode cache across page faults and task switches, DC register forms, the
+IRQ13 error and busy latch, FNSAVE/FRSTOR, script parsing and a scripted
+boot sector, the tar diskette). From an empty 40 MB image with the three
+scripts: install 95 s, gcc 80 s, mandel.txt 73 s host time (boot ~30 s
+each). In the guest: `gcc -O2` 10.3 s (7.18 user); `mandel i 500` 760
+ticks (7.6 s, about 400,000 instructions a picture, 24 million steps/s);
+`mandel f 100` 1150 ticks with --fpu 80387; float x20 without it 141 s
+(Linux's emulator). MANDEL.COM is 429,253 instructions a picture. The
+console window and Windows were not run.
 # A host folder as a disk for booted systems: --hd-folder — 24 November 2026
 
 Tony asked for "virtual folder harddisk support", so that Linux under PIL

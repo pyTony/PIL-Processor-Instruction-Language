@@ -180,6 +180,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         let lo=device.io(port,input,p.cpu.regs[0] as u8)?.ok_or_else(||format!("unsupported VGA port direction at {port:04X}h"))?;
         let hi=if word{device.io(port+1,input,(p.cpu.regs[0]>>8)as u8)?.unwrap()}else{0};
         p.vga=device;
+        if !input{super::vga_regs::sync(p);}
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|u32::from(lo)|(u32::from(hi)<<8);}
         return Ok(());
     }
@@ -426,11 +427,10 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             // next, at (value << 2) | 3, inside 203h-3FFh.
             0xa79 => if s.pnp_register==0{s.pnp_read_port=Some(u16::from(value)<<2|3);},
             // AT coprocessor ports, any byte value. F0h clears the busy latch
-            // that the 287/387 ERROR# output sets and that raises IRQ13. This
-            // FPU finishes each instruction before the next one and stops on
-            // an unmasked exception, so the latch is never set and the write
-            // changes nothing, with or without a coprocessor. F1h resets it.
-            0xf0 => {},
+            // that the 287/387 ERROR# output sets and that raises IRQ13 (in
+            // a booted machine; Dine's DOS stops on an unmasked exception
+            // instead, so there the latch is never set). F1h resets it.
+            0xf0 => p.fpu.clear_busy(),
             0xf1 => p.fpu.reset(),
             _ if booted&&device(port).is_none()=>{},
             _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),

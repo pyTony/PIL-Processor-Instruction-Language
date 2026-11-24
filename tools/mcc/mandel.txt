@@ -1,0 +1,31 @@
+# Compile programs/linux/mandel.c with gcc 2.5.8 and time it, for
+#   pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img
+#       --script tools/mcc/mandel.txt --fpu 80387 --steps 9000000000 --rtc-year 1994
+# mandel.c comes on images/mcc-1.0/gcca.flp. Without --fpu 80387 the
+# float run goes through Linux's own 387 emulator (about 60 times slower).
+run 3000000
+type ro root=301\r
+screen login:
+type root\r
+prompt >
+type cd /tmp\r
+prompt >
+floppy images/mcc-1.0/gcca.flp
+type cpio -imV -H ustar mandel.c </dev/fd0\r
+prompt >
+mark compile
+type time gcc -O2 -o mandel mandel.c\r
+prompt >
+mark compiled
+show
+type ./mandel i 1\r
+prompt >
+show
+type time ./mandel i 500\r
+prompt >
+mark fixed-500
+show
+type time ./mandel f 100\r
+prompt >
+mark float-100
+show

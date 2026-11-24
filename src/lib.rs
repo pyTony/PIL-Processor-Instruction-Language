@@ -2642,9 +2642,9 @@ pub fn run_cli() -> Result<(), String> {
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--boot-probe"){
-        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--hd-folder DIR] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--rtc-year YEAR] [--guest-keymap us|uk|fi]";
+        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--hd-folder DIR] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--script FILE] [--fpu none|80387] [--rtc-year YEAR] [--guest-keymap us|uk|fi]";
         let(mut image,mut drive,mut steps,mut at,mut keys,mut keys_after)=(None,0u8,10_000_000usize,2,String::new(),5_000_000usize);
-        let mut hard_disk=None;let mut folder=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;let mut keymap=dos::guest_keymap::Keymap::default();
+        let mut hard_disk=None;let mut folder=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;let mut script=None;let mut fpu=false;let mut keymap=dos::guest_keymap::Keymap::default();
         while at<dos_args.len(){
             match dos_args[at].as_str(){
                 "--hd"=>drive=0x80,
@@ -2660,6 +2660,13 @@ pub fn run_cli() -> Result<(), String> {
                     changes.push((usize::try_from(number(when)?).map_err(|_|"step count out of range")?,bytes));at+=1;
                 },
                 "--hd-image"=>{hard_disk=Some(dos_args.get(at+1).ok_or(usage)?.clone());at+=1;},
+                "--fpu"=>{
+                    fpu=match dos_args.get(at+1).map(String::as_str){Some("80387")=>true,Some("none")=>false,_=>return Err("--fpu takes none or 80387".into())};at+=1;
+                },
+                "--script"=>{
+                    let file=dos_args.get(at+1).ok_or(usage)?;
+                    script=Some(dos::boot_script(&std::fs::read_to_string(file).map_err(|e|format!("{file}: {e}"))?)?);at+=1;
+                },
                 "--hd-folder"=>{folder=Some(dos_args.get(at+1).ok_or(usage)?.clone());at+=1;},
                 "--keys"=>{keys=dos_args.get(at+1).ok_or(usage)?.replace("\\r","\r");at+=1;},
                 "--rtc-year"=>{rtc_year=Some(u32::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"year out of range")?);at+=1;},
@@ -2674,14 +2681,36 @@ pub fn run_cli() -> Result<(), String> {
         let image=image.ok_or(usage)?;
         // A fixed disk (--hd, --hd-image) is written back to its file; a
         // folder disk's changes go back to the folder when the run ends.
+        if script.is_some()&&(!keys.is_empty()||!typed.is_empty()||!changes.is_empty()){return Err("--script replaces --keys, --type and --change-floppy".into());}
         let folder=folder.map(|dir|dos::FolderDisk::create(std::path::Path::new(&dir))).transpose()?;
         if let Some((_,notes))=&folder{for note in notes{eprintln!("--hd-folder: {note}");}}
         let machine=dos::boot_command(image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()));
-        let report=machine.and_then(|m|dos::boot_probe(m,steps,&keys,keys_after,&typed,&changes,rtc_year,keymap));
+        let machine=machine.and_then(|mut m|{if fpu{m.select_fpu(true)?;}Ok(m)});
+        let report=machine.and_then(|m|match &script{
+            Some(script)=>{
+                let mut out=|text:&str|{use std::io::Write;let mut o=std::io::stdout();let _=o.write_all(text.as_bytes());let _=o.flush();};
+                dos::boot_script_probe(m,steps,script,rtc_year,keymap,Some(&mut out))
+            },
+            None=>dos::boot_probe(m,steps,&keys,keys_after,&typed,&changes,rtc_year,keymap),
+        });
         let back=folder.map(|(f,_)|f.finish());
         print!("{}",report?);
         if let Some(back)=back{println!("--hd-folder {}",back?);}
         return Ok(());
+    }
+    if dos_args.get(1).map(String::as_str)==Some("--new-tar-floppy"){
+        let usage="usage: pil --new-tar-floppy IMAGE [--size 360|720|1200|1440|2880] FILE... (a diskette holding a ustar archive of the files, read in the guest with `cpio -i -H ustar </dev/fd0` or `tar xf /dev/fd0`)";
+        let image=dos_args.get(2).ok_or(usage)?;
+        let mut kilobytes=1200usize;let mut files=Vec::new();let mut at=3;
+        while at<dos_args.len(){
+            if dos_args[at]=="--size"{kilobytes=dos_args.get(at+1).ok_or(usage)?.parse().map_err(|_|usage)?;at+=2;continue;}
+            files.push(dos_args[at].clone());at+=1;
+        }
+        if files.is_empty()||![360,720,1200,1440,2880].contains(&kilobytes){return Err(usage.into());}
+        use std::io::Write;let bytes=dos::tar_floppy(&files,kilobytes*1024)?;
+        let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(image).map_err(|e|format!("{image}: {e}"))?;
+        f.write_all(&bytes).map_err(|e|format!("{image}: {e}"))?;
+        println!("{image}: {} file(s) in a {kilobytes} KB ustar diskette",files.len());return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--new-hd-image"){
         let usage="usage: pil --new-hd-image FILE MEGABYTES (a new, empty fixed-disk image: 16 heads, 63 sectors, up to 1024 cylinders)";

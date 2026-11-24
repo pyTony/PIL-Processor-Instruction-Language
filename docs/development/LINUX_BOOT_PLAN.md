@@ -152,6 +152,16 @@ about 1.5 billion guest steps (10.5 minutes headless).
   (tests/unit/precompiled.rs); DOS/4GW Doom and the Linux boot as
   workloads. test386 with blocks against without is not done.
 
+## After the plan: comparison software (24 November 2026)
+MCC 1.0+ installs gcc 2.5.8 from tar diskettes and compiles
+programs/linux/mandel.c, timed in the guest (docs/BOOT.md, tools/mcc).
+Open: x87 code runs outside blocks (about 3.7M steps/s against 24M for
+integer code); more 387 exceptions on the IRQ13 path.
+svgalib 1.1 builds from source in the guest; its VGA driver sets modes
+through the registers, which a booted machine now follows (vgatest 5 and
+4, vgamand in 320x200x256 and 640x480x16). Open: mode X (vgatest 6-8),
+the 2-colour modes, SVGA chipsets, then X.
+
 ## Principles
 - **Program independence:** PIL and Dine stay program-independent. Every
   device follows its datasheet or the documented PC/AT behaviour, tested

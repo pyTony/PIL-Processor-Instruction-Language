@@ -76,7 +76,7 @@ pub(crate) use folder_disk::FolderDisk;
 mod boot;
 #[path="dos_guest_keymap.rs"]
 pub(crate) mod guest_keymap;
-pub use boot::probe as boot_probe;
+pub use boot::{probe as boot_probe,parse_script as boot_script,script_probe as boot_script_probe,tar_floppy};
 pub(crate) use boot::boot_command;
 #[cfg(test)]
 pub(crate) use boot::{boot,boot_with_hard_disk,boot_with_hard_disks};
@@ -88,6 +88,8 @@ mod vga;
 mod planar;
 #[path="dos_vga_font.rs"]
 mod vga_font;
+#[path="dos_vga_regs.rs"]
+mod vga_regs;
 #[path="dos_serial.rs"]
 mod serial;
 #[path="dos_break.rs"]
@@ -274,6 +276,8 @@ impl Loaded{
         self.ram.store(0x410,MemWidth::Word,u32::from(selected.equipment(equipment))).map_err(|e|format!("FPU BIOS equipment write: {e:?}"))?;
         if present { self.image.msw=(self.image.msw&!0x0004)|0x0012; } else { self.image.msw&=!0x0012; }
         self.fpu=selected;
+        // A booted operating system takes the 387's errors through IRQ13.
+        self.fpu.set_error_irq(self.booted);
         Ok(())
     }
 }
@@ -1082,6 +1086,17 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
                 }
             }
         }
+        // IRQ13 from the 387's ERROR# through the AT busy latch.
+        if p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0&&p.speaker.pic.slave_ready(5){
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            let vector=p.speaker.pic.slave_vector(5);
+            match vectors::deliver_irq(&mut p,vector){
+                Ok(())=>{
+                    p.speaker.pic.acknowledge_slave(5);execution_steps+=1;
+                    *instructions.entry(format!("IRQ13 to INT {vector:02X}h")).or_insert(0)+=1;continue;},
+                Err(message)=>break Stop::Service(message),
+            }
+        }
         // IRQ14 from the hard-disk controller, through the slave PIC.
         if p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0&&p.speaker.pic.slave_ready(6){
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
@@ -1259,6 +1274,24 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
                         p.cpu.eip=p.cpu.eip.wrapping_add(instruction.length)&mask;
                         p.image.retired();completed+=1;execution_steps+=1;
                         *instructions.entry(p.fpu.name().into()).or_insert(0)+=1;
+                        continue;
+                    },
+                    super::fpu::Outcome::ErrorSignalled=>{
+                        // ERROR# sets the AT busy latch, which raises IRQ13
+                        // (slave PIC IRQ5).
+                        p.speaker.pic.raise_slave(5);
+                        let mask=if p.image.segments[SegmentRegister::Cs.index()].default_32(){u32::MAX}else{0xffff};
+                        p.cpu.eip=p.cpu.eip.wrapping_add(instruction.length)&mask;
+                        p.image.retired();completed+=1;execution_steps+=1;
+                        *instructions.entry(p.fpu.name().into()).or_insert(0)+=1;
+                        continue;
+                    },
+                    super::fpu::Outcome::Busy=>{
+                        // BUSY# held by the AT latch: the CPU waits before
+                        // this instruction, taking interrupts meanwhile (the
+                        // IRQ13 handler writes port F0h), and runs it after.
+                        execution_steps+=1;
+                        *instructions.entry("80387 BUSY# wait".into()).or_insert(0)+=1;
                         continue;
                     },
                     super::fpu::Outcome::NotAvailable=>{

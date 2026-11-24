@@ -1,0 +1,21 @@
+# programs/linux/vgamand.c (built by svgalib.txt) in 320x200x256 and
+# 640x480x16, timed with times(), with a screenshot of each:
+#   pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img
+#       --script tools/mcc/vgamand.txt --fpu 80387 --steps 3000000000 --rtc-year 1994
+# Sums: 1104757 (320x200) and 5294314 (640x480), as on the host.
+run 3000000
+type ro root=301\r
+screen login:
+type root\r
+prompt >
+type /tmp/vgamand 256 1\r
+run 400000000
+shot vgamand-256.ppm
+type \r
+run 60000000
+type /tmp/vgamand 16 1\r
+run 1200000000
+shot vgamand-16.ppm
+type \r
+run 60000000
+show

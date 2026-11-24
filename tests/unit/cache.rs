@@ -152,3 +152,26 @@ fn executed_cs_write_invalidates_an_already_cached_instruction(){
  if let Operation::Pil{program,dst,src,flow,address}=&d.operation{execute_machine(program,&mut cpu,*dst,*src,*flow,&mut ram,*address,&mut machine).unwrap();}else{panic!()}
  image.set_segment_state(machine);let new=cache.fetch(&image,&ram,0x106).unwrap();assert_eq!(new.label,"INC CX");assert!(!Rc::ptr_eq(&old,&new));assert_eq!(cache.stats().invalidations,1);
 }
+
+#[test]
+fn decoded_code_survives_page_faults_and_task_switches_but_not_a_new_code_segment(){
+    // CR2 (a page fault), CR3 (another task's page tables), LDTR, TR and
+    // the interrupt shadows are read when an instruction runs; the code
+    // stamps check the bytes under the current page tables. Decoding
+    // depends on CS, SS, the selectors and the mode.
+    let (image,_)=Image::load(&[0x40,0xf4]).unwrap();let mut ram=Ram::new(0x4000);
+    ram.write_bytes(ENTRY,&[0x40,0xf4]).unwrap();let mut cache=DecodeCache::default();
+    let first=cache.fetch(&image,&ram,ENTRY).unwrap();
+    let mut task=image.clone();
+    task.controls=[0x1234_5000,0x0009_c000];
+    task.ldt_tr[0].selector=0x28;task.ldt_tr[1].selector=0x30;
+    task.sti_shadow=1;task.debug[5]=0x401;
+    assert!(task.same_code_context(&image));
+    assert!(Rc::ptr_eq(&first,&cache.fetch(&task,&ram,ENTRY).unwrap()));
+    assert_eq!(cache.stats().misses,1);
+    let mut other=image.clone();
+    other.segments[SegmentRegister::Cs.index()].base+=0x10;other.selectors[1]+=1;
+    assert!(!other.same_code_context(&image));
+    let mut stack=image.clone();stack.selectors[SegmentRegister::Ss.index()]^=8;
+    assert!(!stack.same_code_context(&image));
+}

@@ -137,7 +137,8 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
         let folder=folder.map(|dir|dos::FolderDisk::create(std::path::Path::new(&dir))).transpose()?;
         if let Some((_,notes))=&folder{for note in notes{eprintln!("--hd-folder: {note}");}}
         let result=(||{
-            let machine=dos::boot_command(&image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()))?;
+            let mut machine=dos::boot_command(&image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()))?;
+            if fpu.or(defaults.fpu.map(|on|if on{"80387"}else{"none"}))==Some("80387"){machine.select_fpu(true)?;}
             let mut session=dos::session::Session::new(machine);
             if !floppies.is_empty(){
                 if drive!=0{return Err("--floppy changes the diskette a --boot started from".into());}

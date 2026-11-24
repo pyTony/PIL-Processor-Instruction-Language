@@ -57,6 +57,8 @@ fn start(floppy:Option<(u8,bios_disk::Disk)>,fixed:Vec<bios_disk::Disk>,drive:u8
     if let Some((at,disk))=floppy{p.disks.attach(at,disk)?;}
     for(unit,disk)in fixed.into_iter().enumerate(){p.disks.attach(0x80+unit as u8,disk)?;}
     p.booted=true;
+    // The operating system may program the VGA registers itself.
+    p.vga.free=true;
     // Nothing of Dine's DOS stays in memory: its data segment, the memory
     // chain, the program's PSP and environment are DOS, not the machine.
     p.ram.write_bytes(0x500,&vec![0;0xa0000-0x500]).map_err(|e|format!("clearing conventional memory: {e:?}"))?;
@@ -147,6 +149,171 @@ pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usi
     for line in screen_lines(p){report.push_str(&line);report.push('\n');}
     let cs=p.selectors[SegmentRegister::Cs.index()];
     writeln!(report,"-- stop: {}; CS:EIP={cs:04x}:{:08x}; {} mode; at most {done} steps",reason.trim(),p.cpu.eip,if p.image.real_mode{"real"}else{"protected"}).unwrap();
+    Ok(report)
+}
+
+/// A diskette image of `size` bytes holding a ustar archive of `files`
+/// (each stored under its own file name, mode 0644, owner root), as
+/// `tar cf /dev/fd0` writes one; the rest of the diskette is zeros. A
+/// system without a file system for the diskette reads it with
+/// `cpio -i -H ustar </dev/fd0`.
+pub fn tar_floppy(files:&[String],size:usize)->Result<Vec<u8>,String>{
+    let mut out=Vec::new();
+    for file in files{
+        let data=std::fs::read(file).map_err(|e|format!("{file}: {e}"))?;
+        let name=std::path::Path::new(file).file_name().and_then(|n|n.to_str()).ok_or_else(||format!("{file}: no file name"))?;
+        if name.len()>99||!name.is_ascii(){return Err(format!("{name}: a ustar name holds up to 99 ASCII characters"));}
+        let mut h=[0u8;512];
+        let field=|h:&mut [u8;512],at:usize,text:&[u8]|h[at..at+text.len()].copy_from_slice(text);
+        field(&mut h,0,name.as_bytes());
+        field(&mut h,100,b"0000644\0");field(&mut h,108,b"0000000\0");field(&mut h,116,b"0000000\0");
+        field(&mut h,124,format!("{:011o}\0",data.len()).as_bytes());
+        // 1 January 1994, 00:00 UTC.
+        field(&mut h,136,format!("{:011o}\0",757_382_400u32).as_bytes());
+        field(&mut h,148,b"        ");h[156]=b'0';
+        field(&mut h,257,b"ustar\0");field(&mut h,263,b"00");field(&mut h,265,b"root");field(&mut h,297,b"root");
+        let sum:u32=h.iter().map(|&b|u32::from(b)).sum();
+        field(&mut h,148,format!("{sum:06o}\0 ").as_bytes());
+        out.extend_from_slice(&h);out.extend_from_slice(&data);
+        out.resize(out.len().div_ceil(512)*512,0);
+    }
+    out.resize(out.len()+1024,0);
+    if out.len()>size{return Err(format!("the archive takes {} bytes; the diskette holds {size}",out.len()));}
+    out.resize(size,0);
+    Ok(out)
+}
+
+/// One line of a `--script` file for the boot probe.
+#[derive(Debug,Clone,PartialEq)]
+pub enum ScriptStep{
+    /// Run until the screen has changed since the last typed text and its
+    /// last non-blank line ends with the text (a shell prompt).
+    Prompt(String),
+    /// Run until the text is anywhere on the screen.
+    Screen(String),
+    /// Type the text (US layout; `\r` is Enter, `\\` a backslash).
+    Type(String),
+    /// Put another diskette image of the same format into drive A:.
+    Floppy(Vec<u8>),
+    /// Run this many steps.
+    Run(usize),
+    /// Print the screen into the report.
+    Show,
+    /// Print the steps and host seconds since the last mark.
+    Mark(String),
+    /// Write the graphics screen to a binary PPM (P6) file.
+    Shot(String),
+}
+
+/// Read a probe script: one step per line, `#` starts a comment line.
+/// `prompt TEXT`, `screen TEXT`, `type TEXT`, `floppy IMAGE`, `run STEPS`,
+/// `show`, `mark LABEL`, `shot FILE` (the graphics screen as a PPM
+/// picture). Image paths are relative to the current folder.
+pub fn parse_script(text:&str)->Result<Vec<ScriptStep>,String>{
+    let unescape=|t:&str|->String{
+        let mut out=String::new();let mut chars=t.chars();
+        while let Some(c)=chars.next(){
+            if c!='\\'{out.push(c);continue;}
+            match chars.next(){Some('r'|'n')=>out.push('\r'),Some('s')=>out.push(' '),Some(o)=>out.push(o),None=>out.push('\\')}
+        }
+        out
+    };
+    let mut steps=Vec::new();
+    for (n,line) in text.lines().enumerate(){
+        let line=line.trim_end_matches('\r');
+        if line.trim().is_empty()||line.trim_start().starts_with('#'){continue;}
+        let (word,rest)=line.trim_start().split_once(' ').unwrap_or((line.trim(),""));
+        let at=|e:String|format!("script line {}: {e}",n+1);
+        steps.push(match word{
+            "prompt"=>ScriptStep::Prompt(unescape(rest)),
+            "screen"=>ScriptStep::Screen(unescape(rest)),
+            "type"=>ScriptStep::Type(unescape(rest)),
+            "floppy"=>ScriptStep::Floppy(std::fs::read(rest.trim()).map_err(|e|at(format!("{}: {e}",rest.trim())))?),
+            "run"=>ScriptStep::Run(rest.trim().replace('_',"").parse().map_err(|_|at("run takes a step count".into()))?),
+            "show"=>ScriptStep::Show,
+            "mark"=>ScriptStep::Mark(rest.trim().to_string()),
+            "shot" if !rest.trim().is_empty()=>ScriptStep::Shot(rest.trim().to_string()),
+            "shot"=>return Err(at("shot takes a file name".into())),
+            _=>return Err(at(format!("unknown step `{word}`"))),
+        });
+    }
+    Ok(steps)
+}
+
+/// Run a booted machine through a probe script within `steps` instructions
+/// in all; the report holds what `show` and `mark` print, then the final
+/// screen and why the run stopped.
+/// `progress`, when given, receives the report so far after each step.
+pub fn script_probe(mut p:Loaded,steps:usize,script:&[ScriptStep],rtc_year:Option<u32>,keymap:super::guest_keymap::Keymap,mut progress:Option<&mut dyn FnMut(&str)>)->Result<String,String>{
+    p.clock_offset=Some(0);
+    if let Some(year)=rtc_year{p.set_rtc_year(year)?;}
+    let mut session=session::Session::new(p);
+    session.keymap=keymap;
+    let mut report=String::new();
+    let (mut done,mut mark_steps,mut mark_time)=(0usize,0usize,std::time::Instant::now());
+    let mut typed_screen:Vec<String>=Vec::new();
+    let mut reason=String::from("script done");
+    let screen=|s:&session::Session|->Result<Vec<String>,String>{Ok(screen_lines(s.machine().ok_or("session state lost")?))};
+    'script: for step in script{
+        match step{
+            ScriptStep::Prompt(_)|ScriptStep::Screen(_)|ScriptStep::Run(_)=>{
+                let target=if let ScriptStep::Run(n)=step{done.saturating_add(*n)}else{usize::MAX};
+                let mut stalled=false;
+                loop{
+                    let lines=screen(&session)?;
+                    let met=match step{
+                        ScriptStep::Prompt(t)=>lines!=typed_screen&&lines.iter().rev().find(|l|!l.trim().is_empty()).is_some_and(|l|l.trim_end().ends_with(t.trim_end())),
+                        ScriptStep::Screen(t)=>lines.iter().any(|l|l.contains(t.as_str())),
+                        _=>done>=target,
+                    };
+                    if met{break;}
+                    if done>=steps{reason=format!("budget, waiting for {step:?}");break 'script;}
+                    let slice=(steps-done).min(target.saturating_sub(done)).min(if matches!(step,ScriptStep::Run(_)){1_000_000}else{500_000});
+                    session.run(slice)?;done+=slice;
+                    let (status,detail)=session.status();
+                    // A BIOS key wait goes on once the screen has been
+                    // checked again; a second one in a row cannot change it.
+                    if status=="waiting_input"&&!stalled{stalled=true;continue;}
+                    stalled=false;
+                    if status!="running"{reason=format!("{status} {detail}");break 'script;}
+                }
+            },
+            ScriptStep::Type(text)=>{
+                typed_screen=screen(&session)?;
+                done+=type_text(&mut session,text)?;
+            },
+            ScriptStep::Floppy(image)=>{
+                let disk=bios_disk::Disk::floppy(image.clone())?;
+                session.machine_mut().ok_or("session state lost")?.disks.change_floppy(0,disk)?;
+            },
+            ScriptStep::Show=>{
+                for line in screen(&session)?{report.push_str(&line);report.push('\n');}
+                writeln!(report,"-- at {done} steps").unwrap();
+            },
+            ScriptStep::Mark(label)=>{
+                let seconds=mark_time.elapsed().as_secs_f64();
+                writeln!(report,"-- mark {label}: {} steps, {seconds:.3} s host time since the last mark ({done} steps in all)",done-mark_steps).unwrap();
+                mark_steps=done;mark_time=std::time::Instant::now();
+            },
+            ScriptStep::Shot(file)=>{
+                let p=session.machine().ok_or("session state lost")?;
+                let display=p.vga.display;
+                let Some((width,height,pixels))=super::desktop_vga_frame(p) else{
+                    reason=format!("shot {file}: no graphics screen (display mode {:02x}h)",display.mode);break 'script;
+                };
+                let mut ppm=format!("P6\n{width} {height}\n255\n").into_bytes();
+                for px in pixels{ppm.extend_from_slice(&[(px>>16)as u8,(px>>8)as u8,px as u8]);}
+                std::fs::write(file,&ppm).map_err(|e|format!("shot {file}: {e}"))?;
+                writeln!(report,"-- shot {file}: {width}x{height}, mode {:02x}h, at {done} steps",display.mode).unwrap();
+            },
+        }
+        // A long script shows its progress as it goes.
+        if let Some(out)=progress.as_mut(){out(&report);report.clear();}
+    }
+    let p=session.machine().ok_or("session state lost")?;
+    for line in screen_lines(p){report.push_str(&line);report.push('\n');}
+    let cs=p.selectors[SegmentRegister::Cs.index()];
+    writeln!(report,"-- stop: {}; CS:EIP={cs:04x}:{:08x}; {} mode; {done} steps",reason.trim(),p.cpu.eip,if p.image.real_mode{"real"}else{"protected"}).unwrap();
     Ok(report)
 }
 

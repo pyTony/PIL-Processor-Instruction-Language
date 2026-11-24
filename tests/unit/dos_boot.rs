@@ -270,3 +270,86 @@ fn a_booted_screen_follows_the_crtc_registers_not_the_bios_data_area(){
     assert_eq!(columns,80);
     assert_eq!(cells[0],b'R');
 }
+
+#[test]
+fn probe_scripts_parse_their_steps_and_refuse_unknown_ones(){
+    let steps=parse_script("# comment\nprompt >\nscreen login:\ntype ls -l\\r\ntype a\\\\b\\s\nrun 1_000\nshow\nmark compile\n").unwrap();
+    assert_eq!(steps,vec![
+        ScriptStep::Prompt(">".into()),ScriptStep::Screen("login:".into()),
+        ScriptStep::Type("ls -l\r".into()),ScriptStep::Type("a\\b ".into()),
+        ScriptStep::Run(1000),ScriptStep::Show,ScriptStep::Mark("compile".into()),
+    ]);
+    assert!(parse_script("wait 5\n").unwrap_err().contains("line 1"));
+    assert!(parse_script("run many\n").is_err());
+    assert_eq!(parse_script("shot a.ppm\n").unwrap(),vec![ScriptStep::Shot("a.ppm".into())]);
+    assert!(parse_script("shot\n").unwrap_err().contains("file name"));
+}
+
+#[test]
+fn a_script_shot_writes_the_graphics_screen_and_refuses_text(){
+    // Mode 13h through INT 10h, pixel (1,0) in colour 4 (red), then a loop.
+    let code:&[u8]=&[
+        0xb8,0x13,0x00,0xcd,0x10,                  // mov ax,13h; int 10h
+        0xb8,0x00,0xa0,0x8e,0xc0,                  // mov ax,A000h; mov es,ax
+        0x26,0xc6,0x06,0x01,0x00,0x04,             // mov byte [es:1],4
+        0xeb,0xfe,                                 // jmp $
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);disk[510]=0x55;disk[511]=0xaa;
+    let file=std::env::temp_dir().join(format!("pil-shot-{}.ppm",std::process::id()));
+    let name=file.to_string_lossy().into_owned();
+    let script=parse_script(&format!("run 100000\nshot {name}\n")).unwrap();
+    let report=script_probe(boot(&disk,0).unwrap(),1_000_000,&script,None,Default::default(),None).unwrap();
+    assert!(report.contains(": 320x200, mode 13h,"),"{report}");
+    let ppm=std::fs::read(&file).unwrap();std::fs::remove_file(&file).unwrap();
+    let header=b"P6\n320 200\n255\n";
+    assert_eq!(&ppm[..header.len()],header);
+    assert_eq!(ppm.len(),header.len()+320*200*3);
+    assert_eq!(&ppm[header.len()..header.len()+6],&[0,0,0,0xaa,0,0]);
+    // A text screen has no picture: the script stops and says so.
+    let mut text=vec![0u8;1_474_560];
+    text[..2].copy_from_slice(&[0xeb,0xfe]);text[510]=0x55;text[511]=0xaa;
+    let script=parse_script(&format!("run 1000\nshot {name}\n")).unwrap();
+    let report=script_probe(boot(&text,0).unwrap(),1_000_000,&script,None,Default::default(),None).unwrap();
+    assert!(report.contains("no graphics screen (display mode 03h)"),"{report}");
+    assert!(!file.exists());
+}
+
+#[test]
+fn a_script_types_into_a_booted_machine_and_waits_for_the_screen(){
+    // A boot sector that echoes each key through INT 16h/INT 10h, after a
+    // '>' prompt, forever.
+    let code:&[u8]=&[
+        0xb4,0x0e,0xb0,b'>',0xcd,0x10,             // mov ah,0Eh; mov al,'>'; int 10h
+        0x31,0xc0,0xcd,0x16,                       // xor ax,ax; int 16h
+        0xb4,0x0e,0xcd,0x10,                       // mov ah,0Eh; int 10h
+        0xeb,0xf6,                                 // jmp back to xor ax,ax
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);disk[510]=0x55;disk[511]=0xaa;
+    let script=parse_script("prompt >\ntype hi\nscreen >hi\nmark typed\nshow\n").unwrap();
+    let report=script_probe(boot(&disk,0).unwrap(),2_000_000,&script,None,Default::default(),None).unwrap();
+    assert!(report.contains("-- mark typed:"),"{report}");
+    assert!(report.lines().any(|l|l==">hi"),"{report}");
+    assert!(report.contains("script done"),"{report}");
+}
+
+#[test]
+fn a_tar_floppy_holds_a_ustar_archive_with_correct_checksums(){
+    let dir=std::env::temp_dir().join(format!("pil-tar-floppy-{}",std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file=dir.join("hello.c");std::fs::write(&file,b"main(){}\n").unwrap();
+    let image=tar_floppy(&[file.to_string_lossy().into_owned()],1_228_800).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(image.len(),1_228_800);
+    assert_eq!(&image[..7],b"hello.c");
+    assert_eq!(&image[257..263],b"ustar\0");
+    assert_eq!(&image[124..136],b"00000000011\0");
+    let mut header=image[..512].to_vec();header[148..156].copy_from_slice(b"        ");
+    let sum:u32=header.iter().map(|&b|u32::from(b)).sum();
+    assert_eq!(&image[148..156],format!("{sum:06o}\0 ").as_bytes());
+    assert_eq!(&image[512..521],b"main(){}\n");
+    assert!(image[1024..].iter().all(|&b|b==0));
+    let big=dir.with_extension("big");
+    assert!(tar_floppy(&[big.to_string_lossy().into_owned()],1_228_800).is_err());
+}

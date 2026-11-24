@@ -1,0 +1,23 @@
+# Build svgalib 1.1 (libvga.a), its vgatest and programs/linux/vgamand.c
+# with gcc 2.5.8 (after gcc.txt), for
+#   pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img
+#       --script tools/mcc/svgalib.txt --fpu 80387 --steps 4000000000 --rtc-year 1994
+# images/mcc-1.0/svga.flp holds svga.tgz, svgabld.sh and vgamand.c (docs/BOOT.md).
+# The log goes to /tmp/bld.log: a | typed through the UK keymap arrives as ~.
+run 3000000
+type ro root=301\r
+screen login:
+type root\r
+prompt >
+type cd /tmp\r
+prompt >
+floppy images/mcc-1.0/svga.flp
+type cpio -imuV -H ustar </dev/fd0\r
+prompt >
+mark build
+type time sh svgabld.sh >bld.log 2>&1\r
+prompt >
+type tail -8 bld.log; sync\r
+prompt >
+mark built
+show
