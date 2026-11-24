@@ -1,3 +1,38 @@
+# A host folder as a disk for booted systems: --hd-folder — 24 November 2026
+
+Tony asked for "virtual folder harddisk support", so that Linux under PIL
+can see host files (Mandelbrot sources, later GCC). A booted system reads
+sectors, so the folder becomes a real disk (src/dos_folder_disk.rs):
+- `--hd-folder DIR` (`--dos-console --boot` and `--boot-probe`): an MBR
+  with one FAT16 partition (type 04h, 65 cylinders = 32 MB, more when the
+  folder needs it, type 06h then) holding the folder's files and
+  subdirectories under 8.3 names (Dine's --mount names and BASIS~N
+  aliases). It is a temporary image file behind the next fixed disk (81h
+  /dev/hdb after a hard disk, else 80h). Limits: 8,000 entries, 511 in the
+  top folder, 16 MB a file, 128 MB in all.
+- When the run ends, new and changed files go back to the folder and new
+  directories are made (new names lower case); nothing is deleted or
+  renamed; a file that changed on the host during the run is not
+  overwritten and is named. A volume that cannot be read back keeps its
+  image and names it. Linux must `sync`/`umount` first.
+- Fixed disk 81h: INT 13h (AH=15h 03h, AH=08h counts two), its parameter
+  table at F000:E411 behind INT 46h, CMOS 12h low nibble Fh and 1Ah = 47,
+  0040:0075 = 2, and the AT controller's primary slave with its own
+  INITIALIZE DRIVE PARAMETERS geometry (one shared task file).
+- `--boot-hd IMAGE --hd-image DISK` is now allowed (two fixed disks).
+
+Local Linux (cloud), release: 1060 Rust tests pass, 2 ignored (5 new: 4 in
+tests/unit/dos_folder_disk.rs: layout read back by containers::parse,
+write-back with a host-side race and a deletion, an unreadable volume
+keeping its image, limits; 1 in tests/unit/dos_ata.rs: the slave, INT 46h,
+CMOS, INT 13h); 0 rustc warnings. MCC 1.0+ (nocdboot 9ae65a42..., root
+0959510f...) through the probe: the kernel reports "hdb: hdb1"; installed
+onto a scratch 40 MB hda1 (mkfs ext2, Base) and booted `ro root=301`: as
+root, `mount -t msdos /dev/hdb1 /mnt`, `ls -l` listed the folder and a
+subdirectory, `cat` read a file; `echo >`, `mkdir`, `cp` and `echo >>`
+then `umount`; afterwards the folder held linux.txt, newdir/m2.c and the
+appended hello.txt ("1 changed and 2 new files copied back, 1 new
+directories"). The console window path was not driven. Not run on Windows.
 # MCC 1.0 walkthrough, guest keymap for pastes, menu paste once — 24 November 2026
 
 Tony installed MCC Interim 1.0+ on Windows and booted it to a root prompt,

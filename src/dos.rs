@@ -69,11 +69,17 @@ mod bios_disk;
 mod fdc;
 #[path="dos_ata.rs"]
 mod ata;
+#[path="dos_folder_disk.rs"]
+mod folder_disk;
+pub(crate) use folder_disk::FolderDisk;
 #[path="dos_boot.rs"]
 mod boot;
 #[path="dos_guest_keymap.rs"]
 pub(crate) mod guest_keymap;
-pub use boot::{boot,boot_with_hard_disk,probe as boot_probe};
+pub use boot::probe as boot_probe;
+pub(crate) use boot::boot_command;
+#[cfg(test)]
+pub(crate) use boot::{boot,boot_with_hard_disk,boot_with_hard_disks};
 #[path="dos_xms.rs"]
 mod xms;
 #[path="dos_vga.rs"]

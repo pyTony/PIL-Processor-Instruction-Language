@@ -84,6 +84,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     let mut plain=false;
     let mut boot:Option<(String,u8)>=None;
     let mut hard_disk:Option<String>=None;
+    let mut folder:Option<String>=None;
     let mut floppies:Vec<std::path::PathBuf>=Vec::new();
     let mut host_pointer=None;
     let mut speaker_volume=None;
@@ -102,6 +103,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
             },
             "--floppy"=>{floppies.push(std::path::PathBuf::from(args.get(at+1).ok_or("--floppy takes a diskette image")?));at+=1;},
             "--hd-image"=>{hard_disk=Some(args.get(at+1).ok_or("--hd-image takes a fixed-disk image")?.clone());at+=1;},
+            "--hd-folder"=>{folder=Some(args.get(at+1).ok_or("--hd-folder takes a host folder")?.clone());at+=1;},
             "--rtc-year"=>{
                 let value=args.get(at+1).ok_or("--rtc-year takes a year")?;
                 options.rtc_year=Some(value.parse::<u32>().ok().filter(|y|(1980..=2099).contains(y)).ok_or("--rtc-year takes a year 1980..2099")?);at+=1;
@@ -131,25 +133,29 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
         // A booted disk: the machine without Dine's DOS (no program, drives
         // or configuration file of its own).
         // A fixed disk is written back to its file; a diskette is not.
-        let machine=match(drive,hard_disk){
-            (0x80,None)=>dos::boot_with_hard_disk(None,std::path::Path::new(&image),0x80)?,
-            (0x80,Some(_))=>return Err("--boot-hd boots from a fixed disk; --hd-image adds one next to a --boot diskette".into()),
-            (_,hard_disk)=>{
-                let bytes=std::fs::read(&image).map_err(|e|format!("{image}: {e}"))?;
-                match hard_disk{Some(disk)=>dos::boot_with_hard_disk(Some(&bytes),std::path::Path::new(&disk),0)?,None=>dos::boot(&bytes,0)?}
-            },
-        };
-        let mut session=dos::session::Session::new(machine);
-        if !floppies.is_empty(){
-            if drive!=0{return Err("--floppy changes the diskette a --boot started from".into());}
-            floppies.insert(0,std::path::PathBuf::from(&image));
-            session.boot_diskettes(floppies)?;
+        // A folder disk's changes go back to the folder when the run ends.
+        let folder=folder.map(|dir|dos::FolderDisk::create(std::path::Path::new(&dir))).transpose()?;
+        if let Some((_,notes))=&folder{for note in notes{eprintln!("--hd-folder: {note}");}}
+        let result=(||{
+            let machine=dos::boot_command(&image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()))?;
+            let mut session=dos::session::Session::new(machine);
+            if !floppies.is_empty(){
+                if drive!=0{return Err("--floppy changes the diskette a --boot started from".into());}
+                floppies.insert(0,std::path::PathBuf::from(&image));
+                session.boot_diskettes(floppies)?;
+            }
+            let result=run(&mut session,&options,plain);
+            session.log_stop(&mut dos::stoplog::Logger::new(log_path,&image));
+            result
+        })();
+        // The session (and its open image file) is gone; copy back.
+        if let Some((folder,_))=folder{
+            match folder.finish(){Ok(report)=>println!("--hd-folder {report}"),Err(e)=>{eprintln!("--hd-folder {e}");if result.is_ok(){return Err(e);}}}
         }
-        let result=run(&mut session,&options,plain);
-        session.log_stop(&mut dos::stoplog::Logger::new(log_path,&image));
         return result;
     }
     if hard_disk.is_some(){return Err("--hd-image needs --boot (a booted machine)".into());}
+    if folder.is_some(){return Err("--hd-folder needs --boot (a booted machine); for DOS use --mount".into());}
     if !floppies.is_empty(){return Err("--floppy needs --boot (a booted machine)".into());}
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
