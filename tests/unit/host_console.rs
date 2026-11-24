@@ -666,3 +666,19 @@ fn terminal_keys_reach_a_booted_machine_as_key_presses(){
     let mut dos=crate::dos::boot::boot(&disk,0).unwrap();dos.booted=false;
     assert_eq!(typed(&Session::new(dos),Key::Backspace,NONE),[PendingKey::Tap(0x0e08)]);
 }
+
+#[test]
+fn host_pointer_menu_marks_active_choice_and_maps_commands(){
+    let auto_items=host_pointer_menu_items(HostPointer::Auto);
+    assert_eq!(auto_items.len(),3);
+    assert!(auto_items[0].1.starts_with("* "));
+    assert!(!auto_items[1].1.starts_with("* "));
+    assert!(!auto_items[2].1.starts_with("* "));
+
+    let hide_items=host_pointer_menu_items(HostPointer::Hide);
+    assert!(hide_items[2].1.starts_with("* "));
+    assert_eq!(host_pointer_command(11).map(|(m,_)|m),Some(HostPointer::Auto));
+    assert_eq!(host_pointer_command(12).map(|(m,_)|m),Some(HostPointer::Show));
+    assert_eq!(host_pointer_command(13).map(|(m,_)|m),Some(HostPointer::Hide));
+    assert_eq!(host_pointer_command(10),None);
+}
