@@ -232,9 +232,9 @@ pub(super) fn dos_screen(p:&Loaded,bytes:&[u8])->Result<Writes,String>{
     let writes=if ansi::installed(p)?&&mode==3{ansi::plan(p,active_page(p)?,bytes)?}else{teletype_plan(p,active_page(p)?,bytes,true)?};
     check(p,&writes)?;Ok(writes)
 }
-#[path="dos_ansi.rs"]
+#[path="../dos/ansi.rs"]
 pub(super) mod ansi;
-#[path="dos_graphics_text.rs"]
+#[path="graphics_text.rs"]
 pub(super) mod graphics_text;
 pub(super) fn check(p:&Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,width,_) in writes{p.ram.check_write(at,width).map_err(|e|format!("BIOS console write: {e:?}"))?;}

@@ -204,5 +204,5 @@ fn identify(p:&mut Loaded){
 }
 
 #[cfg(test)]
-#[path="../tests/unit/dos_ata.rs"]
+#[path="../../tests/unit/dos_ata.rs"]
 mod tests;

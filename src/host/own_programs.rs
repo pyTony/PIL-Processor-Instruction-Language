@@ -177,5 +177,5 @@ pub(crate) fn refresh(source:&Path,root:&Path)->Report{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/own_programs.rs"]
+#[path="../../tests/unit/own_programs.rs"]
 mod tests;

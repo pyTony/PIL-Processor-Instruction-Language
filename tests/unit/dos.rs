@@ -2412,7 +2412,7 @@ fn absent_task_switcher_returns_the_caller_state_unchanged(){
 // Graphics-mode text: an independent decoding of the glyph file, then the
 // framebuffer bytes each mode must hold for one character cell.
 fn glyph_rows(ch:u8)->[u8;8]{
- let text=include_str!("../../src/dos_font8x8.txt");
+ let text=include_str!("../../src/bios/font8x8.txt");
  let lines:Vec<&str>=text.lines().filter(|l|!l.starts_with(';')).collect();
  let at=usize::from(ch)*9;assert!(lines[at].starts_with(&format!("{ch:02X}")));
  let mut rows=[0u8;8];

@@ -234,9 +234,9 @@ pub(crate) fn disk_sets(explicit:Option<&str>)->Result<Vec<(u8,PathBuf)>,String>
 }
 
 /// Line-preserving editing of a configuration file, for `pil --pildos`.
-#[path="dos_config_edit.rs"]
+#[path="config_edit.rs"]
 pub(crate) mod edit;
 
 #[cfg(test)]
-#[path="../tests/unit/dos_config.rs"]
+#[path="../../tests/unit/dos_config.rs"]
 mod tests;

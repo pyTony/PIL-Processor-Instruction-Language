@@ -102,5 +102,5 @@ pub(super) fn bios_break(p:&mut Loaded)->Result<(),String>{
     p.dos.pending_scan=None;Ok(())
 }
 #[cfg(test)]
-#[path="../tests/unit/dos_break.rs"]
+#[path="../../tests/unit/dos_break.rs"]
 mod tests;

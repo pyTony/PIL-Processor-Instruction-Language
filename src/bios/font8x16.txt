@@ -7,7 +7,7 @@
 ; letters on rows 5-11, descenders to row 14. Accented letters are this
 ; file's own letters with an accent added; box, block and shade characters
 ; were computed from line positions; the remaining symbols (00h-1Fh and some
-; of 9Eh-FFh) are the rows of dos_font8x8.txt, each drawn twice.
+; of 9Eh-FFh) are the rows of font8x8.txt, each drawn twice.
 00
 ........
 ........

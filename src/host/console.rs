@@ -46,7 +46,7 @@ pub(crate) enum Event{
 }
 
 #[cfg(any(windows,test))]
-#[path="dos_host_keys.rs"]
+#[path="keys.rs"]
 mod host_keys;
 
 /// The keys that type pasted `text`. Dine's DOS reads BIOS words; a booted
@@ -886,26 +886,26 @@ fn local_utc_offset()->i64{
     }
 }
 
-#[path="dos_host_terminal.rs"]
+#[path="terminal.rs"]
 mod tty;
 // Only the Unix terminal draws graphics in text cells.
 #[cfg(any(not(windows),test))]
-#[path="dos_terminal_graphics.rs"]
+#[path="terminal_graphics.rs"]
 mod terminal_graphics;
-#[path="dos_host_speaker.rs"]
+#[path="speaker.rs"]
 pub(crate) mod speaker;
-#[path="dos_host_sb.rs"]
+#[path="sb_audio.rs"]
 mod sb_audio;
-#[path="dos_host_audio.rs"]
+#[path="audio.rs"]
 pub(crate) mod audio;
-#[path="dos_console_select.rs"]
+#[path="select.rs"]
 pub(crate) mod select;
 #[cfg(windows)]
-#[path="dos_media_dialog.rs"]
+#[path="media_dialog.rs"]
 mod media_dialog;
-#[path="dos_media_launch.rs"]
+#[path="media_launch.rs"]
 pub(crate) mod media_launch;
-#[path="dos_catalog.rs"]
+#[path="catalog.rs"]
 pub(crate) mod catalog;
 
 /// The character grid of the screen shown now: (columns, rows).
@@ -916,7 +916,7 @@ fn grid(p:&Loaded)->Result<(u32,u32),String>{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/host_console.rs"]
+#[path="../../tests/unit/host_console.rs"]
 mod tests;
 
 #[cfg(test)]

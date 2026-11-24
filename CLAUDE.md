@@ -1,3 +1,25 @@
+# Source folders for the machine, BIOS, DOS and front ends — 24 November 2026
+
+Tony asked again for the common machine code, the BIOS and Dine's DOS to be
+separate libraries (the Linux boot reuses many dos_*.rs files that are not
+DOS). He chose a staged split: folders first, then Machine/Firmware, then
+Cargo crates. This first step moves 60 files with `git mv` and no code
+change; module names stay, only `#[path]` and `include_str!` paths change:
+- src/pc/: pic, pit, rtc, ports, string_io, speaker_wave, soundblaster, fdc,
+  ata, vga, vga_regs, vga_font, keyboard, serial.
+- src/bios/: disk (was dos_bios_disk), folder_disk, boot, block_move,
+  planar, vectors, console, graphics_text, color_text, font8x8.txt,
+  font8x16.txt.
+- src/dos/: memory, services, files, lfn, nls, exec, break, ansi, xms,
+  mouse, stoplog, history, live_diagnostics, encoding, text_io.
+- src/host/: session, disk_set, console (was dos_host_console), keys,
+  terminal, terminal_graphics, speaker, sb_audio, audio, select,
+  media_dialog, media_launch, catalog, catalog_instance, setup, config,
+  config_edit, own_programs, vga_text, guest_keymap.
+- tools/export_runtime.py, ci_changes.py, verify_mandel_cga/vga.py and
+  program_specific_allow.txt follow the new paths.
+Files that still mix layers are listed in docs/development/DINE_ARCHITECTURE.md.
+
 # svgalib 1.1 under MCC Linux 1.0: VGA modes through the registers — 24 November 2026
 
 Tony's next step after gcc: svgalib. Era source: svgalib 1.1 (May 1994,

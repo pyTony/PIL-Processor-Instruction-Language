@@ -190,5 +190,5 @@ pub(super) fn bios(p:&mut Loaded)->Result<Bios,String>{
     Ok(Bios::Done)
 }
 #[cfg(test)]
-#[path="../tests/unit/dos_keyboard.rs"]
+#[path="../../tests/unit/dos_keyboard.rs"]
 mod tests;

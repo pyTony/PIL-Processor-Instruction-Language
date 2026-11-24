@@ -335,5 +335,5 @@ fn type_text(session:&mut session::Session,text:&str)->Result<usize,String>{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/dos_boot.rs"]
+#[path="../../tests/unit/dos_boot.rs"]
 mod tests;

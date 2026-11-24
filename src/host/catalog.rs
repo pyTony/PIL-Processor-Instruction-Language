@@ -1,6 +1,6 @@
 //! Host-side software catalog. Guest paths and descriptions are data, not engine rules.
 use super::*;
-#[path="dos_catalog_instance.rs"]
+#[path="catalog_instance.rs"]
 mod instance;
 /// Preserve configured drives; supply the conventional D: only when absent.
 pub(super) fn open_program(shell:&str,tail:Option<&str>,config:Option<&str>)->Result<Session,String>{

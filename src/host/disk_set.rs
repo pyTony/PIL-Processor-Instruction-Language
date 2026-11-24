@@ -67,5 +67,5 @@ impl DiskSet{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/disk_set.rs"]
+#[path="../../tests/unit/disk_set.rs"]
 mod tests;

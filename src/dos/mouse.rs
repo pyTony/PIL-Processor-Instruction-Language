@@ -339,5 +339,5 @@ pub(super) fn returned(p:&mut Loaded)->Result<bool,String>{
     Ok(true)
 }
 #[cfg(test)]
-#[path="../tests/unit/dos_mouse.rs"]
+#[path="../../tests/unit/dos_mouse.rs"]
 mod tests;

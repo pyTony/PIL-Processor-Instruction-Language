@@ -107,5 +107,5 @@ pub(super) fn classify(v:&Vga)->Display{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/dos_vga_regs.rs"]
+#[path="../../tests/unit/dos_vga_regs.rs"]
 mod tests;

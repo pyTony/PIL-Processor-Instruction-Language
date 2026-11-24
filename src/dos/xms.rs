@@ -282,5 +282,5 @@ fn copy_a20(p:&mut Loaded,src:u32,dst:u32,length:u32)->Result<(),String>{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/dos_xms.rs"]
+#[path="../../tests/unit/dos_xms.rs"]
 mod tests;

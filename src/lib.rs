@@ -23,11 +23,15 @@ mod dine_window;
 mod block_compiler;
 mod precompiled;
 mod native_application;
+#[path="dos/encoding.rs"]
 mod dos_encoding;
+#[path="dos/text_io.rs"]
 mod dos_text_io;
 mod rust_codegen;
 mod pil_opt;
+#[path="host/config.rs"]
 mod dos_config;
+#[path="host/own_programs.rs"]
 mod dos_own_programs;
 mod fpu;
 mod containers;
