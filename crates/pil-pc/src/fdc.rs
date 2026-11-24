@@ -55,7 +55,7 @@ impl Dma2{
 }
 
 #[derive(Clone,Debug,Default)]
-pub(crate) struct Fdc{
+pub struct Fdc{
     dor:u8,
     dma:Dma2,
     command:Vec<u8>,
@@ -65,7 +65,7 @@ pub(crate) struct Fdc{
     /// Interrupt status for SENSE INTERRUPT STATUS: ST0 and cylinder.
     sense:VecDeque<(u8,u8)>,
     /// IRQ6 raised and not yet delivered.
-    pub(crate) irq:bool,
+    pub irq:bool,
 }
 
 /// Command bytes (opcode included) by the opcode's low five bits.
@@ -75,7 +75,7 @@ fn length(op:u8)->usize{
 
 impl Fdc{
     /// Port I/O for the controller and DMA channel 2; None for other ports.
-    pub(crate) fn io<F>(p:&mut Machine<F>,port:u16,input:bool,value:u8)->Result<Option<u8>,String>{
+    pub fn io<F>(p:&mut Machine<F>,port:u16,input:bool,value:u8)->Result<Option<u8>,String>{
         // Dine's DOS reads disks through INT 13h; the controller is the
         // booted OS's.
         if !p.booted{return Ok(None);}

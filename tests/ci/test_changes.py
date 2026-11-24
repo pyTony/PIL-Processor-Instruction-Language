@@ -24,7 +24,7 @@ class ChangesTests(unittest.TestCase):
             self.assertEqual(ci.classify([path]), {"core", "dos", "frontend", "integration", "library", "backends"})
 
     def test_dos_changes_do_not_select_instruction_suites(self):
-        for path in ["src/dos.rs", "src/dos/services.rs", "src/pc/ports.rs", "tests/unit/dos.rs", "programs/dos/fixture.asm"]:
+        for path in ["src/dos.rs", "src/dos/services.rs", "crates/pil-pc/src/ports.rs", "tests/unit/dos.rs", "programs/dos/fixture.asm"]:
             selected = ci.classify([path])
             self.assertEqual(selected, {"dos", "frontend", "integration", "library"})
             self.assertNotIn("core", selected)

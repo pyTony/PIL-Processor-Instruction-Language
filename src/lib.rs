@@ -1,11 +1,14 @@
-//! PIL and Dine: DOS runtime, PC machine, BIOS and command-line implementation
-//! over the CPU core (crates/pil-cpu, re-exported here as the crate root).
+//! PIL and Dine: DOS runtime, BIOS and command-line implementation over the
+//! CPU core (crates/pil-cpu, re-exported here as the crate root) and the PC
+//! machine (crates/pil-pc, the module `pc`).
 pub(crate) use pil_cpu::*;
 mod serial;
 mod host_io;
 mod debugger;
-mod pc;
+pub(crate) use pil_pc as pc;
 mod dos;
+#[allow(unused_imports)]
+use dos::LoadedOps;
 #[cfg(any(feature = "dine-library",test))]
 mod dine_ffi;
 // Win32 window presentation for --dos-session (DINE_VIDEO=window).

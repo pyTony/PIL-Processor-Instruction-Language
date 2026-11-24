@@ -17,8 +17,8 @@ independently replaceable component today.
 | Responsibility | Current code |
 | --- | --- |
 | Session state, COM/MZ loading, the execution loop | `src/dos.rs` (`Loaded` = `pc::Machine<dos::Dos>`) |
-| The machine (`pc::Machine<F>`: CPU, RAM, devices, disks, history) and the `Firmware` trait | `src/pc.rs` |
-| PC devices: PIC, PIT, CMOS/RTC, speaker, 8042, UART, Sound Blaster, VGA registers, diskette and AT disk controllers, disk images | `src/pc/` |
+| The machine (crate `pil-pc`, module `pc`): `pc::Machine<F>` (CPU, RAM, devices, disks, history) and the `Firmware` trait | `crates/pil-pc/src/lib.rs` |
+| PC devices: PIC, PIT, CMOS/RTC, speaker, 8042, UART, Sound Blaster, VGA registers, diskette and AT disk controllers, disk images | `crates/pil-pc/src/` |
 | BIOS: INT 10h text and planar modes, INT 13h disks, INT 15h block move, the vector entries, booting a disk image, the folder disk | `src/bios/` |
 | Dine's DOS: INT 21h/2Fh dispatch, files and LFN, memory blocks, EXEC, XMS, INT 33h driver, NLS, Ctrl-Break, ANSI | `src/dos/` |
 | Host front ends: session protocol, console window and terminal, setup screen, configuration, audio, media catalog | `src/host/` |
@@ -27,9 +27,9 @@ independently replaceable component today.
 The folders are a first step of the split Tony asked for (24 November 2026):
 files moved with their module names unchanged. The second step made the
 machine its own module: `pc::Machine<F>` holds the CPU, memory and devices,
-with `dos:F` for what runs on it, and `dos::Loaded` is `Machine<Dos>`. Code in
-`src/pc.rs` and `src/pc/` does not name the DOS, BIOS or front-end modules
-(`tools/check_layers.py`, run in CI). The three device events whose effect
+with `dos:F` for what runs on it, and `dos::Loaded` is `Machine<Dos>`. The machine
+code does not name the DOS, BIOS or front-end modules
+(`tools/check_layers.py`, run in CI; since step 3b the compiler as well). The three device events whose effect
 depends on the firmware go through `pc::Firmware`, which `Dos` implements:
 whether keys reach a program's IRQ1 handler, how an IRQ is delivered, and the
 VGA controller ports (Dine's stricter BIOS-mode rules outside a booted
@@ -49,14 +49,21 @@ helpers only tests use are behind the `test-support` feature, which the
 `pil` package enables as a dev-dependency. `cargo test` at the top runs
 both packages.
 
+The machine followed (3b): `crates/pil-pc` (library `pil_pc`) depends on
+`pil-cpu` only, and the `pil` package names it as its module `pc`
+(`pub(crate) use pil_pc as pc`), so `pc::Machine` and `crate::pc::...` paths
+are unchanged. Rust allows no inherent `impl` on another crate's type, so the
+methods Dine adds to `Loaded` (`enqueue_key`, `ctrl_break`, `select_xms`,
+`select_fpu`, `set_rtc_year`) are the trait `dos::LoadedOps`, imported where
+they are called.
+
 Still mixed: `bios/console.rs` holds DOS console output and
 `dos/services.rs` dispatches BIOS and DOS calls; the `bios` modules are
-children of `dos` in the module tree. Next: the machine (`src/pc.rs`,
-`src/pc/`) as a crate, then the BIOS apart from Dine's DOS.
+children of `dos` in the module tree. Next: the BIOS apart from Dine's DOS, then the BIOS as a crate.
 
 Existing seams already support different hosts: `host_io::Output` abstracts
 bounded DOS output; `serial::SerialTransport` defines nonblocking serial I/O;
-`Loaded::enqueue_key` injects BIOS key words; and the session protocol allows
+`LoadedOps::enqueue_key` injects BIOS key words; and the session protocol allows
 frontends to run the machine, supply input and obtain screen state. The
 headless implementation can therefore be used independently of the Python
 terminal. These interfaces solve different pieces of the problem; together

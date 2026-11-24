@@ -1,5 +1,6 @@
 use super::*;
 use super::super::{load,run,hello,Stop,service};
+use super::super::LoadedOps;
 fn call(p:&mut Loaded,ah:u8,bx:u16,es:u16){p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(u32::from(ah)<<8);low(&mut p.cpu.regs[3],bx);p.image.selectors[0]=es;let mut out=Vec::new();assert_eq!(service(p,0x21,&mut out),Ok(None));assert!(out.is_empty());}
 /// Conventional memory alone (no XMS, so no UMBs): the arena as before DOS=UMB.
 fn plain(mut p:Loaded)->Loaded{p.select_xms(false).unwrap();p}

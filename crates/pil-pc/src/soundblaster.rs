@@ -83,7 +83,7 @@ impl Dma1{
 struct Playback{deadline:u64,remaining:Option<u64>,auto:bool}
 /// State of an optional SB2 digital audio card (no OPL/FM synthesizer).
 #[derive(Clone,Debug)]
-pub(crate) struct SoundBlaster{
+pub struct SoundBlaster{
     dma:Dma1,reset_high:bool,reply:VecDeque<u8>,
     pending:Option<(u8,Vec<u8>,usize)>,
     speaker_on:bool,rate:u32,block_length:u16,
@@ -113,7 +113,7 @@ impl SoundBlaster{
     }
     /// Audio blocks already prepared for the host; removing them does not
     /// change DSP timing, DMA state, or the PIC.
-    pub(crate) fn take_pcm(&mut self)->Vec<(u32,Vec<i16>)>{self.pcm.drain(..).collect()}
+    pub fn take_pcm(&mut self)->Vec<(u32,Vec<i16>)>{self.pcm.drain(..).collect()}
     fn start(&mut self,ram:&Ram,length:usize,auto:bool,at:u64)->Result<(),String>{
         if self.playback.is_some(){return Err("Sound Blaster DMA playback already active".into());}
         let bytes=self.dma.take(ram,length)?;
@@ -126,7 +126,7 @@ impl SoundBlaster{
     /// Poll completion and make a *single edge* of IRQ5/IRQ7 for each
     /// completed DMA block. Automatic initialization reuses the DMA base
     /// and count, but never queues unbounded audio when a frontend stalls.
-    pub(crate) fn tick(&mut self,clock:Option<u64>,ram:&Ram,pic:&mut Pair)->Result<(),String>{
+    pub fn tick(&mut self,clock:Option<u64>,ram:&Ram,pic:&mut Pair)->Result<(),String>{
         self.now=match clock{Some(t)=>self.now.max(t),None=>self.now.saturating_add(1024)};
         for _ in 0..8{
             let Some(play)=self.playback.as_ref() else{break};
@@ -195,7 +195,7 @@ impl SoundBlaster{
     /// Byte I/O to DMA channel 1 and SB at 220h..22Fh. None means another
     /// port owns the access. Even unsupported DSP commands stop explicitly,
     /// instead of pretending the hardware accepted an operation.
-    pub(crate) fn io(&mut self,port:u16,input:bool,value:u8,ram:&Ram,pic:&mut Pair)->Result<Option<u8>,String>{
+    pub fn io(&mut self,port:u16,input:bool,value:u8,ram:&Ram,pic:&mut Pair)->Result<Option<u8>,String>{
         if let Some(result)=self.dma.io(port,input,value){return Ok(Some(result));}
         if !(BASE..=BASE+15).contains(&port){return Ok(None);}
         let result=match(port-BASE,input){
@@ -248,8 +248,8 @@ impl SoundBlaster{
         };
         Ok(Some(result))
     }
-    pub(crate) fn irq(&self)->u8{self.irq}
-    pub(crate) fn pending_irq(&self)->bool{self.irq_pending}
+    pub fn irq(&self)->u8{self.irq}
+    pub fn pending_irq(&self)->bool{self.irq_pending}
 }
 
 #[cfg(test)]

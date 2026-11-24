@@ -2,47 +2,47 @@
 //! Neither opcode semantics nor guest-program contents are changed.
 use super::*;
 use std::collections::VecDeque;
-pub(crate) const MAX_HISTORY:usize=256;
+pub const MAX_HISTORY:usize=256;
 #[derive(Clone,Debug,Default)]
-pub(crate) struct History{capacity:usize,next:u64,entries:VecDeque<Dispatch>}
+pub struct History{capacity:usize,next:u64,entries:VecDeque<Dispatch>}
 impl History{
-    pub(crate) fn new(capacity:usize)->Self{
+    pub fn new(capacity:usize)->Self{
         let capacity=capacity.min(MAX_HISTORY);
         Self{capacity,next:0,entries:VecDeque::with_capacity(capacity)}
     }
-    pub(crate) fn from_env()->Self{
+    pub fn from_env()->Self{
         let n=std::env::var("PIL_DOS_HISTORY").ok()
             .and_then(|v|v.parse::<usize>().ok()).unwrap_or(0);
         Self::new(n)
     }
-    pub(crate) fn enabled(&self)->bool{self.capacity>0}
-    pub(crate) fn record(&mut self,mut entry:Dispatch){
+    pub fn enabled(&self)->bool{self.capacity>0}
+    pub fn record(&mut self,mut entry:Dispatch){
         if !self.enabled(){return;}
         entry.sequence=self.next;self.next=self.next.saturating_add(1);
         if self.entries.len()==self.capacity{self.entries.pop_front();}
         self.entries.push_back(entry);
     }
-    pub(crate) fn json(&self)->String{
+    pub fn json(&self)->String{
         format!("[{}]",self.entries.iter().map(Dispatch::json).collect::<Vec<_>>().join(","))
     }
-    pub(crate) fn capacity(&self)->usize{self.capacity}
+    pub fn capacity(&self)->usize{self.capacity}
     /// Most recent dispatches, chronological and capped at the requested size.
-    pub(crate) fn recent_json(&self,count:usize)->String{
+    pub fn recent_json(&self,count:usize)->String{
         let skip=self.entries.len().saturating_sub(count);
         format!("[{}]",self.entries.iter().skip(skip).map(Dispatch::json).collect::<Vec<_>>().join(","))
     }
-    #[cfg(test)]
-    pub(crate) fn len(&self)->usize{self.entries.len()}
+    #[cfg(any(test,feature="test-support"))]
+    pub fn len(&self)->usize{self.entries.len()}
 }
 /// Pre-dispatch snapshot. It may be repeated by interrupt/retry, and
 /// presence here does not prove the instruction retired.
 #[derive(Clone,Debug)]
-pub(crate) struct Dispatch{
+pub struct Dispatch{
     sequence:u64,cs:u16,eip:u32,bytes:[u8;8],length:usize,
     registers:[u32;8],selectors:[u16;6],eflags:u32,msw:u16,
 }
 impl Dispatch{
-    pub(crate) fn capture<F>(p:&Machine<F>)->Self{
+    pub fn capture<F>(p:&Machine<F>)->Self{
         let mut bytes=[0u8;8];let mut length=0;
         for n in (1..=8).rev(){
             if let Ok(raw)=p.image.fetch_signature(&p.ram,p.cpu.eip,n){
@@ -54,7 +54,7 @@ impl Dispatch{
              bytes,length,registers:p.cpu.regs,selectors:p.selectors,
              eflags:p.cpu.eflags,msw:p.image.msw}
     }
-    pub(crate) fn json(&self)->String{
+    pub fn json(&self)->String{
         let bytes=self.bytes[..self.length].iter()
             .map(|v|format!("{v:02X}")).collect::<Vec<_>>().join(" ");
         format!(r#"{{"sequence":{},"location":"{:04X}:{:04X}","instruction_bytes":{},"registers":{:?},"selectors":{:?},"eflags":{},"msw":{}}}"#,
@@ -67,7 +67,7 @@ impl Dispatch{
 /// This is independent of CPU dispatch history, so native block execution
 /// remains available while service tracing is enabled.
 #[derive(Clone,Debug,Default)]
-pub(crate) struct ServiceTrace{
+pub struct ServiceTrace{
     next:u64,
     entries:VecDeque<ServiceCall>,
     enabled:bool,
@@ -80,10 +80,10 @@ struct ServiceCall{
 }
 impl ServiceTrace{
     const CAPACITY:usize=256;
-    pub(crate) fn enable(&mut self){self.enabled=true;self.entries.clear();self.next=0;}
-    pub(crate) fn disable(&mut self){self.enabled=false;self.entries.clear();}
-    pub(crate) fn enabled(&self)->bool{self.enabled}
-    pub(crate) fn record<F>(&mut self,p:&Machine<F>,vector:u8,site:(u16,u32),before:[u16;6]){
+    pub fn enable(&mut self){self.enabled=true;self.entries.clear();self.next=0;}
+    pub fn disable(&mut self){self.enabled=false;self.entries.clear();}
+    pub fn enabled(&self)->bool{self.enabled}
+    pub fn record<F>(&mut self,p:&Machine<F>,vector:u8,site:(u16,u32),before:[u16;6]){
         if !self.enabled{return;}
         let entry=ServiceCall{
             sequence:self.next,vector,cs:site.0,ip:site.1,
@@ -96,7 +96,7 @@ impl ServiceTrace{
         if self.entries.len()==Self::CAPACITY{self.entries.pop_front();}
         self.entries.push_back(entry);
     }
-    pub(crate) fn json(&self)->String{
+    pub fn json(&self)->String{
         if !self.enabled{return r#"{"enabled":false}"#.to_string();}
         let entries=self.entries.iter().map(|e|format!(
             r#"{{"sequence":{},"vector":"{:02X}","location":"{:04X}:{:04X}","ax":{},"bx":{},"cx":{},"dx":{},"ds":{},"es":{},"result_ax":{},"carry":{},"video_mode":{}}}"#,

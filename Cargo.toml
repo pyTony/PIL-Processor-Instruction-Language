@@ -4,11 +4,12 @@ version = "0.38.0-alpha.1"
 edition = "2021"
 
 [workspace]
-members = ["crates/pil-cpu"]
-default-members = [".", "crates/pil-cpu"]
+members = ["crates/pil-cpu", "crates/pil-pc"]
+default-members = [".", "crates/pil-cpu", "crates/pil-pc"]
 
 [dependencies]
 pil-cpu = { path = "crates/pil-cpu" }
+pil-pc = { path = "crates/pil-pc" }
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
 
 # Build the CPU and DOS implementation once as a Rust library used by pil,
@@ -33,3 +34,4 @@ debug-labels = []
 
 [dev-dependencies]
 pil-cpu = { path = "crates/pil-cpu", features = ["test-support"] }
+pil-pc = { path = "crates/pil-pc", features = ["test-support"] }

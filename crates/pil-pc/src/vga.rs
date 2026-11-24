@@ -27,21 +27,21 @@ fn default_palette()->[[u8;3];256]{
     p
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub(crate) struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, cga_mode:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub(crate) idle:Controllers,
+pub struct Vga { pub attr:[u8;21], attr_index:u8, attr_data:bool, cga_color:u8, cga_mode:u8, dac:[[u8;3];256], dac_mask:u8, dac_read:u8, dac_write:u8, read_component:u8, write_component:u8, dac_read_mode:bool, index:u8, misc_output:u8, regs:[u8;25], pub start_override:bool, pub cursor_override:bool, pub idle:Controllers,
     /// Text-mode font memory (plane 2, see dos_vga_font) while A0000h does not show it.
-    pub(crate) font:Option<crate::vga_planar::Planar>,
+    pub font:Option<crate::vga_planar::Planar>,
     /// The mode the last BIOS mode set programmed into the CRTC, sequencer
     /// and attribute controller; see console::shown_mode.
-    pub(crate) display:Display,
+    pub display:Display,
     /// A booted machine: CRTC timing and miscellaneous output writes are
     /// taken as written (see dos_vga_regs), not refused.
-    pub(crate) free:bool }
+    pub free:bool }
 /// A display mode as the hardware shows it: BIOS mode number, character
 /// columns and rows. The model keeps no per-mode CRTC timing values (it
 /// refuses timing changes), so it keeps the mode they describe; only a
 /// BIOS mode set changes it, never a write to the BIOS data area.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub(crate) struct Display{pub(crate) mode:u8,pub(crate) columns:u32,pub(crate) rows:u32}
+pub struct Display{pub mode:u8,pub columns:u32,pub rows:u32}
 impl Default for Display{fn default()->Self{Self{mode:3,columns:80,rows:25}}}
 impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;a},attr_index:0x20,attr_data:false,cga_color:0x30,cga_mode:0x29,dac:default_palette(),dac_mask:255,dac_read:0,dac_write:0,read_component:0,write_component:0,dac_read_mode:false,index:0,misc_output:0x67,regs:[0x5f,0x4f,0x50,0x82,0x55,0x81,0xbf,0x1f,0,0x4f,6,7,0,0,0,0,0x9c,0x8e,0x8f,0x28,0x1f,0x96,0xb9,0xa3,0xff],start_override:false,cursor_override:false,idle:Controllers::standard(3),font:None,display:Display::default(),free:false}}}
 /// Sequencer and graphics controller registers outside the planar modes,
@@ -55,7 +55,7 @@ impl Default for Vga {fn default()->Self{Self{attr:{let mut a=EGA_ATTR;a[16]|=8;
 /// the text modes, where a program may map the font plane at A0000h (see
 /// dos_vga_font).
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub(crate) struct Controllers{pub seq:[u8;5],pub gc:[u8;9],pub seq_index:u8,pub gc_index:u8,
+pub struct Controllers{pub seq:[u8;5],pub gc:[u8;9],pub seq_index:u8,pub gc_index:u8,
     /// The text modes' own memory map (GC 06h bits 2-3), None in graphics modes.
     pub text_map:Option<u8>}
 impl Controllers{

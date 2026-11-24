@@ -12,14 +12,14 @@ use super::*;
 #[path="pit.rs"]
 mod pit;
 #[path="string_io.rs"]
-pub(crate) mod string_io;
-pub(crate) use string_io::{access as string_access,io as string_io,Error as StringError};
+pub mod string_io;
+pub use string_io::{access as string_access,io as string_io,Error as StringError};
 #[path="pic.rs"]
-pub(crate) mod pic;
+pub mod pic;
 #[path="speaker_wave.rs"]
-pub(crate) mod wave;
+pub mod wave;
 /// PIT input clock in Hz.
-pub(crate) static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 /// Conventional PC assignments, not an exhaustive list of expansion hardware.
 fn device(port:u16)->Option<&'static str>{Some(match port{
     0x00..=0x0f|0x80..=0x8f|0xc0..=0xdf=>"DMA controller/page registers",
@@ -34,7 +34,7 @@ fn device(port:u16)->Option<&'static str>{Some(match port{
     0x3f0..=0x3f5|0x3f7=>"floppy controller",
     _=>return None,
 })}
-pub(crate) const PIT_HZ:u32=1_193_182;
+pub const PIT_HZ:u32=1_193_182;
 /// Speaker changes kept for a frontend that has not taken them.
 const MAX_CHANGES:usize=4096;
 #[derive(Clone,Debug,Default)]
@@ -46,10 +46,10 @@ pub struct Speaker{
     /// whether the high byte comes next.
     access:u8,count:u16,high_next:bool,
     counter2:pit::Counter2,
-    pub(crate) pic:pic::Pair,
+    pub pic:pic::Pair,
     /// The channel 0 IRQ edge total (BIOS ticks since midnight) last seen;
     /// a different total is a new edge that sets IRR bit 0.
-    pub(crate) irq_edges:Option<u32>,
+    pub irq_edges:Option<u32>,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
     /// The speaker signal now, and its changes (PIT clock, signal) not yet
@@ -58,7 +58,7 @@ pub struct Speaker{
     changes:Vec<(u64,wave::Wave)>,
     /// BIOS beeps (BEL on the console) not yet taken, at their PIT clocks.
     bells:Vec<u64>,
-    pub(crate) pit:pit::Counter0,
+    pub pit:pit::Counter0,
     pit_clock:Option<(std::time::Instant,u64)>,
     /// The PIT clock at the last guest access to ports 40h-43h or 61h.
     pit_last_io:u64,
@@ -72,11 +72,11 @@ pub struct Speaker{
     /// (Set RD_DATA Port). No PnP card is fitted, so that port reads FFh.
     pnp_register:u8,pnp_read_port:Option<u16>,
     /// Scan codes on their way to port 60h and IRQ1.
-    pub(crate) kbd:keyboard::Keyboard,
+    pub kbd:keyboard::Keyboard,
 }
 impl Speaker{
     fn update_a20(&self,ram:&mut Ram){ram.set_a20_enabled(self.kbc_a20||self.fast_a20&2!=0);}
-    pub(crate) fn bios_a20(&mut self,ram:&mut Ram,enabled:bool){self.kbc_a20=enabled;if !enabled{self.fast_a20&=!2;}self.update_a20(ram);}
+    pub fn bios_a20(&mut self,ram:&mut Ram,enabled:bool){self.kbc_a20=enabled;if !enabled{self.fast_a20&=!2;}self.update_a20(ram);}
     /// Host PIT time is sampled once, then advances monotonically. Headless
     /// deterministic sessions keep it at zero unless a host clock is selected.
     pub fn pit_now(&mut self,clock:Option<i64>)->u64{
@@ -112,17 +112,17 @@ impl Speaker{
         self.changes.push((now,signal));
     }
     /// A BIOS beep (BEL written to the console).
-    pub(crate) fn bell(&mut self,clock:Option<i64>){
+    pub fn bell(&mut self,clock:Option<i64>){
         let now=self.pit_now(clock);
         if self.bells.len()<16{self.bells.push(now);}
     }
     /// The speaker changes and BIOS beeps since the last call, for a frontend.
-    pub(crate) fn take_sound(&mut self)->(Vec<(u64,wave::Wave)>,Vec<u64>){
+    pub fn take_sound(&mut self)->(Vec<(u64,wave::Wave)>,Vec<u64>){
         (std::mem::take(&mut self.changes),std::mem::take(&mut self.bells))
     }
     /// The host time of a PIT clock this speaker recorded, once a host
     /// clock was sampled.
-    pub(crate) fn host_time(&self,clock:u64)->Option<std::time::Instant>{
+    pub fn host_time(&self,clock:u64)->Option<std::time::Instant>{
         let (start,initial)=self.pit_clock?;
         let ahead=clock.checked_sub(initial)?;
         Some(start+std::time::Duration::from_nanos((u128::from(ahead)*1_000_000_000/u128::from(PIT_HZ)) as u64))
@@ -153,10 +153,10 @@ fn instruction<F>(p:&Machine<F>)->Option<(u8,u16,u32,u8)>{
     let width=if first&1==0{1}else if p.image.segments[1].default_32()^operand{4}else{2};
     Some((first,port,at,width))
 }
-pub(crate) fn access<F>(p:&Machine<F>)->Option<(u16,u8)>{
+pub fn access<F>(p:&Machine<F>)->Option<(u16,u8)>{
     string_access(p).or_else(||instruction(p).map(|(_,port,_,width)|(port,width)))
 }
-pub(crate) fn io<F:Firmware>(p:&mut Machine<F>)->Result<Option<u32>,String>{
+pub fn io<F:Firmware>(p:&mut Machine<F>)->Result<Option<u32>,String>{
     let Some((first,port,length,width))=instruction(p)else{return Ok(None)};
     transfer(p,first,port,width)?;
     Ok(Some(length))
@@ -164,7 +164,7 @@ pub(crate) fn io<F:Firmware>(p:&mut Machine<F>)->Result<Option<u32>,String>{
 /// The hardware-device logic shared by scalar and string port instructions.
 /// FIRST is the effective scalar IN/OUT opcode and WIDTH is the operand
 /// size in bytes.  The caller handles its own guest instruction retirement.
-pub(crate) fn transfer<F:Firmware>(p:&mut Machine<F>,first:u8,port:u16,width:u8)->Result<(),String>{
+pub fn transfer<F:Firmware>(p:&mut Machine<F>,first:u8,port:u16,width:u8)->Result<(),String>{
     if width==4{return Err(format!("dword I/O at port {port:04x}h is not modelled in Dine"));}
     let input=first&2==0;
     if matches!(port,0x3c0|0x3c1|0x3c4|0x3c5|0x3ce|0x3cf){
@@ -444,7 +444,7 @@ pub(crate) fn transfer<F:Firmware>(p:&mut Machine<F>,first:u8,port:u16,width:u8)
 /// Tuesday 1 January 1980. Direct RTC year changes are session-local and do
 /// not alter the DOS-maintained clock or the host clock. Bit 7 of register
 /// 0Ah (update in progress) stays clear, so a read never has to wait.
-pub(crate) fn cmos<F>(p:&Machine<F>,index:u8)->Result<u8,String>{
+pub fn cmos<F>(p:&Machine<F>,index:u8)->Result<u8,String>{
     if let Some(value)=p.rtc.read(p.clock_offset,index){return Ok(value);}
     Ok(match index{
         // Alarm registers: no alarm set.

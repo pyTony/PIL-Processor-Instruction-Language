@@ -6,7 +6,7 @@
 //! 12-hour) and RTC interrupts remain unsupported.
 use std::time::{SystemTime,UNIX_EPOCH};
 #[derive(Clone,Debug,Default,PartialEq,Eq)]
-pub(crate) struct Rtc{adjust_seconds:i64,weekday_adjust:i64,
+pub struct Rtc{adjust_seconds:i64,weekday_adjust:i64,
     /// While status B's SET bit is on: the clock registers as frozen and
     /// written (second, minute, hour, weekday, day, month, year, century).
     frozen:Option<[u8;8]>,
@@ -39,7 +39,7 @@ fn base(offset:Option<i64>)->i64{
     match offset{Some(offset)=>SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|t|t.as_secs()as i64)+offset,None=>315_532_800}
 }
 /// DOS keeps its own date, advanced against the session's day counter.
-pub(crate) fn dos_date(offset:Option<i64>,adjust_seconds:i64)->(u32,u32,u32,u32){
+pub fn dos_date(offset:Option<i64>,adjust_seconds:i64)->(u32,u32,u32,u32){
     dos_date_at(base(offset),adjust_seconds)
 }
 fn dos_date_at(now:i64,adjust_seconds:i64)->(u32,u32,u32,u32){

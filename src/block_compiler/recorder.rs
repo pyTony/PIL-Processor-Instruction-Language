@@ -6,6 +6,7 @@
 //! are grouped by the physical base of the code segment they ran in, so a
 //! parent and an EXEC child at the same logical offsets stay apart.
 use crate::{address,dos,guest,Cpu,ExecError,Ram};
+use crate::dos::LoadedOps;
 use super::sites::{Site,InstructionProfile};
 use std::collections::{BTreeMap,BTreeSet};
 

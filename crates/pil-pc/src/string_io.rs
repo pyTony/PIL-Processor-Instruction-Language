@@ -9,7 +9,7 @@ use super::*;
 use crate::flow::ExecError;
 
 #[derive(Debug)]
-pub(crate) enum Error { Device(String), Fault(ExecError) }
+pub enum Error { Device(String), Fault(ExecError) }
 
 #[derive(Clone, Copy)]
 struct StringOp {
@@ -64,7 +64,7 @@ fn decode<F>(p: &Machine<F>) -> Option<StringOp> {
 }
 
 /// For protected-mode I/O bitmap checks. A zero-count REP performs no I/O.
-pub(crate) fn access<F>(p: &Machine<F>) -> Option<(u16, u8)> {
+pub fn access<F>(p: &Machine<F>) -> Option<(u16, u8)> {
     let op = decode(p)?;
     if op.repeated && p.cpu.regs[1] & op.mask() == 0 { return None; }
     Some(((p.cpu.regs[2] & 0xffff) as u16, op.width.bytes()))
@@ -73,7 +73,7 @@ pub(crate) fn access<F>(p: &Machine<F>) -> Option<(u16, u8)> {
 /// Returns (IP increment, partial REP) if a string-port opcode was handled.
 /// A partial REP does one element, updates SI/DI and CX/ECX, but leaves EIP
 /// on this opcode until the last element has completed.
-pub(crate) fn io<F: Firmware>(p: &mut Machine<F>) -> Result<Option<(u32, bool)>, Error> {
+pub fn io<F: Firmware>(p: &mut Machine<F>) -> Result<Option<(u32, bool)>, Error> {
     let Some(op) = decode(p) else { return Ok(None); };
     let mask = op.mask();
     let count = p.cpu.regs[1] & mask;
