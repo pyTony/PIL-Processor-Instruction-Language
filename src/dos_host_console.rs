@@ -49,6 +49,16 @@ pub(crate) enum Event{
 #[path="dos_host_keys.rs"]
 mod host_keys;
 
+/// The keys that type pasted `text`. Dine's DOS reads BIOS words; a booted
+/// machine gets key presses on the guest's layout (`guest-keymap`), after
+/// releases of the modifiers the paste shortcut may still hold.
+fn pasted(session:&Session,text:Option<String>)->Vec<PendingKey>{
+    let Some(text)=text else{return Vec::new()};
+    if !session.machine().is_some_and(|p|p.booted){return select::paste_keys(&text).into_iter().map(PendingKey::from).collect();}
+    super::guest_keymap::RELEASE_MODIFIERS.into_iter().chain(super::guest_keymap::edges(session.keymap,&text))
+        .map(|(scan,extended,down,word)|PendingKey::Native{scan,extended,down,word}).collect()
+}
+
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 enum PendingKey{Tap(u16),Native{scan:u8,extended:bool,down:bool,word:Option<u16>}}
 impl From<u16> for PendingKey{fn from(word:u16)->Self{Self::Tap(word)}}
@@ -309,7 +319,10 @@ pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate
     /// PC speaker volume 0..100, 0 silent (`speaker_volume`).
     pub(crate) speaker_volume:u8,
     /// The year the RTC runs in (`--rtc-year`), else this computer's.
-    pub(crate) rtc_year:Option<u32>}
+    pub(crate) rtc_year:Option<u32>,
+    /// The guest's keyboard layout for a paste into a booted machine
+    /// (`--guest-keymap`), else US.
+    pub(crate) guest_keymap:Option<super::guest_keymap::Keymap>}
 
 /// Run the session until the program ends, it stops, or the user quits.
 /// Returns the closing text for the host terminal: when the program ended
@@ -339,7 +352,7 @@ pub(crate) fn last_lines(text:&[u8],columns:u32,count:usize)->String{
 pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String>{
     let offset=options.utc_offset.unwrap_or_else(local_utc_offset);
     for command in [Some(format!("clock {offset}")),options.country.map(|c|format!("country {c}")),
-        options.rtc_year.map(|y|format!("rtc-year {y}")),options.ansi.then(||"ansi on".to_string()),options.mouse.then(||"mouse on".to_string())].into_iter().flatten(){
+        options.rtc_year.map(|y|format!("rtc-year {y}")),options.guest_keymap.map(|k|format!("guest-keymap {}",k.name())),options.ansi.then(||"ansi on".to_string()),options.mouse.then(||"mouse on".to_string())].into_iter().flatten(){
         let (reply,_)=session.command(0,&command)?;
         if reply.contains("\"ok\":false"){return Err(format!("{command}: {reply}"));}
     }
@@ -399,12 +412,12 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     pending.push_back(PendingKey::Native{scan,extended,down,word:native_bios_word(scan,key)});
                 },
                 Event::Copy=>front.copy(session)?,
-                Event::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
+                Event::Paste=>pending.extend(pasted(session,front.paste())),
                 Event::HostMenu=>{host_menu_open=front.media_menu();},
                 Event::HostCommand(id)=>{
                     host_menu_open=false;
                     if id==1{front.copy(session)?;}
-                    else if id==2{pending.extend(front.paste().into_iter().map(PendingKey::from));}
+                    else if id==2{pending.extend(pasted(session,front.paste()));}
                     else if id==3{note=Some(save_live_snapshot(session,pending.len()).unwrap_or_else(|e|e));}
                     else if id==4{note=Some(session.disable_live_trace().map(|_|"Dispatch history disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id==5{
@@ -422,11 +435,14 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
                     let pressed=buttons&2!=0&&!right_down;right_down=buttons&2!=0;
                     let active=session.machine().is_some_and(|p|p.dos.mouse.view().active);
-                    if pressed&&(shift||!active){host_menu_open=front.media_menu();continue;}
+                    // The right press that opens the host menu is the menu's:
+                    // the selection gesture must not see it again in a move
+                    // with the button still down (that pasted a second time).
+                    if pressed&&(shift||!active){front.selecting.hold(buttons);host_menu_open=front.media_menu();continue;}
                     if front.selects(active,shift){
                         match front.select(session,x,y,width,height,buttons)?{
                             select::Gesture::Copy=>front.copy(session)?,
-                            select::Gesture::Paste=>pending.extend(front.paste().into_iter().map(PendingKey::from)),
+                            select::Gesture::Paste=>pending.extend(pasted(session,front.paste())),
                             select::Gesture::None=>{},
                         }
                     }else if !paused&&width>0&&height>0{
@@ -665,11 +681,11 @@ impl Front{
         self.selecting.clear();
         Ok(())
     }
-    /// The keys that type the host clipboard.
-    fn paste(&mut self)->Vec<u16>{
+    /// The host clipboard's text, to type.
+    fn paste(&mut self)->Option<String>{
         #[cfg(windows)]
-        if self.window.is_some(){return crate::dine_window::clipboard().map_or_else(Vec::new,|t|select::paste_keys(&t));}
-        Vec::new()
+        if self.window.is_some(){return crate::dine_window::clipboard();}
+        None
     }
     pub(crate) fn closed(&self)->bool{
         #[cfg(windows)]

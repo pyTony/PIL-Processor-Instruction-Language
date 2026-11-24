@@ -1,3 +1,37 @@
+# MCC 1.0 walkthrough, guest keymap for pastes, menu paste once — 24 November 2026
+
+Tony installed MCC Interim 1.0+ on Windows and booted it to a root prompt,
+but many steps were missing from docs/BOOT.md, the boot printed "harddisk
+I/O error, dev 0305, sector 0 / Unable to find swap-space signature"
+twice, and a paste from the window's right-click menu arrived twice with
+`-` as `+` and `/` as `-` (Finnish keymap loaded in Linux).
+- docs/BOOT.md: the whole install, step by step: download and gunzip
+  (PowerShell and sh), the empty image, every installer question and its
+  answer, booting from the hard disk with `ro root=301`.
+- The swap lines: Tony answered `y` to the swap question, whose default is
+  /dev/hda5; Linux 1.0 refuses a read past the end of a partition (here of
+  size 0) before it reaches the controller, so a PC printed the same, twice
+  because /etc/bcheckrc and /etc/rc both run `swapon -a`. Not a PIL bug;
+  the walkthrough says to answer `n` and how to remove the line.
+- The double paste: the right press that opened the host menu was seen
+  again by the selection gesture in a move with the button still down,
+  which pastes. Selecting::hold marks it as the menu's.
+- src/dos_guest_keymap.rs: text typed as key presses on the guest's layout
+  (us, uk, fi; Shift and AltGr around keys, a space after a dead accent,
+  modifiers released before a paste). A paste into a booted machine uses
+  it; Dine's DOS still gets BIOS words. `--guest-keymap us|uk|fi` for
+  `pil --dos-console` and `pil --boot-probe` (whose `--type` uses it too),
+  session command `guest-keymap NAME`.
+
+Cloud Linux, release: 1056 Rust tests pass, 2 ignored (1 new keymap test;
+the selection test gains the held right press); 0 rustc warnings in the
+release build; portable-path and program-specific checks pass. Through the
+probe on the installed 40 MB image, with /etc/kbmap set to fi-latin1 and
+with the default UK map, a typed `echo` line with @ # | \\ ~ $ ! { } [ ] ^
+< > ; came out as written (--guest-keymap fi and uk). The swap question
+with `y` shows the default /dev/hda5. The window and its menu paste were
+not driven (no Windows here).
+
 # MCC Interim 1.0+ (Linux 1.0.4) installs and boots — 23 November 2026
 
 Tony chose MCC from github.com/youngd24/oldlinux (mcc-linux) before
