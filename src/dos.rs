@@ -71,6 +71,8 @@ mod fdc;
 mod ata;
 #[path="dos_boot.rs"]
 mod boot;
+#[path="dos_guest_keymap.rs"]
+pub(crate) mod guest_keymap;
 pub use boot::{boot,boot_with_hard_disk,probe as boot_probe,parse_script as boot_script,script_probe as boot_script_probe,tar_floppy};
 #[path="dos_xms.rs"]
 mod xms;

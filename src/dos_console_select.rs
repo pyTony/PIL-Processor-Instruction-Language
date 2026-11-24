@@ -111,6 +111,9 @@ impl Selecting{
         }
         Gesture::None
     }
+    /// Buttons already pressed for something else (the host menu): a later
+    /// event with them still down is not a new press.
+    pub(crate) fn hold(&mut self,buttons:u16){self.buttons|=buttons;}
     /// Whether a drag is under way, so its events stay with the host.
     pub(crate) fn dragging(&self)->bool{self.dragging}
     pub(crate) fn clear(&mut self){self.selection=None;self.dragging=false;}

@@ -22,7 +22,9 @@ pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
 }
 #[path="dos_disk_set.rs"]
 mod disk_set;
-pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,native_video:bool,backend:Option<Box<dyn InstructionBackend>>,disk_sets:BTreeMap<u8,disk_set::DiskSet>}
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,native_video:bool,backend:Option<Box<dyn InstructionBackend>>,disk_sets:BTreeMap<u8,disk_set::DiskSet>,
+    /// The guest's keyboard layout for pasted text in a booted machine.
+    pub(crate) keymap:super::guest_keymap::Keymap}
 impl Session{
     pub(crate) fn mount_media(&mut self,letter:u8,path:&str)->Result<String,String>{
         let source=open_mount_source(path)?;
@@ -33,7 +35,7 @@ impl Session{
         self.loaded.as_mut().ok_or("session state lost")?.dos.drive.unmount(letter)?;
         self.disk_sets.remove(&letter);Ok(format!("{}: unmounted",char::from(letter)))
     }
-    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None,disk_sets:BTreeMap::new()}}
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None,disk_sets:BTreeMap::new(),keymap:Default::default()}}
     pub(crate) fn set_backend(&mut self,backend:Box<dyn InstructionBackend>){self.backend=Some(backend);}
     /// Install disk one only after the manifest and media have been checked.
     pub(crate) fn disk_set(&mut self,letter:u8,manifest:&Path)->Result<String,String>{
@@ -383,6 +385,12 @@ impl Session{
             ["rtc-year",year]=>match year.parse::<u32>(){
                 Ok(year)=>match self.loaded.as_mut().ok_or("session state lost")?.set_rtc_year(year){Ok(())=>(true,String::new(),false),Err(e)=>(false,e,false)},
                 _=>(false,"rtc-year needs a year (1980..2099)".into(),false),
+            },
+            // `guest-keymap NAME`: the guest's keyboard layout (us, uk, fi) for
+            // text pasted into a booted machine.
+            ["guest-keymap",name]=>match super::guest_keymap::Keymap::parse(name){
+                Ok(map)=>{self.keymap=map;(true,String::new(),false)},
+                Err(e)=>(false,e,false),
             },
             // `country CODE`: the DOS country, as AH38 with DX=FFFFh would set it.
             ["country",code]=>match code.parse::<u16>(){

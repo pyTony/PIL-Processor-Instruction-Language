@@ -299,7 +299,7 @@ fn a_script_shot_writes_the_graphics_screen_and_refuses_text(){
     let file=std::env::temp_dir().join(format!("pil-shot-{}.ppm",std::process::id()));
     let name=file.to_string_lossy().into_owned();
     let script=parse_script(&format!("run 100000\nshot {name}\n")).unwrap();
-    let report=script_probe(boot(&disk,0).unwrap(),1_000_000,&script,None,None).unwrap();
+    let report=script_probe(boot(&disk,0).unwrap(),1_000_000,&script,None,Default::default(),None).unwrap();
     assert!(report.contains(": 320x200, mode 13h,"),"{report}");
     let ppm=std::fs::read(&file).unwrap();std::fs::remove_file(&file).unwrap();
     let header=b"P6\n320 200\n255\n";
@@ -310,7 +310,7 @@ fn a_script_shot_writes_the_graphics_screen_and_refuses_text(){
     let mut text=vec![0u8;1_474_560];
     text[..2].copy_from_slice(&[0xeb,0xfe]);text[510]=0x55;text[511]=0xaa;
     let script=parse_script(&format!("run 1000\nshot {name}\n")).unwrap();
-    let report=script_probe(boot(&text,0).unwrap(),1_000_000,&script,None,None).unwrap();
+    let report=script_probe(boot(&text,0).unwrap(),1_000_000,&script,None,Default::default(),None).unwrap();
     assert!(report.contains("no graphics screen (display mode 03h)"),"{report}");
     assert!(!file.exists());
 }
@@ -328,7 +328,7 @@ fn a_script_types_into_a_booted_machine_and_waits_for_the_screen(){
     let mut disk=vec![0u8;1_474_560];
     disk[..code.len()].copy_from_slice(code);disk[510]=0x55;disk[511]=0xaa;
     let script=parse_script("prompt >\ntype hi\nscreen >hi\nmark typed\nshow\n").unwrap();
-    let report=script_probe(boot(&disk,0).unwrap(),2_000_000,&script,None,None).unwrap();
+    let report=script_probe(boot(&disk,0).unwrap(),2_000_000,&script,None,Default::default(),None).unwrap();
     assert!(report.contains("-- mark typed:"),"{report}");
     assert!(report.lines().any(|l|l==">hi"),"{report}");
     assert!(report.contains("script done"),"{report}");
