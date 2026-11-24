@@ -247,5 +247,5 @@ pub fn deliver_real(cpu:&mut Cpu,image:&mut Image,ram:&mut Ram,n:u8,return_ip:u3
 }
 
 #[cfg(test)]
-#[path="../tests/unit/interrupt.rs"]
+#[path="../../../tests/unit/interrupt.rs"]
 mod tests;

@@ -7,7 +7,7 @@ use super::sites::{Site,BlockPlan,unpaged_register_only};
 
 /// Both backends compile the same PIL bodies and expose the same checked and
 /// unpaged-register entry points. Selection is a block planning decision.
-pub(crate) fn instruction_module(ip:u32,p:&Program)->String{
+pub fn instruction_module(ip:u32,p:&Program)->String{
     let functions=crate::emit_rust_functions(p)
         .replace("fn execute_state(","#[inline(always)] fn execute_state(")
         .replace("pub fn execute_with_machine(","#[inline(always)] pub fn execute_with_machine(");
@@ -19,12 +19,12 @@ pub(crate) fn instruction_module(ip:u32,p:&Program)->String{
 }
 
 /// Runtime adapters provide Rust bindings, not instruction semantics.
-pub(crate) struct Bindings {
-    pub(crate) regs:&'static str, pub(crate) flags:&'static str,
-    pub(crate) undefined:&'static str, pub(crate) eip:&'static str,
-    pub(crate) ram:&'static str, pub(crate) machine:&'static str,
+pub struct Bindings {
+    pub regs:&'static str, pub flags:&'static str,
+    pub undefined:&'static str, pub eip:&'static str,
+    pub ram:&'static str, pub machine:&'static str,
 }
-pub(crate) fn instruction_call(ip:u32,site:&Site,b:&Bindings,fast:bool)->String{
+pub fn instruction_call(ip:u32,site:&Site,b:&Bindings,fast:bool)->String{
     let method=if fast&&site.profile.register_only{"execute_unpaged_register"}else{"execute_with_machine"};
     format!("ins_{ip:x}::{method}({},{},{},{},({},{}),({},{}),{:?},{},{:?},{})",b.regs,b.flags,b.undefined,b.eip,
         site.dst.register,site.dst.low,site.src.register,site.src.low,site.flow,b.ram,site.address,b.machine)
@@ -32,12 +32,12 @@ pub(crate) fn instruction_call(ip:u32,site:&Site,b:&Bindings,fast:bool)->String{
 
 /// Runtime-specific fault reporting, retirement and call metadata are kept at
 /// this boundary. Both adapters receive the identical planned instruction order.
-pub(crate) trait BlockAdapter {
+pub trait BlockAdapter {
     fn header(&self,start:u32)->String;
     fn instruction(&self,ip:u32,site:&Site,retired_prefix:usize)->String;
     fn footer(&self,length:usize)->String;
 }
-pub(crate) fn emit_blocks(sites:&BTreeMap<u32,Site>,plan:&BlockPlan,adapter:&impl BlockAdapter)->String{
+pub fn emit_blocks(sites:&BTreeMap<u32,Site>,plan:&BlockPlan,adapter:&impl BlockAdapter)->String{
     let mut out=format!("// Shared block plan: {}\n",plan.summary());
     for &start in sites.keys(){
         let sequence=plan.sequence(sites,start);if sequence.is_empty(){continue;}

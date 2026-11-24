@@ -24,7 +24,7 @@ impl Default for DecodeCache {
 }
 impl DecodeCache {
     /// A smaller cache, so tests can fill one with a small image.
-    #[cfg(test)]
+    #[cfg(any(test,feature="test-support"))]
     pub fn with_capacity(capacity:usize)->Self{Self{capacity:capacity.clamp(1,CAPACITY),..Self::default()}}
     pub fn enabled(&self)->bool {self.enabled}
     pub fn stats(&self)->Stats {self.stats}
@@ -91,5 +91,5 @@ impl DecodeCache {
     }
 }
 #[cfg(test)]
-#[path="../tests/unit/cache.rs"]
+#[path="../../../tests/unit/cache.rs"]
 mod tests;

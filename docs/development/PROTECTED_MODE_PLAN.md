@@ -99,7 +99,7 @@ Merged increment 2: #116 and #117. Increment 3, on the same branch:
 ## Increment 4 status
 
 Merged increment 3: #122. Increment 4, on the same branch:
-- src/interrupt.rs `deliver`: exceptions, INT n, INT3 and INTO in protected
+- crates/pil-cpu/src/interrupt.rs `deliver`: exceptions, INT n, INT3 and INTO in protected
   mode go through 286 and 386 interrupt and trap gates in the IDT, with the
   386 checks in order (IDT limit, gate type, gate DPL for INT n, present),
   then the target code segment (code, DPL at most CPL, present). Error
@@ -124,7 +124,7 @@ Merged increment 3: #122. Increment 4, on the same branch:
 ## Increment 5 status
 
 Merged increment 4: #123. Increment 5, on the same branch:
-- src/privilege.rs (shared by both backends and interrupt delivery): far
+- crates/pil-cpu/src/privilege.rs (shared by both backends and interrupt delivery): far
   JMP/CALL through 286 and 386 call gates, CALL to an inner level with the
   TSS stack switch and parameter copy, RETF/IRET to an outer level with
   SS:ESP popped and data segments nulled.
@@ -174,7 +174,7 @@ Merged increment 5: #124. Increment 6, on the same branch:
 
 Merged increment 6: #128, with follow-ups #129 (ARPL), #131 (128 KB ROM)
 and #132 (SMSW r32 keeps PG). Increment 7, on the same branch:
-- src/task.rs (shared by both backends and interrupt delivery): far JMP
+- crates/pil-cpu/src/task.rs (shared by both backends and interrupt delivery): far JMP
   and CALL to an available TSS or through a task gate, exceptions and
   INT n through IDT task gates, and IRET with NT set (new PIL token
   `task_return_if`). The old task is stored in its 386 or 286 TSS; busy
@@ -286,15 +286,15 @@ Next: the plan's ten increments are done. Open items are the gaps above
 protected-mode speed (blocks cover real-mode code only).
 
 Key files:
-- src/address.rs: SegmentState (caches, CPL, GDT/LDT/IDT/TR, CR0-CR3,
+- crates/pil-cpu/src/address.rs: SegmentState (caches, CPL, GDT/LDT/IDT/TR, CR0-CR3,
   paging), segment loads, `interrupt_target`.
-- src/privilege.rs: far JMP/CALL/RETF/IRET, call gates, TSS stack switch,
+- crates/pil-cpu/src/privilege.rs: far JMP/CALL/RETF/IRET, call gates, TSS stack switch,
   V86 entry. Shared by both backends.
-- src/task.rs: task switches (TSS save and load, busy bits, back link).
-- src/interrupt.rs: exception and interrupt delivery (real, protected, V86),
+- crates/pil-cpu/src/task.rs: task switches (TSS save and load, busy bits, back link).
+- crates/pil-cpu/src/interrupt.rs: exception and interrupt delivery (real, protected, V86),
   #DF and shutdown.
-- src/memory.rs: Ram, paging walk, A/D marks, user/supervisor checks.
-- src/guest.rs: the x86 decoder, which binds operands and picks a PIL file.
+- crates/pil-cpu/src/memory.rs: Ram, paging walk, A/D marks, user/supervisor checks.
+- crates/pil-cpu/src/guest.rs: the x86 decoder, which binds operands and picks a PIL file.
 - isa/i386/*.pil: instruction semantics; src/main.rs has the PIL tokens,
   the interpreter and the Rust emitter. docs/LANGUAGE.md lists every token.
 - src/dos.rs `run_rom`: the test386 runner (`--run-rom`, 64 or 128 KB).

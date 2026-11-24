@@ -14,11 +14,11 @@ mod present;
 #[allow(unused_imports)]
 pub use present::PresentFpu;
 #[path = "fpu_convert.rs"]
-mod convert;
+pub mod convert;
 #[path = "fpu_math.rs"]
-mod math;
+pub mod math;
 #[path = "fpu_address.rs"]
-mod address;
+pub mod address;
 
 #[derive(Clone, Debug, Default)]
 pub struct AbsentFpu;
@@ -187,7 +187,3 @@ impl AbsentFpu {
         if trap { Outcome::NotAvailable } else { Outcome::Completed }
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/unit/fpu.rs"]
-mod tests;

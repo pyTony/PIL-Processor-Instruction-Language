@@ -39,9 +39,9 @@ pub struct Paging {pub directory:u32,pub user:bool}
 // those lines, however close other writes come (data next to code, as small
 // programs keep it). After such a write the owner compares bytes, and may
 // take a new stamp once they match.
-pub(crate) const CODE_LINE:usize=64;
+pub const CODE_LINE:usize=64;
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct CodeStamp {
+pub struct CodeStamp {
     owner: u64,
     address: u32,
     bytes: usize,
@@ -177,14 +177,14 @@ pub struct Ram {
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
     pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),tlb:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,video_watch:None,code_origins:Default::default()}}
-    pub(crate) fn track_resource(&mut self,identity:usize){self.code_origins=CodeOrigins{identity:Some(identity),ranges:Default::default()};}
-    pub(crate) fn resource_origin(&self,address:u32)->Option<(usize,u32)>{
+    pub fn track_resource(&mut self,identity:usize){self.code_origins=CodeOrigins{identity:Some(identity),ranges:Default::default()};}
+    pub fn resource_origin(&self,address:u32)->Option<(usize,u32)>{
         if self.paging.get().is_some(){return None;}
         let identity=self.code_origins.identity?;let at=self.physical_address(address);
         let(&start,&(end,offset))=self.code_origins.ranges.range(..=at).next_back()?;
         (at<end).then(||offset.checked_add(at-start)).flatten().map(|offset|(identity,offset))
     }
-    pub(crate) fn resource_read(&mut self,identity:usize,address:u32,offset:u32,bytes:usize){
+    pub fn resource_read(&mut self,identity:usize,address:u32,offset:u32,bytes:usize){
         if self.code_origins.identity!=Some(identity)||self.paging.get().is_some(){return;}
         if bytes>u32::MAX as usize||offset.checked_add(bytes as u32).is_none(){return;}
         let mut done=0;
@@ -224,7 +224,7 @@ impl Ram {
     /// A stamp for code at `address`: valid until a write reaches one of
     /// its lines (or A20 or the RAM object changes). The caller must have
     /// read the bytes it trusts after the last such write.
-    pub(crate) fn watch_code(&self,address:u32,bytes:usize)->Option<CodeStamp>{
+    pub fn watch_code(&self,address:u32,bytes:usize)->Option<CodeStamp>{
         let (bus,lines)=self.code_pages(address,bytes)?;
         Some(CodeStamp {
             owner: self.code_watch.owner,
@@ -240,7 +240,7 @@ impl Ram {
         })
     }
     #[inline]
-    pub(crate) fn code_unchanged(&self, stamp: CodeStamp, address: u32, bytes: usize) -> bool {
+    pub fn code_unchanged(&self, stamp: CodeStamp, address: u32, bytes: usize) -> bool {
         if stamp.owner != self.code_watch.owner || stamp.address != address
             || stamp.bytes != bytes || stamp.a20 != self.a20_enabled
             || stamp.planar != self.planar.is_some() || stamp.paged != self.paging.get().is_some()
@@ -262,7 +262,7 @@ impl Ram {
     }
     /// Runs `f` on physical addresses, with paging off for its accesses
     /// (a DMA transfer, which bypasses the CPU's page tables).
-    pub(crate) fn physical<R>(&mut self,f:impl FnOnce(&mut Self)->R)->R{
+    pub fn physical<R>(&mut self,f:impl FnOnce(&mut Self)->R)->R{
         let saved=self.paging.get();self.set_paging(None);
         let result=f(self);self.set_paging(saved);result
     }
@@ -271,7 +271,7 @@ impl Ram {
     /// TLB: writes to page-table frames flush it whatever the paging state
     /// (`store` and `write_bytes` call `table_write` on both paths), and
     /// `set_paging` with the same directory turns it back on.
-    pub(crate) fn host_access(&mut self){
+    pub fn host_access(&mut self){
         if !self.marks.get_mut().is_empty(){self.settle();}
         self.paging.set(None);
     }
@@ -364,18 +364,18 @@ impl Ram {
     fn locate(&self,linear:u32,write:bool)->Result<u32,AccessFault>{Ok(self.physical_address(self.translate(linear,write)?))}
     /// Watch all text pages at B0000h..BFFFFh, regardless of program or mode.
     /// Disabled by default; only *changed* bytes create history records.
-    pub(crate) fn start_text_watch(&mut self){self.text_watch=Some(TextWatch::new());}
-    pub(crate) fn stop_text_watch(&mut self){self.text_watch=None;}
-    pub(crate) fn text_watch_enabled(&self)->bool{self.text_watch.is_some()}
-    pub(crate) fn text_watch_site(&mut self,cs:u16,ip:u32){
+    pub fn start_text_watch(&mut self){self.text_watch=Some(TextWatch::new());}
+    pub fn stop_text_watch(&mut self){self.text_watch=None;}
+    pub fn text_watch_enabled(&self)->bool{self.text_watch.is_some()}
+    pub fn text_watch_site(&mut self,cs:u16,ip:u32){
         if let Some(w)=self.text_watch.as_mut(){w.site=(cs,ip);}
     }
-    pub(crate) fn text_watch_json(&self)->String{
+    pub fn text_watch_json(&self)->String{
         self.text_watch.as_ref().map_or_else(||r#"{"enabled":false}"#.into(),TextWatch::json)
     }
-    pub(crate) fn start_video_watch(&mut self){self.video_watch=Some(VideoWatch::default());}
-    pub(crate) fn stop_video_watch(&mut self){self.video_watch=None;}
-    pub(crate) fn video_watch_json(&self)->String{
+    pub fn start_video_watch(&mut self){self.video_watch=Some(VideoWatch::default());}
+    pub fn stop_video_watch(&mut self){self.video_watch=None;}
+    pub fn video_watch_json(&self)->String{
         self.video_watch.as_ref().map_or_else(||r#"{"enabled":false}"#.into(),VideoWatch::json)
     }
     #[inline]
@@ -549,5 +549,5 @@ impl Ram {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/memory.rs"]
+#[path = "../../../tests/unit/memory.rs"]
 mod tests;

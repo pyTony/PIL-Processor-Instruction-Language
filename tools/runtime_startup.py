@@ -42,7 +42,7 @@ def git_status(root: Path, *, gui: bool = False) -> str:
 def fingerprint(root: Path) -> str:
     inputs = [root / name for name in ("Cargo.toml", "Cargo.lock", "build.rs",
                                       ".cargo/config", ".cargo/config.toml")]
-    inputs += [p for folder in ("src", "isa") for p in (root / folder).rglob("*") if p.is_file()]
+    inputs += [p for folder in ("src", "crates", "isa") for p in (root / folder).rglob("*") if p.is_file()]
     digest = hashlib.sha256()
     for path in sorted(set(inputs)):
         if path.is_file():
@@ -73,7 +73,7 @@ def current(root: Path, output: Path, kind: str) -> bool:
         # timestamp check. A library needs one Cargo check to verify its feature.
         if kind == "cli":
             inputs = [root / n for n in ("Cargo.toml", "Cargo.lock", "build.rs")]
-            inputs += [p for folder in ("src", "isa", ".cargo") for p in (root / folder).rglob("*") if p.is_file()]
+            inputs += [p for folder in ("src", "crates", "isa", ".cargo") for p in (root / folder).rglob("*") if p.is_file()]
             return not any(p.is_file() and p.stat().st_mtime_ns > output.stat().st_mtime_ns for p in inputs)
         return False
 

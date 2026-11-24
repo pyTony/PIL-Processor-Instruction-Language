@@ -1,0 +1,20 @@
+[package]
+name = "pil-cpu"
+version = "0.38.0-alpha.1"
+edition = "2021"
+publish = false
+
+# The CPU core of PIL: the PIL language (parser, interpreter, Rust emitter),
+# the 386 decoder, memory and paging, segments, privilege and task switches,
+# the 80387, the decode cache, precompiled instruction forms and run-time
+# blocks. No PC, BIOS or DOS: the pil crate (Dine) builds those on top.
+[lib]
+name = "pil_cpu"
+path = "src/lib.rs"
+
+[features]
+# Omit the generated native PIL instruction-form table (see the pil crate).
+compact-interpreter = []
+# Helpers that only tests use (execute_memory and the like), for the pil
+# crate's own unit tests. Never enabled in a normal build.
+test-support = []

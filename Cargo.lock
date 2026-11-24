@@ -132,7 +132,12 @@ name = "pil"
 version = "0.38.0-alpha.1"
 dependencies = [
  "crossterm",
+ "pil-cpu",
 ]
+
+[[package]]
+name = "pil-cpu"
+version = "0.38.0-alpha.1"
 
 [[package]]
 name = "redox_syscall"

@@ -60,7 +60,8 @@ fn present_80387_fldpi_full_stack_is_atomic(){
     assert_eq!(ram,p.ram);
 }
 
-use super::*;
+use crate::fpu::*;
+use crate::{Cpu, guest::Image};
 use crate::{dos, memory::MemWidth};
 
 #[test]

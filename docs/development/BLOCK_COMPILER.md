@@ -92,9 +92,9 @@ Issue #148 (file I/O in the standalone runtime) is obsolete with this change.
 Steps 1-3 of the route above are in, in the shared code every launcher,
 session and the `dine` library use. Tracking issue #183.
 
-**Precompiled forms** (`src/precompiled/`). A *form* is a decoded PIL
+**Precompiled forms** (`crates/pil-cpu/src/precompiled/`). A *form* is a decoded PIL
 program with its immediate values taken out. `pil --emit-precompiled-forms
-src/precompiled/forms.rs` enumerates the real-mode decoder (prefixes 66, 67,
+crates/pil-cpu/src/precompiled/forms.rs` enumerates the real-mode decoder (prefixes 66, 67,
 the six segment overrides, F2/F3; one- and two-byte opcodes; all 256 ModRM
 bytes; three immediate patterns) and finds 2,669 forms. For each it writes
 `execute_state` and `execute_form`, rendered from the PIL tokens by the
@@ -111,7 +111,7 @@ come with a regenerated table. Real-mode code with a 16-bit stack only for
 now: with 32-bit stacks and 32-bit protected-mode code the table was 4,319
 forms (22 MB), which made the release build too slow for its gain today.
 
-**Run-time blocks** (`src/block_compiler/engine.rs`). When the DOS loop
+**Run-time blocks** (`crates/pil-cpu/src/block_compiler/engine.rs`). When the DOS loop
 reaches an address, Dine plans a block there: straight-line PIL instructions
 through the decode cache, at most 16, ending after any control transfer,
 store, segment/control/table write, interrupt shadow or write of TF, IF,
@@ -162,7 +162,7 @@ DOS loop chains only while it has no scan code or mouse event to look at
 between instructions, so IRQ1, mouse callbacks, the timer and Ctrl-C come
 at the same instruction boundaries as with the interpreter.
 
-Code stamps (src/memory.rs `CodeWatch`, also used by the decode cache)
+Code stamps (crates/pil-cpu/src/memory.rs `CodeWatch`, also used by the decode cache)
 now count writes per 64-byte line instead of marking 4 KB pages dirty for
 good. A write elsewhere in the page (data kept next to code, as small COM
 programs do) keeps the code trusted; a write into its lines makes the next

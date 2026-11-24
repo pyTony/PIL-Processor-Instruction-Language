@@ -5,7 +5,7 @@ This branch tests the size impact of omitting the precompiled PIL instruction-fo
 ## Build modes
 
 - Default: `cargo build --locked` retains the existing generated native forms and runtime selection.
-- Compact: `cargo build --locked --features compact-interpreter` does **not compile** `src/precompiled/forms.rs`. The resolver returns `None` and generic PIL execution handles the instruction.
+- Compact: `cargo build --locked --features compact-interpreter` does **not compile** `crates/pil-cpu/src/precompiled/forms.rs`. The resolver returns `None` and generic PIL execution handles the instruction.
 - The mode is compatible with both real-mode and protected-mode PIL execution. DOS, FPU, native-source utilities, and desktop presentation are **not** yet independently feature-gated.
 
 The `PIL_PRECOMPILED=off` environment variable disables native execution at runtime but does **not** shrink the binary; the new Cargo feature is needed for a smaller binary.

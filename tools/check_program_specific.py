@@ -37,11 +37,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ALLOW = ROOT / 'tools' / 'program_specific_allow.txt'
 
-# General files: everything under src/ and isa/, build.rs, and every script
+# General files: everything under src/, crates/ and isa/, build.rs, and every script
 # in tools/ (Python, PowerShell, shell, cmd): the terminal, the debugger, the
 # precompiler build tools (Tony, 2026-11-13: precompilation, not a JIT, and
 # not exempt) and the packaging scripts.
-GENERAL = ['src/**/*.rs', 'isa/**/*.pil', 'build.rs', 'Cargo.toml',
+GENERAL = ['src/**/*.rs', 'crates/**/*.rs', 'crates/**/Cargo.toml', 'isa/**/*.pil', 'build.rs', 'Cargo.toml',
            'tools/**/*.py', 'tools/**/*.ps1', 'tools/**/*.sh',
            'tools/**/*.cmd', 'tools/**/*.bat', 'tools/**/*.vbs']
 
@@ -70,7 +70,7 @@ HASH = re.compile(r'(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])')
 # Per-program build interfaces that were removed and must not come back.
 PER_PROGRAM_BUILD = re.compile(r'PIL_SHADOW_SOURCE|pil_shadow_backend|--emit-dos-backend|--emit-dos-standalone|'
                                r'build_dos_(?:shadow|native|bundle)|shadow_backend::')
-BUILD_SCOPE = ['src/**/*.rs', 'isa/**/*.pil', 'build.rs', 'Cargo.toml', 'tools/**/*', 'tests/**/*.py', 'tests/**/*.rs',
+BUILD_SCOPE = ['src/**/*.rs', 'crates/**/*.rs', 'crates/**/Cargo.toml', 'isa/**/*.pil', 'build.rs', 'Cargo.toml', 'tools/**/*', 'tests/**/*.py', 'tests/**/*.rs',
                '.github/workflows/**/*', '*.cmd', '*.sh', '*.vbs', '*.ps1', 'scratch/**/*.py']
 BINARY = re.compile(r'\.(?:exe|dll|so|dylib)$', re.I)
 

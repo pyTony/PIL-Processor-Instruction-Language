@@ -130,5 +130,5 @@ impl X87State {
     }
 }
 #[cfg(test)]
-#[path = "../tests/unit/fpu_state.rs"]
+#[path = "../../../tests/unit/fpu_state.rs"]
 mod tests;

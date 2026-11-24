@@ -104,9 +104,9 @@ questions; proposed syntax and plans are not implementation claims.
 | [LES](../isa/i386/les.pil) | Full pointer reads and joint GPR/ES effects |
 | [Memory ADD](../isa/i386/add_ram.pil) | Load, calculate and stage a store |
 | [Conditions](../isa/i386/conditions.pil), [SETcc](../isa/i386/setcc.pil), [Jcc](../isa/i386/jcc.pil) | Composed predicates, conditional results and branches |
-| [Parser, interpreter and Rust emitter](../src/main.rs) | Implemented token validation and both execution paths |
-| [Binary decoder](../src/guest.rs) | Encodings, operands and decoded instruction context |
-| [Address/segment support](../src/address.rs), [RAM](../src/memory.rs), [flow context](../src/flow.rs) | Shared access checks, memory model and error/context types |
+| [Parser, interpreter and Rust emitter](../crates/pil-cpu/src/lib.rs) | Implemented token validation and both execution paths |
+| [Binary decoder](../crates/pil-cpu/src/guest.rs) | Encodings, operands and decoded instruction context |
+| [Address/segment support](../crates/pil-cpu/src/address.rs), [RAM](../crates/pil-cpu/src/memory.rs), [flow context](../crates/pil-cpu/src/flow.rs) | Shared access checks, memory model and error/context types |
 | [Compiled backend verifier](../src/native.rs), [unit tests](../tests/unit/), [verification tools](../tools/) | Full-state comparisons and independent checks |
 
 ## Using and delivering the emulator

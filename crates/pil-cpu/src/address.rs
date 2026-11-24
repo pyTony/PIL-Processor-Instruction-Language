@@ -436,5 +436,5 @@ impl SegmentState {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/address.rs"]
+#[path = "../../../tests/unit/address.rs"]
 mod tests;
