@@ -1,6 +1,6 @@
 //! Interrupt vectors and the 4DOS increment's services, ports and timer.
 use super::*;
-use super::super::{load,run,Stop,PSP};
+use crate::bios::vectors::*;
 fn code_at(bytes:&[(usize,&[u8])])->Vec<u8>{
     let mut code=vec![0x90;0x40];
     for(at,b)in bytes{if code.len()<at+b.len(){code.resize(at+b.len(),0x90);}code[*at..at+b.len()].copy_from_slice(b);}
@@ -22,7 +22,7 @@ fn answered_vectors_start_at_read_only_entries_and_others_keep_their_values(){
         assert_eq!(p.ram.load(at,MemWidth::Byte).unwrap(),0xf4,"entries are in the BIOS ROM, which ignores writes");
     }
     // INT 1Fh points to the upper half of the BIOS graphics font.
-    assert_eq!(p.ram.load(0x1f*4,MemWidth::Dword).unwrap(),super::super::console::graphics_text::UPPER_FONT);
+    assert_eq!(p.ram.load(0x1f*4,MemWidth::Dword).unwrap(),super::console::graphics_text::UPPER_FONT);
     // Other unimplemented BIOS data pointers, mouse and free vectors stay 0.
     for n in [0x1d,0x1e,0x33,0x41,0x60,0x67]{assert_eq!(p.ram.load(n*4,MemWidth::Dword).unwrap(),0,"INT {n:02x}h");}
     assert_eq!(p.ram.load(0x23*4,MemWidth::Dword).unwrap(),0x0070_0074);
@@ -88,8 +88,8 @@ fn timer_ticks_reach_the_bda_only_with_the_host_clock_if_and_bios_handlers(){
     for p in [fresh(None,0x202),fresh(Some(0),0x002)]{let r=run(p,10).unwrap();assert_eq!(r.loaded.cpu.regs[0]&0xffff,0x1111);}
     let r=run(fresh(Some(0),0x202),10).unwrap();
     let ms=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()as u64%86_400_000;
-    let now=(ms*1_193_182/(65_536*1000))as u32%super::super::TICKS_PER_DAY;let got=r.loaded.ram.load(0x46c,MemWidth::Dword).unwrap();
-    let delta=got.abs_diff(now);assert!(delta.min(super::super::TICKS_PER_DAY-delta)<=2,"{got} {now}");assert_eq!(r.loaded.cpu.regs[0]&0xffff,got&0xffff);
+    let now=(ms*1_193_182/(65_536*1000))as u32%super::TICKS_PER_DAY;let got=r.loaded.ram.load(0x46c,MemWidth::Dword).unwrap();
+    let delta=got.abs_diff(now);assert!(delta.min(super::TICKS_PER_DAY-delta)<=2,"{got} {now}");assert_eq!(r.loaded.cpu.regs[0]&0xffff,got&0xffff);
     // The tick went back from the old count, so midnight passed.
     assert_eq!(r.loaded.ram.load(0x470,MemWidth::Byte).unwrap(),1);
     // A program's INT 08h handler takes IRQ0 instead of this BIOS shortcut:
@@ -116,7 +116,7 @@ const OWN_EOI:&[u8]=&[0xfe,0x06,0x10,0x02,0xb0,0x20,0xe6,0x20,0xcf];
 fn irq0_enters_a_program_int08_handler_with_an_exact_frame_and_its_eoi_ends_service(){
     let mut p=irq0_program(OWN_EOI);p.cpu.eflags=0x2d7;
     let(ip,sp,flags,cs)=(p.cpu.eip,p.cpu.regs[4]&0xffff,p.cpu.eflags,p.selectors[SegmentRegister::Cs.index()]);
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    super::services::timer_interrupt_at(&mut p,42).unwrap();
     let ss=u32::from(PSP)*16;let word=|p:&Loaded,o:u32|p.ram.load(ss+((sp-o)&0xffff),MemWidth::Word).unwrap();
     assert_eq!((word(&p,2),word(&p,4),word(&p,6)),(flags&0xffff,u32::from(cs),ip));
     assert_eq!((p.cpu.eip,p.cpu.regs[4]&0xffff,p.cpu.eflags&0x300),(0x130,sp-6,0));
@@ -132,21 +132,21 @@ fn irq0_enters_a_program_int08_handler_with_an_exact_frame_and_its_eoi_ends_serv
 fn irq0_waits_while_masked_in_service_or_with_if_clear(){
     // A handler without EOI: the next edge stays pending in IRR.
     let mut p=irq0_program(&[0xfe,0x06,0x10,0x02,0xcf]);
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x130);
+    super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x130);
     let r=run(p,2).unwrap();let mut p=r.loaded;assert_eq!(p.cpu.eip,0x100);
     let before=(p.cpu.clone(),p.ram.clone());
-    super::super::services::timer_interrupt_at(&mut p,43).unwrap();
+    super::services::timer_interrupt_at(&mut p,43).unwrap();
     assert_eq!((p.cpu.clone(),p.ram.clone()),before);assert_eq!(p.speaker.pic.read(0x20)&1,1,"IRR pending");
     // EOI, then the pending request is delivered at the next boundary.
-    p.speaker.pic.write(0x20,0x20).unwrap();super::super::services::timer_interrupt_at(&mut p,43).unwrap();assert_eq!(p.cpu.eip,0x130);
+    p.speaker.pic.write(0x20,0x20).unwrap();super::services::timer_interrupt_at(&mut p,43).unwrap();assert_eq!(p.cpu.eip,0x130);
     // Masked at the PIC, or IF=0: nothing is delivered, the request waits.
     for(mask,flags)in [(1,0x202),(0,0x002)]{
         let mut p=irq0_program(OWN_EOI);p.cpu.eflags=flags;p.speaker.pic.write(0x21,mask).unwrap();
         let before=(p.cpu.clone(),p.ram.clone());
-        super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+        super::services::timer_interrupt_at(&mut p,42).unwrap();
         assert_eq!((p.cpu.clone(),p.ram.clone()),before);assert_eq!(p.speaker.pic.read(0x20)&1,1);
         p.speaker.pic.write(0x21,0).unwrap();p.cpu.eflags=0x202;
-        super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x130,"the same edge, once allowed");
+        super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x130,"the same edge, once allowed");
     }
 }
 #[test]
@@ -162,7 +162,7 @@ fn a_chained_bios_handler_counts_one_tick_runs_int1c_and_sends_the_eoi(){
         for(k,b)in [0xfeu32,0x06,0x11,0x02,0xcf].into_iter().enumerate(){p.ram.store(ss+0x140+k as u32,MemWidth::Byte,b).unwrap();}
         p.ram.store(ss+0x211,MemWidth::Byte,0).unwrap();p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();
         p.cpu.regs[0]=0xdeadbeef;let(sp,flags)=(p.cpu.regs[4],p.cpu.eflags);
-        super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+        super::services::timer_interrupt_at(&mut p,42).unwrap();
         let r=run(p,60).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
         let p=&r.loaded;
         assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),0x1112,"one tick, not the host edge total");
@@ -184,7 +184,7 @@ fn the_bios_tick_wraps_at_a_day_and_a_software_int08_runs_it_with_a_frame(){
     assert_eq!(r.instructions.get("INT 08h to the BIOS handler"),Some(&1));
     // A read-only tick count stops before anything changes.
     let mut p=irq0_program(&[0x2e,0xff,0x2e,0x00,0x02]);p.ram.protect(0x46c,4).unwrap();
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    super::services::timer_interrupt_at(&mut p,42).unwrap();
     let r=run(p,1).unwrap();let p=r.loaded;let(cpu,ram)=(p.cpu.clone(),p.ram.clone());
     let r=run(p,5).unwrap();assert!(matches!(&r.stop,Stop::Service(m) if m.contains("BDA")),"{:?}",r.stop);
     assert_eq!((r.loaded.cpu,r.loaded.ram),(cpu,ram));
@@ -196,7 +196,7 @@ fn irq0_delivery_faults_change_nothing(){
         let mut p=irq0_program(OWN_EOI);
         match case{0=>p.ram.store(0x08*4,MemWidth::Dword,0xf000_0000).unwrap(),1=>p.cpu.regs[4]=5,_=>p.image.real_mode=false}
         let(cpu,ram,image)=(p.cpu.clone(),p.ram.clone(),p.image.clone());
-        assert!(super::super::services::timer_interrupt_at(&mut p,42).is_err());
+        assert!(super::services::timer_interrupt_at(&mut p,42).is_err());
         assert_eq!((p.cpu,p.ram,p.image),(cpu,ram,image));
         p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,0,"not acknowledged");
     }
@@ -209,7 +209,7 @@ fn hlt_with_a_program_int08_handler_and_the_host_clock_ends_through_the_handler(
     p.ram.store(0x08*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
     let ss=u32::from(PSP)*16;p.ram.store(ss+0x210,MemWidth::Byte,0).unwrap();
     // Take the host edge first, so only HLT can raise the next one.
-    let now=super::super::services::sampled_ticks(&mut p);p.speaker.irq_edges=Some(now);p.timer_ticks=7;
+    let now=super::services::sampled_ticks(&mut p);p.speaker.irq_edges=Some(now);p.timer_ticks=7;
     let r=run(p,8).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     assert!(r.loaded.ram.load(ss+0x210,MemWidth::Byte).unwrap()>=1);assert_eq!(r.loaded.cpu.eip,0x103);
     assert_eq!(r.loaded.timer_ticks,7,"the handler, not Dine, keeps the count");
@@ -218,10 +218,10 @@ fn hlt_with_a_program_int08_handler_and_the_host_clock_ends_through_the_handler(
 fn timer_irq_respects_pic_mask_and_hook_remains_in_service_until_eoi(){
     let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xcf])]);let mut p=load(&code,"pic.com").unwrap();
     p.cpu.eflags=2;p.speaker.pic.write(0x20,0x0a).unwrap();p.speaker.pic.write(0x21,1).unwrap();
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,1);assert_eq!(p.timer_ticks,0);
-    p.cpu.eflags=0x202;super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.timer_ticks,0);
+    super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,1);assert_eq!(p.timer_ticks,0);
+    p.cpu.eflags=0x202;super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.timer_ticks,0);
     p.speaker.pic.write(0x21,0).unwrap();p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.timer_ticks,42);
+    super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.timer_ticks,42);
     p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20)&1,1);
     let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);assert_eq!(r.loaded.speaker.pic.read(0x20)&1,0);
 }
@@ -233,7 +233,7 @@ fn timer_hook_runs_at_instruction_boundary_and_iret_restores_frame(){
     p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
     p.ram.store(u32::from(PSP)*16+0x200,MemWidth::Byte,0).unwrap();
     let (ip,sp,flags)=(p.cpu.eip,p.cpu.regs[4]&0xffff,p.cpu.eflags);
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    super::services::timer_interrupt_at(&mut p,42).unwrap();
     assert_eq!(p.cpu.eip,u32::from(TIMER_OFFSET));assert_eq!(p.cpu.eflags&0x300,0);
     assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),42);
     let ss=u32::from(PSP)*16;
@@ -262,7 +262,7 @@ fn timer_bios_wrapper_restores_eax_and_ds_after_the_hook(){
     let mut p=load(&code,"clobber.com").unwrap();p.cpu.eflags=0x202;p.cpu.regs[0]=0xdeadbeef;
     p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
     let original_ds=p.selectors[SegmentRegister::Ds.index()];
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    super::services::timer_interrupt_at(&mut p,42).unwrap();
     let r=run(p,30).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     assert_eq!(r.loaded.cpu.regs[0],0xdeadbeef);assert_eq!(r.loaded.selectors[SegmentRegister::Ds.index()],original_ds);
 }
@@ -274,7 +274,7 @@ fn timer_hook_can_chain_to_the_default_int1c_entry(){
     let mut p=load(&code,"chain.com").unwrap();p.cpu.eflags=0x202;
     p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
     let ss=u32::from(PSP)*16;p.ram.store(ss+0x200,MemWidth::Byte,0).unwrap();
-    super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+    super::services::timer_interrupt_at(&mut p,42).unwrap();
     let r=run(p,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
     assert_eq!(r.loaded.ram.load(ss+0x200,MemWidth::Byte).unwrap(),1);
 }
@@ -284,7 +284,7 @@ fn bios_clock_read_does_not_enter_timer_hook_mid_service(){
     let mut p=load(&code,"clock.com").unwrap();p.cpu.eflags=0x202;p.clock_offset=Some(0);p.timer_ticks=12;
     p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
     p.cpu.regs[0]=0;let (ip,cs)=(p.cpu.eip,p.selectors[SegmentRegister::Cs.index()]);
-    super::super::service(&mut p,0x1a,&mut vec![]).unwrap();
+    super::service(&mut p,0x1a,&mut vec![]).unwrap();
     assert_eq!((p.cpu.eip,p.selectors[SegmentRegister::Cs.index()]),(ip,cs));
     assert_eq!(p.cpu.regs[2]&0xffff,12);
 }
@@ -293,16 +293,16 @@ fn timer_hook_outside_real_mode_is_an_explicit_stop(){
     let code=code_at(&[(0,&[0xfa,0xf4]),(0x30,&[0xcf])]);
     let mut p=load(&code,"tick.com").unwrap();p.cpu.eflags=0x202;p.image.real_mode=false;
     p.ram.store(0x1c*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
-    let before=p.clone();assert!(super::super::services::timer_interrupt_at(&mut p,42).is_err());
+    let before=p.clone();assert!(super::services::timer_interrupt_at(&mut p,42).is_err());
     assert_eq!(p.cpu,before.cpu);assert_eq!(p.ram,before.ram);assert_eq!(p.timer_ticks,before.timer_ticks);
 }
 #[test]
 fn timer_hook_invalid_target_is_transactional_and_masked_ticks_wait(){
     let mut p=load(&[0xfa,0xf4],"tick.com").unwrap();p.cpu.eflags=2;
     p.ram.store(0x1c*4,MemWidth::Dword,0xf000_0000).unwrap();
-    let original=p.clone();super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu,original.cpu);assert_eq!(p.ram,original.ram);
+    let original=p.clone();super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu,original.cpu);assert_eq!(p.ram,original.ram);
     p.cpu.eflags=0x202;let original=p.clone();
-    assert!(super::super::services::timer_interrupt_at(&mut p,42).is_err());
+    assert!(super::services::timer_interrupt_at(&mut p,42).is_err());
     assert_eq!(p.cpu,original.cpu);assert_eq!(p.ram,original.ram);assert_eq!(p.timer_ticks,original.timer_ticks);
 }
 #[test]
@@ -325,7 +325,7 @@ fn pit_channel0_latches_reads_and_reprograms_binary_modes(){
 }
 fn dos(p:&mut Loaded,ax:u32,bx:u32,cx:u32,dx:u32)->Result<(u32,u32,u32,u32),String>{
     p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;p.cpu.regs[1]=cx;p.cpu.regs[2]=dx;p.cpu.eflags=0x202;
-    let mut out=Vec::new();super::super::service(p,0x21,&mut out)?;assert!(out.is_empty());
+    let mut out=Vec::new();super::service(p,0x21,&mut out)?;assert!(out.is_empty());
     Ok((p.cpu.regs[0],p.cpu.regs[3],p.cpu.regs[2],p.cpu.eflags&1))
 }
 fn name(p:&mut Loaded,text:&[u8]){let mut z=text.to_vec();z.push(0);p.ram.write_bytes(u32::from(PSP)*16+0x200,&z).unwrap();}
@@ -367,7 +367,7 @@ fn code_page_remote_drive_dr_dos_and_date_checks_answer_as_dos_6_22(){
     }
     for(cx,dx,weekday)in [(2000,0x021d,2),(1980,0x0101,2),(2099,0x0c1f,4)]{
         assert_eq!(dos(&mut p,0x2b00,0,cx,dx).unwrap(),(0x2b00,0,dx,0));
-        p.cpu.regs[0]=0x2a00;super::super::service(&mut p,0x21,&mut vec![]).unwrap();
+        p.cpu.regs[0]=0x2a00;super::service(&mut p,0x21,&mut vec![]).unwrap();
         assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff,p.cpu.regs[0]&255),(cx,dx,weekday));
         let bcd=|n:u32|((n/10)<<4|n%10)as u8;assert_eq!(p.rtc.read(None,9),Some(bcd(cx%100)));assert_eq!(p.rtc.read(None,0x32),Some(bcd(cx/100)));
     }
@@ -380,7 +380,7 @@ fn multiplex_checks_for_4dos_windows_mscdex_and_append_leave_registers(){
     let mut p=load(&[0xcd,0x20],"m.com").unwrap();
     for ax in [0x4680u32,0x168f,0x1500,0x150b,0xb706,0xd44d,0xd44e]{
         p.cpu.regs[0]=ax;p.cpu.regs[3]=0x8d;p.cpu.regs[1]=3;let cpu=p.cpu.clone();
-        assert_eq!(super::super::service(&mut p,0x2f,&mut Vec::new()).unwrap(),None);assert_eq!(p.cpu,cpu,"{ax:04x}");
+        assert_eq!(super::service(&mut p,0x2f,&mut Vec::new()).unwrap(),None);assert_eq!(p.cpu,cpu,"{ax:04x}");
     }
 }
 #[test]
@@ -391,7 +391,7 @@ fn borland_tdx_installation_check_preserves_state_when_debugger_is_absent(){
     p.cpu.regs[0]=0x7654_fb43;p.cpu.regs[3]=0xabcd_0100;
     p.cpu.regs[1]=0x12345678;p.cpu.regs[2]=0x87654321;p.cpu.eflags=0x203;
     let old=p.cpu.clone();let old_ram=p.ram.clone();let mut output=vec![65];
-    assert_eq!(super::super::service(&mut p,0x2f,&mut output).unwrap(),None);
+    assert_eq!(super::service(&mut p,0x2f,&mut output).unwrap(),None);
     assert_eq!(p.cpu,old,"unclaimed multiplex check must preserve all registers and flags");
     assert_eq!(p.ram,old_ram);assert_eq!(output,vec![65]);
 
@@ -406,7 +406,7 @@ fn borland_tdx_installation_check_preserves_state_when_debugger_is_absent(){
     for (ax,bx) in [(0xfb43,0x000f),(0xfb43,0x0101),(0xfb42,0x0100)]{
         let mut p=load(&[0xcd,0x2f],"unknown-borland.com").unwrap();
         p.cpu.regs[0]=ax;p.cpu.regs[3]=bx;let old=p.cpu.clone();
-        assert!(super::super::service(&mut p,0x2f,&mut Vec::new()).is_err(),"{ax:04x}/{bx:04x}");
+        assert!(super::service(&mut p,0x2f,&mut Vec::new()).is_err(),"{ax:04x}/{bx:04x}");
         assert_eq!(p.cpu,old);
     }
 }
@@ -429,8 +429,8 @@ fn ascii_adjust_instructions_match_the_sdm_and_aam_zero_faults(){
 #[test]
 fn parent_interrupt_handler_can_be_called_by_child_program(){
     use std::time::{SystemTime,UNIX_EPOCH};
-    use super::super::load_with_drives;
-    use super::super::files::Source;
+    use super::load_with_drives;
+    use super::files::Source;
     let dir=std::env::temp_dir().join(format!("pil-inthook-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     std::fs::create_dir_all(&dir).unwrap();
     // CHILD.COM: MOV AX, 0xD44D; INT 2Fh; MOV AH, 4Ch; INT 21h
@@ -587,16 +587,16 @@ fn reinitialized_pic_delivers_irq0_through_its_new_vector(){
     p.ram.store(8*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();
     p.cpu.eflags=0x202;let before=(p.cpu.eip,p.cpu.regs[4],p.ram.load(0x46c,MemWidth::Dword).unwrap());
     // INT 50h still 0: no handler behind IRQ0, so the run stops unchanged.
-    let e=super::super::services::timer_interrupt_at(&mut p,42).unwrap_err();assert!(e.contains("INT 50h"),"{e}");
+    let e=super::services::timer_interrupt_at(&mut p,42).unwrap_err();assert!(e.contains("INT 50h"),"{e}");
     assert_eq!((p.cpu.eip,p.cpu.regs[4],p.ram.load(0x46c,MemWidth::Dword).unwrap()),before);
     // With a handler at INT 50h, IRQ0 enters it; the BIOS tick is not counted.
     p.ram.store(0x50*4,MemWidth::Dword,u32::from(PSP)<<16|0x130).unwrap();
-    super::super::services::timer_interrupt_at(&mut p,43).unwrap();
+    super::services::timer_interrupt_at(&mut p,43).unwrap();
     assert_eq!(p.cpu.eip,0x130);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),before.2);
     p.speaker.pic.write(0x20,0x0b).unwrap();assert_eq!(p.speaker.pic.read(0x20),1);
     // IRQ1 follows the base as well.
-    assert!(!super::super::keyboard::hooked(&p).unwrap());
-    p.ram.store(0x51*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();assert!(super::super::keyboard::hooked(&p).unwrap());
+    assert!(!super::keyboard::hooked(&p).unwrap());
+    p.ram.store(0x51*4,MemWidth::Dword,u32::from(PSP)<<16|0x140).unwrap();assert!(super::keyboard::hooked(&p).unwrap());
 }
 
 fn protected_irq_program()->Loaded{
@@ -614,7 +614,7 @@ fn protected_irq_program()->Loaded{
 }
 #[test]
 fn protected_timer_irq_uses_idt_frame_and_iretd_returns_after_eoi(){
- let mut p=protected_irq_program();super::super::services::timer_interrupt_at(&mut p,42).unwrap();
+ let mut p=protected_irq_program();super::services::timer_interrupt_at(&mut p,42).unwrap();
  assert_eq!((p.cpu.eip,p.cpu.regs[4],p.selectors[1],p.cpu.eflags),(0x10200,0x17ff4,8,0x46));
  for (at,want) in [(0x17ff4,0x10100),(0x17ff8,24),(0x17ffc,0x346)]{assert_eq!(p.ram.load(at,MemWidth::Dword).unwrap(),want);}
  assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),0);
@@ -626,11 +626,11 @@ fn protected_timer_irq_uses_idt_frame_and_iretd_returns_after_eoi(){
 fn protected_irqs_respect_if_pic_masks_and_instruction_shadows(){
  for case in 0..4{let mut p=protected_irq_program();
   match case{0=>p.cpu.eflags&=!0x200,1=>p.speaker.pic.write(0x21,1).unwrap(),2=>p.image.ss_shadow=1,_=>p.image.sti_shadow=1}
-  let before=p.cpu.clone();super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu,before);
+  let before=p.cpu.clone();super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu,before);
   p.cpu.eflags|=0x200;p.speaker.pic.write(0x21,0).unwrap();p.image.ss_shadow=0;p.image.sti_shadow=0;
-  super::super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x10200);
+  super::services::timer_interrupt_at(&mut p,42).unwrap();assert_eq!(p.cpu.eip,0x10200);
  }
- let mut p=protected_irq_program();assert!(super::super::keyboard::hooked(&p).unwrap());
- super::super::keyboard::key(&mut p,0x1e61).unwrap();assert!(super::super::keyboard::interrupt(&mut p,false).unwrap());
+ let mut p=protected_irq_program();assert!(super::keyboard::hooked(&p).unwrap());
+ super::keyboard::key(&mut p,0x1e61).unwrap();assert!(super::keyboard::interrupt(&mut p,false).unwrap());
  assert_eq!((p.cpu.eip,p.selectors[1]),(0x10200,8));assert_eq!(p.speaker.kbd.read(),0x1e);
 }

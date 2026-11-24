@@ -4,18 +4,19 @@ version = "0.38.0-alpha.1"
 edition = "2021"
 
 [workspace]
-members = ["crates/pil-cpu", "crates/pil-pc"]
-default-members = [".", "crates/pil-cpu", "crates/pil-pc"]
+members = ["crates/pil-cpu", "crates/pil-pc", "crates/pil-bios"]
+default-members = [".", "crates/pil-cpu", "crates/pil-pc", "crates/pil-bios"]
 
 [dependencies]
 pil-cpu = { path = "crates/pil-cpu" }
 pil-pc = { path = "crates/pil-pc" }
+pil-bios = { path = "crates/pil-bios" }
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
 
 # Build the CPU and DOS implementation once as a Rust library used by pil,
 # and expose it as the Dine shared library
 # (C ABI in src/dine_ffi.rs). PIL and Dine are program-independent: no build
-# embeds a guest program. The `pil` binary is the interpreter command. Build with `cargo build --release --lib --features dine-library`.
+# embeds a guest program. The `pil` binary is the interpreter command. Plain `cargo build --release` builds all workspace libraries, the Dine shared library and `pil`.
 [lib]
 name = "dine"
 path = "src/lib.rs"
@@ -24,7 +25,8 @@ crate-type = ["rlib", "cdylib"]
 # tools/verify_dine_library.py also exercises the C ABI on both hosts.
 
 [features]
-# Build the shared DOS runtime C ABI, not part of normal pil CLI builds.
+default = ["dine-library"]
+# Build the shared DOS runtime C ABI (dine.dll / libdine.so); enabled by default.
 dine-library = []
 # Omit the generated native PIL instruction-form table. The generic interpreter
 # remains available for both real and protected mode; the default build is unchanged.

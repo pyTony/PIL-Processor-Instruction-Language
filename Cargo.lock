@@ -132,6 +132,15 @@ name = "pil"
 version = "0.38.0-alpha.1"
 dependencies = [
  "crossterm",
+ "pil-bios",
+ "pil-cpu",
+ "pil-pc",
+]
+
+[[package]]
+name = "pil-bios"
+version = "0.38.0-alpha.1"
+dependencies = [
  "pil-cpu",
  "pil-pc",
 ]

@@ -20,7 +20,8 @@ point is a thin wrapper around `dine::run_cli()`; all CPU, DOS and device
 implementation lives in the library. Cargo produces a Rust `rlib` for the
 command and a `cdylib` for C ABI launchers from that one library target.
 The command links the Rust library directly and can run without a separate
-DLL. Build the C ABI with `--lib --features dine-library` as before.
+DLL. Plain `cargo build --release` builds the C ABI shared library alongside
+`pil` (`default = ["dine-library"]`).
 
 ## One-command build workflow
 

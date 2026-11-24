@@ -1,12 +1,17 @@
-//! Bounded BIOS text console and graphics pixels. Video RAM and the keyboard ring are authoritative.
-//! VGA port state lives in dos_vga; IRQ1 and host UI are outside this module.
-//! The optional ANSI driver (mod ansi) interprets escapes in DOS console output.
+//! Bounded BIOS text console, keyboard ring and graphics pixels.
+//! Video RAM and the keyboard ring at 0040:001E are authoritative; VGA port
+//! state lives in `pil_pc::vga`. DOS CON character editing and ANSI.SYS live
+//! above this module in `crate::dos`.
 use super::*;
 use super::color_text::{VIDEO,PAGE,CELLS,COLS,ROWS};
-fn read(p:&Loaded,at:u32)->Result<u32,String>{
+
+pub type Writes=Vec<(u32,MemWidth,u32)>;
+
+pub fn read<F>(p:&Machine<F>,at:u32)->Result<u32,String>{
     p.ram.load(at,MemWidth::Word).map_err(|e|format!("BIOS console read: {e:?}"))
 }
-fn commit(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
+
+fn commit<F>(p:&mut Machine<F>,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,width,_) in writes{p.ram.check_write(at,width).map_err(|e|format!("BIOS console write: {e:?}"))?;}
     for &(at,width,value) in writes{p.ram.store(at,width,value).map_err(|e|format!("BIOS console write: {e:?}"))?;}
     if writes.iter().any(|(at,_,_)|*at==0x449){p.vga.select_color();}
@@ -19,7 +24,8 @@ fn commit(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     }
     Ok(())
 }
-pub(super) fn initialize(ram:&mut Ram)->Result<(),String>{
+
+pub fn initialize(ram:&mut Ram)->Result<(),String>{
     let mut bytes=vec![0;8*PAGE as usize];
     for page in 0..8{for cell in 0..CELLS as usize{
         bytes[page*PAGE as usize+cell*2]=32;bytes[page*PAGE as usize+cell*2+1]=7;
@@ -33,53 +39,50 @@ pub(super) fn initialize(ram:&mut Ram)->Result<(),String>{
         ram.store(at,width,value).map_err(|e|format!("console initialization: {e:?}"))?;
     }Ok(())
 }
+
 /// Records the mode a BIOS mode set has just programmed into the display
 /// hardware (see vga::Display), from the BIOS data it wrote with it.
-fn program_display(p:&mut Loaded){
+fn program_display<F>(p:&mut Machine<F>){
     if let (Ok(mode),Ok(columns),Ok(rows))=(byte(p,0x449),read(p,0x44a),byte(p,0x484)){
-        p.vga.display=super::vga::Display{mode:mode as u8,columns:columns.clamp(1,80),rows:rows+1};
+        p.vga.display=pil_pc::vga::Display{mode:mode as u8,columns:columns.clamp(1,80),rows:rows+1};
     }
 }
+
 /// The display mode the front ends lay the screen out by. In a booted
-/// machine it is the one the hardware was programmed for: an operating
-/// system may reuse 0040:0049-0040:0085 once it drives the screen itself
-/// (Linux 0.99 has its kernel at physical 0), and the display hardware
-/// never reads that area. Dine's own DOS reads the data area, as before.
-pub(crate) fn shown_mode(p:&Loaded)->Result<super::vga::Display,crate::memory::AccessFault>{
+/// machine it is the one the hardware was programmed for; Dine's DOS reads
+/// the BIOS data area, as before.
+pub fn shown_mode<F>(p:&Machine<F>)->Result<pil_pc::vga::Display,pil_cpu::memory::AccessFault>{
     if p.booted{return Ok(p.vga.display);}
-    Ok(super::vga::Display{mode:p.ram.load(0x449,MemWidth::Byte)? as u8,columns:p.ram.load(0x44a,MemWidth::Word)?.clamp(1,80),rows:p.ram.load(0x484,MemWidth::Byte)?+1})
+    Ok(pil_pc::vga::Display{mode:p.ram.load(0x449,MemWidth::Byte)? as u8,columns:p.ram.load(0x44a,MemWidth::Word)?.clamp(1,80),rows:p.ram.load(0x484,MemWidth::Byte)?+1})
 }
-fn ring(p:&Loaded)->Result<(u32,u32),String>{
+
+pub fn ring<F>(p:&Machine<F>)->Result<(u32,u32),String>{
     let head=read(p,0x41a)?;let tail=read(p,0x41c)?;
     if [head,tail].iter().any(|n|!(0x1e..0x3e).contains(n)||n&1!=0){
         return Err("invalid BIOS keyboard ring pointers".into());
     }Ok((head,tail))
 }
-fn next(n:u32)->u32{if n==0x3c{0x1e}else{n+2}}
-/// Blocking reads stop without retiring. AH0C flushes once before its first
-/// wait, so resuming after a key arrives does not discard that key.
-pub(super) fn waiting(p:&mut Loaded,vector:u8)->Result<bool,String>{
-    let(ah,al)=((p.cpu.regs[0]>>8)as u8,p.cpu.regs[0]as u8);
-    // With standard input on COM1 the service itself waits for the port.
-    if vector==0x21&&super::services::stdin_aux(p){return Ok(false);}
+
+pub fn next(n:u32)->u32{if n==0x3c{0x1e}else{n+2}}
+
+/// Whether a blocking BIOS INT 16h read must wait for a key.
+pub fn waiting<F>(p:&Machine<F>,vector:u8)->Result<bool,String>{
+    let ah=(p.cpu.regs[0]>>8)as u8;
     match(vector,ah){
         (0x16,0|0x10)=>{let(head,tail)=ring(p)?;Ok(head==tail)},
-        (0x21,1|7|8)=>Ok(!dos_available(p)?),
-        (0x21,0x0c) if matches!(al,1|7|8)=>{
-            if !p.dos.flushed{let writes=dos_flush_writes(p)?;commit(p,&writes)?;p.dos.pending_scan=None;p.dos.flushed=true;}
-            Ok(!dos_available(p)?)
-        },
         _=>Ok(false),
     }
 }
+
 /// Host adapter input: legacy BIOS scan code in AH, character in AL; full is not EOF.
-pub(super) fn enqueue(p:&mut Loaded,key:u16)->Result<bool,String>{
+pub fn enqueue<F>(p:&mut Machine<F>,key:u16)->Result<bool,String>{
     let(head,tail)=ring(p)?;let after=next(tail);
     if after==head{return Ok(false);}
     commit(p,&[(0x400+tail,MemWidth::Word,u32::from(key)),(0x41c,MemWidth::Word,after)])?;
     Ok(true)
 }
-pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
+
+pub fn keyboard<F>(p:&mut Machine<F>,ah:u8)->Result<(),String>{
     match ah{
         0|1|0x10|0x11=>{
             let(head,tail)=ring(p)?;
@@ -110,7 +113,8 @@ pub(super) fn keyboard(p:&mut Loaded,ah:u8)->Result<(),String>{
         _=>Err(format!("unimplemented BIOS keyboard AH={ah:02x}")),
     }
 }
-pub(super) fn video(p:&mut Loaded,ah:u8)->Result<(),String>{
+
+pub fn video<F>(p:&mut Machine<F>,ah:u8)->Result<(),String>{
     if graphics_text::is_graphics(byte(p,0x449)?){
         if ah==8{let ch=graphics_text::read_char(p)?;p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|ch;return Ok(());}
         let writes=graphics_text::write_chars(p)?;return commit(p,&writes);
@@ -126,7 +130,6 @@ pub(super) fn video(p:&mut Loaded,ah:u8)->Result<(),String>{
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|value;return Ok(());
     }
     let count=p.cpu.regs[1]&0xffff;
-    // Do not invent a BIOS-dependent overflow policy or spill into another page.
     if count>CELLS-first{return Err("BIOS repeated write exceeds text page".into());}
     let ch=p.cpu.regs[0]&255;let attr=p.cpu.regs[3]&255;
     let writes:Vec<_>=(first..first+count).map(|cell|if ah==9{
@@ -134,25 +137,30 @@ pub(super) fn video(p:&mut Loaded,ah:u8)->Result<(),String>{
     }else{(base+cell*2,MemWidth::Byte,ch)}).collect();
     commit(p,&writes)
 }
-fn byte(p:&Loaded,at:u32)->Result<u32,String>{
+
+pub fn byte<F>(p:&Machine<F>,at:u32)->Result<u32,String>{
     p.ram.load(at,MemWidth::Byte).map_err(|e|format!("BIOS console read: {e:?}"))
 }
-fn active_page(p:&Loaded)->Result<u32,String>{
+
+pub fn active_page<F>(p:&Machine<F>)->Result<u32,String>{
     let page=byte(p,0x462)?;
     if page>=8{return Err("BIOS active page outside 0..7".into());}Ok(page)
 }
-fn cursor(p:&Loaded,page:u32)->Result<(u32,u32),String>{
+
+pub fn cursor<F>(p:&Machine<F>,page:u32)->Result<(u32,u32),String>{
     let position=read(p,0x450+page*2)?;
     let(row,col)=(position>>8,position&255);
     if row>=ROWS||col>=COLS{return Err("BIOS video cursor outside 80x25 profile".into());}
     Ok((row,col))
 }
-fn page_cells(p:&Loaded,page:u32)->Result<Vec<u32>,String>{
+
+pub fn page_cells<F>(p:&Machine<F>,page:u32)->Result<Vec<u32>,String>{
     (0..CELLS).map(|cell|read(p,VIDEO+page*PAGE+cell*2)).collect()
 }
+
 /// Move rows inside an inclusive window; vacated rows become blanks in `attr`.
 /// Zero or more lines than the window height clears the whole window.
-fn scroll(cells:&mut [u32],window:(u32,u32,u32,u32),lines:u32,attr:u32,up:bool){
+pub fn scroll(cells:&mut [u32],window:(u32,u32,u32,u32),lines:u32,attr:u32,up:bool){
     let(top,left,bottom,right)=window;let height=bottom-top+1;
     let lines=if lines==0||lines>height{height}else{lines};
     let rows:Vec<u32>=if up{(top..=bottom).collect()}else{(top..=bottom).rev().collect()};
@@ -164,17 +172,16 @@ fn scroll(cells:&mut [u32],window:(u32,u32,u32,u32),lines:u32,attr:u32,up:bool){
         }
     }
 }
-fn window_writes(page:u32,cells:&[u32],window:(u32,u32,u32,u32))->Vec<(u32,MemWidth,u32)>{
+
+pub fn window_writes(page:u32,cells:&[u32],window:(u32,u32,u32,u32))->Writes{
     let(top,left,bottom,right)=window;
     (top..=bottom).flat_map(|row|(left..=right).map(move|col|row*COLS+col))
         .map(|cell|(VIDEO+page*PAGE+cell*2,MemWidth::Word,cells[cell as usize])).collect()
 }
-type Writes=Vec<(u32,MemWidth,u32)>;
+
 /// Teletype bytes onto a copy of `page`. Text mode keeps cell attributes; a
 /// bottom-row scroll fills with the attribute under the cursor before that byte.
-/// DOS callers expand TAB from the screen column; BIOS AH0E rejects it because
-/// IBM-derived and DOSBox-derived BIOSes differ.
-fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,String>{
+pub fn teletype_plan<F>(p:&Machine<F>,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,String>{
     if page>=8{return Err("BIOS video page must be 0..7".into());}
     if !dos_tabs&&bytes.contains(&9){return Err("BIOS teletype TAB policy is not part of this profile".into());}
     let(mut row,mut col)=cursor(p,page)?;let mut cells=page_cells(p,page)?;
@@ -202,80 +209,43 @@ fn teletype_plan(p:&Loaded,page:u32,bytes:&[u8],dos_tabs:bool)->Result<Writes,St
     writes.push((0x450+page*2,MemWidth::Word,(row<<8)|col));
     Ok(writes)
 }
-/// AH0E writes to the active page and ignores BH, as SeaBIOS and DOSBox-X do;
-/// the earliest IBM PC ROMs required BH to equal the active page anyway.
-fn teletype(p:&mut Loaded)->Result<(),String>{
-    // In graphics modes BL is the foreground colour.
+
+fn teletype<F>(p:&mut Machine<F>)->Result<(),String>{
     if graphics_text::is_graphics(byte(p,0x449)?){
         let writes=graphics_text::teletype(p,&[p.cpu.regs[0]as u8],p.cpu.regs[3]&255,false)?;commit(p,&writes)?;bells(p,&[p.cpu.regs[0]as u8]);return Ok(());
     }
     let writes=teletype_plan(p,active_page(p)?,&[p.cpu.regs[0]as u8],false)?;
     commit(p,&writes)?;bells(p,&[p.cpu.regs[0]as u8]);Ok(())
 }
-/// BEL among bytes shown on the screen beeps the speaker, as the BIOS
-/// teletype does (and so DOS console output through it).
-pub(super) fn bells(p:&mut Loaded,bytes:&[u8]){
+
+/// BEL among bytes shown on the screen beeps the speaker, as the BIOS teletype does.
+pub fn bells<F>(p:&mut Machine<F>,bytes:&[u8]){
     for _ in bytes.iter().filter(|&&b|b==7){p.speaker.bell(p.clock_offset);}
 }
-/// INT 10h AH=0Eh for several bytes on the active page, as a DOS kernel
-/// prints with it; `color` is BL, the foreground in graphics modes.
-pub(super) fn bios_teletype(p:&Loaded,bytes:&[u8],color:u32)->Result<Writes,String>{
+
+/// INT 10h AH=0Eh for several bytes on the active page, as a DOS kernel prints with it.
+pub fn bios_teletype<F>(p:&Machine<F>,bytes:&[u8],color:u32)->Result<Writes,String>{
     if graphics_text::is_graphics(byte(p,0x449)?){return graphics_text::teletype(p,bytes,color,false);}
     teletype_plan(p,active_page(p)?,bytes,false)
 }
-/// DOS console output also reaches the active page, as through INT29/AH0E;
-/// with the ANSI driver loaded its escape sequences are interpreted.
-pub(super) fn dos_screen(p:&Loaded,bytes:&[u8])->Result<Writes,String>{
-    let mode=byte(p,0x449)?;
-    // FreeDOS INT 29h prints with AH0Eh and BX=0007h, so colour 7 in graphics.
-    if graphics_text::is_graphics(mode){let writes=graphics_text::teletype(p,bytes,7,true)?;check(p,&writes)?;return Ok(writes);}
-    let writes=if ansi::installed(p)?&&mode==3{ansi::plan(p,active_page(p)?,bytes)?}else{teletype_plan(p,active_page(p)?,bytes,true)?};
-    check(p,&writes)?;Ok(writes)
-}
-#[path="../dos/ansi.rs"]
-pub(super) mod ansi;
+
 #[path="graphics_text.rs"]
-pub(super) mod graphics_text;
-pub(super) fn check(p:&Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
+pub mod graphics_text;
+
+pub fn check<F>(p:&Machine<F>,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,width,_) in writes{p.ram.check_write(at,width).map_err(|e|format!("BIOS console write: {e:?}"))?;}
     Ok(())
 }
+
 /// Store a write set that `check` already accepted.
-pub(super) fn store(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{commit(p,writes)}
-/// DOS stdin is CON on the BIOS ring. An ASCII-0 key returns 00h, then its scan
-/// code on the next read, as single-byte DOS reads do.
-pub(super) fn dos_available(p:&Loaded)->Result<bool,String>{
-    if p.dos.pending_scan.is_some(){return Ok(true);}
-    let(head,tail)=ring(p)?;Ok(head!=tail)
-}
-/// Plan one DOS character read: the byte, ring writes and the next pending scan.
-pub(super) fn dos_take(p:&Loaded)->Result<(u8,Writes,Option<u8>),String>{
-    if let Some(scan)=p.dos.pending_scan{return Ok((scan,Vec::new(),None));}
-    let(head,tail)=ring(p)?;
-    if head==tail{return Err("DOS console read requires input".into());}
-    let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
-    if key&255==0{Ok((0,writes,Some((key>>8)as u8)))}else{Ok((key as u8,writes,None))}
-}
-/// The error a DOS call stops with, before any effect, when it finds Ctrl-C:
-/// the run loop then echoes ^C and calls INT 23h (see dos_break.rs).
-pub(super) const BREAK:&str="DOS Ctrl-C break";
-/// FreeDOS check_handle_break on CON: Ctrl-Break pressed (0040:0071 bit 7) or
-/// Ctrl-C (03h) at the head of the keyboard buffer. While standard input is
-/// COM1 (CTTY), the keyboard is not the console and is not checked.
-pub(super) fn dos_break_check(p:&Loaded)->Result<(),String>{
-    if super::services::stdin_aux(p){return Ok(());}
-    if byte(p,0x471)?&0x80!=0{return Err(BREAK.into());}
-    if p.dos.pending_scan.is_some(){return Ok(());}
-    let(head,tail)=ring(p)?;
-    if head!=tail&&read(p,0x400+head)?&255==3{return Err(BREAK.into());}
-    Ok(())
-}
-pub(super) fn dos_flush_writes(p:&Loaded)->Result<Writes,String>{
+pub fn store<F>(p:&mut Machine<F>,writes:&[(u32,MemWidth,u32)])->Result<(),String>{commit(p,writes)}
+
+/// Plan writes that empty the BIOS keyboard ring (`head = tail`).
+pub fn flush_writes<F>(p:&Machine<F>)->Result<Writes,String>{
     let(_,tail)=ring(p)?;let writes=vec![(0x41a,MemWidth::Word,tail)];check(p,&writes)?;Ok(writes)
 }
-/// INT10/AH06 (up) and AH07 (down) on the active page. Lower-right corners
-/// beyond the text page are clamped; an inverted window changes nothing.
-fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
+
+fn scroll_service<F>(p:&mut Machine<F>,up:bool)->Result<(),String>{
     if graphics_text::is_graphics(byte(p,0x449)?){let writes=graphics_text::scroll(p,up)?;return commit(p,&writes);}
     let page=active_page(p)?;
     let(cx,dx)=(p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
@@ -285,10 +255,8 @@ fn scroll_service(p:&mut Loaded,up:bool)->Result<(),String>{
     scroll(&mut cells,(top,left,bottom,right),p.cpu.regs[0]&255,(p.cpu.regs[3]>>8)&255,up);
     commit(p,&window_writes(page,&cells,(top,left,bottom,right)))
 }
-/// Bounded 80x25 text modes 02h (monochrome colour-adapter text) and 03h,
-/// CGA 4/5/6, EGA/VGA planar 0Dh/0Eh/10h/12h and VGA 13h.
-/// Bit 7 keeps video RAM.
-fn set_mode(p:&mut Loaded)->Result<(),String>{
+
+fn set_mode<F>(p:&mut Machine<F>)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
     if super::planar::geometry(al&0x7f).is_some(){
         let result=super::planar::set_mode(p,al&0x7f,al&0x80!=0);
@@ -297,16 +265,16 @@ fn set_mode(p:&mut Loaded)->Result<(),String>{
     }
     let result=set_other_mode(p,al);
     if result.is_ok(){program_display(p);}
-    // Leaving a planar mode unmaps the planes; A000h is ordinary RAM again.
     if result.is_ok(){
         p.vga.bios_cga_mode(al&0x7f);
         if al&0xff!=0x93{p.ram.set_planar(None);}
-        p.vga.font=None;p.vga.idle=super::vga::Controllers::standard(al&0x7f);
+        p.vga.font=None;p.vga.idle=pil_pc::vga::Controllers::standard(al&0x7f);
         if al&0xff==0x93{if let Some(planes)=p.ram.planar_mut(){planes.seq=p.vga.idle.seq;planes.gc=p.vga.idle.gc;}}
     }
     result
 }
-fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
+
+fn set_other_mode<F>(p:&mut Machine<F>,al:u32)->Result<(),String>{
     if matches!(al&0x7f,4|5|6){
         let mode=al&0x7f;let cols=if mode==6{80}else{40};
         let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,cols),
@@ -321,16 +289,10 @@ fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
         let mut writes=vec![(0x449,MemWidth::Byte,0x13),(0x44a,MemWidth::Word,40),(0x44c,MemWidth::Word,0xfa00),(0x44e,MemWidth::Word,0),(0x462,MemWidth::Byte,0),(0x43*4,MemWidth::Dword,super::planar::graphics_font(8))];
         writes.extend((0..8).map(|page|(0x450+page*2,MemWidth::Word,0)));
         if al&0x80==0{writes.extend((0..64000).map(|n|(0xa0000+n,MemWidth::Byte,0)));}
-        // Check before changing the MMIO mapping; clearing mode 13h must
-        // clear the new linear backing, not the previous planar window.
         for &(at,w,_) in &writes{p.ram.check_write(at,w).map_err(|e|format!("BIOS console write: {e:?}"))?;}
         if al&0x80==0{p.ram.set_planar(None);}
         commit(p,&writes)?;p.vga.reset_palette();p.vga.bios_sync(Some(0),None,None);return Ok(());
     }
-    // BIOS mode 02h is the 80x25 black-and-white *colour-adapter* text
-    // mode. Like mode 03h it uses B800:0000, 8 text pages, 9x16 VGA cells,
-    // and the 3D4h CRTC. Keep its mode number visible to INT 10h/AH=0Fh.
-    // It is not mode 07h (MDA monochrome, B000:0000).
     let mode=al&0x7f;
     if !matches!(mode,2|3){return Err(format!("BIOS video mode {mode:02x} is outside the VGA BIOS profile (02h, 03h, 04h-06h, 0Dh, 0Eh, 10h, 12h, 13h)"));}
     let mut writes=vec![(0x449,MemWidth::Byte,mode),(0x44a,MemWidth::Word,COLS),(0x44c,MemWidth::Word,PAGE),
@@ -341,25 +303,25 @@ fn set_other_mode(p:&mut Loaded,al:u32)->Result<(),String>{
     }
     commit(p,&writes)
 }
-fn select_page(p:&mut Loaded)->Result<(),String>{
+
+fn select_page<F>(p:&mut Machine<F>)->Result<(),String>{
     let page=p.cpu.regs[0]&255;
     if page>=8{return Err("BIOS video page must be 0..7".into());}
     let mode=byte(p,0x449)?;
-    // These graphics modes expose only one framebuffer in this profile.
-    // Ignore requests for another display page, keeping the BIOS state usable.
     if matches!(mode,4|5|6|0x13)&&page!=0{return Ok(());}
     let offset=if super::planar::geometry(mode).is_some(){super::planar::page_offset(mode,page)? as u32}else{page*PAGE};
     commit(p,&[(0x462,MemWidth::Byte,page),(0x44e,MemWidth::Word,offset)])?;
     if super::planar::geometry(mode).is_some(){p.vga.bios_sync(Some(offset as u16),None,None);}
     Ok(())
 }
-fn video_mode(p:&mut Loaded)->Result<(),String>{
+
+fn video_mode<F>(p:&mut Machine<F>)->Result<(),String>{
     let(mode,cols,page)=(byte(p,0x449)?,byte(p,0x44a)?,active_page(p)?);
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|(cols<<8)|mode;
     p.cpu.regs[3]=(p.cpu.regs[3]&0xffff00ff)|(page<<8);Ok(())
 }
-/// CGA modes 4, 5 and 6, and mode 13h, one pixel on page zero.
-fn graphics_pixel(p:&mut Loaded,write:bool)->Result<(),String>{
+
+fn graphics_pixel<F>(p:&mut Machine<F>,write:bool)->Result<(),String>{
     let mode=byte(p,0x449)?;
     if super::planar::geometry(mode).is_some(){return super::planar::pixel(p,mode,write);}
     let x=p.cpu.regs[1]&0xffff;let y=p.cpu.regs[2]&0xffff;
@@ -381,16 +343,16 @@ fn graphics_pixel(p:&mut Loaded,write:bool)->Result<(),String>{
         p.cpu.regs[0]=(p.cpu.regs[0]&!255)|((old>>shift)&mask);Ok(())
     }
 }
-/// INT 10h AH=0Bh CGA border/background/intensity or palette select.
-fn cga_palette(p:&mut Loaded)->Result<(),String>{
+
+fn cga_palette<F>(p:&mut Machine<F>)->Result<(),String>{
     let mode=byte(p,0x449)?;let bh=(p.cpu.regs[3]>>8)&255;
-    // BH=0 also selects the border colour in 80-column colour text mode.
     if !matches!(mode,4|5|6)&&!(mode==3&&bh==0){return Err("CGA palette requires mode 4, 5 or 6, or border selection in mode 3".into());}
     let bl=p.cpu.regs[3]&255;let old=byte(p,0x466)?;
     let value=match bh{0=>(old&0x20)|(bl&0x1f),1=>(old&0x1f)|((bl&1)<<5),_=>return Err("CGA palette selector must be 0 or 1".into())};
     commit(p,&[(0x466,MemWidth::Byte,value)])?;p.vga.set_cga_color(value as u8);Ok(())
 }
-pub(super) fn display(p:&mut Loaded,ah:u8)->Result<(),String>{
+
+pub fn display<F>(p:&mut Machine<F>,ah:u8)->Result<(),String>{
     match ah{
         0x00=>set_mode(p),0x05=>select_page(p),
         0x06|0x07=>scroll_service(p,ah==6),
@@ -399,16 +361,6 @@ pub(super) fn display(p:&mut Loaded,ah:u8)->Result<(),String>{
         _=>Err(format!("unimplemented BIOS video AH={ah:02x}")),
     }
 }
-/// One AH0A key: a byte below 256, or scan<<8 for an ASCII-0 key read as the
-/// two-byte pair read_line consumes. An owed scan from an earlier single-byte
-/// read comes back as a plain byte. None means no input is ready.
-pub(super) fn dos_line_key(p:&Loaded)->Result<Option<(u32,Writes)>,String>{
-    if let Some(scan)=p.dos.pending_scan{return Ok(Some((u32::from(scan),Vec::new())));}
-    let(head,tail)=ring(p)?;
-    if head==tail{return Ok(None);}
-    let key=read(p,0x400+head)?;let writes=vec![(0x41a,MemWidth::Word,next(head))];
-    Ok(Some((if key&255==0{key&0xff00}else{key&255},writes)))
-}
 
 #[cfg(test)]
 mod video_mode_02_regressions {
@@ -416,7 +368,8 @@ mod video_mode_02_regressions {
 
     #[test]
     fn visicalc_bios_mode_02_is_80x25_b800_text_and_reports_its_mode() {
-        let mut p=load(&[0xcd,0x20],"visicalc-mode02.com").unwrap();
+        let mut disk=vec![0u8;1440*1024];disk[510..512].copy_from_slice(&[0x55,0xaa]);
+        let mut p=super::super::boot::boot_bios(&disk,0).unwrap();
         p.cpu.regs[0]=0x0002;
         display(&mut p,0x00).unwrap();
         assert_eq!(p.ram.load(0x449,MemWidth::Byte).unwrap(),2);
@@ -436,7 +389,8 @@ mod video_mode_02_regressions {
 
     #[test]
     fn mode_82_preserves_video_ram_like_mode_83() {
-        let mut p=load(&[0xcd,0x20],"visicalc-mode82.com").unwrap();
+        let mut disk=vec![0u8;1440*1024];disk[510..512].copy_from_slice(&[0x55,0xaa]);
+        let mut p=super::super::boot::boot_bios(&disk,0).unwrap();
         p.ram.store(VIDEO,MemWidth::Word,0x1e58).unwrap();
         p.cpu.regs[0]=0x0082;
         display(&mut p,0x00).unwrap();

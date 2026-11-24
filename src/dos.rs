@@ -4,7 +4,7 @@ use super::Cpu;
 use super::address::{MemoryContext,SegmentCache,SegmentRegister};
 use super::guest::{GuestError,Image,Operation,SYSTEM_RANGES};
 use super::memory::{MemWidth,Ram};
-use crate::pc::{ports,soundblaster,rtc,vga,vga_font,vga_regs,serial,keyboard,history,disks};
+use crate::pc::{ports,soundblaster,rtc,vga,serial,keyboard,history,disks};
 #[path="dos/memory.rs"]
 mod memory_arena;
 use memory_arena::{Arena,memory_service};
@@ -34,12 +34,13 @@ pub const MAX_STEPS:usize=1_000_000;
 pub const MAX_ROM_STEPS:usize=1_000_000_000;
 #[cfg(test)]
 const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
+use crate::bios::{int09,planar,rom as bios_rom,vectors};
+#[cfg(test)]
+use crate::bios::disk as bios_disk;
 #[path="dos/services.rs"]
 mod services;
-#[path="bios/console.rs"]
+#[path="dos/console.rs"]
 pub(crate) mod console;
-#[path="bios/color_text.rs"]
-mod color_text;
 #[path="host/session.rs"]
 pub mod session;
 #[path="host/console.rs"]
@@ -56,14 +57,10 @@ mod lfn;
 mod nls;
 #[path="dos/exec.rs"]
 mod exec;
-#[path="bios/block_move.rs"]
-mod block_move;
-#[path="bios/disk.rs"]
-mod bios_disk;
-#[path="bios/folder_disk.rs"]
+#[path="host/folder_disk.rs"]
 mod folder_disk;
 pub(crate) use folder_disk::FolderDisk;
-#[path="bios/boot.rs"]
+#[path="host/boot.rs"]
 mod boot;
 #[path="host/guest_keymap.rs"]
 pub(crate) mod guest_keymap;
@@ -73,21 +70,16 @@ pub(crate) use boot::boot_command;
 pub(crate) use boot::{boot,boot_with_hard_disk};
 #[path="dos/xms.rs"]
 mod xms;
-#[path="bios/planar.rs"]
-mod planar;
 #[path="dos/break.rs"]
 mod brk;
 #[path="dos/mouse.rs"]
 mod mouse;
-#[path="bios/vectors.rs"]
-mod vectors;
-#[path="bios/int14.rs"]
-mod int14;
-#[path="bios/int09.rs"]
-mod int09;
 #[path="dos/aux_device.rs"]
 mod aux_device;
-// Machine-level tests that run through Dine's loader and BIOS.
+// Machine- and BIOS-level tests that run through Dine's loader and BIOS.
+#[cfg(test)]
+#[path="../tests/unit/dos_vectors.rs"]
+mod vectors_tests;
 #[cfg(test)]
 #[path="../tests/unit/dos_port_io.rs"]
 mod port_io_tests;
@@ -153,12 +145,10 @@ pub type Loaded=crate::pc::Machine<Dos>;
 /// IRQs go through Dine's vector entries, and the VGA controllers follow the
 /// BIOS mode outside a booted machine.
 impl crate::pc::Firmware for Dos{
-    fn keyboard_irq_owned(p:&Loaded)->Result<bool,String>{
-        Ok(!p.rom_mode&&(!p.image.real_mode||vectors::reachable(p,p.speaker.pic.keyboard_vector())?))
-    }
+    fn keyboard_irq_owned(p:&Loaded)->Result<bool,String>{crate::bios::keyboard_irq_owned(p)}
     fn deliver_irq(p:&mut Loaded,vector:u8)->Result<(),String>{vectors::deliver_irq(p,vector)}
     fn vga_controller_io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<u16,String>{
-        planar::io(p,port,input,value,word)?.ok_or_else(||format!("port {port:04x}h is not a VGA controller port"))
+        crate::bios::vga_controller_io(p,port,input,value,word)
     }
 }
 /// DOS state Dine keeps for the program it runs, apart from the machine
@@ -286,24 +276,6 @@ fn dos_data(ram:&mut Ram)->Result<(),String>{
     ram.store(0x23*4,MemWidth::Dword,u32::from(DOSDATA)<<16|u32::from(brk::HANDLER)).map_err(|e|format!("INT 23h vector: {e:?}"))?;
     xms::install(ram)?;
     nls::install(ram)
-}
-fn rom(ram:&mut Ram)->Result<(),String>{
-    let mut top=[0xffu8;16];
-    top[..5].copy_from_slice(&[0xea,0x5b,0xe0,0x00,0xf0]);
-    top[5..13].copy_from_slice(b"01/10/84");top[13]=0;top[14]=0xfc;top[15]=0;
-    ram.write_bytes(0xc0000,&vec![0xff;0x3fff0]).map_err(|e|format!("{e:?}"))?;
-    ram.write_bytes(0xffff0,&top).map_err(|e|format!("{e:?}"))?;
-    let font=console::graphics_text::font()?;let upper=console::graphics_text::UPPER_FONT;
-    ram.write_bytes(console::graphics_text::FONT,&font[..1024]).map_err(|e|format!("ROM font: {e:?}"))?;
-    ram.write_bytes((upper>>16)*16+(upper&0xffff),&font[1024..]).map_err(|e|format!("ROM upper font: {e:?}"))?;
-    ram.write_bytes(vga_text::linear(vga_text::ROM_FONT14),&vga_text::font14()?).map_err(|e|format!("ROM 8x14 font: {e:?}"))?;
-    ram.write_bytes(vga_text::linear(vga_text::ROM_FONT16),&vga_text::font()?).map_err(|e|format!("ROM 8x16 font: {e:?}"))?;
-    vectors::install(ram)?;
-    // INT 43h starts at the 8x8 graphics font, as after an EGA/VGA BIOS POST.
-    ram.store(0x43*4,MemWidth::Dword,0xf000_0000|(console::graphics_text::FONT&0xffff)).map_err(|e|format!("INT 43h vector: {e:?}"))?;
-    ram.store(0x1f*4,MemWidth::Dword,upper).map_err(|e|format!("INT 1Fh vector: {e:?}"))?;
-    // A write to the BIOS or video ROM is ignored, as on an AT: no fault.
-    ram.rom(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
 }
 pub fn hello(format:&str)->Result<Vec<u8>,String>{
     // Both original examples address their string relative to the initial PSP DS.
@@ -540,7 +512,7 @@ fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compi
     // A20 masked. This does not advertise extended-memory or protected-mode support.
     let mut ram=Ram::new(PHYSICAL_RAM);ram.set_a20_enabled(false);
     console::initialize(&mut ram)?;
-    rom(&mut ram)?;
+    bios_rom(&mut ram)?;
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
     put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x18..0x1d].copy_from_slice(&[0,1,2,3,4]);psp[0x1d..0x2c].fill(0xff);
     put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;put_word(&mut psp,0x2c,ENV);
@@ -1112,7 +1084,8 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
             if vector==9&&vectors::at_keyboard_entry(&p){
                 match int09::bios(&mut p){
                     Ok(int09::Bios::Done)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
-                    Ok(int09::Bios::Break)=>{vectors::enter_break_wrapper(&mut p);execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (Ctrl+Break, INT 1Bh)".into()).or_insert(0)+=1;continue;},
+                    Ok(int09::Bios::HandledBreak)=>{p.dos.pending_scan=None;p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
+                    Ok(int09::Bios::Break)=>{p.dos.pending_scan=None;vectors::enter_break_wrapper(&mut p);execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (Ctrl+Break, INT 1Bh)".into()).or_insert(0)+=1;continue;},
                     Err(message)=>break Stop::Service(message),
                 }
             }

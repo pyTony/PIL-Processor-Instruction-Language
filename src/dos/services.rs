@@ -18,6 +18,35 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
     // call while BREAK is on (FreeDOS int21_service).
     let ah=(p.cpu.regs[0]>>8)as u8;
     if vector==0x21&&(p.dos.break_check||matches!(ah,1..=5|8..=0x0b)){console::dos_break_check(p)?;}
+    // DOS overlays on BIOS vectors: HIMEM claims extended memory from INT 15h
+    // AH=88h, and CTTY COM1 mirrors horizontal cursor positioning to COM1.
+    if (vector,ah)==(0x15,0x88)&&p.dos.xms.installed(){
+        p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
+        return Ok(None);
+    }
+    if (vector,ah)==(0x10,0x02)&&p.com1.is_some()&&matches!(files::system_file(p,1),Ok(Some(3))){
+        let page=(p.cpu.regs[3]>>8)&255;
+        if page<8{
+            let pos=p.cpu.regs[2]&0xffff;
+            let active=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("BIOS active page read: {e:?}"))?&7;
+            let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?&0x7f;
+            let prev=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?;
+            let(prev_row,prev_col)=((prev>>8)&255,prev&255);
+            let(new_row,new_col)=((pos>>8)&255,pos&255);
+            if page==active&&matches!(mode,0..=3|7)&&new_row==prev_row&&new_col!=prev_col{
+                if let Some(s)=p.com1.as_mut(){
+                    s.tx.extend_from_slice(format!("\x1b[{}G",new_col+1).as_bytes());
+                    s.column=new_col as usize;
+                }
+            }
+        }
+    }
+    if let Some(exit)=crate::bios::dispatch(p,vector)?{
+        if (vector,ah)==(0x1a,0x00)&&p.clock_offset.is_none()&&(p.cpu.regs[0]&0xff)!=0{
+            p.dos.dos_date_adjust+=86400;
+        }
+        return Ok(exit);
+    }
     match(vector,ah){
         (0x00,_)=>divide_error(p),
         (0x20,_)=>if p.selectors[SegmentRegister::Cs.index()]==p.dos.psp{Ok(Some(0))}else{Err("INT20 requires CS=PSP in this shim".into())},
@@ -164,7 +193,6 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             }
             Ok(None)
         },
-        (0x14,ah) if p.com1.is_some()=>{int14::bios(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==1&&console_handle(p)=>{
             // The console keeps its cooked mode: setting the information it
             // already has (C3h, as CTTY CON does) is taken, raw mode is not.
@@ -192,163 +220,12 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             out.write_atomic(&text).map_err(|e|format!("DOS string output provider: {e:?}"))?;
             console::store(p,&screen)?;console::bells(p,&text);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|0x24;Ok(None)
         },
-        (0x10,ah @ (0x08|0x09|0x0a))=>{console::video(p,ah)?;Ok(None)},
-        // Everex/Trident installation query. This VGA BIOS has no Everex
-        // extension: retain AL=00, rather than returning the AL=70 signature.
-        // RBIL INT 10/AX=7000h/BX=0000h. Other AH70 functions stay unsupported.
-        (0x10,0x70) if p.cpu.regs[0]&0xffff==0x7000&&p.cpu.regs[3]&0xffff==0=>Ok(None),
-        // Video7 installation query: BX stays zero, not the 'V7' signature.
-        (0x10,0x6f) if p.cpu.regs[0]&0xffff==0x6f00&&p.cpu.regs[3]&0xffff==0=>Ok(None),
-        // Chips & Technologies / Realtek controller-information probe:
-        // retain AL=00 rather than claiming an AL=5Fh extension signature.
-        (0x10,0x5f) if p.cpu.regs[0]&0xffff==0x5f00&&p.cpu.regs[3]&0xffff==0=>Ok(None),
-        (0x10,ah @ (0x00|0x05|0x06|0x07|0x0b|0x0c|0x0d|0x0e|0x0f))=>{console::display(p,ah)?;Ok(None)},
-        (0x16,ah)=>{console::keyboard(p,ah)?;Ok(None)},
-        (0x1c,_)=>Ok(None), // BIOS default timer user hook is an IRET.
-
-        (0x10,0x01)=>{
-            p.ram.store(0x460,MemWidth::Word,p.cpu.regs[1]&0xffff).map_err(|e|format!("BIOS cursor shape write: {e:?}"))?;
-            Ok(None)
-        },
-        (0x10,0x02)=>{
-            let page=(p.cpu.regs[3]>>8)&255;
-            if page>=8{return Err("BIOS cursor page must be 0..7".into());}
-            let pos=p.cpu.regs[2]&0xffff;
-            if p.com1.is_some()&&matches!(files::system_file(p,1),Ok(Some(3))){
-                let active=p.ram.load(0x462,MemWidth::Byte).map_err(|e|format!("BIOS active page read: {e:?}"))?&7;
-                let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("BIOS video mode read: {e:?}"))?&0x7f;
-                let prev=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?;
-                let(prev_row,prev_col)=((prev>>8)&255,prev&255);
-                let(new_row,new_col)=((pos>>8)&255,pos&255);
-                if page==active&&matches!(mode,0..=3|7)&&new_row==prev_row&&new_col!=prev_col{
-                    if let Some(s)=p.com1.as_mut(){
-                        s.tx.extend_from_slice(format!("\x1b[{}G",new_col+1).as_bytes());
-                        s.column=new_col as usize;
-                    }
-                }
-            }
-            p.ram.store(0x450+page*2,MemWidth::Word,pos).map_err(|e|format!("BIOS cursor position write: {e:?}"))?;
-            Ok(None)
-        },
-        (0x10,0x03)=>{
-            let page=(p.cpu.regs[3]>>8)&255;
-            let shape=p.ram.load(0x460,MemWidth::Word).map_err(|e|format!("BIOS cursor shape read: {e:?}"))?;
-            // Bounded VGA compatibility policy for out-of-range query pages:
-            // return origin and the current shape, without reading past the
-            // eight-entry BIOS cursor table or changing the supplied page.
-            let position=if page<8{p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor position read: {e:?}"))?}else{0};
-            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|shape;
-            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|position;
-            Ok(None)
-        },
-        (0x11,_)=>{
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|u32::from(p.fpu.equipment(0x0025));
-            Ok(None)
-        },
-        (0x12,_)=>{
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|0x0280;
-            Ok(None)
-        },
-        (0x19,_) if p.booted=>bios_disk::bootstrap(p),
-        (0x18,_) if p.booted=>Err("INT 18h: no bootable disk and no ROM BASIC".into()),
-        // Booted disks are BIOS sector devices.
-        (0x13,_) if !p.disks.is_empty()=>bios_disk::int13(p),
-        (0x13,0x08)=>{
-            // DOS-mounted images and folders are not BIOS sector devices.
-            // Report this unimplemented BIOS operation as an error, not a
-            // fabricated geometry or access to the underlying host disk.
-            p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x0100;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
-        (0x13,ah) if !matches!(ah,0x00..=0x05|0x08..=0x0d|0x10|0x11|0x14..=0x18)=>{
-            // Not a function of the AT disk BIOS (no EDD either, so AH=41h
-            // finds none): CF=1, AH=01h (invalid function), and the same
-            // status in the BIOS data area, 0040:0041 for diskettes and
-            // 0040:0074 for fixed disks, as the IBM AT BIOS stores it. Virus
-            // scanners trace INT 13h with such a function so no disk is read.
-            let status=if p.cpu.regs[2]&0x80==0{0x441}else{0x474};
-            p.ram.store(status,MemWidth::Byte,1).map_err(|e|format!("BIOS disk status write: {e:?}"))?;
-            p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x0100;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x15,0xd8) if p.cpu.regs[0]as u8==0=>{
-            // EISA slot-information probe on this non-EISA BIOS.
-            p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x15,0x84)=>{
-            // No game adapter: report the BIOS joystick service unavailable
-            // (CF=1, AH=86h); all other register bits remain unchanged.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x15,0x24) if (p.cpu.regs[0]as u8)<=3=>{
-            let op=p.cpu.regs[0]as u8;
-            if op<=1{p.speaker.bios_a20(&mut p.ram,op==1);}
-            if op==2{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(p.ram.a20_enabled());}
-            if op==3{p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|3;}
-            p.cpu.regs[0]&=!0xff00;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x15,0xbf) if matches!(p.cpu.regs[0]&0xffff,0xbf00..=0xbf02|0xbfdc|0xbfde)=>{
-            // No resident DOS/16M, DOS/4GW or DESQview/X interface. An
-            // unsupported BIOS call leaves DX/BX unchanged (no installation
-            // signature), sets CF and returns AH=86h.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x15,0xc2)=>{
-            // No PS/2 pointing device is modelled: answer as a BIOS without one
-            // (SeaBIOS: CF=1, AH=86h function not supported).
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
         (0x33,_) if p.dos.mouse.present()=>{mouse::service(p)?;Ok(None)},
         (0x33,_) if p.cpu.regs[0]&0xffff==0=>{
             // Standalone probes keep the no-MOUSE.COM contract.
             p.cpu.regs[0]&=0xffff0000;p.cpu.regs[3]&=0xffff0000;Ok(None)
         },
         (0x33,_)=>Ok(None), // absent driver: conventional no-op
-        (0x1a,0x00)=>{
-            let (ticks,rollover)=bios_ticks(p)?;
-            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|rollover;
-            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|((ticks>>16)&0xffff);
-            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|(ticks&0xffff);
-            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
-        (0x1a,ah @ (0x03|0x05))=>{
-            // Set the RTC time (CH:CL:DH, BCD) or date (CH century, CL year,
-            // DH month, DL day), as the IBM AT BIOS does: CF clear, the RTC
-            // runs on from the new value. Only the session-local RTC moves;
-            // DOS's clock and the BIOS tick count stay (DOS reads the RTC at
-            // boot only). For AH=03h DL is the daylight-saving flag, which
-            // this RTC does not keep, so only DL=0 is accepted.
-            let (cx,dx)=(p.cpu.regs[1]as u16,p.cpu.regs[2]as u16);
-            let [ch,cl,dh,dl]=[(cx>>8)as u8,cx as u8,(dx>>8)as u8,dx as u8];
-            if ah==3{
-                if dl!=0{return Err(format!("INT 1Ah AH=03h daylight-saving flag DL={dl:02X}h is not modelled"));}
-                p.rtc.set_bios_time(p.clock_offset,ch,cl,dh)?;
-            }else{p.rtc.set_bios_date(p.clock_offset,ch,cl,dh,dl)?;}
-            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x1a,0xb1)=>{
-            // PCI BIOS functions. The machine is an ISA AT with no PCI bus,
-            // so the BIOS answers as one without a PCI BIOS (SeaBIOS
-            // set_unimplemented): CF=1, AH=86h, and EDX does not receive
-            // the 'PCI ' signature of the B101h installation check.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x1a,ah @ (0x02|0x04))=>{
-            let [century,year,month,day,hour,minute,second]=p.rtc.bios(p.clock_offset);
-            let (cx,dx)=if ah==2{(u32::from(hour)<<8|u32::from(minute),u32::from(second)<<8)}
-                else{(u32::from(century)<<8|u32::from(year),u32::from(month)<<8|u32::from(day))};
-            p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|cx;
-            p.cpu.regs[2]=(p.cpu.regs[2]&0xffff0000)|dx;
-            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
         (0x21,0x40)=>{write_handle(p,out)?;Ok(None)},
         (0x21,ah @ (0x38|0x63|0x65|0x66))=>{nls::service(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==0x0c&&p.cpu.regs[1]&0xffff==0x036a=>{
@@ -439,33 +316,11 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // MS-Net/LAN Manager network.
             Ok(None)
         },
-        // Colour VGA BIOS (Tony's choice, 7 November 2026): palette/DAC (10h),
-        // font information (11h), EGA information (12h BL=10h) and display
-        // combination (1Ah) are answered in dos_planar.
-        (0x10,0x10)=>{planar::palette(p)?;Ok(None)},
-        (0x10,0x11)=>{planar::font(p)?;Ok(None)},
-        (0x10,0x12)=>{planar::alternate(p);Ok(None)},
-        (0x10,0x1a)=>{planar::combination(p)?;Ok(None)},
-        (0x10,0x1b|0x1c|0x4f|0xfe|0xff)=>{
-            // No functionality/state services (1Bh/1Ch) and no VBE: they return
-            // unchanged, so AL stays and callers see them as unsupported.
-            // FEh/FFh are DESQview/TopView shadow buffers (not installed, ES:DI
-            // unchanged), and AX=4F00h does not return AL=4Fh.
-            Ok(None)
-        },
-        (0x15,0x87)=>{block_move::block_move(p)?;Ok(None)},
-        (0x15,0xe8) if p.cpu.regs[0]as u8==0x01=>{block_move::memory_size(p);Ok(None)},
-        (0x15,0xe8)=>{
-            // The E820h memory map (and E881h) postdate this AT-class BIOS:
-            // unsupported. E801h is answered above.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
         (0x21,0x2c)=>{
             // DOS reads the BIOS tick count (one INT 1Ah AH=00h read) and scales it
             // by 65536*5/59659 to hundredths, as the FreeDOS clock driver does.
-            let (ticks,_)=bios_ticks(p)?;
+            let (ticks,rollover)=crate::bios::bios_ticks(p)?;
+            if p.clock_offset.is_none()&&rollover!=0{p.dos.dos_date_adjust+=86400;}
             let scaled=5*ticks;let hs=((scaled/59659)<<16)+((scaled%59659)<<16)/59659;
             let (minutes,rest)=(hs/6000,hs%6000);
             p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|((minutes/60)<<8)|(minutes%60);
@@ -473,7 +328,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             Ok(None)
         },
         (0x21,0x2d)=>{
-            let h=(p.cpu.regs[1]>>8)&255;let m=p.cpu.regs[1]&255;let s=(p.cpu.regs[2]>>8)&255;let hundredths=p.cpu.regs[2]&255;
+            let h=(p.cpu.regs[1]>>8)&255;let m=(p.cpu.regs[1])&255;let s=(p.cpu.regs[2]>>8)&255;let hundredths=p.cpu.regs[2]&255;
             if h>23||m>59||s>59||hundredths>99{p.cpu.regs[0]|=255;return Ok(None);}
             let total_hundredths=((h*60+m)*60+s)*100+hundredths;
             let desired=(u64::from(total_hundredths)*59659/327680)as u32;
@@ -485,12 +340,6 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("DOS set time rollover write: {e:?}"))?;
             if p.clock_offset.is_some(){p.speaker.irq_edges=Some(desired);}
             p.timer_ticks=desired;p.cpu.regs[0]&=!255;Ok(None)
-        },
-        (0x15,0xc0)=>{
-            // No system configuration table: CF=1, AH=86h as for AH=C2.
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x8600;
-            p.cpu.eflags|=1;p.cpu.undefined_flags&=!1;
-            Ok(None)
         },
         (0x21,0x0d)=>Ok(None), // No disk buffers are modelled, so the flush has nothing to write.
         (0x21,0x31)=>{
@@ -570,130 +419,14 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             // make for resident viruses that would answer them.
             p.cpu.regs[0]&=!255;Ok(None)
         },
-        (0x15,0x88) if p.dos.xms.installed()=>{
-            // HIMEM/HIMEMX: extended memory belongs to the XMS driver, so the
-            // BIOS call reports none and old INT 15h users leave EMBs alone.
-            p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;Ok(None)
-        },
-        (0x15,0x88)=>{
-            let kb=p.ram.bytes().len().saturating_sub(0x100000)/1024;
-            p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|kb.min(0xffff)as u32;
-            p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;
-            Ok(None)
-        },
         _=>Err(format!("unimplemented DOS/BIOS service INT {vector:02x}, AH={:02x}",(p.cpu.regs[0]>>8)&255)),
     }
 }
-/// The timer interrupt's effect while time runs on the host clock: when the
-/// PIT IRQ edge total moves on, IRR bit 0 is set; with IF=1, no interrupt
-/// shadow, IRQ0 unmasked and not in service, the PIC acknowledges it.
-/// While INT 08h is still the BIOS entry, Dine does the BIOS handler's work
-/// on the host: it stores the edge total at 0040:006C (and sets 0040:0070
-/// when the BIOS day count wraps) and runs a program's INT 1Ch hook through
-/// the BIOS wrapper. When a program has its own INT 08h handler, IRQ0 is a
-/// real-mode interrupt to that handler, which stays in service until an EOI;
-/// a handler that chains to the BIOS entry reaches [`bios_timer`]. The
-/// deterministic clock (no host clock) raises no IRQs and moves only when it
-/// is read, as before.
-pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
-    if p.clock_offset.is_none(){return Ok(());}
-    let now=sampled_ticks(p);
-    timer_interrupt_at(p,now)
-}
+pub(super) use crate::bios::{bios_timer,halt_tick,timer_interrupt};
+#[cfg(test)]
+pub(super) use crate::bios::timer_interrupt_at;
+#[allow(unused_imports)]
 pub(super) use crate::pc::{sampled_ticks,timer_edge};
-/// Commit a sampled PIT IRQ edge total through the PIC and INT 08h.
-pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
-    timer_edge(p,now);
-    timer_pending(p,now)
-}
-fn timer_pending(p:&mut Loaded,now:u32)->Result<(),String>{
-    if p.cpu.eflags&0x200==0||p.image.sti_shadow!=0||p.image.ss_shadow!=0{return Ok(());}
-    if !p.speaker.pic.timer_ready(){return Ok(());}
-    // IRQ0's vector is INT 08h unless the PIC has been reinitialized.
-    let vector=p.speaker.pic.timer_vector();
-    if !p.image.real_mode{
-        vectors::deliver_irq(p,vector)?;
-        p.speaker.pic.acknowledge_timer();
-        return Ok(());
-    }
-    if !vectors::answered(p,vector)?{
-        // The interrupt arrives between instructions: IRET resumes the
-        // current IP. The handler's EOI (its own, or the BIOS wrapper's
-        // after chaining) takes IRQ0 out of service.
-        vectors::deliver_irq(p,vector)?;
-        p.speaker.pic.acknowledge_timer();
-        return Ok(());
-    }
-    // Dine's BIOS timer work stands only behind INT 08h; another vector
-    // still at its Dine entry (or 0) has no IRQ0 handler behind it.
-    if vector!=0x08{return Err(format!("IRQ0 through INT {vector:02X}h (PIC base moved), which has no program handler, is not modelled"));}
-    let hook=!vectors::answered(p,0x1c)?;
-    p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-    p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
-    // Keep the BIOS shortcut's existing catch-up policy (one hook per poll).
-    if hook{vectors::deliver_timer(p)?;}
-    p.speaker.pic.acknowledge_timer();
-    if !hook{p.speaker.pic.finish_timer();}
-    p.ram.store(0x046c,MemWidth::Dword,now).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-    if now<p.timer_ticks{p.ram.store(0x0470,MemWidth::Byte,1).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;}
-    p.timer_ticks=now;
-    Ok(())
-}
-/// HLT with IF=1 under the host clock while a program owns INT 08h: the
-/// halt ends with the next timer edge, delivered to the handler once HLT
-/// has retired. Waiting for the edge is not modelled; it arrives at once.
-/// If IRQ0 is masked or still in service, execution continues as the
-/// deterministic idle tick does.
-pub(super) fn halt_tick(p:&mut Loaded)->Result<(),String>{
-    p.speaker.pic.raise_timer();
-    timer_pending(p,p.timer_ticks)
-}
-/// The BIOS INT 08h handler, reached by INT 08h at its entry (a program's
-/// handler chaining to the saved vector, or a software INT 08h). It adds one
-/// to the tick count at 0040:006C, wrapping at a day with 0040:0070 set, then
-/// continues in the BIOS wrapper: INT 1Ch, EOI to port 20h, IRET.
-pub(super) fn bios_timer(p:&mut Loaded)->Result<(),String>{
-    let ticks=p.ram.load(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA read: {e:?}"))?;
-    p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-    p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
-    let next=ticks.wrapping_add(1);let wrapped=next>=TICKS_PER_DAY;let next=if wrapped{0}else{next};
-    p.ram.store(0x046c,MemWidth::Dword,next).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-    if wrapped{p.ram.store(0x0470,MemWidth::Byte,1).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;}
-    p.timer_ticks=next;
-    vectors::enter_timer_wrapper(p);
-    Ok(())
-}
-/// One INT 1Ah AH=00h read. With a host clock, BIOS ticks follow channel 0
-/// interrupt edges, respecting IF and the programmed divisor. Initially the
-/// count matches local time of day; reprogramming changes its rate. Otherwise it is the current count,
-/// then the deterministic clock advances one tick. Either way the rollover
-/// flag is consumed by this read.
-fn bios_ticks(p:&mut Loaded)->Result<(u32,u32),String>{
-    let(ticks,next_ticks,rollover)=match p.clock_offset{
-        Some(_)=>{
-            // Do not redirect CS:IP to a hook while servicing INT 1Ah itself;
-            // the run loop delivers pending hooks between guest instructions.
-            // Nor into a program's INT 08h handler: its chained BIOS ticks
-            // are the count.
-            if vectors::answered(p,0x1c)?&&vectors::answered(p,p.speaker.pic.timer_vector())?{timer_interrupt(p)?;}
-            let now=p.timer_ticks;
-            let flagged=p.ram.load(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover read: {e:?}"))?!=0;
-            (now,now,u32::from(flagged))
-        },
-        None=>{
-            let ticks=p.timer_ticks;let next=ticks+1;
-            if next>=TICKS_PER_DAY{(ticks,0,1)}else{(ticks,next,0)}
-        },
-    };
-    // Validate the entire service write set before committing either cell.
-    p.ram.check_write(0x046c,MemWidth::Dword).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-    p.ram.check_write(0x0470,MemWidth::Byte).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
-    p.ram.store(0x046c,MemWidth::Dword,ticks).map_err(|e|format!("BIOS timer BDA write: {e:?}"))?;
-    p.ram.store(0x0470,MemWidth::Byte,0).map_err(|e|format!("BIOS timer rollover write: {e:?}"))?;
-    p.timer_ticks=next_ticks;
-    if p.clock_offset.is_none()&&rollover!=0{p.dos.dos_date_adjust+=86400;}
-    Ok((ticks,rollover))
-}
 /// AH40 on the CON handles 0..2 writes CX bytes from DS:DX like AH09, without
 /// a terminator, and on a file writes them there. AUX/PRN (3..4) are not
 /// modelled; a closed handle is error 6.
@@ -789,14 +522,14 @@ fn flush_then(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
         },
         0x0a=>{
             if !p.dos.flushed{
-                let flush=console::dos_flush_writes(p)?;console::store(p,&flush)?;
+                let flush=console::flush_writes(p)?;console::store(p,&flush)?;
                 p.dos.pending_scan=None;p.dos.flushed=true;
             }
             line_input(p,out)?;
             if !p.dos.input_wait{p.dos.flushed=false;}Ok(())
         },
         _=>{
-            let flush=console::dos_flush_writes(p)?;
+            let flush=console::flush_writes(p)?;
             let saved=(p.ram.clone(),p.cpu.clone(),p.dos.pending_scan);
             console::store(p,&flush)?;p.dos.pending_scan=None;
             let result=if al==6{direct_console(p,out)}else{p.cpu.regs[0]&=!255;Ok(())};
