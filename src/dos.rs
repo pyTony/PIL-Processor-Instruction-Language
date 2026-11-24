@@ -74,6 +74,8 @@ mod folder_disk;
 pub(crate) use folder_disk::FolderDisk;
 #[path="dos_boot.rs"]
 mod boot;
+#[path="dos_guest_keymap.rs"]
+pub(crate) mod guest_keymap;
 pub use boot::probe as boot_probe;
 pub(crate) use boot::boot_command;
 #[cfg(test)]

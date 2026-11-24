@@ -2490,7 +2490,9 @@ DOS and ROM:
       from today's date and time, for systems that cannot read this
       century (Linux 0.99). --boot IMAGE, --boot-hd IMAGE and --hd-image
       DISK start a disk instead of DOS (docs/BOOT.md); --hd-folder DIR
-      adds a host folder as a FAT16 fixed disk, changes copied back.
+      adds a host folder as a FAT16 fixed disk, changes copied back;
+      --guest-keymap us|uk|fi is the booted system's keyboard layout for
+      pasted text.
       Without PROGRAM, the configuration's program and args start; its
       fpu, mouse, ansi, utc_offset and host_pointer apply unless options
       are given. --host-pointer: the window's own arrow is hidden while the
@@ -2640,9 +2642,9 @@ pub fn run_cli() -> Result<(), String> {
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--boot-probe"){
-        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--hd-folder DIR] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--rtc-year YEAR]";
+        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--hd-folder DIR] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--rtc-year YEAR] [--guest-keymap us|uk|fi]";
         let(mut image,mut drive,mut steps,mut at,mut keys,mut keys_after)=(None,0u8,10_000_000usize,2,String::new(),5_000_000usize);
-        let mut hard_disk=None;let mut folder=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;
+        let mut hard_disk=None;let mut folder=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;let mut keymap=dos::guest_keymap::Keymap::default();
         while at<dos_args.len(){
             match dos_args[at].as_str(){
                 "--hd"=>drive=0x80,
@@ -2661,6 +2663,7 @@ pub fn run_cli() -> Result<(), String> {
                 "--hd-folder"=>{folder=Some(dos_args.get(at+1).ok_or(usage)?.clone());at+=1;},
                 "--keys"=>{keys=dos_args.get(at+1).ok_or(usage)?.replace("\\r","\r");at+=1;},
                 "--rtc-year"=>{rtc_year=Some(u32::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"year out of range")?);at+=1;},
+                "--guest-keymap"=>{keymap=dos::guest_keymap::Keymap::parse(dos_args.get(at+1).ok_or(usage)?)?;at+=1;},
                 "--keys-after"=>{keys_after=usize::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"step count out of range")?;at+=1;},
                 "--steps"=>{steps=usize::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"budget out of range")?;at+=1;},
                 a if a.starts_with("--")||image.is_some()=>return Err(usage.into()),
@@ -2674,7 +2677,7 @@ pub fn run_cli() -> Result<(), String> {
         let folder=folder.map(|dir|dos::FolderDisk::create(std::path::Path::new(&dir))).transpose()?;
         if let Some((_,notes))=&folder{for note in notes{eprintln!("--hd-folder: {note}");}}
         let machine=dos::boot_command(image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()));
-        let report=machine.and_then(|m|dos::boot_probe(m,steps,&keys,keys_after,&typed,&changes,rtc_year));
+        let report=machine.and_then(|m|dos::boot_probe(m,steps,&keys,keys_after,&typed,&changes,rtc_year,keymap));
         let back=folder.map(|(f,_)|f.finish());
         print!("{}",report?);
         if let Some(back)=back{println!("--hd-folder {}",back?);}

@@ -20,13 +20,14 @@ steps, about 11 s headless here.
   with `--tty`. `--hd-image DISK` adds a fixed disk (drive 80h, `/dev/hda`)
   next to a `--boot` diskette.
 - `--boot-probe IMAGE [--hd] [--hd-image DISK] [--steps N] [--keys TEXT]
-  [--keys-after N] [--type STEPS:TEXT]...` runs headless and prints the
-  text screen and why the run stopped. `--keys` is typed when the program
+  [--keys-after N] [--type STEPS:TEXT]... [--guest-keymap us|uk|fi]` runs
+  headless and prints the text screen and why the run stopped. `--keys` is typed when the program
   first waits for a key, or after `--keys-after` steps (default 5,000,000)
   for a loader that polls the keyboard. Each `--type` is typed once the run
   has made STEPS steps (an operating system idles in its own loop, so the
-  probe cannot see it wait). `\r` is Enter; capitals and shifted symbols
-  are typed with Shift (US layout).
+  probe cannot see it wait). `\r` is Enter; text is typed on the keys of
+  the `--guest-keymap` layout (US unless given), with Shift and AltGr
+  where it needs them.
 - `--boot-probe ... --change-floppy STEPS:IMAGE` (repeatable) puts another
   diskette of the same format into drive A: once the run has made STEPS
   steps. `--dos-console --boot IMAGE --floppy IMAGE2 [--floppy IMAGE3]...`
@@ -72,19 +73,141 @@ diskette again with `rw root=301` at `boot:` mounts /dev/hda1 as `/`; `7`
 skips the package floppies and `root` logs in. Add `--rtc-year 1993` to
 the console command for a working clock.
 
-MCC Interim 1.0+ (Linux 1.0.4, March 1994) comes as a boot disk and a
-root disk, 1.2 MB each (`nocdboot` and `root` from the `images` folder of
-the release, gunzipped; not the copies padded to 1.44 MB for a GoTek):
+## Installing MCC Interim 1.0+ (Linux 1.0.4) step by step
+
+MCC Interim 1.0+ (Linux 1.0.4, March 1994) is the MCC release in the
+oldlinux repository (github.com/youngd24/oldlinux, folder
+`mcc-linux/MCC-1.0`). It comes as a boot disk and a root disk, 1.2 MB each:
+`nocdboot.gz` and `root.gz` in its `images` folder, gunzipped. (The copies
+in `mcc-linux/images/bootroot` are padded to 1.44 MB for a GoTek; use the
+1.2 MB ones.) The images stay local, in the git-ignored `images` folder.
+
+**1. Get the two diskettes.** From the checkout's folder, in PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force images\mcc-1.0 | Out-Null
+$base = "https://github.com/youngd24/oldlinux/raw/main/mcc-linux/MCC-1.0/images"
+foreach ($n in "nocdboot", "root") {
+  Invoke-WebRequest "$base/$n.gz" -OutFile "images\mcc-1.0\$n.gz"
+  $in = New-Object IO.Compression.GZipStream([IO.File]::OpenRead((Join-Path $PWD "images\mcc-1.0\$n.gz")), [IO.Compression.CompressionMode]::Decompress)
+  $out = [IO.File]::Create((Join-Path $PWD "images\mcc-1.0\$n"))
+  $in.CopyTo($out); $out.Close(); $in.Close()
+}
+Get-FileHash images\mcc-1.0\nocdboot, images\mcc-1.0\root
+```
+
+In sh:
+
+```sh
+mkdir -p images/mcc-1.0 && cd images/mcc-1.0
+base=https://github.com/youngd24/oldlinux/raw/main/mcc-linux/MCC-1.0/images
+curl -LO $base/nocdboot.gz && curl -LO $base/root.gz
+gunzip -k nocdboot.gz root.gz && sha256sum nocdboot root && cd ../..
+```
+
+Both files are 1,228,800 bytes. SHA256: `nocdboot` 9ae65a42...b59048c,
+`root` 0959510f...a3f9f.
+
+**2. Make an empty 40 MB hard disk** (it refuses a file that exists):
+
+```powershell
+pil --new-hd-image images/mcc-1.0/hd40.img 40
+```
+
+**3. Start the boot disk with the root disk and the hard disk** (the same
+command in sh; on Windows it opens the Dine window):
 
 ```powershell
 pil --dos-console --boot images/mcc-1.0/nocdboot --floppy images/mcc-1.0/root --hd-image images/mcc-1.0/hd40.img --rtc-year 1994
 ```
 
-Type `ramdisk` at `boot:`; when the kernel asks for the root disk, press
-Ctrl+Shift+F1 and then Enter. The menu is the same as above; `m` offers
-ext2. `i` installs Base onto /dev/hda1 and then asks about the keyboard
-map, networking, LILO and a boot floppy (`n` to each) and the package
-drive (`7`, none for now).
+`--rtc-year 1994` gives Linux 1.0 a clock it can read (without it the
+prompt shows 23:59:59).
+
+**4. Boot the installer.** At LILO's `boot:` type `ramdisk` and Enter. The
+kernel loads the boot disk into a RAM disk and then asks for the root
+disk: press **Ctrl+Shift+F1** (drive A: gets the next diskette, `root`),
+then Enter. "VFS: Disk change detected" and the install menu follow
+(`f`, `s`, `a`, `m`, `i`, `c`, `e`, `r`, `q` and a `?` prompt).
+
+**5. Partition the disk: `f`.** The answers, each followed by Enter:
+
+| Question | Answer |
+|---|---|
+| Run fdisk on (block device; default = /dev/hda) | Enter |
+| Command (m for help) | `n` (new partition) |
+| e extended / p primary | `p` |
+| Partition number (1-4) | `1` |
+| First cylinder | `1` |
+| Last cylinder | `81` (the last one of a 40 MB image) |
+| Command (m for help) | `w` (write and leave) |
+
+The kernel prints `hda: hda1` and the menu comes back.
+
+**6. Make the file system: `m`.**
+
+| Question | Answer |
+|---|---|
+| WARNING: This will destroy any files on this partition. Do you want to continue | `y` |
+| Run mkfs on (block device; default = /dev/hda1) | Enter |
+| Create an ext2 file system | `y` |
+
+**7. Install Base: `i`.**
+
+| Question | Answer |
+|---|---|
+| This file system is on (block device; default = /dev/hda1) | Enter |
+| Does this device contain an ext2 file system | `y` |
+| Do you wish to have a swap device | `n` (see below) |
+| Is there another partition you wish to mount? ... type 'n' | `n` |
+
+Base is copied from the root disk and its CRCs checked ("Verifying
+Base.crc", "Verifying base.crc"); this takes a few minutes. Then:
+
+| Question | Answer |
+|---|---|
+| Do you wish to change the default keyboard map | `n` keeps MCC's UK map; `y` lets you pick one (Finnish is `fi-latin1`) |
+| Do you wish to install networking software | `n` |
+| Would you like LILO to install a boot program now? | `n` |
+| Which drive will you use to install Linux packages | `7` (none for now) |
+| Reboot the system now | close the window instead |
+
+Answer `n` to the swap question: the installer's default swap device is
+/dev/hda5, which this disk does not have, so `y` writes a swap line for a
+partition that does not exist into /etc/fstab. Every boot then prints
+"harddisk I/O error, dev 0305, sector 0" and "Unable to find swap-space
+signature" twice (/etc/bcheckrc and /etc/rc both run `swapon -a`). Linux
+refuses a read past a partition's end before it reaches the disk
+controller, so a PC of the time printed the same; it does no harm. To
+remove it, at the root prompt: `grep -v hda5 /etc/fstab > /tmp/f; cp
+/tmp/f /etc/fstab`. A real swap partition would need a second partition
+from fdisk (type 82, `t`) and the menu's `s` before `i`.
+
+**8. Boot Linux from the hard disk.** The installed system is on
+/dev/hda1, but there is no LILO on the hard disk, so the boot disk loads
+the kernel:
+
+```powershell
+pil --dos-console --boot images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img --rtc-year 1994
+```
+
+At `boot:` type `ro root=301` and Enter (301 is /dev/hda1; the kernel
+mounts it read-only, /etc/bcheckrc checks it and mounts it read-write).
+At `linux login:` type `root` (no password). `uname -a`, `df`, `ls /`,
+`free` and `date` answer.
+
+The hard disk image keeps every write, as a disk does: copy
+`hd40.img` after a step you want to come back to.
+
+**Typing and pasting.** Keys typed in the window reach Linux as the
+physical keys pressed, so Linux's own keymap decides the character, as on
+a PC with that keyboard. A paste (right-click menu, Ctrl+Shift+V,
+Shift+Insert) has only characters, so in a booted machine it is typed on
+the keys of the layout given by `--guest-keymap us|uk|fi` (default `us`):
+give the layout of the keymap Linux has loaded (`fi` after choosing
+`fi-latin1`; `uk` for MCC's default map; for plain letters, digits and
+`-` `/` `.` `,` `=` `;` US and UK agree). `--boot-probe ... --type` types
+the same way.
 
 ## A host folder as a disk
 

@@ -462,6 +462,10 @@ fn window_selection_follows_the_pointer_in_reading_order(){
     s.clear();assert_eq!(s.pointer((0,0),2),Gesture::Paste);s.pointer((0,0),0);
     // A click that does not move clears the selection.
     s.pointer((3,3),1);s.pointer((3,3),0);assert_eq!(s.selection,None);
+    // The right press that opened the host menu: a move with the button
+    // still down is not a second press (the menu's Paste pasted twice).
+    s.hold(2);assert_eq!(s.pointer((0,1),2),Gesture::None);
+    s.pointer((0,1),0);assert_eq!(s.pointer((0,1),2),Gesture::Paste);
 }
 
 #[test]
