@@ -2489,8 +2489,10 @@ DOS and ROM:
       --rtc-year YEAR (1980-2099) runs the RTC and DOS date in that year
       from today's date and time, for systems that cannot read this
       century (Linux 0.99). --boot IMAGE, --boot-hd IMAGE and --hd-image
-      DISK start a disk instead of DOS (docs/BOOT.md); --guest-keymap
-      us|uk|fi is the booted system's keyboard layout for pasted text.
+      DISK start a disk instead of DOS (docs/BOOT.md); --hd-folder DIR
+      adds a host folder as a FAT16 fixed disk, changes copied back;
+      --guest-keymap us|uk|fi is the booted system's keyboard layout for
+      pasted text.
       Without PROGRAM, the configuration's program and args start; its
       fpu, mouse, ansi, utc_offset and host_pointer apply unless options
       are given. --host-pointer: the window's own arrow is hidden while the
@@ -2640,9 +2642,9 @@ pub fn run_cli() -> Result<(), String> {
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--boot-probe"){
-        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--script FILE] [--fpu none|80387] [--rtc-year YEAR] [--guest-keymap us|uk|fi]";
+        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--hd-folder DIR] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--script FILE] [--fpu none|80387] [--rtc-year YEAR] [--guest-keymap us|uk|fi]";
         let(mut image,mut drive,mut steps,mut at,mut keys,mut keys_after)=(None,0u8,10_000_000usize,2,String::new(),5_000_000usize);
-        let mut hard_disk=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;let mut script=None;let mut fpu=false;let mut keymap=dos::guest_keymap::Keymap::default();
+        let mut hard_disk=None;let mut folder=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;let mut script=None;let mut fpu=false;let mut keymap=dos::guest_keymap::Keymap::default();
         while at<dos_args.len(){
             match dos_args[at].as_str(){
                 "--hd"=>drive=0x80,
@@ -2665,6 +2667,7 @@ pub fn run_cli() -> Result<(), String> {
                     let file=dos_args.get(at+1).ok_or(usage)?;
                     script=Some(dos::boot_script(&std::fs::read_to_string(file).map_err(|e|format!("{file}: {e}"))?)?);at+=1;
                 },
+                "--hd-folder"=>{folder=Some(dos_args.get(at+1).ok_or(usage)?.clone());at+=1;},
                 "--keys"=>{keys=dos_args.get(at+1).ok_or(usage)?.replace("\\r","\r");at+=1;},
                 "--rtc-year"=>{rtc_year=Some(u32::try_from(number(dos_args.get(at+1).ok_or(usage)?)?).map_err(|_|"year out of range")?);at+=1;},
                 "--guest-keymap"=>{keymap=dos::guest_keymap::Keymap::parse(dos_args.get(at+1).ok_or(usage)?)?;at+=1;},
@@ -2676,23 +2679,24 @@ pub fn run_cli() -> Result<(), String> {
             at+=1;
         }
         let image=image.ok_or(usage)?;
-        // A fixed disk (--hd, or --hd-image next to a diskette) is written
-        // back to its file.
-        let mut machine=match(drive,hard_disk){
-            (0x80,None)=>dos::boot_with_hard_disk(None,std::path::Path::new(image),0x80)?,
-            (0x80,Some(_))=>return Err("--hd boots from IMAGE; --hd-image adds a disk next to a diskette".into()),
-            (_,hard_disk)=>{
-                let bytes=std::fs::read(image).map_err(|e|format!("{image}: {e}"))?;
-                match hard_disk{Some(disk)=>dos::boot_with_hard_disk(Some(&bytes),std::path::Path::new(&disk),0)?,None=>dos::boot(&bytes,0)?}
+        // A fixed disk (--hd, --hd-image) is written back to its file; a
+        // folder disk's changes go back to the folder when the run ends.
+        if script.is_some()&&(!keys.is_empty()||!typed.is_empty()||!changes.is_empty()){return Err("--script replaces --keys, --type and --change-floppy".into());}
+        let folder=folder.map(|dir|dos::FolderDisk::create(std::path::Path::new(&dir))).transpose()?;
+        if let Some((_,notes))=&folder{for note in notes{eprintln!("--hd-folder: {note}");}}
+        let machine=dos::boot_command(image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()));
+        let machine=machine.and_then(|mut m|{if fpu{m.select_fpu(true)?;}Ok(m)});
+        let report=machine.and_then(|m|match &script{
+            Some(script)=>{
+                let mut out=|text:&str|{use std::io::Write;let mut o=std::io::stdout();let _=o.write_all(text.as_bytes());let _=o.flush();};
+                dos::boot_script_probe(m,steps,script,rtc_year,keymap,Some(&mut out))
             },
-        };
-        if fpu{machine.select_fpu(true)?;}
-        if let Some(script)=script{
-            if !keys.is_empty()||!typed.is_empty()||!changes.is_empty(){return Err("--script replaces --keys, --type and --change-floppy".into());}
-            let mut out=|text:&str|{use std::io::Write;let mut o=std::io::stdout();let _=o.write_all(text.as_bytes());let _=o.flush();};
-            print!("{}",dos::boot_script_probe(machine,steps,&script,rtc_year,keymap,Some(&mut out))?);return Ok(());
-        }
-        print!("{}",dos::boot_probe(machine,steps,&keys,keys_after,&typed,&changes,rtc_year,keymap)?);return Ok(());
+            None=>dos::boot_probe(m,steps,&keys,keys_after,&typed,&changes,rtc_year,keymap),
+        });
+        let back=folder.map(|(f,_)|f.finish());
+        print!("{}",report?);
+        if let Some(back)=back{println!("--hd-folder {}",back?);}
+        return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--new-tar-floppy"){
         let usage="usage: pil --new-tar-floppy IMAGE [--size 360|720|1200|1440|2880] FILE... (a diskette holding a ustar archive of the files, read in the guest with `cpio -i -H ustar </dev/fd0` or `tar xf /dev/fd0`)";

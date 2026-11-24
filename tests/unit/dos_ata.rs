@@ -121,3 +121,47 @@ fn a_fixed_disk_file_gets_its_written_sectors(){
     assert!(file[7*512..8*512].iter().all(|&b|b==0x5a));
     assert_eq!(&file[6*512..6*512+2],&6u16.to_le_bytes());
 }
+
+#[test]
+fn a_second_fixed_disk_is_the_primary_slave(){
+    let mut p=machine(&[0xf4]);
+    // Disk 81h: 5 cylinders, LBA n starts with 1000+n.
+    let mut second=vec![0u8;5*16*63*512];
+    for n in 0..5*16*63{second[n*512..n*512+2].copy_from_slice(&(1000+n as u16).to_le_bytes());}
+    p.disks.attach(0x81,bios_disk::Disk::fixed(second).unwrap()).unwrap();
+    bios_disk::install_fixed_table(&mut p).unwrap();
+    // CMOS: C: and D: extended type 47; INT 46h: 5 cylinders; two disks.
+    assert_eq!((ports::cmos(&p,0x12).unwrap(),ports::cmos(&p,0x19).unwrap(),ports::cmos(&p,0x1a).unwrap()),(0xff,47,47));
+    let table=p.ram.load(0x46*4,MemWidth::Dword).unwrap();
+    let at=(table>>16)*16+(table&0xffff);
+    assert_eq!((p.ram.load(at,MemWidth::Word).unwrap(),p.ram.load(at+2,MemWidth::Byte).unwrap(),p.ram.load(at+14,MemWidth::Byte).unwrap()),(5,16,63));
+    assert_ne!(at,{let t=p.ram.load(0x41*4,MemWidth::Dword).unwrap();(t>>16)*16+(t&0xffff)});
+    assert_eq!(p.ram.load(0x475,MemWidth::Byte).unwrap(),2);
+    // INT 13h: AH=15h on 81h is a fixed disk (03h) of 5*16*63 sectors;
+    // AH=08h counts two fixed disks.
+    p.cpu.regs[0]=0x1500;p.cpu.regs[2]=0x81;bios_disk::int13(&mut p).unwrap();
+    assert_eq!((p.cpu.regs[0]>>8&0xff,p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(3,0,5*16*63));
+    p.cpu.regs[0]=0x0800;p.cpu.regs[2]=0x81;bios_disk::int13(&mut p).unwrap();
+    assert_eq!((p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff),(0x043f,0x0f02));
+    // The slave answers IDENTIFY with its own geometry.
+    out(&mut p,0x1f6,0xb0);assert_eq!(inp(&mut p,0x1f7),0x50);out(&mut p,0x1f7,0xec);
+    assert!(irq(&mut p));
+    let w:Vec<u16>=(0..256).map(|_|word(&mut p)).collect();
+    assert_eq!((w[1],w[3],w[6]),(5,16,63));
+    // INITIALIZE DRIVE PARAMETERS on the slave (8 heads, 32 sectors) leaves
+    // the master's geometry alone.
+    out(&mut p,0x1f2,32);out(&mut p,0x1f6,0xb7);out(&mut p,0x1f7,0x91);assert!(irq(&mut p));
+    // A CHS read from each: cylinder 0, head 1, sector 1 is LBA 32 on the
+    // slave and LBA 63 on the master.
+    for(head,first)in[(0xb1u8,1032u16),(0xa1,63)]{
+        out(&mut p,0x1f2,1);out(&mut p,0x1f3,1);out(&mut p,0x1f4,0);out(&mut p,0x1f5,0);out(&mut p,0x1f6,head);
+        out(&mut p,0x1f7,0x20);assert!(irq(&mut p));
+        let w:Vec<u16>=(0..256).map(|_|word(&mut p)).collect();assert_eq!(w[0],first);
+    }
+    // A write to the slave reaches disk 81h only.
+    out(&mut p,0x1f2,1);out(&mut p,0x1f3,9);out(&mut p,0x1f4,0);out(&mut p,0x1f5,0);out(&mut p,0x1f6,0xf0);out(&mut p,0x1f7,0x30);
+    for _ in 0..256{Ata::io(&mut p,0x1f0,false,true,0x7777).unwrap();}
+    assert!(irq(&mut p));
+    assert!(p.disks.sector(0x81,9).unwrap().iter().all(|&b|b==0x77));
+    assert_eq!(&p.disks.sector(0x80,9).unwrap()[..2],&9u16.to_le_bytes());
+}

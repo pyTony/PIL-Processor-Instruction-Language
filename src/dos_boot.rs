@@ -17,23 +17,45 @@ fn dummy(n:u8)->bool{n<8||(0x0a..=0x0f).contains(&n)||(0x70..=0x77).contains(&n)
 /// first diskette, or 80h, the first fixed disk).
 pub fn boot(image:&[u8],drive:u8)->Result<Loaded,String>{
     let disk=match drive{0|1=>bios_disk::Disk::floppy(image.to_vec())?,0x80=>bios_disk::Disk::fixed(image.to_vec())?,_=>return Err("boot drive must be 00h, 01h or 80h".into())};
-    if drive==0x80{start(None,Some(disk),drive)}else{start(Some((drive,disk)),None,drive)}
+    if drive==0x80{start(None,vec![disk],drive)}else{start(Some((drive,disk)),Vec::new(),drive)}
 }
 /// Boot with a fixed disk read from `hard_disk` as drive 80h (its writes go
 /// back to the file), and optionally a diskette image as drive A:; start
 /// from drive 00h or 80h.
+#[cfg(test)]
 pub fn boot_with_hard_disk(floppy:Option<&[u8]>,hard_disk:&std::path::Path,drive:u8)->Result<Loaded,String>{
+    boot_with_hard_disks(floppy,&[hard_disk],drive)
+}
+/// Boot with one or two fixed disks read from files (80h, then 81h; their
+/// writes go back to the files), and optionally a diskette image as drive
+/// A:; start from drive 00h or 80h.
+pub fn boot_with_hard_disks(floppy:Option<&[u8]>,hard_disks:&[&std::path::Path],drive:u8)->Result<Loaded,String>{
     let floppy=floppy.map(|f|bios_disk::Disk::floppy(f.to_vec())).transpose()?.map(|d|(0,d));
     if drive==0&&floppy.is_none(){return Err("booting from drive A: needs a diskette image".into());}
-    start(floppy,Some(bios_disk::Disk::fixed_file(hard_disk)?),drive)
+    if hard_disks.len()>2{return Err("the AT controller takes two fixed disks".into());}
+    let fixed=hard_disks.iter().map(|d|bios_disk::Disk::fixed_file(d)).collect::<Result<Vec<_>,_>>()?;
+    start(floppy,fixed,drive)
 }
-fn start(floppy:Option<(u8,bios_disk::Disk)>,fixed:Option<bios_disk::Disk>,drive:u8)->Result<Loaded,String>{
+/// The machine the command line asks for: IMAGE booted from drive 00h (a
+/// diskette) or 80h (a fixed disk read from its file), then the fixed
+/// disks `--hd-image` and `--hd-folder` add, in that order (80h, 81h).
+pub(crate) fn boot_command(image:&str,drive:u8,hard_disk:Option<&str>,folder:Option<&std::path::Path>)->Result<Loaded,String>{
+    let mut fixed:Vec<&std::path::Path>=Vec::new();
+    if drive==0x80{fixed.push(std::path::Path::new(image));}
+    if let Some(disk)=hard_disk{fixed.push(std::path::Path::new(disk));}
+    if let Some(folder)=folder{fixed.push(folder);}
+    if fixed.len()>2{return Err("the AT controller takes two fixed disks (the boot disk, --hd-image, --hd-folder)".into());}
+    if drive==0x80{return boot_with_hard_disks(None,&fixed,0x80);}
+    let bytes=std::fs::read(image).map_err(|e|format!("{image}: {e}"))?;
+    if fixed.is_empty(){boot(&bytes,0)}else{boot_with_hard_disks(Some(&bytes),&fixed,0)}
+}
+fn start(floppy:Option<(u8,bios_disk::Disk)>,fixed:Vec<bios_disk::Disk>,drive:u8)->Result<Loaded,String>{
     let mut p=load(&[0xf4],"BOOT")?;
     // No XMS driver or upper memory: conventional memory to A000h, the
     // BIOS's own INT 15h AH=88h answer for the extended memory.
     p.select_xms(false)?;
     if let Some((at,disk))=floppy{p.disks.attach(at,disk)?;}
-    if let Some(disk)=fixed{p.disks.attach(0x80,disk)?;}
+    for(unit,disk)in fixed.into_iter().enumerate(){p.disks.attach(0x80+unit as u8,disk)?;}
     p.booted=true;
     // The operating system may program the VGA registers itself.
     p.vga.free=true;

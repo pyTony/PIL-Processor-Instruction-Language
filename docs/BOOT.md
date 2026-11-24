@@ -43,6 +43,10 @@ steps, about 11 s headless here.
 - `pil --new-hd-image FILE MEGABYTES` creates an empty fixed-disk image of
   whole cylinders (16 heads, 63 sectors; 1-504 MB). It refuses an existing
   file.
+- `--hd-folder DIR` (console and probe) adds a host folder as a fixed
+  disk, the next one after the boot disk and `--hd-image`: drive 81h and
+  `/dev/hdb` next to a hard disk, else 80h and `/dev/hda`. See "A host
+  folder as a disk" below.
 
 Floppy images are recognised by size (160K-2.88M PC formats); a fixed-disk
 image is read as 16 heads and 63 sectors per track. A diskette's writes stay
@@ -297,6 +301,45 @@ next coprocessor instruction wait until OUT F0h clears it. Linux 1.0
 checks this at boot ("Checking 386/387 coupling... Ok, fpu using irq13
 error reporting."). Without it, Linux emulates the coprocessor itself.
 
+## A host folder as a disk
+
+A booted system reads sectors, so `--hd-folder DIR` lays the folder out as
+a real disk: a partition table with one primary FAT16 partition (type 04h;
+06h when the folder needs more than 32 MB) holding the folder's files and
+subdirectories, 8.3 names as Dine's `--mount` lists them (BASIS~N aliases
+for long names, sorted by host name). The disk has 65 cylinders (32 MB)
+or as many as the folder needs plus 16 MB free, up to 504 MB; at most
+8,000 entries, 511 in the top folder, 16 MB a file and 128 MB in all.
+Linux mounts it with its msdos file system:
+
+```sh
+mount -t msdos /dev/hdb1 /mnt
+```
+
+The disk is a temporary image file; the guest reads and writes it as any
+other disk, and the host folder does not change while the machine runs.
+**When the run ends** (the console closes, or the probe's budget is spent)
+the files the guest created or changed are copied into the folder, and new
+directories are made (new names in lower case, as Linux lists them).
+Nothing in the folder is deleted or renamed: a file deleted on the disk
+stays, a renamed one appears under its new name beside the old. A host file
+that also changed on the host during the run is not overwritten; the run's
+summary names it. Linux keeps writes in its buffers, so run `sync` or
+`umount /mnt` before closing the console. If the FAT volume cannot be read
+back, nothing is copied and the image file is kept and named.
+
+```powershell
+pil --dos-console --boot images/mcc-1.0/nocdboot --floppy images/mcc-1.0/root --hd-image images/mcc-1.0/hd40.img --hd-folder share --rtc-year 1994
+```
+```sh
+pil --dos-console --boot images/mcc-1.0/nocdboot --floppy images/mcc-1.0/root --hd-image images/mcc-1.0/hd40.img --hd-folder share --rtc-year 1994
+```
+
+With a fixed disk 81h the BIOS also has its parameter table at F000:E411
+behind INT 46h (Linux's setup copies it too), CMOS 12h low nibble Fh and
+1Ah = 47, two fixed disks at 0040:0075 and in INT 13h AH=08h, and the AT
+controller answers as the primary slave.
+
 The BIOS side: INT 13h 00h-04h, 08h, 15h-18h on drives 00h, 01h and 80h
 (status at 0040:0041 and 0040:0074, the 64 KiB DMA limit on diskettes), the
 diskette parameter table at F000:EFC7 behind INT 1Eh, CMOS register 10h with
@@ -315,9 +358,12 @@ Hardware an operating system drives itself, beyond the BIOS:
 - **Hard-disk controller** (1F0h-1F7h, 3F6h; WD1003/ATA-1 task file:
   recalibrate, read and write sectors, verify, seek, diagnostics,
   initialize drive parameters, identify; CHS or LBA; software reset and
-  nIEN) with **IRQ14** through the slave PIC, for the fixed disk as the
-  primary master. Only a booted machine with a fixed disk has it; the
-  other ATA channels and the absent slave stay empty.
+  nIEN) with **IRQ14** through the slave PIC, for fixed disk 80h as the
+  primary master and 81h as its slave. Only a booted machine with a fixed
+  disk has it; the other ATA channels, and the slave without a disk 81h,
+  stay empty. The two drives share one task file, status and error
+  register (commands complete at once, so neither is busy while the other
+  is addressed).
 - **Keyboard commands** through port 60h (ACK FAh, reset FAh AAh, echo,
   identify, FEh for unknown commands), for Dine's DOS too. Controller
   commands ADh/AEh turn the keyboard interface off and on: while it is

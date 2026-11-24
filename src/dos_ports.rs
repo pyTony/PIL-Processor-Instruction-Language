@@ -453,10 +453,12 @@ pub(super) fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         0x0a=>p.rtc.status_a(),0x0b=>p.rtc.status_b(),0x0c=>0x00,0x0d=>0x80,
         // Diagnostics passed, normal shutdown.
         0x0e|0x11|0x13=>0,0x0f=>p.cmos_shutdown,
-        // Fixed disk types: drive C: in the high nibble, Fh meaning the
-        // extended type in register 19h (47, user-defined geometry); D: none.
-        0x12=>if p.disks.fixed().is_some(){0xf0}else{0},
-        0x19=>if p.disks.fixed().is_some(){47}else{0},0x1a=>0,
+        // Fixed disk types: drive C: in the high nibble, D: in the low, Fh
+        // meaning the extended type in register 19h (C:) or 1Ah (D:): 47,
+        // user-defined geometry.
+        0x12=>(if p.disks.fixed_unit(0).is_some(){0xf0}else{0})|if p.disks.fixed_unit(1).is_some(){0x0f}else{0},
+        0x19=>if p.disks.fixed_unit(0).is_some(){47}else{0},
+        0x1a=>if p.disks.fixed_unit(1).is_some(){47}else{0},
         // Diskette drive types (A: high nibble, B: low) of attached BIOS disks.
         0x10=>p.disks.cmos_floppy_types(),
         // Equipment: CGA 80 columns, no diskette, no coprocessor.
