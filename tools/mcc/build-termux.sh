@@ -74,6 +74,8 @@ need sha256sum coreutils
 echo "==> Repository: $ROOT"
 echo "==> Host: $(uname -srm)"
 echo "==> Building PIL/Dine (release, locked; same build mode as PRs #307-#310)"
+# Keep peak memory predictable on phones/tablets; callers may override this.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 cargo build --release --locked
 PIL="$ROOT/target/release/pil"
 [[ -x "$PIL" ]] || die "Expected executable not found: $PIL"
@@ -179,3 +181,5 @@ echo
 echo "==> MCC 386 environment workflow finished"
 echo "    Persistent disk: $IMAGE_DIR/hd40.img"
 echo "    Floppy images:   $IMAGE_DIR/*.flp"
+echo "    Interactive Termux console:"
+echo "    $PIL --dos-console --tty --boot $IMAGE_DIR/nocdboot --hd-image $IMAGE_DIR/hd40.img --rtc-year 1994"
