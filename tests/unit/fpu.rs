@@ -1491,3 +1491,23 @@ fn present_80387_fnsave_frstor_round_trip_and_fnsave_reinitialises() {
     assert_eq!(q(0x308),0x3ff0_0000_0000_0000);
     assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
 }
+
+#[test]
+fn present_80387_fucompp_compares_st0_with_st1_and_pops_both() {
+    // FLD1; FLDZ; FUCOMPP (DA E9): 0 < 1 gives C0; FNSTSW [200h];
+    // FLDZ; FLD1; FUCOMPP: 1 > 0 clears C3 C2 C0; FNSTSW [202h]; INT 20h.
+    let bytes=[0xd9,0xe8, 0xd9,0xee, 0xda,0xe9, 0xdd,0x3e,0x00,0x02,
+               0xd9,0xee, 0xd9,0xe8, 0xda,0xe9, 0xdd,0x3e,0x02,0x02,
+               0xcd,0x20];
+    let mut p=dos::load(&bytes,"x87-fucompp.com").unwrap();
+    p.fpu=Fpu::present();
+    let base=p.image.segments[3].base;
+    let result=dos::run(p,32).unwrap();
+    assert!(matches!(result.stop,dos::Stop::Exit(0)),"{:?}",result.stop);
+    let first=result.loaded.ram.load(base+0x200,MemWidth::Word).unwrap();
+    let second=result.loaded.ram.load(base+0x202,MemWidth::Word).unwrap();
+    assert_eq!(first&0x4700,0x0100,"{first:04x}");
+    assert_eq!(first&0x3800,0x0000,"TOP back to 0: {first:04x}");
+    assert_eq!(second&0x4700,0x0000,"{second:04x}");
+    assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}

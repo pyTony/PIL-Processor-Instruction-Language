@@ -96,6 +96,7 @@ script, one step per line (`#` starts a comment):
 | `floppy IMAGE` | change the diskette (same format) |
 | `show` | print the screen |
 | `mark NAME` | print the steps and host seconds since the last mark |
+| `shot FILE` | write the graphics screen as a P6 PPM (a text screen stops the script) |
 
 The output streams as the script runs. A script ends at its last step,
 at `--steps` or when the guest waits for a key no step will give.
@@ -138,6 +139,35 @@ wrote, so copy it between stages to repeat one.
   `time ./mandel i 500` (fixed point, as MANDEL.COM) and
   `time ./mandel f 100` (double precision).
 
+### svgalib 1.1: vgatest and a Mandelbrot in 256 and 16 colours
+
+MCC 1.0 has no svgalib, so it is built from source in the guest with
+gcc 2.5.8: svgalib111.tar.gz (svgalib 1.1, May 1994; SHA256 ea7b2157...
+df86, 305,979 bytes) from `slackware/slackware-2.0.0/source/d/svgalib` of
+github.com/youngd24/oldlinux. svgalib sets modes through the VGA registers
+itself (see the register list below), with `chipset VGA` in
+/usr/local/lib/libvga.config. After gcc.txt, PowerShell:
+
+```powershell
+python tools/mcc/ustar_repack.py images/mcc-1.0/svgalib111.tar.gz images/mcc-1.0/svga.tgz
+& $pil --new-tar-floppy images/mcc-1.0/svga.flp images/mcc-1.0/svga.tgz tools/mcc/svgabld.sh programs/linux/vgamand.c
+& $pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img --script tools/mcc/svgalib.txt --fpu 80387 --steps 4000000000 --rtc-year 1994
+& $pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img --script tools/mcc/vgatest.txt --fpu 80387 --steps 3000000000 --rtc-year 1994
+& $pil --boot-probe images/mcc-1.0/nocdboot --hd-image images/mcc-1.0/hd40.img --script tools/mcc/vgamand.txt --fpu 80387 --steps 3000000000 --rtc-year 1994
+```
+
+sh: `python3` and `$pil` as above. ustar_repack.py rewrites the archive
+as ustar owned by root, which MCC's cpio reads.
+
+- tools/mcc/svgalib.txt runs tools/mcc/svgabld.sh: libvga.a into
+  /usr/lib with its headers in /usr/include, vgatest into /usr/local/bin,
+  vgamand into /tmp (7 minutes in the guest, 440 s host time).
+- tools/mcc/vgatest.txt: vgatest mode 5 (320x200x256) and 4 (640x480x16),
+  a screenshot of each (vgatest-5.ppm, vgatest-4.ppm), back to text.
+- tools/mcc/vgamand.txt: programs/linux/vgamand.c in both modes, with
+  screenshots; it prints the times() ticks and the sum of the iteration
+  counts after returning to text (1104757 and 5294314, as on the host).
+
 `--fpu 80387` gives the booted machine the 80387 with its AT error path:
 an unmasked exception sets the busy latch and raises IRQ13; FWAIT and the
 next coprocessor instruction wait until OUT F0h clears it. Linux 1.0
@@ -170,6 +200,16 @@ Hardware an operating system drives itself, beyond the BIOS:
   commands ADh/AEh turn the keyboard interface off and on: while it is
   off, keys wait in the keyboard (Linux 1.0's keyboard interrupt does so).
 - **Diskette change line** (3F7h bit 7, INT 13h AH=16h), see above.
+- **VGA registers** (src/dos_vga_regs.rs): the miscellaneous output,
+  sequencer 0-4, CRTC 0-18h (11h bit 7 protects 0-7) and graphics
+  controller 0-8 take any value. CPU access to A0000h follows the live
+  sequencer and graphics controller (planes with map mask, read map, write
+  modes, latches, chain-4; ordinary RAM with odd/even or the B0000h/B8000h
+  maps), and the shown mode is read from the registers: 320x200x256
+  chained is mode 13h, 16-colour planar 320x200, 640x200, 640x350 and
+  640x480 are 0Dh, 0Eh, 10h and 12h, text has the CRTC's columns and rows.
+  Other layouts (mode X, other sizes) are shown as nothing. Not modelled:
+  odd/even graphics addressing, split screens, panning.
 - **Absent devices**: COM2-COM4 (and COM1 without a session) read FFh; in a
   booted machine every port no known device answers is an open bus (FFh,
   FFFFh for a word access), as ISA probes expect. So are the addresses the

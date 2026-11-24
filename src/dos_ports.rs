@@ -180,6 +180,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
         let lo=device.io(port,input,p.cpu.regs[0] as u8)?.ok_or_else(||format!("unsupported VGA port direction at {port:04X}h"))?;
         let hi=if word{device.io(port+1,input,(p.cpu.regs[0]>>8)as u8)?.unwrap()}else{0};
         p.vga=device;
+        if !input{super::vga_regs::sync(p);}
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|u32::from(lo)|(u32::from(hi)<<8);}
         return Ok(());
     }

@@ -35,6 +35,8 @@ fn start(floppy:Option<(u8,bios_disk::Disk)>,fixed:Option<bios_disk::Disk>,drive
     if let Some((at,disk))=floppy{p.disks.attach(at,disk)?;}
     if let Some(disk)=fixed{p.disks.attach(0x80,disk)?;}
     p.booted=true;
+    // The operating system may program the VGA registers itself.
+    p.vga.free=true;
     // Nothing of Dine's DOS stays in memory: its data segment, the memory
     // chain, the program's PSP and environment are DOS, not the machine.
     p.ram.write_bytes(0x500,&vec![0;0xa0000-0x500]).map_err(|e|format!("clearing conventional memory: {e:?}"))?;
@@ -176,11 +178,14 @@ pub enum ScriptStep{
     Show,
     /// Print the steps and host seconds since the last mark.
     Mark(String),
+    /// Write the graphics screen to a binary PPM (P6) file.
+    Shot(String),
 }
 
 /// Read a probe script: one step per line, `#` starts a comment line.
 /// `prompt TEXT`, `screen TEXT`, `type TEXT`, `floppy IMAGE`, `run STEPS`,
-/// `show`, `mark LABEL`. Image paths are relative to the current folder.
+/// `show`, `mark LABEL`, `shot FILE` (the graphics screen as a PPM
+/// picture). Image paths are relative to the current folder.
 pub fn parse_script(text:&str)->Result<Vec<ScriptStep>,String>{
     let unescape=|t:&str|->String{
         let mut out=String::new();let mut chars=t.chars();
@@ -204,6 +209,8 @@ pub fn parse_script(text:&str)->Result<Vec<ScriptStep>,String>{
             "run"=>ScriptStep::Run(rest.trim().replace('_',"").parse().map_err(|_|at("run takes a step count".into()))?),
             "show"=>ScriptStep::Show,
             "mark"=>ScriptStep::Mark(rest.trim().to_string()),
+            "shot" if !rest.trim().is_empty()=>ScriptStep::Shot(rest.trim().to_string()),
+            "shot"=>return Err(at("shot takes a file name".into())),
             _=>return Err(at(format!("unknown step `{word}`"))),
         });
     }
@@ -263,6 +270,17 @@ pub fn script_probe(mut p:Loaded,steps:usize,script:&[ScriptStep],rtc_year:Optio
                 let seconds=mark_time.elapsed().as_secs_f64();
                 writeln!(report,"-- mark {label}: {} steps, {seconds:.3} s host time since the last mark ({done} steps in all)",done-mark_steps).unwrap();
                 mark_steps=done;mark_time=std::time::Instant::now();
+            },
+            ScriptStep::Shot(file)=>{
+                let p=session.machine().ok_or("session state lost")?;
+                let display=p.vga.display;
+                let Some((width,height,pixels))=super::desktop_vga_frame(p) else{
+                    reason=format!("shot {file}: no graphics screen (display mode {:02x}h)",display.mode);break 'script;
+                };
+                let mut ppm=format!("P6\n{width} {height}\n255\n").into_bytes();
+                for px in pixels{ppm.extend_from_slice(&[(px>>16)as u8,(px>>8)as u8,px as u8]);}
+                std::fs::write(file,&ppm).map_err(|e|format!("shot {file}: {e}"))?;
+                writeln!(report,"-- shot {file}: {width}x{height}, mode {:02x}h, at {done} steps",display.mode).unwrap();
             },
         }
         // A long script shows its progress as it goes.

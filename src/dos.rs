@@ -80,6 +80,8 @@ mod vga;
 mod planar;
 #[path="dos_vga_font.rs"]
 mod vga_font;
+#[path="dos_vga_regs.rs"]
+mod vga_regs;
 #[path="dos_serial.rs"]
 mod serial;
 #[path="dos_break.rs"]

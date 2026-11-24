@@ -281,6 +281,38 @@ fn probe_scripts_parse_their_steps_and_refuse_unknown_ones(){
     ]);
     assert!(parse_script("wait 5\n").unwrap_err().contains("line 1"));
     assert!(parse_script("run many\n").is_err());
+    assert_eq!(parse_script("shot a.ppm\n").unwrap(),vec![ScriptStep::Shot("a.ppm".into())]);
+    assert!(parse_script("shot\n").unwrap_err().contains("file name"));
+}
+
+#[test]
+fn a_script_shot_writes_the_graphics_screen_and_refuses_text(){
+    // Mode 13h through INT 10h, pixel (1,0) in colour 4 (red), then a loop.
+    let code:&[u8]=&[
+        0xb8,0x13,0x00,0xcd,0x10,                  // mov ax,13h; int 10h
+        0xb8,0x00,0xa0,0x8e,0xc0,                  // mov ax,A000h; mov es,ax
+        0x26,0xc6,0x06,0x01,0x00,0x04,             // mov byte [es:1],4
+        0xeb,0xfe,                                 // jmp $
+    ];
+    let mut disk=vec![0u8;1_474_560];
+    disk[..code.len()].copy_from_slice(code);disk[510]=0x55;disk[511]=0xaa;
+    let file=std::env::temp_dir().join(format!("pil-shot-{}.ppm",std::process::id()));
+    let name=file.to_string_lossy().into_owned();
+    let script=parse_script(&format!("run 100000\nshot {name}\n")).unwrap();
+    let report=script_probe(boot(&disk,0).unwrap(),1_000_000,&script,None,None).unwrap();
+    assert!(report.contains(": 320x200, mode 13h,"),"{report}");
+    let ppm=std::fs::read(&file).unwrap();std::fs::remove_file(&file).unwrap();
+    let header=b"P6\n320 200\n255\n";
+    assert_eq!(&ppm[..header.len()],header);
+    assert_eq!(ppm.len(),header.len()+320*200*3);
+    assert_eq!(&ppm[header.len()..header.len()+6],&[0,0,0,0xaa,0,0]);
+    // A text screen has no picture: the script stops and says so.
+    let mut text=vec![0u8;1_474_560];
+    text[..2].copy_from_slice(&[0xeb,0xfe]);text[510]=0x55;text[511]=0xaa;
+    let script=parse_script(&format!("run 1000\nshot {name}\n")).unwrap();
+    let report=script_probe(boot(&text,0).unwrap(),1_000_000,&script,None,None).unwrap();
+    assert!(report.contains("no graphics screen (display mode 03h)"),"{report}");
+    assert!(!file.exists());
 }
 
 #[test]

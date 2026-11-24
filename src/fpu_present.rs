@@ -217,7 +217,9 @@ impl PresentFpu {
             Operation::Compare { index, pop } =>
                 return self.compare_register(index, if pop {1}else{0}),
             Operation::UnorderedCompare { index, pop } =>
-                return self.compare_unordered_register(index, pop),
+                return self.compare_unordered_register(index, u8::from(pop)),
+            Operation::UnorderedComparePop2 =>
+                return self.compare_unordered_register(1, 2),
             Operation::Ftst => {
                 let Some(value)=self.state.st(0) else{return Outcome::StackFault(StackError::Underflow);};
                 return self.commit_compare(value,Extended80::default(),0);
@@ -565,7 +567,7 @@ impl PresentFpu {
     /// FUCOM/FUCOMP are quiet comparisons: a quiet NaN sets C3,C2,C0
     /// without signalling invalid-operation. Other exceptional encodings
     /// remain unsupported rather than silently changing x87 state.
-    fn compare_unordered_register(&mut self, index:u8, pop:bool) -> Outcome {
+    fn compare_unordered_register(&mut self, index:u8, pops:u8) -> Outcome {
         let (Some(lhs),Some(rhs))=(self.state.st(0),self.state.st(usize::from(index))) else {
             return Outcome::StackFault(StackError::Underflow);
         };
@@ -584,10 +586,10 @@ impl PresentFpu {
             };
             if signaling_nan(lhs)||signaling_nan(rhs){return Outcome::Unsupported;}
             self.state.status=(self.state.status&!0x4700)|0x4500;
-            if pop {self.state.pop().expect("FUCOMP checked ST(0)");}
+            for _ in 0..pops {self.state.pop().expect("FUCOMP/FUCOMPP checked ST(0) and ST(i)");}
             return Outcome::Completed;
         }
-        self.commit_compare(lhs,rhs,u8::from(pop))
+        self.commit_compare(lhs,rhs,pops)
     }
 
     fn compare_register(&mut self, index:u8, pops:u8) -> Outcome {

@@ -1,3 +1,32 @@
+# svgalib 1.1 under MCC Linux 1.0: VGA modes through the registers — 24 November 2026
+
+Tony's next step after gcc: svgalib. Era source: svgalib 1.1 (May 1994,
+svgalib111.tar.gz from slackware-2.0.0/source/d/svgalib of
+github.com/youngd24/oldlinux, SHA256 ea7b2157...df86, not in the repo),
+built in the guest with gcc 2.5.8 (tools/mcc/svgabld.sh, svgalib.txt).
+- svgalib's VGA driver sets modes by writing the misc output, sequencer,
+  CRTC, graphics controller and attribute registers, no BIOS. In a booted
+  machine (src/dos_vga_regs.rs) those registers now take any value; CPU
+  access to A0000h follows the live sequencer/GC values (Ram's planar
+  window or plain RAM, planes kept while unmapped for the font restore)
+  and vga::Display is read from the registers (13h, 0Dh/0Eh/10h/12h, text
+  with the CRTC's size; anything else is mode FFh, shown as nothing).
+  Dine's DOS keeps its stricter rules.
+- `shot FILE` script step: the graphics screen as a P6 PPM.
+- FUCOMPP (DA E9), which svgalib's build (gcc's float code) needed.
+- tools/mcc/ustar_repack.py, svgalib.txt, vgatest.txt, vgamand.txt;
+  programs/linux/vgamand.c.
+
+Local Linux (cloud), release: 1067 Rust tests pass, 2 ignored (5 new:
+three register-level mode sets in tests/unit/dos_vga_regs.rs, FUCOMPP,
+the shot step). In the guest: vgatest mode 5 (320x200x256: lines and the
+grey/red/green/blue ramps) and mode 4 (640x480x16: all 16 colours) drawn
+and back to text; vgamand 256 took 112 ticks (1.12 s), vgamand 16 622
+ticks, sums 1104757 and 5294314 as the host's, and every screenshot pixel
+has the colour of its iteration count. Mode X (vgatest 6-8), the 2-colour
+modes and SVGA chipsets were not tried. The console window and Windows
+were not run.
+
 # gcc 2.5.8 and a timed Mandelbrot under MCC Linux 1.0 — 24 November 2026
 
 Tony asked for comparison software: gcc and a Mandelbrot inside Linux, so

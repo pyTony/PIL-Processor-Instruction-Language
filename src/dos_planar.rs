@@ -57,8 +57,11 @@ pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<
     match port{
         0x3c0|0x3c1=>{
             if word{return Err("word access to the VGA attribute controller is not modelled".into());}
-            return p.vga.attribute_io(port,input,value as u8).map(|v|Some(u16::from(v)));
+            let v=p.vga.attribute_io(port,input,value as u8)?;
+            if !input{super::vga_regs::sync(p);}
+            return Ok(Some(u16::from(v)));
         },
+        0x3c4|0x3c5|0x3ce|0x3cf if p.booted=>return super::vga_regs::controller_io(p,port,input,value,word).map(Some),
         0x3c4|0x3c5|0x3ce|0x3cf=>{},
         _=>return Ok(None),
     }

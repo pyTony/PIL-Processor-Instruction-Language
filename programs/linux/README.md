@@ -9,3 +9,8 @@ Sources to compile inside a booted Linux under PIL (docs/BOOT.md).
   double precision; both print the clock ticks from times() and a sum of
   the iteration counts (fixed 15564, float 15584), so a run can be checked
   against the host's own build of the same file.
+- vgamand.c: a Mandelbrot through svgalib 1.1 (`vgamand [256|16]
+  [reps]`): 320x200 in 256 colours or 640x480 in 16, 32-bit integers with
+  12 fraction bits, 64 iterations, each point drawn with vga_drawpixel.
+  After Enter it returns to text and prints the times() ticks and the sum
+  of the iteration counts (1104757 for 320x200, 5294314 for 640x480).

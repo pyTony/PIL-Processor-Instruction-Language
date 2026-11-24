@@ -58,6 +58,8 @@ pub enum Operation {
     ComparePop2,
     /// FUCOM/FUCOMP register comparison, with optional pop of ST(0).
     UnorderedCompare { index: u8, pop: bool },
+    /// FUCOMPP (DA E9): quiet unordered compare ST(0) with ST(1), pop both.
+    UnorderedComparePop2,
     /// FUCOM/FUCOMP: quiet unordered compare ST(0) with ST(i), optionally pop.
     CompareMemory { bytes: u32, pop: bool },
     /// Register arithmetic, either ST(0) op ST(i) or ST(i) op ST(0), pop.
@@ -119,6 +121,7 @@ pub fn classify(opcode: u8, modrm: u8) -> Result<Operation, DecodeError> {
             (0xd8, 0xd0..=0xd7) => Some(Operation::Compare { index: rm, pop: false }),
             (0xd8, 0xd8..=0xdf) => Some(Operation::Compare { index: rm, pop: true }),
             (0xde, 0xd9) => Some(Operation::ComparePop2),
+            (0xda, 0xe9) => Some(Operation::UnorderedComparePop2),
             // DC: the destination is ST(i), as DE without the pop (Intel's
             // FSUB/FSUBR and FDIV/FDIVR ST(i),ST(0) encodings).
             (0xdc, 0xc0..=0xc7) => Some(Operation::ArithmeticTo { kind: Arithmetic::Add, index: rm }),
@@ -269,6 +272,7 @@ mod tests {
             assert_eq!(classify(0xd8,0xd8+i), Ok(Operation::Compare{index:i,pop:true}));
         }
         assert_eq!(classify(0xde,0xd9),Ok(Operation::ComparePop2));
+        assert_eq!(classify(0xda,0xe9),Ok(Operation::UnorderedComparePop2));
     }
     #[test]
     fn signed_integer_arithmetic_and_comparison_cover_m16_and_m32() {
