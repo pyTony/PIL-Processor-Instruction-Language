@@ -6,6 +6,7 @@
 //! Layouts as the PC keyboards of the time print them (set-1 scan codes):
 //! US, UK and Finnish (also Swedish). Dine's own DOS reads BIOS words and
 //! needs none of this.
+use super::host_console::{Key,Mods};
 
 /// A guest keyboard layout.
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
@@ -71,7 +72,9 @@ const FI:&[Extra]=&[
 
 fn stroke(map:Keymap,c:char)->Option<Stroke>{
     let plain=|scan|Some(Stroke{scan,shift:false,altgr:false,dead:false});
-    match c{'\n'=>return plain(0x1c),'\t'=>return plain(0x0f),' '=>return plain(0x39),_=>{}}
+    // Backspace (BS or DEL, as terminals send it) and Esc are keys too.
+    match c{'\n'=>return plain(0x1c),'\t'=>return plain(0x0f),' '=>return plain(0x39),
+        '\u{8}'|'\u{7f}'=>return plain(0x0e),'\u{1b}'=>return plain(0x01),_=>{}}
     if let Some(i)=DIGITS.find(c){return plain(0x02+i as u8);}
     let lower=c.to_ascii_lowercase();
     if lower.is_ascii_lowercase(){
@@ -98,7 +101,7 @@ pub(crate) fn edges(map:Keymap,text:&str)->Vec<Edge>{
     let mut out=Vec::new();
     for c in text.chars(){
         let Some(s)=stroke(map,c) else{continue};
-        let ascii=match c{'\n'=>0x0d,'\t'=>0x09,_=>crate::dos_encoding::command_line(&c.to_string()).ok()
+        let ascii=match c{'\n'=>0x0d,'\t'=>0x09,'\u{7f}'=>0x08,_=>crate::dos_encoding::command_line(&c.to_string()).ok()
             .and_then(|b|if let [b]=b[..]{Some(b)}else{None}).unwrap_or(0)};
         let word=u16::from(s.scan)<<8|u16::from(ascii);
         if s.shift{out.push((SHIFT,false,true,None));}
@@ -110,6 +113,46 @@ pub(crate) fn edges(map:Keymap,text:&str)->Vec<Edge>{
         if s.dead{out.push((SPACE,false,true,None));out.push((SPACE,false,false,None));}
     }
     out
+}
+
+/// The key edges of one host key from the terminal (`--tty`) on `map`, for
+/// a booted machine, which reads scan codes through IRQ1: Shift, Ctrl and
+/// Alt held around the key, the cursor and editing block as the enhanced
+/// keyboard's E0h-prefixed keys (not the keypad), a control code as Ctrl
+/// and its letter. `word` is the BIOS word a press stores for a named key.
+pub(crate) fn key_edges(map:Keymap,key:Key,mods:Mods,word:Option<u16>)->Vec<Edge>{
+    const CTRL:u8=0x1d;
+    let mut mods=mods;
+    let mut keys:Vec<Edge>=match key{
+        Key::Char(c) if (1..=26).contains(&(c as u32))&&!matches!(c,'\u{8}'|'\t'|'\r'|'\n')=>{
+            mods.ctrl=true;edges(map,&char::from(c as u8+0x60).to_string())
+        },
+        Key::Char(c) if mods.ctrl||mods.alt=>{
+            // The key that types the character; a letter's case is the
+            // Shift the host reported, a symbol brings its own Shift.
+            let keys=edges(map,&c.to_ascii_lowercase().to_string());
+            if keys.first()==Some(&(SHIFT,false,true,None)){mods.shift=false;}
+            keys
+        },
+        Key::Char(c)=>{mods.shift=false;edges(map,&c.to_string())},
+        named=>{
+            let (scan,extended)=match named{
+                Key::Enter=>(0x1c,false),Key::Backspace=>(0x0e,false),Key::Tab=>(0x0f,false),Key::Escape=>(0x01,false),
+                Key::Up=>(0x48,true),Key::Down=>(0x50,true),Key::Left=>(0x4b,true),Key::Right=>(0x4d,true),
+                Key::Home=>(0x47,true),Key::End=>(0x4f,true),Key::PageUp=>(0x49,true),Key::PageDown=>(0x51,true),
+                Key::Insert=>(0x52,true),Key::Delete=>(0x53,true),
+                Key::F(n @ 1..=10)=>(0x3a+n,false),Key::F(11)=>(0x57,false),Key::F(12)=>(0x58,false),
+                Key::F(_)|Key::Char(_)=>return Vec::new(),
+            };
+            vec![(scan,extended,true,word),(scan,extended,false,None)]
+        },
+    };
+    if keys.is_empty(){return keys;}
+    // Modifiers pressed first (Ctrl, Alt, Shift) and released last.
+    for (held,scan) in [(mods.shift,SHIFT),(mods.alt,ALT),(mods.ctrl,CTRL)]{
+        if held{keys.insert(0,(scan,false,true,None));keys.push((scan,false,false,None));}
+    }
+    keys
 }
 
 /// Releases of every Shift, Ctrl and Alt key, sent before a paste: the
@@ -141,5 +184,38 @@ mod tests{
         // Capitals with Shift; the word a BIOS handler stores is the character.
         assert_eq!(edges(Keymap::Us,"A")[1],(0x1e,false,true,Some(0x1e41)));
         assert_eq!(Keymap::parse("FI"),Ok(Keymap::Fi));assert!(Keymap::parse("de").is_err());
+        // BS and DEL (what a terminal sends for Backspace) are key 0Eh, ESC is Esc.
+        assert_eq!(makes(Keymap::Us,"a\u{7f}\u{8}\u{1b}"),[(0x1e,false),(0x0e,false),(0x0e,false),(0x01,false)]);
+    }
+    #[test]
+    fn terminal_keys_are_key_presses_with_their_modifiers(){
+        let none=Mods::default();
+        let shift=Mods{shift:true,..none};let ctrl=Mods{ctrl:true,..none};let alt=Mods{alt:true,..none};
+        // Backspace is its key, not the DEL byte; arrows and the editing
+        // block are the E0h keys, not the keypad.
+        assert_eq!(key_edges(Keymap::Us,Key::Backspace,none,Some(0x0e08)),[(0x0e,false,true,Some(0x0e08)),(0x0e,false,false,None)]);
+        for (key,scan) in [(Key::Up,0x48),(Key::Down,0x50),(Key::Left,0x4b),(Key::Right,0x4d),(Key::Home,0x47),
+            (Key::End,0x4f),(Key::PageUp,0x49),(Key::PageDown,0x51),(Key::Insert,0x52),(Key::Delete,0x53)]{
+            assert_eq!(key_edges(Keymap::Fi,key,none,None),[(scan,true,true,None),(scan,true,false,None)]);
+        }
+        assert_eq!(key_edges(Keymap::Us,Key::F(1),none,None)[0].0,0x3b);
+        assert_eq!(key_edges(Keymap::Us,Key::F(12),none,None)[0].0,0x58);
+        assert!(key_edges(Keymap::Us,Key::F(13),none,None).is_empty());
+        // Shift+Tab holds Shift around Tab.
+        assert_eq!(key_edges(Keymap::Us,Key::Tab,shift,None),[(0x2a,false,true,None),(0x0f,false,true,None),
+            (0x0f,false,false,None),(0x2a,false,false,None)]);
+        // A capital brings its own Shift once, whether or not the host reported it.
+        assert_eq!(key_edges(Keymap::Us,Key::Char('A'),shift,None),edges(Keymap::Us,"A"));
+        // A symbol is typed on the guest layout: '-' on Finnish is the US '/' key.
+        assert_eq!(key_edges(Keymap::Fi,Key::Char('-'),none,None),edges(Keymap::Fi,"-"));
+        // Ctrl+C, and the control code 03h a terminal sends for it, are Ctrl and C.
+        let ctrl_c=[(0x1d,false,true,None),(0x2e,false,true,Some(0x2e63)),(0x2e,false,false,None),(0x1d,false,false,None)];
+        assert_eq!(key_edges(Keymap::Us,Key::Char('c'),ctrl,None),ctrl_c);
+        assert_eq!(key_edges(Keymap::Us,Key::Char('\u{3}'),none,None),ctrl_c);
+        // Alt+X and Ctrl+Alt+Del: modifiers pressed first, released last.
+        assert_eq!(key_edges(Keymap::Us,Key::Char('x'),alt,None)[0],(0x38,false,true,None));
+        let cad=key_edges(Keymap::Us,Key::Delete,Mods{ctrl:true,alt:true,shift:false},None);
+        assert_eq!(cad.iter().map(|e|(e.0,e.1,e.2)).collect::<Vec<_>>(),
+            [(0x1d,false,true),(0x38,false,true),(0x53,true,true),(0x53,true,false),(0x38,false,false),(0x1d,false,false)]);
     }
 }
