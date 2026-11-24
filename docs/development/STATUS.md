@@ -27,7 +27,7 @@ Cloud Linux, release: 1056 Rust tests pass, 2 ignored (1 new keymap test;
 the selection test gains the held right press); 0 rustc warnings in the
 release build; portable-path and program-specific checks pass. Through the
 probe on the installed 40 MB image, with /etc/kbmap set to fi-latin1 and
-with the default UK map, a typed `echo` line with @ # | \\ ~ $ ! { } [ ] ^
+with the default UK map, a typed `echo` line with @ # | \ ~ $ ! { } [ ] ^
 < > ; came out as written (--guest-keymap fi and uk). The swap question
 with `y` shows the default /dev/hda5. The window and its menu paste were
 not driven (no Windows here).
