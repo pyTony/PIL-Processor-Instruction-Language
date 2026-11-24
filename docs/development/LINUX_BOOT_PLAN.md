@@ -36,9 +36,10 @@ kernel) is another.
 ### 1. Machine layer (refactor, no behaviour change)
 Partly done. 21 November 2026 (#292): DOS state in `dos::Dos`. 24 November
 2026: the device, BIOS, DOS and host files moved into `src/pc/`, `src/bios/`,
-`src/dos/` and `src/host/` (module names unchanged). Still to do: split the
-files that mix layers, `Machine` and the `Firmware` trait, then Cargo crates
-(Tony chose the staged route to separate crates; see DINE_ARCHITECTURE.md).
+`src/dos/` and `src/host/` (module names unchanged), then `pc::Machine` and
+the `Firmware` trait, the CPU core as `crates/pil-cpu` and the machine as
+`crates/pil-pc`. Still to do: split the files that mix BIOS and DOS, and the
+BIOS as a crate (Tony chose the staged route; see DINE_ARCHITECTURE.md).
 - **`pc::Machine`:** CPU, RAM, segment state/image, FPU, decode cache,
   blocks, and the devices: `pc::pic`, `pc::pit`, `pc::kbc` (8042),
   `pc::cmos`, `pc::vga` (text, planar, fonts), `pc::speaker`, `pc::uart`

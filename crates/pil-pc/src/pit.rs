@@ -5,7 +5,7 @@
 /// its gate low. Binary modes 0, 2 and 3 are timed; other speaker modes can still be written
 /// for audio but cannot be read as though they were modelled.
 #[derive(Clone,Debug)]
-pub(crate) struct Counter2{mode:u8,access:u8,reload:u32,epoch:u64,frozen:u32,gate:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>}
+pub struct Counter2{mode:u8,access:u8,reload:u32,epoch:u64,frozen:u32,gate:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>}
 impl Default for Counter2{fn default()->Self{Self{mode:3,access:3,reload:65536,epoch:0,frozen:0,gate:false,low:None,read_high:false,latch:None}}}
 impl Counter2{
     fn count_full(&self,now:u64)->u32{
@@ -63,7 +63,7 @@ impl Counter2{
     }
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub(crate) struct Counter0{mode:u8,access:u8,reload:u32,epoch:u64,irq_base:u64,running:bool,frozen:u16,frozen_irqs:u64,armed:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>,
+pub struct Counter0{mode:u8,access:u8,reload:u32,epoch:u64,irq_base:u64,running:bool,frozen:u16,frozen_irqs:u64,armed:bool,low:Option<u8>,read_high:bool,latch:Option<(u16,bool)>,
     /// A count written while the counter runs, and the PIT clock where the
     /// current period ends and the counter loads it.
     next:Option<(u64,u32)>}

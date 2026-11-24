@@ -1,6 +1,7 @@
 //! Startup and redirected I/O for the shared Rust DOS console.
 //! Interactive drawing and BIOS key mapping belong to dos::host_console.
 use crate::dos::{self,session::Session,host_console::{self,Key,Mods}};
+use crate::dos::LoadedOps;
 use std::{collections::VecDeque,io::{self,BufRead,Read,Write,IsTerminal}};
 
 pub(crate) fn transcript(bytes:&[u8])->String{

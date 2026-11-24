@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Check that the machine layer does not reach into the layers above it.
 
-src/pc.rs and src/pc/ hold the PC (CPU, memory, devices). Code there may use
-the CPU, memory and other machine modules of the crate, but never Dine's DOS
-(crate::dos), the BIOS (crate::bios) or the front ends (crate::host): what
-the firmware decides reaches the machine through the Firmware trait in
-src/pc.rs. Comments and string literals are not checked.
+crates/pil-pc holds the PC (CPU, memory, devices). Code there may use the CPU
+core (pil-cpu) and other machine modules, but never Dine's DOS, the BIOS or
+the front ends: what the firmware decides reaches the machine through the
+Firmware trait in crates/pil-pc/src/lib.rs. Since pil-pc is its own crate,
+the compiler refuses such a use already; this check also catches the names
+in code (Loaded, Dos, super:: paths to DOS and BIOS modules) before a build.
+Comments and string literals are not checked.
 
 --self-test runs the rule on built-in samples first.
 """
@@ -20,8 +22,7 @@ FORBIDDEN = re.compile(
     r"|\bsuper::super::"
     r"|\bLoaded\b"
     r"|\bDos\b")
-# The machine files' own parent is the crate root (pc.rs) or pc (pc/*.rs):
-# names of DOS and BIOS modules reached through super:: are refused too.
+# Names of DOS and BIOS modules reached through super:: are refused too.
 UPPER = ("services", "vectors", "console", "files", "planar", "brk",
          "stoplog", "session", "int09", "int14", "aux_device", "memory_arena",
          "bios_disk", "boot", "xms", "mouse", "exec", "lfn", "nls")
@@ -81,7 +82,7 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         self_test()
-    files = [ROOT / "src" / "pc.rs", *sorted((ROOT / "src" / "pc").glob("*.rs"))]
+    files = sorted((ROOT / "crates" / "pil-pc" / "src").glob("*.rs"))
     failed = 0
     for path in files:
         for number, text in findings(path.read_text(encoding="utf-8")):

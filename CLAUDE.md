@@ -1,3 +1,28 @@
+# The machine as its own crate: crates/pil-pc — 24 November 2026
+
+Step 3b of the staged library split Tony chose (#311 folders, #312
+pc::Machine, #313 pil-cpu). No behaviour change.
+- crates/pil-pc (library `pil_pc`, depends on pil-cpu only): src/pc.rs is
+  its lib.rs and src/pc/*.rs its modules (moved with `git mv`); items are
+  `pub` (were `pub(crate)`). The pil package names it as its module `pc`
+  (`pub(crate) use pil_pc as pc`), so `pc::Machine` paths are unchanged.
+  The compiler now keeps the machine from naming DOS, BIOS or front ends;
+  tools/check_layers.py checks crates/pil-pc/src.
+- Rust allows no inherent `impl` on another crate's type: the methods Dine
+  added to `Loaded` (enqueue_key, ctrl_break, select_xms, select_fpu,
+  set_rtc_year) are the trait `dos::LoadedOps`, imported where called;
+  with_upper_memory is a function in dos.rs.
+- `History::len` (tests only) is behind pil-pc's `test-support` feature (a
+  dev-dependency of pil). export_runtime, ci_changes (and its test) and the
+  architecture and Linux boot plan docs follow the paths.
+  Next: the BIOS apart from Dine's DOS, then the BIOS as a crate.
+
+Cloud Linux, release: 1075 Rust tests pass, 2 ignored (748 in pil, 292 in
+pil-cpu, 35 in pil-pc; the same tests as before); forms.rs current (2,685
+forms); 0 rustc warnings (release, dine-library, compact-interpreter);
+x86_64-pc-windows-gnu cargo check (release, tests, dine-library) clean;
+portable-path, program-specific and layer checks and the CI tool tests
+pass; export_runtime.py --verify (standalone build, debugger, DOS hello, ZIP) passes. No program was run by hand.
 # The CPU core as its own crate: crates/pil-cpu — 24 November 2026
 
 Step 3a of the staged library split Tony chose (#311 folders, #312

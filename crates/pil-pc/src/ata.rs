@@ -26,7 +26,7 @@ const IDNF:u8=0x10;const ABRT:u8=0x04;
 enum Transfer{None,Read{left:u32},Write{left:u32},Identify}
 
 #[derive(Clone,Debug)]
-pub(crate) struct Ata{
+pub struct Ata{
     error:u8,count:u8,sector:u8,cylinder:u16,head:u8,status:u8,control:u8,
     buffer:Box<[u8;512]>,at:usize,transfer:Transfer,
     /// Heads and sectors per track from INITIALIZE DRIVE PARAMETERS, per
@@ -40,7 +40,7 @@ impl Default for Ata{
 impl Ata{
     /// Port I/O for the controller; None for other ports or without a disk.
     /// `word` is a 16-bit access, valid at the data port only.
-    pub(crate) fn io<F>(p:&mut Machine<F>,port:u16,input:bool,word:bool,value:u16)->Result<Option<u16>,String>{
+    pub fn io<F>(p:&mut Machine<F>,port:u16,input:bool,word:bool,value:u16)->Result<Option<u16>,String>{
         if !p.booted||p.disks.fixed().is_none()||!matches!(port,0x1f0..=0x1f7|0x3f6){return Ok(None);}
         if word!=(port==0x1f0){return Err(format!("{} ATA access to port {port:03X}h is not modelled",if word{"word"}else{"byte"}));}
         // An absent slave's registers read 0 and it ignores commands.

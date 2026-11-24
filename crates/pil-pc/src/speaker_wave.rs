@@ -14,15 +14,15 @@
 use std::collections::VecDeque;
 
 /// PIT input clock in Hz (the same value as dos_ports.rs PIT_HZ).
-pub(crate) const PIT_HZ:u64=1_193_182;
+pub const PIT_HZ:u64=1_193_182;
 /// The IBM AT BIOS beep: PIT count 1331 (896 Hz), 31/64 s.
-pub(crate) const BELL_COUNT:u32=1331;
-pub(crate) const BELL_CLOCKS:u64=PIT_HZ*31/64;
+pub const BELL_COUNT:u32=1331;
+pub const BELL_CLOCKS:u64=PIT_HZ*31/64;
 /// A sound that is on for less than this, after silence, is held this
 /// long: the guest switches the speaker on and off in a microsecond or two
 /// of host time, where a 386 took several, and a shorter pulse would vanish
 /// inside one sample. About 1 ms.
-pub(crate) const MIN_PULSE:u64=PIT_HZ/1000;
+pub const MIN_PULSE:u64=PIT_HZ/1000;
 /// The silence before a pulse that counts as "after silence": 10 ms.
 const QUIET_BEFORE:u64=PIT_HZ/100;
 /// At most this much bell sound waits ahead (2 s).
@@ -30,7 +30,7 @@ const BELL_BACKLOG:u64=2*PIT_HZ;
 
 /// The speaker signal from one moment on: 1 is the cone pushed out.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub(crate) enum Wave{
+pub enum Wave{
     /// A constant level.
     Level(bool),
     /// High for `high` of every `period` clocks, starting high: mode 3
@@ -57,11 +57,11 @@ impl Wave{
         (self.high_until(b-start)-self.high_until(a-start))/(b-a)
     }
     /// Silent: no movement of the cone from now on.
-    pub(crate) fn steady(self)->bool{matches!(self,Wave::Level(_))}
+    pub fn steady(self)->bool{matches!(self,Wave::Level(_))}
 }
 
 /// Speaker signal to 16-bit PCM.
-pub(crate) struct Synth{
+pub struct Synth{
     rate:u32,
     /// Peak sample value for a full step, from the volume.
     amplitude:f64,
@@ -79,17 +79,17 @@ pub(crate) struct Synth{
     last_x:f64,y:f64,
 }
 impl Synth{
-    pub(crate) fn new(rate:u32,volume:u8,start:u64)->Self{
+    pub fn new(rate:u32,volume:u8,start:u64)->Self{
         Self{rate,amplitude:32767.0*f64::from(volume.min(100))/100.0,at:start as f64,wave:(start as f64,Wave::Level(false)),
             pending:VecDeque::new(),bells:VecDeque::new(),sound_from:None,quiet_since:start,last_x:0.0,y:0.0}
     }
     /// PIT clocks per sample.
     fn step(&self)->f64{PIT_HZ as f64/f64::from(self.rate)}
     /// The time of the next sample, in PIT clocks.
-    pub(crate) fn now(&self)->u64{self.at as u64}
+    pub fn now(&self)->u64{self.at as u64}
     /// A change of the speaker signal at PIT clock `at`. A change from before
     /// the samples already made counts from the next sample.
-    pub(crate) fn wave(&mut self,at:u64,wave:Wave){
+    pub fn wave(&mut self,at:u64,wave:Wave){
         let last=self.pending.back().map_or(self.wave.0 as u64,|e|e.0);
         let mut at=at.max(last).max(self.now());
         let previous=self.pending.back().map_or(self.wave.1,|e|e.1);
@@ -105,17 +105,17 @@ impl Synth{
         self.pending.push_back((at,wave));
     }
     /// A BIOS beep asked for at PIT clock `at`; it follows any beep still due.
-    pub(crate) fn bell(&mut self,at:u64){
+    pub fn bell(&mut self,at:u64){
         let start=at.max(self.now()).max(self.bells.back().map_or(0,|b|b.1));
         if start>=self.now()+BELL_BACKLOG{return;}
         self.bells.push_back((start,start+BELL_CLOCKS));
     }
     /// Nothing more to hear until the next change.
-    pub(crate) fn quiet(&self)->bool{
+    pub fn quiet(&self)->bool{
         self.pending.is_empty()&&self.bells.is_empty()&&self.wave.1.steady()&&self.y.abs()*self.amplitude<0.5
     }
     /// Samples for the signal up to PIT clock `until`, appended to `out`.
-    pub(crate) fn render(&mut self,until:u64,out:&mut Vec<i16>){
+    pub fn render(&mut self,until:u64,out:&mut Vec<i16>){
         let step=self.step();
         // A one-pole high-pass filter at about 20 Hz.
         let r=1.0-2.0*std::f64::consts::PI*20.0/f64::from(self.rate);

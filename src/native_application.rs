@@ -9,6 +9,7 @@ use crate::{
     guest::{Decoded, GuestError, Image, Operation},
     precompiled, Cpu, ExecError, FlowContext, Program, Ram, View,
 };
+use crate::dos::LoadedOps;
 #[cfg(feature = "dine-library")]
 use std::ffi::c_char;
 use std::{cell::OnceCell, path::Path, rc::Rc};
