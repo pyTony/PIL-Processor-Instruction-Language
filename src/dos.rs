@@ -4,6 +4,7 @@ use super::Cpu;
 use super::address::{MemoryContext,SegmentCache,SegmentRegister};
 use super::guest::{GuestError,Image,Operation,SYSTEM_RANGES};
 use super::memory::{MemWidth,Ram};
+use crate::pc::{ports,soundblaster,rtc,vga,vga_font,vga_regs,serial,keyboard,history,disks};
 #[path="dos/memory.rs"]
 mod memory_arena;
 use memory_arena::{Arena,memory_service};
@@ -26,7 +27,7 @@ const SYSVARS:u16=0x0026;
 /// Offset in DOSDATA of the 128-byte line buffer CON reads (AH3F) edit into.
 const CON_LINE:u16=0x0300;
 /// BIOS timer ticks in 24 hours (INT1A, BDA 0040:006C).
-const TICKS_PER_DAY:u32=0x0018_00b0;
+use crate::pc::TICKS_PER_DAY;
 pub const MAX_FILE:usize=1024*1024;
 pub const MAX_STEPS:usize=1_000_000;
 /// test386 runs tens of millions of instructions (its LEA test alone).
@@ -55,20 +56,10 @@ mod lfn;
 mod nls;
 #[path="dos/exec.rs"]
 mod exec;
-#[path="pc/ports.rs"]
-pub(crate) mod ports;
-#[path="pc/soundblaster.rs"]
-mod soundblaster;
-#[path="pc/rtc.rs"]
-mod rtc;
 #[path="bios/block_move.rs"]
 mod block_move;
 #[path="bios/disk.rs"]
 mod bios_disk;
-#[path="pc/fdc.rs"]
-mod fdc;
-#[path="pc/ata.rs"]
-mod ata;
 #[path="bios/folder_disk.rs"]
 mod folder_disk;
 pub(crate) use folder_disk::FolderDisk;
@@ -79,27 +70,45 @@ pub(crate) mod guest_keymap;
 pub use boot::{probe as boot_probe,parse_script as boot_script,script_probe as boot_script_probe,tar_floppy};
 pub(crate) use boot::boot_command;
 #[cfg(test)]
-pub(crate) use boot::{boot,boot_with_hard_disk,boot_with_hard_disks};
+pub(crate) use boot::{boot,boot_with_hard_disk};
 #[path="dos/xms.rs"]
 mod xms;
-#[path="pc/vga.rs"]
-mod vga;
 #[path="bios/planar.rs"]
 mod planar;
-#[path="pc/vga_font.rs"]
-mod vga_font;
-#[path="pc/vga_regs.rs"]
-mod vga_regs;
-#[path="pc/serial.rs"]
-mod serial;
 #[path="dos/break.rs"]
 mod brk;
-#[path="pc/keyboard.rs"]
-mod keyboard;
 #[path="dos/mouse.rs"]
 mod mouse;
 #[path="bios/vectors.rs"]
 mod vectors;
+#[path="bios/int14.rs"]
+mod int14;
+#[path="bios/int09.rs"]
+mod int09;
+#[path="dos/aux_device.rs"]
+mod aux_device;
+// Machine-level tests that run through Dine's loader and BIOS.
+#[cfg(test)]
+#[path="../tests/unit/dos_port_io.rs"]
+mod port_io_tests;
+#[cfg(test)]
+#[path="../tests/unit/dos_string_io.rs"]
+mod string_io_tests;
+#[cfg(test)]
+#[path="../tests/unit/dos_ata.rs"]
+mod ata_tests;
+#[cfg(test)]
+#[path="../tests/unit/dos_fdc.rs"]
+mod fdc_tests;
+#[cfg(test)]
+#[path="../tests/unit/dos_keyboard.rs"]
+mod keyboard_tests;
+#[cfg(test)]
+#[path="../tests/unit/dos_vga_font.rs"]
+mod vga_font_tests;
+#[cfg(test)]
+#[path="../tests/unit/dos_vga_regs.rs"]
+mod vga_regs_tests;
 use services::dispatch as service;
 #[cfg(any(feature = "dine-library", test))]
 pub(crate) fn compiled_interrupt(
@@ -137,51 +146,20 @@ pub(crate) fn compiled_port(
 
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
-pub struct Loaded{
-    /// The DOS run by Dine on this machine: its memory chain, processes,
-    /// files, console state and drivers. Everything else here is the PC.
-    pub dos:Dos,
-    pub cpu:Cpu,
-    pub ram:Ram,
-    pub image:Image,
-    pub selectors:[u16;6],
-    pub timer_ticks:u32,
-    timer_tick_adjust:i64,
-    /// The PC speaker behind ports 42h, 43h and 61h.
-    pub speaker:ports::Speaker,
-    /// ISA Sound Blaster 2.0 DSP, DMA1 and PCM queue.
-    pub(crate) sb:soundblaster::SoundBlaster,
-    /// The host's local time, as seconds east of UTC, for the clock (INT 1Ah
-    /// AH00, AH2A, AH2C); None keeps the deterministic clock from midnight
-    /// on 1 January 1980.
-    pub clock_offset:Option<i64>,
-    /// The CMOS register that port 71h reads, as port 70h last chose it.
-    pub cmos_index:u8,
-    pub cmos_shutdown:u8,
-    rtc:rtc::Rtc,
-    /// COM1 when a session attached it.
-    pub com1:Option<serial::Serial>,
-    /// Persistent, signature-validated cache across session slices.
-    pub cache:super::cache::DecodeCache,
-    /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
-    rom_mode:bool,
-    /// Replaceable coprocessor state, preserved between session slices.
-    pub fpu:super::fpu::Fpu,
-    vga:vga::Vga,
-    /// Run-time blocks over the precompiled instruction forms.
-    pub(crate) blocks:crate::block_compiler::engine::Blocks,
-    /// Opt-in bounded instruction-dispatch history, shared by DOS frontends.
-    pub(crate) history:history::History,
-    /// Opt-in BIOS and DOS service call trace, independent of instruction history.
-    pub(crate) services_trace:history::ServiceTrace,
-    /// Disk images the BIOS reads as sector devices (INT 13h), for a boot.
-    pub(crate) disks:bios_disk::Disks,
-    /// A disk was booted: no DOS runs on this machine, only the BIOS answers
-    /// INT n, and a zero vector is a real 0000:0000.
-    pub(crate) booted:bool,
-    /// The diskette controller and its DMA channel, for a booted OS.
-    pub(crate) fdc:fdc::Fdc,
-    pub(crate) ata:ata::Ata,
+/// The machine running Dine's DOS.
+pub type Loaded=crate::pc::Machine<Dos>;
+/// Dine's DOS and BIOS answer the device events that depend on the
+/// firmware: keys reach a program's IRQ1 handler only when Dine can run it,
+/// IRQs go through Dine's vector entries, and the VGA controllers follow the
+/// BIOS mode outside a booted machine.
+impl crate::pc::Firmware for Dos{
+    fn keyboard_irq_owned(p:&Loaded)->Result<bool,String>{
+        Ok(!p.rom_mode&&(!p.image.real_mode||vectors::reachable(p,p.speaker.pic.keyboard_vector())?))
+    }
+    fn deliver_irq(p:&mut Loaded,vector:u8)->Result<(),String>{vectors::deliver_irq(p,vector)}
+    fn vga_controller_io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<u16,String>{
+        planar::io(p,port,input,value,word)?.ok_or_else(||format!("port {port:04x}h is not a VGA controller port"))
+    }
 }
 /// DOS state Dine keeps for the program it runs, apart from the machine
 /// (CPU, memory, devices) it runs on.
@@ -239,21 +217,6 @@ pub struct Dos{
     mouse:mouse::Mouse,
     /// The XMS 3.0 driver (installed unless PIL_XMS=off or `select_xms`).
     xms:xms::Xms,
-}
-impl Clone for Loaded{
-    fn clone(&self)->Self{Self{dos:self.dos.clone(),
-        cpu:self.cpu.clone(),ram:self.ram.clone(),image:self.image.clone(),
-        selectors:self.selectors,
-        timer_ticks:self.timer_ticks,timer_tick_adjust:self.timer_tick_adjust,
-        
-        
-        
-        speaker:self.speaker.clone(),sb:self.sb.clone(),clock_offset:self.clock_offset,
-        cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),com1:self.com1.clone(),
-        cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),history:self.history.clone(),services_trace:self.services_trace.clone(),disks:self.disks.clone(),booted:self.booted,fdc:self.fdc.clone(),ata:self.ata.clone()}}
-}
-impl std::fmt::Debug for Loaded{
-    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("Loaded{..}")}
 }
 impl Loaded{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
@@ -615,8 +578,6 @@ pub struct Probe{
 }
 #[path="dos/stoplog.rs"]
 pub(super) mod stoplog;
-#[path="dos/history.rs"]
-pub(crate) mod history;
 #[path="dos/live_diagnostics.rs"]
 mod live_diagnostics;
 #[derive(Clone,Debug)]
@@ -1142,9 +1103,9 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
                 }
             }
             if vector==9&&vectors::at_keyboard_entry(&p){
-                match keyboard::bios(&mut p){
-                    Ok(keyboard::Bios::Done)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
-                    Ok(keyboard::Bios::Break)=>{vectors::enter_break_wrapper(&mut p);execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (Ctrl+Break, INT 1Bh)".into()).or_insert(0)+=1;continue;},
+                match int09::bios(&mut p){
+                    Ok(int09::Bios::Done)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
+                    Ok(int09::Bios::Break)=>{vectors::enter_break_wrapper(&mut p);execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (Ctrl+Break, INT 1Bh)".into()).or_insert(0)+=1;continue;},
                     Err(message)=>break Stop::Service(message),
                 }
             }

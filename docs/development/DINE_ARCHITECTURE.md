@@ -16,20 +16,30 @@ independently replaceable component today.
 
 | Responsibility | Current code |
 | --- | --- |
-| Session state, COM/MZ loading, the execution loop | `src/dos.rs` (`Loaded` = machine fields plus `dos::Dos`) |
-| PC devices: PIC, PIT, CMOS/RTC, speaker, 8042, UART, Sound Blaster, VGA registers, diskette and AT disk controllers | `src/pc/` |
+| Session state, COM/MZ loading, the execution loop | `src/dos.rs` (`Loaded` = `pc::Machine<dos::Dos>`) |
+| The machine (`pc::Machine<F>`: CPU, RAM, devices, disks, history) and the `Firmware` trait | `src/pc.rs` |
+| PC devices: PIC, PIT, CMOS/RTC, speaker, 8042, UART, Sound Blaster, VGA registers, diskette and AT disk controllers, disk images | `src/pc/` |
 | BIOS: INT 10h text and planar modes, INT 13h disks, INT 15h block move, the vector entries, booting a disk image, the folder disk | `src/bios/` |
 | Dine's DOS: INT 21h/2Fh dispatch, files and LFN, memory blocks, EXEC, XMS, INT 33h driver, NLS, Ctrl-Break, ANSI | `src/dos/` |
 | Host front ends: session protocol, console window and terminal, setup screen, configuration, audio, media catalog | `src/host/` |
 | CPU, PIL execution and physical memory | `src/guest.rs`, `src/lib.rs`, `src/address.rs`, `src/memory.rs`, `isa/i386/` |
 
 The folders are a first step of the split Tony asked for (24 November 2026):
-files moved with their module names unchanged. Some files still mix layers
-(`pc/serial.rs` holds INT 14h and DOS AUX next to the 8250; `bios/console.rs`
-holds DOS console output; `dos/services.rs` dispatches BIOS and DOS calls;
-`pc/keyboard.rs` holds the BIOS INT 09h handler). The next steps are to split
-those, make `Loaded` a `Machine` plus `Dos` with a `Firmware` trait for INT n,
-and then make `pc`, `bios` and `dine` separate crates in a Cargo workspace.
+files moved with their module names unchanged. The second step made the
+machine its own module: `pc::Machine<F>` holds the CPU, memory and devices,
+with `dos:F` for what runs on it, and `dos::Loaded` is `Machine<Dos>`. Code in
+`src/pc.rs` and `src/pc/` does not name the DOS, BIOS or front-end modules
+(`tools/check_layers.py`, run in CI). The three device events whose effect
+depends on the firmware go through `pc::Firmware`, which `Dos` implements:
+whether keys reach a program's IRQ1 handler, how an IRQ is delivered, and the
+VGA controller ports (Dine's stricter BIOS-mode rules outside a booted
+machine). INT 14h moved to `bios/int14.rs`, the AUX device to
+`dos/aux_device.rs`, the BIOS INT 09h handler to `bios/int09.rs`.
+
+Still mixed: `bios/console.rs` holds DOS console output and
+`dos/services.rs` dispatches BIOS and DOS calls; the `bios` modules are
+children of `dos` in the module tree. The next step makes `pc`, `bios` and
+`dine` separate crates in a Cargo workspace.
 
 Existing seams already support different hosts: `host_io::Output` abstracts
 bounded DOS output; `serial::SerialTransport` defines nonblocking serial I/O;
@@ -39,8 +49,7 @@ headless implementation can therefore be used independently of the Python
 terminal. These interfaces solve different pieces of the problem; together
 they are not yet a single complete replaceable machine interface.
 
-The Dine boundary is still imperfect: `Loaded` in `dos.rs` combines CPU, memory,
-devices and DOS process state, and its execution loop dispatches device and
+The Dine boundary is still imperfect: the execution loop in `dos.rs` dispatches device and
 BIOS calls alongside CPU execution. Some BIOS behavior lives in the DOS
 service dispatcher. The session frontend controls this combined machine;
 it is not Dine itself.

@@ -12,6 +12,7 @@ mod serial;
 mod host_io;
 mod debugger;
 mod guest;
+mod pc;
 mod dos;
 #[cfg(any(feature = "dine-library",test))]
 mod dine_ffi;
@@ -2562,7 +2563,7 @@ pub fn run_cli() -> Result<(), String> {
     loop {match dos_args.get(1).map(String::as_str){
         Some("--stop-log")=>{if log_given{return Err("duplicate --stop-log".into());}stop_log=dos_args.get(2).ok_or("--stop-log requires a path (empty disables logging)")?.clone();log_given=true;dos_args.drain(1..3);},
         Some("--profile")=>{if _profile.is_some(){return Err("duplicate --profile".into());}let path=dos_args.get(2).ok_or("--profile requires an output JSON path")?;_profile=Some(profile::start(path)?);dos_args.drain(1..3);},
-        Some("--ignore-unassigned-out")=>{dos::ports::IGNORE_UNASSIGNED_OUT.store(true,std::sync::atomic::Ordering::Relaxed);dos_args.remove(1);},
+        Some("--ignore-unassigned-out")=>{pc::ports::IGNORE_UNASSIGNED_OUT.store(true,std::sync::atomic::Ordering::Relaxed);dos_args.remove(1);},
         _=>break,
     }}
     if dos_args.get(1).map(String::as_str)==Some("--dos-list"){

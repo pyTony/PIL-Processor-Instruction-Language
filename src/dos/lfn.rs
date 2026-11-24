@@ -1146,7 +1146,7 @@ fn extended_open(p: &mut Loaded) -> Result<(), String> {
         fail(p, 1);
         return Ok(());
     }
-    if serial::device_name(&raw, b"NUL") {
+    if aux_device::device_name(&raw, b"NUL") {
         if exist_act == 0 {
             fail(p, 0x50);
             return Ok(());
@@ -1157,7 +1157,7 @@ fn extended_open(p: &mut Loaded) -> Result<(), String> {
         }
         return Ok(());
     }
-    if serial::is_device(p, &raw) {
+    if aux_device::is_device(p, &raw) {
         if exist_act == 0 {
             fail(p, 0x50);
             return Ok(());
@@ -1168,7 +1168,7 @@ fn extended_open(p: &mut Loaded) -> Result<(), String> {
         }
         return Ok(());
     }
-    if p.com1.is_some() && serial::device_name(&raw, b"CON") {
+    if p.com1.is_some() && aux_device::device_name(&raw, b"CON") {
         if exist_act == 0 {
             fail(p, 0x50);
             return Ok(());

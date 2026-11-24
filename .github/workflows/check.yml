@@ -58,6 +58,7 @@ jobs:
     - run: python -m unittest discover -s tests/ci -v
     - run: python tools/check_portable_paths.py --self-test
     - run: python tools/check_program_specific.py --self-test
+    - run: python tools/check_layers.py --self-test
     - run: python tools/export_runtime.py target/runtime-links
   frontend:
     name: web (${{ matrix.os }})

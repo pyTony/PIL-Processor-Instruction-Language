@@ -514,10 +514,10 @@ fn open(p:&mut Loaded)->Result<(),String>{
     if mode>2{fail(p,0x0c);return Ok(());}
     let raw=asciiz(p,p.cpu.regs[2]&0xffff)?;
     // NUL, in any directory and with any extension, is the device (FreeDOS).
-    if serial::device_name(&raw,b"NUL"){return device(p,NUL);}
-    if serial::is_device(p,&raw){return device(p,3);}
+    if aux_device::device_name(&raw,b"NUL"){return device(p,NUL);}
+    if aux_device::is_device(p,&raw){return device(p,3);}
     // CON opens the console, as handles 0..2 hold it (CTTY CON).
-    if p.com1.is_some()&&serial::device_name(&raw,b"CON"){return device(p,1);}
+    if p.com1.is_some()&&aux_device::device_name(&raw,b"CON"){return device(p,1);}
     let own=!raw.is_empty()&&base_name(&raw)==p.dos.own_name;
     let(data,drive,loc,stamp)=if own{
         // The program's own file opens by its name from any directory.
@@ -644,8 +644,8 @@ fn create(p:&mut Loaded,ah:u8)->Result<(),String>{
     let mut raw=asciiz(p,dx)?;
     if raw.is_empty(){fail(p,3);return Ok(());}
     // Creating a device name opens the device (AH5Bh fails: it exists).
-    if ah!=0x5a&&serial::is_device(p,&raw){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,3);}
-    if ah!=0x5a&&serial::device_name(&raw,b"NUL"){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,NUL);}
+    if ah!=0x5a&&aux_device::is_device(p,&raw){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,3);}
+    if ah!=0x5a&&aux_device::device_name(&raw,b"NUL"){if ah==0x5b{fail(p,0x50);return Ok(());}return device(p,NUL);}
     if ah==0x5a{
         if !matches!(raw.last(),Some(b'\\'|b'/'|b':')){raw.push(b'\\');}
         let(drive,path)=match components(&p.dos.drive,&raw){Ok(found)=>found,Err(code)=>{fail(p,code);return Ok(())}};

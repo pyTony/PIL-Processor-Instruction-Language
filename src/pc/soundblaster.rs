@@ -126,7 +126,7 @@ impl SoundBlaster{
     /// Poll completion and make a *single edge* of IRQ5/IRQ7 for each
     /// completed DMA block. Automatic initialization reuses the DMA base
     /// and count, but never queues unbounded audio when a frontend stalls.
-    pub(in crate::dos) fn tick(&mut self,clock:Option<u64>,ram:&Ram,pic:&mut Pair)->Result<(),String>{
+    pub(crate) fn tick(&mut self,clock:Option<u64>,ram:&Ram,pic:&mut Pair)->Result<(),String>{
         self.now=match clock{Some(t)=>self.now.max(t),None=>self.now.saturating_add(1024)};
         for _ in 0..8{
             let Some(play)=self.playback.as_ref() else{break};
@@ -195,7 +195,7 @@ impl SoundBlaster{
     /// Byte I/O to DMA channel 1 and SB at 220h..22Fh. None means another
     /// port owns the access. Even unsupported DSP commands stop explicitly,
     /// instead of pretending the hardware accepted an operation.
-    pub(super) fn io(&mut self,port:u16,input:bool,value:u8,ram:&Ram,pic:&mut Pair)->Result<Option<u8>,String>{
+    pub(crate) fn io(&mut self,port:u16,input:bool,value:u8,ram:&Ram,pic:&mut Pair)->Result<Option<u8>,String>{
         if let Some(result)=self.dma.io(port,input,value){return Ok(Some(result));}
         if !(BASE..=BASE+15).contains(&port){return Ok(None);}
         let result=match(port-BASE,input){
@@ -248,8 +248,8 @@ impl SoundBlaster{
         };
         Ok(Some(result))
     }
-    pub(super) fn irq(&self)->u8{self.irq}
-    pub(super) fn pending_irq(&self)->bool{self.irq_pending}
+    pub(crate) fn irq(&self)->u8{self.irq}
+    pub(crate) fn pending_irq(&self)->bool{self.irq_pending}
 }
 
 #[cfg(test)]

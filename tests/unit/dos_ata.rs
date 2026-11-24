@@ -1,5 +1,6 @@
 use super::*;
-use crate::dos::{run,Stop};
+use crate::pc::ata::*;
+use crate::pc::disks::Disk;
 
 /// 10 cylinders of 16 heads and 63 sectors; LBA n starts with n as a word.
 fn disk()->Vec<u8>{
@@ -13,7 +14,7 @@ fn machine(code:&[u8])->Loaded{
     let mut floppy=vec![0u8;1_474_560];
     floppy[..code.len()].copy_from_slice(code);floppy[510]=0x55;floppy[511]=0xaa;
     let mut p=boot(&floppy,0).unwrap();
-    p.disks.attach(0x80,bios_disk::Disk::fixed(disk()).unwrap()).unwrap();
+    p.disks.attach(0x80,Disk::fixed(disk()).unwrap()).unwrap();
     bios_disk::install_fixed_table(&mut p).unwrap();
     p
 }
@@ -128,7 +129,7 @@ fn a_second_fixed_disk_is_the_primary_slave(){
     // Disk 81h: 5 cylinders, LBA n starts with 1000+n.
     let mut second=vec![0u8;5*16*63*512];
     for n in 0..5*16*63{second[n*512..n*512+2].copy_from_slice(&(1000+n as u16).to_le_bytes());}
-    p.disks.attach(0x81,bios_disk::Disk::fixed(second).unwrap()).unwrap();
+    p.disks.attach(0x81,Disk::fixed(second).unwrap()).unwrap();
     bios_disk::install_fixed_table(&mut p).unwrap();
     // CMOS: C: and D: extended type 47; INT 46h: 5 cylinders; two disks.
     assert_eq!((ports::cmos(&p,0x12).unwrap(),ports::cmos(&p,0x19).unwrap(),ports::cmos(&p,0x1a).unwrap()),(0xff,47,47));

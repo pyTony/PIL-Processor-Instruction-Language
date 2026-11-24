@@ -151,7 +151,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             let(offset,wanted)=(p.cpu.regs[2]&0xffff,p.cpu.regs[1]&0xffff);
             if offset+wanted>0x10000{return Err("DOS read buffer exceeds segment end".into());}
             if wanted==0{p.cpu.regs[0]&=0xffff0000;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(None);}
-            match serial::read(p,wanted as usize)?{
+            match aux_device::read(p,wanted as usize)?{
                 None=>p.dos.input_wait=true,
                 Some(bytes)=>{
                     let context=MemoryContext{segment:SegmentRegister::Ds,cache:p.image.segments[SegmentRegister::Ds.index()]};
@@ -164,7 +164,7 @@ fn dispatch_inner(p:&mut Loaded,vector:u8,out:&mut impl Output)->Result<Option<u
             }
             Ok(None)
         },
-        (0x14,ah) if p.com1.is_some()=>{serial::bios(p,ah)?;Ok(None)},
+        (0x14,ah) if p.com1.is_some()=>{int14::bios(p,ah)?;Ok(None)},
         (0x21,0x44) if p.cpu.regs[0]as u8==1&&console_handle(p)=>{
             // The console keeps its cooked mode: setting the information it
             // already has (C3h, as CTTY CON does) is taken, raw mode is not.
@@ -600,15 +600,7 @@ pub(super) fn timer_interrupt(p:&mut Loaded)->Result<(),String>{
     let now=sampled_ticks(p);
     timer_interrupt_at(p,now)
 }
-pub(super) fn sampled_ticks(p:&mut Loaded)->u32{
-    let raw=p.speaker.pit_interrupts(p.clock_offset)%u64::from(TICKS_PER_DAY);
-    (raw as i64+p.timer_tick_adjust).rem_euclid(i64::from(TICKS_PER_DAY))as u32
-}
-/// A sampled PIT IRQ edge total: a new one sets IRR bit 0. The PIC holds a
-/// single request, so edges that pass while one is pending are not counted.
-pub(super) fn timer_edge(p:&mut Loaded,now:u32){
-    if p.speaker.irq_edges!=Some(now){p.speaker.pic.raise_timer();p.speaker.irq_edges=Some(now);}
-}
+pub(super) use crate::pc::{sampled_ticks,timer_edge};
 /// Commit a sampled PIT IRQ edge total through the PIC and INT 08h.
 pub(super) fn timer_interrupt_at(p:&mut Loaded,now:u32)->Result<(),String>{
     timer_edge(p,now);
@@ -728,7 +720,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
         text.push(p.ram.load(addr,MemWidth::Byte).map_err(|e|format!("DOS write buffer RAM access: {e:?}"))?as u8);
     }
     if sft==3{
-        let written=serial::write(p,&text)?;
+        let written=aux_device::write(p,&text)?;
         p.cpu.regs[0]=(p.cpu.regs[0]&0xffff0000)|written;p.cpu.eflags&=!1;p.cpu.undefined_flags&=!1;return Ok(());
     }
     if sft>files::NUL{
@@ -747,7 +739,7 @@ fn write_handle(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
 /// AH02/06/09 output goes to the file handle 1 was redirected to, if any.
 /// DOS has no error return there, so a failed write stops the run.
 fn to_file(p:&mut Loaded,bytes:&[u8])->Result<bool,String>{
-    if p.com1.is_some()&&files::system_file(p,1)?==Some(3){serial::write(p,bytes)?;return Ok(true);}
+    if p.com1.is_some()&&files::system_file(p,1)?==Some(3){aux_device::write(p,bytes)?;return Ok(true);}
     // Standard output on NUL: the characters are taken and dropped.
     if files::system_file(p,1)?==Some(files::NUL){return Ok(true);}
     let Some(sft)=files::redirected_output(p)? else{return Ok(false)};

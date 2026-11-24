@@ -1,4 +1,5 @@
 use super::*;
+use crate::pc::fdc::*;
 
 /// A booted machine with a 1.44 MB diskette whose sector at LBA n starts
 /// with the byte n (mod 256).

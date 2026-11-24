@@ -1,3 +1,30 @@
+# Machine apart from Dine's DOS and BIOS: pc::Machine and Firmware — 24 November 2026
+
+Step 2 of the staged library split Tony chose (#311 was step 1). No
+behaviour change.
+- src/pc.rs: `pc::Machine<F>` holds the CPU, RAM, segment state, FPU,
+  devices, disks (pc/disks.rs, from bios/disk.rs), decode cache, blocks and
+  history (pc/history.rs, from dos/), with `dos:F` for what runs on it.
+  `dos::Loaded` is `Machine<Dos>`, so `p.x` and `p.dos.x` stay as they were.
+- `pc::Firmware`, implemented by `Dos`, answers the three device events
+  whose effect depends on the firmware: whether keys go through IRQ1 to a
+  program's INT 09h handler, how an IRQ is delivered, and the VGA
+  controller ports (BIOS-mode rules outside a booted machine).
+- INT 14h moved to bios/int14.rs, the AUX device to dos/aux_device.rs and
+  the BIOS INT 09h handler to bios/int09.rs; the PIT tick sampling and the
+  JSON quote moved into pc. Unit tests of pc devices that load programs
+  through Dine (ata, fdc, keyboard, vga_font, vga_regs, port and string
+  I/O) are now test modules of dos.rs, unchanged otherwise.
+- tools/check_layers.py (CI): src/pc.rs and src/pc/ never name crate::dos,
+  crate::bios, crate::host, Loaded or Dos. Still mixed: bios/console.rs (DOS
+  console output) and dos/services.rs (BIOS and DOS dispatch). Next: Cargo
+  workspace crates.
+
+Cloud Linux, release: 1073 Rust tests pass, 2 ignored (the same tests as
+before); 0 rustc warnings in the release build; x86_64-pc-windows-gnu
+cargo check (release, tests, dine-library) clean; portable-path,
+program-specific and layer checks pass. No program was run by hand.
+
 # Source folders for the machine, BIOS, DOS and front ends — 24 November 2026
 
 Tony asked again for the common machine code, the BIOS and Dine's DOS to be

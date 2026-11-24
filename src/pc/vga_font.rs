@@ -23,12 +23,12 @@ use super::*;
 use crate::vga_planar::Planar;
 use super::vga::Controllers;
 /// Whether the registers give plane-at-a-time access at A0000h.
-pub(super) fn plane_window(c:&Controllers)->bool{
+pub(crate) fn plane_window(c:&Controllers)->bool{
     c.text_map.is_some()&&c.gc[6]&0x0c<=0x04&&c.gc[6]&0x02==0&&c.seq[4]&0x0c==0x04&&c.gc[5]&0x10==0
 }
 /// Maps the planes at A0000h, keeps their registers in step, or unmaps
 /// them, after a sequencer or graphics controller write in a text mode.
-pub(super) fn sync(p:&mut Loaded){
+pub(crate) fn sync<F>(p:&mut Machine<F>){
     if p.vga.idle.text_map.is_none(){return;}
     let want=plane_window(&p.vga.idle);
     let registers=|planes:&mut Planar,c:&Controllers|{planes.seq=c.seq;planes.gc=c.gc;};
@@ -45,7 +45,7 @@ pub(super) fn sync(p:&mut Loaded){
 /// INT 10/AX=1100: user glyphs in font block zero, at the current text cell
 /// height. As with guest font-plane writes, the host-font frontend does not
 /// yet display custom bitmaps, but plane 2 remains readable by the guest.
-pub(super) fn load_user_patterns(p:&mut Loaded)->Result<(),String>{
+pub(crate) fn load_user_patterns<F>(p:&mut Machine<F>)->Result<(),String>{
     let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("font mode: {e:?}"))?;
     let height=(p.cpu.regs[3]>>8)&255;let block=p.cpu.regs[3]&255;
     let current=p.ram.load(0x485,MemWidth::Word).map_err(|e|format!("font height: {e:?}"))?;
@@ -65,13 +65,10 @@ pub(super) fn load_user_patterns(p:&mut Loaded)->Result<(),String>{
 /// writes it. Text modes only. It is recorded like a program's own write to
 /// that register; the host-font frontend draws the same glyphs whichever
 /// block is selected, as it does for glyphs loaded with AX=1100h.
-pub(super) fn select_blocks(p:&mut Loaded)->Result<(),String>{
+pub(crate) fn select_blocks<F>(p:&mut Machine<F>)->Result<(),String>{
     if p.vga.idle.text_map.is_none(){return Err("INT 10h AX=1103h outside a text mode is not modelled".into());}
     let bl=p.cpu.regs[3]as u8;
     p.vga.idle.seq[3]=bl;
     if let Some(planes)=p.ram.planar_mut(){planes.seq[3]=bl;}
     Ok(())
 }
-#[cfg(test)]
-#[path="../../tests/unit/dos_vga_font.rs"]
-mod tests;
