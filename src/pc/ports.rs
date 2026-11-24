@@ -12,10 +12,10 @@ use super::*;
 #[path="pit.rs"]
 mod pit;
 #[path="string_io.rs"]
-mod string_io;
-pub(super) use string_io::{access as string_access,io as string_io,Error as StringError};
+pub(crate) mod string_io;
+pub(crate) use string_io::{access as string_access,io as string_io,Error as StringError};
 #[path="pic.rs"]
-pub(super) mod pic;
+pub(crate) mod pic;
 #[path="speaker_wave.rs"]
 pub(crate) mod wave;
 /// PIT input clock in Hz.
@@ -34,7 +34,7 @@ fn device(port:u16)->Option<&'static str>{Some(match port{
     0x3f0..=0x3f5|0x3f7=>"floppy controller",
     _=>return None,
 })}
-pub(super) const PIT_HZ:u32=1_193_182;
+pub(crate) const PIT_HZ:u32=1_193_182;
 /// Speaker changes kept for a frontend that has not taken them.
 const MAX_CHANGES:usize=4096;
 #[derive(Clone,Debug,Default)]
@@ -46,10 +46,10 @@ pub struct Speaker{
     /// whether the high byte comes next.
     access:u8,count:u16,high_next:bool,
     counter2:pit::Counter2,
-    pub(super) pic:pic::Pair,
+    pub(crate) pic:pic::Pair,
     /// The channel 0 IRQ edge total (BIOS ticks since midnight) last seen;
     /// a different total is a new edge that sets IRR bit 0.
-    pub(super) irq_edges:Option<u32>,
+    pub(crate) irq_edges:Option<u32>,
     /// Times the speaker was switched on, for a frontend to sound.
     pub beeps:u64,
     /// The speaker signal now, and its changes (PIT clock, signal) not yet
@@ -58,7 +58,7 @@ pub struct Speaker{
     changes:Vec<(u64,wave::Wave)>,
     /// BIOS beeps (BEL on the console) not yet taken, at their PIT clocks.
     bells:Vec<u64>,
-    pit:pit::Counter0,
+    pub(crate) pit:pit::Counter0,
     pit_clock:Option<(std::time::Instant,u64)>,
     /// The PIT clock at the last guest access to ports 40h-43h or 61h.
     pit_last_io:u64,
@@ -72,11 +72,11 @@ pub struct Speaker{
     /// (Set RD_DATA Port). No PnP card is fitted, so that port reads FFh.
     pnp_register:u8,pnp_read_port:Option<u16>,
     /// Scan codes on their way to port 60h and IRQ1.
-    pub(super) kbd:keyboard::Keyboard,
+    pub(crate) kbd:keyboard::Keyboard,
 }
 impl Speaker{
     fn update_a20(&self,ram:&mut Ram){ram.set_a20_enabled(self.kbc_a20||self.fast_a20&2!=0);}
-    pub(super) fn bios_a20(&mut self,ram:&mut Ram,enabled:bool){self.kbc_a20=enabled;if !enabled{self.fast_a20&=!2;}self.update_a20(ram);}
+    pub(crate) fn bios_a20(&mut self,ram:&mut Ram,enabled:bool){self.kbc_a20=enabled;if !enabled{self.fast_a20&=!2;}self.update_a20(ram);}
     /// Host PIT time is sampled once, then advances monotonically. Headless
     /// deterministic sessions keep it at zero unless a host clock is selected.
     pub fn pit_now(&mut self,clock:Option<i64>)->u64{
@@ -112,7 +112,7 @@ impl Speaker{
         self.changes.push((now,signal));
     }
     /// A BIOS beep (BEL written to the console).
-    pub(super) fn bell(&mut self,clock:Option<i64>){
+    pub(crate) fn bell(&mut self,clock:Option<i64>){
         let now=self.pit_now(clock);
         if self.bells.len()<16{self.bells.push(now);}
     }
@@ -138,7 +138,7 @@ impl Speaker{
 /// `Ok(None)` for any other instruction.
 /// The port and byte count of the unprefixed IN or OUT at CS:EIP, for the
 /// protected-mode I/O permission check before `io` answers it.
-fn instruction(p:&Loaded)->Option<(u8,u16,u32,u8)>{
+fn instruction<F>(p:&Machine<F>)->Option<(u8,u16,u32,u8)>{
     let mut at=0u32;let mut operand=false;
     let first=loop{
         if at>=15{return None;}
@@ -153,10 +153,10 @@ fn instruction(p:&Loaded)->Option<(u8,u16,u32,u8)>{
     let width=if first&1==0{1}else if p.image.segments[1].default_32()^operand{4}else{2};
     Some((first,port,at,width))
 }
-pub(super) fn access(p:&Loaded)->Option<(u16,u8)>{
+pub(crate) fn access<F>(p:&Machine<F>)->Option<(u16,u8)>{
     string_access(p).or_else(||instruction(p).map(|(_,port,_,width)|(port,width)))
 }
-pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
+pub(crate) fn io<F:Firmware>(p:&mut Machine<F>)->Result<Option<u32>,String>{
     let Some((first,port,length,width))=instruction(p)else{return Ok(None)};
     transfer(p,first,port,width)?;
     Ok(Some(length))
@@ -164,12 +164,12 @@ pub(super) fn io(p:&mut Loaded)->Result<Option<u32>,String>{
 /// The hardware-device logic shared by scalar and string port instructions.
 /// FIRST is the effective scalar IN/OUT opcode and WIDTH is the operand
 /// size in bytes.  The caller handles its own guest instruction retirement.
-pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),String>{
+pub(crate) fn transfer<F:Firmware>(p:&mut Machine<F>,first:u8,port:u16,width:u8)->Result<(),String>{
     if width==4{return Err(format!("dword I/O at port {port:04x}h is not modelled in Dine"));}
     let input=first&2==0;
     if matches!(port,0x3c0|0x3c1|0x3c4|0x3c5|0x3ce|0x3cf){
         let word=first&1!=0;
-        let value=super::planar::io(p,port,input,p.cpu.regs[0]as u16,word)?.unwrap();
+        let value=F::vga_controller_io(p,port,input,p.cpu.regs[0]as u16,word)?;
         if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
         return Ok(());
     }
@@ -290,8 +290,8 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
             // IRR must reflect a pending edge even when IF or the IRQ mask
             // prevents the BIOS timer shortcut from delivering it.
             if port==0x20&&p.clock_offset.is_some(){
-                let now=services::sampled_ticks(p);
-                services::timer_edge(p,now);
+                let now=super::sampled_ticks(p);
+                super::timer_edge(p,now);
             }
             let value=p.speaker.pic.read(port);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
         }else{p.speaker.pic.write(port,p.cpu.regs[0]as u8)?;}
@@ -444,7 +444,7 @@ pub(super) fn transfer(p:&mut Loaded,first:u8,port:u16,width:u8)->Result<(),Stri
 /// Tuesday 1 January 1980. Direct RTC year changes are session-local and do
 /// not alter the DOS-maintained clock or the host clock. Bit 7 of register
 /// 0Ah (update in progress) stays clear, so a read never has to wait.
-pub(super) fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
+pub(crate) fn cmos<F>(p:&Machine<F>,index:u8)->Result<u8,String>{
     if let Some(value)=p.rtc.read(p.clock_offset,index){return Ok(value);}
     Ok(match index{
         // Alarm registers: no alarm set.
@@ -471,31 +471,3 @@ pub(super) fn cmos(p:&Loaded,index:u8)->Result<u8,String>{
         _=>return Err(format!("CMOS register {index:02x}h is not modelled")),
     })
 }
-
-
-#[cfg(test)]
-mod timer_tests{
-    use super::*;
-    #[test]
-    fn fm_alias_word_cycles_preserve_dsp_reply_and_upper_ax(){
-        for opcode in [0xef,0xed]{
-            let mut p=load(&[opcode],"fm-alias.com").unwrap();
-            p.cpu.regs[0]=0xa5a5_1234;p.cpu.regs[2]=0x228;
-            p.sb.io(0x226,false,1,&p.ram,&mut p.speaker.pic).unwrap();
-            p.sb.io(0x226,false,0,&p.ram,&mut p.speaker.pic).unwrap();
-            let ram=p.ram.clone();
-            assert_eq!(io(&mut p),Ok(Some(1)));
-            assert_eq!(p.cpu.regs[0],if opcode==0xed{0xa5a5_ffff}else{0xa5a5_1234});
-            assert_eq!(p.ram,ram);
-            assert_eq!(p.sb.io(0x22a,true,0,&p.ram,&mut p.speaker.pic).unwrap(),Some(0xaa));
-        }
-    }
-    #[test]fn programmed_edges_drive_bios_ticks_and_obey_interrupt_shadows(){
-        let mut p=load(&[0xfa,0xf4],"pit.com").unwrap();p.speaker.pit.command(0x34,0).unwrap();p.speaker.pit.write(0x0b,0).unwrap();p.speaker.pit.write(0xe9,0).unwrap();
-        let now=p.speaker.pit.interrupts(1+3*0xe90b)as u32;assert_eq!(now,3);
-        services::timer_interrupt_at(&mut p,now).unwrap();assert_eq!(p.timer_ticks,3);assert_eq!(p.ram.load(0x46c,MemWidth::Dword).unwrap(),3);
-        for shadow in 0..3{p.cpu.eflags=if shadow==0{2}else{0x202};p.image.sti_shadow=u8::from(shadow==1);p.image.ss_shadow=u8::from(shadow==2);services::timer_interrupt_at(&mut p,4).unwrap();assert_eq!(p.timer_ticks,3);}
-        p.image.ss_shadow=0;p.image.sti_shadow=0;p.cpu.eflags=0x202;services::timer_interrupt_at(&mut p,4).unwrap();assert_eq!(p.timer_ticks,4);
-    }
-}
-

@@ -1,5 +1,5 @@
 use super::*;
-use crate::dos::{boot,run,Stop};
+use crate::pc::vga_regs::*;
 
 /// CRTC 00h-18h, attribute 00h-14h, graphics controller 00h-08h and
 /// sequencer 00h-04h of the standard VGA modes 13h and 12h (IBM VGA
@@ -121,6 +121,6 @@ fn register_states_without_a_bios_mode_show_nothing(){
     for (i,x) in [(0x11u8,0x0e),(6,0x0d),(7,0x3e),(9,0x41),(0x10,0xea),(0x11,0xac),(0x12,0xdf),(0x15,0xe7),(0x16,0x06)]{
         v.io(0x3d4,false,i).unwrap();v.io(0x3d5,false,x).unwrap();
     }
-    assert_eq!(super::classify(&v).mode,0xff);
-    assert!(super::plane_window(&v));
+    assert_eq!(classify(&v).mode,0xff);
+    assert!(plane_window(&v));
 }

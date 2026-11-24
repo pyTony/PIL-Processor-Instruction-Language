@@ -16,7 +16,7 @@ fn dummy(n:u8)->bool{n<8||(0x0a..=0x0f).contains(&n)||(0x70..=0x77).contains(&n)
 /// A machine that has booted `image` from BIOS drive `drive` (00h, the
 /// first diskette, or 80h, the first fixed disk).
 pub fn boot(image:&[u8],drive:u8)->Result<Loaded,String>{
-    let disk=match drive{0|1=>bios_disk::Disk::floppy(image.to_vec())?,0x80=>bios_disk::Disk::fixed(image.to_vec())?,_=>return Err("boot drive must be 00h, 01h or 80h".into())};
+    let disk=match drive{0|1=>disks::Disk::floppy(image.to_vec())?,0x80=>disks::Disk::fixed(image.to_vec())?,_=>return Err("boot drive must be 00h, 01h or 80h".into())};
     if drive==0x80{start(None,vec![disk],drive)}else{start(Some((drive,disk)),Vec::new(),drive)}
 }
 /// Boot with a fixed disk read from `hard_disk` as drive 80h (its writes go
@@ -30,10 +30,10 @@ pub fn boot_with_hard_disk(floppy:Option<&[u8]>,hard_disk:&std::path::Path,drive
 /// writes go back to the files), and optionally a diskette image as drive
 /// A:; start from drive 00h or 80h.
 pub fn boot_with_hard_disks(floppy:Option<&[u8]>,hard_disks:&[&std::path::Path],drive:u8)->Result<Loaded,String>{
-    let floppy=floppy.map(|f|bios_disk::Disk::floppy(f.to_vec())).transpose()?.map(|d|(0,d));
+    let floppy=floppy.map(|f|disks::Disk::floppy(f.to_vec())).transpose()?.map(|d|(0,d));
     if drive==0&&floppy.is_none(){return Err("booting from drive A: needs a diskette image".into());}
     if hard_disks.len()>2{return Err("the AT controller takes two fixed disks".into());}
-    let fixed=hard_disks.iter().map(|d|bios_disk::Disk::fixed_file(d)).collect::<Result<Vec<_>,_>>()?;
+    let fixed=hard_disks.iter().map(|d|disks::Disk::fixed_file(d)).collect::<Result<Vec<_>,_>>()?;
     start(floppy,fixed,drive)
 }
 /// The machine the command line asks for: IMAGE booted from drive 00h (a
@@ -49,7 +49,7 @@ pub(crate) fn boot_command(image:&str,drive:u8,hard_disk:Option<&str>,folder:Opt
     let bytes=std::fs::read(image).map_err(|e|format!("{image}: {e}"))?;
     if fixed.is_empty(){boot(&bytes,0)}else{boot_with_hard_disks(Some(&bytes),&fixed,0)}
 }
-fn start(floppy:Option<(u8,bios_disk::Disk)>,fixed:Vec<bios_disk::Disk>,drive:u8)->Result<Loaded,String>{
+fn start(floppy:Option<(u8,disks::Disk)>,fixed:Vec<disks::Disk>,drive:u8)->Result<Loaded,String>{
     let mut p=load(&[0xf4],"BOOT")?;
     // No XMS driver or upper memory: conventional memory to A000h, the
     // BIOS's own INT 15h AH=88h answer for the extended memory.
@@ -131,7 +131,7 @@ pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usi
             match later.next().unwrap().1{
                 Event::Type(text)=>{let ran=type_text(&mut session,text)?;done+=ran;left=left.saturating_sub(ran);},
                 Event::Floppy(image)=>{
-                    let disk=bios_disk::Disk::floppy(image.to_vec())?;
+                    let disk=disks::Disk::floppy(image.to_vec())?;
                     session.machine_mut().ok_or("session state lost")?.disks.change_floppy(0,disk)?;
                 },
             }
@@ -283,7 +283,7 @@ pub fn script_probe(mut p:Loaded,steps:usize,script:&[ScriptStep],rtc_year:Optio
                 done+=type_text(&mut session,text)?;
             },
             ScriptStep::Floppy(image)=>{
-                let disk=bios_disk::Disk::floppy(image.clone())?;
+                let disk=disks::Disk::floppy(image.clone())?;
                 session.machine_mut().ok_or("session state lost")?.disks.change_floppy(0,disk)?;
             },
             ScriptStep::Show=>{

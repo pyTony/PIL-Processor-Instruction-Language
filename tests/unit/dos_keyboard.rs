@@ -1,7 +1,7 @@
 //! Keyboard IRQ1 to a program's INT 09h handler, the BIOS INT 09h entry,
 //! Ctrl+Break through INT 1Bh, and the VGA controllers outside planar modes.
 use super::*;
-use super::super::{load,run,Stop,PSP};
+use crate::pc::keyboard::*;
 fn code_at(bytes:&[(usize,&[u8])])->Vec<u8>{
     let mut code=vec![0x90;0x80];
     for(at,b)in bytes{if code.len()<at+b.len(){code.resize(at+b.len(),0x90);}code[*at..at+b.len()].copy_from_slice(b);}
@@ -110,7 +110,7 @@ fn bios_scan_codes_map_back_to_the_physical_keys(){
 #[test]
 fn vga_controllers_outside_planar_modes_keep_steering_registers_and_refuse_layout_changes(){
     let mut p=load(&[0xcd,0x20],"vga.com").unwrap();
-    let io=|p:&mut Loaded,port:u16,input:bool,value:u16,word:bool|super::super::planar::io(p,port,input,value,word);
+    let io=|p:&mut Loaded,port:u16,input:bool,value:u16,word:bool|super::planar::io(p,port,input,value,word);
     // GW-BASIC's sequence before SCREEN 9, in text mode 3.
     io(&mut p,0x3c4,false,0x0f02,true).unwrap();
     for v in [0x0001u16,0x0002,0x0f07,0x0005]{io(&mut p,0x3ce,false,v,true).unwrap();}
@@ -125,7 +125,7 @@ fn vga_controllers_outside_planar_modes_keep_steering_registers_and_refuse_layou
     assert_eq!(p.vga.idle,old);
     // A mode set loads the mode's own values again.
     p.cpu.regs[0]=0x0003;console::display(&mut p,0).unwrap();
-    assert_eq!(p.vga.idle,super::super::vga::Controllers::standard(3));
+    assert_eq!(p.vga.idle,super::vga::Controllers::standard(3));
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn separate_edges_leave_a_game_key_pressed_until_the_release_arrives(){
 #[test]
 fn native_scan_codes_hold_repeat_and_release_through_the_guest_irq_handler(){
     let mut p=program(&[0xfb,0xeb,0xfe]);p=run(p,50).unwrap().loaded;
-    let mut session=super::super::session::Session::new(p);
+    let mut session=super::session::Session::new(p);
     assert!(session.native_key(0x11,false,true,Some(0x1177)).unwrap());
     session.run(200).unwrap();assert_eq!(recorded(session.machine().unwrap()),[0x11]);
     session.run(400).unwrap();assert_eq!(recorded(session.machine().unwrap()),[0x11]);
@@ -156,7 +156,7 @@ fn native_scan_codes_hold_repeat_and_release_through_the_guest_irq_handler(){
 #[test]
 fn native_bios_input_repeats_without_releases_or_modifier_words(){
     let p=load(&[0xfb,0xeb,0xfe],"bios-input.com").unwrap();
-    let mut session=super::super::session::Session::new(p);
+    let mut session=super::session::Session::new(p);
     for down in [true,true,false]{assert!(session.native_key(0x1e,false,down,Some(0x1e61)).unwrap());}
     assert!(session.native_key(0x1d,false,true,None).unwrap());
     assert!(session.native_key(0x1d,false,false,None).unwrap());
@@ -185,7 +185,7 @@ fn a_guest_that_samples_key_state_can_exit_while_escape_is_held(){
  let mut main=HOOK09.to_vec();main.extend([0xfb,0x80,0x3e,0x10,0x02,1,0x75,0xf9,0xb8,0,0x4c,0xcd,0x21]);
  let handler=[0x50,0xe4,0x60,0x2e,0xa2,0x10,0x02,0xb0,0x20,0xe6,0x20,0x58,0xcf];
  let p=load(&code_at(&[(0,&main),(0x40,&handler)]),"state.com").unwrap();let p=run(p,60).unwrap().loaded;
- let mut session=super::super::session::Session::new(p);
+ let mut session=super::session::Session::new(p);
  let (reply,_)=session.command(1,"snapshot").unwrap();assert!(reply.contains("\"key_edges\":true")&&reply.contains("\"raw_keyboard\":true"));
  let (reply,_)=session.command(2,"keydown 27 1").unwrap();assert!(reply.contains("\"ok\":true"));
  let (reply,_)=session.command(3,"run 200").unwrap();assert!(reply.contains("\"status\":\"exit\""),"{reply}");

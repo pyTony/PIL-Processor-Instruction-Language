@@ -1,6 +1,5 @@
 //! Text-mode font memory: plane 2 at A0000h while the registers select it.
 use super::*;
-use super::super::{load,run,Stop};
 // MOV DX,3C4h; map mask 04h; memory mode 07h; MOV DX,3CEh; mode 00h;
 // miscellaneous 04h (A0000h, 64 KiB); read map 02h.
 const OPEN:&[u8]=&[0xba,0xc4,0x03,0xb8,0x02,0x04,0xef,0xb8,0x04,0x07,0xef,

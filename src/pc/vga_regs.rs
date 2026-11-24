@@ -35,7 +35,7 @@ use crate::vga_planar::Planar;
 /// Sequencer (3C4h/3C5h) and graphics controller (3CEh/3CFh) access in a
 /// booted machine; a word OUT to an index port writes the index then the
 /// data. Absent extension indices read FFh and ignore writes.
-pub(super) fn controller_io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<u16,String>{
+pub(crate) fn controller_io<F>(p:&mut Machine<F>,port:u16,input:bool,value:u16,word:bool)->Result<u16,String>{
     if word&&!matches!(port,0x3c4|0x3ce){return Err("VGA word access must start at index port 3C4h or 3CEh".into());}
     let sequencer=port<0x3ce;
     let c=&mut p.vga.idle;
@@ -56,14 +56,14 @@ pub(super) fn controller_io(p:&mut Loaded,port:u16,input:bool,value:u16,word:boo
 
 /// Whether the registers put the planes at A0000h with plane (or chain-4)
 /// addressing.
-pub(super) fn plane_window(v:&Vga)->bool{
+pub(crate) fn plane_window(v:&Vga)->bool{
     let(seq,gc)=(&v.idle.seq,&v.idle.gc);
     gc[6]&0x0c<=0x04&&(seq[4]&0x08!=0||seq[4]&0x04!=0)&&gc[5]&0x10==0
 }
 
 /// Maps or unmaps the planes and recomputes the display after a register
 /// write in a booted machine.
-pub(super) fn sync(p:&mut Loaded){
+pub(crate) fn sync<F>(p:&mut Machine<F>){
     if !p.booted{return;}
     let want=plane_window(&p.vga);
     match(p.ram.planar().is_some(),want){
@@ -79,7 +79,7 @@ pub(super) fn sync(p:&mut Loaded){
 }
 
 /// The display the registers describe (see the module comment).
-pub(super) fn classify(v:&Vga)->Display{
+pub(crate) fn classify(v:&Vga)->Display{
     let(seq,gc,c)=(&v.idle.seq,&v.idle.gc,v.crtc());
     let columns=u32::from(c[1])+1;
     let lines=(u32::from(c[0x12])|(u32::from(c[7])&0x02)<<7|(u32::from(c[7])&0x40)<<3)+1;
@@ -106,6 +106,3 @@ pub(super) fn classify(v:&Vga)->Display{
     Display{mode,columns:width/8,rows:height/cell}
 }
 
-#[cfg(test)]
-#[path="../../tests/unit/dos_vga_regs.rs"]
-mod tests;

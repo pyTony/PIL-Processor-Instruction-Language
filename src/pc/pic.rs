@@ -68,7 +68,7 @@ impl Controller{
     fn acknowledge(&mut self,bit:u8){self.request&=!bit;if !self.auto_eoi{self.in_service|=bit;}}
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub(in crate::dos) struct Pair{master:Controller,slave:Controller}
+pub(crate) struct Pair{master:Controller,slave:Controller}
 /// The BIOS's power-on programming: IRQ0-7 at INT 08h-0Fh, IRQ8-15 at 70h-77h.
 impl Default for Pair{fn default()->Self{Pair{master:Controller::new(false,0x08),slave:Controller::new(true,0x70)}}}
 impl Pair{

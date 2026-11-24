@@ -67,7 +67,7 @@ impl Session{
             // A booted machine's drive A: or B: gets the next diskette, with
             // its change line, as a hand at the drive would do it.
             let bytes=std::fs::read(path).map_err(|e|format!("{path}: {e}"))?;
-            loaded.disks.change_floppy(letter-b'A',super::bios_disk::Disk::floppy(bytes)?)?;
+            loaded.disks.change_floppy(letter-b'A',super::disks::Disk::floppy(bytes)?)?;
         }else{
             let source=open_mount_source(path)?;
             loaded.dos.drive.mount(letter,source)?;
@@ -200,7 +200,7 @@ impl Session{
         if keyboard::hooked(p)?{return keyboard::physical(p,scan,extended,down,word);}
         // With the built-in BIOS handler, keys enter the ring directly rather
         // than through IRQ1. Keep INT16/AH02's modifier state in that path too.
-        keyboard::bios_modifiers(p,scan|if down{0}else{0x80})?;
+        super::int09::bios_modifiers(p,scan|if down{0}else{0x80})?;
         if down{if let Some(word)=word{return self.key(word as u8,(word>>8)as u8);}}
         Ok(true)
     }
@@ -478,11 +478,7 @@ impl Session{
         Ok((self.reply(seq,ok,&text,&output)?,quit))
     }
 }
-pub(crate) fn quote(text:&str)->String{
-    let mut out=String::from("\"");
-    for c in text.chars(){match c{'"'=>out.push_str("\\\""),'\\'=>out.push_str("\\\\"),'\n'=>out.push_str("\\n"),'\r'=>out.push_str("\\r"),'\t'=>out.push_str("\\t"),c if (c as u32)<0x20=>out.push_str(&format!("\\u{:04x}",c as u32)),c=>out.push(c)}}
-    out.push('"');out
-}
+pub(crate) fn quote(text:&str)->String{crate::pc::json_quote(text)}
 /// `--dos-session [--mount DIR] [--args TEXT] PATH`: PATH is a file or
 /// IMAGE::INNER inside a container. A FAT16 image becomes read-only drive C:
 /// and DIR the next drive; TEXT is the program's command line.

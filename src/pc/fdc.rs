@@ -75,7 +75,7 @@ fn length(op:u8)->usize{
 
 impl Fdc{
     /// Port I/O for the controller and DMA channel 2; None for other ports.
-    pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u8)->Result<Option<u8>,String>{
+    pub(crate) fn io<F>(p:&mut Machine<F>,port:u16,input:bool,value:u8)->Result<Option<u8>,String>{
         // Dine's DOS reads disks through INT 13h; the controller is the
         // booted OS's.
         if !p.booted{return Ok(None);}
@@ -120,7 +120,7 @@ impl Fdc{
     fn raise(&mut self){if self.dor&8!=0{self.irq=true;}}
 }
 
-fn execute(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
+fn execute<F>(p:&mut Machine<F>,cmd:&[u8])->Result<(),String>{
     let op=cmd[0];
     let drive=cmd.get(1).map_or(0,|b|b&3);let head=cmd.get(1).map_or(0,|b|b>>2&1);
     match op&0x1f{
@@ -165,12 +165,12 @@ fn execute(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
 /// from R to EOT on the head, then side 1 of the same cylinder with MT,
 /// moved through DMA channel 2 until its count ends (terminal count) or
 /// the track does. The result names the sector after the last one moved.
-fn transfer(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
+fn transfer<F>(p:&mut Machine<F>,cmd:&[u8])->Result<(),String>{
     let (op,drive,head)=(cmd[0],cmd[1]&3,cmd[1]>>2&1);
     let (c,h,r,n,eot)=(cmd[2],cmd[3],cmd[4],cmd[5],cmd[6]);
     let write=op&0x1f==0x05;let multi=op&0x80!=0;
     let geometry=p.disks.floppy_geometry(drive);
-    let fail=|p:&mut Loaded,st0:u8,st1:u8|{p.fdc.result.extend([st0|head<<2|drive,st1,0,c,h,r,n]);p.fdc.raise();};
+    let fail=|p:&mut Machine<F>,st0:u8,st1:u8|{p.fdc.result.extend([st0|head<<2|drive,st1,0,c,h,r,n]);p.fdc.raise();};
     let Some((cylinders,heads,sectors))=geometry else{fail(p,0x48,0);return Ok(())};
     if n!=2||u32::from(c)>=cylinders||u32::from(h)>=heads||r==0||u32::from(r)>sectors{fail(p,0x40,0x04);return Ok(());}
     let (mut cur_h,mut cur_r)=(h,r);
@@ -210,6 +210,3 @@ fn transfer(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
     Ok(())
 }
 
-#[cfg(test)]
-#[path="../../tests/unit/dos_fdc.rs"]
-mod tests;

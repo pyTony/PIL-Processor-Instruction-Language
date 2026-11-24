@@ -42,7 +42,7 @@ pub(crate) struct Dispatch{
     registers:[u32;8],selectors:[u16;6],eflags:u32,msw:u16,
 }
 impl Dispatch{
-    pub(crate) fn capture(p:&Loaded)->Self{
+    pub(crate) fn capture<F>(p:&Machine<F>)->Self{
         let mut bytes=[0u8;8];let mut length=0;
         for n in (1..=8).rev(){
             if let Ok(raw)=p.image.fetch_signature(&p.ram,p.cpu.eip,n){
@@ -54,11 +54,11 @@ impl Dispatch{
              bytes,length,registers:p.cpu.regs,selectors:p.selectors,
              eflags:p.cpu.eflags,msw:p.image.msw}
     }
-    pub(super) fn json(&self)->String{
+    pub(crate) fn json(&self)->String{
         let bytes=self.bytes[..self.length].iter()
             .map(|v|format!("{v:02X}")).collect::<Vec<_>>().join(" ");
         format!(r#"{{"sequence":{},"location":"{:04X}:{:04X}","instruction_bytes":{},"registers":{:?},"selectors":{:?},"eflags":{},"msw":{}}}"#,
-            self.sequence,self.cs,self.eip,super::stoplog::quote(&bytes),
+            self.sequence,self.cs,self.eip,super::json_quote(&bytes),
             self.registers,self.selectors,self.eflags,self.msw)
     }
 }
@@ -83,7 +83,7 @@ impl ServiceTrace{
     pub(crate) fn enable(&mut self){self.enabled=true;self.entries.clear();self.next=0;}
     pub(crate) fn disable(&mut self){self.enabled=false;self.entries.clear();}
     pub(crate) fn enabled(&self)->bool{self.enabled}
-    pub(crate) fn record(&mut self,p:&Loaded,vector:u8,site:(u16,u32),before:[u16;6]){
+    pub(crate) fn record<F>(&mut self,p:&Machine<F>,vector:u8,site:(u16,u32),before:[u16;6]){
         if !self.enabled{return;}
         let entry=ServiceCall{
             sequence:self.next,vector,cs:site.0,ip:site.1,

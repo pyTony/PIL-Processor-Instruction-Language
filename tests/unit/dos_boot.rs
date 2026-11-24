@@ -64,9 +64,9 @@ fn drive_parameters_cmos_type_and_equipment_follow_the_image(){
 #[test]
 fn images_of_other_sizes_are_refused(){
     assert!(boot(&vec![0u8;1_000_000],0).is_err());
-    assert!(bios_disk::Disk::floppy(vec![0;737_280]).is_ok());
-    assert!(bios_disk::Disk::fixed(vec![0;16*63*512*20]).is_ok());
-    assert!(bios_disk::Disk::fixed(vec![0;1024]).is_err());
+    assert!(crate::pc::disks::Disk::floppy(vec![0;737_280]).is_ok());
+    assert!(crate::pc::disks::Disk::fixed(vec![0;16*63*512*20]).is_ok());
+    assert!(crate::pc::disks::Disk::fixed(vec![0;1024]).is_err());
 }
 
 #[test]
@@ -179,10 +179,10 @@ fn a_diskette_change_raises_the_change_line_until_the_head_steps(){
     let mut p=boot(&disk,0).unwrap();
     let mut other=vec![0u8;1_228_800];other[512]=0x77;
     // Only a diskette of the drive's format, into a drive that is there.
-    assert!(p.disks.change_floppy(0,bios_disk::Disk::floppy(vec![0;1_474_560]).unwrap()).is_err());
-    assert!(p.disks.change_floppy(1,bios_disk::Disk::floppy(other.clone()).unwrap()).is_err());
+    assert!(p.disks.change_floppy(0,crate::pc::disks::Disk::floppy(vec![0;1_474_560]).unwrap()).is_err());
+    assert!(p.disks.change_floppy(1,crate::pc::disks::Disk::floppy(other.clone()).unwrap()).is_err());
     assert!(!p.disks.changed(0));
-    p.disks.change_floppy(0,bios_disk::Disk::floppy(other).unwrap()).unwrap();
+    p.disks.change_floppy(0,crate::pc::disks::Disk::floppy(other).unwrap()).unwrap();
     assert_eq!(p.disks.sector(0,1).unwrap()[0],0x77,"the new diskette's data");
     // INT 13h AH=16h: 06h (CF set) once, then 00h.
     for expect in [(6,1),(0,0)]{
@@ -191,14 +191,14 @@ fn a_diskette_change_raises_the_change_line_until_the_head_steps(){
     }
     // The controller's digital input register (3F7h bit 7) for the drive
     // the DOR selects, until a seek.
-    p.disks.change_floppy(0,bios_disk::Disk::floppy(vec![0;1_228_800]).unwrap()).unwrap();
-    fdc::Fdc::io(&mut p,0x3f2,false,0x1c).unwrap();
-    assert_eq!(fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0x80));
-    fdc::Fdc::io(&mut p,0x3f2,false,0x1d).unwrap();
-    assert_eq!(fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0),"drive B: selected");
-    fdc::Fdc::io(&mut p,0x3f2,false,0x1c).unwrap();
-    for b in [0x0f,0x00,0x01]{fdc::Fdc::io(&mut p,0x3f5,false,b).unwrap();}
-    assert_eq!(fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0));
+    p.disks.change_floppy(0,crate::pc::disks::Disk::floppy(vec![0;1_228_800]).unwrap()).unwrap();
+    crate::pc::fdc::Fdc::io(&mut p,0x3f2,false,0x1c).unwrap();
+    assert_eq!(crate::pc::fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0x80));
+    crate::pc::fdc::Fdc::io(&mut p,0x3f2,false,0x1d).unwrap();
+    assert_eq!(crate::pc::fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0),"drive B: selected");
+    crate::pc::fdc::Fdc::io(&mut p,0x3f2,false,0x1c).unwrap();
+    for b in [0x0f,0x00,0x01]{crate::pc::fdc::Fdc::io(&mut p,0x3f5,false,b).unwrap();}
+    assert_eq!(crate::pc::fdc::Fdc::io(&mut p,0x3f7,true,0).unwrap(),Some(0));
 }
 
 #[test]
