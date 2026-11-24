@@ -214,7 +214,7 @@ pub fn parse_script(text:&str)->Result<Vec<ScriptStep>,String>{
         let mut out=String::new();let mut chars=t.chars();
         while let Some(c)=chars.next(){
             if c!='\\'{out.push(c);continue;}
-            match chars.next(){Some('r'|'n')=>out.push('\r'),Some('s')=>out.push(' '),Some(o)=>out.push(o),None=>out.push('\\')}
+            match chars.next(){Some('r'|'n')=>out.push('\r'),Some('s')=>out.push(' '),Some('b')=>out.push('\u{8}'),Some('e')=>out.push('\u{1b}'),Some(o)=>out.push(o),None=>out.push('\\')}
         }
         out
     };
