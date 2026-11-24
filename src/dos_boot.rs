@@ -85,12 +85,13 @@ pub(crate) fn screen_lines(p:&Loaded)->Vec<String>{
 /// Each `changes` (STEPS, IMAGE) puts another diskette into drive A: once
 /// the run has made STEPS steps, as for a boot disk that asks for its root
 /// disk.
-pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)],changes:&[(usize,Vec<u8>)],rtc_year:Option<u32>)->Result<String,String>{
+pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usize,String)],changes:&[(usize,Vec<u8>)],rtc_year:Option<u32>,keymap:super::guest_keymap::Keymap)->Result<String,String>{
     // The host clock drives the timer, so BIOS time-outs (a boot loader's
     // prompt) pass as they would on the machine.
     p.clock_offset=Some(0);
     if let Some(year)=rtc_year{p.set_rtc_year(year)?;}
     let mut session=session::Session::new(p);
+    session.keymap=keymap;
     let (mut left,mut done,mut typed)=(steps,0usize,keys.is_empty());
     enum Event<'a>{Type(&'a str),Floppy(&'a [u8])}
     let mut later:Vec<(usize,Event)>=typed_at.iter().map(|(at,text)|(*at,Event::Type(text)))
@@ -127,27 +128,19 @@ pub fn probe(mut p:Loaded,steps:usize,keys:&str,keys_after:usize,typed_at:&[(usi
     Ok(report)
 }
 
-/// Type ASCII text as US-layout key presses (Shift around capitals and
-/// shifted symbols); carriage return or line feed is Enter. While the
-/// keyboard queue is full the machine runs on in short slices; the steps
-/// run are returned.
+/// Type text as key presses on the guest's layout (`session.keymap`, US
+/// unless set): Shift and AltGr around the keys that need them; carriage
+/// return or line feed is Enter. While the keyboard queue is full the
+/// machine runs on in short slices; the steps run are returned.
 fn type_text(session:&mut session::Session,text:&str)->Result<usize,String>{
     let mut ran=0usize;
-    let mut send=|session:&mut session::Session,code:u8,down:bool,word:Option<u16>,native:bool|->Result<(),String>{
+    for (scan,extended,down,word) in super::guest_keymap::edges(session.keymap,text){
+        let mut taken=false;
         for _ in 0..1000{
-            let taken=if native{session.native_key(code,false,down,word)?}else{let w=word.unwrap_or(0);session.key(w as u8,(w>>8) as u8)?};
-            if taken{return Ok(());}
+            if session.native_key(scan,extended,down,word)?{taken=true;break;}
             session.run(10_000)?;ran+=10_000;
         }
-        Err("the keyboard queue stays full".into())
-    };
-    for c in text.chars(){
-        let (ascii,scan)=match c{'\r'|'\n'=>(13,0x1c),c if c.is_ascii()=>(c as u8,host_console::scan_of(c).unwrap_or(0)),_=>continue};
-        let word=u16::from(scan)<<8|u16::from(ascii);
-        let shift=c.is_ascii_uppercase()||host_console::SHIFTED.contains(c);
-        if shift&&scan!=0{
-            for (code,down,word) in [(0x2a,true,None),(scan,true,Some(word)),(scan,false,None),(0x2a,false,None)]{send(session,code,down,word,true)?;}
-        }else{send(session,0,true,Some(word),false)?;}
+        if !taken{return Err("the keyboard queue stays full".into());}
     }
     Ok(ran)
 }
