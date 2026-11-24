@@ -4,7 +4,7 @@
 The reference repeats the program's 4.12 fixed-point arithmetic in Python
 integers (floor shifts, escape when |zr| or |zi| reaches 2.0 or the squared
 magnitude passes 4.0, 32 iterations). The caption on the last character row
-must be the ROM-font glyphs from src/dos_font8x8.txt in colour 3, which is
+must be the ROM-font glyphs from src/bios/font8x8.txt in colour 3, which is
 FreeDOS's INT 29h colour 7 in a four-colour mode. P must switch the CGA
 palette and any other key must return to text mode with exit code 0.
 """
@@ -33,7 +33,7 @@ def colour(x, y):
 
 
 def font():
-    lines = [l for l in (root / 'src' / 'dos_font8x8.txt').read_text(encoding='utf-8').splitlines() if not l.startswith(';')]
+    lines = [l for l in (root / 'src' / 'bios' / 'font8x8.txt').read_text(encoding='utf-8').splitlines() if not l.startswith(';')]
     return {int(lines[n * 9][:2], 16): [int(r.replace('#', '1').replace('.', '0'), 2) for r in lines[n * 9 + 1:n * 9 + 9]]
             for n in range(128)}
 

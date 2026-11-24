@@ -168,5 +168,5 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
 }
 
 #[cfg(test)]
-#[path="../tests/unit/dos_text_io.rs"]
+#[path="../../tests/unit/dos_text_io.rs"]
 mod tests;

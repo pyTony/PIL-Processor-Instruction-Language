@@ -1385,5 +1385,5 @@ fn convert_time(p: &mut Loaded) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/dos_lfn.rs"]
+#[path = "../../tests/unit/dos_lfn.rs"]
 mod tests;

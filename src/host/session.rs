@@ -20,7 +20,7 @@ pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
     if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
     Err(format!("mount {path} is not a folder or .img/.ima image"))
 }
-#[path="dos_disk_set.rs"]
+#[path="disk_set.rs"]
 mod disk_set;
 pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,native_video:bool,backend:Option<Box<dyn InstructionBackend>>,disk_sets:BTreeMap<u8,disk_set::DiskSet>,
     /// The guest's keyboard layout for pasted text in a booted machine.

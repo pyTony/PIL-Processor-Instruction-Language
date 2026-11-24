@@ -1,5 +1,5 @@
 //! The VGA text screen as a host picture: 9x16 character cells, 720x400 for
-//! 80 columns, drawn with Dine's own 8x16 font (dos_font8x16.txt).
+//! 80 columns, drawn with Dine's own 8x16 font (src/bios/font8x16.txt).
 //!
 //! As on a VGA in its standard text modes, the ninth column of a cell is the
 //! background, except for the line-drawing characters C0h-DFh, which repeat
@@ -9,7 +9,7 @@
 //! character/attribute pairs and the cursor.
 
 #![cfg_attr(not(any(windows,test)),allow(dead_code))]
-const FONT_TEXT:&str=include_str!("dos_font8x16.txt");
+const FONT_TEXT:&str=include_str!("../bios/font8x16.txt");
 /// Cell width and height in pixels.
 pub(crate) const CELL_WIDTH:usize=9;
 pub(crate) const CELL_HEIGHT:usize=16;

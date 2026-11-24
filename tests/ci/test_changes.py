@@ -24,12 +24,12 @@ class ChangesTests(unittest.TestCase):
             self.assertEqual(ci.classify([path]), {"core", "dos", "frontend", "integration", "library", "backends"})
 
     def test_dos_changes_do_not_select_instruction_suites(self):
-        for path in ["src/dos.rs", "src/dos_services.rs", "src/dos_ports.rs", "tests/unit/dos.rs", "programs/dos/fixture.asm"]:
+        for path in ["src/dos.rs", "src/dos/services.rs", "src/pc/ports.rs", "tests/unit/dos.rs", "programs/dos/fixture.asm"]:
             selected = ci.classify([path])
             self.assertEqual(selected, {"dos", "frontend", "integration", "library"})
             self.assertNotIn("core", selected)
             self.assertNotIn("backends", selected)
-        self.assertIn("core", ci.classify(["src/dos_services.rs", "src/guest.rs"]))
+        self.assertIn("core", ci.classify(["src/dos/services.rs", "src/guest.rs"]))
 
     def test_delivery(self):
         for path in ["tools/package.py", "tools/export_runtime.py", "tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"]:
@@ -49,8 +49,8 @@ class ChangesTests(unittest.TestCase):
         self.assertIn("cargo test --locked containers:: -- --show-output", workflow)
 
     def test_startup_pr_selects_only_its_affected_modules(self):
-        paths = ["src/containers.rs", "src/dos_session.rs", "src/dos_setup.rs",
-                 "src/dine_window.rs", "src/dos_live_diagnostics.rs",
+        paths = ["src/containers.rs", "src/host/session.rs", "src/host/setup.rs",
+                 "src/dine_window.rs", "src/dos/live_diagnostics.rs",
                  "tests/unit/containers.rs", "tools/runtime_startup.py",
                  "tests/ci/test_runtime_startup.py", "docs/DOS_CONFIG.md"]
         self.assertEqual(ci.classify(paths), {"dos", "frontend", "integration", "library", "delivery"})

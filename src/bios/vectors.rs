@@ -172,5 +172,5 @@ pub(super) fn leave(p:&mut Loaded)->Result<bool,String>{
     Ok(true)
 }
 #[cfg(test)]
-#[path="../tests/unit/dos_vectors.rs"]
+#[path="../../tests/unit/dos_vectors.rs"]
 mod tests;

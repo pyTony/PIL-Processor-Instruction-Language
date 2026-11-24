@@ -302,5 +302,5 @@ pub(crate) fn write_back(image:&[u8],snapshot:&Snapshot)->Result<String,String>{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/dos_folder_disk.rs"]
+#[path="../../tests/unit/dos_folder_disk.rs"]
 mod tests;

@@ -211,5 +211,5 @@ fn transfer(p:&mut Loaded,cmd:&[u8])->Result<(),String>{
 }
 
 #[cfg(test)]
-#[path="../tests/unit/dos_fdc.rs"]
+#[path="../../tests/unit/dos_fdc.rs"]
 mod tests;

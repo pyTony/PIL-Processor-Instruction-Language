@@ -483,5 +483,5 @@ fn run_mode(explicit:Option<&str>,window:bool,stop_log:&str,edit_only:bool)->Res
     }
 }
 #[cfg(test)]
-#[path="../tests/unit/dos_setup.rs"]
+#[path="../../tests/unit/dos_setup.rs"]
 mod tests;

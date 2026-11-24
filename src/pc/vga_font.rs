@@ -73,5 +73,5 @@ pub(super) fn select_blocks(p:&mut Loaded)->Result<(),String>{
     Ok(())
 }
 #[cfg(test)]
-#[path="../tests/unit/dos_vga_font.rs"]
+#[path="../../tests/unit/dos_vga_font.rs"]
 mod tests;

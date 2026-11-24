@@ -16,7 +16,7 @@ pub(in super::super) const FONT:u32=0xffa6e;
 /// VGA BIOS points INT 1Fh at its own upper-half table, so Dine's colour
 /// VGA identity starts INT 1Fh here; GRAFTABL or a program may replace it.
 pub(in super::super) const UPPER_FONT:u32=0xc000_1000;
-const FONT_TEXT:&str=include_str!("dos_font8x8.txt");
+const FONT_TEXT:&str=include_str!("font8x8.txt");
 /// The 2048 font bytes for characters 00h-FFh, parsed from the readable
 /// glyph file (a header line, then eight rows of '#' and '.').
 pub(in super::super) fn font()->Result<Vec<u8>,String>{

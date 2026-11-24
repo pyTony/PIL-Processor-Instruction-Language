@@ -16,13 +16,20 @@ independently replaceable component today.
 
 | Responsibility | Current code |
 | --- | --- |
-| Session state, COM/MZ loading, DOS execution loop | `src/dos.rs` |
-| DOS and BIOS interrupt dispatch | `src/dos_services.rs`, `src/dos_vectors.rs` |
-| DOS files and drives, memory blocks, EXEC and overlays | `src/dos_files.rs`, `src/dos_memory.rs`, `src/dos_exec.rs` |
-| DOS console, ANSI, country and Ctrl-Break | `src/dos_console.rs`, `src/dos_color_text.rs`, `src/dos_ansi.rs`, `src/dos_nls.rs`, `src/dos_break.rs` |
-| Emulated machine devices | `src/dos_ports.rs`, `src/dos_pic.rs`, `src/dos_pit.rs`, `src/dos_rtc.rs`, `src/dos_block_move.rs` (INT 15h AH=87h, E801h), `src/dos_serial.rs`, `src/dos_vga.rs` |
-| Host-facing session protocol | `src/dos_session.rs`; terminal frontend in `tools/dos_terminal.py` |
-| CPU, PIL execution and physical memory | `src/guest.rs`, `src/main.rs`, `src/address.rs`, `src/memory.rs`, `isa/i386/` |
+| Session state, COM/MZ loading, the execution loop | `src/dos.rs` (`Loaded` = machine fields plus `dos::Dos`) |
+| PC devices: PIC, PIT, CMOS/RTC, speaker, 8042, UART, Sound Blaster, VGA registers, diskette and AT disk controllers | `src/pc/` |
+| BIOS: INT 10h text and planar modes, INT 13h disks, INT 15h block move, the vector entries, booting a disk image, the folder disk | `src/bios/` |
+| Dine's DOS: INT 21h/2Fh dispatch, files and LFN, memory blocks, EXEC, XMS, INT 33h driver, NLS, Ctrl-Break, ANSI | `src/dos/` |
+| Host front ends: session protocol, console window and terminal, setup screen, configuration, audio, media catalog | `src/host/` |
+| CPU, PIL execution and physical memory | `src/guest.rs`, `src/lib.rs`, `src/address.rs`, `src/memory.rs`, `isa/i386/` |
+
+The folders are a first step of the split Tony asked for (24 November 2026):
+files moved with their module names unchanged. Some files still mix layers
+(`pc/serial.rs` holds INT 14h and DOS AUX next to the 8250; `bios/console.rs`
+holds DOS console output; `dos/services.rs` dispatches BIOS and DOS calls;
+`pc/keyboard.rs` holds the BIOS INT 09h handler). The next steps are to split
+those, make `Loaded` a `Machine` plus `Dos` with a `Firmware` trait for INT n,
+and then make `pc`, `bios` and `dine` separate crates in a Cargo workspace.
 
 Existing seams already support different hosts: `host_io::Output` abstracts
 bounded DOS output; `serial::SerialTransport` defines nonblocking serial I/O;

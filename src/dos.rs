@@ -4,7 +4,7 @@ use super::Cpu;
 use super::address::{MemoryContext,SegmentCache,SegmentRegister};
 use super::guest::{GuestError,Image,Operation,SYSTEM_RANGES};
 use super::memory::{MemWidth,Ram};
-#[path="dos_memory.rs"]
+#[path="dos/memory.rs"]
 mod memory_arena;
 use memory_arena::{Arena,memory_service};
 // Declared compatibility version of this bounded host shim, not an OS boot.
@@ -33,72 +33,72 @@ pub const MAX_STEPS:usize=1_000_000;
 pub const MAX_ROM_STEPS:usize=1_000_000_000;
 #[cfg(test)]
 const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
-#[path="dos_services.rs"]
+#[path="dos/services.rs"]
 mod services;
-#[path="dos_console.rs"]
+#[path="bios/console.rs"]
 pub(crate) mod console;
-#[path="dos_color_text.rs"]
+#[path="bios/color_text.rs"]
 mod color_text;
-#[path="dos_session.rs"]
+#[path="host/session.rs"]
 pub mod session;
-#[path="dos_host_console.rs"]
+#[path="host/console.rs"]
 pub(crate) mod host_console;
-#[path="dos_vga_text.rs"]
+#[path="host/vga_text.rs"]
 pub(crate) mod vga_text;
-#[path="dos_setup.rs"]
+#[path="host/setup.rs"]
 pub(crate) mod setup;
-#[path="dos_files.rs"]
+#[path="dos/files.rs"]
 mod files;
-#[path="dos_lfn.rs"]
+#[path="dos/lfn.rs"]
 mod lfn;
-#[path="dos_nls.rs"]
+#[path="dos/nls.rs"]
 mod nls;
-#[path="dos_exec.rs"]
+#[path="dos/exec.rs"]
 mod exec;
-#[path="dos_ports.rs"]
+#[path="pc/ports.rs"]
 pub(crate) mod ports;
-#[path="dos_soundblaster.rs"]
+#[path="pc/soundblaster.rs"]
 mod soundblaster;
-#[path="dos_rtc.rs"]
+#[path="pc/rtc.rs"]
 mod rtc;
-#[path="dos_block_move.rs"]
+#[path="bios/block_move.rs"]
 mod block_move;
-#[path="dos_bios_disk.rs"]
+#[path="bios/disk.rs"]
 mod bios_disk;
-#[path="dos_fdc.rs"]
+#[path="pc/fdc.rs"]
 mod fdc;
-#[path="dos_ata.rs"]
+#[path="pc/ata.rs"]
 mod ata;
-#[path="dos_folder_disk.rs"]
+#[path="bios/folder_disk.rs"]
 mod folder_disk;
 pub(crate) use folder_disk::FolderDisk;
-#[path="dos_boot.rs"]
+#[path="bios/boot.rs"]
 mod boot;
-#[path="dos_guest_keymap.rs"]
+#[path="host/guest_keymap.rs"]
 pub(crate) mod guest_keymap;
 pub use boot::{probe as boot_probe,parse_script as boot_script,script_probe as boot_script_probe,tar_floppy};
 pub(crate) use boot::boot_command;
 #[cfg(test)]
 pub(crate) use boot::{boot,boot_with_hard_disk,boot_with_hard_disks};
-#[path="dos_xms.rs"]
+#[path="dos/xms.rs"]
 mod xms;
-#[path="dos_vga.rs"]
+#[path="pc/vga.rs"]
 mod vga;
-#[path="dos_planar.rs"]
+#[path="bios/planar.rs"]
 mod planar;
-#[path="dos_vga_font.rs"]
+#[path="pc/vga_font.rs"]
 mod vga_font;
-#[path="dos_vga_regs.rs"]
+#[path="pc/vga_regs.rs"]
 mod vga_regs;
-#[path="dos_serial.rs"]
+#[path="pc/serial.rs"]
 mod serial;
-#[path="dos_break.rs"]
+#[path="dos/break.rs"]
 mod brk;
-#[path="dos_keyboard.rs"]
+#[path="pc/keyboard.rs"]
 mod keyboard;
-#[path="dos_mouse.rs"]
+#[path="dos/mouse.rs"]
 mod mouse;
-#[path="dos_vectors.rs"]
+#[path="bios/vectors.rs"]
 mod vectors;
 use services::dispatch as service;
 #[cfg(any(feature = "dine-library", test))]
@@ -613,11 +613,11 @@ pub struct Probe{
     pub exceptions:Vec<ExceptionSite>,pub exception_count:usize,
     pub output:Vec<u8>,pub instructions:BTreeMap<String,usize>,pub stop_bytes:Vec<u8>,pub file_offset:Option<usize>,
 }
-#[path="dos_stoplog.rs"]
+#[path="dos/stoplog.rs"]
 pub(super) mod stoplog;
-#[path="dos_history.rs"]
+#[path="dos/history.rs"]
 pub(crate) mod history;
-#[path="dos_live_diagnostics.rs"]
+#[path="dos/live_diagnostics.rs"]
 mod live_diagnostics;
 #[derive(Clone,Debug)]
 pub struct ExceptionSite{pub vector:u8,pub detail:String,pub diagnostic:String,pub cs:u16,pub eip:u32}

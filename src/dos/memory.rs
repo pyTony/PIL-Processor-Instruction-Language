@@ -252,5 +252,5 @@ pub(super) fn set_umbs(p:&mut Loaded,on:bool)->Result<(),String>{
 /// The fixed slot of image.system that holds C800-EFFF while UMBs exist.
 pub(super) const UMB_CODE_SLOT:usize=4;
 #[cfg(test)]
-#[path="../tests/unit/dos_memory.rs"]
+#[path="../../tests/unit/dos_memory.rs"]
 mod tests;

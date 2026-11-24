@@ -9,14 +9,14 @@
 //! Writes to the AT coprocessor ports F0h (clear busy) and F1h (reset) are
 //! taken; reads from them stop.
 use super::*;
-#[path="dos_pit.rs"]
+#[path="pit.rs"]
 mod pit;
-#[path="dos_string_io.rs"]
+#[path="string_io.rs"]
 mod string_io;
 pub(super) use string_io::{access as string_access,io as string_io,Error as StringError};
-#[path="dos_pic.rs"]
+#[path="pic.rs"]
 pub(super) mod pic;
-#[path="dos_speaker_wave.rs"]
+#[path="speaker_wave.rs"]
 pub(crate) mod wave;
 /// PIT input clock in Hz.
 pub(crate) static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
