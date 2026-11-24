@@ -1,5 +1,5 @@
-//! Raw disk images as BIOS drives: INT 13h on floppies (00h, 01h) and a
-//! fixed disk (80h), the diskette parameter table INT 1Eh points to, and the
+//! Raw disk images as BIOS drives: INT 13h on floppies (00h, 01h) and
+//! fixed disks (80h, 81h), the diskette parameter table INT 1Eh points to, and the
 //! drive types the CMOS reports. This is the machine's firmware, used by a
 //! boot sector and the real-mode code it loads, not by Dine's DOS (whose
 //! drives are file systems, not sector devices).
@@ -74,21 +74,27 @@ impl Disk{
     fn total(&self)->u32{(self.data.len()/512) as u32}
 }
 
-/// The BIOS drives: floppies 00h and 01h, fixed disk 80h.
+/// The BIOS drives: floppies 00h and 01h, fixed disks 80h and 81h (the
+/// master and slave on the AT controller).
 #[derive(Clone,Debug,Default)]
-pub(crate) struct Disks{floppy:[Option<Disk>;2],fixed:Option<Disk>,
+pub(crate) struct Disks{floppy:[Option<Disk>;2],fixed:[Option<Disk>;2],
     /// Each diskette drive's change line: set when another disk goes in,
     /// cleared by a step of the head (a seek or recalibrate) or by the
     /// BIOS's change check.
     changed:[bool;2]}
 impl Disks{
-    pub(crate) fn is_empty(&self)->bool{self.floppy.iter().all(Option::is_none)&&self.fixed.is_none()}
+    pub(crate) fn is_empty(&self)->bool{self.floppy.iter().all(Option::is_none)&&self.fixed.iter().all(Option::is_none)}
     pub(crate) fn attach(&mut self,drive:u8,disk:Disk)->Result<(),String>{
-        match drive{0|1=>self.floppy[usize::from(drive)]=Some(disk),0x80=>self.fixed=Some(disk),_=>return Err(format!("BIOS drive {drive:02x}h: only 00h, 01h and 80h")),}
+        match drive{
+            0|1=>self.floppy[usize::from(drive)]=Some(disk),0x80=>self.fixed[0]=Some(disk),
+            0x81 if self.fixed[0].is_some()=>self.fixed[1]=Some(disk),
+            0x81=>return Err("fixed disk 81h needs a disk 80h".into()),
+            _=>return Err(format!("BIOS drive {drive:02x}h: only 00h, 01h, 80h and 81h")),
+        }
         Ok(())
     }
-    fn get(&self,drive:u8)->Option<&Disk>{match drive{0|1=>self.floppy[usize::from(drive)].as_ref(),0x80=>self.fixed.as_ref(),_=>None}}
-    fn get_mut(&mut self,drive:u8)->Option<&mut Disk>{match drive{0|1=>self.floppy[usize::from(drive)].as_mut(),0x80=>self.fixed.as_mut(),_=>None}}
+    fn get(&self,drive:u8)->Option<&Disk>{match drive{0|1=>self.floppy[usize::from(drive)].as_ref(),0x80|0x81=>self.fixed[usize::from(drive&1)].as_ref(),_=>None}}
+    fn get_mut(&mut self,drive:u8)->Option<&mut Disk>{match drive{0|1=>self.floppy[usize::from(drive)].as_mut(),0x80|0x81=>self.fixed[usize::from(drive&1)].as_mut(),_=>None}}
     /// Put another diskette of the same format into drive 00h or 01h (the
     /// drive type in CMOS stays). Its change line goes active.
     pub(crate) fn change_floppy(&mut self,drive:u8,disk:Disk)->Result<(),String>{
@@ -116,8 +122,12 @@ impl Disks{
     pub(crate) fn write_sector(&mut self,drive:u8,lba:u32,data:&[u8])->Result<(),String>{
         self.get_mut(drive).ok_or("no disk in the drive")?.write(lba,&data[..512])
     }
-    /// The fixed disk (80h), when one is attached.
-    pub(crate) fn fixed(&self)->Option<&Disk>{self.fixed.as_ref()}
+    /// The first fixed disk (80h), when one is attached.
+    pub(crate) fn fixed(&self)->Option<&Disk>{self.fixed[0].as_ref()}
+    /// Fixed disk 0 (80h, master) or 1 (81h, slave), when attached.
+    pub(crate) fn fixed_unit(&self,unit:u8)->Option<&Disk>{self.fixed.get(usize::from(unit))?.as_ref()}
+    /// The number of fixed disks, for 0040:0075 and INT 13h AH=08h.
+    pub(crate) fn fixed_count(&self)->u8{self.fixed.iter().filter(|d|d.is_some()).count() as u8}
     pub(crate) fn sector(&self,drive:u8,lba:u32)->Option<&[u8]>{
         let d=self.get(drive)?;d.data.get(lba as usize*512..lba as usize*512+512)
     }
@@ -141,23 +151,28 @@ pub(super) fn install_table(p:&mut Loaded)->Result<(),String>{
     Ok(())
 }
 
-/// The fixed disk parameter table (F000:E401, where the IBM AT BIOS kept
-/// its drive-type table) for drive 80h, behind INT 41h, and the number of
-/// fixed disks at 0040:0075. Layout: cylinders (word), heads, reduced
-/// write current cylinder (word), write precompensation cylinder (word,
-/// FFFFh none), ECC burst, control byte (bit 3: more than 8 heads), three
-/// time-outs, landing zone (word), sectors per track, reserved.
+/// The fixed disk parameter tables (F000:E401, where the IBM AT BIOS kept
+/// its drive-type table, and the next 16 bytes for the second disk) behind
+/// INT 41h (80h) and INT 46h (81h), and the number of fixed disks at
+/// 0040:0075. Layout: cylinders (word), heads, reduced write current
+/// cylinder (word), write precompensation cylinder (word, FFFFh none), ECC
+/// burst, control byte (bit 3: more than 8 heads), three time-outs, landing
+/// zone (word), sectors per track, reserved.
 const FDPT:u32=0xfe401;
 pub(super) fn install_fixed_table(p:&mut Loaded)->Result<(),String>{
-    let Some((cylinders,heads,sectors))=p.disks.fixed.as_ref().map(Disk::geometry)else{return Ok(())};
-    let c=cylinders as u16;let mut table=[0u8;16];
-    table[0..2].copy_from_slice(&c.to_le_bytes());table[2]=heads as u8;
-    table[3..5].copy_from_slice(&c.to_le_bytes());table[5..7].copy_from_slice(&0xffffu16.to_le_bytes());
-    table[8]=if heads>8{8}else{0};table[12..14].copy_from_slice(&c.to_le_bytes());table[14]=sectors as u8;
-    let rom=|e|format!("fixed disk parameter table: {e:?}");
-    p.ram.unrom(FDPT,16).map_err(rom)?;p.ram.write_bytes(FDPT,&table).map_err(rom)?;p.ram.rom(FDPT,16).map_err(rom)?;
-    p.ram.store(0x41*4,MemWidth::Dword,0xf000_0000|(FDPT-0xf0000)).map_err(|e|format!("INT 41h vector: {e:?}"))?;
-    p.ram.store(0x475,MemWidth::Byte,1).map_err(|e|format!("BIOS fixed disk count: {e:?}"))?;
+    for (unit,vector) in [(0usize,0x41u32),(1,0x46)]{
+        let Some((cylinders,heads,sectors))=p.disks.fixed[unit].as_ref().map(Disk::geometry)else{continue};
+        let c=cylinders as u16;let mut table=[0u8;16];
+        table[0..2].copy_from_slice(&c.to_le_bytes());table[2]=heads as u8;
+        table[3..5].copy_from_slice(&c.to_le_bytes());table[5..7].copy_from_slice(&0xffffu16.to_le_bytes());
+        table[8]=if heads>8{8}else{0};table[12..14].copy_from_slice(&c.to_le_bytes());table[14]=sectors as u8;
+        let at=FDPT+16*unit as u32;
+        let rom=|e|format!("fixed disk parameter table: {e:?}");
+        p.ram.unrom(at,16).map_err(rom)?;p.ram.write_bytes(at,&table).map_err(rom)?;p.ram.rom(at,16).map_err(rom)?;
+        p.ram.store(vector*4,MemWidth::Dword,0xf000_0000|(at-0xf0000)).map_err(|e|format!("INT {vector:02x}h vector: {e:?}"))?;
+    }
+    let count=p.disks.fixed_count();
+    if count>0{p.ram.store(0x475,MemWidth::Byte,u32::from(count)).map_err(|e|format!("BIOS fixed disk count: {e:?}"))?;}
     Ok(())
 }
 
@@ -217,7 +232,7 @@ pub(super) fn int13(p:&mut Loaded)->Result<Option<u8>,String>{
             let max_cylinder=disk.cylinders-1;
             let cl=(disk.sectors&0x3f)|(max_cylinder>>2&0xc0);
             p.cpu.regs[1]=(p.cpu.regs[1]&!0xffff)|(max_cylinder&0xff)<<8|cl;
-            let drives=if drive&0x80==0{u32::from(p.disks.floppies())}else{1};
+            let drives=u32::from(if drive&0x80==0{p.disks.floppies()}else{u16::from(p.disks.fixed_count())});
             p.cpu.regs[2]=(p.cpu.regs[2]&!0xffff)|(disk.heads-1)<<8|drives;
             if drive&0x80==0{
                 p.cpu.regs[3]=(p.cpu.regs[3]&!0xff)|u32::from(disk.cmos_type());

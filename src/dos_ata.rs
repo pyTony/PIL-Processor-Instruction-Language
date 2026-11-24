@@ -2,8 +2,11 @@
 //! 3F6h with IRQ14, for an operating system that drives the disk itself
 //! (Dine's DOS uses its own drives; a booted loader uses INT 13h). Only a
 //! booted machine with a fixed disk has it; elsewhere the ports stay an
-//! open bus. The disk is BIOS drive 80h's image (`bios_disk`), the master
-//! on the primary channel; there is no slave.
+//! open bus. The master on the primary channel is BIOS drive 80h's image
+//! (`bios_disk`), the slave drive 81h's when there is one. Both drives
+//! take every task-file write, as on the cable; the drive bit (bit 4 of
+//! the drive/head register) says which one answers reads and commands.
+//! An absent slave reads 0 and ignores commands.
 //!
 //! Commands complete at once: data is ready (DRQ) and IRQ14 raised as soon
 //! as the command byte is written. Commands follow ATA-1 (X3.221-1994):
@@ -26,11 +29,12 @@ enum Transfer{None,Read{left:u32},Write{left:u32},Identify}
 pub(crate) struct Ata{
     error:u8,count:u8,sector:u8,cylinder:u16,head:u8,status:u8,control:u8,
     buffer:Box<[u8;512]>,at:usize,transfer:Transfer,
-    /// Heads and sectors per track from INITIALIZE DRIVE PARAMETERS.
-    geometry:Option<(u32,u32)>,
+    /// Heads and sectors per track from INITIALIZE DRIVE PARAMETERS, per
+    /// drive (master, slave).
+    geometry:[Option<(u32,u32)>;2],
 }
 impl Default for Ata{
-    fn default()->Self{Self{error:1,count:1,sector:1,cylinder:0,head:0,status:READY|SEEK,control:0,buffer:Box::new([0;512]),at:0,transfer:Transfer::None,geometry:None}}
+    fn default()->Self{Self{error:1,count:1,sector:1,cylinder:0,head:0,status:READY|SEEK,control:0,buffer:Box::new([0;512]),at:0,transfer:Transfer::None,geometry:[None;2]}}
 }
 
 impl Ata{
@@ -39,8 +43,8 @@ impl Ata{
     pub(super) fn io(p:&mut Loaded,port:u16,input:bool,word:bool,value:u16)->Result<Option<u16>,String>{
         if !p.booted||p.disks.fixed().is_none()||!matches!(port,0x1f0..=0x1f7|0x3f6){return Ok(None);}
         if word!=(port==0x1f0){return Err(format!("{} ATA access to port {port:03X}h is not modelled",if word{"word"}else{"byte"}));}
-        // The slave is absent: its registers read 0 and it ignores commands.
-        let slave=p.ata.head&0x10!=0;
+        // An absent slave's registers read 0 and it ignores commands.
+        let slave=p.ata.head&0x10!=0&&p.disks.fixed_unit(1).is_none();
         Ok(Some(match(port,input){
             (0x1f0,true)=>data_in(p)?,
             (0x1f0,false)=>{data_out(p,value)?;0},
@@ -79,10 +83,13 @@ fn control(a:&mut Ata,value:u8){
 
 fn interrupt(p:&mut Loaded){if p.ata.control&2==0{p.speaker.pic.raise_slave(6);}}
 
-/// Heads and sectors per track for CHS addresses, and the image's sectors.
+/// The selected drive: 0 master, 1 slave.
+fn unit(p:&Loaded)->u8{p.ata.head>>4&1}
+/// Heads and sectors per track for CHS addresses, and the image's sectors,
+/// of the selected drive.
 fn layout(p:&Loaded)->(u32,u32,u32){
-    let (c,h,s)=p.disks.fixed().map_or((0,1,1),|d|d.geometry());
-    let (heads,sectors)=p.ata.geometry.unwrap_or((h,s));
+    let (c,h,s)=p.disks.fixed_unit(unit(p)).map_or((0,1,1),|d|d.geometry());
+    let (heads,sectors)=p.ata.geometry[usize::from(unit(p))].unwrap_or((h,s));
     (heads,sectors,c*h*s)
 }
 /// The sector the task file addresses, if the disk has it.
@@ -114,7 +121,7 @@ fn done(p:&mut Loaded){p.ata.status=READY|SEEK;p.ata.transfer=Transfer::None;int
 fn load_sector(p:&mut Loaded,left:u32)->Result<(),String>{
     let Some(lba)=target(p)else{fail(p,IDNF);return Ok(())};
     // `target` keeps LBAs inside the whole cylinders the image holds.
-    let Some(data)=p.disks.sector(0x80,lba)else{
+    let Some(data)=p.disks.sector(0x80|unit(p),lba)else{
         p.ata.transfer=Transfer::None;p.ata.status=READY|SEEK;
         return Err(format!("fixed disk sector {lba} outside the image"));
     };
@@ -136,7 +143,7 @@ fn command(p:&mut Loaded,cmd:u8)->Result<(),String>{
         },
         0x40|0x41|0x70..=0x7f=>if target(p).is_some(){done(p)}else{fail(p,IDNF)},
         0x90=>{p.ata.error=1;done(p);},
-        0x91=>{p.ata.geometry=Some((u32::from(p.ata.head&0x0f)+1,u32::from(p.ata.count)));done(p);},
+        0x91=>{p.ata.geometry[usize::from(unit(p))]=Some((u32::from(p.ata.head&0x0f)+1,u32::from(p.ata.count)));done(p);},
         0xec=>{
             identify(p);p.ata.at=0;p.ata.transfer=Transfer::Identify;p.ata.status=READY|SEEK|DRQ;interrupt(p);
         },
@@ -166,7 +173,7 @@ fn data_out(p:&mut Loaded,value:u16)->Result<(),String>{
     if a.at<512{return Ok(());}
     let Some(lba)=target(p)else{fail(p,IDNF);return Ok(())};
     let data=*p.ata.buffer;
-    p.disks.write_sector(0x80,lba,&data)?;
+    p.disks.write_sector(0x80|unit(p),lba,&data)?;
     if left>1{
         advance(p);
         if target(p).is_none(){fail(p,IDNF);return Ok(());}
@@ -179,8 +186,8 @@ fn data_out(p:&mut Loaded,value:u16)->Result<(),String>{
 /// geometry, serial, firmware and model strings (byte pairs swapped), LBA
 /// supported, no READ/WRITE MULTIPLE, current geometry and capacity.
 fn identify(p:&mut Loaded){
-    let (c,h,s)=p.disks.fixed().map_or((0,1,1),|d|d.geometry());let total=c*h*s;
-    let (ch,cs)=p.ata.geometry.unwrap_or((h,s));
+    let (c,h,s)=p.disks.fixed_unit(unit(p)).map_or((0,1,1),|d|d.geometry());let total=c*h*s;
+    let (ch,cs)=p.ata.geometry[usize::from(unit(p))].unwrap_or((h,s));
     let mut w=[0u16;256];
     w[0]=0x0040;w[1]=c as u16;w[3]=h as u16;w[4]=(512*s) as u16;w[5]=512;w[6]=s as u16;
     let text=|w:&mut [u16;256],at:usize,len:usize,t:&str|{
