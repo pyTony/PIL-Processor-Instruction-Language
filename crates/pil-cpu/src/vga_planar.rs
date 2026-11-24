@@ -107,5 +107,5 @@ impl Planar {
     }
 }
 #[cfg(test)]
-#[path="../tests/unit/vga_planar.rs"]
+#[path="../../../tests/unit/vga_planar.rs"]
 mod tests;

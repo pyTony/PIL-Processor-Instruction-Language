@@ -45,7 +45,7 @@ def classify(paths):
                 selected.add("delivery")
         elif path in DOS_SUPPORT or path == "src/dos.rs" or path.startswith(("src/pc/", "src/bios/", "src/dos/", "src/host/", "tests/unit/dos", "programs/dos/")):
             selected.update(("dos", "frontend", "integration", "library"))
-        elif path.startswith(("src/", "isa/", "tests/unit/", "programs/")) or path in {"Cargo.toml", "Cargo.lock"}:
+        elif path.startswith(("src/", "crates/", "isa/", "tests/unit/", "programs/")) or path in {"Cargo.toml", "Cargo.lock"}:
             selected.update(("core", "dos", "frontend", "integration", "library", "backends"))
         elif path.startswith("tools/bench") or path.startswith("tools/compare."):
             selected.update(("core", "performance"))

@@ -26,7 +26,7 @@ use std::rc::Rc;
 use super::sites::MAX_BLOCK_INSTRUCTIONS;
 
 /// Blocks kept before the table is emptied and rebuilt.
-pub(crate) const CAPACITY:usize=16_384;
+pub const CAPACITY:usize=16_384;
 
 struct Block {
     eip:u32,
@@ -69,7 +69,7 @@ const NONE:usize=usize::MAX;
 type Map=HashMap<u32,Variants,std::hash::BuildHasherDefault<LinearHash>>;
 
 #[derive(Default)]
-pub(crate) struct Blocks {
+pub struct Blocks {
     /// Linear address to slot.
     map:Map,
     slots:Vec<(u64,Block)>,
@@ -77,20 +77,20 @@ pub(crate) struct Blocks {
     /// before `report`.
     pending:BTreeMap<String,usize>,
     /// Overrides `PIL_PRECOMPILED` for this machine (tests and tools).
-    pub(crate) mode:Option<crate::precompiled::Mode>,
+    pub mode:Option<crate::precompiled::Mode>,
     /// Block entries and instructions retired in blocks, for diagnostics.
-    pub(crate) blocks:u64,
-    pub(crate) instructions:u64,
+    pub blocks:u64,
+    pub instructions:u64,
     /// Successfully retired native forms, excluding interpreter fallback.
-    pub(crate) native_instructions:u64,
+    pub native_instructions:u64,
     /// Successfully retired PIL instructions executed by the interpreter.
-    pub(crate) interpreted_instructions:u64,
+    pub interpreted_instructions:u64,
     /// Native forms retired outside blocks.
-    pub(crate) single_instructions:u64,
-    pub(crate) compare_branches:u64,
+    pub single_instructions:u64,
+    pub compare_branches:u64,
     /// Returns to the DOS loop with at least one instruction retired (a
     /// chain of blocks counts once).
-    pub(crate) runs:u64,
+    pub runs:u64,
     next_version:u64,
 }
 impl Clone for Blocks { fn clone(&self)->Self{Self::default()} }
@@ -102,7 +102,7 @@ fn opcode(bytes:&[u8])->Option<u8>{
     bytes.iter().copied().find(|b|!matches!(b,0x66|0x67|0x26|0x2e|0x36|0x3e|0x64|0x65|0xf0|0xf2|0xf3))
 }
 /// Instructions the DOS loop handles before the PIL decoder sees them.
-pub(crate) fn answered_by_loop(bytes:&[u8])->bool{
+pub fn answered_by_loop(bytes:&[u8])->bool{
     matches!(opcode(bytes),None|Some(0xe4..=0xe7|0xec..=0xef|0x6c..=0x6f|0xd8..=0xdf|0x9b|0xcc..=0xce|0xf4))
 }
 /// Code addresses blocks never cover. In real and virtual-8086 mode,
@@ -143,7 +143,7 @@ fn context(p:&crate::Program)->bool{
 }
 
 impl Blocks {
-    pub(crate) fn clear(&mut self){
+    pub fn clear(&mut self){
         for (_,b) in self.slots.drain(..){count(&b,&mut self.pending);}
         self.map.clear();
     }
@@ -196,7 +196,7 @@ impl Blocks {
     /// block that changed segments, control registers, IF, TF, IOPL, NT, VM
     /// or an interrupt shadow, or that faulted, always returns to the loop.
     /// None: no block applies here; the caller interprets.
-    pub(crate) fn run(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,chain:bool)->Option<(usize,Result<(),ExecError>)>{
+    pub fn run(&mut self,cache:&mut DecodeCache,image:&Image,cpu:&mut Cpu,ram:&mut Ram,machine:&mut SegmentState,budget:usize,chain:bool)->Option<(usize,Result<(),ExecError>)>{
         let mut total=0usize;let mut from=None;
         let mut flags = crate::LazyFlags::None;
         // Code guards translate with the current CR3 and privilege level.
@@ -319,7 +319,7 @@ impl Blocks {
 
     /// Move the per-mnemonic counts of retired block instructions into the
     /// probe's instruction mix, keyed as the interpreter keys them.
-    pub(crate) fn report(&mut self,mix:&mut BTreeMap<String,usize>){
+    pub fn report(&mut self,mix:&mut BTreeMap<String,usize>){
         for (_,block) in self.slots.iter_mut(){count(block,mix);block.runs.fill(0);}
         for (k,n) in std::mem::take(&mut self.pending){*mix.entry(k).or_insert(0)+=n;}
     }

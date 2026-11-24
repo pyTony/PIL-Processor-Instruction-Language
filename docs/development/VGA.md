@@ -138,8 +138,8 @@ Tony chose on 7 November 2026 to identify the video BIOS as a colour VGA
 BL=10h returns BH=0 (colour), BL=3 (256 KiB), CX=0009h; the BIOS data area
 holds 0485h=16 (9x16 text cells), 0487h=60h, 0488h=09h and 0489h=11h.
 
-**Display memory.** `src/vga_planar.rs` holds four 64 KiB planes and is the
-one memory-mapped device in `Ram` (`src/memory.rs`). While a planar mode is
+**Display memory.** `crates/pil-cpu/src/vga_planar.rs` holds four 64 KiB planes and is the
+one memory-mapped device in `Ram` (`crates/pil-cpu/src/memory.rs`). While a planar mode is
 set, guest bytes at A0000h-AFFFFh go to it; otherwise the window is ordinary
 RAM, so mode 13h stays linear. Both execution backends embed the same code.
 - Reads load the four latches, then return read mode 0 (Read Map Select) or

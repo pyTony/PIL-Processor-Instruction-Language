@@ -1,4 +1,5 @@
-use super::*;
+use crate::precompiled::*;
+use crate::{guest,Program,Token};
 use crate::dos::{self,Stop};
 use crate::guest::Operation;
 use crate::host_io::{CaptureOutput,Output};

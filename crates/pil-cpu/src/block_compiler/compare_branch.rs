@@ -10,7 +10,7 @@ enum Operand {
 }
 
 /// Two validated PIL operations with no observable boundary between them.
-pub(super) struct CompareBranch {
+pub struct CompareBranch {
     left: View,
     right: Operand,
     write_result: bool,
@@ -20,7 +20,7 @@ pub(super) struct CompareBranch {
 }
 
 impl CompareBranch {
-    pub(super) fn suffix(steps: &[Rc<Decoded>]) -> Option<Self> {
+    pub fn suffix(steps: &[Rc<Decoded>]) -> Option<Self> {
         let [.., arithmetic, branch] = steps else {
             return None;
         };
@@ -97,7 +97,7 @@ impl CompareBranch {
         })
     }
 
-    pub(super) fn execute(&self, cpu: &mut Cpu) -> LazyFlags {
+    pub fn execute(&self, cpu: &mut Cpu) -> LazyFlags {
         let a = cpu.read(self.left).bits;
         let b = match self.right {
             Operand::Register(view) => cpu.read(view).bits,

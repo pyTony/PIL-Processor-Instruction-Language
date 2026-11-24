@@ -20,7 +20,7 @@ class ChangesTests(unittest.TestCase):
         self.assertEqual(ci.classify(["tools/dos_terminal.py"]), {"frontend"})
 
     def test_engine_and_descriptions(self):
-        for path in ["src/guest.rs", "src/memory.rs", "isa/i386/add.pil", "Cargo.lock", "tests/unit/cpu.rs", "programs/selftest.hex"]:
+        for path in ["crates/pil-cpu/src/guest.rs", "crates/pil-cpu/src/memory.rs", "isa/i386/add.pil", "Cargo.lock", "tests/unit/cpu.rs", "programs/selftest.hex"]:
             self.assertEqual(ci.classify([path]), {"core", "dos", "frontend", "integration", "library", "backends"})
 
     def test_dos_changes_do_not_select_instruction_suites(self):
@@ -29,7 +29,7 @@ class ChangesTests(unittest.TestCase):
             self.assertEqual(selected, {"dos", "frontend", "integration", "library"})
             self.assertNotIn("core", selected)
             self.assertNotIn("backends", selected)
-        self.assertIn("core", ci.classify(["src/dos/services.rs", "src/guest.rs"]))
+        self.assertIn("core", ci.classify(["src/dos/services.rs", "crates/pil-cpu/src/guest.rs"]))
 
     def test_delivery(self):
         for path in ["tools/package.py", "tools/export_runtime.py", "tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"]:
@@ -55,7 +55,7 @@ class ChangesTests(unittest.TestCase):
                  "tests/ci/test_runtime_startup.py", "docs/DOS_CONFIG.md"]
         self.assertEqual(ci.classify(paths), {"dos", "frontend", "integration", "library", "delivery"})
         # Adding a real decoder/compiler change must restore CPU verification.
-        for path in ["src/guest.rs", "src/emit.rs", "src/precompiled/forms.rs", "isa/i386/add.pil"]:
+        for path in ["crates/pil-cpu/src/guest.rs", "src/emit.rs", "crates/pil-cpu/src/precompiled/forms.rs", "isa/i386/add.pil"]:
             with self.subTest(path=path):
                 selected = ci.classify([*paths, path])
                 self.assertTrue({"core", "backends"}.issubset(selected))

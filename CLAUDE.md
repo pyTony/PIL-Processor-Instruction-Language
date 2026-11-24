@@ -1,3 +1,36 @@
+# The CPU core as its own crate: crates/pil-cpu — 24 November 2026
+
+Step 3a of the staged library split Tony chose (#311 folders, #312
+pc::Machine). No behaviour change.
+- Cargo workspace: the `pil` package (library `dine`, executable `pil`)
+  and its member crates/pil-cpu (library `pil_cpu`): PIL parser,
+  interpreter and emitter (the former first 2,400 lines of src/lib.rs),
+  decoder (guest.rs), memory and paging, segments, privilege, tasks, the
+  80387, decode cache, trace, precompiled forms and run-time blocks
+  (sites, codegen, guards, engine). `cargo test` at the top runs both.
+- src/lib.rs re-exports the core as its crate root (`pub(crate) use
+  pil_cpu::*`), so `crate::memory::Ram` and the like are unchanged. Core
+  items are `pub` (were private or `pub(crate)`).
+- The core names no PC, BIOS or DOS module (the compiler enforces it now).
+  The machine the precompiled forms are enumerated in is a parameter of
+  `precompiled::emit`, given by `form_machines` in src/lib.rs; forms.rs
+  changed only in its header path and `pub static FORMS`.
+- Unit tests that load programs through Dine (fpu, precompiled, block
+  guards and plans) stay in the pil package; helpers only tests use are
+  behind pil-cpu's `test-support` feature (a dev-dependency of pil).
+- `--emit-precompiled-forms crates/pil-cpu/src/precompiled/forms.rs
+  --check` in CI; export_runtime, ci_changes, runtime_startup,
+  check_program_specific, .gitattributes and the docs follow the paths.
+  Next: the machine (src/pc) as a crate, then the BIOS apart from DOS.
+
+Cloud Linux, release: 1073 Rust tests pass, 2 ignored (781 in pil, 292 in
+pil-cpu; the same tests as before); forms.rs current (2,685 forms); 0
+rustc warnings (release, dine-library, compact-interpreter);
+x86_64-pc-windows-gnu cargo check (release, tests, dine-library) clean;
+portable-path, program-specific and layer checks pass; export_runtime.py
+--verify (standalone build, debugger, DOS hello, ZIP) passes. No program
+was run by hand.
+
 # Machine apart from Dine's DOS and BIOS: pc::Machine and Firmware — 24 November 2026
 
 Step 2 of the staged library split Tony chose (#311 was step 1). No

@@ -7,10 +7,10 @@ use super::memory::{MemWidth, Ram};
 pub const ENTRY:u32=0x100;
 pub const RAM_BYTES:usize=4096;
 pub fn selftest_bytes()->Result<Vec<u8>,String> {
-    include_str!("../programs/selftest.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
+    include_str!("../../../programs/selftest.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
 }
 pub fn hello_bytes()->Result<Vec<u8>,String> {
-    include_str!("../programs/hello.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
+    include_str!("../../../programs/hello.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
 }
 // Original demonstration image: aliases, preserved flags, LEA and equal-width moves.
 pub fn extension_bytes()->Vec<u8>{vec![
@@ -29,11 +29,11 @@ pub fn extension_bytes()->Vec<u8>{vec![
 pub const LOOP_ITERATIONS:u32=65536;
 pub const FACTORIALS:[u32;12]=[1,2,6,24,120,720,5040,40320,362880,3628800,39916800,479001600];
 pub fn factorial_bytes()->Result<Vec<u8>,String> {
-    include_str!("../programs/factorials.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
+    include_str!("../../../programs/factorials.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect()
 }
 pub fn loop_bytes(iterations:u32)->Result<Vec<u8>,String> {
     if !(1..=100000).contains(&iterations){return Err("loop iterations must be 1..100000".into());}
-    let mut bytes:Vec<u8>=include_str!("../programs/loop.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect::<Result<_,_>>()?;
+    let mut bytes:Vec<u8>=include_str!("../../../programs/loop.hex").split_whitespace().map(|s|u8::from_str_radix(s,16).map_err(|e|e.to_string())).collect::<Result<_,_>>()?;
     bytes[2..6].copy_from_slice(&iterations.to_le_bytes());Ok(bytes)
 }
 const CONDITIONS:[&str;16]=["o","no","b","ae","e","ne","be","a","s","ns","p","np","l","ge","le","g"];
@@ -53,7 +53,7 @@ pub struct Decoded {pub label:String,pub length:u32,pub operation:Operation,
     /// The precompiled native form of a PIL operation, resolved on first use.
     pub native:std::cell::OnceCell<Option<crate::precompiled::Native>>}
 impl Decoded {
-    pub(crate) fn native(&self)->Option<&crate::precompiled::Native>{
+    pub fn native(&self)->Option<&crate::precompiled::Native>{
         self.native.get_or_init(||match &self.operation{Operation::Pil{program,..}=>crate::precompiled::resolve(program),_=>None}).as_ref()
     }
 }
@@ -182,7 +182,7 @@ impl Image {
                 let m=jump_indirect.unwrap();dst=view((m&7)as usize,w);src=dst;
                 let (target,label)=if m>>6!=3{let effective=r.effective(m,addr32)?;address=Some(AddressContext{effective,override_segment,segments:self.segments});(format!("read_address operand\nload target_value operand {w}"),operand_name(dst,address))}
                     else{(format!("read target_value dst {w}"),register_name(dst).into())};
-                let text=include_str!("../isa/i386/jmp_indirect.pil").replace("$TARGET",&target);
+                let text=include_str!("../../../isa/i386/jmp_indirect.pil").replace("$TARGET",&target);
                 (format!("JMP {label}"),compile(&instantiate(text,w),w))
             }
             0xff if memory_push.is_some()=>{
@@ -200,7 +200,7 @@ impl Image {
                 // Intel documents this wrap case as processor-family-specific.
                 // Reject it until a legacy386 hardware vector fixes the policy.
                 let guard=if stack_bits==16&&esp_based{"ult wrapped new_sp old_sp\nnot allowed wrapped\nrequire allowed"}else{""};
-                let text=include_str!("../isa/i386/pop_memory.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$HIGH_MASK",if stack_bits==16{"4294901760"}else{"0"}).replace("$WRAP_GUARD",guard);
+                let text=include_str!("../../../isa/i386/pop_memory.pil").replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$HIGH_MASK",if stack_bits==16{"4294901760"}else{"0"}).replace("$WRAP_GUARD",guard);
                 (format!("POP {}",operand_name(dst,address)),compile(&instantiate(text,w),w))
             }
             0xc8=>{
@@ -225,12 +225,12 @@ impl Image {
                 let frame_value=if wide{"zext frame_value frame_wide 32"}else if w<stack_bits{"trunc frame_value frame $W"}else{"zext frame_value frame $W"};
                 if level32>0{stores+=&format!("{frame_value}\nconst down_last $S {}\nsub last frame down_last\nzext last_at last 32\nstore_segment 2 last_at frame_value\n",level32*n);}
                 let pointer=if wide{"zext frame_pointer frame_wide 32"}else{"zext frame_pointer frame $S"};
-                let text=include_str!("../isa/i386/enter.pil").replace("$COPY_STORES",stores.trim_end()).replace("$FRAME_POINTER",pointer).replace("$PUSHED",&(level32*n).to_string()).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let text=include_str!("../../../isa/i386/enter.pil").replace("$COPY_STORES",stores.trim_end()).replace("$FRAME_POINTER",pointer).replace("$PUSHED",&(level32*n).to_string()).replace("$SIZE",&size.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("ENTER 0x{size:04x},{level}"),compile(&instantiate(&text,w),w))
             }
             0xd7=>{
                 let seg=override_segment.unwrap_or(SegmentRegister::Ds).index();
-                let text=include_str!("../isa/i386/xlat.pil").replace("$A",if addr32{"32"}else{"16"}).replace("$SEG",&seg.to_string());
+                let text=include_str!("../../../isa/i386/xlat.pil").replace("$A",if addr32{"32"}else{"16"}).replace("$SEG",&seg.to_string());
                 ("XLAT".into(),compile(&text,w))
             }
             0xc9=>{
@@ -245,13 +245,13 @@ impl Image {
                     0xe1=>("LOOPE","read_flag z ZF\nand take more z"),
                     _=>("LOOP","or take more more"),
                 };
-                let text=include_str!("../isa/i386/loop.pil").replace("$A",if addr32{"32"}else{"16"}).replace("$CONDITION",condition);
+                let text=include_str!("../../../isa/i386/loop.pil").replace("$A",if addr32{"32"}else{"16"}).replace("$CONDITION",condition);
                 (format!("{name} 0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w)as u32),compile(&instantiate(text,w),w))
             }
             0xe3=>{
                 disp=r.byte()? as i8 as i32;
                 let name=if addr32{"JECXZ"}else{"JCXZ"};
-                let text=include_str!("../isa/i386/jcxz.pil").replace("$A",if addr32{"32"}else{"16"});
+                let text=include_str!("../../../isa/i386/jcxz.pil").replace("$A",if addr32{"32"}else{"16"});
                 (format!("{name} 0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w)as u32),compile(&instantiate(text,w),w))
             }
             0x9c|0x9d=>{
@@ -273,7 +273,7 @@ impl Image {
                     let offset=r.unsigned(w)?;let selector=r.unsigned(16)?;
                     (format!("const target_value {w} {offset}\nconst selector 16 {selector}"),format!("{selector:04x}:{offset:08x}"))
                 };
-                let text=include_str!("../isa/i386/jmp_far.pil").replace("$FAR_TARGET",&target);
+                let text=include_str!("../../../isa/i386/jmp_far.pil").replace("$FAR_TARGET",&target);
                 (format!("JMP FAR {label}"),compile(&instantiate(&text,w),w))
             }
             0x9a=>{
@@ -299,12 +299,12 @@ impl Image {
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
                     (format!("read_disp delta {w}\nadd target_value return_offset delta"),format!("0x{:08x}",r.pos.wrapping_add(disp as u32)&super::mask(w)as u32))
                 };
-                let text=include_str!("../isa/i386/call.pil").replace("$TARGET",&target).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let text=include_str!("../../../isa/i386/call.pil").replace("$TARGET",&target).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("CALL {label}"),compile(&instantiate(text,w),w))
             }
             0xca|0xcb=>{
                 let cleanup=if opcode==0xca{r.unsigned(16)?}else{0};let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
-                let text=include_str!("../isa/i386/retf.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/4).to_string());
+                let text=include_str!("../../../isa/i386/retf.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/4).to_string());
                 (if opcode==0xca{format!("RETF 0x{cleanup:04x}")}else{"RETF".into()},compile(&instantiate(text,w),w))
             }
             0xcf=>{
@@ -316,13 +316,13 @@ impl Image {
             }
             0xc2|0xc3=>{
                 let cleanup=if opcode==0xc2{r.unsigned(16)?}else{0};let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
-                let text=include_str!("../isa/i386/ret.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let text=include_str!("../../../isa/i386/ret.pil").replace("$CLEANUP",&cleanup.to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (if opcode==0xc2{format!("RET 0x{cleanup:04x}")}else{"RET".into()},compile(&instantiate(text,w),w))
             }
             0x6c..=0x6f|0xa4|0xa5|0xaa|0xab|0xac|0xad=>{
                 if opcode&1==0{w=8;}dst=view(0,w);src=dst;let a=if addr32{32}else{16};
                 let name=match opcode{0x6c|0x6d=>"ins",0x6e|0x6f=>"outs",0xa4|0xa5=>"movs",0xaa|0xab=>"stos",_=>"lods"};
-                let body=match name{"ins"=>include_str!("../isa/i386/ins.pil"),"outs"=>include_str!("../isa/i386/outs.pil"),"movs"=>include_str!("../isa/i386/movs.pil"),"stos"=>include_str!("../isa/i386/stos.pil"),_=>include_str!("../isa/i386/lods.pil")};
+                let body=match name{"ins"=>include_str!("../../../isa/i386/ins.pil"),"outs"=>include_str!("../../../isa/i386/outs.pil"),"movs"=>include_str!("../../../isa/i386/movs.pil"),"stos"=>include_str!("../../../isa/i386/stos.pil"),_=>include_str!("../../../isa/i386/lods.pil")};
                 let body=body.replace("$SEG",&override_segment.unwrap_or(SegmentRegister::Ds).index().to_string()).replace("$A",&a.to_string()).replace("$BYTES",&(w/8).to_string());
                 let text=if repeat.is_some(){super::repeat_description(&body,a)}else{body};
                 let mnemonic=format!("{}{}",name.to_ascii_uppercase(),match w{8=>"B",16=>"W",_=>"D"});
@@ -359,14 +359,14 @@ impl Image {
                 if self.real_mode||self.segment_state().v86(){return Err(GuestError::Decode("ARPL (63h) is #UD in real and virtual-8086 mode".into()));}
                 let m=r.byte()?;dst=view((m&7)as usize,16);src=view(((m>>3)&7)as usize,16);
                 let (input,output)=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});("read_address destination\nload selector destination 16","store_if destination result raise")}else{("read selector dst 16","write dst result")};
-                let text=include_str!("../isa/i386/arpl.pil").replace("$INPUT",input).replace("$OUTPUT",output);
+                let text=include_str!("../../../isa/i386/arpl.pil").replace("$INPUT",input).replace("$OUTPUT",output);
                 (format!("ARPL {},{}",operand_name(dst,address),register_name(src)),compile(&text,16))
             }
             0x62=>{
                 let m=r.byte()?;if m>>6==3{return Err(GuestError::Decode("BOUND requires a memory bounds pair".into()));}
                 dst=view(((m>>3)&7)as usize,w);src=dst;
                 address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
-                (format!("BOUND {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(include_str!("../isa/i386/bound.pil").replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}),w),w))
+                (format!("BOUND {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(include_str!("../../../isa/i386/bound.pil").replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}),w),w))
             }
             0xc4|0xc5=>{
                 let name=if opcode==0xc4{"LES"}else{"LDS"};
@@ -374,7 +374,7 @@ impl Image {
                 dst=view(((m>>3)&7)as usize,w);src=dst;
                 let effective=r.effective(m,addr32)?;
                 address=Some(AddressContext{effective,override_segment,segments:self.segments});
-                let text=include_str!("../isa/i386/les.pil").replace("$SEG",&effective.resolve(&[0;8],override_segment)?.segment.index().to_string()).replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}).replace("$BYTES",&(w/8).to_string()).replace("$DEST",if opcode==0xc4{"0"}else{"3"});
+                let text=include_str!("../../../isa/i386/les.pil").replace("$SEG",&effective.resolve(&[0;8],override_segment)?.segment.index().to_string()).replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}).replace("$BYTES",&(w/8).to_string()).replace("$DEST",if opcode==0xc4{"0"}else{"3"});
                 (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
             }
             0x8c|0x8e=>{
@@ -403,7 +403,7 @@ impl Image {
                 let segment=pop_selector.unwrap_or(match opcode{0x07=>SegmentRegister::Es,0x17=>SegmentRegister::Ss,_=>SegmentRegister::Ds});
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
-                let text=include_str!("../isa/i386/pop_segment.pil").replace("$SEG",&segment.index().to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let text=include_str!("../../../isa/i386/pop_segment.pil").replace("$SEG",&segment.index().to_string()).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("POP {segment:?}").to_ascii_uppercase(),compile(&instantiate(text,w),w))
             }
             0x50..=0x5f|0x68|0x6a|0x06|0x0e|0x16|0x1e=>{
@@ -429,7 +429,7 @@ impl Image {
             0x60|0x61=>{
                 let stack_bits=if matches!(self.segments[SegmentRegister::Ss.index()].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 address=Some(AddressContext{effective:EffectiveAddress::Bits16{form:Address16::Direct,displacement:0},override_segment:Some(SegmentRegister::Ss),segments:self.segments});
-                let file=if opcode==0x60{include_str!("../isa/i386/pusha.pil")}else{include_str!("../isa/i386/popa.pil")};
+                let file=if opcode==0x60{include_str!("../../../isa/i386/pusha.pil")}else{include_str!("../../../isa/i386/popa.pil")};
                 let (keep,take)=match (stack_bits,w){(16,32)=>("0","4294901760"),(16,_)=>("4294901760","0"),_=>("0","0")};
                 let text=file.replace("$KEEP_ESP",keep).replace("$TAKE_ESP",take).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
                 (format!("{}{}",if opcode==0x60{"PUSHA"}else{"POPA"},if w==32{"D"}else{""}),compile(&instantiate(text,w),w))
@@ -460,7 +460,7 @@ impl Image {
                     if !debug&&!matches!(n,0|2|3){return Err(GuestError::Decode("MOV control requires CR0, CR2 or CR3".into()));}
                     dst=view((m&7)as usize,32);src=dst;
                     let read=second&2==0;
-                    let file=if read{include_str!("../isa/i386/read_control.pil")}else{include_str!("../isa/i386/write_control.pil")};
+                    let file=if read{include_str!("../../../isa/i386/read_control.pil")}else{include_str!("../../../isa/i386/write_control.pil")};
                     let text=file.replace("$CR",&(n+if debug{8}else{0}).to_string());
                     let name=format!("{}{n}",if debug{"DR"}else{"CR"});
                     (if read{format!("MOV {},{name}",register_name(dst))}else{format!("MOV {name},{}",register_name(src))},compile(&text,32))
@@ -470,7 +470,7 @@ impl Image {
                     let effective=r.effective(m,addr32)?;
                     let seg=effective.resolve(&[0;8],override_segment)?.segment.index();
                     address=Some(AddressContext{effective,override_segment,segments:self.segments});
-                    let text=include_str!("../isa/i386/store_table.pil").replace("$SEG",&seg.to_string()).replace("$TABLE",&table.to_string());
+                    let text=include_str!("../../../isa/i386/store_table.pil").replace("$SEG",&seg.to_string()).replace("$TABLE",&table.to_string());
                     (format!("{} {}",if table==0{"SGDT"}else{"SIDT"},operand_name(view(0,w),address).split_once(' ').map_or(String::new(),|(_,a)|a.to_string())),compile(&text,w))
                 }else if second==0x00{
                     // SLDT, STR, LLDT, LTR, VERR and VERW are #UD in real mode.
@@ -486,12 +486,12 @@ impl Image {
                         if memory||!wide{w=16;}
                         dst=view((m&7)as usize,w);src=dst;
                         let output=if memory{"read_address destination\nstore destination selector".to_string()}else if w==32{"zext whole selector 32\nwrite dst whole".to_string()}else{"write dst selector".to_string()};
-                        let text=include_str!("../isa/i386/store_system.pil").replace("$WHICH",&ext.to_string()).replace("$OUTPUT",&output);
+                        let text=include_str!("../../../isa/i386/store_system.pil").replace("$WHICH",&ext.to_string()).replace("$OUTPUT",&output);
                         (format!("{name} {}",operand_name(dst,address)),compile(&text,w))
                     }else{
                         dst=view((m&7)as usize,16);src=dst;
-                        let text=if ext<4{include_str!("../isa/i386/load_system.pil").replace("$WHICH",&(ext-2).to_string()).replace("$INPUT",input)}
-                            else{format!("{}{}",include_str!("../isa/i386/descriptor_rights.pil").replace("$INPUT",input),if ext==4{include_str!("../isa/i386/verr.pil")}else{include_str!("../isa/i386/verw.pil")})};
+                        let text=if ext<4{include_str!("../../../isa/i386/load_system.pil").replace("$WHICH",&(ext-2).to_string()).replace("$INPUT",input)}
+                            else{format!("{}{}",include_str!("../../../isa/i386/descriptor_rights.pil").replace("$INPUT",input),if ext==4{include_str!("../../../isa/i386/verr.pil")}else{include_str!("../../../isa/i386/verw.pil")})};
                         (format!("{name} {}",operand_name(src,address)),compile(&text,16))
                     }
                 }else if matches!(second,0x02|0x03){
@@ -503,9 +503,9 @@ impl Image {
                     let source_label=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});let label=operand_name(src,address);src=dst;label}else{register_name(src).into()};
                     let input=if address.is_some(){"read_address source\nload selector source 16"}else{"read selector src 16"};
                     let result=if w==32{"write_if dst rights valid"}else{"trunc rights16 rights 16\nwrite_if dst rights16 valid"};
-                    let mut tail=(if second==0x02{include_str!("../isa/i386/lar.pil")}else{include_str!("../isa/i386/lsl.pil")}).replace("$RESULT",result);
+                    let mut tail=(if second==0x02{include_str!("../../../isa/i386/lar.pil")}else{include_str!("../../../isa/i386/lsl.pil")}).replace("$RESULT",result);
                     if second==0x02&&w==16{tail=tail.replace("const rights_mask 32 16776960","const rights_mask 32 65280");}
-                    let text=format!("{}{}",include_str!("../isa/i386/descriptor_rights.pil").replace("$INPUT",input),tail);
+                    let text=format!("{}{}",include_str!("../../../isa/i386/descriptor_rights.pil").replace("$INPUT",input),tail);
                     (format!("{name} {},{}",register_name(dst),source_label),compile(&text,w))
                 }else if second==0x01{
                     let m=r.byte()?;
@@ -515,12 +515,12 @@ impl Image {
                         let seg=effective.resolve(&[0;8],override_segment)?.segment.index();
                         address=Some(AddressContext{effective,override_segment,segments:self.segments});
                         let table=((m>>3)&7)-2;
-                        let text=include_str!("../isa/i386/load_table.pil").replace("$SEG",&seg.to_string()).replace("$TABLE",&table.to_string()).replace("$MASK",if wide{"4294967295"}else{"16777215"});
+                        let text=include_str!("../../../isa/i386/load_table.pil").replace("$SEG",&seg.to_string()).replace("$TABLE",&table.to_string()).replace("$MASK",if wide{"4294967295"}else{"16777215"});
                         (if table==0{"LGDT".into()}else{"LIDT".into()},compile(&text,w))
                     }else{
                     if (m>>3)&7==6{
                         w=16;dst=view((m&7)as usize,w);src=dst;
-                        let mut text=include_str!("../isa/i386/lmsw.pil").to_string();
+                        let mut text=include_str!("../../../isa/i386/lmsw.pil").to_string();
                         if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("read input src 16","read_address source\nload input source 16");}
                         (format!("LMSW {}",operand_name(src,address)),compile(&text,w))
                     }else{
@@ -536,7 +536,7 @@ impl Image {
                     }
                     }
                 }else if second==0x06{
-                    ("CLTS".into(),compile(include_str!("../isa/i386/clts.pil"),w))
+                    ("CLTS".into(),compile(include_str!("../../../isa/i386/clts.pil"),w))
                 }else if (0x80..=0x8f).contains(&second){
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
                     let name=format!("j{}",CONDITIONS[(second&15) as usize]);
@@ -567,7 +567,7 @@ impl Image {
                     let (operand,write)=if memory&&second!=0xba{(string.as_str(),"store addr r")}else if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
                     let offset=if memory&&second!=0xba{String::new()}else{offset};
                     let update=match kind{5=>format!("or r a selected\n{write}"),6=>format!("not cleared selected\nand r a cleared\n{write}"),7=>format!("xor r a selected\n{write}"),_=>String::new()};
-                    let text=include_str!("../isa/i386/bt.pil").replace("$OPERAND",operand).replace("$OFFSET",&offset).replace("$UPDATE",&update);
+                    let text=include_str!("../../../isa/i386/bt.pil").replace("$OPERAND",operand).replace("$OFFSET",&offset).replace("$UPDATE",&update);
                     (format!("{name} {},{offset_label}",operand_name(dst,address)),compile(&instantiate(text,w),w))
                 }else if matches!(second,0xa4|0xa5|0xac|0xad){
                     let m=r.byte()?;let memory=m>>6!=3;
@@ -575,7 +575,7 @@ impl Image {
                     if memory{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});}
                     let (count,count_label)=if second&1==0{let imm=r.byte()?;(format!("const raw 8 {imm}"),format!("0x{imm:02x}"))}else{("read_gpr raw 1 8".into(),"CL".into())};
                     let (operand,write)=if memory{("read_address addr\nload a addr $W","store addr r")}else{("read a dst $W","write dst r")};
-                    let (name,text)=if second<0xa8{("SHLD",include_str!("../isa/i386/shld.pil"))}else{("SHRD",include_str!("../isa/i386/shrd.pil"))};
+                    let (name,text)=if second<0xa8{("SHLD",include_str!("../../../isa/i386/shld.pil"))}else{("SHRD",include_str!("../../../isa/i386/shrd.pil"))};
                     // A 16-bit double shift works on 48 bits on the 386: dst:src:src (SHLD), src:src:dst (SHRD).
                     let (join_b,join_low,join_top,join_high)=if w==16{("16","65535","48","281470681743360")}else{("0","0","64","0")};
                     let text=text.replace("$OPERAND",operand).replace("$COUNT",&count).replace("$WRITE",write).replace("$JOINB",join_b).replace("$JOINLOW",join_low).replace("$JOINTOP",join_top).replace("$JOINHIGH",join_high);
@@ -583,7 +583,7 @@ impl Image {
                 }else if matches!(second,0xbc|0xbd){
                     let m=r.byte()?;dst=view(((m>>3)&7)as usize,w);src=view((m&7)as usize,w);
                     let read=if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});src=dst;"read_address addr\nload a addr $W"}else{"read a src $W"};
-                    let (name,text)=if second==0xbc{("BSF",include_str!("../isa/i386/bsf.pil"))}else{("BSR",include_str!("../isa/i386/bsr.pil"))};
+                    let (name,text)=if second==0xbc{("BSF",include_str!("../../../isa/i386/bsf.pil"))}else{("BSR",include_str!("../../../isa/i386/bsr.pil"))};
                     (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text.replace("$READ",read),w),w))
                 }else if second==0xaf {
                     let m=r.byte()?;let reg=view(((m>>3)&7) as usize,w);let rm=view((m&7) as usize,w);
@@ -598,7 +598,7 @@ impl Image {
                     let effective=r.effective(m,addr32)?;
                     address=Some(AddressContext{effective,override_segment,segments:self.segments});
                     let dest_reg=match second{0xb2=>"2",0xb4=>"4",_=>"5"};
-                    let text=include_str!("../isa/i386/les.pil").replace("$SEG",&effective.resolve(&[0;8],override_segment)?.segment.index().to_string()).replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}).replace("$BYTES",&(w/8).to_string()).replace("$DEST",dest_reg);
+                    let text=include_str!("../../../isa/i386/les.pil").replace("$SEG",&effective.resolve(&[0;8],override_segment)?.segment.index().to_string()).replace("$OFFSET_MASK",if addr32{"4294967295"}else{"65535"}).replace("$BYTES",&(w/8).to_string()).replace("$DEST",dest_reg);
                     (format!("{name} {},{}",register_name(dst),operand_name(src,address)),compile(&instantiate(text,w),w))
                 }else{
                 if !(0x90..=0x9f).contains(&second) {return Err(GuestError::Decode(format!("unsupported opcode 0f {second:02x}")));}
@@ -682,7 +682,7 @@ impl Image {
                 let text=if memory{
                     address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
                     dst=src;
-                    include_str!("../isa/i386/xchg_ram.pil").to_string()
+                    include_str!("../../../isa/i386/xchg_ram.pil").to_string()
                 }else{description("xchg").map_err(GuestError::Decode)?};
                 (format!("XCHG {},{}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
             }
@@ -691,8 +691,8 @@ impl Image {
                 (format!("XCHG {},{}",register_name(dst),register_name(src)),compile(&instantiate(description("xchg").map_err(GuestError::Decode)?,w),w))
             }
             0x90=>("NOP".into(),compile(&description("nop").map_err(GuestError::Decode)?,w)),
-            0x9b=>("FWAIT".into(),compile(include_str!("../isa/i386/fwait.pil"),w)),
-            0xd6=>{w=8;dst=view(0,w);src=dst;("SALC".into(),compile(include_str!("../isa/i386/salc.pil"),w))}
+            0x9b=>("FWAIT".into(),compile(include_str!("../../../isa/i386/fwait.pil"),w)),
+            0xd6=>{w=8;dst=view(0,w);src=dst;("SALC".into(),compile(include_str!("../../../isa/i386/salc.pil"),w))}
             0x40..=0x4f=>{
                 dst=view((opcode&7) as usize,w);src=dst;
                 let name=if opcode<0x48{"inc"}else{"dec"};
@@ -769,7 +769,7 @@ impl Image {
                 let input=opcode&2==0;
                 let port_name=port.map(|p|format!("0x{p:02x}")).unwrap_or_else(||"DX".into());
                 let label=if input{format!("IN {},{port_name}",register_name(dst))}else{format!("OUT {port_name},{}",register_name(dst))};
-                let text=if input{include_str!("../isa/i386/in_open_bus.pil")}else{include_str!("../isa/i386/out_open_bus.pil")};
+                let text=if input{include_str!("../../../isa/i386/in_open_bus.pil")}else{include_str!("../../../isa/i386/out_open_bus.pil")};
                 let port_text=match port{Some(p)=>format!("const port 16 {p}"),None=>"read_gpr port 2 16".into()};
                 (label,compile(&instantiate(text.replace("$IO_PORT",&port_text),w),w))
             }
@@ -789,13 +789,13 @@ impl Image {
         Ok(Decoded{label,length:r.pos-eip,operation:Operation::Pil{program:program.map_err(GuestError::Decode)?,dst,src,flow,address},native:Default::default()})
     }
 }
-pub(crate) fn register_name(view:View)->&'static str {
+pub fn register_name(view:View)->&'static str {
     const BYTE:[&str;8]=["AL","CL","DL","BL","AH","CH","DH","BH"];
     const WORD:[&str;8]=["AX","CX","DX","BX","SP","BP","SI","DI"];
     const DWORD:[&str;8]=["EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI"];
     match view.width{8=>BYTE[view.register+if view.low==8{4}else{0}],16=>WORD[view.register],_=>DWORD[view.register]}
 }
-pub(crate) fn operand_name(view:View,address:Option<AddressContext>)->String {
+pub fn operand_name(view:View,address:Option<AddressContext>)->String {
     let Some(address)=address else{return register_name(view).into();};
     let mut terms=Vec::new();let displacement;
     match address.effective {
@@ -926,6 +926,6 @@ impl Reader<'_> {
     }
 }
 #[cfg(test)]
-#[path="../tests/unit/guest.rs"]
+#[path="../../../tests/unit/guest.rs"]
 mod tests;
 

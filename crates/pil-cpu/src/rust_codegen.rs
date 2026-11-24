@@ -1,7 +1,7 @@
 //! Rust rendering of backend-neutral PIL dataflow idioms.
 use crate::Program;
 
-pub(crate) fn carry_window(p:&Program,at:usize)->Option<String>{
+pub fn carry_window(p:&Program,at:usize)->Option<String>{
     let crate::pil_opt::CarryWindow{partial,wide,result,cf,a,b,carry,width:w,op}=crate::pil_opt::carry_window(p,at)?;
     let method=match op{crate::pil_opt::CarryOp::Add=>"add",crate::pil_opt::CarryOp::Sub=>"sub"};
     Some(format!("\

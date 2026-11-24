@@ -187,9 +187,9 @@ jobs:
     - run: python tools/check_build_warnings.py build --release --locked --lib --features dine-library
       if: github.event_name == 'schedule' || inputs.library || inputs.backends
       name: 'backends: python tools/check_build_warnings.py build --release --locked --lib --features dine-library'
-    - run: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check
+    - run: cargo run --release --locked -- --emit-precompiled-forms crates/pil-cpu/src/precompiled/forms.rs --check
       if: (github.event_name == 'schedule' || inputs.backends)
-      name: 'backends: cargo run --release --locked -- --emit-precompiled-forms src/precompiled/forms.rs --check'
+      name: 'backends: cargo run --release --locked -- --emit-precompiled-forms crates/pil-cpu/src/precompiled/forms.rs --check'
     - run: python tools/verify_dine_library.py
       if: (github.event_name == 'schedule' || inputs.library)
       name: 'library: python tools/verify_dine_library.py'

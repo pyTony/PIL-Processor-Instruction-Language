@@ -22,7 +22,7 @@ independently replaceable component today.
 | BIOS: INT 10h text and planar modes, INT 13h disks, INT 15h block move, the vector entries, booting a disk image, the folder disk | `src/bios/` |
 | Dine's DOS: INT 21h/2Fh dispatch, files and LFN, memory blocks, EXEC, XMS, INT 33h driver, NLS, Ctrl-Break, ANSI | `src/dos/` |
 | Host front ends: session protocol, console window and terminal, setup screen, configuration, audio, media catalog | `src/host/` |
-| CPU, PIL execution and physical memory | `src/guest.rs`, `src/lib.rs`, `src/address.rs`, `src/memory.rs`, `isa/i386/` |
+| CPU core (crate `pil-cpu`): PIL parser, interpreter and emitter, decoder, memory and paging, segments, privilege and tasks, 80387, decode cache, precompiled forms, run-time blocks | `crates/pil-cpu/src/`, `isa/i386/` |
 
 The folders are a first step of the split Tony asked for (24 November 2026):
 files moved with their module names unchanged. The second step made the
@@ -36,10 +36,23 @@ VGA controller ports (Dine's stricter BIOS-mode rules outside a booted
 machine). INT 14h moved to `bios/int14.rs`, the AUX device to
 `dos/aux_device.rs`, the BIOS INT 09h handler to `bios/int09.rs`.
 
+The third step makes Cargo crates, one at a time. The CPU core came first:
+`crates/pil-cpu` (library `pil_cpu`) is a workspace member that the `pil`
+package (library `dine`, executable `pil`) depends on, and `src/lib.rs`
+re-exports it as its crate root, so `crate::memory::Ram` and the like still
+name the same items. The core names no PC, BIOS or DOS module; the one place
+that needed Dine, the machine the precompiled forms are enumerated in, is
+now a parameter (`precompiled::emit`, given by `form_machines` in
+`src/lib.rs`). Its unit tests that load programs through Dine (the 80387,
+precompiled forms, block guards and plans) stay in the `pil` package;
+helpers only tests use are behind the `test-support` feature, which the
+`pil` package enables as a dev-dependency. `cargo test` at the top runs
+both packages.
+
 Still mixed: `bios/console.rs` holds DOS console output and
 `dos/services.rs` dispatches BIOS and DOS calls; the `bios` modules are
-children of `dos` in the module tree. The next step makes `pc`, `bios` and
-`dine` separate crates in a Cargo workspace.
+children of `dos` in the module tree. Next: the machine (`src/pc.rs`,
+`src/pc/`) as a crate, then the BIOS apart from Dine's DOS.
 
 Existing seams already support different hosts: `host_io::Output` abstracts
 bounded DOS output; `serial::SerialTransport` defines nonblocking serial I/O;
