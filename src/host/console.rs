@@ -442,6 +442,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     else if id==8{note=Some(session.stop_text_write_watch().map(|_|"Text memory write watch disabled".to_string()).unwrap_or_else(|e|e));}
                     else if id==9{note=Some(session.enable_service_trace().map(|_|"INT 10h/16h/21h service trace enabled".to_string()).unwrap_or_else(|e|e));}
                     else if id==10{note=Some(session.disable_service_trace().map(|_|"Service trace disabled".to_string()).unwrap_or_else(|e|e));}
+                    else if let Some((mode,msg))=host_pointer_command(id){front.host_pointer=mode;note=Some(msg.into());}
                     else if id!=0{note=front.media_command(session,id);}
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
@@ -563,6 +564,24 @@ fn clipboard_mount_path(text:&str)->Result<&str,String>{
     Ok(path)
 }
 
+#[cfg(any(windows,test))]
+pub(crate) fn host_pointer_menu_items(current:HostPointer)->Vec<(u16,String)>{
+    let label=|mode:HostPointer,text:&str|if current==mode{format!("* {text}")}else{text.into()};
+    vec![
+        (11,label(HostPointer::Auto,"Auto (hide while DOS cursor shows)")),
+        (12,label(HostPointer::Show,"Always show host pointer")),
+        (13,label(HostPointer::Hide,"Always hide host pointer")),
+    ]
+}
+pub(crate) fn host_pointer_command(id:u16)->Option<(HostPointer,&'static str)>{
+    match id{
+        11=>Some((HostPointer::Auto,"Host pointer: auto")),
+        12=>Some((HostPointer::Show,"Host pointer: always shown")),
+        13=>Some((HostPointer::Hide,"Host pointer: always hidden")),
+        _=>None,
+    }
+}
+
 impl Front{
     pub(crate) fn title(&self,title:&str){
         #[cfg(windows)]
@@ -580,6 +599,7 @@ impl Front{
                 items.push((base+8,"Mount clipboard path".into()));
                 items.push((base+7,"Unmount".into()));groups.push((format!("Drive {drive}:"),items));
             }
+            groups.push(("Mouse pointer".into(),host_pointer_menu_items(self.host_pointer)));
             groups.push(("Diagnostics".into(),vec![
                 (3,"Save live guest snapshot".into()),
                 (4,"Disable instruction history".into()),
