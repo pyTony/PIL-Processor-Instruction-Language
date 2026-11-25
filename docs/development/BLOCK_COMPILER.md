@@ -105,11 +105,14 @@ there differs. The key is the program shape (tokens with constants zeroed,
 widths and flags) hashed with two FNV-1a variants. A program the table does
 not have runs in the interpreter, as before.
 
-The generated file is committed (about 13.5 MB). CI regenerates it with
-`--check` and fails when it is stale, so an emitter or decoder change must
-come with a regenerated table. Real-mode code with a 16-bit stack only for
-now: with 32-bit stacks and 32-bit protected-mode code the table was 4,319
-forms (22 MB), which made the release build too slow for its gain today.
+The generated file is committed (`crates/pil-cpu/src/precompiled/forms.rs`).
+CI regenerates it with `--check` and fails when it is stale, so an emitter
+or decoder change must come with a regenerated table. Initially (13 November
+2026) only 16-bit real mode with a 16-bit stack was enumerated (`2,669` ->
+`2,685` forms, 13.5 MB); once `pil-cpu` became its own crate (#313),
+`form_machines` was extended (25 November 2026) to enumerate 16-bit real
+mode, 32-bit protected mode with a 32-bit stack, 16-bit ring-3 protected
+mode and real mode with a 32-bit stack (`5,369` forms, 26.4 MB).
 
 **Run-time blocks** (`crates/pil-cpu/src/block_compiler/engine.rs`). When the DOS loop
 reaches an address, Dine plans a block there: straight-line PIL instructions

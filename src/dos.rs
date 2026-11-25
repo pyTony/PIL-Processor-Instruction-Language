@@ -1001,7 +1001,7 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
     // The ordinary one-instruction interpreter still handles any DOS guest.
     let history_enabled=p.history.enabled();
     let watched=p.ram.text_watch_enabled();
-    let blocks_enabled=matches!(mode,crate::precompiled::Mode::On|crate::precompiled::Mode::Required)&&!p.rom_mode&&!history_enabled&&!watched;
+    let blocks_enabled=matches!(mode,crate::precompiled::Mode::On|crate::precompiled::Mode::Required)&&!history_enabled&&!watched;
     let stop=loop{
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
@@ -1377,7 +1377,7 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
                 // only while nothing waits for the checks at the top of
                 // the loop: a scan code or mouse event could become
                 // deliverable at any boundary.
-                let chain=!p.rom_mode&&!p.speaker.kbd.pending()&&!mouse::ready(&p);
+                let chain=!p.speaker.kbd.pending()&&(p.rom_mode||!mouse::ready(&p));
                 if let Some((n,result))=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget,chain){
                     p.image.set_segment_state(machine);p.selectors=machine.selectors;
                     execution_steps+=n;completed+=n;pil_steps+=n;
@@ -1622,6 +1622,7 @@ pub fn run_rom(rom_path: &Path, budget: usize) -> Result<Probe, String> {
     ram.protect(rom_base,rom_data.len()).map_err(|e|format!("ROM protection: {e:?}"))?;
     p.ram = ram;
     p.rom_mode = true;
+    p.blocks.rom = true;
     p.cpu.regs = [0;8];
     p.image.system = [(0,0);SYSTEM_RANGES];
     p.image.fetch_base = 0;

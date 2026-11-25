@@ -1,3 +1,27 @@
+# Protected-mode and 32-bit-stack precompiled forms — 25 November 2026
+
+Linux boot plan milestone 5 (`docs/development/LINUX_BOOT_PLAN.md`).
+- `form_machines` (`src/lib.rs`) and `FILLS` (`crates/pil-cpu/src/precompiled/mod.rs`)
+  now enumerate 16-bit real mode, 32-bit protected mode with a 32-bit stack,
+  16-bit ring-3 protected mode, real mode with a 32-bit stack, and `[ESP]`
+  SIB addressing (`5,369` unique native forms in
+  `crates/pil-cpu/src/precompiled/forms.rs`, up from `2,685`).
+- `Blocks` (`crates/pil-cpu/src/block_compiler/engine.rs`, `src/dos.rs`) also
+  runs in raw ROM mode (`--run-rom`), excluding only video MMIO
+  (`A0000h..BFFFFh`) since Dine installs no BIOS/DOS stubs in `rom_mode`.
+
+Local Windows, release: 1,084 Rust tests pass, 2 ignored (`757` in `pil`,
+`292` in `pil-cpu`, `35` in `pil-pc`, including >20,000 real- and
+protected-mode form equivalence cases, paged 32-bit `Mode::Required`
+verification, and a real-to-protected ROM+RAM block test); `forms.rs`
+current (`5,369` forms); `0` rustc warnings (release, `dine-library`,
+`compact-interpreter`); `--selftest`, `--numeric-test`, `--verify-backends`
+and `verify_dine_library.py` pass; portable-path, program-specific, layer
+and CI checks pass. `test386` completes all 33 POST stages (`76,115,423`
+instructions) in `6.13 s` vs `33.82 s` with `PIL_PRECOMPILED=off` (stdout
+and stderr bit-for-bit identical); MCC Interim Linux 0.99 reaches its
+install menu (`200M` steps) under `PIL_PRECOMPILED=required` with zero
+interpreter fallbacks (`9.59 s` vs `64.07 s` with `PIL_PRECOMPILED=off`).
 # The machine as its own crate: crates/pil-pc — 24 November 2026
 
 Step 3b of the staged library split Tony chose (#311 folders, #312

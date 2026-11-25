@@ -40,25 +40,44 @@ fn forms_agree_with_the_interpreter_on_full_state(){
     // Decode as Dine does; execute against the 4 KiB monitor RAM.
     let dos=dos::load(&[0x90],"FORM.COM").unwrap();
     let (image,ram)=guest::Image::load(&[0x90]).unwrap();
-    let mut code=dos.ram.clone();let at=dos.image.segments[1].base+0x100;
+    let code_base=dos.image.segments[1].base;
+    let code32=crate::address::SegmentCache{base:code_base,limit:0xffff_ffff,access:crate::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0}};
+    let exec_code32=crate::address::SegmentCache{base:0,limit:0xffff_ffff,access:crate::address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0}};
+    let data32=crate::address::SegmentCache{base:0,limit:0xffff_ffff,access:crate::address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};
+    let mut pm_decode=dos.image.clone();
+    pm_decode.real_mode=false;pm_decode.msw=0x11;pm_decode.controls[0]=0x11;
+    pm_decode.segments=[data32,code32,data32,data32,data32,data32];
+    pm_decode.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
+    let mut pm_exec=image.clone();
+    pm_exec.real_mode=false;pm_exec.msw=0x11;pm_exec.controls[0]=0x11;
+    pm_exec.segments=[data32,exec_code32,data32,data32,data32,data32];
+    pm_exec.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
+    pm_exec.tables[0]=(0x27,0x500);
+    let mut pm_ram=ram.clone();
+    // GDT at 0500h: null, 08h 32-bit code, 10h 32-bit data, 18h 16-bit data, 20h ring-3 data.
+    for (i,desc) in [0u64,0x00cf_9a00_0000_ffff,0x00cf_9200_0000_ffff,0x0000_9200_0000_ffff,0x00cf_f200_0000_ffff].into_iter().enumerate(){
+        pm_ram.write_bytes(0x500+(i as u32)*8,&desc.to_le_bytes()).unwrap();
+    }
+    let mut code=dos.ram.clone();let at=code_base+0x100;
     let mut seed=0x2545_f491_4f6c_dd1du64;
     let mut next=||{seed^=seed<<13;seed^=seed>>7;seed^=seed<<17;seed};
     let mut checked=0;
+    for (decode_image,exec_image,base_ram) in [(&dos.image,&image,&ram),(&pm_decode,&pm_exec,&pm_ram)]{
     for prefix in [&[][..],&[0x66][..],&[0x67][..],&[0x26][..]]{
-        for opcode in 0..512u32{for modrm in [0x00u8,0x06,0x07,0x47,0x5e,0x87,0xc0,0xc3,0xd1,0xe9,0xf7]{
+        for opcode in 0..512u32{for modrm in [0x00u8,0x04,0x06,0x07,0x47,0x5e,0x87,0xc0,0xc3,0xd1,0xd8,0xe9,0xf7]{
             let mut bytes=prefix.to_vec();if opcode>=256{bytes.push(0x0f);}bytes.push(opcode as u8);bytes.push(modrm);
             bytes.extend_from_slice(&[0x10,0x01,0x22,0x00,0x05,0x00]);
             code.write_bytes(at,&bytes).unwrap();
-            let Ok(decoded)=dos.image.decode(&code,0x100)else{continue};
+            let Ok(decoded)=decode_image.decode(&code,0x100)else{continue};
             let Operation::Pil{program,dst,src,flow,address}=&decoded.operation else{continue};
             let Some(native)=decoded.native()else{continue};
             for _ in 0..4{
                 let mut cpu=crate::Cpu::default();
                 for r in &mut cpu.regs{*r=(next() as u32)&0x8000_03ff;}
-                cpu.regs[4]=0x200+((next() as u32)&0x1fe);
+                cpu.regs[4]=0x200+((next() as u32)&0x1fc);
                 cpu.eflags=0x2|((next() as u32)&0x0cd5);cpu.eip=0x100;
-                let mut ram_a=ram.clone();ram_a.write_bytes(0x300,&next().to_le_bytes()).unwrap();let mut ram_b=ram_a.clone();
-                let mut machine_a=image.segment_state();let mut machine_b=machine_a;
+                let mut ram_a=base_ram.clone();ram_a.write_bytes(0x300,&next().to_le_bytes()).unwrap();let mut ram_b=ram_a.clone();
+                let mut machine_a=exec_image.segment_state();let mut machine_b=machine_a;
                 let mut native_cpu=cpu.clone();
                 let got=(native.form)(&mut native_cpu.regs,&mut native_cpu.eflags,&mut native_cpu.undefined_flags,&mut native_cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,&mut ram_a,*address,&mut machine_a,&native.consts);
                 let mut lazy=crate::LazyFlags::None;
@@ -72,7 +91,8 @@ fn forms_agree_with_the_interpreter_on_full_state(){
             }
         }}
     }
-    assert!(checked>10_000,"only {checked} cases");
+    }
+    assert!(checked>20_000,"only {checked} cases");
 }
 
 fn load_with(bytes:&[u8],name:&str,mode:Mode)->dos::Loaded{
@@ -410,4 +430,113 @@ fn blocks_match_the_interpreter_in_paged_32_bit_protected_mode(){
         assert!(stored==sum(rounds)||stored==sum(rounds-1),"stored {stored:x} after {rounds} rounds");
     }
     assert!(b.blocks.blocks>1000,"blocks ran: {} entries",b.blocks.blocks);
+    if forms()>0{
+        assert_eq!(b.blocks.interpreted_instructions,0,"all paged 32-bit instructions use precompiled forms");
+        assert!(b.blocks.native_instructions>5000);
+        let mut out_req=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let req=dos::run_with_backend(booted(PAGED_32,Mode::Required),10_000,&mut out_req,None).unwrap();
+        assert_eq!(req.stop,Stop::Budget);
+        assert!(!req.loaded.image.real_mode&&req.loaded.image.paging);
+        assert_eq!(req.loaded.blocks.interpreted_instructions,0);
+    }
+}
+
+#[test]
+fn rom_blocks_match_the_interpreter_across_real_and_32_bit_protected_mode(){
+    // 64 KiB ROM at F0000h: reset at F000:FFF0 jumps to F000:0100, builds a
+    // GDT at 0000:0500 and a 32-bit RAM helper at 0000:0600, enters 32-bit
+    // protected mode at 08h:000F0160 (in ROM), calls the RAM helper and a ROM
+    // helper (PUSH/MOV EBP/LEA/ARPL/LSL/LEAVE/RET on a 32-bit stack) in a
+    // loop, then halts with IF=0.
+    let mut rom=vec![0xf4u8;0x10000];
+    rom[0xfff0..0xfff5].copy_from_slice(&[0xea,0x00,0x01,0x00,0xf0]); // jmp F000:0100
+    let setup:&[u8]=&[
+        0xfa,                                           // 0100 cli
+        0x31,0xc0,                                      // 0101 xor ax,ax
+        0x8e,0xd8,                                      // 0103 mov ds,ax
+        0x8e,0xc0,                                      // 0105 mov es,ax
+        // GDT at 0500h: null, 08h flat 32-bit code, 10h ring-0 data, 18h ring-3 data
+        0xbf,0x00,0x05,                                 // 0107 mov di,0500h
+        0x66,0x31,0xc0,                                 // 010a xor eax,eax
+        0x66,0xab,0x66,0xab,                            // 010d stosd; stosd
+        0x66,0xb8,0xff,0xff,0x00,0x00,0x66,0xab,        // 0111 dd 0000ffffh
+        0x66,0xb8,0x00,0x9a,0xcf,0x00,0x66,0xab,        // 0119 dd 00cf9a00h
+        0x66,0xb8,0xff,0xff,0x00,0x00,0x66,0xab,        // 0121 dd 0000ffffh
+        0x66,0xb8,0x00,0x92,0xcf,0x00,0x66,0xab,        // 0129 dd 00cf9200h
+        0x66,0xb8,0xff,0xff,0x00,0x00,0x66,0xab,        // 0131 dd 0000ffffh
+        0x66,0xb8,0x00,0xf2,0xcf,0x00,0x66,0xab,        // 0139 dd 00cff200h
+        // GDTR at 0530h: limit 1fh, base 00000500h
+        0xc7,0x06,0x30,0x05,0x1f,0x00,                  // 0141 mov word [0530h],1fh
+        0x66,0xc7,0x06,0x32,0x05,0x00,0x05,0x00,0x00,   // 0147 mov dword [0532h],500h
+        // Copy 9-byte 32-bit subroutine to 0600h:
+        // 55 (push ebp); 89 e5 (mov ebp,esp); 8d 44 48 05 (lea eax,[eax+ecx*2+5]); c9 (leave); c3 (ret)
+        0x66,0xc7,0x06,0x00,0x06,0x55,0x89,0xe5,0x8d,   // 0150
+        0x66,0xc7,0x06,0x04,0x06,0x44,0x48,0x05,0xc9,   // 0159
+        0xc6,0x06,0x08,0x06,0xc3,                       // 0162
+        0x0f,0x01,0x16,0x30,0x05,                       // 0167 lgdt [0530h]
+        0x0f,0x20,0xc0,                                 // 016c mov eax,cr0
+        0x0c,0x01,                                      // 016f or al,1
+        0x0f,0x22,0xc0,                                 // 0171 mov cr0,eax
+        0x66,0xea,0x80,0x01,0x0f,0x00,0x08,0x00,        // 0174 jmp dword 08h:000F0180h
+    ];
+    rom[0x0100..0x0100+setup.len()].copy_from_slice(setup);
+    let pm32:&[u8]=&[
+        0x66,0xb8,0x10,0x00,                            // F0180 mov ax,10h
+        0x8e,0xd8,0x8e,0xc0,0x8e,0xd0,                  // F0184 mov ds,ax; mov es,ax; mov ss,ax
+        0xbc,0x00,0x20,0x00,0x00,                       // F018a mov esp,2000h
+        0x31,0xc0,                                      // F018f xor eax,eax
+        0xb9,0x14,0x00,0x00,0x00,                       // F0191 mov ecx,20
+        0xe8,0x65,0x04,0xf1,0xff,                       // F0196 again: call 00000600h (disp = 0600 - F019B = FFF10465)
+        0xe8,0x09,0x00,0x00,0x00,                       // F019b call F01A9h
+        0xe2,0xf4,                                      // F01a0 loop again
+        0x89,0x05,0x00,0x07,0x00,0x00,                  // F01a2 mov [0700h],eax
+        0xf4,                                           // F01a8 hlt
+        // ROM helper at F01A9h: exercise ARPL and LSL in 32-bit protected mode
+        0x53,                                           // F01a9 push ebx
+        0x66,0xbb,0x18,0x00,                            // F01aa mov bx,18h (DPL=3 data, RPL=0)
+        0x66,0xba,0x1b,0x00,                            // F01ae mov dx,1bh (RPL=3)
+        0x63,0xd3,                                      // F01b2 arpl bx,dx (bx -> 1bh, ZF=1)
+        0x0f,0x03,0xd3,                                 // F01b4 lsl edx,ebx (edx -> ffffffffh)
+        0x29,0xd0,                                      // F01b7 sub eax,edx (eax += 1)
+        0x5b,                                           // F01b9 pop ebx
+        0xc3,                                           // F01ba ret
+    ];
+    rom[0x0180..0x0180+pm32.len()].copy_from_slice(pm32);
+
+    let make_rom=|mode:Mode|{
+        let mut p=dos::load(&[0x90],"ROM").unwrap();
+        let mut ram=crate::Ram::new(0x100000);
+        ram.write_bytes(0xf0000,&rom).unwrap();
+        ram.protect(0xf0000,rom.len()).unwrap();
+        p.ram=ram;p.rom_mode=true;p.blocks.rom=true;p.blocks.mode=Some(mode);
+        p.cpu.regs=[0;8];p.image.system=[(0,0);guest::SYSTEM_RANGES];
+        p.image.fetch_base=0;p.image.start=0;p.image.end=0x100000;
+        let selectors=[0,0xf000,0,0,0,0];
+        p.selectors=selectors;p.image.selectors=selectors;
+        p.image.segments=selectors.map(crate::address::SegmentCache::real_mode);
+        p.cpu.eip=0xfff0;p.cpu.eflags=0x0002;
+        p
+    };
+    let mut out_off=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let mut out_on=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let ref_run=dos::run_with_backend(make_rom(Mode::Off),10_000,&mut out_off,None).unwrap();
+    let on_run=dos::run_with_backend(make_rom(Mode::On),10_000,&mut out_on,None).unwrap();
+    assert!(matches!(ref_run.stop,Stop::Monitor(_)),"{:?}",ref_run.stop);
+    assert_eq!(on_run.stop,ref_run.stop);
+    assert_eq!(on_run.completed,ref_run.completed);
+    assert_eq!(on_run.instructions,ref_run.instructions);
+    assert_eq!(on_run.loaded.cpu,ref_run.loaded.cpu);
+    assert_eq!(on_run.loaded.image,ref_run.loaded.image);
+    assert!(on_run.loaded.ram.bytes()==ref_run.loaded.ram.bytes());
+    // 20 rounds: sum_{c=1..20} (2*c + 5 + 1) = 2*210 + 120 = 540.
+    assert_eq!(on_run.loaded.ram.load(0x700,crate::MemWidth::Dword).unwrap(),540);
+    assert!(on_run.loaded.blocks.blocks>20);
+    if forms()>0{
+        assert_eq!(on_run.loaded.blocks.interpreted_instructions,0);
+        let mut out_req=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let req_run=dos::run_with_backend(make_rom(Mode::Required),10_000,&mut out_req,None).unwrap();
+        assert_eq!(req_run.stop,ref_run.stop);
+        assert_eq!(req_run.loaded.cpu,ref_run.loaded.cpu);
+        assert_eq!(req_run.loaded.blocks.interpreted_instructions,0);
+    }
 }

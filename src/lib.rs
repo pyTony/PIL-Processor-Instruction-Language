@@ -31,13 +31,32 @@ mod inflate;
 mod native;
 mod mandelbrot;
 
-/// The machine the precompiled forms are enumerated in: Dine's real mode with
-/// a 16-bit stack and a two-byte program. Protected-mode and 32-bit-stack
-/// forms are not in the table yet; such instructions run in the interpreter.
+/// The machines the precompiled forms are enumerated in: 16-bit real mode,
+/// 32-bit protected mode with a 32-bit stack, 16-bit ring-3 protected mode,
+/// and real mode with a 32-bit stack.
 fn form_machines()->Result<Vec<(guest::Image,Ram)>,String>{
     let p=dos::load(&[0xcd,0x20],"FORMS.COM")?;
-    let mut image=p.image.clone();image.end=0xff00;
-    Ok(vec![(image,p.ram)])
+    let mut real16=p.image.clone();real16.end=0xff00;
+    let code_base=real16.segments[1].base;
+    let mut pm32=real16.clone();
+    pm32.real_mode=false;pm32.msw=0x11;pm32.controls[0]=0x11;
+    let code32=address::SegmentCache{base:code_base,limit:0xffff_ffff,access:address::SegmentAccess::Code{readable:true,conforming:false,big:true,dpl:0}};
+    let data32=address::SegmentCache{base:0,limit:0xffff_ffff,access:address::SegmentAccess::Data{writable:true,expand_down:false,big:true,dpl:0}};
+    pm32.segments=[data32,code32,data32,data32,data32,data32];
+    pm32.selectors=[0x10,0x08,0x10,0x10,0x10,0x10];
+    let mut pm16=pm32.clone();
+    let code16=address::SegmentCache{base:code_base,limit:0xffff,access:address::SegmentAccess::Code{readable:true,conforming:false,big:false,dpl:3}};
+    let data16=address::SegmentCache{base:0,limit:0xffff,access:address::SegmentAccess::Data{writable:true,expand_down:false,big:false,dpl:3}};
+    pm16.segments=[data16,code16,data16,data16,data16,data16];
+    pm16.selectors=[0x13,0x0b,0x13,0x13,0x13,0x13];
+    let mut real32_stack=real16.clone();
+    real32_stack.segments[2]=data32;
+    Ok(vec![
+        (real16,p.ram.clone()),
+        (pm32,p.ram.clone()),
+        (pm16,p.ram.clone()),
+        (real32_stack,p.ram),
+    ])
 }
 
 const CLI_HELP:&str = "PIL - Processor Instruction Language

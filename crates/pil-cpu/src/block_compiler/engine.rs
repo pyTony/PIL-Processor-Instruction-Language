@@ -78,6 +78,9 @@ pub struct Blocks {
     pending:BTreeMap<String,usize>,
     /// Overrides `PIL_PRECOMPILED` for this machine (tests and tools).
     pub mode:Option<crate::precompiled::Mode>,
+    /// Raw ROM execution (`--run-rom`): no DOS low-memory hooks or BIOS
+    /// interrupt stubs exist, so only video MMIO is excluded.
+    pub rom:bool,
     /// Block entries and instructions retired in blocks, for diagnostics.
     pub blocks:u64,
     pub instructions:u64,
@@ -93,7 +96,7 @@ pub struct Blocks {
     pub runs:u64,
     next_version:u64,
 }
-impl Clone for Blocks { fn clone(&self)->Self{Self::default()} }
+impl Clone for Blocks { fn clone(&self)->Self{Self{rom:self.rom,..Self::default()}} }
 
 fn window(image:&Image)->(u32,u32,u32,[(u32,u32);guest::SYSTEM_RANGES]){(image.fetch_base,image.start,image.end,image.system)}
 
@@ -111,8 +114,11 @@ pub fn answered_by_loop(bytes:&[u8])->bool{
 /// watches), video memory, the ROM/BIOS area with Dine's interrupt entries,
 /// and anything above 1 MiB. Otherwise, bus addresses (after paging): video
 /// memory and the ROM/BIOS area; Dine watches no return points in 16- or
-/// 32-bit protected-mode code.
-fn excluded(image:&Image,ram:&Ram,linear:u32)->bool{
+/// 32-bit protected-mode code. In raw ROM mode (`rom`), Dine installs no
+/// stubs or low-memory hooks, so only video MMIO (`A0000h..BFFFFh`) is
+/// excluded.
+fn excluded(image:&Image,ram:&Ram,linear:u32,rom:bool)->bool{
+    if rom{return ram.bus_address(linear,false).map_or(true,|bus|(0xa0000..0xc0000).contains(&bus));}
     if image.real_mode||image.segment_state().v86(){return !(0x1000..0xa0000).contains(&linear);}
     ram.bus_address(linear,false).map_or(true,|bus|(0xa0000..0x100000).contains(&bus))
 }
@@ -148,7 +154,7 @@ impl Blocks {
         self.map.clear();
     }
 
-    fn plan(cache:&mut DecodeCache,image:&Image,ram:&Ram,eip:u32,required:bool)->Option<Block>{
+    fn plan(cache:&mut DecodeCache,image:&Image,ram:&Ram,eip:u32,rom:bool,required:bool)->Option<Block>{
         let base=image.segments[1].base;
         let linear=base.checked_add(eip)?;
         // An IP past FFFFh wraps in a 16-bit code segment: a block ends there.
@@ -156,7 +162,7 @@ impl Blocks {
         let mut steps=Vec::new();let mut bytes=Vec::new();let mut ip=eip;
         while steps.len()<MAX_BLOCK_INSTRUCTIONS {
             let at=base.checked_add(ip)?;
-            if excluded(image,ram,at){break;}
+            if excluded(image,ram,at,rom){break;}
             let Ok(decoded)=cache.fetch(image,ram,ip)else{break};
             // With paging a block stays in one page, so one translation
             // covers its code (see Ram::watch_code).
@@ -245,7 +251,7 @@ impl Blocks {
         // none free the least recently planned one gives way.
         let mut from=from;let mut stale=slot;
         if self.slots.len()>=CAPACITY{self.clear();from=None;stale=None;}
-        let planned=Self::plan(cache,image,ram,eip,self.mode.unwrap_or_else(crate::precompiled::mode)==crate::precompiled::Mode::Required)?;
+        let planned=Self::plan(cache,image,ram,eip,self.rom,self.mode.unwrap_or_else(crate::precompiled::mode)==crate::precompiled::Mode::Required)?;
         let mut variants=self.map.get(&linear).copied().unwrap_or([NONE;VARIANTS]);
         let reuse=stale.or_else(||variants.iter().copied().all(|v|v!=NONE).then(||variants[VARIANTS-1]));
         let i=match reuse{

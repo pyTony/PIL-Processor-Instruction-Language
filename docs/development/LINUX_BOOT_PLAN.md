@@ -148,15 +148,20 @@ about 1.5 billion guest steps (10.5 minutes headless).
   real and V86 mode the old linear exclusions stay; elsewhere video memory
   and the ROM/BIOS area (by bus address) never join a block.
   MCC Interim to its menu: about 80 s -> 11 s (200 million steps).
-- **Not done, forms:** the precompiled table still enumerates the real-mode
-  decoder. A 32-bit protected-mode instruction runs its native form when
-  its PIL program is one of those forms (they take the segment state at
-  run time), else the interpreter inside the block. Enumerating a 32-bit
-  default code segment is the next step.
-- **Checks:** a paged 32-bit boot-sector fixture against the interpreter
-  per slice, with a remapped page and code rewritten through an alias page
-  (tests/unit/precompiled.rs); DOS/4GW Doom and the Linux boot as
-  workloads. test386 with blocks against without is not done.
+- **Done (25 November 2026), forms:** `form_machines` enumerates 16-bit
+  real mode, 32-bit protected mode with a 32-bit stack, 16-bit ring-3
+  protected mode and real mode with a 32-bit stack, plus `[ESP]` SIB
+  addressing (`5,369` unique forms in `crates/pil-cpu/src/precompiled/forms.rs`).
+  Raw ROM runs (`--run-rom`) also execute blocks across RAM and ROM,
+  excluding only video MMIO (`A0000h..BFFFFh`).
+- **Checks:** the paged 32-bit boot-sector fixture in
+  `tests/unit/precompiled.rs` runs slice by slice against the interpreter
+  with zero interpreter fallbacks (`Mode::Required`); a real-to-protected
+  ROM fixture checks RAM+ROM blocks (`CALL`/`LEAVE`/`ARPL`/`LSL`);
+  `test386` finishes all 33 POST stages (`76,115,423` instructions) with
+  bit-for-bit identical output and counts with blocks on vs `PIL_PRECOMPILED=off`
+  (33.8 s -> 6.1 s); MCC Interim 0.99 boots to its menu (`200M` steps) in
+  `PIL_PRECOMPILED=required` with zero fallbacks (64.1 s -> 9.6 s).
 
 ## After the plan: comparison software (24 November 2026)
 MCC 1.0+ installs gcc 2.5.8 from tar diskettes and compiles
