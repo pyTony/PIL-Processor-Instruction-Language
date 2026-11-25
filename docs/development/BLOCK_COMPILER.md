@@ -118,9 +118,11 @@ mode and real mode with a 32-bit stack (`5,369` forms, 26.4 MB).
 reaches an address, Dine plans a block there: straight-line PIL instructions
 through the decode cache, at most 16, ending after any control transfer,
 store, segment/control/table write, interrupt shadow or write of TF, IF,
-IOPL, NT or VM. Instructions the loop answers itself never join a block
-(port I/O, INS/OUTS, 80387 escapes and WAIT, INT n, HLT), nor does code
-outside 0400h-9FFFFh. A block runs only with no interrupt shadow and TF
+IOPL, NT or VM, plus 80387 escapes and WAIT (which end a block when they
+store to memory, and exit the block immediately on `ERROR#`, `BUSY#`, `#NM`
+or a memory fault). Instructions the loop answers itself never join a block
+(port I/O, INS/OUTS, INT n, HLT), nor does real-mode code outside
+1000h-9FFFFh (or video/BIOS bus addresses in protected mode). A block runs only with no interrupt shadow and TF
 clear, when the segment state and fetch window equal the planned ones and
 its bytes are unchanged (code stamp, else a byte compare); otherwise it
 is planned again. The DOS loop runs one block per iteration, never past a

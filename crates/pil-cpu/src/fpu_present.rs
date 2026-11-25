@@ -40,13 +40,30 @@ impl PresentFpu {
             msw & 0x0c != 0
         };
         if trap { return Outcome::NotAvailable; }
-        if self.busy { return Outcome::Busy; }
-        if instruction.opcode == 0x9b { return Outcome::Completed; }
+        if instruction.opcode == 0x9b {
+            return if self.busy { Outcome::Busy } else { Outcome::Completed };
+        }
 
         let Some(modrm) = instruction.modrm else { return Outcome::Unsupported; };
         let Ok(operation) = classify(instruction.opcode, modrm) else {
             return Outcome::Unsupported;
         };
+        // The 386 does not sample BUSY# on the no-wait control/store-status
+        // forms (FNINIT, FNCLEX, FNSTSW, FNSTCW, FNSTENV, FNSAVE), so an IRQ13
+        // handler can clear or save 387 status before writing port F0h.
+        let no_wait = matches!(
+            operation,
+            Operation::Finit
+                | Operation::Fnclex
+                | Operation::FnstswAx
+                | Operation::FnstswM16
+                | Operation::Fnstcw
+                | Operation::Fnstenv
+                | Operation::Fnsave
+        );
+        if self.busy && !no_wait {
+            return Outcome::Busy;
+        }
         let one = Extended80::from_bits(0x8000_0000_0000_0000, 0x3fff);
         let result: Result<(), StackError> = match operation {
             Operation::Finit => { self.state.finit(); Ok(()) },
@@ -68,7 +85,7 @@ impl PresentFpu {
                 // Only the sign bit changes: no rounding, TOP and tags stay,
                 // and signed zero is kept. An empty ST(0) changes nothing.
                 let Some(mut value) = self.state.st(0) else {
-                    return Outcome::StackFault(StackError::Underflow);
+                    return self.stack_fault(StackError::Underflow);
                 };
                 if operation == Operation::Fabs {
                     value.sign_exponent &= 0x7fff;
@@ -81,23 +98,28 @@ impl PresentFpu {
             },
             Operation::Fsin | Operation::Fcos => {
                 let Some(x) = self.state.st(0) else {
-                    return Outcome::StackFault(StackError::Underflow);
+                    return self.stack_fault(StackError::Underflow);
                 };
-                let Ok(computed) = math::sin_cos(x, matches!(operation, Operation::Fcos), self.state.control) else {
-                    return Outcome::Unsupported;
+                let computed = match math::sin_cos(x, matches!(operation, Operation::Fcos), self.state.control) {
+                    Ok(c) => c,
+                    Err(math::MathError::InvalidOperation) => return self.invalid_operation(),
+                    Err(math::MathError::Denormal) => return self.denormal_operand(),
+                    Err(_) => return Outcome::Unsupported,
                 };
-                if computed.inexact && self.state.control & 0x0020 == 0 {
+                let inexact_unmasked = computed.inexact && self.state.control & 0x0020 == 0;
+                if inexact_unmasked && !self.error_irq {
                     return Outcome::Unsupported;
                 }
                 self.state.store(0, computed.value);
                 self.state.status &= !0x0600;
                 if computed.rounded_up { self.state.status |= 0x0200; }
                 if computed.inexact { self.state.status |= 0x0020; }
+                if inexact_unmasked { return self.signal_error(); }
                 return Outcome::Completed;
             },
             Operation::F2xm1 => {
                 let Some(x) = self.state.st(0) else {
-                    return Outcome::StackFault(StackError::Underflow);
+                    return self.stack_fault(StackError::Underflow);
                 };
                 // 80387 specifies the result of F2XM1 outside [-1,1] as
                 // undefined, not as an invalid opcode. On current x87 hardware
@@ -115,32 +137,42 @@ impl PresentFpu {
                     self.state.status |= 0x0020;
                     return Outcome::Completed;
                 }
-                let Ok(computed) = math::f2xm1(x, self.state.control) else {
-                    return Outcome::Unsupported;
+                let computed = match math::f2xm1(x, self.state.control) {
+                    Ok(c) => c,
+                    Err(math::MathError::InvalidOperation) => return self.invalid_operation(),
+                    Err(math::MathError::Denormal) => return self.denormal_operand(),
+                    Err(_) => return Outcome::Unsupported,
                 };
-                if computed.inexact && self.state.control & 0x0020 == 0 {
+                let inexact_unmasked = computed.inexact && self.state.control & 0x0020 == 0;
+                if inexact_unmasked && !self.error_irq {
                     return Outcome::Unsupported;
                 }
                 self.state.store(0, computed.value);
                 self.state.status &= !0x0200;
                 if computed.rounded_up { self.state.status |= 0x0200; }
                 if computed.inexact { self.state.status |= 0x0020; }
+                if inexact_unmasked { return self.signal_error(); }
                 return Outcome::Completed;
             },
             Operation::Frndint => {
                 let Some(x) = self.state.st(0) else {
-                    return Outcome::StackFault(StackError::Underflow);
+                    return self.stack_fault(StackError::Underflow);
                 };
-                let Ok(computed) = math::frndint(x, self.state.control) else {
-                    return Outcome::Unsupported;
+                let computed = match math::frndint(x, self.state.control) {
+                    Ok(c) => c,
+                    Err(math::MathError::InvalidOperation) => return self.invalid_operation(),
+                    Err(math::MathError::Denormal) => return self.denormal_operand(),
+                    Err(_) => return Outcome::Unsupported,
                 };
-                if computed.inexact && self.state.control & 0x0020 == 0 {
+                let inexact_unmasked = computed.inexact && self.state.control & 0x0020 == 0;
+                if inexact_unmasked && !self.error_irq {
                     return Outcome::Unsupported;
                 }
                 self.state.store(0, computed.value);
                 self.state.status &= !0x0200;
                 if computed.rounded_up { self.state.status |= 0x0200; }
                 if computed.inexact { self.state.status |= 0x0020; }
+                if inexact_unmasked { return self.signal_error(); }
                 return Outcome::Completed;
             },
             Operation::Fxam => {
@@ -172,12 +204,16 @@ impl PresentFpu {
             Operation::Fldz => self.state.push(Extended80::default()),
             Operation::Fyl2xp1 => {
                 let (Some(x), Some(y)) = (self.state.st(0), self.state.st(1)) else {
-                    return Outcome::StackFault(StackError::Underflow);
+                    return self.stack_fault(StackError::Underflow);
                 };
-                let Ok(computed) = math::fyl2xp1(y, x, self.state.control) else {
-                    return Outcome::Unsupported;
+                let computed = match math::fyl2xp1(y, x, self.state.control) {
+                    Ok(c) => c,
+                    Err(math::MathError::InvalidOperation) => return self.invalid_operation(),
+                    Err(math::MathError::Denormal) => return self.denormal_operand(),
+                    Err(_) => return Outcome::Unsupported,
                 };
-                if computed.inexact && self.state.control & 0x0020 == 0 {
+                let inexact_unmasked = computed.inexact && self.state.control & 0x0020 == 0;
+                if inexact_unmasked && !self.error_irq {
                     return Outcome::Unsupported;
                 }
                 self.state.store(1, computed.value);
@@ -185,6 +221,7 @@ impl PresentFpu {
                 self.state.status &= !0x0200;
                 if computed.rounded_up { self.state.status |= 0x0200; }
                 if computed.inexact { self.state.status |= 0x0020; }
+                if inexact_unmasked { return self.signal_error(); }
                 return Outcome::Completed;
             },
             Operation::FldSt(i) => self.state.st(usize::from(i))
@@ -204,8 +241,8 @@ impl PresentFpu {
                 return self.execute_arithmetic(kind, index, pop),
             Operation::ArithmeticTo { kind, index } => {
                 let dst = usize::from(index);
-                let Some(lhs) = self.state.st(dst) else { return Outcome::StackFault(StackError::Underflow); };
-                let Some(rhs) = self.state.st(0) else { return Outcome::StackFault(StackError::Underflow); };
+                let Some(lhs) = self.state.st(dst) else { return self.stack_fault(StackError::Underflow); };
+                let Some(rhs) = self.state.st(0) else { return self.stack_fault(StackError::Underflow); };
                 return self.commit_arithmetic(kind, lhs, rhs, dst, false);
             },
             Operation::MemoryArithmetic { kind, bytes } =>
@@ -221,19 +258,20 @@ impl PresentFpu {
             Operation::UnorderedComparePop2 =>
                 return self.compare_unordered_register(1, 2),
             Operation::Ftst => {
-                let Some(value)=self.state.st(0) else{return Outcome::StackFault(StackError::Underflow);};
+                let Some(value)=self.state.st(0) else{return self.stack_fault(StackError::Underflow);};
                 return self.commit_compare(value,Extended80::default(),0);
             },
             Operation::Fxtract => {
-                let Some(value)=self.state.st(0) else{return Outcome::StackFault(StackError::Underflow);};
+                let Some(value)=self.state.st(0) else{return self.stack_fault(StackError::Underflow);};
                 let exponent=value.sign_exponent&0x7fff;
-                // Zero needs divide-by-zero exception handling; denormals
-                // and exceptional operands remain outside this finite subset.
-                if exponent==0||exponent==0x7fff||value.significand>>63==0{return Outcome::Unsupported;}
+                if exponent==0&&value.significand==0{return self.zero_divide();}
+                if exponent==0{return self.denormal_operand();}
+                if Self::is_snan_or_unnormal(value){return self.invalid_operation();}
+                if exponent==0x7fff{return Outcome::Unsupported;}
                 let significand=Extended80::from_bits(value.significand,(value.sign_exponent&0x8000)|0x3fff);
                 let exponent=convert::from_i32(i32::from(exponent)-16383);
                 let mut next=self.state.clone();next.store(0,exponent);
-                if let Err(e)=next.push(significand){return Outcome::StackFault(e);}
+                if let Err(e)=next.push(significand){return self.stack_fault(e);}
                 next.status&=!0x0200;self.state=next;return Outcome::Completed;
             },
             Operation::ComparePop2 =>
@@ -248,7 +286,7 @@ impl PresentFpu {
         };
         match result {
             Ok(()) => Outcome::Completed,
-            Err(error) => Outcome::StackFault(error),
+            Err(error) => self.stack_fault(error),
         }
     }
 
@@ -414,12 +452,69 @@ impl PresentFpu {
         let dst = if pop { usize::from(index) } else { 0 };
         let src = if pop { 0 } else { usize::from(index) };
         let Some(lhs) = self.state.st(dst) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         let Some(rhs) = self.state.st(src) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         self.commit_arithmetic(kind, lhs, rhs, dst, pop)
+    }
+
+    fn is_snan_or_unnormal(value: Extended80) -> bool {
+        let exp = value.sign_exponent & 0x7fff;
+        if exp == 0 {
+            return false;
+        }
+        if exp < 0x7fff {
+            return value.significand & (1u64 << 63) == 0;
+        }
+        if value.significand & (1u64 << 63) == 0 {
+            return true;
+        }
+        value.significand & (1u64 << 62) == 0 && value.significand & ((1u64 << 62) - 1) != 0
+    }
+
+    /// Read an IEEE binary32 or binary64 memory operand, raising unmasked DE
+    /// on subnormals and IE on SNaNs (or any NaN for ordered comparisons).
+    fn read_ieee_memory(&mut self, bytes: u32, linear: u32, ordered_compare: bool,
+                        ram: &Ram) -> Result<Extended80, Outcome> {
+        let Ok(low) = ram.load(linear, MemWidth::Dword) else {
+            return Err(Outcome::MemoryFault);
+        };
+        if bytes == 4 {
+            let exp = low & 0x7f80_0000;
+            let frac = low & 0x007f_ffff;
+            if exp == 0 && frac != 0 && self.error_irq && self.state.control & 0x0002 == 0 {
+                return Err(self.denormal_operand());
+            }
+            if exp == 0x7f80_0000 && frac != 0 {
+                if ordered_compare || frac & 0x0040_0000 == 0 {
+                    return Err(self.invalid_operation());
+                }
+                return Err(Outcome::Unsupported);
+            }
+            convert::from_f32_bits(low).map_err(|_| Outcome::Unsupported)
+        } else {
+            let Some(high) = linear.checked_add(4) else {
+                return Err(Outcome::MemoryFault);
+            };
+            let Ok(upper) = ram.load(high, MemWidth::Dword) else {
+                return Err(Outcome::MemoryFault);
+            };
+            let bits = u64::from(low) | (u64::from(upper) << 32);
+            let exp = bits & 0x7ff0_0000_0000_0000;
+            let frac = bits & 0x000f_ffff_ffff_ffff;
+            if exp == 0 && frac != 0 && self.error_irq && self.state.control & 0x0002 == 0 {
+                return Err(self.denormal_operand());
+            }
+            if exp == 0x7ff0_0000_0000_0000 && frac != 0 {
+                if ordered_compare || frac & 0x0008_0000_0000_0000 == 0 {
+                    return Err(self.invalid_operation());
+                }
+                return Err(Outcome::Unsupported);
+            }
+            convert::from_f64_bits(bits).map_err(|_| Outcome::Unsupported)
+        }
     }
 
     /// Memory arithmetic uses the same effective-address and segment checks
@@ -429,7 +524,7 @@ impl PresentFpu {
                                  instruction: &Instruction, cpu: &Cpu,
                                  ram: &mut Ram, image: &Image) -> Outcome {
         let Some(lhs) = self.state.st(0) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         let Ok((offset, context)) = address::resolve(instruction, cpu, image) else {
             return Outcome::MemoryFault;
@@ -437,21 +532,10 @@ impl PresentFpu {
         let Ok(linear) = context.translate_span(u64::from(offset), bytes, false, cpu.eip) else {
             return Outcome::MemoryFault;
         };
-        let Ok(low) = ram.load(linear, MemWidth::Dword) else {
-            return Outcome::MemoryFault;
+        let rhs = match self.read_ieee_memory(bytes, linear, false, ram) {
+            Ok(v) => v,
+            Err(stop) => return stop,
         };
-        let rhs = if bytes == 4 {
-            convert::from_f32_bits(low)
-        } else {
-            let Some(high) = linear.checked_add(4) else {
-                return Outcome::MemoryFault;
-            };
-            let Ok(upper) = ram.load(high, MemWidth::Dword) else {
-                return Outcome::MemoryFault;
-            };
-            convert::from_f64_bits(u64::from(low) | (u64::from(upper) << 32))
-        };
-        let Ok(rhs) = rhs else { return Outcome::Unsupported; };
         self.commit_arithmetic(kind, lhs, rhs, 0, false)
     }
 
@@ -481,7 +565,7 @@ impl PresentFpu {
                                          instruction:&Instruction,cpu:&Cpu,
                                          ram:&Ram,image:&Image)->Outcome {
         let Some(lhs)=self.state.st(0) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         let rhs=match Self::integer_memory_operand(bytes,instruction,cpu,ram,image){
             Ok(value)=>value,
@@ -497,7 +581,7 @@ impl PresentFpu {
                               instruction:&Instruction,cpu:&Cpu,
                               ram:&Ram,image:&Image)->Outcome {
         let Some(lhs)=self.state.st(0) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         let rhs=match Self::integer_memory_operand(bytes,instruction,cpu,ram,image){
             Ok(value)=>value,
@@ -506,15 +590,41 @@ impl PresentFpu {
         self.commit_compare(lhs,rhs,u8::from(pop))
     }
 
-    /// Atomic retirement shared by register and memory arithmetic. An
-    /// unmasked ZE leaves the destination and the stack as they were (a
-    /// pre-computation exception); an unmasked PE stores the rounded result
-    /// and pops. Either sets ES and B and signals ERROR# (IRQ13 on an AT);
-    /// without that wiring it stops as unsupported.
+    /// Atomic retirement shared by register and memory arithmetic. Pre-
+    /// computation exceptions (IE, DE, ZE) leave the destination and stack as
+    /// they were; post-computation exceptions (OE, UE with +/-24576 exponent
+    /// bias adjustment, and PE) store the rounded result and pop. With
+    /// `error_irq` any unmasked exception sets ES and B and signals ERROR#
+    /// (IRQ13 on an AT); without that wiring it stops as unsupported.
     fn commit_arithmetic(&mut self, kind: Arithmetic, lhs: Extended80,
                          rhs: Extended80, dst: usize, pop: bool) -> Outcome {
-        let Ok(computed) = math::calculate(kind, lhs, rhs, self.state.control) else {
-            return Outcome::Unsupported;
+        let computed = match math::calculate(kind, lhs, rhs, self.state.control) {
+            Ok(c) => c,
+            Err(math::MathError::InvalidOperation) => return self.invalid_operation(),
+            Err(math::MathError::Denormal) => return self.denormal_operand(),
+            Err(math::MathError::Overflow { value, inexact, rounded_up }) => {
+                if !self.error_irq || self.state.control & 0x0008 != 0 {
+                    return Outcome::Unsupported;
+                }
+                self.state.store(dst, value);
+                if pop { self.state.pop().expect("checked arithmetic ST(0)"); }
+                self.state.status &= !0x0200;
+                if rounded_up { self.state.status |= 0x0200; }
+                self.state.status |= 0x0008 | if inexact { 0x0020 } else { 0 };
+                return self.signal_error();
+            }
+            Err(math::MathError::Underflow { value, inexact, rounded_up }) => {
+                if !self.error_irq || self.state.control & 0x0010 != 0 {
+                    return Outcome::Unsupported;
+                }
+                self.state.store(dst, value);
+                if pop { self.state.pop().expect("checked arithmetic ST(0)"); }
+                self.state.status &= !0x0200;
+                if rounded_up { self.state.status |= 0x0200; }
+                self.state.status |= 0x0010 | if inexact { 0x0020 } else { 0 };
+                return self.signal_error();
+            }
+            Err(math::MathError::Unsupported) => return Outcome::Unsupported,
         };
         let zero_unmasked = computed.zero_divide && self.state.control & 0x0004 == 0;
         let inexact_unmasked = computed.inexact && self.state.control & 0x0020 == 0;
@@ -522,7 +632,7 @@ impl PresentFpu {
             return Outcome::Unsupported;
         }
         if zero_unmasked {
-            self.state.status |= 0x0004;
+            self.state.status = (self.state.status & !0x0200) | 0x0004;
             return self.signal_error();
         }
         self.state.store(dst, computed.value);
@@ -534,6 +644,39 @@ impl PresentFpu {
         if computed.inexact { self.state.status |= 0x0020; }
         if inexact_unmasked { return self.signal_error(); }
         Outcome::Completed
+    }
+
+    fn stack_fault(&mut self, err: StackError) -> Outcome {
+        if self.error_irq && self.state.control & 0x0001 == 0 {
+            self.state.status = (self.state.status & !0x0200) | 0x0041
+                | if err == StackError::Overflow { 0x0200 } else { 0 };
+            return self.signal_error();
+        }
+        Outcome::StackFault(err)
+    }
+
+    fn invalid_operation(&mut self) -> Outcome {
+        if self.error_irq && self.state.control & 0x0001 == 0 {
+            self.state.status = (self.state.status & !0x0200) | 0x0001;
+            return self.signal_error();
+        }
+        Outcome::Unsupported
+    }
+
+    fn denormal_operand(&mut self) -> Outcome {
+        if self.error_irq && self.state.control & 0x0002 == 0 {
+            self.state.status = (self.state.status & !0x0200) | 0x0002;
+            return self.signal_error();
+        }
+        Outcome::Unsupported
+    }
+
+    fn zero_divide(&mut self) -> Outcome {
+        if self.error_irq && self.state.control & 0x0004 == 0 {
+            self.state.status = (self.state.status & !0x0200) | 0x0004;
+            return self.signal_error();
+        }
+        Outcome::Unsupported
     }
 
     /// An unmasked exception: the error summary (ES) and busy (B) bits go
@@ -549,8 +692,11 @@ impl PresentFpu {
     /// Never change condition codes or TOP for missing operands/NaNs.
     fn commit_compare(&mut self, lhs:Extended80, rhs:Extended80,
                       pops:u8) -> Outcome {
-        let Ok(order)=math::compare(lhs,rhs) else {
-            return Outcome::Unsupported;
+        let order = match math::compare(lhs, rhs) {
+            Ok(o) => o,
+            Err(math::MathError::InvalidOperation) => return self.invalid_operation(),
+            Err(math::MathError::Denormal) => return self.denormal_operand(),
+            Err(_) => return Outcome::Unsupported,
         };
         self.state.status &= !0x4700;
         match order {
@@ -569,22 +715,16 @@ impl PresentFpu {
     /// remain unsupported rather than silently changing x87 state.
     fn compare_unordered_register(&mut self, index:u8, pops:u8) -> Outcome {
         let (Some(lhs),Some(rhs))=(self.state.st(0),self.state.st(usize::from(index))) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
+        if Self::is_snan_or_unnormal(lhs)||Self::is_snan_or_unnormal(rhs){
+            return self.invalid_operation();
+        }
         let quiet_nan=|x:Extended80| {
             x.sign_exponent & 0x7fff == 0x7fff &&
             x.significand & (3u64<<62) == (3u64<<62)
         };
         if quiet_nan(lhs)||quiet_nan(rhs){
-            // A signaling NaN elsewhere still needs an invalid-operation
-            // exception; do not suppress it merely because one operand is QNaN.
-            let signaling_nan=|x:Extended80| {
-                x.sign_exponent & 0x7fff == 0x7fff &&
-                x.significand & (1u64<<63)!=0 &&
-                x.significand & (1u64<<62)==0 &&
-                x.significand & ((1u64<<62)-1)!=0
-            };
-            if signaling_nan(lhs)||signaling_nan(rhs){return Outcome::Unsupported;}
             self.state.status=(self.state.status&!0x4700)|0x4500;
             for _ in 0..pops {self.state.pop().expect("FUCOMP/FUCOMPP checked ST(0) and ST(i)");}
             return Outcome::Completed;
@@ -594,10 +734,10 @@ impl PresentFpu {
 
     fn compare_register(&mut self, index:u8, pops:u8) -> Outcome {
         let Some(lhs)=self.state.st(0) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         let Some(rhs)=self.state.st(usize::from(index)) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         self.commit_compare(lhs,rhs,pops)
     }
@@ -606,7 +746,7 @@ impl PresentFpu {
                       instruction:&Instruction, cpu:&Cpu,
                       ram:&mut Ram, image:&Image)->Outcome {
         let Some(lhs)=self.state.st(0) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         let Ok((offset,context))=address::resolve(instruction,cpu,image) else {
             return Outcome::MemoryFault;
@@ -614,21 +754,10 @@ impl PresentFpu {
         let Ok(linear)=context.translate_span(u64::from(offset),bytes,false,cpu.eip) else {
             return Outcome::MemoryFault;
         };
-        let Ok(low)=ram.load(linear,MemWidth::Dword) else {
-            return Outcome::MemoryFault;
+        let rhs=match self.read_ieee_memory(bytes,linear,true,ram){
+            Ok(v)=>v,
+            Err(stop)=>return stop,
         };
-        let rhs=if bytes==4{
-            convert::from_f32_bits(low)
-        }else{
-            let Some(high)=linear.checked_add(4) else {
-                return Outcome::MemoryFault;
-            };
-            let Ok(upper)=ram.load(high,MemWidth::Dword) else {
-                return Outcome::MemoryFault;
-            };
-            convert::from_f64_bits(u64::from(low)|(u64::from(upper)<<32))
-        };
-        let Ok(rhs)=rhs else {return Outcome::Unsupported;};
         self.commit_compare(lhs,rhs,u8::from(pop))
     }
 
@@ -657,7 +786,7 @@ impl PresentFpu {
             let value=convert::from_i32(i32::from(raw as i16));
             return match self.state.push(value) {
                 Ok(())=>Outcome::Completed,
-                Err(err)=>Outcome::StackFault(err),
+                Err(err)=>self.stack_fault(err),
             };
         }
         let Some(high)=linear.checked_add(4) else {return Outcome::MemoryFault;};
@@ -681,31 +810,50 @@ impl PresentFpu {
                 if !supported_m80(value){return Outcome::Unsupported;}
                 return match self.state.push(value) {
                     Ok(())=>Outcome::Completed,
-                    Err(e)=>Outcome::StackFault(e),
+                    Err(e)=>self.stack_fault(e),
                 };
             }
             let Some(value)=self.state.st(0) else {
-                return Outcome::StackFault(StackError::Underflow);
+                return self.stack_fault(StackError::Underflow);
             };
-            if !supported_m80(value){return Outcome::Unsupported;}
-            let (raw,inexact,rounded_up)=if matches!(operation,Operation::FbstpM80) {
-                let Ok(res)=convert::to_bcd80(value,self.state.control) else {
-                    return Outcome::Unsupported;
-                };
-                if res.1 && self.state.control & 0x0020 == 0 {
-                    return Outcome::Unsupported;
-                }
-                res
-            } else {
-                (value.to_le_bytes(),false,false)
-            };
-            // Validate every byte of the 10-byte destination before the
-            // first write, so protection failures never pop ST(0).
+            // Validate every byte of the 10-byte destination before numeric
+            // exceptions or writes, so protection failures take precedence.
             for i in 0..10u32 {
                 if ram.check_write(linear+i,MemWidth::Byte).is_err() {
                     return Outcome::MemoryFault;
                 }
             }
+            if matches!(operation,Operation::FbstpM80) {
+                if (value.sign_exponent&0x7fff)==0 && value.significand!=0 {
+                    return self.denormal_operand();
+                }
+                if (self.state.control&0x0300)==0x0100 {
+                    return Outcome::Unsupported;
+                }
+                let Ok((raw,inexact,rounded_up))=convert::to_bcd80(value,self.state.control) else {
+                    return self.invalid_operation();
+                };
+                let inexact_unmasked=inexact && self.state.control & 0x0020 == 0;
+                if inexact_unmasked && !self.error_irq {
+                    return Outcome::Unsupported;
+                }
+                let lo=u32::from_le_bytes([raw[0],raw[1],raw[2],raw[3]]);
+                let hi=u32::from_le_bytes([raw[4],raw[5],raw[6],raw[7]]);
+                let ex=u16::from_le_bytes([raw[8],raw[9]]);
+                if ram.store(linear,MemWidth::Dword,lo).is_err()
+                    ||ram.store(high,MemWidth::Dword,hi).is_err()
+                    ||ram.store(top,MemWidth::Word,u32::from(ex)).is_err() {
+                    return Outcome::MemoryFault;
+                }
+                self.state.status &= !0x0200;
+                if rounded_up { self.state.status |= 0x0200; }
+                if inexact { self.state.status |= 0x0020; }
+                self.state.pop().expect("FBSTP m80 checked ST(0)");
+                if inexact_unmasked { return self.signal_error(); }
+                return Outcome::Completed;
+            }
+            if !supported_m80(value){return Outcome::Unsupported;}
+            let raw=value.to_le_bytes();
             let lo=u32::from_le_bytes([raw[0],raw[1],raw[2],raw[3]]);
             let hi=u32::from_le_bytes([raw[4],raw[5],raw[6],raw[7]]);
             let ex=u16::from_le_bytes([raw[8],raw[9]]);
@@ -714,60 +862,67 @@ impl PresentFpu {
                 ||ram.store(top,MemWidth::Word,u32::from(ex)).is_err() {
                 return Outcome::MemoryFault;
             }
-            if matches!(operation,Operation::FbstpM80) {
-                self.state.status &= !0x0200;
-                if rounded_up { self.state.status |= 0x0200; }
-                if inexact { self.state.status |= 0x0020; }
-            }
             self.state.pop().expect("FSTP m80 checked ST(0)");
             return Outcome::Completed;
         }
         if !write {
-            let Ok(low)=ram.load(linear,MemWidth::Dword) else {
-                return Outcome::MemoryFault;
-            };
-            let converted=if matches!(operation,Operation::FildM32) {
-                Ok(convert::from_i32(low as i32))
-            }else if bytes==4 {
-                convert::from_f32_bits(low)
-            }else{
+            if matches!(operation,Operation::FildM32) {
+                let Ok(low)=ram.load(linear,MemWidth::Dword) else {
+                    return Outcome::MemoryFault;
+                };
+                return match self.state.push(convert::from_i32(low as i32)) {
+                    Ok(())=>Outcome::Completed,
+                    Err(err)=>self.stack_fault(err),
+                };
+            }
+            if matches!(operation,Operation::FildM64) {
+                let Ok(low)=ram.load(linear,MemWidth::Dword) else {
+                    return Outcome::MemoryFault;
+                };
                 let Ok(upper)=ram.load(high,MemWidth::Dword) else {
                     return Outcome::MemoryFault;
                 };
                 let bits = u64::from(low)|(u64::from(upper)<<32);
-                if matches!(operation,Operation::FildM64) {
-                    Ok(convert::from_i64(bits as i64))
-                } else {
-                    convert::from_f64_bits(bits)
-                }
-            };
-            return match converted {
-                Ok(value)=>match self.state.push(value){
+                return match self.state.push(convert::from_i64(bits as i64)) {
                     Ok(())=>Outcome::Completed,
-                    Err(err)=>Outcome::StackFault(err),
-                },
-                Err(_)=>Outcome::Unsupported,
+                    Err(err)=>self.stack_fault(err),
+                };
+            }
+            let value=match self.read_ieee_memory(bytes,linear,false,ram){
+                Ok(v)=>v,
+                Err(stop)=>return stop,
+            };
+            return match self.state.push(value){
+                Ok(())=>Outcome::Completed,
+                Err(err)=>self.stack_fault(err),
             };
         }
         let Some(value)=self.state.st(0) else {
-            return Outcome::StackFault(StackError::Underflow);
+            return self.stack_fault(StackError::Underflow);
         };
         if matches!(operation,Operation::FistpM16|Operation::FistpM32|Operation::FistpM64) {
-            let Ok((ival,inexact,rounded_up))=convert::to_i64(value,self.state.control) else {
-                return Outcome::Unsupported;
-            };
-            if inexact && self.state.control & 0x0020 == 0 {
-                return Outcome::Unsupported;
-            }
-            // A narrower FISTP must fit the signed destination. Out-of-range
-            // values require x87 invalid-operation handling, not a truncated write.
-            if (bytes==2 && i16::try_from(ival).is_err()) || (bytes==4 && i32::try_from(ival).is_err()) {
-                return Outcome::Unsupported;
-            }
             for i in 0..bytes {
                 if ram.check_write(linear+i,MemWidth::Byte).is_err() {
                     return Outcome::MemoryFault;
                 }
+            }
+            if (value.sign_exponent&0x7fff)==0 && value.significand!=0 {
+                return self.denormal_operand();
+            }
+            if (self.state.control&0x0300)==0x0100 {
+                return Outcome::Unsupported;
+            }
+            let Ok((ival,inexact,rounded_up))=convert::to_i64(value,self.state.control) else {
+                return self.invalid_operation();
+            };
+            // A narrower FISTP must fit the signed destination. Out-of-range
+            // values signal invalid-operation without writing or popping.
+            if (bytes==2 && i16::try_from(ival).is_err()) || (bytes==4 && i32::try_from(ival).is_err()) {
+                return self.invalid_operation();
+            }
+            let inexact_unmasked=inexact && self.state.control & 0x0020 == 0;
+            if inexact_unmasked && !self.error_irq {
+                return Outcome::Unsupported;
             }
             let bits=ival as u64;
             let width=if bytes==2{MemWidth::Word}else{MemWidth::Dword};
@@ -779,27 +934,53 @@ impl PresentFpu {
             if rounded_up { self.state.status |= 0x0200; }
             if inexact { self.state.status |= 0x0020; }
             self.state.pop().expect("FISTP checked ST(0)");
+            if inexact_unmasked { return self.signal_error(); }
             return Outcome::Completed;
+        }
+        // Check every destination byte first so memory protection faults take
+        // precedence over numeric overflow/underflow/inexact exceptions.
+        for i in 0..bytes {
+            let Some(address)=linear.checked_add(i) else {return Outcome::MemoryFault;};
+            if ram.check_write(address,MemWidth::Byte).is_err(){
+                return Outcome::MemoryFault;
+            }
         }
         let converted=if bytes==4{
             convert::to_f32_bits(value,self.state.control)
         }else{
             convert::to_f64_bits(value,self.state.control)
         };
-        let Ok(result)=converted else {return Outcome::Unsupported;};
-        // Correct unmasked exception delivery (#MF) has not been implemented.
-        // Refuse this case rather than retiring an instruction spuriously.
-        let exceptions=u16::from(result.inexact)<<5 | u16::from(result.underflow)<<4;
-        if exceptions & !self.state.control & 0x003f != 0 {
+        let result=match converted {
+            Ok(r)=>r,
+            Err(convert::ConversionError::OutOfRange)=>{
+                if self.error_irq && self.state.control & 0x0008 == 0 {
+                    self.state.status = (self.state.status & !0x0200) | 0x0008;
+                    return self.signal_error();
+                }
+                return Outcome::Unsupported;
+            },
+            Err(convert::ConversionError::UnsupportedSpecial)=>{
+                if (value.sign_exponent&0x7fff)==0 && value.significand!=0 {
+                    return self.denormal_operand();
+                }
+                if Self::is_snan_or_unnormal(value) {
+                    return self.invalid_operation();
+                }
+                return Outcome::Unsupported;
+            },
+            Err(convert::ConversionError::UnsupportedRounding)=>return Outcome::Unsupported,
+        };
+        if result.underflow && self.state.control & 0x0010 == 0 {
+            if self.error_irq {
+                self.state.status = (self.state.status & !0x0200) | 0x0010;
+                return self.signal_error();
+            }
             return Outcome::Unsupported;
         }
-        // Check every destination byte first. Partial writes must never be
-        // reported as successful stores or pop an x87 register.
-        for i in 0..bytes {
-            let Some(address)=linear.checked_add(i) else {return Outcome::MemoryFault;};
-            if ram.check_write(address,MemWidth::Byte).is_err(){
-                return Outcome::MemoryFault;
-            }
+        let exceptions=u16::from(result.inexact)<<5 | u16::from(result.underflow)<<4;
+        let inexact_unmasked=result.inexact && self.state.control & 0x0020 == 0;
+        if inexact_unmasked && !self.error_irq {
+            return Outcome::Unsupported;
         }
         if ram.store(linear,MemWidth::Dword,result.bits as u32).is_err(){
             return Outcome::MemoryFault;
@@ -809,6 +990,7 @@ impl PresentFpu {
         }
         self.state.status|=exceptions;
         self.state.pop().expect("FSTP requires checked ST(0)");
+        if inexact_unmasked { return self.signal_error(); }
         Outcome::Completed
     }
 }

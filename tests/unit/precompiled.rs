@@ -540,3 +540,115 @@ fn rom_blocks_match_the_interpreter_across_real_and_32_bit_protected_mode(){
         assert_eq!(req_run.loaded.blocks.interpreted_instructions,0);
     }
 }
+
+#[test]
+fn x87_loops_and_irq13_exceptions_run_inside_blocks_in_lockstep_with_the_interpreter(){
+    // 1. Tight x87 loop: FNINIT; MOV CX,30; FLDZ;
+    //    again: FLD1; FADD m32 [0200h] (0.5); FMULP ST(1),ST; FADD m32 [0204h] (1.25);
+    //    FLD ST(0); FCOMP m32 [0208h] (100.0); FNSTSW AX; TEST AH,01h; JZ clamped;
+    //    JMP next; clamped: FSTP ST(0); FLD1; next: LOOP again; FSTP m64 [0210h]; INT 20h.
+    let loop_code:&[u8]=&[
+        0xdb,0xe3,                      // 0100 fninit
+        0xb9,0x1e,0x00,                 // 0102 mov cx,30
+        0xd9,0xee,                      // 0105 fldz
+        0xd9,0xe8,                      // 0107 again: fld1
+        0xd8,0x06,0x00,0x02,            // 0109 fadd dword [0200h]
+        0xde,0xc9,                      // 010d fmulp st(1),st
+        0xd8,0x06,0x04,0x02,            // 010f fadd dword [0204h]
+        0xd9,0xc0,                      // 0113 fld st(0)
+        0xd8,0x1e,0x08,0x02,            // 0115 fcomp dword [0208h]
+        0xdf,0xe0,                      // 0119 fnstsw ax
+        0xf6,0xc4,0x01,                 // 011b test ah,01h (C0: < 100.0)
+        0x74,0x02,                      // 011e jz clamped
+        0xeb,0x04,                      // 0120 jmp next
+        0xdd,0xd8,                      // 0122 clamped: fstp st(0)
+        0xd9,0xe8,                      // 0124 fld1
+        0xe2,0xdf,                      // 0126 next: loop again (0107h)
+        0xdd,0x1e,0x10,0x02,            // 0128 fstp qword [0210h]
+        0xcd,0x20,                      // 012c int 20h
+    ];
+    let make_fpu_run=|mode:Mode|{
+        let mut p=load_with(loop_code,"X87LOOP.COM",mode);
+        p.fpu=crate::fpu::Fpu::present();
+        let base=p.image.segments[3].base;
+        p.ram.store(base+0x200,crate::MemWidth::Dword,0.5f32.to_bits()).unwrap();
+        p.ram.store(base+0x204,crate::MemWidth::Dword,1.25f32.to_bits()).unwrap();
+        p.ram.store(base+0x208,crate::MemWidth::Dword,100.0f32.to_bits()).unwrap();
+        p
+    };
+    let mut a=make_fpu_run(Mode::Off);let mut b=make_fpu_run(Mode::On);
+    let mut out_a=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let mut out_b=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    for budget in [1usize,2,5,9,16,17,63,255,256,1000].into_iter().cycle().take(100){
+        let left=dos::run_with_backend(a,budget,&mut out_a,None).unwrap();
+        let right=dos::run_with_backend(b,budget,&mut out_b,None).unwrap();
+        assert_eq!(left.stop,right.stop);
+        assert_eq!(left.completed,right.completed);
+        assert_eq!(left.pil_steps,right.pil_steps);
+        assert_eq!(left.instructions,right.instructions);
+        assert_eq!(left.loaded.cpu,right.loaded.cpu);
+        assert_eq!(left.loaded.fpu.state(),right.loaded.fpu.state());
+        assert!(left.loaded.ram.bytes()==right.loaded.ram.bytes());
+        if left.stop!=Stop::Budget{
+            assert_eq!(left.stop,Stop::Exit(0));
+            // Dozens of x87 instructions retired inside blocks alongside PIL instructions.
+            assert!(right.loaded.blocks.instructions>right.loaded.blocks.native_instructions+right.loaded.blocks.interpreted_instructions+100);
+            break;
+        }
+        a=left.loaded;b=right.loaded;a.blocks.mode=Some(Mode::Off);b.blocks.mode=Some(Mode::On);
+    }
+
+    // 2. Unmasked 80387 exception inside a block delivers IRQ13 (INT 75h) at
+    //    the exact instruction boundary before the following FWAIT.
+    //    Handler at 0132h: PUSH AX; FNCLEX; OUT F0h,AL; MOV AL,20h; OUT A0h,AL;
+    //    OUT 20h,AL; INC word [0220h]; POP AX; IRET.
+    let irq13_code:&[u8]=&[
+        0xfa,                           // 0100 cli
+        0xb8,0x32,0x01,                 // 0101 mov ax,0132h
+        0x8c,0xca,                      // 0104 mov dx,cs
+        0x31,0xdb,                      // 0106 xor bx,bx
+        0x8e,0xc3,                      // 0108 mov es,bx
+        0x26,0x89,0x06,0xd4,0x01,       // 010a mov es:[75h*4],ax
+        0x26,0x89,0x16,0xd6,0x01,       // 010f mov es:[75h*4+2],dx
+        0xb0,0xfb,0xe6,0x21,            // 0114 mov al,0fbh; out 21h,al
+        0xb0,0xdf,0xe6,0xa1,            // 0118 mov al,0dfh; out a1h,al
+        0xfb,                           // 011c sti
+        0x90,                           // 011d nop
+        0xd9,0x2e,0x00,0x02,            // 011e fldcw [0200h]
+        0xd9,0xee,                      // 0122 fldz
+        0xd9,0xee,                      // 0124 fldz
+        0xde,0xf9,                      // 0126 fdivp st(1),st (0/0 -> IE + IRQ13)
+        0x9b,                           // 0128 fwait
+        0xd9,0xe8,                      // 0129 fld1
+        0xdd,0x1e,0x10,0x02,            // 012b fstp qword [0210h]
+        0xcd,0x20,                      // 012f int 20h
+        0x90,                           // 0131 nop
+        0x50,0xdb,0xe2,0xe6,0xf0,       // 0132 push ax; fnclex; out f0h,al
+        0xb0,0x20,0xe6,0xa0,0xe6,0x20,  // 0137 mov al,20h; out a0h,al; out 20h,al
+        0xff,0x06,0x20,0x02,            // 013d inc word [0220h]
+        0x58,0xcf,                      // 0141 pop ax; iret
+    ];
+    let make_irq13=|mode:Mode|{
+        let mut p=load_with(irq13_code,"X87IRQ13.COM",mode);
+        p.fpu=crate::fpu::Fpu::present();
+        p.fpu.set_error_irq(true);
+        let base=p.image.segments[3].base;
+        p.ram.store(base+0x200,crate::MemWidth::Word,0x037e).unwrap(); // IM=0
+        p
+    };
+    let mut out_off=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let mut out_on=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let left=dos::run_with_backend(make_irq13(Mode::Off),200,&mut out_off,None).unwrap();
+    let right=dos::run_with_backend(make_irq13(Mode::On),200,&mut out_on,None).unwrap();
+    assert_eq!(left.stop,Stop::Exit(0));
+    assert_eq!(right.stop,Stop::Exit(0));
+    assert_eq!(left.completed,right.completed);
+    assert_eq!(left.pil_steps,right.pil_steps);
+    assert_eq!(left.instructions,right.instructions);
+    assert_eq!(left.loaded.cpu,right.loaded.cpu);
+    assert_eq!(left.loaded.fpu.state(),right.loaded.fpu.state());
+    assert!(left.loaded.ram.bytes()==right.loaded.ram.bytes());
+    let base=right.loaded.image.segments[3].base;
+    assert_eq!(right.loaded.ram.load(base+0x220,crate::MemWidth::Word).unwrap(),1);
+    assert_eq!(right.loaded.ram.load(base+0x214,crate::MemWidth::Dword).unwrap(),0x3ff0_0000);
+}
