@@ -696,6 +696,15 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
     Some((width,height,pixels))
 }
 
+/// Standard 16x16 white arrow with a black outline (hot spot 0,0) when a DOS
+/// program uses graphics mouse mode without defining a custom shape (AX=0009h).
+#[cfg(any(windows,unix,test))]
+const DEFAULT_GRAPHICS_MOUSE_ARROW:(i16,i16,[u16;32])=(0,0,[
+    0x3fff,0x1fff,0x0fff,0x07ff,0x03ff,0x01ff,0x00ff,0x007f,
+    0x003f,0x003f,0x01ff,0x10ff,0x30ff,0xf87f,0xf87f,0xfcff,
+    0x0000,0x4000,0x6000,0x7000,0x7800,0x7c00,0x7e00,0x7f00,
+    0x7f80,0x7c00,0x6c00,0x4600,0x0600,0x0300,0x0300,0x0000,
+]);
 /// Native desktop scanout of the *existing* emulated VGA framebuffer.
 /// All text drawn by BIOS in a graphics mode has already reached these pixels
 /// via dos_graphics_text, so the host renderer needs no duplicate font logic.
@@ -704,7 +713,7 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
 fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
     let view=p.dos.mouse.view();
     if !view.visible{return;}
-    let Some((hx,hy,rows))=p.dos.mouse.shape() else {return;};
+    let (hx,hy,rows)=p.dos.mouse.shape().unwrap_or(DEFAULT_GRAPHICS_MOUSE_ARROW);
     let mx=i32::from(view.x)*(width as i32)/(i32::from(view.max_x)+1);
     let my=i32::from(view.y)*(height as i32)/(i32::from(view.max_y)+1);
     for dy in 0..16i32{
@@ -854,6 +863,41 @@ mod desktop_scanout_tests{
         let expected=(u32::from(rgb[0])*255/63)<<16|
             (u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63);
         assert_eq!(pixels[0],expected);
+    }
+    #[test]
+    fn mode13_visible_mouse_draws_default_arrow_without_custom_shape(){
+        let mut p=load(&[0xcd,0x20],"PTR.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,0x13).unwrap();
+        let rgb=p.vga.dac(1);
+        let bg=(u32::from(rgb[0])*255/63)<<16|
+            (u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63);
+        assert_ne!(bg,0x000000);
+        assert_ne!(bg,0xffffff);
+        for y in 10..26u32{
+            for x in 19..36u32{
+                p.ram.store(0xa0000+y*320+x,MemWidth::Byte,1).unwrap();
+            }
+        }
+        p.dos.mouse.enable(0);
+        p.cpu.regs[0]=0x0000;
+        mouse::service(&mut p).unwrap();
+        p.cpu.regs[0]=0x0001;
+        mouse::service(&mut p).unwrap();
+        p.cpu.regs[0]=0x0004;
+        p.cpu.regs[1]=40;
+        p.cpu.regs[2]=10;
+        mouse::service(&mut p).unwrap();
+        assert!(p.dos.mouse.shape().is_none());
+        assert!(p.dos.mouse.view().visible);
+        let (_,_,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!(pixels[10*320+20],0x000000);
+        assert_eq!(pixels[11*320+21],0xffffff);
+        assert_eq!(pixels[10*320+19],bg);
+        p.cpu.regs[0]=0x0002;
+        mouse::service(&mut p).unwrap();
+        let (_,_,hidden_pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!(hidden_pixels[10*320+20],bg);
+        assert_eq!(hidden_pixels[11*320+21],bg);
     }
 }
 
