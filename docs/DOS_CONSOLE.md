@@ -178,8 +178,11 @@ same keys, from the X layout (AltGr third level included).
 
 Copy and paste use `termux-clipboard-get`/`-set` (Termux:API), `wl-copy`,
 `xclip` or `xsel`, whichever is installed; without one, copy does nothing and
-paste types nothing. The host menu (drive and media commands) and the host
-snapshot commands are Windows only; sound is as with `--tty`.
+paste types nothing. Right-click, Shift+right-click, the Menu key, Shift+F10,
+Ctrl+Shift+M, or Ctrl+Shift+Enter opens the host popup menu (Clipboard,
+Drive A:/B: disk swap and clipboard mount, Mouse pointer, Diagnostics/live
+snapshot; Windows-only Explorer file/folder picker dialogs are omitted). Sound
+is as with `--tty`.
 
 ## Copy and paste (window)
 

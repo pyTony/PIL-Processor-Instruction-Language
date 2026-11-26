@@ -10,6 +10,10 @@ pub(crate) struct Frame {
     pub(crate) pixels: Vec<u32>,
 }
 
+/// Groups `(title, [(command_id, label)])` shown in the host popup menu.
+#[cfg(any(windows,all(unix,feature="x11"),test))]
+pub(crate) type MenuGroups=Vec<(String,Vec<(u16,String)>)>;
+
 /// Input from an interactive window, before any DOS mapping: a typed
 /// character, a key that types none (Windows virtual-key code), or the mouse
 /// in client coordinates.
@@ -58,9 +62,28 @@ pub(crate) fn initial_scale(setting:Option<&str>,room_w:i32,room_h:i32,frame_w:i
     (room_w/frame_w).min(room_h/frame_h).clamp(1,8)
 }
 
+/// Non-empty border strips `(x, y, width, height)` around the centered picture
+/// `(vx, vy, vw, vh)` inside a `client_w` x `client_h` window.
+#[cfg(any(all(unix,feature="x11"),test))]
+pub(crate) fn border_rects(client_w:i32,client_h:i32,vx:i32,vy:i32,vw:i32,vh:i32)->Vec<(i32,i32,i32,i32)>{
+    let mut rects=Vec::with_capacity(4);
+    if client_w<=0||client_h<=0{return rects;}
+    if vw<=0||vh<=0{
+        rects.push((0,0,client_w,client_h));
+        return rects;
+    }
+    if vy>0{rects.push((0,0,client_w,vy));}
+    let bottom=vy.saturating_add(vh);
+    if bottom<client_h{rects.push((0,bottom,client_w,client_h-bottom));}
+    if vx>0{rects.push((0,vy,vx,vh));}
+    let right=vx.saturating_add(vw);
+    if right<client_w{rects.push((right,vy,client_w-right,vh));}
+    rects
+}
+
 #[cfg(windows)]
 mod windows {
-    use super::{Frame,Input,view,initial_scale};
+    use super::{Frame,Input,MenuGroups,view,initial_scale};
     // This module is also copied into generated standalone DOS executables.
     // Keep diagnostics self-contained: standalone code has no dine_display.
     fn debug_log(message:&str) {
@@ -118,7 +141,6 @@ mod windows {
     /// Set for a window that takes keyboard and mouse input (the DOS console).
     static INPUT:OnceLock<Mutex<Option<mpsc::Sender<Input>>>>=OnceLock::new();
     static TITLE:OnceLock<Mutex<String>>=OnceLock::new();
-    type MenuGroups=Vec<(String,Vec<(u16,String)>)>;
     static HOST_MENU:OnceLock<Mutex<MenuGroups>>=OnceLock::new();
     const WM_HOST_MENU:u32=0x8001;
     const WM_KEYDOWN:u32=0x100;
@@ -609,5 +631,28 @@ mod windows {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{border_rects,view};
+
+    #[test]
+    fn border_rects_cover_margins_without_overlapping_the_picture(){
+        // Exact fill: no borders.
+        let (vx,vy,vw,vh)=view(1440,800,720,400);
+        assert!(border_rects(1440,800,vx,vy,vw,vh).is_empty());
+
+        // Pillarbox (640x480 inside 1440x800): left and right borders only.
+        let (vx,vy,vw,vh)=view(1440,800,640,480);
+        let rects=border_rects(1440,800,vx,vy,vw,vh);
+        assert_eq!(rects.len(),2);
+        let area:i64=rects.iter().map(|&(_,_,w,h)|i64::from(w)*i64::from(h)).sum::<i64>()+i64::from(vw)*i64::from(vh);
+        assert_eq!(area,1440*800);
+
+        // Centered smaller picture: all four borders, exact total area.
+        let rects=border_rects(1440,800,100,80,640,400);
+        assert_eq!(rects,vec![(0,0,1440,80),(0,480,1440,320),(0,80,100,400),(740,80,700,400)]);
     }
 }

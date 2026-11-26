@@ -375,6 +375,7 @@ pub(crate) fn configure(session:&mut Session,options:&Options)->Result<(),String
 pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&mpsc::Receiver<Event>)->Result<String,String>{
     configure(session,options)?;
     front.reset();
+    front.title(window_title(session.machine().is_some_and(|p|p.booted)));
     front.host_pointer=options.host_pointer;
     // Changes from before this run (a setup screen, an earlier program) are not sounded.
     if let Some(p)=session.machine_mut(){p.speaker.take_sound();p.sb.take_pcm();}
@@ -550,8 +551,8 @@ fn save_live_snapshot(session:&mut Session,host_pending:usize)->Result<String,St
         format!("Saved {path}; 32-entry trace enabled (capture again)")
     }else{format!("Saved {path}")})
 }
-/// A Windows Explorer path, possibly quoted by Copy as path.
-#[cfg(any(windows,test))]
+/// A Windows or Unix path, possibly quoted.
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 fn clipboard_mount_path(text:&str)->Result<&str,String>{
     let text=text.trim();
     let path=if text.starts_with('"')||text.ends_with('"'){
@@ -565,7 +566,7 @@ fn clipboard_mount_path(text:&str)->Result<&str,String>{
     Ok(path)
 }
 
-#[cfg(any(windows,test))]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 pub(crate) fn host_pointer_menu_items(current:HostPointer)->Vec<(u16,String)>{
     let label=|mode:HostPointer,text:&str|if current==mode{format!("* {text}")}else{text.into()};
     vec![
@@ -583,6 +584,10 @@ pub(crate) fn host_pointer_command(id:u16)->Option<(HostPointer,&'static str)>{
     }
 }
 
+fn window_title(booted:bool)->&'static str{
+    if booted{"Dine PC console"}else{"Dine DOS console"}
+}
+
 impl Front{
     pub(crate) fn title(&self,title:&str){
         #[cfg(any(windows,all(unix,feature="x11")))]
@@ -590,15 +595,28 @@ impl Front{
         let _=title;
     }
     fn media_menu(&self)->bool{
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if let Some(w)=self.window.as_ref(){
             let mut groups=vec![("Clipboard".into(),vec![(1,"Copy".into()),(2,"Paste".into())])];
+            #[cfg(windows)]
             for (index,drive) in ['A','B','D','E'].iter().enumerate(){
                 let base=100+index as u16*10;
                 let mut items=vec![(base+1,"Mount image...".into()),(base+2,"Mount folder...".into())];
                 if index<2{items.extend([(base+3,"Open disk set...".into()),(base+4,"Next disk".into()),(base+5,"Previous disk".into()),(base+6,"Current disk".into())]);}
                 items.push((base+8,"Mount clipboard path".into()));
                 items.push((base+7,"Unmount".into()));groups.push((format!("Drive {drive}:"),items));
+            }
+            #[cfg(all(unix,feature="x11"))]
+            for (index,drive) in ['A','B'].iter().enumerate(){
+                let base=100+index as u16*10;
+                let items=vec![
+                    (base+4,"Next disk".into()),
+                    (base+5,"Previous disk".into()),
+                    (base+6,"Current disk".into()),
+                    (base+8,"Mount clipboard path".into()),
+                    (base+7,"Unmount".into()),
+                ];
+                groups.push((format!("Drive {drive}:"),items));
             }
             groups.push(("Mouse pointer".into(),host_pointer_menu_items(self.host_pointer)));
             groups.push(("Diagnostics".into(),vec![
@@ -616,11 +634,12 @@ impl Front{
         false
     }
     fn media_command(&mut self,session:&mut Session,id:u16)->Option<String>{
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         {
             let drive=*b"ABDE".get(usize::from(id.saturating_sub(100)/10))?;
             let action=id%10;
             let result=match action{
+                #[cfg(windows)]
                 1..=3=>{
                     let chosen=if action==2{media_dialog::folder()}else{media_dialog::file(action==3)};
                     match chosen{
@@ -634,9 +653,11 @@ impl Front{
                         Ok(None)=>return None,Err(e)=>Err(e),
                     }
                 },
+                #[cfg(not(windows))]
+                1..=3=>return None,
                 4=>session.disk(drive,Some("next")),5=>session.disk(drive,Some("prev")),6=>session.disk(drive,None),
                 7=>session.unmount_media(drive),
-                8=>crate::dine_window::clipboard().ok_or_else(||"clipboard has no text path; use Explorer's Copy as path".to_string())
+                8=>crate::dine_window::clipboard().ok_or_else(||"clipboard has no text path; copy a path first".to_string())
                     .and_then(|text|{
                         let path=clipboard_mount_path(&text)?;
                         let is_image=std::path::Path::new(path).extension().and_then(|s|s.to_str())
@@ -649,7 +670,7 @@ impl Front{
             };
             Some(result.unwrap_or_else(|e|e))
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows,all(unix,feature="x11"))))]
         {let _=(session,id);None}
     }
     pub(crate) fn open(window:bool,tx:mpsc::Sender<Event>)->Result<Self,String>{
@@ -745,7 +766,8 @@ impl Front{
             if grid!=self.grid{self.selecting.clear();self.grid=grid;}
             let selection=self.selecting.selection.map(|s|(s,grid.0,grid.1));
             if let Some(w)=self.window.as_mut(){
-                if let Some(ref note)=note{w.window.title(&format!("Dine DOS console - {note}"));}
+                let base=window_title(p.booted);
+                if let Some(ref note)=note{w.window.title(&format!("{base} - {note}"));}
                 w.window.hide_pointer(self.host_pointer.hides(p.dos.mouse.view().visible));
                 w.present(session,selection)?;
             }
@@ -824,7 +846,7 @@ impl WindowFront{
             }
         }).ok();
         let font=super::vga_text::font().unwrap_or_else(|_|vec![0;256*super::vga_text::CELL_HEIGHT]);
-        Self{window:crate::dine_window::Window::interactive("Dine DOS console",input),font,started:Instant::now(),last:None}
+        Self{window:crate::dine_window::Window::interactive("Dine console",input),font,started:Instant::now(),last:None}
     }
     fn closed(&self)->bool{self.window.closed()}
     fn present_text(&mut self,cells:&[u8],cursor:Option<(u32,u32)>){
