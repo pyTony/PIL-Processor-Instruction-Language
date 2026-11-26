@@ -1,3 +1,34 @@
+# 80387 IRQ13 exceptions and x87 instructions inside blocks — 25 November 2026
+
+Follow-on to Linux boot plan milestone 5 (`docs/development/LINUX_BOOT_PLAN.md`).
+- `crates/pil-cpu/src/fpu_math.rs`, `crates/pil-cpu/src/fpu_present.rs`:
+  complete unmasked 80387 exceptions on the AT `ERROR#` / `IRQ13` path when
+  `error_irq` is set: stack underflow/overflow (`IE|SF`, `C1`), invalid
+  operation (`0/0`, `Inf/Inf`, `0*Inf`, `Inf-Inf`, SNaN, unnormals, ordered
+  NaN compare, out-of-range `FISTP`/`FBSTP`), denormalized operand (`DE` on
+  subnormal `m32`/`m64` and 80-bit denormals), `FXTRACT` zero-divide (`ZE`),
+  register overflow/underflow (`OE`/`UE` with `+/-24576` exponent bias
+  adjustment), memory `FSTP m32/m64` pre-write `OE`/`UE`, and post-write
+  `PE` across `FSTP`/`FISTP`/`FBSTP`/`FSIN`/`FCOS`/`F2XM1`/`FRNDINT`/`FYL2XP1`.
+  No-wait control forms (`FNINIT`, `FNCLEX`, `FNSTSW`, `FNSTCW`, `FNSTENV`,
+  `FNSAVE`) do not stall on `BUSY#` before `OUT F0h`.
+- `crates/pil-cpu/src/block_compiler/engine.rs`, `src/dos.rs`: run 80387
+  escapes (`D8h..DFh`) and `WAIT` (`9Bh`) inside run-time blocks (guarded by
+  `fpu_present` and `SegmentState::same_code_context`), ending a block on
+  x87 memory stores, preserving exact `pil_steps` and mnemonic counts, and
+  returning immediately to the outer loop on `ErrorSignalled` (raising slave
+  PIC IRQ5 for `IRQ13`) or pre-execution `#NM`/`BUSY#`/faults.
+
+Local Windows, release: 1,088 Rust tests pass, 2 ignored (`761` in `pil`,
+`292` in `pil-cpu`, `35` in `pil-pc`); `forms.rs` current (`5,369` forms);
+`0` rustc warnings (release, `dine-library`, `compact-interpreter`, tests);
+`--selftest`, `--numeric-test`, `--verify-backends`, `verify_dine_library.py`,
+`verify_mandel_cga.py` and `verify_mandel_vga.py` pass; portable-path,
+program-specific, layer and CI checks pass. MCC Interim Linux 1.0+ (`gcc
+2.5.8` `-O2`, `tools/mcc/mandel.txt` with `--fpu 80387`): `./mandel i 500`
+runs `205.51M` steps in `6.21 s` (`33.1M` steps/s, `sum 15564`); `./mandel
+f 100` runs `44.51M` steps in `1.57 s` (`28.4M` steps/s, `sum 15584`, up
+from `3.7M` steps/s).
 # Protected-mode and 32-bit-stack precompiled forms — 25 November 2026
 
 Linux boot plan milestone 5 (`docs/development/LINUX_BOOT_PLAN.md`).
