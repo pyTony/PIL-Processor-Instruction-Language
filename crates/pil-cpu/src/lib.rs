@@ -2294,10 +2294,207 @@ pub fn effects_so_far(p:&Program,index:usize)->String{
     out
 }
 pub fn emit_rust_functions(p:&Program)->String {emit_rust_body(p,None)}
-/// One precompiled form (src/precompiled): `slots[n]` is the n-th `const`
-/// of the program; `Some` keeps a literal, `None` reads `k[n]` at run time.
-/// Only `execute_state` and the machine wrapper `execute_form` are emitted.
-pub fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {emit_rust_body(p,Some(slots))}
+/// Generated code for `effects_before_fault` inside `emit_rust_form`.
+fn effects_so_far_form(p:&Program,index:usize,has_stores:bool)->String{
+    let mut out=String::new();
+    if has_stores{
+        out.push_str("for (at,w,v) in pending_stores[..store_index].iter().flatten(){ram.store(*at,*w,*v).map_err(|f|f.error(*eip))?;}");
+    }
+    for (i,t) in p.tokens[..index].iter().enumerate(){
+        if let Token::WriteGpr(reg,_,width)=t{let m=mask(*width);out.push_str(&format!("regs[{reg}]=((regs[{reg}] as u64 & !{m}u64)|(pending_register_{i}&{m}u64)) as u32;"));}
+    }
+    out
+}
+fn emit_segment_load_form(reg:&str,a:usize)->String{
+    format!("let (selector,cache,accessed)={{let e=*eip;machine.load_segment({reg},v{a} as u16,e,&mut |at|privilege::read_descriptor(ram,at,e))?}};if let Some((at,v))=accessed{{ram.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}")
+}
+/// One precompiled form (`crates/pil-cpu/src/precompiled`): `slots[n]` is the
+/// n-th `const` of the program; `Some` keeps a literal, `None` reads `k[n]` at
+/// run time. Emits a single flat `execute_form` function declaring only the
+/// staging locals actually used by `p.tokens`.
+pub fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {
+    let mut out=String::new();let mut const_index=0usize;
+    let register_commits=p.tokens.iter().enumerate().filter_map(|(index,t)|{
+        if let Token::WriteGpr(reg,_,width)=t{
+            let m=mask(*width);
+            Some(format!("regs[{reg}]=((regs[{reg}] as u64 & !{m}u64)|(pending_register_{index}&{m}u64)) as u32;"))
+        }else{None}
+    }).collect::<String>();
+    let stores=p.tokens.iter().filter(|t|matches!(t,Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)|Token::LoadSystem(..))).count();
+    let has_stores=stores>0;
+    let uses_addr=p.tokens.iter().any(|t|matches!(t,Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)));
+    let uses_effective=p.tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)));
+    let has_control=p.tokens.iter().any(|t|matches!(t,Token::WriteControl(..)));
+    let has_table=p.tokens.iter().any(|t|matches!(t,Token::WriteTable(..)));
+    let has_system=p.tokens.iter().any(|t|matches!(t,Token::LoadSystem(..)));
+    let has_segment=p.tokens.iter().any(|t|matches!(t,Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)));
+    let has_transfer=p.tokens.iter().any(|t|matches!(t,Token::FarJump(..)|Token::FarReturn(..)));
+    let has_eip_write=p.tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarCall(..)));
+    let has_resume=p.tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
+    let has_interrupt_shadow=p.tokens.iter().any(|t|matches!(t,Token::InterruptShadowIf(..)));
+    let has_flag_write=p.tokens.iter().any(|t|matches!(t,Token::UndefFlag(..)|Token::FlagIf(..)|Token::Flag(..)));
+    let has_dst_write=p.tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)));
+    let has_src_write=p.tokens.iter().any(|t|matches!(t,Token::WriteSource(..)|Token::WriteSourceIf(..)));
+    let changes_paging=has_control||has_segment||has_transfer;
+    let effects_before_fault=p.tokens.iter().any(|t|matches!(t,Token::EffectsBeforeFault));
+    out.push_str("#[inline(never)] pub fn execute_form(regs:&mut [u32;8],flags:&mut u32,undefined:&mut u32,eip:&mut u32,dst:(usize,u8),src:(usize,u8),context:FlowContext,ram:&mut Ram,mut address:Option<address::AddressContext>,machine:&mut address::SegmentState,k:&[u64])->Result<(),ExecError>{\n");
+    if uses_effective{out.push_str("let effective=address.as_ref().map(|a|a.effective);\n");}
+    if uses_addr{
+        out.push_str("let (address,memory_context)=if let Some(a)=address.as_mut(){a.segments=machine.segments;let(o,c)=a.resolve(regs)?;(o,Some(c))}else{(0,None)};\n");
+    }else{
+        out.push_str("if let Some(a)=address.as_mut(){a.segments=machine.segments;a.resolve(regs)?;}\n");
+    }
+    if p.checkpoint_flags{out.push_str("machine.checkpoint_flags(*eip,*flags,*undefined);\n");}
+    out.push_str("ram.set_paging(machine.ram_paging());\n");
+    if p.checkpoint_flags{out.push_str("let result=(||->Result<(),ExecError>{\n");}
+    out.push_str(&format!(
+        "if dst.0>=8||src.0>=8||dst.1 as u16+{}u16>32||src.1 as u16+{}u16>32{{return Err(ExecError::InvalidBinding);}}\ncontext.validate({},{})?;\n",
+        p.operand_width,p.source_width,p.operand_width,p.uses_displacement));
+    if has_control{out.push_str("let mut pending_control:Option<(usize,u32)>=None;\n");}
+    if has_table{out.push_str("let mut pending_table:Option<(usize,u16,u32)>=None;\n");}
+    if has_system{out.push_str("let mut pending_system:Option<(usize,address::SystemSegment)>=None;\n");}
+    if has_segment{out.push_str("let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;\n");}
+    if has_transfer{out.push_str("let mut pending_transfer:Option<privilege::Transfer>=None;\n");}
+    if has_stores{out.push_str(&format!("let mut pending_stores:[Option<(u32,MemWidth,u32)>;{stores}]=[None;{stores}];let mut store_index=0;\n"));}
+    if has_eip_write{out.push_str("let mut pending_eip=context.next_eip;\n");}
+    if has_resume{out.push_str("let mut pending_resume=false;\n");}
+    if has_interrupt_shadow{out.push_str("let mut pending_interrupt_shadow=false;\n");}
+    if has_flag_write{out.push_str("let mut pending_flags=*flags;let mut pending_undefined=*undefined;\n");}
+    if has_dst_write{out.push_str("let mut pending_dst:Option<u64>=None;\n");}
+    if has_src_write{out.push_str("let mut pending_src:Option<u64>=None;\n");}
+    let staged_slice=if has_stores{"&pending_stores[..store_index]"}else{"&[]"};
+    let mut carry_skip=0;
+    for (index,t) in p.tokens.iter().enumerate(){
+        if carry_skip>0{carry_skip-=1;continue;}
+        if let Some(code)=rust_codegen::carry_window(p,index){out.push_str(&code);carry_skip=3;continue;}
+        let line=match *t{
+            Token::CheckpointFlags|Token::EffectsBeforeFault|Token::PreserveFlags(_)=>String::new(),
+            Token::ReadFlags(o)=>format!("let v{o}:u64=*flags as u64;"),
+            Token::RequireRealMode=>"if !machine.real_mode||*flags&0x20000!=0{return Err(ExecError::InvalidContext);}".into(),
+            Token::RequireRing0=>"if machine.cpl()!=0{return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}".into(),
+            Token::RequireIopl=>"if !machine.real_mode&&u32::from(machine.cpl())>(*flags>>12)&3{return Err(ExecError::GeneralProtection{eip:*eip,error_code:0});}".into(),
+            Token::CheckIo(a,n)=>format!("{{let e=*eip;machine.io_permitted(*flags,v{a} as u16,{n},e,&mut |at|ram.as_level(false,|r|r.load(at,MemWidth::Byte)).map(|v|v as u8).map_err(|f|f.error(e)))?;}}"),
+            Token::FarJump(a,b)=>format!("pending_transfer=Some(privilege::far_jump(machine,ram,regs,*flags,v{a} as u16,v{b} as u32,context.next_eip,*eip)?);"),
+            Token::TaskReturnIf(c)=>format!("if v{c}!=0{{let back=ram.as_level(false,|r|r.load(machine.ldt_tr[1].base,MemWidth::Word)).map_err(|f|f.error(*eip))? as u16;let t=task::switch(machine,ram,regs,*flags,context.next_eip,back,task::Entry::Return,None,0,*eip)?;t.commit(regs,flags,undefined,eip,machine,ram)?;machine.retired();ram.set_paging(machine.ram_paging());return Ok(());}}"),
+            Token::FarReturn(a,b,c,w,n,v)=>format!("pending_transfer=Some(privilege::far_return(machine,ram,regs,v{a} as u16,v{b} as u32,v{c} as u32,MemWidth::{w:?},{n},{},*eip)?);",v.map(|v|format!("v{v}!=0")).unwrap_or("false".into())),
+            Token::FarCall(a,b)=>format!("let mut direct=None;if let Some(t)=privilege::far_call(machine,ram,regs,*flags,v{a} as u16,context.next_eip,*eip,&mut direct)?{{t.commit(regs,flags,undefined,eip,machine,ram)?;machine.retired();ram.set_paging(machine.ram_paging());return Ok(());}}let (selector,cache,accessed)=direct.ok_or(ExecError::InvalidContext)?;if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}if let Some((at,v))=accessed{{ram.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;"),
+            Token::InterruptShadowIf(c)=>format!("pending_interrupt_shadow=v{c}!=0;"),
+            Token::Read(o,b,w)=>{
+                let binding=match b{Binding::Dst=>"dst",Binding::Src=>"src"};
+                format!("let v{o}:u64=((regs[{binding}.0] as u64)>>{binding}.1)&{}u64;",mask(w))
+            }
+            Token::LoadSegment(o,a,w,segment) if effects_before_fault=>format!("let cache=machine.segments[{segment}];let loaded:Result<u64,ExecError>=(||{{let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;Ok(ram.load_staged(at,MemWidth::{w:?},{staged_slice},&[]).map_err(|f|f.error(*eip))? as u64)}})();let v{o}:u64=match loaded{{Ok(v)=>v,Err(e)=>{{{}return Err(e);}}}};",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],effects_so_far_form(p,index,has_stores)),
+            Token::LoadSegment(o,a,w,segment)=>format!("let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:machine.segments[{segment}]}}.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?;let v{o}:u64=ram.load_staged(at,MemWidth::{w:?},{staged_slice},&[]).map_err(|f|f.error(*eip))? as u64;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
+            Token::StoreSegment(a,v,w,segment) if effects_before_fault=>format!("let cache=machine.segments[{segment}];let checked:Result<u32,ExecError>=(||{{let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;Ok(at)}})();let at=match checked{{Ok(at)=>at,Err(e)=>{{{}return Err(e);}}}};pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment],effects_so_far_form(p,index,has_stores)),
+            Token::StoreSegment(a,v,w,segment)=>format!("let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:machine.segments[{segment}]}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::{w:?},v{v} as u32));store_index+=1;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][segment]),
+            Token::RetireIf(c)=>format!("if v{c}!=0{{*eip=context.next_eip;machine.retired();return Ok(());}}"),
+            Token::ResumeIf(c)=>format!("if v{c}!=0{{pending_eip=*eip;pending_resume=true;}}"),
+            Token::ReadSegment(o,reg)=>format!("let v{o}:u64=machine.selectors[{reg}] as u64;"),
+            Token::WriteSegment(reg,a)=>format!("{}pending_segment=Some(({reg},selector,cache));",emit_segment_load_form(&reg.to_string(),a)),
+            Token::ReadGpr(o,reg,w)=>format!("let v{o}:u64=(regs[{reg}] as u64)&{}u64;",mask(w)),
+            Token::WriteGpr(_,a,_)=>format!("let pending_register_{index}=v{a};"),
+            Token::ReadControl(o,r)=>format!("let v{o}:u64=machine.read_control({r},*flags,*eip)? as u64;"),
+            Token::WriteControl(r,v)=>format!("machine.validate_control({r},v{v} as u32,*flags,*eip)?;pending_control=Some(({r},v{v} as u32));"),
+            Token::WriteTable(t,l,b)=>format!("pending_table=Some(({t},v{l} as u16,v{b} as u32));"),
+            Token::ReadMsw(o)=>format!("let v{o}:u64=machine.machine_status() as u64;"),
+            Token::ReadMsw32(o)=>format!("let v{o}:u64=u64::from(machine.machine_status())|(u64::from(machine.paging)<<31);"),
+            Token::RequireProtectedMode=>"if machine.real_mode||*flags&0x20000!=0{return Err(ExecError::InvalidContext);}".into(),
+            Token::ReadTable(l,b,t)=>format!("let (v{l},v{b}):(u64,u64)={{let (l,b)=machine.tables[{t}];(l as u64,b as u64)}};"),
+            Token::ReadSystem(o,t)=>format!("let v{o}:u64=machine.ldt_tr[{t}].selector as u64;"),
+            Token::ReadCpl(o)=>format!("let v{o}:u64=machine.cpl() as u64;"),
+            Token::ReadDescriptor(r,f,a)=>format!("let (v{r},v{f}):(u64,u64)={{let e=*eip;let raw=machine.find_descriptor(v{a} as u16,&mut |at|privilege::read_descriptor(ram,at,e))?;(raw.unwrap_or(0),u64::from(raw.is_some()))}};"),
+            Token::LoadSystem(t,a)=>format!("{{let e=*eip;let (loaded,busy)=machine.load_system({t},v{a} as u16,e,&mut |at|privilege::read_descriptor(ram,at,e))?;if let Some((at,v))=busy{{ram.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_system=Some(({t},loaded));}}"),
+            Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
+            Token::RaiseUnless(c,v)=>if v==13{format!("if v{c}==0{{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}")}else{format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}")},
+            Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
+            Token::ReadAddress(o)=>format!("let v{o}:u64=address as u64;"),
+            Token::Load(o,a,w) if effects_before_fault=>format!("let loaded:Result<u64,ExecError>=(||{{let at=match memory_context{{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}};Ok(ram.load(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))? as u64)}})();let v{o}:u64=match loaded{{Ok(v)=>v,Err(e)=>{{{}return Err(e);}}}};",effects_so_far_form(p,index,has_stores)),
+            Token::Load(o,a,w)=>format!("let addr{o}=match memory_context{{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},false,*eip)?,None=>v{a} as u32}};let v{o}:u64=ram.load(addr{o},MemWidth::{w:?}).map_err(|f|f.error(*eip))? as u64;"),
+            Token::Store(a,v,w) if effects_before_fault=>format!("let checked:Result<u32,ExecError>=(||{{let at=match memory_context{{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}};ram.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;Ok(at)}})();let store_addr=match checked{{Ok(at)=>at,Err(e)=>{{{}return Err(e);}}}};pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;",effects_so_far_form(p,index,has_stores)),
+            Token::Store(a,v,w)=>format!("let store_addr=match memory_context{{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}};ram.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;"),
+            Token::StoreIf(a,v,c,w)=>format!("if v{c}!=0{{let store_addr=match memory_context{{Some(c)=>c.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?,None=>v{a} as u32}};ram.check_write(store_addr,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((store_addr,MemWidth::{w:?},v{v} as u32));store_index+=1;}}"),
+            Token::ReadIp(o,next,w)=>format!("let v{o}:u64=({} as u64)&{}u64;",if next{"context.next_eip"}else{"*eip"},mask(w)),
+            Token::ReadDisp(o,w)=>format!("let v{o}:u64=(context.displacement as u32 as u64)&{}u64;",mask(w)),
+            Token::CheckWriteSegment(reg,a,w)=>format!("let at=address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:machine.segments[{reg}]}}.translate(v{a} as u32,MemWidth::{w:?},true,*eip)?;ram.check_write(at,MemWidth::{w:?}).map_err(|f|f.error(*eip))?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
+            Token::CheckSegment(reg,a,n)=>format!("address::MemoryContext{{segment:address::SegmentRegister::{:?},cache:machine.segments[{reg}]}}.translate_span(v{a},{n},false,*eip)?;",[address::SegmentRegister::Es,address::SegmentRegister::Cs,address::SegmentRegister::Ss,address::SegmentRegister::Ds,address::SegmentRegister::Fs,address::SegmentRegister::Gs][reg]),
+            Token::FarBranch(a,b)=>format!("{}if v{b}>u64::from(cache.limit){{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_segment=Some((1,selector,cache));pending_eip=v{b} as u32;",emit_segment_load_form("1",a)),
+            Token::BranchIf(a,c)=>format!("if v{c}!=0{{if v{a} as u32>context.code_limit{{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}pending_eip=v{a} as u32;}}"),
+            Token::Const(o,_)=>{
+                let n=const_index;const_index+=1;
+                match slots.get(n).copied().flatten(){Some(v)=>format!("let v{o}:u64={v}u64;"),None=>format!("let v{o}:u64=k[{n}];")}
+            }
+            Token::UndefFlag(f)=>format!("pending_flags&=!{}u32;pending_undefined|={}u32;",1u32<<f.bit(),1u32<<f.bit()),
+            Token::Select(o,c,a,b)=>format!("let v{o}:u64=if v{c}!=0{{v{a}}}else{{v{b}}};"),
+            Token::WriteIf(a,c)=>format!("if v{c}!=0{{pending_dst=Some(v{a});}}"),
+            Token::ReadFlag(o,f)=>format!("let v{o}:u64=((*flags>>{})&1) as u64;",f.bit()),
+            Token::Extend(o,a,w)|Token::Truncate(o,a,w)=>format!("let v{o}:u64=v{a}&{}u64;",mask(w)),
+            Token::SignExtend(o,a,w)=>format!("let v{o}:u64=(if v{a}&{}u64!=0{{v{a}|!{}u64}}else{{v{a}}})&{}u64;",1u64<<(p.widths[a]-1),mask(p.widths[a]),mask(w)),
+            Token::Binary(o,op,a,b)=>{
+                let expr=match op{
+                    Binary::Add=>format!("v{a}.wrapping_add(v{b})"),
+                    Binary::Sub=>format!("v{a}.wrapping_sub(v{b})"),
+                    Binary::Div=>format!("if v{b}==0{{0}}else{{v{a}/v{b}}}"),
+                    Binary::Rem=>format!("if v{b}==0{{0}}else{{v{a}%v{b}}}"),
+                    Binary::Mul=>format!("v{a}.wrapping_mul(v{b})"),
+                    Binary::Xor=>format!("v{a}^v{b}"),Binary::And=>format!("v{a}&v{b}"),Binary::Or=>format!("v{a}|v{b}"),
+                };
+                format!("let v{o}:u64=({expr})&{}u64;",mask(p.widths[o]))
+            }
+            Token::Shift(o,kind,a,b)=>{
+                let w=p.widths[a];let expr=match kind{
+                    Shift::Left=>format!("if v{b}>={w}u64{{0}}else{{v{a}<<v{b}}}"),
+                    Shift::Right=>format!("if v{b}>={w}u64{{0}}else{{v{a}>>v{b}}}"),
+                    Shift::Arithmetic=>format!("((((v{a}<<{}) as i64)>>{})>>v{b}.min({}u64)) as u64",64-w,64-w,w-1),
+                };format!("let v{o}:u64=({expr})&{}u64;",mask(w))
+            }
+            Token::Less(o,a,b)=>format!("let v{o}:u64=u64::from(v{a}<v{b});"),
+            Token::FlagIf(f,a,d,c)=>format!("if v{c}!=0{{pending_flags&=!{m}u32;if v{d}!=0{{pending_flags|=(v{a} as u32)<<{bit};pending_undefined&=!{m}u32;}}else{{pending_undefined|={m}u32;}}}}",m=1u32<<f.bit(),bit=f.bit()),
+            Token::Not(o,a)=>format!("let v{o}:u64=(!v{a})&{}u64;",mask(p.widths[o])),
+            Token::Bit(o,a,i)=>format!("let v{o}:u64=(v{a}>>{i})&1;"),
+            Token::Zero(o,a)=>format!("let v{o}:u64=u64::from(v{a}==0);"),
+            Token::Parity(o,a)=>format!("let v{o}:u64=u64::from((v{a} as u8).count_ones()%2==0);"),
+            Token::Write(a)=>format!("pending_dst=Some(v{a});"),
+            Token::WriteSource(a)=>format!("pending_src=Some(v{a});"),
+            Token::WriteSourceIf(a,c)=>format!("if v{c}!=0{{pending_src=Some(v{a});}}"),
+            Token::Flag(f,a)=>format!("pending_undefined&=!{m}u32;pending_flags=(pending_flags&!{m}u32)|((v{a} as u32)<<{bit});",m=1u32<<f.bit(),bit=f.bit()),
+            Token::Retire=>{
+                let mut r=String::new();
+                if has_dst_write&&has_src_write{
+                    r.push_str(&format!("if let(Some(a),Some(b))=(pending_dst,pending_src){{let overlap=({}u64<<dst.1)&({}u64<<src.1);if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0{{return Err(ExecError::InvalidBinding);}}}}\n",mask(p.operand_width),mask(p.source_width)));
+                }
+                if has_stores{
+                    r.push_str("for (addr,w,v) in pending_stores.into_iter().flatten(){ram.store(addr,w,v).map_err(|f|f.error(*eip))?;}\n");
+                }
+                if has_dst_write{
+                    r.push_str(&format!("if let Some(value)=pending_dst{{let m={}u64<<dst.1;regs[dst.0]=(((regs[dst.0] as u64)&!m)|((value<<dst.1)&m)) as u32;}}\n",mask(p.operand_width)));
+                }
+                if has_src_write{
+                    r.push_str(&format!("if let Some(value)=pending_src{{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\n",mask(p.source_width)));
+                }
+                if !register_commits.is_empty(){r.push_str(&register_commits);r.push('\n');}
+                if has_flag_write{r.push_str("*flags=pending_flags;*undefined=pending_undefined;\n");}
+                if has_eip_write{r.push_str("*eip=pending_eip;\n");}else{r.push_str("*eip=context.next_eip;\n");}
+                if has_control{r.push_str("if let Some((r,v))=pending_control{machine.commit_control(r,v);}");}
+                if has_table{r.push_str("if let Some((t,l,b))=pending_table{machine.tables[t]=(l,b);}");}
+                if has_system{r.push_str("if let Some((t,loaded))=pending_system{machine.ldt_tr[t]=loaded;}");}
+                if has_resume{r.push_str("if !pending_resume{machine.retired();}");}else{r.push_str("machine.retired();");}
+                if has_interrupt_shadow{r.push_str("if pending_interrupt_shadow{machine.sti_shadow=1;}");}
+                if has_segment{r.push_str("if let Some((reg,selector,cache))=pending_segment{machine.selectors[reg]=selector;machine.segments[reg]=cache;if reg==2{machine.ss_shadow=1;}}");}
+                if has_transfer{r.push_str("if let Some(t)=pending_transfer{t.commit(regs,flags,undefined,eip,machine,ram)?;}\n");}
+                if changes_paging{r.push_str("ram.set_paging(machine.ram_paging());");}
+                r.push_str("Ok(())");
+                r
+            }
+        };
+        if !line.is_empty(){out.push_str(&line);out.push('\n');}
+    }
+    if p.checkpoint_flags{
+        out.push_str("})();\nif result.is_err(){machine.flag_checkpoint=None;}\nresult\n}\n");
+    }else{
+        out.push_str("}\n");
+    }
+    out
+}
 pub fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
     let mut out=String::new();let mut const_index=0usize;
     // Each named register effect has a statically known destination and width.
