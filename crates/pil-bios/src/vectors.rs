@@ -16,7 +16,7 @@
 //! BIOS handlers return them (RETF 2 or a patched IRET frame).
 use super::*;
 /// Linear address of vector 0's entry; vector n's is 3*n bytes on.
-pub(super) const ENTRIES:u32=0xff000;
+pub const ENTRIES:u32=0xff000;
 const SEGMENT:u16=0xf000;
 const FIRST:u16=0xf000;
 /// The vectors that start at an entry: the divide error (the DOS kernel's
@@ -26,10 +26,10 @@ const FIRST:u16=0xf000;
 /// console 29h, network 2Ah, multiplex 2Fh). Data pointers (1Dh-1Eh, 41h,
 /// 43h, 46h), the DOS-kept 22h-24h and the free and user vectors stay as
 /// they were. INT 1Fh points to the upper graphics font.
-pub(super) const ANSWERED:[u8;20]=[0x00,0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
+pub const ANSWERED:[u8;20]=[0x00,0x08,0x09,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x1a,0x1b,0x1c,0x20,0x21,0x28,0x29,0x2a,0x2f];
 /// The INT stubs end before the small synthetic IRQ0 BIOS wrapper.
 const ENTRY_END:u32=ENTRIES+3*256;
-const TIMER_OFFSET:u16=0xf300;
+pub const TIMER_OFFSET:u16=0xf300;
 // IRQ0 enters here with the interrupted FLAGS/CS/IP on the stack. Save the
 // registers BIOS itself uses across INT 1Ch, then return from the hardware IRQ.
 const TIMER_CODE:&[u8]=&[0x66,0x50,0x1e,0xcd,0x1c,0x1f,0xb0,0x20,0xe6,0x20,0x66,0x58,0xcf];
@@ -37,90 +37,85 @@ const TIMER_CODE:&[u8]=&[0x66,0x50,0x1e,0xcd,0x1c,0x1f,0xb0,0x20,0xe6,0x20,0x66,
 // it, then EOI and return from IRQ1 through the frame already on the stack.
 const BREAK_OFFSET:u16=TIMER_OFFSET+TIMER_CODE.len() as u16;
 const BREAK_CODE:&[u8]=&[0x50,0xcd,0x1b,0xb0,0x20,0xe6,0x20,0x58,0xcf];
-// A private one-byte continuation reached only by a DOS mouse callback's
-// RETF. The runner catches it before decoding; HLT prevents silent execution
-// if a program returns here with no matching callback frame.
-pub(super) const MOUSE_RETURN:u32=ENTRY_END+(TIMER_CODE.len()+BREAK_CODE.len()) as u32;
-pub(super) const MOUSE_RETURN_SEGMENT:u16=SEGMENT;
-pub(super) const MOUSE_RETURN_OFFSET:u16=FIRST+(3*256+TIMER_CODE.len()+BREAK_CODE.len()) as u16;
-pub(super) const END:u32=MOUSE_RETURN+1;
+// A private one-byte continuation reached only by a callback's RETF.
+pub const MOUSE_RETURN:u32=ENTRY_END+(TIMER_CODE.len()+BREAK_CODE.len()) as u32;
+pub const MOUSE_RETURN_SEGMENT:u16=SEGMENT;
+pub const MOUSE_RETURN_OFFSET:u16=FIRST+(3*256+TIMER_CODE.len()+BREAK_CODE.len()) as u16;
+pub const END:u32=MOUSE_RETURN+1;
 /// The far pointer of vector n's entry.
-pub(super) fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::from(n))}
+pub fn entry(n:u8)->u32{u32::from(SEGMENT)<<16|(u32::from(FIRST)+3*u32::from(n))}
 /// Writes the entries (into the read-only BIOS area, before it is protected)
 /// and points the answered vectors at them.
-pub(super) fn install(ram:&mut Ram)->Result<(),String>{
+pub fn install(ram:&mut Ram)->Result<(),String>{
     let mut code=vec![0u8;3*256];
     for n in 0..=255u8{code[3*usize::from(n)..][..3].copy_from_slice(&[0xf4,n,0xcf]);}
     code.extend_from_slice(TIMER_CODE);code.extend_from_slice(BREAK_CODE);
-    code.push(0xf4); // mouse callback continuation, never executed by the guest
+    code.push(0xf4); // callback continuation, never executed by the guest
     ram.write_bytes(ENTRIES,&code).map_err(|e|format!("interrupt entries: {e:?}"))?;
     for n in ANSWERED{ram.store(u32::from(n)*4,MemWidth::Dword,entry(n)).map_err(|e|format!("INT {n:02x}h vector: {e:?}"))?;}
     Ok(())
 }
-/// Whether vector n still leads to Dine: its entry, or 0 for a vector that
+/// Whether vector n still leads to firmware: its entry, or 0 for a vector that
 /// has none.
-pub(super) fn answered(p:&Loaded,n:u8)->Result<bool,String>{
-    // A raw ROM has no Dine behind its vectors: 0000:0000 is an address too.
+pub fn answered<F>(p:&Machine<F>,n:u8)->Result<bool,String>{
     if p.rom_mode{return Ok(false);}
-    // A booted machine has only its BIOS behind vectors: 0000:0000 is an
-    // address too, and a vector answers only while it holds its entry.
     if p.booted{return Ok(p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?==entry(n));}
     let vector=p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?;
     Ok(vector==0||vector==entry(n))
 }
-fn linear(p:&Loaded)->u32{p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip)}
-/// Whether CS:IP is at an entry, so Dine answers whatever the vector holds.
-pub(super) fn at_entry(p:&Loaded)->bool{let at=linear(p);(ENTRIES..ENTRY_END).contains(&at)&&(at-ENTRIES)%3==0}
+fn linear<F>(p:&Machine<F>)->u32{p.image.segments[SegmentRegister::Cs.index()].base.wrapping_add(p.cpu.eip)}
+/// Whether CS:IP is at an entry, so firmware answers whatever the vector holds.
+pub fn at_entry<F>(p:&Machine<F>)->bool{let at=linear(p);(ENTRIES..ENTRY_END).contains(&at)&&(at-ENTRIES)%3==0}
 /// The vector of the entry at CS:IP, when CS:IP is at one.
-pub(super) fn entry_vector(p:&Loaded)->Option<u8>{at_entry(p).then(||((linear(p)-ENTRIES)/3)as u8)}
-fn set_cs(p:&mut Loaded,selector:u16){
+pub fn entry_vector<F>(p:&Machine<F>)->Option<u8>{at_entry(p).then(||((linear(p)-ENTRIES)/3)as u8)}
+fn set_cs<F>(p:&mut Machine<F>,selector:u16){
     let cs=SegmentRegister::Cs.index();
     p.selectors[cs]=selector;p.image.selectors[cs]=selector;p.image.segments[cs]=SegmentCache::real_mode(selector);
 }
-fn stack(p:&Loaded,offset:u32,write:bool)->Result<u32,String>{
+fn stack<F>(p:&Machine<F>,offset:u32,write:bool)->Result<u32,String>{
     let context=MemoryContext{segment:SegmentRegister::Ss,cache:p.image.segments[SegmentRegister::Ss.index()]};
     context.translate(offset&0xffff,MemWidth::Word,write,p.cpu.eip).map_err(|e|format!("interrupt stack access: {e:?}"))
 }
 /// INT n at CS:IP (length 2) to a program's handler. All three stack words
 /// and the target are checked before anything changes.
-pub(super) fn deliver(p:&mut Loaded,n:u8)->Result<(),String>{
+pub fn deliver<F>(p:&mut Machine<F>,n:u8)->Result<(),String>{
     deliver_at(p,n,(p.cpu.eip+2)&0xffff)
 }
 /// A fault whose vector still holds its entry: the frame is pushed as for
-/// any fault and execution continues at the entry, where Dine answers it.
-pub(super) fn deliver_fault_to_entry(p:&mut Loaded,n:u8,fault_ip:u32)->Result<(),String>{
+/// any fault and execution continues at the entry, where firmware answers it.
+pub fn deliver_fault_to_entry<F>(p:&mut Machine<F>,n:u8,fault_ip:u32)->Result<(),String>{
     let at=entry(n);deliver_to(p,(at>>16)as u16,at&0xffff,fault_ip&0xffff)
 }
 /// Whether vector n holds its own entry (not 0 and not a program's handler).
-pub(super) fn at_own_entry(p:&Loaded,n:u8)->Result<bool,String>{
+pub fn at_own_entry<F>(p:&Machine<F>,n:u8)->Result<bool,String>{
     if p.rom_mode{return Ok(false);}
     Ok(p.ram.load(u32::from(n)*4,MemWidth::Dword).map_err(|e|format!("INT {n:02x}h vector read: {e:?}"))?==entry(n))
 }
 /// Fault/exception delivery (such as #UD, vector 06h) with the faulting EIP.
-pub(super) fn deliver_fault(p:&mut Loaded,n:u8,fault_ip:u32)->Result<(),String>{
+pub fn deliver_fault<F>(p:&mut Machine<F>,n:u8,fault_ip:u32)->Result<(),String>{
     deliver_at(p,n,fault_ip&0xffff)
 }
-fn target(p:&Loaded,n:u8)->Result<(u16,u32),String>{
-    let(segment,offset)=crate::interrupt::real_vector(&p.image,&p.ram,n)?;let offset=u32::from(offset);
+fn target<F>(p:&Machine<F>,n:u8)->Result<(u16,u32),String>{
+    let(segment,offset)=pil_cpu::interrupt::real_vector(&p.image,&p.ram,n)?;let offset=u32::from(offset);
     let address=u32::from(segment)*16+offset;let image=&p.image;
     let fetchable=(address>=image.fetch_base+image.start&&address<image.fetch_base+image.end)
         ||image.system.iter().any(|&(start,end)|address>=start&&address<end);
     if !fetchable{return Err(format!("INT {n:02x}h handler at {segment:04x}:{offset:04x} is outside the running program"));}
     Ok((segment,offset))
 }
-/// Whether vector n leads to a program's handler inside code Dine can run.
-pub(super) fn reachable(p:&Loaded,n:u8)->Result<bool,String>{Ok(!answered(p,n)?&&target(p,n).is_ok())}
-pub(super) fn deliver_timer(p:&mut Loaded)->Result<(),String>{
+/// Whether vector n leads to a program's handler inside runnable code.
+pub fn reachable<F>(p:&Machine<F>,n:u8)->Result<bool,String>{Ok(!answered(p,n)?&&target(p,n).is_ok())}
+pub fn deliver_timer<F>(p:&mut Machine<F>)->Result<(),String>{
     if !p.image.real_mode||p.cpu.eflags&0x20000!=0{return Err("timer hook outside real mode is not modelled".into());}
     target(p,0x1c)?;
     deliver_to(p,SEGMENT,u32::from(TIMER_OFFSET),p.cpu.eip&0xffff)
 }
 /// A hardware interrupt (IRQ0 as INT 08h) between instructions: the frame
 /// returns to the current IP.
-pub(super) fn deliver_irq(p:&mut Loaded,n:u8)->Result<(),String>{
+pub fn deliver_irq<F>(p:&mut Machine<F>,n:u8)->Result<(),String>{
     if !p.image.real_mode{
-        let event=crate::interrupt::Event{vector:n,error_code:None,return_eip:p.cpu.eip,software:false,cr2:None};
-        crate::interrupt::deliver(&mut p.cpu,&mut p.image,&mut p.ram,event)?;
+        let event=pil_cpu::interrupt::Event{vector:n,error_code:None,return_eip:p.cpu.eip,software:false,cr2:None};
+        pil_cpu::interrupt::deliver(&mut p.cpu,&mut p.image,&mut p.ram,event)?;
         p.selectors=p.image.selectors;
         return Ok(());
     }
@@ -128,35 +123,35 @@ pub(super) fn deliver_irq(p:&mut Loaded,n:u8)->Result<(),String>{
 }
 /// Continue the BIOS INT 08h handler in its wrapper (INT 1Ch, EOI, IRET),
 /// which returns through the frame already on the stack.
-pub(super) fn enter_timer_wrapper(p:&mut Loaded){
+pub fn enter_timer_wrapper<F>(p:&mut Machine<F>){
     set_cs(p,SEGMENT);p.cpu.eip=u32::from(TIMER_OFFSET);p.image.retired();
 }
 /// Continue the BIOS INT 09h handler's Ctrl+Break in its wrapper (INT 1Bh,
 /// EOI, IRET), which returns through the frame already on the stack.
-pub(super) fn enter_break_wrapper(p:&mut Loaded){
+pub fn enter_break_wrapper<F>(p:&mut Machine<F>){
     set_cs(p,SEGMENT);p.cpu.eip=u32::from(BREAK_OFFSET);p.image.retired();
 }
 /// Whether CS:IP is INT 09h at its own entry, where the BIOS handler runs.
-pub(super) fn at_keyboard_entry(p:&Loaded)->bool{linear(p)==ENTRIES+3*9}
+pub fn at_keyboard_entry<F>(p:&Machine<F>)->bool{linear(p)==ENTRIES+3*9}
 /// Whether CS:IP is INT 08h at its own entry, where the BIOS handler runs.
-pub(super) fn at_timer_entry(p:&Loaded)->bool{linear(p)==ENTRIES+3*8}
-/// Protected-mode delivery through the IDT (see crate::interrupt::deliver).
-pub(super) fn deliver_protected(p:&mut Loaded,event:crate::interrupt::Event)->Result<(),String>{
-    let result=crate::interrupt::deliver(&mut p.cpu,&mut p.image,&mut p.ram,event);
+pub fn at_timer_entry<F>(p:&Machine<F>)->bool{linear(p)==ENTRIES+3*8}
+/// Protected-mode delivery through the IDT (see pil_cpu::interrupt::deliver).
+pub fn deliver_protected<F>(p:&mut Machine<F>,event:pil_cpu::interrupt::Event)->Result<(),String>{
+    let result=pil_cpu::interrupt::deliver(&mut p.cpu,&mut p.image,&mut p.ram,event);
     p.selectors=p.image.selectors;
     result
 }
-fn deliver_at(p:&mut Loaded,n:u8,return_ip:u32)->Result<(),String>{
+fn deliver_at<F>(p:&mut Machine<F>,n:u8,return_ip:u32)->Result<(),String>{
     let(segment,offset)=target(p,n)?;deliver_to(p,segment,offset,return_ip)
 }
-fn deliver_to(p:&mut Loaded,segment:u16,offset:u32,return_ip:u32)->Result<(),String>{
-    crate::interrupt::real_frame(&mut p.cpu,&mut p.image,&mut p.ram,segment,offset as u16,return_ip)?;
+fn deliver_to<F>(p:&mut Machine<F>,segment:u16,offset:u32,return_ip:u32)->Result<(),String>{
+    pil_cpu::interrupt::real_frame(&mut p.cpu,&mut p.image,&mut p.ram,segment,offset as u16,return_ip)?;
     p.selectors=p.image.selectors;
     Ok(())
 }
 /// At an entry's IRET: return to the caller with its own control flags and
 /// the status flags the service left. `Ok(false)` anywhere else.
-pub(super) fn leave(p:&mut Loaded)->Result<bool,String>{
+pub fn leave<F>(p:&mut Machine<F>)->Result<bool,String>{
     let at=linear(p);
     if !(ENTRIES..ENTRY_END).contains(&at)||(at-ENTRIES)%3!=2{return Ok(false);}
     let sp=p.cpu.regs[4]&0xffff;let mut words=[0u32;3];
@@ -171,6 +166,3 @@ pub(super) fn leave(p:&mut Loaded)->Result<bool,String>{
     set_cs(p,cs as u16);p.cpu.eip=ip;p.image.retired();
     Ok(true)
 }
-#[cfg(test)]
-#[path="../../tests/unit/dos_vectors.rs"]
-mod tests;

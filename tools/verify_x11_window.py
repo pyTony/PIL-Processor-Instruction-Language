@@ -9,7 +9,7 @@ What it does: writes an original boot sector that polls the keyboard
 controller (port 60h) with interrupts off and prints each byte it reads as two
 hex digits, boots it in the window, presses keys through the XTEST extension
 and reads the screen back from the window, recognising the digits against
-Dine's own font (src/bios/font8x16.txt). So it checks what a booted machine
+Dine's own font (crates/pil-bios/src/font8x16.txt). So it checks what a booted machine
 such as Linux receives: set-1 scan codes with Shift, Ctrl, E0h keys, F-keys
 and a held key's repeats. Then the window is closed through the window
 manager protocol and pil must exit.
@@ -81,7 +81,7 @@ def boot_image():
 
 def font_templates():
     """Bitmaps of '0'-'9', 'A'-'F' and the space from the project's 8x16 font."""
-    lines = open(os.path.join(ROOT, "src", "bios", "font8x16.txt"), encoding="utf-8").read().splitlines()
+    lines = open(os.path.join(ROOT, "crates", "pil-bios", "src", "font8x16.txt"), encoding="utf-8").read().splitlines()
     wanted = {ord(c): c for c in "0123456789ABCDEF "}
     found, i = {}, 0
     while i < len(lines):

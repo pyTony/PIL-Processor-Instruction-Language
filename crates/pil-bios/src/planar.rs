@@ -4,16 +4,16 @@
 //! information (AH=12h BL=10h) and display combination (AH=1Ah) calls that a
 //! colour VGA BIOS answers. The planes themselves live in Ram (vga_planar).
 use super::*;
-use crate::vga_planar::Planar;
+use pil_cpu::vga_planar::Planar;
 /// Geometry of a planar mode: pixels, character cell height and text rows.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub(super) struct Geometry{pub width:u32,pub height:u32,pub cell:u32,pub rows:u32}
+pub struct Geometry{pub width:u32,pub height:u32,pub cell:u32,pub rows:u32}
 impl Geometry{
     pub fn columns(&self)->u32{self.width/8}
     pub fn line_bytes(&self)->u32{self.width/8}
     pub fn bytes(&self)->usize{(self.line_bytes()*self.height)as usize}
 }
-pub(super) fn geometry(mode:u32)->Option<Geometry>{
+pub fn geometry(mode:u32)->Option<Geometry>{
     Some(match mode{
         0x0d=>Geometry{width:320,height:200,cell:8,rows:25},
         0x0e=>Geometry{width:640,height:200,cell:8,rows:25},
@@ -23,19 +23,19 @@ pub(super) fn geometry(mode:u32)->Option<Geometry>{
     })
 }
 /// Page storage in each 64 KiB plane, including BIOS alignment padding.
-pub(super) fn page_offset(mode:u32,page:u32)->Result<usize,String>{
+pub fn page_offset(mode:u32,page:u32)->Result<usize,String>{
     let stride=match mode{0x0d=>0x2000,0x0e=>0x4000,0x10=>0x8000,0x12=>0x10000,_=>return Err("not a planar mode".into())};
     if page>=0x10000/stride{return Err(format!("graphics page {page} outside mode {mode:02x}h"));}
     Ok((page*stride)as usize)
 }
-fn err(e:crate::memory::AccessFault)->String{format!("BIOS video write: {e:?}")}
-fn commit(p:&mut Loaded,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
+fn err(e:pil_cpu::memory::AccessFault)->String{format!("BIOS video write: {e:?}")}
+fn commit<F>(p:&mut Machine<F>,writes:&[(u32,MemWidth,u32)])->Result<(),String>{
     for &(at,w,_) in writes{p.ram.check_write(at,w).map_err(err)?;}
     for &(at,w,v) in writes{p.ram.store(at,w,v).map_err(err)?;}Ok(())
 }
 /// INT 10h AH=00h for a planar mode: BIOS data area, a fresh register set,
 /// the mode's palette, and cleared planes unless AL bit 7 asks to keep them.
-pub(super) fn set_mode(p:&mut Loaded,mode:u32,keep:bool)->Result<(),String>{
+pub fn set_mode<F>(p:&mut Machine<F>,mode:u32,keep:bool)->Result<(),String>{
     let g=geometry(mode).ok_or("not a planar mode")?;
     // Regen buffer length as the VGA BIOS parameter table gives it.
     let page=match mode{0x0d=>0x2000,0x0e=>0x4000,0x10=>0x8000,_=>0xa000};
@@ -53,15 +53,15 @@ pub(super) fn set_mode(p:&mut Loaded,mode:u32,keep:bool)->Result<(),String>{
 /// Sequencer (3C4h/3C5h), graphics controller (3CEh/3CFh) and attribute
 /// controller (3C0h/3C1h) accesses; a word OUT to an index port writes the
 /// index then the data. Returns the value read, or None for another port.
-pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<Option<u16>,String>{
+pub fn io<F>(p:&mut Machine<F>,port:u16,input:bool,value:u16,word:bool)->Result<Option<u16>,String>{
     match port{
         0x3c0|0x3c1=>{
             if word{return Err("word access to the VGA attribute controller is not modelled".into());}
             let v=p.vga.attribute_io(port,input,value as u8)?;
-            if !input{super::vga_regs::sync(p);}
+            if !input{pil_pc::vga_regs::sync(p);}
             return Ok(Some(u16::from(v)));
         },
-        0x3c4|0x3c5|0x3ce|0x3cf if p.booted=>return super::vga_regs::controller_io(p,port,input,value,word).map(Some),
+        0x3c4|0x3c5|0x3ce|0x3cf if p.booted=>return pil_pc::vga_regs::controller_io(p,port,input,value,word).map(Some),
         0x3c4|0x3c5|0x3ce|0x3cf=>{},
         _=>return Ok(None),
     }
@@ -76,7 +76,7 @@ pub(super) fn io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<
 }
 /// The same ports outside the planar modes (see dos_vga::Controllers):
 /// all checks precede any change.
-fn idle_io(p:&mut Loaded,sequencer:bool,even:bool,input:bool,value:u16,word:bool)->Result<u16,String>{
+fn idle_io<F>(p:&mut Machine<F>,sequencer:bool,even:bool,input:bool,value:u16,word:bool)->Result<u16,String>{
     let mut next=p.vga.idle.clone();
     let mut index=if sequencer{next.seq_index}else{next.gc_index};
     let mut access=|data:bool,value:u8|->Result<u8,String>{
@@ -101,11 +101,11 @@ fn idle_io(p:&mut Loaded,sequencer:bool,even:bool,input:bool,value:u16,word:bool
             p.ram.set_planar(Some(planes));
         }
         if let Some(planes)=p.ram.planar_mut(){planes.seq=p.vga.idle.seq;planes.gc=p.vga.idle.gc;}
-    }else{super::vga_font::sync(p);}
+    }else{pil_pc::vga_font::sync(p);}
     Ok(u16::from(lo)|u16::from(hi)<<8)
 }
 /// INT 10h AH=0Ch/0Dh in a planar mode, page 0. Bit 7 of AL XORs.
-pub(super) fn pixel(p:&mut Loaded,mode:u32,write:bool)->Result<(),String>{
+pub fn pixel<F>(p:&mut Machine<F>,mode:u32,write:bool)->Result<(),String>{
     let g=geometry(mode).ok_or("not a planar mode")?;
     let(x,y)=(p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
     let page=(p.cpu.regs[3]>>8)&255;let page_offset=page_offset(mode,page)?;
@@ -119,13 +119,13 @@ pub(super) fn pixel(p:&mut Loaded,mode:u32,write:bool)->Result<(),String>{
     }else{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(old);}
     Ok(())
 }
-fn es_dx(p:&Loaded)->u32{(u32::from(p.selectors[SegmentRegister::Es.index()])<<4).wrapping_add(p.cpu.regs[2]&0xffff)}
-fn get8(p:&Loaded,at:u32)->Result<u8,String>{p.ram.load(at,MemWidth::Byte).map(|v|v as u8).map_err(|e|format!("BIOS palette table read: {e:?}"))}
+fn es_dx<F>(p:&Machine<F>)->u32{(u32::from(p.selectors[SegmentRegister::Es.index()])<<4).wrapping_add(p.cpu.regs[2]&0xffff)}
+fn get8<F>(p:&Machine<F>,at:u32)->Result<u8,String>{p.ram.load(at,MemWidth::Byte).map(|v|v as u8).map_err(|e|format!("BIOS palette table read: {e:?}"))}
 /// INT 10h AH=10h: attribute palette and DAC services of a VGA BIOS. Colour
 /// paging (13h/1Ah) and grey-scale summing (1Bh) are not modelled.
-pub(super) fn palette(p:&mut Loaded)->Result<(),String>{
+pub fn palette<F>(p:&mut Machine<F>)->Result<(),String>{
     let al=p.cpu.regs[0]&255;let(bl,bh)=((p.cpu.regs[3]&255)as usize,((p.cpu.regs[3]>>8)&255)as u8);
-    let set_bh=|p:&mut Loaded,v:u8|p.cpu.regs[3]=(p.cpu.regs[3]&0xffff00ff)|u32::from(v)<<8;
+    let set_bh=|p:&mut Machine<F>,v:u8|p.cpu.regs[3]=(p.cpu.regs[3]&0xffff00ff)|u32::from(v)<<8;
     match al{
         0x00=>{if bl>15{return Err("AH=10h AL=00h palette register above 0Fh".into());}p.vga.attr[bl]=bh&0x3f;},
         0x01=>p.vga.attr[17]=bh,
@@ -158,26 +158,51 @@ pub(super) fn palette(p:&mut Loaded)->Result<(),String>{
 }
 /// The INT 43h graphics font a mode set selects: 8x14 for 350-line modes,
 /// 8x16 for 480-line modes, else the 8x8 ROM font, as the EGA/VGA BIOS does.
-pub(super) fn graphics_font(cell:u32)->u32{
-    match cell{14=>super::vga_text::ROM_FONT14,16=>super::vga_text::ROM_FONT16,_=>0xf000_0000|(super::console::graphics_text::FONT&0xffff)}
+pub fn graphics_font(cell:u32)->u32{
+    match cell{14=>super::rom_font::ROM_FONT14,16=>super::rom_font::ROM_FONT16,_=>0xf000_0000|(super::console::graphics_text::FONT&0xffff)}
 }
 /// AX=1130h: font information. BH=0/1 return the INT 1Fh/43h vectors, BH=2
 /// the 8x14 font, BH=3 the 8x8 ROM font (00h-7Fh), BH=4 its upper half
 /// (80h-FFh) and BH=6 the 8x16 font; CX is the
 /// current character height and DL the last text row. Font loading (other
 /// AL) is not modelled.
-pub(super) fn font(p:&mut Loaded)->Result<(),String>{
+fn load_rom_font<F>(p:&mut Machine<F>,al:u32)->Result<(),String>{
+    let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("font mode: {e:?}"))?;
+    let block=(p.cpu.regs[3]&255)as usize;
+    if !matches!(mode,0..=3|7)||block>7{
+        return Err(format!("INT 10h AX=11{al:02X}h requires text mode and font block 0..7"));
+    }
+    let height:usize=match al{1=>14,2=>8,_=>16};
+    let base=((block&3)<<14)|((block&4)<<11);
+    let mut font=p.ram.planar().cloned().or_else(||p.vga.font.clone()).unwrap_or_else(Planar::new);
+    for glyph in 0..256usize{
+        let src=match al{
+            1=>super::rom_font::linear(super::rom_font::ROM_FONT14)+(glyph*14)as u32,
+            2 if glyph<128=>super::console::graphics_text::FONT+(glyph*8)as u32,
+            2=>super::rom_font::linear(super::console::graphics_text::UPPER_FONT)+((glyph-128)*8)as u32,
+            _=>super::rom_font::linear(super::rom_font::ROM_FONT16)+(glyph*16)as u32,
+        };
+        for row in 0..32usize{
+            let b=if row<height{p.ram.load(src+row as u32,MemWidth::Byte).map_err(|e|format!("ROM font read: {e:?}"))?as u8}else{0};
+            font.poke(2,base+glyph*32+row,b);
+        }
+    }
+    if p.ram.planar().is_some(){p.ram.set_planar(Some(font));}else{p.vga.font=Some(font);}
+    Ok(())
+}
+pub fn font<F>(p:&mut Machine<F>)->Result<(),String>{
     let al=p.cpu.regs[0]&255;
-    if al==0{return super::vga_font::load_user_patterns(p);}
-    if al==3{return super::vga_font::select_blocks(p);}
+    if al==0{return pil_pc::vga_font::load_user_patterns(p);}
+    if matches!(al,1|2|4){return load_rom_font(p,al);}
+    if al==3{return pil_pc::vga_font::select_blocks(p);}
     if al!=0x30{return Err(format!("INT 10h AX=11{al:02X}h (font load) is not modelled"));}
     let bh=(p.cpu.regs[3]>>8)&255;
     let pointer=match bh{
         0|1=>p.ram.load(if bh==0{0x1f*4}else{0x43*4},MemWidth::Dword).map_err(|e|format!("{e:?}"))?,
-        2=>super::vga_text::ROM_FONT14,
+        2=>super::rom_font::ROM_FONT14,
         3=>0xf000_fa6e,
         4=>super::console::graphics_text::UPPER_FONT,
-        6=>super::vga_text::ROM_FONT16,
+        6=>super::rom_font::ROM_FONT16,
         _=>return Err(format!("INT 10h AX=1130h BH={bh:02X}h: the 9-dot alternate tables are not present")),
     };
     let height=p.ram.load(0x485,MemWidth::Word).map_err(|e|format!("{e:?}"))?;
@@ -191,7 +216,7 @@ pub(super) fn font(p:&mut Loaded)->Result<(),String>{
 }
 /// AH=12h BL=10h: EGA information of a colour VGA with 256 KiB. Other BL
 /// subfunctions return unchanged (AL stays, which callers read as failure).
-pub(super) fn alternate(p:&mut Loaded){
+pub fn alternate<F>(p:&mut Machine<F>){
     if p.cpu.regs[3]&255==0x10{
         p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|0x0003;
         p.cpu.regs[1]=(p.cpu.regs[1]&0xffff0000)|0x0009;
@@ -199,14 +224,14 @@ pub(super) fn alternate(p:&mut Loaded){
 }
 /// AH=1Ah: AL=00h reads the display combination, colour VGA (08h) with no
 /// alternate display. Setting it (AL=01h) is not modelled.
-pub(super) fn combination(p:&mut Loaded)->Result<(),String>{
+pub fn combination<F>(p:&mut Machine<F>)->Result<(),String>{
     match p.cpu.regs[0]&255{
         0=>{p.cpu.regs[0]=(p.cpu.regs[0]&0xffffff00)|0x1a;p.cpu.regs[3]=(p.cpu.regs[3]&0xffff0000)|0x0008;Ok(())},
         al=>Err(format!("INT 10h AX=1A{al:02X}h is not modelled")),
     }
 }
 /// Session view: the used part of each plane and the 16 pixel colours.
-pub(super) fn snapshot(p:&Loaded)->Option<(u32,Geometry,String,String)>{
+pub fn snapshot<F>(p:&Machine<F>)->Option<(u32,Geometry,String,String)>{
     let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;let g=geometry(mode)?;let planar=p.ram.planar()?;
     let mut hex=String::with_capacity(8*g.bytes());
     let start=usize::from(p.vga.start());
@@ -217,7 +242,7 @@ pub(super) fn snapshot(p:&Loaded)->Option<(u32,Geometry,String,String)>{
 
 /// The 320x200, 256-colour scanout. Unchained storage is one byte per
 /// pixel in successive planes, 80 bytes per scanline in each plane.
-pub(super) fn mode13_snapshot(p:&Loaded)->Option<String>{
+pub fn mode13_snapshot<F>(p:&Machine<F>)->Option<String>{
  if p.ram.load(0x449,MemWidth::Byte).ok()!=Some(0x13){return None;}
  Some(if let Some(planes)=p.ram.planar(){
   let start=usize::from(p.vga.start());

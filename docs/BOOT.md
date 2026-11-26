@@ -219,7 +219,7 @@ script, one step per line (`#` starts a comment):
 | Step | Meaning |
 |---|---|
 | `run N` | run N steps (`_` separators allowed) |
-| `type TEXT` | type TEXT (`\r` or `\n` is Enter, `\s` a space, `\b` Backspace, `\e` Esc, `\\` a backslash) |
+| `type TEXT` | type TEXT (`\r` or `\n` is Enter, `\t` Tab, `\s` a space, `\b` Backspace, `\e` Esc, `\\` a backslash) |
 | `prompt TEXT` | wait until the screen changed after the last `type` and its last line ends with TEXT |
 | `screen TEXT` | wait until TEXT is anywhere on the screen |
 | `floppy IMAGE` | change the diskette (same format) |

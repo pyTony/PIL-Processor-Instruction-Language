@@ -1,0 +1,16 @@
+[package]
+name = "pil-bios"
+version = "0.38.0-alpha.1"
+edition = "2021"
+publish = false
+
+# The PC/AT and VGA BIOS firmware on top of pil-pc: INT 08h/09h/10h/11h/12h/
+# 13h/14h/15h/16h/18h/19h/1Ah/1Ch, ROM fonts and parameter tables, interrupt
+# vector entries, and booting a disk sector into Machine<F> without DOS.
+[lib]
+name = "pil_bios"
+path = "src/lib.rs"
+
+[dependencies]
+pil-cpu = { path = "../pil-cpu" }
+pil-pc = { path = "../pil-pc" }

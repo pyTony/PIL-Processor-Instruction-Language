@@ -34,12 +34,13 @@ kernel) is another.
 ## Milestones (one PR each, every existing test passing throughout)
 
 ### 1. Machine layer (refactor, no behaviour change)
-Partly done. 21 November 2026 (#292): DOS state in `dos::Dos`. 24 November
-2026: the device, BIOS, DOS and host files moved into `src/pc/`, `src/bios/`,
-`src/dos/` and `src/host/` (module names unchanged), then `pc::Machine` and
-the `Firmware` trait, the CPU core as `crates/pil-cpu` and the machine as
-`crates/pil-pc`. Still to do: split the files that mix BIOS and DOS, and the
-BIOS as a crate (Tony chose the staged route; see DINE_ARCHITECTURE.md).
+Done for the crate split (24 November 2026): DOS state in `dos::Dos` (#292),
+source folders (`src/pc/`, `src/bios/`, `src/dos/`, `src/host/`, #311),
+`pc::Machine` and `Firmware` (#312), the CPU core as `crates/pil-cpu` (#313),
+the machine as `crates/pil-pc` (#315), and the BIOS split apart from Dine's
+DOS into `crates/pil-bios` (`pil_bios::Bios` implements `Firmware`; Cargo
+builds all workspace libraries and the `dine` shared library by default).
+See DINE_ARCHITECTURE.md.
 - **`pc::Machine`:** CPU, RAM, segment state/image, FPU, decode cache,
   blocks, and the devices: `pc::pic`, `pc::pit`, `pc::kbc` (8042),
   `pc::cmos`, `pc::vga` (text, planar, fonts), `pc::speaker`, `pc::uart`
@@ -56,11 +57,12 @@ BIOS as a crate (Tony chose the staged route; see DINE_ARCHITECTURE.md).
   are.
 
 ### 2. Booting a disk image through the BIOS
-Done (22 November 2026, `feat/bios-boot-20261122`): MCC Interim's LILO
-reaches `boot:`, loads the kernel, and Linux 0.99pl10 switches to protected
-mode, decompresses and prints `Console: colour`. It then stops on OUT 60h
-(a command to the keyboard itself), which is milestone 3. Usage:
-docs/BOOT.md. The FreeDOS kernel boot was not tried yet.
+Done (22 November 2026, `feat/bios-boot-20261122`; FreeDOS kernel verified
+24 November 2026): MCC Interim's LILO reaches `boot:` and loads Linux 0.99pl10,
+and FreeDOS 1.4 (`FD14LITE.img`, `KERNEL.SYS` 2043 -> `HimemX 3.38` with 46
+disk buffers in HMA -> `FreeCom 0.86` -> `FDAUTO.BAT` and the installer TUI)
+boots on `pil-bios` after adding `INT 1Ah AH=01h` (set tick counter) and
+`INT 10h AX=1101h/1102h/1104h` (ROM font load). Usage: docs/BOOT.md.
 
 - **`pil --boot IMAGE`:** the boot sector at 0000:7C00, DL=00h/80h.
 - **INT 13h on the image:** AH 00, 02, 03, 08, 15, 41/42/48 (LBA), with

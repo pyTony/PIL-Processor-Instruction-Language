@@ -101,7 +101,7 @@ pub(crate) fn edges(map:Keymap,text:&str)->Vec<Edge>{
     let mut out=Vec::new();
     for c in text.chars(){
         let Some(s)=stroke(map,c) else{continue};
-        let ascii=match c{'\n'=>0x0d,'\t'=>0x09,'\u{7f}'=>0x08,_=>crate::dos_encoding::command_line(&c.to_string()).ok()
+        let ascii=match c{'\n'=>0x0d,'\t'=>0x09,'\u{8}'|'\u{7f}'=>0x08,'\u{1b}'=>0x1b,_=>crate::dos_encoding::command_line(&c.to_string()).ok()
             .and_then(|b|if let [b]=b[..]{Some(b)}else{None}).unwrap_or(0)};
         let word=u16::from(s.scan)<<8|u16::from(ascii);
         if s.shift{out.push((SHIFT,false,true,None));}
@@ -186,6 +186,8 @@ mod tests{
         assert_eq!(Keymap::parse("FI"),Ok(Keymap::Fi));assert!(Keymap::parse("de").is_err());
         // BS and DEL (what a terminal sends for Backspace) are key 0Eh, ESC is Esc.
         assert_eq!(makes(Keymap::Us,"a\u{7f}\u{8}\u{1b}"),[(0x1e,false),(0x0e,false),(0x0e,false),(0x01,false)]);
+        assert_eq!(edges(Keymap::Us,"\u{8}\u{1b}")[0].3,Some(0x0e08));
+        assert_eq!(edges(Keymap::Us,"\u{8}\u{1b}")[2].3,Some(0x011b));
     }
     #[test]
     fn terminal_keys_are_key_presses_with_their_modifiers(){
