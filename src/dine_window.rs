@@ -1,8 +1,9 @@
 //! Reusable Win32/GDI RGB framebuffer window for Dine (pil and the Dine
-//! library). No interpreter or DOS dependency.
+//! library); on Linux and Termux:X11 the window is `dine_x11` (feature `x11`).
+//! No interpreter or DOS dependency.
 //! `Frame` contains host RGB pixels, never guest state or pointers.
 
-#[cfg(windows)]
+#[cfg(any(windows,all(unix,feature="x11")))]
 pub(crate) struct Frame {
     pub(crate) width: i32,
     pub(crate) height: i32,
@@ -12,8 +13,9 @@ pub(crate) struct Frame {
 /// Input from an interactive window, before any DOS mapping: a typed
 /// character, a key that types none (Windows virtual-key code), or the mouse
 /// in client coordinates.
-#[cfg(any(windows,test))]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 #[derive(Clone,Copy,Debug)]
+#[cfg_attr(not(windows),allow(dead_code))]
 pub(crate) enum Input{
     Physical{vk:u16,scan:u8,extended:bool,down:bool,repeat:u16,shift:bool,ctrl:bool,alt:bool},
     Text{scan:u8,extended:bool,ch:char,shift:bool,ctrl:bool,alt:bool},
@@ -27,6 +29,8 @@ pub(crate) enum Input{
 
 #[cfg(windows)]
 pub(crate) use self::windows::{Window,set_clipboard,clipboard};
+#[cfg(all(unix,feature="x11"))]
+pub(crate) use crate::dine_x11::{Window,set_clipboard,clipboard};
 
 /// Where a `frame_w` x `frame_h` picture goes in a client area, centred
 /// (x, y, width, height): the largest whole-number enlargement that fits, so
@@ -34,7 +38,7 @@ pub(crate) use self::windows::{Window,set_clipboard,clipboard};
 /// less than 85% of the size that fits with the picture's proportions (a
 /// 640x480 mode in a window made for 2x text), it is drawn at that size
 /// instead, proportions kept.
-#[cfg_attr(not(windows),allow(dead_code))]
+#[cfg_attr(not(any(windows,all(unix,feature="x11"))),allow(dead_code))]
 pub(crate) fn view(client_w:i32,client_h:i32,frame_w:i32,frame_h:i32)->(i32,i32,i32,i32){
     if client_w<=0||client_h<=0||frame_w<=0||frame_h<=0{return (0,0,client_w.max(0),client_h.max(0));}
     let (cw,ch,fw,fh)=(i64::from(client_w),i64::from(client_h),i64::from(frame_w),i64::from(frame_h));
@@ -47,7 +51,7 @@ pub(crate) fn view(client_w:i32,client_h:i32,frame_w:i32,frame_h:i32)->(i32,i32,
 /// The whole-number enlargement for a new window: `DINE_WINDOW_SCALE` (1-8)
 /// when set, otherwise the largest that fits the free desktop area
 /// (`room_w` x `room_h`, without the window frame), at least 1.
-#[cfg_attr(not(windows),allow(dead_code))]
+#[cfg_attr(not(any(windows,all(unix,feature="x11"))),allow(dead_code))]
 pub(crate) fn initial_scale(setting:Option<&str>,room_w:i32,room_h:i32,frame_w:i32,frame_h:i32)->i32{
     if let Some(n)=setting.and_then(|s|s.trim().parse::<i32>().ok()).filter(|n|(1..=8).contains(n)){return n;}
     if frame_w<=0||frame_h<=0{return 1;}
