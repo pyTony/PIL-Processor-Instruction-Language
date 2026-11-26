@@ -102,9 +102,9 @@ in [DOS_CONFIG.md](DOS_CONFIG.md).
 | Option | Effect |
 |---|---|
 | `--tty` | Use the host terminal. This is the default except on Windows. |
-| `--window` | Use a Win32 window. This is the default on Windows, and it works only there. |
+| `--window` | Use a window: Win32 on Windows (the default there), or on Linux and Termux:X11 an X11 window, in a build made with `--features x11` ([below](#linux-and-termuxx11-window)). Without the feature it works only on Windows. |
 | `--mouse` | Install the INT 33h driver, like `mouse on` in a session. Without it no mouse is offered. |
-| `--host-pointer` | The Windows pointer over the window: `auto` (default) hides it while the program's INT 33h cursor is shown, `show` never hides it, `hide` always does. It changes at the pointer's next move. |
+| `--host-pointer` | The host pointer over the window: `auto` (default) hides it while the program's INT 33h cursor is shown, `show` never hides it, `hide` always does. It changes at the pointer's next move. |
 | `--speaker-volume` | PC speaker volume `0..100`, `0` silent; default `speaker_volume` from the configuration, else 5. |
 | `--ansi` | Load the ANSI.SYS-style CON driver. |
 | `--country` | Set the DOS country: 1 or 358 (Finland). |
@@ -141,11 +141,45 @@ terminal session.
 
 | Front end | Text modes | Graphics modes |
 |---|---|---|
-| `--tty` | Each changed row is redrawn on the terminal's alternate screen, in the 16 CGA colours, with the IBM PC glyphs (CP437 and the symbols for 00h-1Fh). The cursor follows the BIOS cursor and hides when the BIOS cursor is off. | On Windows a window opens. It shows the same frames as `--window` and also takes keys. On Linux/Termux the existing CGA/EGA/VGA framebuffer is sampled into ANSI true-colour Unicode half-blocks (`▀`) in the terminal; keyboard input remains available there. This is a reduced-resolution preview, not a separate X11 window. |
+| `--tty` | Each changed row is redrawn on the terminal's alternate screen, in the 16 CGA colours, with the IBM PC glyphs (CP437 and the symbols for 00h-1Fh). The cursor follows the BIOS cursor and hides when the BIOS cursor is off. | On Windows a window opens. It shows the same frames as `--window` and also takes keys. On Linux/Termux the existing CGA/EGA/VGA framebuffer is sampled into ANSI true-colour Unicode half-blocks (`▀`) in the terminal; keyboard input remains available there. This is a reduced-resolution preview; for the full picture in a window on Linux or Termux use `--window` ([X11 window](#linux-and-termuxx11-window)). |
 | `--window` | The page is drawn as a VGA shows it: 9x16 cells, 720x400 for 80 columns (40 columns are drawn 360 wide and doubled), with Dine's own 8x16 font (src/dos_font8x16.txt). The ninth column is the background, except that C0h-DFh repeat their eighth column so lines join. The window opens at the largest whole-number size that fits the desktop (1440x800 on a 1920x1080 screen); `DINE_WINDOW_SCALE=1`..`8` chooses it. A resized window keeps whole-number scaling with black borders, unless that would use less than 85% of the room; then the picture fills it with its proportions kept (a 640x480 graphics mode in a 1440x800 window is drawn 1066x800). The BIOS cursor blinks at its shape; the BIOS default 6-7 becomes lines 13-14, as the VGA BIOS scales it. | Drawn from the same scanout as the GDI preview: CGA 4/5/6, EGA/VGA 0Dh/0Eh/10h/12h and 13h. |
 
 Mouse motion and the three buttons scale to the program's virtual
 coordinates over the picture.
+
+## Linux and Termux:X11 window
+
+`pil --dos-console --window` opens an X11 window on Linux and on Android
+with Termux:X11, for a DOS program and for a booted machine alike (Linux,
+see [BOOT.md](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/BOOT.md)). The window is the same one as on Windows: the text
+page at VGA resolution, the VGA and svgalib graphics modes from the live
+registers, whole-number scaling, selection and copy/paste, the DOS mouse. It
+is a pure Rust X11 client (no libX11), built with a Cargo feature so that
+the usual build stays free of it:
+
+```sh
+cargo build --release --locked --features x11
+# Termux: pkg install x11-repo termux-x11-nightly, open the Termux:X11 app, then
+termux-x11 :0 &
+export DISPLAY=:0
+./target/release/pil --dos-console --window --boot IMAGE --hd-image DISK
+```
+
+`DISPLAY` names the server (`:0` if it is not set). Termux keeps the server's
+socket under `$TMPDIR`, which the window looks in too. The window needs a
+24-bit TrueColor screen, as Termux:X11 and Xorg give.
+
+Keys reach a booted machine as the physical keys they are: X key codes map to
+set-1 scan codes (E0h for the cursor block, right Ctrl/Alt, keypad Enter and
+Divide), Shift, Ctrl and Alt go down and up on their own, and a held key
+repeats makes with one break at the end. The guest's own keymap decides
+what each key types (`--guest-keymap`). Dine's DOS gets BIOS words from the
+same keys, from the X layout (AltGr third level included).
+
+Copy and paste use `termux-clipboard-get`/`-set` (Termux:API), `wl-copy`,
+`xclip` or `xsel`, whichever is installed; without one, copy does nothing and
+paste types nothing. The host menu (drive and media commands) and the host
+snapshot commands are Windows only; sound is as with `--tty`.
 
 ## Copy and paste (window)
 
@@ -220,7 +254,7 @@ cargo build --release --locked
 ./target/release/pil --dos-text
 ```
 
-When a DOS program changes to a supported graphics mode (CGA 4/5/6, EGA/VGA planar, or VGA 13h), the framebuffer appears as coloured half-block characters fitted to the current terminal dimensions. The final terminal column and row are reserved to avoid wrapping. The renderer does not need Termux:X11 and does not modify guest framebuffer contents. When the program restores text mode the DOS text page is drawn again. Ctrl+] still quits. `DISPLAY`/Termux:X11 by themselves do not open a PILdos graphics window; a separate Linux X11 frontend is not implemented by this change.
+When a DOS program changes to a supported graphics mode (CGA 4/5/6, EGA/VGA planar, or VGA 13h), the framebuffer appears as coloured half-block characters fitted to the current terminal dimensions. The final terminal column and row are reserved to avoid wrapping. The renderer does not need Termux:X11 and does not modify guest framebuffer contents. When the program restores text mode the DOS text page is drawn again. Ctrl+] still quits. `DISPLAY`/Termux:X11 by themselves do not open a window; `--window` in a build with `--features x11` does ([X11 window](#linux-and-termuxx11-window)).
 
 For a clearer picture, use Termux's landscape orientation and reduce terminal font size. This is a preview: scaling, aspect ratio, and 24-bit ANSI colour support depend on the host terminal.
 

@@ -3,8 +3,9 @@
 //!
 //! Two front ends share one loop. `--tty` draws the text page in the host
 //! terminal with ANSI sequences and reads keys in raw mode; on Windows a
-//! graphics mode opens the console window too. `--window` (Windows) is a
-//! Win32 window that draws the text page at VGA resolution (dos_vga_text), the graphics
+//! graphics mode opens the console window too. `--window` is a window (Win32
+//! on Windows; on Linux and Termux:X11 an X11 window, `--features x11`) that
+//! draws the text page at VGA resolution (dos_vga_text), the graphics
 //! modes through `desktop_vga_frame`, and takes keyboard and mouse input.
 //!
 //! Host keys become the words the IBM BIOS stores (scan code high, ASCII
@@ -26,7 +27,7 @@ pub(crate) struct Mods{pub(crate) shift:bool,pub(crate) ctrl:bool,pub(crate) alt
 
 /// What a front end hands the loop.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-#[cfg_attr(not(windows),allow(dead_code))]
+#[cfg_attr(not(any(windows,all(unix,feature="x11"))),allow(dead_code))]
 pub(crate) enum Event{
     Key(Key,Mods),
     /// Physical set-1 identity plus optional layout-translated BIOS key.
@@ -45,7 +46,7 @@ pub(crate) enum Event{
     Quit,
 }
 
-#[cfg(any(windows,test))]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 #[path="keys.rs"]
 mod host_keys;
 
@@ -308,7 +309,7 @@ pub(crate) fn ansi_frame(cells:&[u8],columns:u32,cursor:(u32,u32),cursor_visible
     out
 }
 
-#[cfg(any(windows,test))]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 pub(crate) use super::vga_text::text_pixels;
 /// The BIOS cursor (0040:0050 for the page, shape at 0040:0060) on a 16-line
 /// cell, or None when it is off. In a booted machine the shape is the CRTC's
@@ -517,7 +518,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
 /// graphics in a window).
 pub(crate) struct Front{
     tty:Option<tty::Terminal>,
-    #[cfg(windows)]
+    #[cfg(any(windows,all(unix,feature="x11")))]
     window:Option<WindowFront>,
     #[cfg(windows)]
     window_tx:Option<mpsc::Sender<Event>>,
@@ -584,7 +585,7 @@ pub(crate) fn host_pointer_command(id:u16)->Option<(HostPointer,&'static str)>{
 
 impl Front{
     pub(crate) fn title(&self,title:&str){
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if let Some(window)=self.window.as_ref(){window.window.title(title);}
         let _=title;
     }
@@ -652,14 +653,18 @@ impl Front{
         {let _=(session,id);None}
     }
     pub(crate) fn open(window:bool,tx:mpsc::Sender<Event>)->Result<Self,String>{
-        #[cfg(not(windows))]
-        if window{return Err("the DOS console window needs Windows; use --tty".into());}
+        #[cfg(not(any(windows,all(unix,feature="x11"))))]
+        if window{return Err("the DOS console window needs Windows, or Linux built with --features x11; use --tty".into());}
+        #[cfg(all(unix,feature="x11"))]
+        if window{crate::dine_x11::check()?;}
         let tty=if window{None}else{Some(tty::Terminal::open(tx.clone())?)};
         #[cfg(windows)]
         let (window,window_tx)=if window{(Some(WindowFront::new(tx)),None)}else{(None,Some(tx))};
-        #[cfg(not(windows))]
+        #[cfg(all(unix,feature="x11"))]
+        let window=if window{Some(WindowFront::new(tx))}else{None};
+        #[cfg(not(any(windows,all(unix,feature="x11"))))]
         let _=tx;
-        Ok(Self{tty,#[cfg(windows)]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false,graphics_cache:None,selecting:select::Selecting::default(),grid:(0,0),host_pointer:HostPointer::Show})
+        Ok(Self{tty,#[cfg(any(windows,all(unix,feature="x11")))]window,#[cfg(windows)]window_tx,held:Vec::new(),previous:None,previous_cursor:None,graphics_note:false,graphics_cache:None,selecting:select::Selecting::default(),grid:(0,0),host_pointer:HostPointer::Show})
     }
     pub(crate) fn poll(&mut self,events:&mut Vec<Event>)->Result<(),String>{
         events.splice(0..0,self.held.drain(..));
@@ -671,7 +676,7 @@ impl Front{
     pub(crate) fn reset(&mut self){
         self.previous=None;self.previous_cursor=None;self.graphics_note=false;self.graphics_cache=None;self.held.clear();self.selecting.clear();
         self.host_pointer=HostPointer::Show;
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if let Some(w)=self.window.as_mut(){w.last=None;w.window.hide_pointer(false);}
         if let Some(t)=self.tty.as_ref(){let _=t.write("\x1b[0m\x1b[2J");}
     }
@@ -684,7 +689,7 @@ impl Front{
             self.previous=Some(cells.to_vec());self.previous_cursor=cursor;
             return t.write(&text);
         }
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if let Some(w)=self.window.as_mut(){w.present_text(cells,cursor);}
         Ok(())
     }
@@ -692,7 +697,7 @@ impl Front{
     /// program: only in the window, when the program has no mouse driver
     /// active, while Shift is held, or during a selection drag.
     fn selects(&self,active:bool,shift:bool)->bool{
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if self.window.is_some(){return !active||shift||self.selecting.dragging();}
         let _=(active,shift);false
     }
@@ -707,7 +712,7 @@ impl Front{
     fn copy(&mut self,session:&Session)->Result<(),String>{
         let(columns,_,text)=select::screen_text(session)?;
         let chosen=select::copy_text(&text,columns,self.selecting.selection);
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if self.window.is_some(){crate::dine_window::set_clipboard(&chosen);}
         let _=chosen;
         self.selecting.clear();
@@ -715,12 +720,12 @@ impl Front{
     }
     /// The host clipboard's text, to type.
     fn paste(&mut self)->Option<String>{
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if self.window.is_some(){return crate::dine_window::clipboard();}
         None
     }
     pub(crate) fn closed(&self)->bool{
-        #[cfg(windows)]
+        #[cfg(any(windows,all(unix,feature="x11")))]
         if let Some(w)=self.window.as_ref(){return w.closed();}
         false
     }
@@ -733,6 +738,9 @@ impl Front{
             if graphics&&self.window.is_none(){
                 if let Some(tx)=self.window_tx.take(){self.window=Some(WindowFront::new(tx));}
             }
+        }
+        #[cfg(any(windows,all(unix,feature="x11")))]
+        {
             let grid=grid(p)?;
             if grid!=self.grid{self.selecting.clear();self.grid=grid;}
             let selection=self.selecting.selection.map(|s|(s,grid.0,grid.1));
@@ -784,7 +792,7 @@ impl Front{
 
 // Programs can upload an alternate CP437 glyph set to VGA plane 2. Preserve
 // the built-in ROM font for untouched glyphs: text font VRAM is initially zero.
-#[cfg(any(windows,test))]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 fn visible_text_font(p:&Loaded,rom:&[u8])->Vec<u8>{
     let mut font=rom.to_vec();
     let Some(planes)=p.ram.planar().or(p.vga.font.as_ref()) else{return font;};
@@ -797,14 +805,14 @@ fn visible_text_font(p:&Loaded,rom:&[u8])->Vec<u8>{
     font
 }
 
-#[cfg(windows)]
+#[cfg(any(windows,all(unix,feature="x11")))]
 struct WindowFront{
     window:crate::dine_window::Window,
     font:Vec<u8>,
     started:Instant,
     last:Option<(usize,usize,Vec<u32>)>,
 }
-#[cfg(windows)]
+#[cfg(any(windows,all(unix,feature="x11")))]
 impl WindowFront{
     fn new(tx:mpsc::Sender<Event>)->Self{
         let (input,raw)=mpsc::channel::<crate::dine_window::Input>();
@@ -846,7 +854,7 @@ impl WindowFront{
 }
 /// A window input as a console event. Ctrl+Shift+C and Ctrl+Shift+V copy
 /// and paste, as Shift+Insert pastes; plain Ctrl+C and Ctrl+V reach DOS.
-#[cfg(any(windows,test))]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 fn window_event(input:crate::dine_window::Input)->Option<Event>{
     use crate::dine_window::Input;
     match input{
@@ -878,7 +886,7 @@ fn window_event(input:crate::dine_window::Input)->Option<Event>{
     }
 }
 /// Windows virtual-key codes of the keys that type nothing.
-#[cfg(any(windows,test))]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 fn windows_key(vk:u16)->Option<Event>{
     let m=Mods::default();
     Some(Event::Key(match vk{

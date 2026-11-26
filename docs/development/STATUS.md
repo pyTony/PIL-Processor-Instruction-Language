@@ -1,3 +1,55 @@
+# An X11 window for the Linux guest: --window on Linux and Termux:X11 — 26 November 2026
+
+Tony, on Termux (Android) with the booted MCC Linux, asked for a GUI for the
+guest and has Termux:X11 installed. Until now `--window` was Win32 only; on
+Linux and Termux the console was the terminal (`--tty`, graphics as
+half-block characters). The same console loop now has an X11 window.
+- `--features x11` (optional, off by default; pure Rust x11rb 0.14, no
+  libX11; Cargo.lock gains gethostname, x11rb, x11rb-protocol):
+  `pil --dos-console --window` opens an X11 window. src/dine_x11.rs takes the
+  `Frame` and `Input` of dine_window and the Windows window's place in
+  host/console.rs, so a booted machine gets what Windows gets: the text page
+  from the CRTC registers at VGA resolution, the VGA and svgalib graphics
+  modes, whole-number scaling, selection, the physical keys as key edges
+  (Shift, Ctrl, Alt, E0h keys, F-keys, a held key's repeats) and the mouse;
+  Dine's DOS gets BIOS words from the same keys.
+- src/dine_x11_keys.rs (pure, its tests run in every build): X key code
+  (evdev + 8) to Windows-style vk, set-1 scan code and E0h flag, and the
+  text from the X layout (levels 1-4 and AltGr, Caps, NumLock on the keypad,
+  Ctrl+letter control codes, dead keys).
+- Connection: `DISPLAY` (`:0` if unset); Termux keeps the server's socket
+  under `$TMPDIR/.X11-unix`, which is tried when the stock lookup fails. A
+  24-bit TrueColor screen is needed. XKB detectable auto-repeat is switched
+  on: without it a held key came as release/press pairs, two edges each.
+- Clipboard through `termux-clipboard-get`/`-set`, `wl-copy`/`wl-paste`,
+  `xclip` or `xsel`, whichever exists. The host menu, drive/media commands
+  and the tty-to-window graphics upgrade stay Windows only. cfg sites that
+  said `windows` for the window now say `any(windows, all(unix,
+  feature = "x11"))`; Windows behaviour is unchanged.
+- tools/verify_x11_window.py (by hand; needs Xvfb and python-xlib, skips
+  without them): an original boot sector that polls port 60h and prints each
+  byte, keys pressed through XTEST, the screen read back from the window and
+  recognised against src/bios/font8x16.txt. docs/DOS_CONSOLE.md has the new
+  "Linux and Termux:X11 window" section, BOOT.md and `--help` follow.
+
+Cloud Linux, release: 1083 Rust tests pass, 2 ignored (6 new, in
+dine_x11_keys; 1085 with `--features x11`); 0 rustc warnings (release,
+release with x11, dine-library); portable-path, program-specific and layer
+checks pass; export_runtime.py --verify passes. Under Xvfb (24-bit):
+verify_x11_window.py passes: a, Shift+a, Up, Ctrl+c, F1, Delete, right Ctrl
+and keypad Enter reach a booted machine as 1E 9E / 2A 1E 9E AA / E0 48 E0 C8
+/ 1D 2E AE 9D / 3B BB / E0 53 E0 D3 / E0 1D E0 9D / E0 1C E0 9C, a held key
+gives repeated makes and one break, closing the window ends pil. Also run:
+MANDVGA.COM (640x480x16, colours and caption right), a key exiting it, a
+tiny DOS program echoing typed `aA@3nS`, a drag selection (inverted, cleared
+by Ctrl+Shift+C), resize (fits with proportions kept), the Termux-style
+socket under TMPDIR, and the error with no X server. Not run: a real
+Termux:X11 or Android, MCC Linux itself (its images are not in the cloud;
+the boot sector stands in), svgalib in the window, the clipboard tools (none
+installed here), sound, the DOS mouse driver through the window. The
+x86_64-pc-windows-gnu check could not run (the cloud cannot download that
+Rust target); the Windows code paths are only re-gated, and CI covers them.
+
 # The machine as its own crate: crates/pil-pc — 24 November 2026
 
 Step 3b of the staged library split Tony chose (#311 folders, #312

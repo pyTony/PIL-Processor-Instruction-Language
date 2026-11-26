@@ -8,7 +8,7 @@
 //! dot clock shows it. Nothing here reads guest memory: callers pass the
 //! character/attribute pairs and the cursor.
 
-#![cfg_attr(not(any(windows,test)),allow(dead_code))]
+#![cfg_attr(not(any(windows,all(unix,feature="x11"),test)),allow(dead_code))]
 const FONT_TEXT:&str=include_str!("../bios/font8x16.txt");
 /// Cell width and height in pixels.
 pub(crate) const CELL_WIDTH:usize=9;
