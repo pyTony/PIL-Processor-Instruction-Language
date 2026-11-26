@@ -8,7 +8,8 @@
 //! dot clock shows it. Nothing here reads guest memory: callers pass the
 //! character/attribute pairs and the cursor.
 
-#![cfg_attr(not(any(windows,test)),allow(dead_code))]
+#![cfg_attr(not(any(windows,all(unix,feature="x11"),test)),allow(dead_code,unused_imports))]
+/// Cell width and height in pixels.
 pub(crate) const CELL_WIDTH:usize=9;
 pub(crate) use crate::bios::rom_font::CELL_HEIGHT;
 pub(crate) use crate::bios::rom_font::font;

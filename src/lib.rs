@@ -18,6 +18,12 @@ mod dine_ffi;
 mod dine_display;
 // Window code is Windows-only inside; the layout helpers are tested everywhere.
 mod dine_window;
+// X11 window (Linux, Termux:X11) for --dos-console --window; key translation
+// is pure and tested everywhere.
+#[cfg(all(unix,feature = "x11"))]
+mod dine_x11;
+#[cfg(any(all(unix,feature = "x11"),test))]
+mod dine_x11_keys;
 mod block_compiler;
 mod native_application;
 #[path="dos/encoding.rs"]
@@ -56,7 +62,9 @@ DOS and ROM:
   --dos-text [--plain] [OPTIONS] [PROGRAM]  Rust terminal; config startup if omitted
   --dos-console [--tty|--window] [--mouse] [--ansi] [--host-pointer auto|show|hide] [OPTIONS] [PROGRAM]
       DOS session with its own keyboard and screen: the host terminal
-      (--tty, default except on Windows) or a window (--window, Windows).
+      (--tty, default except on Windows) or a window (--window: Win32 on
+      Windows; on Linux and Termux:X11 an X11 window, in a build made with
+      --features x11).
       Ctrl+] in a terminal ends it. Same OPTIONS as --dos-session, plus
       --country 1|358 and --utc-offset SECONDS (default: host time zone).
       --rtc-year YEAR (1980-2099) runs the RTC and DOS date in that year

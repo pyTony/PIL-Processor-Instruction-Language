@@ -17,7 +17,9 @@ steps, about 11 s headless here.
 
 - `--dos-console --boot IMAGE` (or `--boot-hd IMAGE` for a fixed-disk
   image) opens the usual console: the Dine window on Windows, the terminal
-  with `--tty`. `--hd-image DISK` adds a fixed disk (drive 80h, `/dev/hda`)
+  with `--tty`, or an X11 window with `--window` on Linux and Termux:X11
+  (build with `--features x11`, see [DOS_CONSOLE.md](DOS_CONSOLE.md#linux-and-termuxx11-window)).
+  `--hd-image DISK` adds a fixed disk (drive 80h, `/dev/hda`)
   next to a `--boot` diskette.
 - `--boot-probe IMAGE [--hd] [--hd-image DISK] [--steps N] [--keys TEXT]
   [--keys-after N] [--type STEPS:TEXT]... [--guest-keymap us|uk|fi]` runs
