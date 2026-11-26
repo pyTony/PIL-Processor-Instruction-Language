@@ -15,6 +15,9 @@ path = "src/lib.rs"
 [features]
 # Omit the generated native PIL instruction-form table (see the pil crate).
 compact-interpreter = []
+# Compile only the most frequently used real- and 32-bit protected-mode
+# instruction forms; rarer and privileged forms run in the generic interpreter.
+common-forms = []
 # Helpers that only tests use (execute_memory and the like), for the pil
 # crate's own unit tests. Never enabled in a normal build.
 test-support = []

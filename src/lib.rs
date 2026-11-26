@@ -428,8 +428,13 @@ pub fn run_cli() -> Result<(), String> {
         return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--emit-precompiled-forms") {
-        let (path,check)=match args.len(){3=>(args[2].as_str(),false),4 if args[3]=="--check"=>(args[2].as_str(),true),_=>return Err("usage: pil --emit-precompiled-forms PATH [--check]".into())};
-        println!("{}",precompiled::emit(path,check,&form_machines()?)?);return Ok(());
+        let path=args.get(2).ok_or("usage: pil --emit-precompiled-forms PATH [--common] [--check]")?;
+        let (mut check,mut common)=(false,false);
+        for flag in &args[3..]{
+            match flag.as_str(){"--check" if !check=>check=true,"--common" if !common=>common=true,_=>return Err("usage: pil --emit-precompiled-forms PATH [--common] [--check]".into())}
+        }
+        let set=if common{precompiled::FormSet::Common}else{precompiled::FormSet::Full};
+        println!("{}",precompiled::emit_set(path,check,set,&form_machines()?)?);return Ok(());
     }
     if args.get(1).map(String::as_str)==Some("--emit-native-application"){
         if args.len()!=4{return Err("usage: pil --emit-native-application INPUT OUTPUT.rs".into());}

@@ -33,6 +33,10 @@ dine-library = []
 # Omit the generated native PIL instruction-form table. The generic interpreter
 # remains available for both real and protected mode; the default build is unchanged.
 compact-interpreter = ["pil-cpu/compact-interpreter"]
+# Compile only the most frequently used x86 instruction forms (a smaller
+# build than default, much faster than compact-interpreter); rarer forms
+# run in the generic interpreter.
+common-forms = ["pil-cpu/common-forms"]
 # A window for `pil --dos-console --window` on Linux and Termux:X11 (pure
 # Rust X11 client). Without it the Unix console is the terminal (`--tty`).
 x11 = ["dep:x11rb"]

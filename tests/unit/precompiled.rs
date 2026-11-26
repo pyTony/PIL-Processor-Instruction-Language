@@ -92,7 +92,7 @@ fn forms_agree_with_the_interpreter_on_full_state(){
         }}
     }
     }
-    assert!(checked>20_000,"only {checked} cases");
+    assert!(checked>if cfg!(feature = "common-forms"){2_000}else{20_000},"only {checked} cases");
 }
 
 fn load_with(bytes:&[u8],name:&str,mode:Mode)->dos::Loaded{
@@ -321,6 +321,67 @@ fn compact_build_omits_generated_forms_and_uses_interpreter() {
     same_run(include_bytes!("../../programs/dos/FACTOR.COM"), "FACTOR.COM", 40);
 }
 
+#[cfg(all(feature = "common-forms", not(feature = "compact-interpreter")))]
+#[test]
+fn common_forms_build_compiles_core_subset_and_falls_back_cleanly() {
+    let count = forms();
+    assert!((200..1200).contains(&count), "expected 200..1200 common forms, got {count}");
+    // Common real-mode instructions resolve to compiled forms.
+    for sample in [
+        &[0x05u8, 0x34, 0x12, 0xcd, 0x20][..], // ADD AX, 1234h
+        &[0x8b, 0x07, 0xcd, 0x20],             // MOV AX, [BX]
+        &[0x50, 0xcd, 0x20],                   // PUSH AX
+        &[0x75, 0x02, 0x90, 0x90, 0xcd, 0x20], // JNZ +2
+        &[0xd1, 0xe0, 0xcd, 0x20],             // SHL AX, 1
+    ] {
+        assert!(resolve(&pil_program(sample)).is_some(), "expected common real-mode form for {sample:02x?}");
+    }
+    // Common 32-bit protected-mode instructions also resolve.
+    let mut pm = dos::load(&[0x90], "PMCOMMON.COM").unwrap().image;
+    pm.real_mode = false; pm.msw = 0x11; pm.controls[0] = 0x11;
+    let code32 = crate::address::SegmentCache { base: pm.segments[1].base, limit: 0xffff_ffff, access: crate::address::SegmentAccess::Code { readable: true, conforming: false, big: true, dpl: 0 } };
+    let data32 = crate::address::SegmentCache { base: 0, limit: 0xffff_ffff, access: crate::address::SegmentAccess::Data { writable: true, expand_down: false, big: true, dpl: 0 } };
+    pm.segments = [data32, code32, data32, data32, data32, data32];
+    pm.selectors = [0x10, 0x08, 0x10, 0x10, 0x10, 0x10];
+    let mut pm_ram = crate::Ram::new(0x10_0000);
+    let at = pm.segments[1].base + 0x100;
+    for sample in [
+        &[0x01u8, 0xd8][..],             // ADD EAX, EBX
+        &[0x8b, 0x44, 0x24, 0x04],       // MOV EAX, [ESP+4]
+        &[0x55],                         // PUSH EBP
+        &[0xe8, 0x10, 0x00, 0x00, 0x00], // CALL rel32
+        &[0xc3],                         // RET
+    ] {
+        pm_ram.write_bytes(at, sample).unwrap();
+        let dec = pm.decode(&pm_ram, 0x100).unwrap();
+        let Operation::Pil { program, .. } = &dec.operation else { panic!("not PIL: {:?}", dec.operation) };
+        assert!(resolve(program).is_some(), "expected common 32-bit PM form for {} ({sample:02x?})", dec.label);
+    }
+    // Rare/system instructions are excluded and fall back to the interpreter.
+    for rare in [
+        &[0x37u8, 0xcd, 0x20][..],             // AAA
+        &[0x62, 0x06, 0x00, 0x02, 0xcd, 0x20], // BOUND AX, [0200h]
+        &[0xc8, 0x04, 0x00, 0x00, 0xcd, 0x20], // ENTER 4, 0
+    ] {
+        assert!(resolve(&pil_program(rare)).is_none(), "expected rare real-mode form to be omitted: {rare:02x?}");
+    }
+    for sys in [
+        &[0x0fu8, 0x01, 0x16, 0x00, 0x02, 0x00, 0x00][..], // LGDT [0200h]
+        &[0x0f, 0x20, 0xc0],                               // MOV EAX, CR0
+    ] {
+        pm_ram.write_bytes(at, sys).unwrap();
+        let dec = pm.decode(&pm_ram, 0x100).unwrap();
+        let Operation::Pil { program, .. } = &dec.operation else { panic!("not PIL: {:?}", dec.operation) };
+        assert!(resolve(program).is_none(), "expected system form to be omitted: {}", dec.label);
+    }
+    same_run(include_bytes!("../../programs/dos/FACTOR.COM"), "FACTOR.COM", 40);
+    let mut out = CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+    let run = dos::run_with_backend(load_with(include_bytes!("../../programs/dos/FACTOR.COM"), "FACTOR.COM", Mode::On), 10_000, &mut out, None).unwrap();
+    assert_eq!(run.stop, Stop::Exit(0));
+    assert!(run.loaded.blocks.native_instructions > 0);
+    assert_eq!(run.loaded.blocks.interpreted_instructions, 0);
+}
+
 
 #[test]
 fn fused_subtract_branch_loop_preserves_partial_slices() {
@@ -430,7 +491,7 @@ fn blocks_match_the_interpreter_in_paged_32_bit_protected_mode(){
         assert!(stored==sum(rounds)||stored==sum(rounds-1),"stored {stored:x} after {rounds} rounds");
     }
     assert!(b.blocks.blocks>1000,"blocks ran: {} entries",b.blocks.blocks);
-    if forms()>0{
+    if forms()>0 && !cfg!(feature = "common-forms"){
         assert_eq!(b.blocks.interpreted_instructions,0,"all paged 32-bit instructions use precompiled forms");
         assert!(b.blocks.native_instructions>5000);
         let mut out_req=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
@@ -531,7 +592,7 @@ fn rom_blocks_match_the_interpreter_across_real_and_32_bit_protected_mode(){
     // 20 rounds: sum_{c=1..20} (2*c + 5 + 1) = 2*210 + 120 = 540.
     assert_eq!(on_run.loaded.ram.load(0x700,crate::MemWidth::Dword).unwrap(),540);
     assert!(on_run.loaded.blocks.blocks>20);
-    if forms()>0{
+    if forms()>0 && !cfg!(feature = "common-forms"){
         assert_eq!(on_run.loaded.blocks.interpreted_instructions,0);
         let mut out_req=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
         let req_run=dos::run_with_backend(make_rom(Mode::Required),10_000,&mut out_req,None).unwrap();
