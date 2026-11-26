@@ -146,7 +146,8 @@ def ensure(root: Path, output: Path, kind: str, *, check_only: bool = False, gui
     command = ["cargo", "build", "--locked"]
     if profile == "release":
         command.append("--release")
-    command += ["--lib", "--features", "dine-library"] if kind == "library" else ["--bin", "pil"]
+    if kind == "library":
+        command += ["--lib", "--features", "dine-library"]
     env = os.environ.copy()
     env.pop("CARGO_BUILD_TARGET", None)
     env.pop("CARGO_TARGET_DIR", None)

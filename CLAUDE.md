@@ -1,3 +1,35 @@
+# The BIOS as its own crate, default library builds, and FreeDOS kernel boot — 24 November 2026
+
+Step 3c of the staged library split (#311 folders, #312 pc::Machine, #313
+pil-cpu, #315 pil-pc), plus default Cargo library builds and Milestone 2's
+FreeDOS kernel boot check.
+- `crates/pil-bios` (library `pil_bios`, depends on `pil-cpu` and `pil-pc`
+  only): `block_move`, `boot` (`Machine<Bios>` and `setup_boot`), `color_text`,
+  `console`, `disk`, `graphics_text`, `int09`, `int14`, `planar`, `rom_font`,
+  `services` (`INT 08h/10h/11h/12h/13h/14h/15h/16h/18h/19h/1Ah/1Ch`, timer and
+  RTC helpers) and `vectors`, moved with `git mv`. `pil_bios::Bios` implements
+  `pil_pc::Firmware`. DOS `CON` character I/O, Ctrl-C checks and `ANSI.SYS`
+  live in `src/dos/console.rs`; the host boot-probe runner and `folder_disk`
+  live in `src/host/`. `tools/check_layers.py` checks both `pil-pc` and
+  `pil-bios`.
+- Cargo builds all workspace libraries (`pil_cpu`, `pil_pc`, `pil_bios`,
+  `dine`) and the `dine` C ABI shared library by default (`default =
+  ["dine-library"]` in `Cargo.toml`; `tools/build_termux.sh` keeps
+  `--no-default-features` for low-memory CLI builds).
+- Real FreeDOS 1.4 kernel boot (`FD14LITE.img`, local copy, outside the repo):
+  boots `KERNEL.SYS` 2043 -> `HimemX 3.38` (Fast A20, 46 disk buffers in HMA)
+  -> `FreeCom 0.86` (`XMS_Swap`) -> `FDCONFIG.SYS`/`FDAUTO.BAT` and the
+  FreeDOS 1.4 installer menus, and exits cleanly with `No - Return to DOS`.
+  Added `INT 1Ah AH=01h` (set system tick counter), `INT 10h
+  AX=1101h/1102h/1104h` (load ROM 8x14/8x8/8x16 font into plane 2 block BL),
+  `guest_keymap` BIOS ASCII bytes for `\b`/`\e`, `\t` in probe scripts, and
+  `boot::screen_lines` `p.booted` CRTC start origin.
+
+Local Windows, release: 1,082 Rust tests pass, 2 ignored (752 in pil, 3 in
+pil-bios, 35 in pil-pc, 292 in pil-cpu); 0 rustc warnings (default release,
+`--no-default-features`, `compact-interpreter`); `verify_dine_library.py`,
+`verify_mandel_cga.py`, `verify_mandel_vga.py`, layer/portable-path/
+program-specific checks, CI unit tests and `export_runtime.py --verify` pass.
 # An X11 window for the Linux guest: --window on Linux and Termux:X11 — 26 November 2026
 
 Tony, on Termux (Android) with the booted MCC Linux, asked for a GUI for the

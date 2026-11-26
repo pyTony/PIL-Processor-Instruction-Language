@@ -14,11 +14,11 @@ for arg in "$@"; do
   esac
 done
 
-# Keep the regular build unchanged; compact removes generated PIL forms.
+# Keep the regular build unchanged; Termux skips the C ABI shared library, and compact removes generated PIL forms.
 if [ "$compact" = true ]; then
-  set -- --features compact-interpreter
+  set -- --no-default-features --features compact-interpreter
 else
-  set --
+  set -- --no-default-features
 fi
 
 # One rustc at a time; no incremental cache or large DWARF debug sections.

@@ -1,5 +1,5 @@
 //! The VGA text screen as a host picture: 9x16 character cells, 720x400 for
-//! 80 columns, drawn with Dine's own 8x16 font (src/bios/font8x16.txt).
+//! 80 columns, drawn with the BIOS 8x16 font (`crates/pil-bios/src/font8x16.txt`).
 //!
 //! As on a VGA in its standard text modes, the ninth column of a cell is the
 //! background, except for the line-drawing characters C0h-DFh, which repeat
@@ -8,48 +8,16 @@
 //! dot clock shows it. Nothing here reads guest memory: callers pass the
 //! character/attribute pairs and the cursor.
 
-#![cfg_attr(not(any(windows,all(unix,feature="x11"),test)),allow(dead_code))]
-const FONT_TEXT:&str=include_str!("../bios/font8x16.txt");
+#![cfg_attr(not(any(windows,all(unix,feature="x11"),test)),allow(dead_code,unused_imports))]
 /// Cell width and height in pixels.
 pub(crate) const CELL_WIDTH:usize=9;
-pub(crate) const CELL_HEIGHT:usize=16;
+pub(crate) use crate::bios::rom_font::CELL_HEIGHT;
+pub(crate) use crate::bios::rom_font::font;
 
 /// The 16 colours of the text attribute, as 0x00RRGGBB (the VGA's default
 /// palette and DAC).
 pub(crate) const COLORS:[u32;16]=[0x000000,0x0000aa,0x00aa00,0x00aaaa,0xaa0000,0xaa00aa,0xaa5500,0xaaaaaa,
     0x555555,0x5555ff,0x55ff55,0x55ffff,0xff5555,0xff55ff,0xffff55,0xffffff];
-
-/// Far pointers to the 8x14 and 8x16 fonts in the video BIOS area. As on an
-/// EGA/VGA BIOS, INT 43h points at the one that matches a 350- or 480-line
-/// graphics mode, and AX=1130h BH=02h/06h returns them.
-pub(crate) const ROM_FONT14:u32=0xc000_2000;
-pub(crate) const ROM_FONT16:u32=0xc000_3000;
-/// Linear address of a real-mode far pointer.
-pub(crate) fn linear(pointer:u32)->u32{(pointer>>16)*16+(pointer&0xffff)}
-
-/// The 8x14 font, 14 bytes per character: the 8x16 font without its top and
-/// bottom rows, which no glyph that fits a cell uses (line and block
-/// characters run on through the cell either way).
-pub(crate) fn font14()->Result<Vec<u8>,String>{
-    Ok(font()?.chunks(CELL_HEIGHT).flat_map(|g|g[1..15].to_vec()).collect())
-}
-
-/// The 8x16 font, 16 bytes per character (bit 7 is the left column).
-pub(crate) fn font()->Result<Vec<u8>,String>{
-    let mut lines=FONT_TEXT.lines().filter(|l|!l.starts_with(';'));
-    let mut bytes=Vec::with_capacity(256*CELL_HEIGHT);
-    for code in 0..256u32{
-        let header=lines.next().ok_or("8x16 font file ends early")?;
-        if u32::from_str_radix(header.get(..2).unwrap_or(""),16)!=Ok(code){return Err(format!("8x16 font glyph {code:02X}h header is {header:?}"));}
-        for _ in 0..CELL_HEIGHT{
-            let row=lines.next().ok_or("8x16 font file ends inside a glyph")?;
-            if row.len()!=8||!row.bytes().all(|b|b==b'#'||b==b'.'){return Err(format!("8x16 font glyph {code:02X}h row {row:?}"));}
-            bytes.push(row.bytes().fold(0u8,|n,b|n<<1|u8::from(b==b'#')));
-        }
-    }
-    if lines.next().is_some(){return Err("8x16 font file has data after glyph FFh".into());}
-    Ok(bytes)
-}
 
 /// The cursor lines on a 16-line cell for the BIOS shape at 0040:0060
 /// (start, end), or None when the shape hides it. A shape within 8 lines is

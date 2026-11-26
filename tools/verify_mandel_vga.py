@@ -7,7 +7,7 @@ repeats its 4.12 fixed-point arithmetic in Python (escape when |zr| or |zi|
 reaches 2.0 or the squared magnitude passes 4.0, 30 iterations) and
 compares the four planes: colour 0 inside, otherwise 1 + iterations mod 15.
 The 30th text row must hold the caption in the 8x16 font that INT 43h
-points to in mode 12h (src/bios/font8x16.txt), in colour 7. Any key must return to text mode.
+points to in mode 12h (crates/pil-bios/src/font8x16.txt), in colour 7. Any key must return to text mode.
 """
 from pathlib import Path
 import os
@@ -36,7 +36,7 @@ def colour(px, py):
 
 
 def font():
-    lines = [l for l in (root / 'src' / 'bios' / 'font8x16.txt').read_text(encoding='utf-8').splitlines() if not l.startswith(';')]
+    lines = [l for l in (root / 'crates' / 'pil-bios' / 'src' / 'font8x16.txt').read_text(encoding='utf-8').splitlines() if not l.startswith(';')]
     return {int(lines[n * 17][:2], 16): [int(r.replace('#', '1').replace('.', '0'), 2) for r in lines[n * 17 + 1:n * 17 + 17]]
             for n in range(256)}
 

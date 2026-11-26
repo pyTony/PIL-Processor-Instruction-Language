@@ -18,7 +18,7 @@ use super::*;
 
 /// One caller descriptor: (base, limit, access byte). The 386 fields are
 /// honoured: limit bits 19-16 and G in byte 6, base bits 31-24 in byte 7.
-fn descriptor(p:&Loaded,at:u32)->Result<(u32,u32,u8),String>{
+fn descriptor<F>(p:&Machine<F>,at:u32)->Result<(u32,u32,u8),String>{
     let mut b=[0u8;8];
     for (i,byte) in b.iter_mut().enumerate(){
         *byte=p.ram.load(at.wrapping_add(i as u32),MemWidth::Byte).map_err(|e|format!("INT 15h AH=87h descriptor read: {e:?}"))?as u8;
@@ -38,11 +38,11 @@ fn usable(limit:u32,access:u8,bytes:u32,write:bool)->bool{
     if !code&&access&0x04!=0{return false;}
     bytes-1<=limit
 }
-fn fail(p:&mut Loaded){
+fn fail<F>(p:&mut Machine<F>){
     p.cpu.regs[0]=(p.cpu.regs[0]&0xffff00ff)|0x0200;
     p.cpu.eflags=(p.cpu.eflags|1)&!0x40;p.cpu.undefined_flags&=!0x41;
 }
-pub(super) fn block_move(p:&mut Loaded)->Result<(),String>{
+pub fn block_move<F>(p:&mut Machine<F>)->Result<(),String>{
     if !p.image.real_mode{return Err("INT 15h AH=87h block move outside real mode is not modelled".into());}
     let words=p.cpu.regs[1]&0xffff;
     if words>0x8000{return Err(format!("INT 15h AH=87h block move of {words:04X}h words: more than 8000h is not modelled"));}
@@ -68,7 +68,7 @@ pub(super) fn block_move(p:&mut Loaded)->Result<(),String>{
 /// Forward word by word, as REP MOVSW with DF=0 does, so overlapping ranges
 /// give what the BIOS gives. Every destination word is checked first:
 /// nothing is written when any of it is read-only.
-fn copy(p:&mut Loaded,source:u32,target:u32,words:u32)->Result<(),String>{
+fn copy<F>(p:&mut Machine<F>,source:u32,target:u32,words:u32)->Result<(),String>{
     for i in 0..words{
         p.ram.check_write(target+i*2,MemWidth::Word).map_err(|_|format!("INT 15h AH=87h block move destination {:08X}h is read-only memory",target+i*2))?;
     }
@@ -80,7 +80,7 @@ fn copy(p:&mut Loaded,source:u32,target:u32,words:u32)->Result<(),String>{
 }
 /// AX=E801h: AX=CX=KiB between 1 MiB and 16 MiB (at most 3C00h), BX=DX=64 KiB
 /// blocks above 16 MiB. The same RAM as AH=88h and CMOS 17h/18h/30h/31h.
-pub(super) fn memory_size(p:&mut Loaded){
+pub fn memory_size<F>(p:&mut Machine<F>){
     let extended=p.ram.bytes().len().saturating_sub(0x100000);
     let low=(extended/1024).min(0x3c00)as u32;
     let high=(extended.saturating_sub(15<<20)/65536).min(0xffff)as u32;

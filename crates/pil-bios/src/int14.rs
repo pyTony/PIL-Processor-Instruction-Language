@@ -1,9 +1,10 @@
-//! INT 14h, the BIOS serial calls, on COM1 (crate::pc::serial).
+//! INT 14h, the BIOS serial calls, on COM1 (`pil_pc::serial`).
 use super::*;
+use pil_pc::serial;
 /// INT 14h for DX=0 (COM1): AH=00h initializes (AL's speed and format are
 /// kept, nothing is timed), AH=01h sends AL, AH=02h takes a received byte or
 /// reports a timeout at once, AH=03h gives line and modem status.
-pub(crate) fn bios(p:&mut Loaded,ah:u8)->Result<(),String>{
+pub fn bios<F>(p:&mut Machine<F>,ah:u8)->Result<(),String>{
     if p.cpu.regs[2]&0xffff!=0{return Err(format!("INT 14h port {} is not modelled (only COM1)",p.cpu.regs[2]&0xffff));}
     let al=p.cpu.regs[0]as u8;
     let s=serial::port(p)?;
