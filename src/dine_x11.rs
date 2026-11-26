@@ -441,7 +441,7 @@ impl Window{
     pub(crate) fn present(&mut self,frame:Frame){
         if self.failed{return;}
         if self.shared.is_none(){
-            let title=self.title.lock().map_or_else(|_|"Dine console".into(),|t|t.clone());
+            let title=self.title.lock().map_or_else(|_|"PIL console".into(),|t|t.clone());
             match open(&title,frame.width,frame.height){
                 Ok(shared)=>{
                     let (s,input)=(shared.clone(),self.input.clone());
@@ -476,22 +476,37 @@ impl Drop for Window{
 
 /// Run `program` with `args`, text to its stdin when `text` is given, and
 /// return its stdout; none when it is missing, fails or takes over 2 seconds.
+/// Writes attach `stdout` to `/dev/null`: clipboard daemons (`xclip`,
+/// `wl-copy`, `xsel`) fork a background holder that would keep a piped stdout
+/// open until another client takes the selection.
 fn tool(program:&str,args:&[&str],text:Option<&str>)->Option<String>{
     use std::process::{Command,Stdio};
-    let mut child=Command::new(program).args(args).stdin(if text.is_some(){Stdio::piped()}else{Stdio::null()})
-        .stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let writing=text.is_some();
+    let mut child=Command::new(program).args(args)
+        .stdin(if writing{Stdio::piped()}else{Stdio::null()})
+        .stdout(if writing{Stdio::null()}else{Stdio::piped()})
+        .stderr(Stdio::null()).spawn().ok()?;
     if let Some(text)=text{
         let mut stdin=child.stdin.take()?;
         let data=text.to_string();
         // A thread, so a tool that does not read cannot stall the console.
         thread::spawn(move||{let _=stdin.write_all(data.as_bytes());});
     }
-    let mut out=child.stdout.take()?;
-    let reader=thread::spawn(move||{let mut s=String::new();let _=std::io::Read::read_to_string(&mut out,&mut s);s});
+    let rx=if writing{None}else{
+        let mut out=child.stdout.take()?;
+        let (tx,rx)=mpsc::channel();
+        thread::spawn(move||{let mut s=String::new();let _=std::io::Read::read_to_string(&mut out,&mut s);let _=tx.send(s);});
+        Some(rx)
+    };
     let started=Instant::now();
     loop{
         match child.try_wait(){
-            Ok(Some(status))=>return if status.success(){reader.join().ok()}else{None},
+            Ok(Some(status))=>return if status.success(){
+                match rx{
+                    Some(rx)=>rx.recv_timeout(Duration::from_secs(2)).ok(),
+                    None=>Some(String::new()),
+                }
+            }else{None},
             Ok(None) if started.elapsed()<Duration::from_secs(2)=>thread::sleep(Duration::from_millis(10)),
             _=>{let _=child.kill();let _=child.wait();return None;},
         }
@@ -538,5 +553,12 @@ mod tests{
         assert_eq!(parse(":0"),("0".to_string(),0));
         assert_eq!(parse(":3.1"),("3".to_string(),1));
         assert_eq!(parse("localhost:10.0"),("10".to_string(),0));
+    }
+
+    #[test]
+    fn tool_write_does_not_hang_when_child_spawns_background_holder(){
+        let started=Instant::now();
+        assert!(tool("sh",&["-c","cat >/dev/null; sleep 5 &"],Some("hello")).is_some());
+        assert!(started.elapsed()<Duration::from_secs(2));
     }
 }
