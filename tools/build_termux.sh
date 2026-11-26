@@ -6,17 +6,27 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 mode=debug
 compact=false
+common=false
 for arg in "$@"; do
   case "$arg" in
     --release) mode=release ;;
     --compact) compact=true ;;
-    *) echo 'usage: sh tools/build_termux.sh [--release] [--compact]' >&2; exit 2 ;;
+    --common) common=true ;;
+    *) echo 'usage: sh tools/build_termux.sh [--release] [--compact|--common]' >&2; exit 2 ;;
   esac
 done
 
-# Keep the regular build unchanged; Termux skips the C ABI shared library, and compact removes generated PIL forms.
+if [ "$compact" = true ] && [ "$common" = true ]; then
+  echo 'choose at most one of --compact and --common' >&2
+  exit 2
+fi
+
+# Keep the regular build unchanged; Termux skips the C ABI shared library,
+# compact removes generated PIL forms, and common keeps only the most used forms.
 if [ "$compact" = true ]; then
   set -- --no-default-features --features compact-interpreter
+elif [ "$common" = true ]; then
+  set -- --no-default-features --features common-forms
 else
   set -- --no-default-features
 fi
