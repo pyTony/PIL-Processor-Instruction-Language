@@ -85,7 +85,8 @@ struct Shared{
     frame:Mutex<Option<Frame>>,
     /// The window's client size.
     client:Mutex<(i32,i32)>,
-    draw:Mutex<()>,
+    /// Last drawn `(cw, ch, vx, vy, vw, vh)` layout, to clear borders on change.
+    draw:Mutex<Option<(i32,i32,i32,i32,i32,i32)>>,
     closed:AtomicBool,
     stop:AtomicBool,
     hidden:AtomicBool,
@@ -111,13 +112,23 @@ impl Shared{
     /// Draw the current frame: nearest-neighbour, whole-number scaling, the
     /// rest of the window black (the window's background).
     fn draw(&self){
-        let Ok(_busy)=self.draw.lock() else{return;};
+        let Ok(mut last)=self.draw.lock() else{return;};
         let (cw,ch)=self.client.lock().map_or((0,0),|c|*c);
         let Ok(frame)=self.frame.lock() else{return;};
         let Some(frame)=frame.as_ref() else{return;};
         if frame.width<=0||frame.height<=0||frame.pixels.len()<(frame.width*frame.height) as usize{return;}
         let (vx,vy,vw,vh)=view(cw,ch,frame.width,frame.height);
         if vw<=0||vh<=0{return;}
+        let layout=(cw,ch,vx,vy,vw,vh);
+        if *last!=Some(layout){
+            for (x,y,w,h) in borders(cw,ch,vx,vy,vw,vh){
+                if self.conn.clear_area(false,self.win,x,y,w,h).is_err(){
+                    self.closed.store(true,Ordering::Release);
+                    return;
+                }
+            }
+            *last=Some(layout);
+        }
         let packed:Vec<u32>=frame.pixels.iter().map(|&p|self.format.pack(p)).collect();
         let columns:Vec<usize>=(0..vw).map(|x|(i64::from(x)*i64::from(frame.width)/i64::from(vw)) as usize).collect();
         let stride=vw as usize*4;
@@ -151,6 +162,22 @@ impl Shared{
         let _=self.conn.set_input_focus(x::InputFocus::PARENT,self.win,CURRENT_TIME);
         let _=self.conn.flush();
     }
+}
+
+/// Non-empty black border strips `(x, y, width, height)` around `(vx, vy, vw, vh)`
+/// inside a `cw` x `ch` client area.
+fn borders(cw:i32,ch:i32,vx:i32,vy:i32,vw:i32,vh:i32)->Vec<(i16,i16,u16,u16)>{
+    let mut rects=Vec::new();
+    let (cw,ch)=(cw.max(0),ch.max(0));
+    let x0=vx.clamp(0,cw);
+    let y0=vy.clamp(0,ch);
+    let x1=(vx+vw).clamp(x0,cw);
+    let y1=(vy+vh).clamp(y0,ch);
+    if y0>0&&cw>0{rects.push((0,0,cw as u16,y0 as u16));}
+    if y1<ch&&cw>0{rects.push((0,y1 as i16,cw as u16,(ch-y1) as u16));}
+    if x0>0&&y1>y0{rects.push((0,y0 as i16,x0 as u16,(y1-y0) as u16));}
+    if x1<cw&&y1>y0{rects.push((x1 as i16,y0 as i16,(cw-x1) as u16,(y1-y0) as u16));}
+    rects
 }
 
 fn atom(conn:&RustConnection,name:&str)->Result<x::Atom,String>{
@@ -205,7 +232,7 @@ fn open(title:&str,frame_w:i32,frame_h:i32)->Result<Arc<Shared>,String>{
     }
     let max_bytes=conn.maximum_request_bytes().min(1<<20);
     let shared=Arc::new(Shared{conn,win,gc,blank,format,max_bytes,wake,net_wm_name,utf8,
-        frame:Mutex::new(None),client:Mutex::new((width,height)),draw:Mutex::new(()),
+        frame:Mutex::new(None),client:Mutex::new((width,height)),draw:Mutex::new(None),
         closed:AtomicBool::new(false),stop:AtomicBool::new(false),hidden:AtomicBool::new(false),keymap:Mutex::new(Keymap::default())});
     shared.set_title(title);
     shared.load_keymap();
@@ -235,10 +262,7 @@ fn events(shared:&Arc<Shared>,input:&Mutex<Option<mpsc::Sender<Input>>>){
             XEvent::ConfigureNotify(e)=>{
                 let size=(i32::from(e.width),i32::from(e.height));
                 let changed=shared.client.lock().map(|mut c|{let old=*c;*c=size;old!=size}).unwrap_or(false);
-                if changed{
-                    let _=shared.conn.clear_area(false,shared.win,0,0,0,0);
-                    shared.draw();
-                }
+                if changed{shared.draw();}
             },
             XEvent::MappingNotify(_)=>shared.load_keymap(),
             XEvent::KeyPress(k)=>{
@@ -420,5 +444,15 @@ mod tests{
         assert_eq!(parse(":0"),("0".to_string(),0));
         assert_eq!(parse(":3.1"),("3".to_string(),1));
         assert_eq!(parse("localhost:10.0"),("10".to_string(),0));
+    }
+
+    #[test]
+    fn borders_cover_only_the_margin_around_the_picture(){
+        assert_eq!(borders(1440,800,0,0,1440,800),Vec::new());
+        assert_eq!(borders(1440,800,187,0,1066,800),vec![(0,0,187,800),(1253,0,187,800)]);
+        let four=borders(1440,800,80,50,1280,700);
+        assert_eq!(four,vec![(0,0,1440,50),(0,750,1440,50),(0,50,80,700),(1360,50,80,700)]);
+        let area:i32=four.iter().map(|&(_,_,w,h)|i32::from(w)*i32::from(h)).sum();
+        assert_eq!(area+1280*700,1440*800);
     }
 }
