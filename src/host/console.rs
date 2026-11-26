@@ -324,6 +324,21 @@ pub(crate) fn cursor_shape(p:&Loaded)->Option<(u32,u32)>{
 pub(crate) fn graphics_mode(p:&Loaded)->bool{
     super::console::shown_mode(p).is_ok_and(|d|!matches!(d.mode&0x7f,0..=3|7))
 }
+fn serial_mouse_range(p:&Loaded)->(i32,i32){
+    match super::console::shown_mode(p).map_or(3,|d|d.mode&0x7f){
+        4|5|0x0d|0x13=>(320,200),
+        6|0x0e=>(640,200),
+        0x10=>(640,350),
+        0x12=>(640,480),
+        _=>(640,200),
+    }
+}
+fn serial_mouse_active(session:&Session)->bool{
+    session.machine().is_some_and(|p|p.booted&&p.com1.as_ref().is_some_and(crate::pc::serial::Serial::mouse_active))
+}
+fn guest_mouse_visible(p:&Loaded)->bool{
+    p.dos.mouse.view().visible||(p.booted&&p.com1.as_ref().is_some_and(crate::pc::serial::Serial::mouse_active))
+}
 
 /// Options of `pil --dos-console`.
 pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) country:Option<u16>,pub(crate) utc_offset:Option<i64>,
@@ -398,6 +413,7 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
     let mut note=None::<String>;
     let mut host_menu_open=false;
     let mut right_down=false;
+    let mut last_serial_mouse:Option<(i32,i32,u16)>=None;
     // Host-side pause: never inject a guest keyboard event or retire a DOS
     // instruction while paused. Device state remains available for snapshots.
     let mut paused=false;
@@ -449,11 +465,13 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                 },
                 Event::Mouse{x,y,width,height,buttons,shift}=>{
                     let pressed=buttons&2!=0&&!right_down;right_down=buttons&2!=0;
-                    let active=session.machine().is_some_and(|p|p.dos.mouse.view().active);
+                    let serial_active=serial_mouse_active(session);
+                    if !serial_active{last_serial_mouse=None;}
+                    let active=serial_active||session.machine().is_some_and(|p|p.dos.mouse.view().active);
                     // The right press that opens the host menu is the menu's:
                     // the selection gesture must not see it again in a move
                     // with the button still down (that pasted a second time).
-                    if pressed&&(shift||!active){front.selecting.hold(buttons);host_menu_open=front.media_menu();continue;}
+                    if pressed&&(shift||!active){front.selecting.hold(buttons);last_serial_mouse=None;host_menu_open=front.media_menu();continue;}
                     if front.selects(active,shift){
                         match front.select(session,x,y,width,height,buttons)?{
                             select::Gesture::Copy=>front.copy(session)?,
@@ -461,16 +479,30 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                             select::Gesture::None=>{},
                         }
                     }else if !paused&&width>0&&height>0{
-                        let view=session.machine().map(|p|p.dos.mouse.view()).ok_or("session state lost")?;
-                        let fx=(x.clamp(0,width-1) as i64*(i64::from(view.max_x)+1)/i64::from(width)) as u16;
-                        let fy=(y.clamp(0,height-1) as i64*(i64::from(view.max_y)+1)/i64::from(height)) as u16;
-                        session.mouse(fx,fy,buttons)?;
+                        if serial_active{
+                            let p=session.machine().ok_or("session state lost")?;
+                            let (mw,mh)=serial_mouse_range(p);
+                            let gx=(x.clamp(0,width-1) as i64*i64::from(mw)/i64::from(width)) as i32;
+                            let gy=(y.clamp(0,height-1) as i64*i64::from(mh)/i64::from(height)) as i32;
+                            let btns=buttons&3;
+                            let (dx,dy,prev_btns)=last_serial_mouse.map_or((0,0,0),|(lx,ly,lb)|(gx-lx,gy-ly,lb));
+                            if dx!=0||dy!=0||btns!=prev_btns{
+                                session.serial_mouse(dx,dy,btns)?;
+                            }
+                            last_serial_mouse=Some((gx,gy,btns));
+                        }else{
+                            let view=session.machine().map(|p|p.dos.mouse.view()).ok_or("session state lost")?;
+                            let fx=(x.clamp(0,width-1) as i64*(i64::from(view.max_x)+1)/i64::from(width)) as u16;
+                            let fy=(y.clamp(0,height-1) as i64*(i64::from(view.max_y)+1)/i64::from(height)) as u16;
+                            session.mouse(fx,fy,buttons)?;
+                        }
                     }
                 },
             }
         }
-        if host_menu_open{std::thread::sleep(Duration::from_millis(10));continue;}
+        if host_menu_open{last_serial_mouse=None;std::thread::sleep(Duration::from_millis(10));continue;}
         if paused{
+            last_serial_mouse=None;
             // Keep pumping host events, but do not inject queued keys, poll
             // guest DMA, or execute an instruction. Snapshot and copy still work.
             if last_present.elapsed()>=Duration::from_millis(16)||note.is_some(){
@@ -768,7 +800,7 @@ impl Front{
             if let Some(w)=self.window.as_mut(){
                 let base=window_title(p.booted);
                 if let Some(ref note)=note{w.window.title(&format!("{base} - {note}"));}
-                w.window.hide_pointer(self.host_pointer.hides(p.dos.mouse.view().visible));
+                w.window.hide_pointer(self.host_pointer.hides(guest_mouse_visible(p)));
                 w.present(session,selection)?;
             }
         }

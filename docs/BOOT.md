@@ -37,6 +37,11 @@ steps, about 11 s headless here.
   Ctrl+Shift+F2 back to the previous. Either way the drive's change line
   goes active (FDC 3F7h bit 7 until the head steps; INT 13h AH=16h returns
   06h once), as when a hand changes the disk.
+- `--mouse` (console, and `mouse on` in `--boot-probe --script`) attaches a
+  Microsoft 2-button serial mouse to COM1 (`3F8h`, IRQ4) when booting a disk.
+  While the guest enables DTR, RTS, OUT2 and receive interrupts on COM1,
+  window pointer motion and left/right clicks go to COM1 as relative
+  3-byte Microsoft packets (`Shift`+right-click still opens the host menu).
 - `--rtc-year YEAR` (console and probe, 1980-2099) runs the real-time
   clock in that year from today's date and time. Linux 0.99 reads only the
   CMOS year's last two digits and takes `26` as 1926, a date before 1970,
@@ -226,6 +231,8 @@ script, one step per line (`#` starts a comment):
 | `show` | print the screen |
 | `mark NAME` | print the steps and host seconds since the last mark |
 | `shot FILE` | write the graphics screen as a P6 PPM (a text screen stops the script) |
+| `mouse on` | attach a Microsoft serial mouse to COM1 (before running) |
+| `mouse DX DY B` | send serial mouse motion `DX DY` and buttons `B` (`0..3`) |
 
 The output streams as the script runs. A script ends at its last step,
 at `--steps` or when the guest waits for a key no step will give.
@@ -381,7 +388,10 @@ Hardware an operating system drives itself, beyond the BIOS:
   640x480 are 0Dh, 0Eh, 10h and 12h, text has the CRTC's columns and rows.
   Other layouts (mode X, other sizes) are shown as nothing. Not modelled:
   odd/even graphics addressing, split screens, panning.
-- **Absent devices**: COM2-COM4 (and COM1 without a session) read FFh; in a
+- **Serial port COM1** (`3F8h-3FFh`, 16450 UART with `IER`/`IIR`, loopback
+  modem control/status, `OUT2` and **IRQ4**; optionally a Microsoft 2-button
+  serial mouse with `--mouse`). COM2-COM4 still read `FFh`.
+- **Absent devices**: COM2-COM4 read FFh; in a
   booted machine every port no known device answers is an open bus (FFh,
   FFFFh for a word access), as ISA probes expect. So are the addresses the
   Sound Blaster does not decode (220h-223h, 227h, 22Bh, 22Dh), where

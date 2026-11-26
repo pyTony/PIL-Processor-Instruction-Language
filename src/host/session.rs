@@ -181,6 +181,13 @@ impl Session{
         let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("mouse mode: {e:?}"))?as u8;
         p.dos.mouse.host(x,y,buttons&7,mode);Ok(())
     }
+    /// Relative host pointer motion and buttons (`buttons`: bit 0 left, bit 1
+    /// right) for a Microsoft serial mouse on COM1.
+    pub(crate) fn serial_mouse(&mut self,dx:i32,dy:i32,buttons:u16)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        if let Some(com1)=p.com1.as_mut(){com1.mouse_motion(dx,dy,buttons,&mut p.speaker.pic);}
+        Ok(())
+    }
     /// Ctrl+Break. The inner error is a refusal the frontend may show.
     pub(crate) fn ctrl_break(&mut self)->Result<Result<(),String>,String>{
         let p=self.loaded.as_mut().ok_or("session state lost")?;
@@ -336,13 +343,19 @@ impl Session{
                 if self.started{(false,"mouse on requires a fresh session before the first run".into(),false)}
                 else{
                     let p=self.loaded.as_mut().ok_or("session state lost")?;
-                    let vector=p.ram.load(0x33*4,MemWidth::Dword).map_err(|e|format!("mouse IVT read: {e:?}"))?;
-                    if vector!=0 && vector!=vectors::entry(0x33){
-                        (false,"INT 33h already belongs to another mouse handler".into(),false)
+                    if p.booted{
+                        if p.com1.is_none(){serial::attach(p)?;}
+                        p.com1.as_mut().unwrap().attach_mouse();
+                        (true,"Serial mouse enabled on COM1".into(),false)
                     }else{
-                        p.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33))
-                            .map_err(|e|format!("mouse IVT write: {e:?}"))?;
-                        p.dos.mouse.enable(vector);(true,"DOS mouse enabled".into(),false)
+                        let vector=p.ram.load(0x33*4,MemWidth::Dword).map_err(|e|format!("mouse IVT read: {e:?}"))?;
+                        if vector!=0 && vector!=vectors::entry(0x33){
+                            (false,"INT 33h already belongs to another mouse handler".into(),false)
+                        }else{
+                            p.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33))
+                                .map_err(|e|format!("mouse IVT write: {e:?}"))?;
+                            p.dos.mouse.enable(vector);(true,"DOS mouse enabled".into(),false)
+                        }
                     }
                 }
             },
@@ -459,9 +472,13 @@ impl Session{
             ["unmount"]=>(false,"unmount needs drive A..E".into(),false),
             // `com1 HEX`: bytes arriving at COM1 from the host terminal.
             ["com1",hex]=>match(0..hex.len()).step_by(2).map(|i|hex.get(i..i+2).and_then(|b|u8::from_str_radix(b,16).ok())).collect::<Option<Vec<u8>>>(){
-                Some(bytes) if !bytes.is_empty()=>match self.loaded.as_mut().and_then(|p|p.com1.as_mut()){
-                    Some(port)=>{port.rx.extend(bytes);(true,String::new(),false)},
-                    None=>(false,"COM1 is not attached".into(),false),
+                Some(bytes) if !bytes.is_empty()=>{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    let pic=&mut p.speaker.pic;
+                    match p.com1.as_mut(){
+                        Some(port)=>{port.rx.extend(bytes);port.update_irq(pic);(true,String::new(),false)},
+                        None=>(false,"COM1 is not attached".into(),false),
+                    }
                 },
                 _=>(false,"com1 needs bytes in hex".into(),false),
             },
