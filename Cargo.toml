@@ -42,3 +42,8 @@ debug-labels = []
 [dev-dependencies]
 pil-cpu = { path = "crates/pil-cpu", features = ["test-support"] }
 pil-pc = { path = "crates/pil-pc", features = ["test-support"] }
+
+# Omit DWARF local-variable records for the 5,369 generated instruction forms
+# during unoptimized dev/test builds so 7 GB CI runners do not OOM.
+[profile.dev.package.pil-cpu]
+debug = false

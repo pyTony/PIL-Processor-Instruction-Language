@@ -1276,7 +1276,7 @@ fn system_information_f2xm1_has_exact_endpoints_and_preserves_stack(){
     let state=result.loaded.fpu.state().unwrap();
     assert_eq!(state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff)));
     assert_eq!(state.st(1),None);
-    let mut p=dos::load(&[0xd9,0xf0],"sysinfo-f2xm1-negative.com").unwrap();
+    let p=dos::load(&[0xd9,0xf0],"sysinfo-f2xm1-negative.com").unwrap();
     let mut cpu=p.cpu.clone();let mut ram=p.ram.clone();
     let mut fpu=PresentFpu::default();
     let minus_one=Extended80::from_bits(1u64<<63,0xbfff);
@@ -1511,4 +1511,112 @@ fn present_80387_fucompp_compares_st0_with_st1_and_pops_both() {
     assert_eq!(first&0x3800,0x0000,"TOP back to 0: {first:04x}");
     assert_eq!(second&0x4700,0x0000,"{second:04x}");
     assert_eq!(result.loaded.fpu.state().unwrap().tag_word(),0xffff);
+}
+
+#[test]
+fn present_80387_unmasked_exceptions_signal_error_on_the_irq13_path() {
+    let p=dos::load(&[0x90],"x87-exc.com").unwrap();
+    let base=p.image.segments[3].base;
+    let one=Extended80::from_bits(1u64<<63,0x3fff);
+
+    // 1. Stack underflow (FADD ST(0),ST(1) on empty stack, IM=0): IE|SF|ES|B, C1=0.
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x037e;fpu.state.status=0x0200;
+    assert_eq!(fpu.execute(&instruction(&[0xd8,0xc1]),&mut p.cpu.clone(),&mut p.ram.clone(),&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x80c1);
+    assert!(fpu.busy);
+    assert_eq!(fpu.state.tag_word(),0xffff);
+
+    // 2. Stack overflow (FLD1 on full stack, IM=0): IE|SF|C1|ES|B, registers preserved.
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x037e;
+    for i in 1..=8{fpu.state.push(convert::from_i32(i)).unwrap();}
+    let before=fpu.state.clone();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0xe8]),&mut p.cpu.clone(),&mut p.ram.clone(),&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x82c1);
+    for i in 0..8{assert_eq!(fpu.state.st(i),before.st(i));}
+
+    // 3. Invalid operation (0.0 / 0.0, SNaN FUCOMP, out-of-range FISTP m16, IM=0): IE|ES|B, SF=0, C1=0.
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x037e;fpu.state.status=0x0200;
+    fpu.state.push(Extended80::default()).unwrap();
+    fpu.state.push(Extended80::default()).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd8,0xf1]),&mut p.cpu.clone(),&mut p.ram.clone(),&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8081);
+
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x037e;
+    fpu.state.push(one).unwrap();
+    fpu.state.push(Extended80::from_bits(0x8000_0000_0000_0001,0x7fff)).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xdd,0xe9]),&mut p.cpu.clone(),&mut p.ram.clone(),&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8081);
+    assert!(fpu.state.st(1).is_some(),"FUCOMP SNaN must not pop");
+
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x037e;
+    fpu.state.push(convert::from_i32(40_000)).unwrap();
+    let mut ram=p.ram.clone();ram.store(base+0x200,MemWidth::Word,0x1234).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xdf,0x1e,0x00,0x02]),&mut p.cpu.clone(),&mut ram,&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8081);
+    assert_eq!(ram.load(base+0x200,MemWidth::Word).unwrap(),0x1234);
+
+    // 4. Denormalized operand (subnormal m32 FLD, DM=0): DE|ES|B, stack untouched.
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x037d;
+    let mut ram=p.ram.clone();ram.store(base+0x200,MemWidth::Dword,0x0000_0001).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0x06,0x00,0x02]),&mut p.cpu.clone(),&mut ram,&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8082);
+    assert_eq!(fpu.state.tag_word(),0xffff);
+
+    // 5. FXTRACT on 0.0 (ZM=0): ZE|ES|B, ST(0) untouched.
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x037b;
+    fpu.state.push(Extended80::default()).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0xf4]),&mut p.cpu.clone(),&mut p.ram.clone(),&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8084);
+    assert_eq!(fpu.state.st(0),Some(Extended80::default()));
+
+    // 6. Register overflow (2^10000 * 2^10000, OM=0): bias-adjusted by -24576 (0x6000) + OE|ES|B.
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x0377;
+    let big=Extended80::from_bits(1u64<<63,0x3fff+10_000);
+    fpu.state.push(big).unwrap();fpu.state.push(big).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd8,0xc9]),&mut p.cpu.clone(),&mut p.ram.clone(),&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8088);
+    assert_eq!(fpu.state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff+20_000-0x6000)));
+
+    // 7. Register underflow (2^-10000 * 2^-10000, UM=0): bias-adjusted by +24576 (0x6000) + UE|ES|B.
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x036f;
+    let tiny=Extended80::from_bits(1u64<<63,0x3fff-10_000);
+    fpu.state.push(tiny).unwrap();fpu.state.push(tiny).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd8,0xc9]),&mut p.cpu.clone(),&mut p.ram.clone(),&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8090);
+    assert_eq!(fpu.state.st(0),Some(Extended80::from_bits(1u64<<63,0x3fff+0x6000-20_000)));
+
+    // 8. Memory FSTP m32 overflow (OM=0), underflow (UM=0), and inexact (PM=0).
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x0377;
+    fpu.state.push(Extended80::from_bits(1u64<<63,0x3fff+200)).unwrap();
+    let mut ram=p.ram.clone();ram.store(base+0x200,MemWidth::Dword,0xdead_beef).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0x1e,0x00,0x02]),&mut p.cpu.clone(),&mut ram,&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8088);
+    assert_eq!(ram.load(base+0x200,MemWidth::Dword).unwrap(),0xdead_beef);
+    assert!(fpu.state.st(0).is_some());
+
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x036f;
+    fpu.state.push(Extended80::from_bits((1u64<<63)+1,0x3fff-140)).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0x1e,0x00,0x02]),&mut p.cpu.clone(),&mut ram,&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x8090);
+    assert_eq!(ram.load(base+0x200,MemWidth::Dword).unwrap(),0xdead_beef);
+    assert!(fpu.state.st(0).is_some());
+
+    let mut fpu=PresentFpu{error_irq:true,..Default::default()};
+    fpu.state.control=0x035f;
+    fpu.state.push(Extended80::from_bits((1u64<<63)+1,0x3fff)).unwrap();
+    assert_eq!(fpu.execute(&instruction(&[0xd9,0x1e,0x00,0x02]),&mut p.cpu.clone(),&mut ram,&p.image),Outcome::ErrorSignalled);
+    assert_eq!(fpu.state.status&0x82ff,0x80a0);
+    assert_eq!(ram.load(base+0x200,MemWidth::Dword).unwrap(),0x3f80_0000);
+    assert_eq!(fpu.state.tag_word(),0xffff);
 }

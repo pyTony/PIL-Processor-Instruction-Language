@@ -973,7 +973,7 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
     // The ordinary one-instruction interpreter still handles any DOS guest.
     let history_enabled=p.history.enabled();
     let watched=p.ram.text_watch_enabled();
-    let blocks_enabled=matches!(mode,crate::precompiled::Mode::On|crate::precompiled::Mode::Required)&&!p.rom_mode&&!history_enabled&&!watched;
+    let blocks_enabled=matches!(mode,crate::precompiled::Mode::On|crate::precompiled::Mode::Required)&&!history_enabled&&!watched;
     let stop=loop{
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
@@ -1244,6 +1244,27 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
             Ok(None)=>{},
             Err(message)=>break Stop::Service(message),
         }
+        if backend.is_none()&&blocks_enabled{
+            let mut machine=p.image.segment_state();
+            if machine.ss_shadow==0&&machine.sti_shadow==0{
+                // Never step over a multiple of 256 steps: the timer check
+                // at the top of the loop runs there.
+                let block_budget=(budget-execution_steps).min(256-execution_steps%256);
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                // Blocks may follow one another without coming back here
+                // only while nothing waits for the checks at the top of
+                // the loop: a scan code or mouse event could become
+                // deliverable at any boundary.
+                let chain=!p.speaker.kbd.pending()&&(p.rom_mode||!mouse::ready(&p));
+                if let Some(r)=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut p.fpu,&mut machine,block_budget,chain){
+                    p.image.set_segment_state(machine);p.selectors=machine.selectors;
+                    execution_steps+=r.steps;completed+=r.steps;pil_steps+=r.pil_steps;
+                    if r.error_signalled{p.speaker.pic.raise_slave(5);}
+                    if let Err(e)=r.result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
+                    if r.steps>0{continue;}
+                }
+            }
+        }
         // Numerics are a replaceable device, separate from integer PIL semantics.
         // Decode afresh so self-modifying code and changes to EM/TS are visible.
         let numerics=super::fpu::decode_with_default(|offset|{
@@ -1338,26 +1359,6 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
             },
             // The ordinary decoder retains ownership of malformed/non-x87 fetches.
             Ok(None)|Err(_)=>{},
-        }
-        if backend.is_none()&&blocks_enabled{
-            let mut machine=p.image.segment_state();
-            if machine.ss_shadow==0&&machine.sti_shadow==0{
-                // Never step over a multiple of 256 steps: the timer check
-                // at the top of the loop runs there.
-                let block_budget=(budget-execution_steps).min(256-execution_steps%256);
-                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                // Blocks may follow one another without coming back here
-                // only while nothing waits for the checks at the top of
-                // the loop: a scan code or mouse event could become
-                // deliverable at any boundary.
-                let chain=!p.rom_mode&&!p.speaker.kbd.pending()&&!mouse::ready(&p);
-                if let Some((n,result))=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget,chain){
-                    p.image.set_segment_state(machine);p.selectors=machine.selectors;
-                    execution_steps+=n;completed+=n;pil_steps+=n;
-                    if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
-                    if n>0{continue;}
-                }
-            }
         }
         if let Some(b)=backend.as_deref_mut().filter(|_|!history_enabled&&!watched){
             if b.may_block(&p.image,&p.ram,p.cpu.eip){
@@ -1595,6 +1596,7 @@ pub fn run_rom(rom_path: &Path, budget: usize) -> Result<Probe, String> {
     ram.protect(rom_base,rom_data.len()).map_err(|e|format!("ROM protection: {e:?}"))?;
     p.ram = ram;
     p.rom_mode = true;
+    p.blocks.rom = true;
     p.cpu.regs = [0;8];
     p.image.system = [(0,0);SYSTEM_RANGES];
     p.image.fetch_base = 0;

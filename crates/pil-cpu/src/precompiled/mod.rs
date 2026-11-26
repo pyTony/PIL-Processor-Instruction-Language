@@ -6,7 +6,7 @@
 //! two `ADD AX,imm16` instructions with different immediates are one form.
 //! `pil --emit-precompiled-forms PATH` enumerates the decoder (prefixes,
 //! one- and two-byte opcodes, every ModRM byte, several immediate patterns,
-//! real-mode code with a 16-bit stack) and
+//! 16- and 32-bit real- and protected-mode code and stacks) and
 //! writes one Rust function per form to `forms.rs`, rendered from the PIL
 //! tokens by the same emitter as `--emit-rust`. Constants that changed
 //! between the enumerated decodes are read from a slot at run time; the
@@ -128,15 +128,15 @@ fn record(into:&mut Collected,p:&Program){
     }
 }
 
-const FILLS:[[u8;10];3]=[
+const FILLS:[[u8;10];4]=[
     [0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,0x01,0x02],
     [0x81,0x00,0x00,0x80,0x03,0x00,0x00,0x00,0x7f,0x40],
+    [0x24,0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08],
     [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00],
 ];
 
-/// Enumerate every decodable form in the given machines (the pil crate
-/// passes Dine's real-mode machine with a 16-bit stack; protected-mode and
-/// 32-bit-stack forms are not in the table yet and run in the interpreter).
+/// Enumerate every decodable form in the given machines (real- and
+/// protected-mode 16- and 32-bit code and stack segments).
 /// Deterministic; uses all host cores.
 pub fn enumerate(machines:&[(guest::Image,Ram)])->Collected{
     let mut prefixes=Vec::new();
@@ -173,11 +173,11 @@ pub fn render(forms:&Collected)->String{
     out.push_str(&format!("pub static FORMS:[(u128,&[Option<u64>],super::FormFn);{}]=[\n",forms.len()));
     for (n,(text,(_,slots))) in forms.iter().enumerate(){
         let slots:Vec<String>=slots.iter().map(|s|s.map_or("None".into(),|v|format!("Some({v})"))).collect();
-        out.push_str(&format!("({:#034x},&[{}],f{n}::execute_form),\n",key(text),slots.join(",")));
+        out.push_str(&format!("({:#034x},&[{}],f{n}),\n",key(text),slots.join(",")));
     }
     out.push_str("];\n");
     for (n,(_,(program,slots))) in forms.iter().enumerate(){
-        out.push_str(&format!("mod f{n}{{use super::*;\n{}}}\n",crate::emit_rust_form(program,slots)));
+        out.push_str(&crate::emit_rust_form(program,slots).replacen("pub fn execute_form(",&format!("fn f{n}("),1));
     }
     out
 }

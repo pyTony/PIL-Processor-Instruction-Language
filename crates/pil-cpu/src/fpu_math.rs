@@ -6,7 +6,13 @@ use super::{Arithmetic, Extended80};
 use std::cmp::Ordering;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MathError { Unsupported }
+pub enum MathError {
+    InvalidOperation,
+    Denormal,
+    Overflow { value: Extended80, inexact: bool, rounded_up: bool },
+    Underflow { value: Extended80, inexact: bool, rounded_up: bool },
+    Unsupported,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Computed {
@@ -16,13 +22,40 @@ pub struct Computed {
     pub zero_divide: bool,
 }
 
+fn is_infinity(value: Extended80) -> Option<bool> {
+    ((value.sign_exponent & 0x7fff) == 0x7fff && value.significand == (1u64 << 63))
+        .then_some(value.sign_exponent & 0x8000 != 0)
+}
+
+fn is_signaling_or_invalid_special(value: Extended80) -> bool {
+    let exp = value.sign_exponent & 0x7fff;
+    if exp == 0 {
+        return false;
+    }
+    if exp < 0x7fff {
+        return value.significand & (1u64 << 63) == 0;
+    }
+    // 80387: J=0 at exponent 7FFFh is an invalid encoding; J=1, bit 62=0 and
+    // non-zero low bits is an SNaN. Quiet NaNs (J=1, bit 62=1) stay separate.
+    if value.significand & (1u64 << 63) == 0 {
+        return true;
+    }
+    value.significand & (1u64 << 62) == 0 && value.significand & ((1u64 << 62) - 1) != 0
+}
+
 fn split(value: Extended80) -> Result<(bool, i32, u64), MathError> {
     let sign = value.sign_exponent & 0x8000 != 0;
     let exp = i32::from(value.sign_exponent & 0x7fff);
     if exp == 0 && value.significand == 0 {
         return Ok((sign, 0, 0));
     }
-    if exp == 0 || exp == 0x7fff || value.significand & (1u64 << 63) == 0 {
+    if exp == 0 {
+        return Err(MathError::Denormal);
+    }
+    if is_signaling_or_invalid_special(value) {
+        return Err(MathError::InvalidOperation);
+    }
+    if exp == 0x7fff {
         return Err(MathError::Unsupported);
     }
     Ok((sign, exp, value.significand))
@@ -70,14 +103,32 @@ fn finish(negative: bool, mut exponent: i32, mut significand: u64,
         }
         (inexact, up)
     };
-    // Underflow/overflow and denormal handling require real x87 exception
-    // semantics. Do not modify the destination for these cases.
-    if !(1..0x7fff).contains(&exponent) {
+    // 80387 unmasked overflow/underflow bias adjustment is +/-24576 (0x6000).
+    let sign_bit = if negative { 0x8000 } else { 0 };
+    if exponent >= 0x7fff {
+        let adjusted = exponent - 0x6000;
+        if (1..0x7fff).contains(&adjusted) {
+            return Err(MathError::Overflow {
+                value: Extended80::from_bits(significand, adjusted as u16 | sign_bit),
+                inexact,
+                rounded_up,
+            });
+        }
+        return Err(MathError::Unsupported);
+    }
+    if exponent <= 0 {
+        let adjusted = exponent + 0x6000;
+        if (1..0x7fff).contains(&adjusted) {
+            return Err(MathError::Underflow {
+                value: Extended80::from_bits(significand, adjusted as u16 | sign_bit),
+                inexact,
+                rounded_up,
+            });
+        }
         return Err(MathError::Unsupported);
     }
     Ok(Computed {
-        value: Extended80::from_bits(significand,
-            exponent as u16 | if negative { 0x8000 } else { 0 }),
+        value: Extended80::from_bits(significand, exponent as u16 | sign_bit),
         inexact,
         rounded_up,
         zero_divide: false,
@@ -103,15 +154,28 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
         Arithmetic::Divide => (a, b, false, false, true),
         Arithmetic::ReverseDivide => (b, a, false, false, true),
     };
+    if is_signaling_or_invalid_special(a) || is_signaling_or_invalid_special(b) {
+        return Err(MathError::InvalidOperation);
+    }
+    let a_zero = (a.sign_exponent & 0x7fff) == 0 && a.significand == 0;
+    let b_zero = (b.sign_exponent & 0x7fff) == 0 && b.significand == 0;
+    if let (Some(a_inf), Some(b_inf)) = (is_infinity(a), is_infinity(b)) {
+        if divide || (!multiply && a_inf != (b_inf ^ subtract)) {
+            return Err(MathError::InvalidOperation);
+        }
+    }
+    if multiply && ((is_infinity(a).is_some() && b_zero) || (a_zero && is_infinity(b).is_some())) {
+        return Err(MathError::InvalidOperation);
+    }
     let (asign, ae, av) = split(a)?;
     let (bsign, be, bv) = split(b)?;
     if divide {
         // av and bv are normalized 64-bit integers. Long division in u128
         // yields the 64 significand bits and the exact remainder, which
         // suffices for correct nearest-even rounding without host floats.
-        // 0/0 needs invalid-operation modelling; finite nonzero / 0 produces
-        // signed infinity when ZE is masked in the caller.
-        if av == 0 && bv == 0 { return Err(MathError::Unsupported); }
+        // 0/0 is an invalid operation; finite nonzero / 0 produces signed
+        // infinity when ZE is masked in the caller.
+        if av == 0 && bv == 0 { return Err(MathError::InvalidOperation); }
         if bv == 0 {
             return Ok(Computed {
                 value: Extended80::from_bits(1u64 << 63,
@@ -185,7 +249,6 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
     while magnitude < (1u128 << 66) {
         magnitude <<= 1;
         exponent -= 1;
-        if exponent <= 0 { return Err(MathError::Unsupported); }
     }
     let significand = (magnitude >> 3) as u64;
     let discarded = magnitude & 7;
@@ -195,8 +258,11 @@ pub fn calculate(operation: Arithmetic, a: Extended80, b: Extended80,
 fn split_comparable(value: Extended80) -> Result<(bool, i32, u64), MathError> {
     let sign = value.sign_exponent & 0x8000 != 0;
     let exp = i32::from(value.sign_exponent & 0x7fff);
-    if exp == 0x7fff && value.significand == (1u64 << 63) {
-        return Ok((sign, 0x7fff, value.significand));
+    if exp == 0x7fff {
+        if value.significand == (1u64 << 63) {
+            return Ok((sign, 0x7fff, value.significand));
+        }
+        return Err(MathError::InvalidOperation);
     }
     split(value)
 }
@@ -508,7 +574,7 @@ mod tests {
         assert_eq!(calculate(Arithmetic::Divide, ONE, Extended80::from_bits(0, 0x8000), CW),
                    Ok(Computed { value: neg_inf, inexact: false, rounded_up: false, zero_divide: true }));
         assert_eq!(calculate(Arithmetic::Divide, ZERO, ZERO, CW),
-                   Err(MathError::Unsupported));
+                   Err(MathError::InvalidOperation));
         assert_eq!(calculate(Arithmetic::Divide, half, TWO, CW).unwrap().value,
                    Extended80::from_bits(1u64 << 63, 0x3ffd));
     }
@@ -536,7 +602,7 @@ mod tests {
         assert_eq!(compare(ONE, pos_inf), Ok(Ordering::Less));
         assert_eq!(compare(neg_inf, ONE), Ok(Ordering::Less));
         assert_eq!(compare(ONE, Extended80::from_bits(0xc000_0000_0000_0000, 0x7fff)),
-                   Err(MathError::Unsupported));
+                   Err(MathError::InvalidOperation));
     }
 
     #[test]
@@ -550,9 +616,9 @@ mod tests {
         assert_eq!(calculate(Arithmetic::Add, ONE,
                    Extended80::from_bits(1u64 << 63, 0x7fff), CW),
                    Err(MathError::Unsupported)); // infinity
-        assert_eq!(calculate(Arithmetic::Multiply,
+        assert!(matches!(calculate(Arithmetic::Multiply,
                    Extended80::from_bits(1u64 << 63, 1),
                    Extended80::from_bits(1u64 << 63, 0x3ffe), CW),
-                   Err(MathError::Unsupported)); // underflow
+                   Err(MathError::Underflow { .. }))); // underflow
     }
 }
