@@ -173,11 +173,11 @@ pub fn render(forms:&Collected)->String{
     out.push_str(&format!("pub static FORMS:[(u128,&[Option<u64>],super::FormFn);{}]=[\n",forms.len()));
     for (n,(text,(_,slots))) in forms.iter().enumerate(){
         let slots:Vec<String>=slots.iter().map(|s|s.map_or("None".into(),|v|format!("Some({v})"))).collect();
-        out.push_str(&format!("({:#034x},&[{}],f{n}::execute_form),\n",key(text),slots.join(",")));
+        out.push_str(&format!("({:#034x},&[{}],f{n}),\n",key(text),slots.join(",")));
     }
     out.push_str("];\n");
     for (n,(_,(program,slots))) in forms.iter().enumerate(){
-        out.push_str(&format!("mod f{n}{{use super::*;\n{}}}\n",crate::emit_rust_form(program,slots)));
+        out.push_str(&crate::emit_rust_form(program,slots).replacen("pub fn execute_form(",&format!("fn f{n}("),1));
     }
     out
 }
