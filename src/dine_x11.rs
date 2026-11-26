@@ -441,7 +441,7 @@ impl Window{
     pub(crate) fn present(&mut self,frame:Frame){
         if self.failed{return;}
         if self.shared.is_none(){
-            let title=self.title.lock().map_or_else(|_|"Dine console".into(),|t|t.clone());
+            let title=self.title.lock().map_or_else(|_|"PIL console".into(),|t|t.clone());
             match open(&title,frame.width,frame.height){
                 Ok(shared)=>{
                     let (s,input)=(shared.clone(),self.input.clone());

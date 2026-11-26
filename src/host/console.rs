@@ -585,7 +585,7 @@ pub(crate) fn host_pointer_command(id:u16)->Option<(HostPointer,&'static str)>{
 }
 
 fn window_title(booted:bool)->&'static str{
-    if booted{"Dine PC console"}else{"Dine DOS console"}
+    if booted{"PIL PC console"}else{"Dine DOS console"}
 }
 
 impl Front{
@@ -846,7 +846,7 @@ impl WindowFront{
             }
         }).ok();
         let font=super::vga_text::font().unwrap_or_else(|_|vec![0;256*super::vga_text::CELL_HEIGHT]);
-        Self{window:crate::dine_window::Window::interactive("Dine console",input),font,started:Instant::now(),last:None}
+        Self{window:crate::dine_window::Window::interactive("PIL console",input),font,started:Instant::now(),last:None}
     }
     fn closed(&self)->bool{self.window.closed()}
     fn present_text(&mut self,cells:&[u8],cursor:Option<(u32,u32)>){
@@ -996,5 +996,11 @@ mod text_cursor_font_regressions {
         let font=visible_text_font(&p,&rom);
         assert_eq!(font[0xc4*16+7],0x55);
         assert_eq!(&font[0xb3*16..0xb3*16+16],&rom[0xb3*16..0xb3*16+16]);
+    }
+
+    #[test]
+    fn window_title_uses_pil_pc_for_booted_and_dine_dos_for_dos() {
+        assert_eq!(window_title(true), "PIL PC console");
+        assert_eq!(window_title(false), "Dine DOS console");
     }
 }
