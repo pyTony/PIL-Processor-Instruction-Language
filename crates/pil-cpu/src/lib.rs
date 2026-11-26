@@ -355,6 +355,20 @@ pub fn pack_tokens(tokens: &[Token]) -> Vec<PackedOp> {
                     break;
                 }
             }
+            if let [
+                Token::ReadIp(ft, true, 32),
+                Token::ReadDisp(delta, 32),
+                Token::Binary(target, Binary::Add, ft2, delta2),
+                Token::BranchIf(target2, cond),
+                Token::Retire,
+            ] = &rest[16..]
+            {
+                if ft == ft2 && delta == delta2 && target == target2 && *cond < 16 {
+                    out.push(PackedOp::Jcc16 { cond: *cond as u8, w: 32 });
+                    out.push(PackedOp::Token(Token::Retire));
+                    break;
+                }
+            }
             out.push(PackedOp::Conditions16);
             i += 16;
             continue;
@@ -2732,3 +2746,41 @@ mod les_tests;
 #[cfg(test)]
 #[path = "../../../tests/unit/control_registers.rs"]
 mod control_register_tests;
+
+#[cfg(test)]
+mod jcc32_packing_tests {
+    use super::*;
+
+    #[test]
+    fn pack_tokens_packs_32bit_jcc_tail() {
+        let mut tokens = vec![
+            Token::ReadFlag(0, Flag::OF),
+            Token::Not(1, 0),
+            Token::ReadFlag(2, Flag::CF),
+            Token::Not(3, 2),
+            Token::ReadFlag(4, Flag::ZF),
+            Token::Not(5, 4),
+            Token::Binary(6, Binary::Or, 2, 4),
+            Token::Not(7, 6),
+            Token::ReadFlag(8, Flag::SF),
+            Token::Not(9, 8),
+            Token::ReadFlag(10, Flag::PF),
+            Token::Not(11, 10),
+            Token::Binary(12, Binary::Xor, 8, 0),
+            Token::Not(13, 12),
+            Token::Binary(14, Binary::Or, 12, 4),
+            Token::Not(15, 14),
+            Token::ReadIp(16, true, 32),
+            Token::ReadDisp(17, 32),
+            Token::Binary(18, Binary::Add, 16, 17),
+            Token::BranchIf(18, 5),
+            Token::Retire,
+        ];
+        assert!(is_conditions16_prefix(&tokens));
+        let packed = pack_tokens(&mut tokens);
+        assert!(
+            packed.iter().any(|op| matches!(op, PackedOp::Jcc16 { cond: 5, w: 32 })),
+            "expected PackedOp::Jcc16 {{ cond: 5, w: 32 }}, got {packed:?}"
+        );
+    }
+}

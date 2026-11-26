@@ -148,6 +148,14 @@ impl Tlb{
     fn table(&mut self,physical:u32)->bool{let f=physical>>12;if f>=4096{return false;}self.tables[(f>>6)as usize]|=1<<(f&63);true}
     fn holds_table(&self,index:usize)->bool{let f=index>>12;f<4096&&self.tables[f>>6]&(1<<(f&63))!=0}
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MicroTlb {
+    directory: u32,
+    page: u32,
+    frame: u32,
+    bits: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ram {
     data:Vec<u8>,
@@ -160,6 +168,8 @@ pub struct Ram {
     /// A Cell so that `as_level` can make one access supervisor-level (a
     /// descriptor or TSS read at CPL 3) through `&self`.
     paging:std::cell::Cell<Option<Paging>>,
+    /// Lock-free 1-entry fast-path cache for the most recently translated page.
+    micro_tlb:std::cell::Cell<Option<MicroTlb>>,
     /// Accessed and dirty bits a page walk has set but `&self` methods could
     /// not yet write: (physical byte, bits to OR). Reads see them at once;
     /// `settle` writes them, and every `&mut` method settles first.
@@ -176,7 +186,7 @@ pub struct Ram {
 /// mode guest addresses end at 10FFEFh, so guests cannot reach it.
 pub const PLANE_ALIAS:u32=0xf000_0000;
 impl Ram {
-    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),marks:Default::default(),tlb:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,video_watch:None,code_origins:Default::default()}}
+    pub fn new(bytes:usize)->Self {Self{data:vec![0;bytes],readonly:Vec::new(),rom:Vec::new(),a20_enabled:true,planar:None,paging:std::cell::Cell::new(None),micro_tlb:std::cell::Cell::new(None),marks:Default::default(),tlb:Default::default(),code_watch:CodeWatch::new(bytes),text_watch:None,video_watch:None,code_origins:Default::default()}}
     pub fn track_resource(&mut self,identity:usize){self.code_origins=CodeOrigins{identity:Some(identity),ranges:Default::default()};}
     pub fn resource_origin(&self,address:u32)->Option<(usize,u32)>{
         if self.paging.get().is_some(){return None;}
@@ -276,7 +286,7 @@ impl Ram {
         self.paging.set(None);
     }
     /// A CPU write to a frame holding a page table the TLB has used.
-    fn table_write(&mut self,index:usize){let tlb=self.tlb.get_mut();if tlb.used&&tlb.holds_table(index){tlb.flush();}}
+    fn table_write(&mut self,index:usize){let tlb=self.tlb.get_mut();if tlb.used&&tlb.holds_table(index){tlb.flush();self.micro_tlb.set(None);}}
     /// Turns paging on or off (CR0.PG, CR3, CPL). Paging off, or another
     /// page directory, flushes the TLB.
     #[inline]
@@ -285,7 +295,7 @@ impl Ram {
             self.settle();
         }
         let tlb=self.tlb.get_mut();
-        match paging{None=>tlb.flush(),Some(p) if tlb.directory!=Some(p.directory)=>{tlb.flush();tlb.directory=Some(p.directory);},_=>{}}
+        match paging{None=>{tlb.flush();self.micro_tlb.set(None);},Some(p) if tlb.directory!=Some(p.directory)=>{tlb.flush();tlb.directory=Some(p.directory);self.micro_tlb.set(None);},_=>{}}
         self.paging.set(paging);
     }
     /// Runs `f` with accesses at user level (`user`) or supervisor level,
@@ -326,18 +336,29 @@ impl Ram {
     /// #PF with bit 0 set (the 386 does not check writes at CPL 0-2). Bit 1 is
     /// set for a write, bit 2 for user level. Only a walk that succeeds sets
     /// the accessed bits of both entries, and the PTE's dirty bit on a write.
+    #[inline]
     pub fn translate(&self,linear:u32,write:bool)->Result<u32,AccessFault>{
         let Some(paging)=self.paging.get() else{return Ok(linear);};
         let code=(u8::from(write)<<1)|(u8::from(paging.user)<<2);
         let fault=|p:u8|AccessFault{address:linear,bytes:1,write,page:Some(code|p)};
-        let page=linear>>12;let slot=(page&255)as usize;
+        let page=linear>>12;
+        if let Some(m)=self.micro_tlb.get(){
+            if m.directory==paging.directory&&m.page==page{
+                if paging.user&&(m.bits&4==0||(write&&m.bits&2==0)){return Err(fault(1));}
+                if !write||m.bits&0x40!=0{return Ok(m.frame|(linear&0xfff));}
+            }
+        }
+        let slot=(page&255)as usize;
         {
             let tlb=self.tlb.borrow();
             if tlb.directory==Some(paging.directory)&&tlb.tags[slot]==(page<<1|1){
                 let bits=tlb.bits[slot];
                 if paging.user&&(bits&4==0||(write&&bits&2==0)){return Err(fault(1));}
                 // A write to a page not yet dirty walks, to set the D bit.
-                if !write||bits&0x40!=0{return Ok(tlb.frames[slot]|(linear&0xfff));}
+                if !write||bits&0x40!=0{
+                    self.micro_tlb.set(Some(MicroTlb{directory:paging.directory,page,frame:tlb.frames[slot],bits}));
+                    return Ok(tlb.frames[slot]|(linear&0xfff));
+                }
             }
         }
         let pde_at=(paging.directory&!0xfff).wrapping_add((linear>>22)*4);
@@ -551,3 +572,44 @@ impl Ram {
 #[cfg(test)]
 #[path = "../../../tests/unit/memory.rs"]
 mod tests;
+
+#[cfg(test)]
+mod micro_tlb_tests {
+    use super::*;
+
+    #[test]
+    fn micro_tlb_caches_translation_and_invalidates_on_paging_and_table_write() {
+        let mut ram = Ram::new(0x10000);
+        // Page directory at 0x1000, PDE[0] -> page table at 0x2000 (present + writable + accessed)
+        let pde0: u32 = 0x2023;
+        ram.data[0x1000..0x1004].copy_from_slice(&pde0.to_le_bytes());
+        // PTE[2] (linear 0x2000) -> identity frame 0x2000 so stores into the page table succeed
+        let pte2: u32 = 0x2023;
+        ram.data[0x2008..0x200C].copy_from_slice(&pte2.to_le_bytes());
+        // PTE[4] (linear 0x4000) -> physical frame 0x5000 (present + writable + accessed)
+        let pte4_initial: u32 = 0x5023;
+        ram.data[0x2010..0x2014].copy_from_slice(&pte4_initial.to_le_bytes());
+
+        ram.set_paging(Some(Paging { directory: 0x1000, user: false }));
+        // First walk populates Tlb; second access on same page hits Tlb and populates MicroTlb; third hits MicroTlb.
+        assert_eq!(ram.translate(0x4123, false).unwrap(), 0x5123);
+        assert_eq!(ram.translate(0x4456, false).unwrap(), 0x5456);
+        assert!(ram.micro_tlb.get().is_some());
+        assert_eq!(ram.translate(0x4789, false).unwrap(), 0x5789);
+
+        // Changing page directory flushes MicroTlb
+        ram.set_paging(Some(Paging { directory: 0x1800, user: false }));
+        assert!(ram.micro_tlb.get().is_none());
+
+        // Re-enable paging on 0x1000, populate MicroTlb, then overwrite PTE[4] -> frame 0x6000
+        ram.set_paging(Some(Paging { directory: 0x1000, user: false }));
+        assert_eq!(ram.translate(0x4010, false).unwrap(), 0x5010);
+        assert_eq!(ram.translate(0x4020, false).unwrap(), 0x5020);
+        assert!(ram.micro_tlb.get().is_some());
+
+        let pte4_updated: u32 = 0x6023;
+        ram.store(0x2010, MemWidth::Dword, pte4_updated).unwrap();
+        assert!(ram.micro_tlb.get().is_none());
+        assert_eq!(ram.translate(0x4010, false).unwrap(), 0x6010);
+    }
+}
