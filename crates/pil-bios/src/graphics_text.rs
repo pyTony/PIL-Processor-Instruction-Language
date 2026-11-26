@@ -11,15 +11,15 @@
 //! it, and every change is a planned write that the caller commits all or none.
 use super::*;
 /// Linear address of the ROM font, F000:FA6E as on the IBM PC/XT/AT BIOS.
-pub(in super::super) const FONT:u32=0xffa6e;
+pub const FONT:u32=0xffa6e;
 /// Far pointer to the 80h-FFh half in the video BIOS area (C000:1000). A
-/// VGA BIOS points INT 1Fh at its own upper-half table, so Dine's colour
+/// VGA BIOS points INT 1Fh at its own upper-half table, so the colour
 /// VGA identity starts INT 1Fh here; GRAFTABL or a program may replace it.
-pub(in super::super) const UPPER_FONT:u32=0xc000_1000;
+pub const UPPER_FONT:u32=0xc000_1000;
 const FONT_TEXT:&str=include_str!("font8x8.txt");
 /// The 2048 font bytes for characters 00h-FFh, parsed from the readable
 /// glyph file (a header line, then eight rows of '#' and '.').
-pub(in super::super) fn font()->Result<Vec<u8>,String>{
+pub fn font()->Result<Vec<u8>,String>{
     let mut lines=FONT_TEXT.lines().filter(|l|!l.starts_with(';'));
     let mut bytes=Vec::with_capacity(2048);
     for code in 0..256u32{
@@ -34,20 +34,20 @@ pub(in super::super) fn font()->Result<Vec<u8>,String>{
     if lines.next().is_some(){return Err("font file has data after glyph FFh".into());}
     Ok(bytes)
 }
-pub(super) fn is_graphics(mode:u32)->bool{matches!(mode,4|5|6|0x13)||super::super::planar::geometry(mode).is_some()}
+pub fn is_graphics(mode:u32)->bool{matches!(mode,4|5|6|0x13)||super::super::planar::geometry(mode).is_some()}
 /// A copy of the framebuffer of a graphics mode; the plan diffs it at the end.
 /// Planar modes copy each plane's used bytes through the host plane alias.
 struct Frame{mode:u32,base:u32,old:Vec<u8>,bytes:Vec<u8>,columns:u32,rows:u32,cell:u32,plane_bytes:usize,page_offset:usize}
 impl Frame{
     /// The frame of `page`; only planar modes have more than page 0.
-    fn read(p:&Loaded,page:u32)->Result<Self,String>{
+    fn read<F>(p:&Machine<F>,page:u32)->Result<Self,String>{
         let mode=byte(p,0x449)?;
         if page>=8{return Err("graphics page outside 0..7".into());}
         if let Some(g)=super::super::planar::geometry(mode){
             let planar=p.ram.planar().ok_or("planar memory is not mapped")?;let n=g.bytes();
             let offset=super::super::planar::page_offset(mode,page)?;
             let old:Vec<u8>=(0..4).flat_map(|k|planar.plane(k)[offset..offset+n].iter().copied()).collect();
-            return Ok(Self{mode,base:crate::memory::PLANE_ALIAS,bytes:old.clone(),old,columns:g.columns(),rows:g.rows,cell:g.cell,plane_bytes:n,page_offset:offset});
+            return Ok(Self{mode,base:pil_cpu::memory::PLANE_ALIAS,bytes:old.clone(),old,columns:g.columns(),rows:g.rows,cell:g.cell,plane_bytes:n,page_offset:offset});
         }
         if page!=0{return Err("graphics modes have only display page 0".into());}
         let(base,len)=match mode{4|5|6=>(VIDEO,0x4000),0x13=>(0xa0000,64000),_=>return Err(format!("mode {mode:02x}h is not a graphics mode"))};
@@ -106,20 +106,20 @@ impl Frame{
     fn writes(&self)->Writes{
         self.bytes.iter().zip(&self.old).enumerate().filter(|(_,(n,o))|n!=o)
             .map(|(i,(n,_))|{
-                let at=if self.planar(){(i/self.plane_bytes*crate::vga_planar::PLANE+self.page_offset+i%self.plane_bytes)as u32}else{i as u32};
+                let at=if self.planar(){(i/self.plane_bytes*pil_cpu::vga_planar::PLANE+self.page_offset+i%self.plane_bytes)as u32}else{i as u32};
                 (self.base+at,MemWidth::Byte,u32::from(*n))
             }).collect()
     }
 }
-fn byte(p:&Loaded,at:u32)->Result<u32,String>{
+fn byte<F>(p:&Machine<F>,at:u32)->Result<u32,String>{
     p.ram.load(at,MemWidth::Byte).map_err(|e|format!("BIOS graphics read: {e:?}"))
 }
 /// The glyph of `ch` for cells `cell` lines high, one byte a line. 14- and
 /// 16-line cells read the INT 43h table. In 8-line cells 80h-FFh come through
-/// INT 1Fh, which starts at Dine's own upper-half table. A program that sets
+/// INT 1Fh, which starts at the video BIOS upper-half table. A program that sets
 /// either vector to 0 leaves no table; the call then stops instead of drawing
 /// whatever the interrupt table holds.
-fn glyph(p:&Loaded,cell:u32,ch:u32)->Result<Vec<u8>,String>{
+fn glyph<F>(p:&Machine<F>,cell:u32,ch:u32)->Result<Vec<u8>,String>{
     if cell!=8{
         let vector=p.ram.load(0x43*4,MemWidth::Dword).map_err(|e|format!("INT 43h vector read: {e:?}"))?;
         if vector==0{return Err(format!("graphics-mode character {ch:02X}h needs an INT 43h font table; none is installed"));}
@@ -134,7 +134,7 @@ fn glyph(p:&Loaded,cell:u32,ch:u32)->Result<Vec<u8>,String>{
     (0..8).map(|n|byte(p,at+n).map(|b|b as u8)).collect()
 }
 /// Cursor of `page`, the page `frame` was read from.
-fn cursor(p:&Loaded,frame:&Frame,page:u32)->Result<(u32,u32),String>{
+fn cursor<F>(p:&Machine<F>,frame:&Frame,page:u32)->Result<(u32,u32),String>{
     let position=p.ram.load(0x450+page*2,MemWidth::Word).map_err(|e|format!("BIOS cursor read: {e:?}"))?;
     let(row,col)=(position>>8,position&255);
     if row>=frame.rows||col>=frame.columns(){return Err(format!("BIOS cursor outside the {}x{} graphics text grid",frame.rows,frame.columns()));}
@@ -143,14 +143,14 @@ fn cursor(p:&Loaded,frame:&Frame,page:u32)->Result<(u32,u32),String>{
 /// The page AH08h-AH0Ah use: BH in the EGA/VGA planar modes, which have
 /// several pages, as the IBM EGA BIOS and SeaBIOS take it; the CGA modes and
 /// mode 13h have page 0 only, and their BIOSes ignore BH.
-fn bh_page(p:&Loaded)->Result<u32,String>{
+fn bh_page<F>(p:&Machine<F>)->Result<u32,String>{
     if super::super::planar::geometry(byte(p,0x449)?).is_some(){Ok((p.cpu.regs[3]>>8)&255)}else{Ok(0)}
 }
 /// Teletype (AH0Eh, and DOS console output, which FreeDOS sends through
 /// INT 29h as AH0Eh with BX=0007h) in a graphics mode: BEL does nothing here,
 /// BS/CR/LF move the cursor, other bytes draw in `color`. A line feed on the
 /// last row scrolls the whole screen up 8 scanlines, filling with colour 0.
-pub(super) fn teletype(p:&Loaded,bytes:&[u8],color:u32,dos_tabs:bool)->Result<Writes,String>{
+pub fn teletype<F>(p:&Machine<F>,bytes:&[u8],color:u32,dos_tabs:bool)->Result<Writes,String>{
     if !dos_tabs&&bytes.contains(&9){return Err("BIOS teletype TAB policy is not part of this profile".into());}
     let mut frame=Frame::read(p,byte(p,0x462)?)?;let cols=frame.columns();
     let(mut row,mut col)=cursor(p,&frame,byte(p,0x462)?)?;
@@ -173,7 +173,7 @@ pub(super) fn teletype(p:&Loaded,bytes:&[u8],color:u32,dos_tabs:bool)->Result<Wr
 /// AH09h/AH0Ah: `count` copies of AL from the cursor in colour BL, without
 /// moving the cursor. The run may continue onto later rows but not past the
 /// screen, which the BIOS implementations treat differently.
-pub(super) fn write_chars(p:&Loaded)->Result<Writes,String>{
+pub fn write_chars<F>(p:&Machine<F>)->Result<Writes,String>{
     let page=bh_page(p)?;let mut frame=Frame::read(p,page)?;let cols=frame.columns();
     let(row,col)=cursor(p,&frame,page)?;
     let count=p.cpu.regs[1]&0xffff;let first=row*cols+col;
@@ -186,7 +186,7 @@ pub(super) fn write_chars(p:&Loaded)->Result<Writes,String>{
 /// but 0). 14- and 16-line cells search the INT 43h table; 8-line cells
 /// search 00h-7Fh, then the INT 1Fh table when one is installed.
 /// AL=0 when nothing matches; AH=0, as graphics cells have no attribute.
-pub(super) fn read_char(p:&Loaded)->Result<u32,String>{
+pub fn read_char<F>(p:&Machine<F>)->Result<u32,String>{
     let page=bh_page(p)?;let frame=Frame::read(p,page)?;let(row,col)=cursor(p,&frame,page)?;
     let h=frame.cell;
     let cell:Vec<u8>=(0..h).map(|r|(0..8).fold(0u8,|bits,b|if frame.get(col*8+b,row*h+r)!=0{bits|0x80>>b}else{bits})).collect();
@@ -198,7 +198,7 @@ pub(super) fn read_char(p:&Loaded)->Result<u32,String>{
 }
 /// AH06h/AH07h in a graphics mode: the window is in character cells; vacated
 /// rows take the pixel value in BH.
-pub(super) fn scroll(p:&Loaded,up:bool)->Result<Writes,String>{
+pub fn scroll<F>(p:&Machine<F>,up:bool)->Result<Writes,String>{
     let mut frame=Frame::read(p,byte(p,0x462)?)?;let cols=frame.columns();
     let(cx,dx)=(p.cpu.regs[1]&0xffff,p.cpu.regs[2]&0xffff);
     let(top,left)=(cx>>8,cx&255);let(bottom,right)=((dx>>8).min(frame.rows-1),(dx&255).min(cols-1));
@@ -213,7 +213,7 @@ pub(super) fn scroll(p:&Loaded,up:bool)->Result<Writes,String>{
 /// when it is not colour 0), then as those not colour 0. A cell that matches no glyph,
 /// such as part of a picture, reads as a space, as does a cell of one
 /// colour (a full block cannot be told from a filled area).
-pub(in super::super) fn screen_text(p:&Loaded)->Result<(u32,u32,Vec<u8>),String>{
+pub fn screen_text<F>(p:&Machine<F>)->Result<(u32,u32,Vec<u8>),String>{
     let frame=Frame::read(p,byte(p,0x462)?)?;let h=frame.cell;
     let upper=h!=8||p.ram.load(0x1f*4,MemWidth::Dword).map_err(|e|format!("INT 1Fh vector read: {e:?}"))?!=0;
     let mut known=std::collections::HashMap::new();

@@ -19,9 +19,9 @@ independently replaceable component today.
 | Session state, COM/MZ loading, the execution loop | `src/dos.rs` (`Loaded` = `pc::Machine<dos::Dos>`) |
 | The machine (crate `pil-pc`, module `pc`): `pc::Machine<F>` (CPU, RAM, devices, disks, history) and the `Firmware` trait | `crates/pil-pc/src/lib.rs` |
 | PC devices: PIC, PIT, CMOS/RTC, speaker, 8042, UART, Sound Blaster, VGA registers, diskette and AT disk controllers, disk images | `crates/pil-pc/src/` |
-| BIOS: INT 10h text and planar modes, INT 13h disks, INT 15h block move, the vector entries, booting a disk image, the folder disk | `src/bios/` |
-| Dine's DOS: INT 21h/2Fh dispatch, files and LFN, memory blocks, EXEC, XMS, INT 33h driver, NLS, Ctrl-Break, ANSI | `src/dos/` |
-| Host front ends: session protocol, console window and terminal, setup screen, configuration, audio, media catalog | `src/host/` |
+| BIOS (crate `pil-bios`, module `bios`): INT 08h/09h/10h/11h/12h/13h/14h/15h/16h/18h/19h/1Ah/1Ch, ROM fonts and parameter tables, vector entries, booting a disk sector (`Machine<Bios>`) | `crates/pil-bios/src/` |
+| Dine's DOS: INT 21h/2Fh dispatch, CON/ANSI character I/O, files and LFN, memory blocks, EXEC, XMS, INT 33h driver, NLS, Ctrl-Break | `src/dos/` |
+| Host front ends: session protocol, boot probe and folder disk, console window and terminal, setup screen, configuration, audio, media catalog | `src/host/` |
 | CPU core (crate `pil-cpu`): PIL parser, interpreter and emitter, decoder, memory and paging, segments, privilege and tasks, 80387, decode cache, precompiled forms, run-time blocks | `crates/pil-cpu/src/`, `isa/i386/` |
 
 The folders are a first step of the split Tony asked for (24 November 2026):
@@ -57,9 +57,17 @@ methods Dine adds to `Loaded` (`enqueue_key`, `ctrl_break`, `select_xms`,
 `select_fpu`, `set_rtc_year`) are the trait `dos::LoadedOps`, imported where
 they are called.
 
-Still mixed: `bios/console.rs` holds DOS console output and
-`dos/services.rs` dispatches BIOS and DOS calls; the `bios` modules are
-children of `dos` in the module tree. Next: the BIOS apart from Dine's DOS, then the BIOS as a crate.
+The BIOS followed (3c): `crates/pil-bios` (library `pil_bios`) depends on
+`pil-cpu` and `pil-pc` only, and the `pil` package names it as its module
+`bios` (`pub(crate) use pil_bios as bios`). DOS console character editing and
+ANSI.SYS moved to `src/dos/console.rs`, BIOS interrupt dispatch (`INT 10h`,
+`11h`, `12h`, `13h`, `14h`, `15h`, `16h`, `18h`, `19h`, `1Ah`, `1Ch`) and
+timer/RTC helpers moved to `crates/pil-bios/src/services.rs`, and the host
+boot-probe runner and FAT16 folder disk moved to `src/host/`. `pil_bios::Bios`
+implements `pil_pc::Firmware` for a standalone booted machine without DOS.
+Plain `cargo build` / `cargo build --release` builds all workspace libraries
+(`pil_cpu`, `pil_pc`, `pil_bios`, `dine`) and the `dine` C ABI shared library
+(`default = ["dine-library"]`).
 
 Existing seams already support different hosts: `host_io::Output` abstracts
 bounded DOS output; `serial::SerialTransport` defines nonblocking serial I/O;

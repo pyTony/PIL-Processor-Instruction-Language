@@ -43,7 +43,7 @@ def classify(paths):
             selected.add("frontend")
             if path in {"tests/gui/test_export_runtime.py", "tests/gui/test_build_dine.py"}:
                 selected.add("delivery")
-        elif path in DOS_SUPPORT or path == "src/dos.rs" or path.startswith(("crates/pil-pc/", "src/bios/", "src/dos/", "src/host/", "tests/unit/dos", "programs/dos/")):
+        elif path in DOS_SUPPORT or path == "src/dos.rs" or path.startswith(("crates/pil-pc/", "crates/pil-bios/", "src/dos/", "src/host/", "tests/unit/dos", "programs/dos/")):
             selected.update(("dos", "frontend", "integration", "library"))
         elif path.startswith(("src/", "crates/", "isa/", "tests/unit/", "programs/")) or path in {"Cargo.toml", "Cargo.lock"}:
             selected.update(("core", "dos", "frontend", "integration", "library", "backends"))

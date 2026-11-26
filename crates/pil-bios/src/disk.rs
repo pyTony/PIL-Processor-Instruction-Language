@@ -9,7 +9,7 @@
 //! Diskette writes change the image held in memory only; a fixed disk read
 //! from a file writes each changed sector back to that file.
 use super::*;
-use crate::pc::disks::Disk;
+use pil_pc::disks::Disk;
 
 /// Where the diskette parameter table lives in the BIOS area (F000:EFC7, the
 /// address the IBM AT BIOS used).
@@ -22,7 +22,7 @@ const DPT_OFFSET:u16=0xefc7;
 /// sectors 02h, sectors per track, gap 1Bh, data length FFh, format gap 54h,
 /// fill F6h, head settle 0Fh, motor start 08h), written into the BIOS area
 /// and pointed to by INT 1Eh.
-pub(super) fn install_table(p:&mut Loaded)->Result<(),String>{
+pub fn install_table<F>(p:&mut Machine<F>)->Result<(),String>{
     let sectors=p.disks.floppy[0].as_ref().map_or(18,|d|d.sectors) as u8;
     // The table is BIOS ROM contents: written while the bytes are
     // writable, then ROM again, so a guest store there is dropped.
@@ -43,7 +43,7 @@ pub(super) fn install_table(p:&mut Loaded)->Result<(),String>{
 /// burst, control byte (bit 3: more than 8 heads), three time-outs, landing
 /// zone (word), sectors per track, reserved.
 const FDPT:u32=0xfe401;
-pub(super) fn install_fixed_table(p:&mut Loaded)->Result<(),String>{
+pub fn install_fixed_table<F>(p:&mut Machine<F>)->Result<(),String>{
     for (unit,vector) in [(0usize,0x41u32),(1,0x46)]{
         let Some((cylinders,heads,sectors))=p.disks.fixed[unit].as_ref().map(Disk::geometry)else{continue};
         let c=cylinders as u16;let mut table=[0u8;16];
@@ -60,7 +60,7 @@ pub(super) fn install_fixed_table(p:&mut Loaded)->Result<(),String>{
     Ok(())
 }
 
-fn finish(p:&mut Loaded,drive:u8,status:u8)->Result<(),String>{
+fn finish<F>(p:&mut Machine<F>,drive:u8,status:u8)->Result<(),String>{
     let at=if drive&0x80==0{0x441}else{0x474};
     p.ram.store(at,MemWidth::Byte,u32::from(status)).map_err(|e|format!("BIOS disk status write: {e:?}"))?;
     p.cpu.regs[0]=(p.cpu.regs[0]&!0xff00)|u32::from(status)<<8;
@@ -70,7 +70,7 @@ fn finish(p:&mut Loaded,drive:u8,status:u8)->Result<(),String>{
 }
 
 /// INT 13h with BIOS drives attached.
-pub(super) fn int13(p:&mut Loaded)->Result<Option<u8>,String>{
+pub fn int13<F>(p:&mut Machine<F>)->Result<Option<u8>,String>{
     let ah=(p.cpu.regs[0]>>8)as u8;let al=p.cpu.regs[0]as u8;
     let (cx,dx)=(p.cpu.regs[1] as u16,p.cpu.regs[2] as u16);let drive=dx as u8;
     let present=p.disks.get(drive).is_some();
@@ -146,7 +146,7 @@ pub(super) fn int13(p:&mut Loaded)->Result<Option<u8>,String>{
     }
     Ok(None)
 }
-fn load_es(p:&mut Loaded,selector:u16){
+fn load_es<F>(p:&mut Machine<F>,selector:u16){
     let es=SegmentRegister::Es.index();
     p.selectors[es]=selector;p.image.selectors[es]=selector;
     p.image.segments[es]=p.image.segments[es].real_mode_reload(selector);
@@ -155,10 +155,10 @@ fn load_es(p:&mut Loaded,selector:u16){
 /// Read the boot drive's first sector to 0000:7C00 and start there, with
 /// DL the drive, CS=DS=ES=SS=0, SP=7C00h and interrupts on, as the AT BIOS
 /// leaves the machine after POST.
-pub(super) fn load_boot_sector(p:&mut Loaded,drive:u8)->Result<(),String>{
+pub fn load_boot_sector<F>(p:&mut Machine<F>,drive:u8)->Result<(),String>{
     let sector=p.disks.sector(drive,0).ok_or("boot drive has no sector 0")?.to_vec();
     p.ram.write_bytes(0x7c00,&sector).map_err(|e|format!("boot sector: {e:?}"))?;
-    for i in 0..6{p.selectors[i]=0;p.image.selectors[i]=0;p.image.segments[i]=crate::address::SegmentCache::real_mode(0);}
+    for i in 0..6{p.selectors[i]=0;p.image.selectors[i]=0;p.image.segments[i]=SegmentCache::real_mode(0);}
     p.cpu.regs=[0;8];p.cpu.regs[2]=u32::from(drive);p.cpu.regs[4]=0x7c00;
     p.cpu.eip=0x7c00;p.cpu.eflags=0x202;p.cpu.undefined_flags=0;
     Ok(())
@@ -166,7 +166,7 @@ pub(super) fn load_boot_sector(p:&mut Loaded,drive:u8)->Result<(),String>{
 /// INT 19h: load the boot sector again and start it. The service returns
 /// to the loop like any other, which steps over the two bytes of an INT
 /// instruction, so CS:IP is left two bytes before 0000:7C00.
-pub(super) fn bootstrap(p:&mut Loaded)->Result<Option<u8>,String>{
+pub fn bootstrap<F>(p:&mut Machine<F>)->Result<Option<u8>,String>{
     let drive=if p.disks.get(0).is_some(){0}else{0x80};
     load_boot_sector(p,drive)?;
     p.cpu.eip=0x7bfe;

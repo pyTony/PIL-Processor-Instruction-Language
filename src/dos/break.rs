@@ -37,7 +37,7 @@ pub(super) fn start(p:&mut Loaded,out:&mut impl Output)->Result<(),String>{
     let(segment,offset)=((vector>>16)as u16,vector&0xffff);
     let flag=p.ram.load(0x471,MemWidth::Byte).map_err(|e|format!("BIOS break flag: {e:?}"))?;
     let sp=p.cpu.regs[4]&0xffff;let flags=(p.cpu.eflags&0xffff)&!1;
-    let mut writes=console::dos_flush_writes(p)?;
+    let mut writes=console::flush_writes(p)?;
     writes.extend(console::dos_screen(p,echo)?);
     writes.push((0x471,MemWidth::Byte,flag&0x7f));
     for(n,value)in [(2,flags),(4,u32::from(DOSDATA)),(6,u32::from(RETURN))]{
@@ -92,13 +92,7 @@ pub(super) fn ctrl_break(p:&mut Loaded)->Result<(),String>{
 /// The BIOS keyboard handler's Ctrl+Break: empty the ring, store a 0000h
 /// word and set bit 7 of 0040:0071, all or nothing.
 pub(super) fn bios_break(p:&mut Loaded)->Result<(),String>{
-    // The flush makes head equal tail; the 0000h word goes in at tail.
-    let mut writes=console::dos_flush_writes(p)?;
-    let tail=p.ram.load(0x41c,MemWidth::Word).map_err(|e|format!("BIOS keyboard read: {e:?}"))?;
-    let flag=p.ram.load(0x471,MemWidth::Byte).map_err(|e|format!("BIOS break flag: {e:?}"))?;
-    let next=if tail==0x3c{0x1e}else{tail+2};
-    writes.extend([(0x400+tail,MemWidth::Word,0),(0x41c,MemWidth::Word,next),(0x471,MemWidth::Byte,flag|0x80)]);
-    console::check(p,&writes)?;console::store(p,&writes)?;
+    int09::bios_break(p)?;
     p.dos.pending_scan=None;Ok(())
 }
 #[cfg(test)]
