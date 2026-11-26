@@ -8,8 +8,9 @@
 //! One thread reads X events and sends `Input` (keys through
 //! `dine_x11_keys`); the caller's thread draws, scaled in whole numbers
 //! (`dine_window::view`), under a lock shared with the event thread.
-use crate::dine_window::{initial_scale,view,Frame,Input};
+use crate::dine_window::{border_rects,initial_scale,view,Frame,Input,MenuGroups};
 use crate::dine_x11_keys::{self as keys,Keymap};
+use crate::dine_x11_menu::{Action as MenuAction,PopupMenu,Rect};
 use std::io::Write as _;
 use std::sync::atomic::{AtomicBool,Ordering};
 use std::sync::{mpsc,Arc,Mutex};
@@ -85,6 +86,10 @@ struct Shared{
     frame:Mutex<Option<Frame>>,
     /// The window's client size.
     client:Mutex<(i32,i32)>,
+    last_view:Mutex<Option<(i32,i32,i32,i32)>>,
+    last_pointer:Mutex<(i32,i32)>,
+    menu:Mutex<Option<PopupMenu>>,
+    font:Vec<u8>,
     draw:Mutex<()>,
     closed:AtomicBool,
     stop:AtomicBool,
@@ -108,37 +113,85 @@ impl Shared{
         let size=self.frame.lock().ok().and_then(|f|f.as_ref().map(|f|(f.width,f.height)));
         match size{Some((fw,fh))=>view(cw,ch,fw,fh),None=>(0,0,cw,ch)}
     }
-    /// Draw the current frame: nearest-neighbour, whole-number scaling, the
-    /// rest of the window black (the window's background).
-    fn draw(&self){
-        let Ok(_busy)=self.draw.lock() else{return;};
-        let (cw,ch)=self.client.lock().map_or((0,0),|c|*c);
-        let Ok(frame)=self.frame.lock() else{return;};
-        let Some(frame)=frame.as_ref() else{return;};
-        if frame.width<=0||frame.height<=0||frame.pixels.len()<(frame.width*frame.height) as usize{return;}
-        let (vx,vy,vw,vh)=view(cw,ch,frame.width,frame.height);
-        if vw<=0||vh<=0{return;}
-        let packed:Vec<u32>=frame.pixels.iter().map(|&p|self.format.pack(p)).collect();
-        let columns:Vec<usize>=(0..vw).map(|x|(i64::from(x)*i64::from(frame.width)/i64::from(vw)) as usize).collect();
-        let stride=vw as usize*4;
-        // Requests are limited in size (BIG-REQUESTS raises it): send the
-        // picture in bands of rows.
-        let rows=((self.max_bytes.saturating_sub(64))/stride.max(1)).clamp(1,vh as usize);
+    fn apply_cursor(&self){
+        let menu_open=self.menu.lock().ok().is_some_and(|m|m.is_some());
+        let cursor=if !menu_open&&self.hidden.load(Ordering::Acquire){self.blank}else{x11rb::NONE};
+        let _=self.conn.change_window_attributes(self.win,&x::ChangeWindowAttributesAux::new().cursor(cursor));
+        let _=self.conn.flush();
+    }
+    fn put_rgb(&self,rect:Rect,pixels:&[u32])->bool{
+        if rect.w<=0||rect.h<=0||pixels.len()<(rect.w*rect.h) as usize{return true;}
+        let stride=rect.w as usize*4;
+        let rows=((self.max_bytes.saturating_sub(64))/stride.max(1)).clamp(1,rect.h as usize);
         let mut y=0;
-        while y<vh{
-            let band=rows.min((vh-y) as usize);
+        while y<rect.h{
+            let band=rows.min((rect.h-y) as usize);
             let mut data=Vec::with_capacity(band*stride);
             for row in 0..band{
-                let sy=(i64::from(y)+row as i64)*i64::from(frame.height)/i64::from(vh);
-                let source=&packed[sy as usize*frame.width as usize..][..frame.width as usize];
-                for &c in &columns{
-                    let value=source[c];
+                let start=(y as usize+row)*rect.w as usize;
+                for &pixel in &pixels[start..start+rect.w as usize]{
+                    let value=self.format.pack(pixel);
                     data.extend_from_slice(&if self.format.msb_first{value.to_be_bytes()}else{value.to_le_bytes()});
                 }
             }
-            let sent=self.conn.put_image(x::ImageFormat::Z_PIXMAP,self.win,self.gc,vw as u16,band as u16,vx as i16,(vy+y) as i16,0,24,&data);
-            if sent.is_err(){self.closed.store(true,Ordering::Release);return;}
+            if self.conn.put_image(x::ImageFormat::Z_PIXMAP,self.win,self.gc,rect.w as u16,band as u16,rect.x as i16,(rect.y+y) as i16,0,24,&data).is_err(){
+                self.closed.store(true,Ordering::Release);
+                return false;
+            }
             y+=band as i32;
+        }
+        true
+    }
+    /// Draw the current frame: nearest-neighbour, whole-number scaling, clearing
+    /// borders whenever the picture rectangle shrinks or moves, plus any open popup menu.
+    fn draw(&self){self.draw_inner(false);}
+    fn draw_inner(&self,clear_borders:bool){
+        let Ok(_busy)=self.draw.lock() else{return;};
+        let (cw,ch)=self.client.lock().map_or((0,0),|c|*c);
+        let menu=self.menu.lock().ok().and_then(|m|m.clone());
+        let Ok(frame)=self.frame.lock() else{return;};
+        if let Some(frame)=frame.as_ref(){
+            if frame.width>0&&frame.height>0&&frame.pixels.len()>=(frame.width*frame.height) as usize{
+                let (vx,vy,vw,vh)=view(cw,ch,frame.width,frame.height);
+                let mut view_changed=false;
+                if let Ok(mut prev)=self.last_view.lock(){
+                    view_changed=*prev!=Some((vx,vy,vw,vh));
+                    *prev=Some((vx,vy,vw,vh));
+                }
+                if clear_borders||view_changed{
+                    for (bx,by,bw,bh) in border_rects(cw,ch,vx,vy,vw,vh){
+                        let _=self.conn.clear_area(false,self.win,bx as i16,by as i16,bw as u16,bh as u16);
+                    }
+                }
+                if vw>0&&vh>0{
+                    let packed:Vec<u32>=frame.pixels.iter().map(|&p|self.format.pack(p)).collect();
+                    let columns:Vec<usize>=(0..vw).map(|x|(i64::from(x)*i64::from(frame.width)/i64::from(vw)) as usize).collect();
+                    let stride=vw as usize*4;
+                    let rows=((self.max_bytes.saturating_sub(64))/stride.max(1)).clamp(1,vh as usize);
+                    let mut y=0;
+                    while y<vh{
+                        let band=rows.min((vh-y) as usize);
+                        let mut data=Vec::with_capacity(band*stride);
+                        for row in 0..band{
+                            let sy=(i64::from(y)+row as i64)*i64::from(frame.height)/i64::from(vh);
+                            let source=&packed[sy as usize*frame.width as usize..][..frame.width as usize];
+                            for &c in &columns{
+                                let value=source[c];
+                                data.extend_from_slice(&if self.format.msb_first{value.to_be_bytes()}else{value.to_le_bytes()});
+                            }
+                        }
+                        let sent=self.conn.put_image(x::ImageFormat::Z_PIXMAP,self.win,self.gc,vw as u16,band as u16,vx as i16,(vy+y) as i16,0,24,&data);
+                        if sent.is_err(){self.closed.store(true,Ordering::Release);return;}
+                        y+=band as i32;
+                    }
+                }
+            }
+        }
+        drop(frame);
+        if let Some(menu)=menu{
+            for (rect,pixels) in menu.render_panels(&self.font){
+                if !self.put_rgb(rect,&pixels){return;}
+            }
         }
         let _=self.conn.flush();
     }
@@ -204,8 +257,10 @@ fn open(title:&str,frame_w:i32,frame_h:i32)->Result<Arc<Shared>,String>{
         }
     }
     let max_bytes=conn.maximum_request_bytes().min(1<<20);
+    let font=crate::bios::rom_font::font().unwrap_or_else(|_|vec![0;256*crate::bios::rom_font::CELL_HEIGHT]);
     let shared=Arc::new(Shared{conn,win,gc,blank,format,max_bytes,wake,net_wm_name,utf8,
-        frame:Mutex::new(None),client:Mutex::new((width,height)),draw:Mutex::new(()),
+        frame:Mutex::new(None),client:Mutex::new((width,height)),last_view:Mutex::new(None),
+        last_pointer:Mutex::new((24,24)),menu:Mutex::new(None),font,draw:Mutex::new(()),
         closed:AtomicBool::new(false),stop:AtomicBool::new(false),hidden:AtomicBool::new(false),keymap:Mutex::new(Keymap::default())});
     shared.set_title(title);
     shared.load_keymap();
@@ -217,6 +272,12 @@ fn open(title:&str,frame_w:i32,frame_h:i32)->Result<Arc<Shared>,String>{
 /// X events to console input, until the window is closed or dropped.
 fn events(shared:&Arc<Shared>,input:&Mutex<Option<mpsc::Sender<Input>>>){
     let send=|i:Input|{if let Ok(g)=input.lock(){if let Some(tx)=g.as_ref(){let _=tx.send(i);}}};
+    let close_menu=|id:u16|{
+        if let Ok(mut m)=shared.menu.lock(){*m=None;}
+        shared.apply_cursor();
+        shared.draw_inner(true);
+        send(Input::Menu{id});
+    };
     let mut buttons:u16=0;
     let mut focused=false;
     let mut queued:Option<XEvent>=None;
@@ -230,25 +291,38 @@ fn events(shared:&Arc<Shared>,input:&Mutex<Option<mpsc::Sender<Input>>>){
         match event{
             XEvent::Expose(e)=>{
                 if !focused{focused=true;shared.focus();}
-                if e.count==0{shared.draw();}
+                if e.count==0{shared.draw_inner(true);}
             },
             XEvent::ConfigureNotify(e)=>{
                 let size=(i32::from(e.width),i32::from(e.height));
                 let changed=shared.client.lock().map(|mut c|{let old=*c;*c=size;old!=size}).unwrap_or(false);
                 if changed{
+                    if let Ok(mut prev)=shared.last_view.lock(){*prev=None;}
+                    if let Ok(mut m)=shared.menu.lock(){if let Some(menu)=m.as_mut(){menu.resize(size);}}
                     let _=shared.conn.clear_area(false,shared.win,0,0,0,0);
-                    shared.draw();
+                    shared.draw_inner(true);
                 }
             },
             XEvent::MappingNotify(_)=>shared.load_keymap(),
             XEvent::KeyPress(k)=>{
                 let info=keys::translate(&shared.keymap.lock().map(|m|m.clone()).unwrap_or_default(),k.detail,k.state.into());
+                let action=shared.menu.lock().ok().and_then(|mut m|m.as_mut().map(|menu|menu.key(info.vk)));
+                if let Some(action)=action{
+                    match action{
+                        MenuAction::Stay=>{},
+                        MenuAction::Redraw=>shared.draw_inner(false),
+                        MenuAction::Choose(id)=>close_menu(id),
+                        MenuAction::Cancel=>close_menu(0),
+                    }
+                    continue;
+                }
                 if info.scan==0{continue;}
                 send(Input::Physical{vk:info.vk,scan:info.scan,extended:info.extended,down:true,repeat:1,shift:info.shift,ctrl:info.ctrl,alt:info.alt});
                 if info.dead{send(Input::DeadKey);}
                 else if let Some(ch)=info.text{send(Input::Text{scan:info.scan,extended:info.extended,ch,shift:info.shift,ctrl:info.ctrl,alt:info.alt});}
             },
             XEvent::KeyRelease(k)=>{
+                if shared.menu.lock().ok().is_some_and(|m|m.is_some()){continue;}
                 // The server repeats a held key as a release followed by a
                 // press with the same time: that is one held key, not two.
                 match shared.conn.poll_for_event(){
@@ -260,9 +334,23 @@ fn events(shared:&Arc<Shared>,input:&Mutex<Option<mpsc::Sender<Input>>>){
                 if info.scan==0{continue;}
                 send(Input::Physical{vk:info.vk,scan:info.scan,extended:info.extended,down:false,repeat:1,shift:info.shift,ctrl:info.ctrl,alt:info.alt});
             },
-            XEvent::FocusOut(_)=>send(Input::FocusLost),
+            XEvent::FocusOut(_)=>{
+                if shared.menu.lock().ok().is_some_and(|m|m.is_some()){close_menu(0);}
+                send(Input::FocusLost);
+            },
             XEvent::ButtonPress(b)|XEvent::ButtonRelease(b)=>{
+                if let Ok(mut p)=shared.last_pointer.lock(){*p=(i32::from(b.event_x),i32::from(b.event_y));}
                 let down=matches!(event_kind(&b),Kind::Press);
+                let action=shared.menu.lock().ok().and_then(|mut m|m.as_mut().map(|menu|if down{menu.pointer_press(i32::from(b.event_x),i32::from(b.event_y),b.detail)}else{MenuAction::Stay}));
+                if let Some(action)=action{
+                    match action{
+                        MenuAction::Stay=>{},
+                        MenuAction::Redraw=>shared.draw_inner(false),
+                        MenuAction::Choose(id)=>close_menu(id),
+                        MenuAction::Cancel=>close_menu(0),
+                    }
+                    continue;
+                }
                 let bit=match b.detail{1=>1,3=>2,2=>4,_=>0};
                 if bit!=0{if down{buttons|=bit;shared.focus();}else{buttons&=!bit;}}
                 else{continue;}
@@ -270,17 +358,30 @@ fn events(shared:&Arc<Shared>,input:&Mutex<Option<mpsc::Sender<Input>>>){
                 send(Input::Mouse{x:i32::from(b.event_x)-px,y:i32::from(b.event_y)-py,width:pw,height:ph,buttons,shift:u16::from(b.state)&keys::SHIFT!=0});
             },
             XEvent::MotionNotify(m)=>{
+                if let Ok(mut p)=shared.last_pointer.lock(){*p=(i32::from(m.event_x),i32::from(m.event_y));}
+                let action=shared.menu.lock().ok().and_then(|mut g|g.as_mut().map(|menu|menu.pointer_move(i32::from(m.event_x),i32::from(m.event_y))));
+                if let Some(action)=action{
+                    match action{
+                        MenuAction::Redraw=>shared.draw_inner(false),
+                        MenuAction::Stay|MenuAction::Choose(_)|MenuAction::Cancel=>{},
+                    }
+                    continue;
+                }
                 let (px,py,pw,ph)=shared.picture();
                 send(Input::Mouse{x:i32::from(m.event_x)-px,y:i32::from(m.event_y)-py,width:pw,height:ph,buttons,shift:u16::from(m.state)&keys::SHIFT!=0});
             },
             XEvent::ClientMessage(c)=>{
                 if c.type_==protocols&&c.format==32{
+                    if shared.menu.lock().ok().is_some_and(|m|m.is_some()){close_menu(0);}
                     send(Input::FocusLost);
                     shared.closed.store(true,Ordering::Release);
                     return;
                 }
             },
-            XEvent::DestroyNotify(_)=>{shared.closed.store(true,Ordering::Release);send(Input::FocusLost);return;},
+            XEvent::DestroyNotify(_)=>{
+                if shared.menu.lock().ok().is_some_and(|m|m.is_some()){close_menu(0);}
+                shared.closed.store(true,Ordering::Release);send(Input::FocusLost);return;
+            },
             _=>{},
         }
     }
@@ -295,7 +396,7 @@ fn event_kind(b:&x::ButtonPressEvent)->Kind{
 
 /// A window with the same surface as the Win32 one.
 pub(crate) struct Window{
-    title:String,
+    title:Mutex<String>,
     input:Arc<Mutex<Option<mpsc::Sender<Input>>>>,
     shared:Option<Arc<Shared>>,
     worker:Option<thread::JoinHandle<()>>,
@@ -306,7 +407,7 @@ impl Window{
     /// A window that takes keyboard and mouse input and sends it to `input`;
     /// it opens at the first picture.
     pub(crate) fn interactive(title:&str,input:mpsc::Sender<Input>)->Self{
-        Self{title:title.into(),input:Arc::new(Mutex::new(Some(input))),shared:None,worker:None,failed:false}
+        Self{title:Mutex::new(title.into()),input:Arc::new(Mutex::new(Some(input))),shared:None,worker:None,failed:false}
     }
     pub(crate) fn no_frame(&mut self){}
     pub(crate) fn closed(&self)->bool{self.shared.as_ref().is_some_and(|s|s.closed.load(Ordering::Acquire))}
@@ -314,17 +415,34 @@ impl Window{
     pub(crate) fn hide_pointer(&self,hidden:bool){
         let Some(s)=self.shared.as_ref() else{return;};
         if s.hidden.swap(hidden,Ordering::AcqRel)==hidden{return;}
-        let cursor=if hidden{s.blank}else{x11rb::NONE};
-        let _=s.conn.change_window_attributes(s.win,&x::ChangeWindowAttributesAux::new().cursor(cursor));
-        let _=s.conn.flush();
+        s.apply_cursor();
+    }
+    /// Display a host popup over the window; IDs belong to the caller.
+    pub(crate) fn popup(&self,groups:MenuGroups){
+        if let Ok(g)=self.input.lock(){if let Some(tx)=g.as_ref(){let _=tx.send(Input::FocusLost);}}
+        let Some(s)=self.shared.as_ref() else{
+            if let Ok(g)=self.input.lock(){if let Some(tx)=g.as_ref(){let _=tx.send(Input::Menu{id:0});}}
+            return;
+        };
+        let client=s.client.lock().map_or((640,400),|c|*c);
+        let anchor=s.last_pointer.lock().map_or((24,24),|p|*p);
+        let Some(menu)=PopupMenu::open(groups,anchor,client) else{
+            if let Ok(g)=self.input.lock(){if let Some(tx)=g.as_ref(){let _=tx.send(Input::Menu{id:0});}}
+            return;
+        };
+        if let Ok(mut slot)=s.menu.lock(){*slot=Some(menu);}
+        s.apply_cursor();
+        s.draw_inner(true);
     }
     pub(crate) fn title(&self,text:&str){
+        if let Ok(mut slot)=self.title.lock(){*slot=text.into();}
         if let Some(s)=self.shared.as_ref(){s.set_title(text);}
     }
     pub(crate) fn present(&mut self,frame:Frame){
         if self.failed{return;}
         if self.shared.is_none(){
-            match open(&self.title,frame.width,frame.height){
+            let title=self.title.lock().map_or_else(|_|"Dine console".into(),|t|t.clone());
+            match open(&title,frame.width,frame.height){
                 Ok(shared)=>{
                     let (s,input)=(shared.clone(),self.input.clone());
                     match thread::Builder::new().name("dine-x11".into()).spawn(move||events(&s,&input)){

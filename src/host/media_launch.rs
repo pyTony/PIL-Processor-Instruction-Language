@@ -53,6 +53,12 @@ pub(super) fn mount_path(session:&mut super::Session,drive:u8,path:&std::path::P
     }else{Ok(result)}
 }
 
+#[cfg(all(unix,feature="x11"))]
+pub(super) fn mount_path(session:&mut super::Session,drive:u8,path:&std::path::Path)->Result<String,String>{
+    let text=path.to_str().ok_or("mount path is not Unicode")?;
+    session.mount_media(drive,text)
+}
+
 #[cfg(windows)]
 fn expand_hard_disk(image:&std::path::Path)->Result<std::path::PathBuf,String>{
     use std::{path::PathBuf,os::windows::process::CommandExt};

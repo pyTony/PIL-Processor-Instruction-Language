@@ -4,7 +4,7 @@ use std::io::Read;
 
 pub(super) struct DiskSet{pub(super) images:Vec<PathBuf>,pub(super) current:usize}
 impl DiskSet{
-    #[cfg(any(windows,test))]
+    #[cfg(any(windows,all(unix,feature="x11"),test))]
     pub(super) fn numbered(image:&Path)->Result<Option<Self>,String>{
         if !image.is_file(){return Err("selected disk image is not a file".into());}
         let stem=image.file_stem().and_then(|s|s.to_str()).ok_or("image name is not Unicode")?;

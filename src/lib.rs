@@ -24,6 +24,8 @@ mod dine_window;
 mod dine_x11;
 #[cfg(any(all(unix,feature = "x11"),test))]
 mod dine_x11_keys;
+#[cfg(any(all(unix,feature = "x11"),test))]
+mod dine_x11_menu;
 mod block_compiler;
 mod native_application;
 #[path="dos/encoding.rs"]

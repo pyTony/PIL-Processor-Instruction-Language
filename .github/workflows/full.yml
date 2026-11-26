@@ -184,6 +184,9 @@ jobs:
     - run: python tools/check_build_warnings.py
       if: github.event_name == 'schedule' || inputs.library || inputs.backends
       name: 'backends: python tools/check_build_warnings.py'
+    - if: (github.event_name == 'schedule' || inputs.frontend || inputs.library || inputs.backends) && runner.os == 'Linux'
+      run: python tools/check_build_warnings.py check --locked --features x11
+      name: 'frontend: python tools/check_build_warnings.py check --locked --features x11'
     - run: python tools/check_build_warnings.py build --release --locked --lib --features dine-library
       if: github.event_name == 'schedule' || inputs.library || inputs.backends
       name: 'backends: python tools/check_build_warnings.py build --release --locked --lib --features dine-library'

@@ -44,7 +44,7 @@ impl Session{
         self.insert_set(letter,set)
     }
     /// Native browsing can infer numbered neighbouring images without a manifest.
-    #[cfg(any(windows,test))]
+    #[cfg(any(windows,all(unix,feature="x11"),test))]
     pub(crate) fn floppy_media(&mut self,letter:u8,image:&Path)->Result<String,String>{
         if !matches!(letter,b'A'|b'B'){return Err("disk sets use floppy drive A: or B:".into());}
         if let Some(set)=disk_set::DiskSet::numbered(image)?{return self.insert_set(letter,set);}

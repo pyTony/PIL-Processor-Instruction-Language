@@ -19,6 +19,7 @@ def main(argv):
     command = ["cargo", *args, "--message-format=json-diagnostic-short"]
     process = subprocess.run(command, stdout=subprocess.PIPE, text=True,
                              encoding="utf-8", errors="replace")
+    errors = []
     warnings = []
     for line in process.stdout.splitlines():
         try:
@@ -28,11 +29,18 @@ def main(argv):
         if message.get("reason") != "compiler-message":
             continue
         diagnostic = message.get("message", {})
-        if diagnostic.get("level") == "warning":
+        level = diagnostic.get("level")
+        if level in ("warning", "error"):
             rendered = (diagnostic.get("rendered") or diagnostic.get("message") or "").strip()
             target = message.get("target", {}).get("name", "?")
-            warnings.append(f"[{target}] {rendered}")
+            entry = f"[{target}] {rendered}"
+            if level == "error":
+                errors.append(entry)
+            else:
+                warnings.append(entry)
     if process.returncode != 0:
+        for error in errors:
+            print(error)
         print(f"cargo {' '.join(args)} failed with exit code {process.returncode}")
         return process.returncode
     for warning in warnings:
