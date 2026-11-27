@@ -1,0 +1,22 @@
+[package]
+name = "pil-pc"
+version = "0.38.0-alpha.1"
+edition = "2021"
+publish = false
+
+# The PC machine: CPU, RAM and the AT devices (PIC, PIT, RTC/CMOS, keyboard
+# controller, diskette and AT disk controllers, VGA registers, Sound Blaster,
+# serial port, disks and history), apart from any firmware or operating
+# system. pc::Machine<F> carries what runs on it as F; the pil crate (Dine's
+# BIOS and DOS, the boot path) builds on top.
+[lib]
+name = "pil_pc"
+path = "src/lib.rs"
+
+[dependencies]
+pil-cpu = { path = "../pil-cpu" }
+
+[features]
+# Helpers that only tests use, for the pil crate's own unit tests. Never
+# enabled in a normal build.
+test-support = []

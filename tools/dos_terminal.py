@@ -527,12 +527,12 @@ def screen_rows(reply, blink_on=True):
 class Session:
     """The engine process: one command line out, one JSON reply line back."""
 
-    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False, rust_graphics=False):
+    def __init__(self, engine, program, mount=None, args=None, profile=None, stop_log="PILdos-stops.jsonl", ignore_unassigned_out=False, ansi=False, drives=None, config=None, fpu="none", mouse=False, rust_graphics=False, browser_video=False):
         options = (['--config', str(config)] if config else []) + (['--mount', str(mount)] if mount else []) + (['--args', args] if args else []) + (['--fpu', fpu] if fpu != "none" else [])
         self.process = subprocess.Popen([str(engine), *(['--profile', str(profile)] if profile else []), *(['--ignore-unassigned-out'] if ignore_unassigned_out else []), '--stop-log', str(stop_log) if stop_log else '', '--dos-session', *options, str(program)], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                                        **({'env': {**os.environ, 'DINE_VIDEO': 'window'}} if rust_graphics else {}))
+                                        **({'env': {**os.environ, 'DINE_VIDEO': 'browser'}} if browser_video else {'env': {**os.environ, 'DINE_VIDEO': 'window'}} if rust_graphics else {}))
         self.seq = 0
         self.com1_out = b''  # what the program sent to COM1, not yet shown
         self.last = self._read()
@@ -602,11 +602,15 @@ def format_native_stats(reply):
     other = max(0, steps - native)
     coverage = f'{native / steps:.1%}' if steps else 'n/a'
     average = f'{block / blocks:.2f}' if blocks else 'n/a'
+    interpreted = reply.get('interpreter_instructions')
+    fallback = (f'Interpreted PIL instructions: {int(interpreted):,}\n'
+                if interpreted is not None else '')
     return (
         f'Guest steps: {steps:,}\n'
         f'Native block instructions: {block:,} in {blocks:,} blocks\n'
         f'Native single instructions: {single:,}\n'
         f'Native total: {native:,} ({coverage} of steps)\n'
+        f'{fallback}'
         f'Other steps: {other:,} (includes DOS/BIOS services)\n'
         f'Average native block length: {average} instructions'
     )
@@ -1603,6 +1607,22 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         root.title(f"PIL DOS — {program} ({reply.get('text', '')})")
         draw(reply)
 
+    def disk_set(letter):
+        from tkinter import filedialog
+        chosen = filedialog.askopenfilename(
+            parent=root, title=f'Open ordered disk set on {letter}:',
+            filetypes=[('Disk-set manifests', '*.lst *.txt'), ('All files', '*.*')])
+        if chosen:
+            command = mount_command(letter, chosen).replace('mount ', 'diskset ', 1)
+            reply = session.send(command)
+            root.title(f"PIL DOS - {reply.get('text', '')}")
+            draw(reply)
+
+    def select_disk(letter, selection=''):
+        reply = session.send(f'disk {letter}' + (f' {selection}' if selection else ''))
+        root.title(f"PIL DOS - {reply.get('text', '')}")
+        draw(reply)
+
     root.bind('<Key>', on_key)
     root.bind('<KeyRelease>', on_release)
     root.bind('<FocusOut>', lost_focus)
@@ -1623,9 +1643,18 @@ def make_app(root, engine, program, mount=None, utc_offset=None, args=None, coun
         sub = tk.Menu(drives_menu, tearoff=0)
         sub.add_command(label=f'Mount Floppy / Image (.img/.ima) on {drv}:...', command=lambda d=drv: mount_image(d))
         sub.add_command(label=f'Mount Host Folder on {drv}:...', command=lambda d=drv: mount_folder(d))
+        if drv in ('A', 'B'):
+            sub.add_command(label='Open disk set...', command=lambda d=drv: disk_set(d))
+            sub.add_command(label='Next disk', command=lambda d=drv: select_disk(d, 'next'))
+            sub.add_command(label='Previous disk', command=lambda d=drv: select_disk(d, 'prev'))
+            sub.add_command(label='Current disk', command=lambda d=drv: select_disk(d))
         sub.add_command(label=f'Unmount {drv}:', command=lambda d=drv: unmount_drive(d))
         drives_menu.add_cascade(label=f'Drive {drv}:', menu=sub)
     menu.add_cascade(label='Drives', menu=drives_menu)
+    def host_menu(event):
+        menu.tk_popup(event.x_root, event.y_root)
+        return 'break'
+    root.bind('<Control-Shift-M>', host_menu)
     def right_click(event):
         # Mouse-enabled DOS applications receive the right button. The host
         # popup remains available with Shift+right-click or on the status bar.

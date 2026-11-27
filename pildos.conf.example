@@ -6,3 +6,6 @@ args=/K D:\AUTOEXEC.BAT
 C=images/FD14LITE.img
 D=driveD
 country=358
+# The programs of programs/dos are kept current in \PIL on this drive, which
+# is on PATH (none: off).
+own_programs=D

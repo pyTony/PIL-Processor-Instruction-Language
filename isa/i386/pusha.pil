@@ -1,5 +1,9 @@
 # PUSHA/PUSHAD: push AX/EAX, CX, DX, BX, the original SP, BP, SI, DI.
-# Every register is read first; the eight stores are staged and commit together.
+# Every register is read first. The 386 then writes the slots from the
+# lowest address (DI) upwards: when a slot crosses the end of a 16-bit
+# stack, the slots below it are already written as the #SS is raised
+# (SingleStepTests/80386). ESP changes only when all eight are written.
+effects_before_fault
 require_width 16_or_32
 read_gpr old_sp 4 $S
 read_gpr r0 0 $W
@@ -12,29 +16,29 @@ read_gpr r6 6 $W
 read_gpr r7 7 $W
 const step $S $BYTES
 sub a0 old_sp step
-zext o0 a0 32
-store o0 r0
 sub a1 a0 step
-zext o1 a1 32
-store o1 r1
 sub a2 a1 step
-zext o2 a2 32
-store o2 r2
 sub a3 a2 step
-zext o3 a3 32
-store o3 r3
 sub a4 a3 step
-zext o4 a4 32
-store o4 r4
 sub a5 a4 step
-zext o5 a5 32
-store o5 r5
 sub a6 a5 step
-zext o6 a6 32
-store o6 r6
 sub a7 a6 step
 zext o7 a7 32
 store o7 r7
+zext o6 a6 32
+store o6 r6
+zext o5 a5 32
+store o5 r5
+zext o4 a4 32
+store o4 r4
+zext o3 a3 32
+store o3 r3
+zext o2 a2 32
+store o2 r2
+zext o1 a1 32
+store o1 r1
+zext o0 a0 32
+store o0 r0
 write_gpr 4 a7
 preserve_flags all
 retire

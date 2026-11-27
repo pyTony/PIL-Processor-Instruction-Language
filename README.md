@@ -13,7 +13,13 @@ terminal console. Native packages run without a Rust toolchain.
 
 Python remains optional for the legacy graphical debugger, Tk/COM1 frontend,
 shortcut-generation helpers, and development/packaging utilities. The default
-legacy PILdos shortcut still uses Python; select `--rust-text` for Rust I/O.
+PILdos shortcut opens the Rust setup screen (`pil --pildos`); `--python`
+selects the legacy Tk terminal and `--rust-text` selects `pil --dos-text`.
+
+For prepared native applications calling the shared library, see
+[Native applications](docs/NATIVE_APPLICATIONS.md). The compiler prepares
+initial relocation and native CPU calls, retains executable resources, and
+reports modified/generated-code interpretation separately.
 
 ## Build and run DOS
 

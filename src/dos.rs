@@ -4,7 +4,8 @@ use super::Cpu;
 use super::address::{MemoryContext,SegmentCache,SegmentRegister};
 use super::guest::{GuestError,Image,Operation,SYSTEM_RANGES};
 use super::memory::{MemWidth,Ram};
-#[path="dos_memory.rs"]
+use crate::pc::{ports,soundblaster,rtc,vga,serial,keyboard,history,disks};
+#[path="dos/memory.rs"]
 mod memory_arena;
 use memory_arena::{Arena,memory_service};
 // Declared compatibility version of this bounded host shim, not an OS boot.
@@ -26,140 +27,204 @@ const SYSVARS:u16=0x0026;
 /// Offset in DOSDATA of the 128-byte line buffer CON reads (AH3F) edit into.
 const CON_LINE:u16=0x0300;
 /// BIOS timer ticks in 24 hours (INT1A, BDA 0040:006C).
-const TICKS_PER_DAY:u32=0x0018_00b0;
+use crate::pc::TICKS_PER_DAY;
 pub const MAX_FILE:usize=1024*1024;
 pub const MAX_STEPS:usize=1_000_000;
 /// test386 runs tens of millions of instructions (its LEA test alone).
 pub const MAX_ROM_STEPS:usize=1_000_000_000;
 #[cfg(test)]
 const MAX_OUTPUT:usize=crate::host_io::DOS_OUTPUT_LIMIT;
-#[path="dos_services.rs"]
+use crate::bios::{int09,planar,rom as bios_rom,vectors};
+#[cfg(test)]
+use crate::bios::disk as bios_disk;
+#[path="dos/services.rs"]
 mod services;
-#[path="dos_console.rs"]
-mod console;
-#[path="dos_color_text.rs"]
-mod color_text;
-#[path="dos_session.rs"]
+#[path="dos/console.rs"]
+pub(crate) mod console;
+#[path="host/session.rs"]
 pub mod session;
-#[path="dos_host_console.rs"]
+#[path="host/console.rs"]
 pub(crate) mod host_console;
-#[path="dos_setup.rs"]
+#[path="host/vga_text.rs"]
+pub(crate) mod vga_text;
+#[path="host/setup.rs"]
 pub(crate) mod setup;
-#[path="dos_files.rs"]
+#[path="dos/files.rs"]
 mod files;
-#[path="dos_nls.rs"]
+#[path="dos/lfn.rs"]
+mod lfn;
+#[path="dos/nls.rs"]
 mod nls;
-#[path="dos_exec.rs"]
+#[path="dos/exec.rs"]
 mod exec;
-#[path="dos_ports.rs"]
-pub(crate) mod ports;
-#[path="dos_rtc.rs"]
-mod rtc;
-#[path="dos_vga.rs"]
-mod vga;
-#[path="dos_planar.rs"]
-mod planar;
-#[path="dos_vga_font.rs"]
-mod vga_font;
-#[path="dos_serial.rs"]
-mod serial;
-#[path="dos_break.rs"]
+#[path="host/folder_disk.rs"]
+mod folder_disk;
+pub(crate) use folder_disk::FolderDisk;
+#[path="host/boot.rs"]
+mod boot;
+#[path="host/guest_keymap.rs"]
+pub(crate) mod guest_keymap;
+pub use boot::{probe as boot_probe,parse_script as boot_script,script_probe as boot_script_probe,tar_floppy};
+pub(crate) use boot::boot_command;
+#[cfg(test)]
+pub(crate) use boot::{boot,boot_with_hard_disk};
+#[path="dos/xms.rs"]
+mod xms;
+#[path="dos/break.rs"]
 mod brk;
-#[path="dos_keyboard.rs"]
-mod keyboard;
-#[path="dos_mouse.rs"]
+#[path="dos/mouse.rs"]
 mod mouse;
-#[path="dos_vectors.rs"]
-mod vectors;
+#[path="dos/aux_device.rs"]
+mod aux_device;
+// Machine- and BIOS-level tests that run through Dine's loader and BIOS.
 use services::dispatch as service;
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn compiled_interrupt(
+    guest: &mut Loaded,
+    vector: u8,
+    output: &mut impl crate::host_io::Output,
+) -> Result<Option<u8>, String> {
+    let ah = (guest.cpu.regs[0] >> 8) as u8;
+    if !matches!(vector, 0x10 | 0x16 | 0x20 | 0x21)
+        || (vector == 0x21 && matches!(ah, 0x25 | 0x31 | 0x4b))
+        || !vectors::answered(guest, vector)?
+    {
+        return Err(format!("INT {vector:02x}h AH={ah:02x} needs an unsupported compiled-mode control transfer or service"));
+    }
+    if console::waiting(guest, vector)? {
+        return Err("compiled guest requested blocking input".into());
+    }
+    let result = service(guest, vector, output);
+    if std::mem::take(&mut guest.dos.input_wait) {
+        return Err("compiled guest requested blocking input".into());
+    }
+    result
+}
+
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn compiled_port(
+    guest: &mut Loaded, port: u16, bytes: u8, input: bool, value: u32,
+) -> Result<u32, String> {
+    let opcode = (if input { 0xec } else { 0xee }) | u8::from(bytes != 1);
+    let saved = std::mem::replace(&mut guest.cpu.regs[0], value);
+    let result = ports::transfer(guest, opcode, port, bytes);
+    let accumulator = std::mem::replace(&mut guest.cpu.regs[0], saved);
+    result.map(|()| accumulator)
+}
+
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Format{Com,Mz}
-pub struct Loaded{
+/// The machine running Dine's DOS.
+pub type Loaded=crate::pc::Machine<Dos>;
+/// Dine's DOS and BIOS answer the device events that depend on the
+/// firmware: keys reach a program's IRQ1 handler only when Dine can run it,
+/// IRQs go through Dine's vector entries, and the VGA controllers follow the
+/// BIOS mode outside a booted machine.
+impl crate::pc::Firmware for Dos{
+    fn keyboard_irq_owned(p:&Loaded)->Result<bool,String>{crate::bios::keyboard_irq_owned(p)}
+    fn deliver_irq(p:&mut Loaded,vector:u8)->Result<(),String>{vectors::deliver_irq(p,vector)}
+    fn vga_controller_io(p:&mut Loaded,port:u16,input:bool,value:u16,word:bool)->Result<u16,String>{
+        crate::bios::vga_controller_io(p,port,input,value,word)
+    }
+}
+/// DOS state Dine keeps for the program it runs, apart from the machine
+/// (CPU, memory, devices) it runs on.
+#[derive(Clone)]
+pub struct Dos{
     arena:Arena,
-    pub format:Format,pub cpu:Cpu,pub ram:Ram,pub image:Image,
-    pub selectors:[u16;6],pub relocations:usize,pub module_bytes:usize,
-    pub header_bytes:usize,pub module_base:u32,pub allocated_end:u32,pub trailing_bytes:usize,
-    pub timer_ticks:u32,timer_tick_adjust:i64,pub open_handles:u32,
+    pub format:Format,
+    pub relocations:usize,
+    pub module_bytes:usize,
+    pub header_bytes:usize,
+    pub module_base:u32,
+    pub allocated_end:u32,
+    pub trailing_bytes:usize,
+    pub open_handles:u32,
     /// Most recent reported DOS error for INT 21h/AH=59h.
     pub dos_error:u16,
     pub dta:(u16,u16),
     /// DOS console state: scan code owed after an ASCII-0 key, and an AH0C flush
     /// already performed for the read that is waiting.
-    pub pending_scan:Option<u8>,pub flushed:bool,
+    pub pending_scan:Option<u8>,
+    pub flushed:bool,
     /// AH0A line being edited across waits: bytes so far, entry column, first key.
     pub line:Option<(Vec<u8>,usize,bool)>,
     /// Set by a service that consumed what input there was and must wait.
     pub input_wait:bool,
     /// AH58 allocation strategy (first fit only is modelled) and the AH31
     /// paragraphs kept resident when the program terminated that way.
-    pub alloc_strategy:u8,pub resident:Option<u16>,
+    pub alloc_strategy:u8,
+    pub resident:Option<u16>,
     /// The program's own file, which opens read-only by its upper-case base
     /// name from any directory, and the drive with the files AH3D opened.
-    pub own_file:std::sync::Arc<Vec<u8>>,pub own_name:Vec<u8>,pub drive:files::Drives,
+    pub own_file:std::sync::Arc<Vec<u8>>,
+    pub own_name:Vec<u8>,
+    pub drive:files::Drives,
     /// The running program's PSP, the parents waiting in EXEC, the last
     /// child's return code for AH4D, and console bytes AH3F read but did not
     /// return yet.
-    pub psp:u16,exec:Vec<exec::Frame>,in_memory:Vec<exec::InMemoryChild>,pub return_code:u16,con_pending:Vec<u8>,
-    /// The PC speaker behind ports 42h, 43h and 61h.
-    pub speaker:ports::Speaker,
-    /// The host's local time, as seconds east of UTC, for the clock (INT 1Ah
-    /// AH00, AH2A, AH2C); None keeps the deterministic clock from midnight
-    /// on 1 January 1980.
-    pub clock_offset:Option<i64>,
+    pub psp:u16,
+    exec:Vec<exec::Frame>,
+    in_memory:Vec<exec::InMemoryChild>,
+    /// Programs loaded by EXEC AL=01h remain allocated while the caller runs.
+    load_only:Vec<exec::LoadedChild>,
+    pub return_code:u16,
+    con_pending:Vec<u8>,
     /// The BREAK setting of INT21/AH33 AL=00h-02h; DOS starts with it off.
     pub break_check:bool,
-    /// The CMOS register that port 71h reads, as port 70h last chose it.
-    pub cmos_index:u8,pub cmos_shutdown:u8,rtc:rtc::Rtc,dos_date_adjust:i64,
+    /// The VERIFY setting of INT21/AH2E (set) and AH54 (get); off at start.
+    pub verify:bool,
+    dos_date_adjust:i64,
     /// The DOS country code (001 or 358) for AH38 and AH65.
     pub country:u16,
-    /// COM1 when a session attached it.
-    pub com1:Option<serial::Serial>,
     /// INT 23h handlers Dine called for Ctrl-C that have not returned yet.
     breaks:Vec<brk::Frame>,
     /// Optional software INT 33h mouse driver, enabled by interactive sessions.
     mouse:mouse::Mouse,
-    /// Persistent, signature-validated cache across session slices.
-    pub cache:super::cache::DecodeCache,
-    /// Raw ROM execution must not use DOS interrupt-entry shortcuts.
-    rom_mode:bool,
-    /// Replaceable coprocessor state, preserved between session slices.
-    pub fpu:super::fpu::Fpu,
-    vga:vga::Vga,
-    /// Run-time blocks over the precompiled instruction forms.
-    pub(crate) blocks:crate::block_compiler::engine::Blocks,
+    /// The XMS 3.0 driver (installed unless PIL_XMS=off or `select_xms`).
+    xms:xms::Xms,
 }
-impl Clone for Loaded{
-    fn clone(&self)->Self{Self{
-        arena:self.arena.clone(),format:self.format.clone(),cpu:self.cpu.clone(),ram:self.ram.clone(),image:self.image.clone(),
-        selectors:self.selectors,relocations:self.relocations,module_bytes:self.module_bytes,header_bytes:self.header_bytes,
-        module_base:self.module_base,allocated_end:self.allocated_end,trailing_bytes:self.trailing_bytes,timer_ticks:self.timer_ticks,timer_tick_adjust:self.timer_tick_adjust,
-        open_handles:self.open_handles,dos_error:self.dos_error,dta:self.dta,pending_scan:self.pending_scan,flushed:self.flushed,line:self.line.clone(),
-        input_wait:self.input_wait,alloc_strategy:self.alloc_strategy,resident:self.resident,own_file:self.own_file.clone(),
-        own_name:self.own_name.clone(),drive:self.drive.clone(),psp:self.psp,exec:self.exec.clone(),in_memory:self.in_memory.clone(),return_code:self.return_code,
-        con_pending:self.con_pending.clone(),speaker:self.speaker.clone(),clock_offset:self.clock_offset,break_check:self.break_check,
-        cmos_index:self.cmos_index,cmos_shutdown:self.cmos_shutdown,rtc:self.rtc.clone(),dos_date_adjust:self.dos_date_adjust,country:self.country,com1:self.com1.clone(),breaks:self.breaks.clone(),
-        mouse:self.mouse.clone(),cache:super::cache::DecodeCache::default(),rom_mode:self.rom_mode,fpu:self.fpu.clone(),vga:self.vga.clone(),blocks:Default::default(),
-    }}
-}
-impl std::fmt::Debug for Loaded{
-    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("Loaded{..}")}
-}
-impl Loaded{
+/// What Dine adds to the machine it runs on (`Loaded` is the pil-pc crate's
+/// `Machine<Dos>`, so these are trait methods; bring the trait into scope).
+pub(crate) trait LoadedOps{
     /// Inject one BIOS scan/ASCII word; false means the bounded ring is full.
     #[allow(dead_code)]
-    pub fn enqueue_key(&mut self,key:u16)->Result<bool,String>{console::enqueue(self,key)}
+    fn enqueue_key(&mut self,key:u16)->Result<bool,String>;
     /// Ctrl+Break: see `brk::ctrl_break`. Retained for a future frontend hook.
     #[allow(dead_code)]
-    pub fn ctrl_break(&mut self)->Result<(),String>{brk::ctrl_break(self)}
+    fn ctrl_break(&mut self)->Result<(),String>;
+    /// Install or remove the XMS driver before the first guest instruction.
+    #[allow(dead_code)]
+    fn select_xms(&mut self,installed:bool)->Result<(),String>;
     /// Select the optional 80387 backend before executing the first guest instruction.
     /// Keep the BIOS equipment word consistent with INT 11h without replacing
     /// unrelated BDA bits. Commit the device only after the RAM write succeeds.
-    pub fn select_fpu(&mut self,present:bool)->Result<(),String>{
+    fn select_fpu(&mut self,present:bool)->Result<(),String>;
+    /// Run the RTC and DOS's date in `year` (1980-2099), from today's month,
+    /// day and time on the session clock: for systems that cannot read a
+    /// date in this century (Linux 0.99 takes CMOS year 26 as 1926).
+    fn set_rtc_year(&mut self,year:u32)->Result<(),String>;
+}
+impl LoadedOps for Loaded{
+    fn enqueue_key(&mut self,key:u16)->Result<bool,String>{console::enqueue(self,key)}
+    fn ctrl_break(&mut self)->Result<(),String>{brk::ctrl_break(self)}
+    fn select_xms(&mut self,installed:bool)->Result<(),String>{
+        memory_arena::set_umbs(self,installed)?;self.dos.xms.set_installed(installed);Ok(())
+    }
+    fn select_fpu(&mut self,present:bool)->Result<(),String>{
         let selected=if present{super::fpu::Fpu::present()}else{super::fpu::Fpu::default()};
         let equipment=self.ram.load(0x410,MemWidth::Word).map_err(|e|format!("FPU BIOS equipment read: {e:?}"))? as u16;
         self.ram.store(0x410,MemWidth::Word,u32::from(selected.equipment(equipment))).map_err(|e|format!("FPU BIOS equipment write: {e:?}"))?;
         if present { self.image.msw=(self.image.msw&!0x0004)|0x0012; } else { self.image.msw&=!0x0012; }
         self.fpu=selected;
+        // A booted operating system takes the 387's errors through IRQ13.
+        self.fpu.set_error_irq(self.booted);
+        Ok(())
+    }
+    fn set_rtc_year(&mut self,year:u32)->Result<(),String>{
+        if !(1980..=2099).contains(&year){return Err(format!("RTC year {year} is outside 1980..2099"));}
+        let (year,month,day)=self.rtc.date_in_year(self.clock_offset,year);
+        self.dos.dos_date_adjust=self.rtc.set_dos_date(self.clock_offset,self.dos.dos_date_adjust,year,month,day);
         Ok(())
     }
 }
@@ -185,20 +250,8 @@ fn dos_data(ram:&mut Ram)->Result<(),String>{
     ram.write_bytes(u32::from(DOSDATA)*16,&data).map_err(|e|format!("DOS data area: {e:?}"))?;
     // INT 23h starts at Dine's default Ctrl-C handler, which aborts the program.
     ram.store(0x23*4,MemWidth::Dword,u32::from(DOSDATA)<<16|u32::from(brk::HANDLER)).map_err(|e|format!("INT 23h vector: {e:?}"))?;
+    xms::install(ram)?;
     nls::install(ram)
-}
-fn rom(ram:&mut Ram)->Result<(),String>{
-    let mut top=[0xffu8;16];
-    top[..5].copy_from_slice(&[0xea,0x5b,0xe0,0x00,0xf0]);
-    top[5..13].copy_from_slice(b"01/10/84");top[13]=0;top[14]=0xfc;top[15]=0;
-    ram.write_bytes(0xc0000,&vec![0xff;0x3fff0]).map_err(|e|format!("{e:?}"))?;
-    ram.write_bytes(0xffff0,&top).map_err(|e|format!("{e:?}"))?;
-    let font=console::graphics_text::font()?;let upper=console::graphics_text::UPPER_FONT;
-    ram.write_bytes(console::graphics_text::FONT,&font[..1024]).map_err(|e|format!("ROM font: {e:?}"))?;
-    ram.write_bytes((upper>>16)*16+(upper&0xffff),&font[1024..]).map_err(|e|format!("ROM upper font: {e:?}"))?;
-    vectors::install(ram)?;
-    ram.store(0x1f*4,MemWidth::Dword,upper).map_err(|e|format!("INT 1Fh vector: {e:?}"))?;
-    ram.protect(0xc0000,0x40000).map_err(|e|format!("{e:?}"))
 }
 pub fn hello(format:&str)->Result<Vec<u8>,String>{
     // Both original examples address their string relative to the initial PSP DS.
@@ -229,20 +282,117 @@ fn environment(path:&[u8],drive:u8,temp:Option<u8>)->Vec<u8>{
     let drive=char::from(drive);
     let mut env=format!("COMSPEC={drive}:\\COMMAND.COM\0").into_bytes();
     if let Some(temp)=temp{env.extend(format!("TEMP={}:\\\0",char::from(temp)).bytes());}
+    env.extend_from_slice(b"BLASTER=A220 I5 D1 T3\0");
     env.extend(format!("\0\x01\0{drive}:\\").bytes());env.extend(path);env.push(0);
     env
 }
 pub use files::{MemDir,Source};
 /// Adjust the initial environment when configuration supplies the DOS drive.
 pub(crate) fn select_startup_drive(p:&mut Loaded,letter:u8)->Result<(),String>{
-    let env=p.ram.load(u32::from(p.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
-    let tail=b"COMSPEC=A:\\COMMAND.COM\0".len()+if p.drive.memory_letter().is_some(){b"TEMP=Z:\\\0".len()}else{0}+3;
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let tail=b"COMSPEC=A:\\COMMAND.COM\0".len()+if p.dos.drive.memory_letter().is_some(){b"TEMP=Z:\\\0".len()}else{0}+b"BLASTER=A220 I5 D1 T3\0".len()+3;
     for at in [env+8,env+tail as u32]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
-    p.drive.select_default(letter)?;
+    p.dos.drive.select_default(letter)?;
     for at in [env+8,env+tail as u32]{p.ram.store(at,MemWidth::Byte,u32::from(letter)).map_err(|e|format!("DOS environment: {e:?}"))?;}
     Ok(())
 }
 use nls::COUNTRIES;
+/// Set PATH in the first program's environment (added, or replaced when
+/// there is one), keeping the other strings and the program path after
+/// them. The whole block must still fit the environment's paragraphs.
+pub(crate) fn set_environment_path(p:&mut Loaded,value:&str)->Result<(),String>{
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let size=usize::from(ENV_PARAS)*16;
+    let mut block=vec![0u8;size];
+    for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
+    let block=with_path(&block,value.as_bytes()).ok_or("DOS environment: no room for PATH")?;
+    for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
+}
+/// Where a host-launched program (a native application or a Dine launcher)
+/// finds itself and its files, as when DOS runs it from its own folder:
+/// - The launch folder is the default drive and directory. A configured
+///   host drive that contains it is used (cd'ed into); otherwise it goes on
+///   a free letter, so every configured drive stays.
+/// - The program's path in its environment (DOS 3+, what programs read to
+///   find support files beside themselves) names `program_folder`, the
+///   host executable's folder: through a configured drive that contains
+///   it, else that folder mounted on a free letter.
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn place_host_program(p:&mut Loaded,launch:&Path,program_folder:&Path,name:&str)->Result<(),String>{
+    match p.dos.drive.host_location(launch){
+        Some((letter,path))=>{select_startup_drive(p,letter)?;p.dos.drive.select_directory(letter,path)?;}
+        None=>{
+            // Every configured drive stays; the launch folder takes a free
+            // letter (C: only when all of A:-E: are in use).
+            let letter=p.dos.drive.free_letter().unwrap_or(b'C');
+            p.dos.drive.mount(letter,Source::Host(launch.to_path_buf()))?;select_startup_drive(p,letter)?;
+        }
+    }
+    let directory=match p.dos.drive.host_location(program_folder){
+        Some((letter,path))=>files::Drives::dos_directory(letter,&path),
+        None=>{
+            let Some(letter)=p.dos.drive.free_letter() else{return Ok(())};
+            p.dos.drive.mount(letter,Source::Host(program_folder.to_path_buf()))?;
+            files::Drives::dos_directory(letter,&[])
+        }
+    };
+    let mut path=directory;path.extend(base_name(name.as_bytes()));
+    set_program_path(p,&path)
+}
+/// Set the program's own path after the first program's environment
+/// strings (what DOS 3+ programs read to find files beside themselves),
+/// keeping the strings. The whole block must still fit.
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn set_program_path(p:&mut Loaded,value:&[u8])->Result<(),String>{
+    let env=p.ram.load(u32::from(p.dos.psp)*16+0x2c,MemWidth::Word).map_err(|e|format!("DOS environment pointer: {e:?}"))?*16;
+    let size=usize::from(ENV_PARAS)*16;
+    let mut block=vec![0u8;size];
+    for (i,b) in block.iter_mut().enumerate(){*b=p.ram.load(env+i as u32,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))? as u8;}
+    let block=with_program(&block,value).ok_or("DOS environment: no room for the program path")?;
+    for at in [env,env+size as u32-1]{p.ram.check_write(at,MemWidth::Byte).map_err(|e|format!("DOS environment: {e:?}"))?;}
+    p.ram.write_bytes(env,&block).map_err(|e|format!("DOS environment: {e:?}"))
+}
+/// `block` with the program path after the count word replaced by `value`.
+#[cfg(any(feature = "dine-library", test))]
+fn with_program(block:&[u8],value:&[u8])->Option<Vec<u8>>{
+    let mut at=0;
+    loop{
+        let end=at+block.get(at..)?.iter().position(|&b|b==0)?;
+        if end==at{break;}
+        at=end+1;
+    }
+    let mut out=block.get(..at+1)?.to_vec();
+    out.extend([1,0]);out.extend(value);out.push(0);
+    if out.len()>block.len(){return None;}
+    out.resize(block.len(),0);
+    Some(out)
+}
+/// `block` (an environment: strings, an empty one, count word, program
+/// path) with PATH=`value`, the same size, or None when it does not fit
+/// or the block is not an environment.
+fn with_path(block:&[u8],value:&[u8])->Option<Vec<u8>>{
+    let mut strings=Vec::new();let mut at=0;
+    loop{
+        let end=at+block.get(at..)?.iter().position(|&b|b==0)?;
+        if end==at{break;}
+        strings.push(&block[at..end]);at=end+1;
+    }
+    let rest=block.get(at+1..)?;
+    let count=u16::from_le_bytes([*rest.first()?,*rest.get(1)?]);
+    let tail=if count==0{&rest[..2]}else{let n=2+rest[2..].iter().position(|&b|b==0)?+1;&rest[..n]};
+    let mut path=b"PATH=".to_vec();path.extend(value);
+    let mut out=Vec::new();let mut placed=false;
+    for string in strings{
+        if string.len()>=5&&string[..5].eq_ignore_ascii_case(b"PATH="){if !placed{out.extend(&path);out.push(0);placed=true;}continue;}
+        out.extend(string);out.push(0);
+    }
+    if !placed{out.extend(&path);out.push(0);}
+    out.push(0);out.extend(tail);
+    if out.len()>block.len(){return None;}
+    out.resize(block.len(),0);
+    Some(out)
+}
 /// DOS PSP tail format: count, leading space, CP437 text, CR.
 pub(crate) fn command_tail(ram:&mut Ram,psp_base:u32,text:&str)->Result<(),String>{
     let encoded=crate::dos_encoding::command_line(text)?;
@@ -260,19 +410,33 @@ pub fn load(bytes:&[u8],name:&str)->Result<Loaded,String>{load_with_drives(bytes
 /// Loads a program with `drives` as read-only C:, D:, ...; `path` is where the
 /// program lies on C: (else its base name in the root).
 pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>)->Result<Loaded,String>{
+    load_program(bytes, name, drives, path, None)
+}
+#[cfg(any(feature = "dine-library", test))]
+pub(crate) fn load_compiled_com(
+    data: &[u8], image_len: usize, offset: usize, name: &str, drives: Vec<Source>,
+) -> Result<Loaded, String> {
+    if image_len > 0xff00 || offset > image_len || data.len() > image_len - offset {
+        return Err("compiled COM data lies outside its reserved image".into());
+    }
+    load_program(data, name, drives, None, Some((image_len, offset)))
+}
+fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compiled_image:Option<(usize,usize)>)->Result<Loaded,String>{
+    let compiled=compiled_image.is_some();
+    let (image_len, data_offset) = compiled_image.unwrap_or((bytes.len(), 0));
     for source in &drives{if let Source::Host(root)=source{if !root.is_dir(){return Err(format!("mount {} is not a folder",root.display()));}}}
     let drive=files::Drives::new(drives);
     let program=match path{
         Some(path)=>path.bytes().map(|b|if b==b'/'{b'\\'}else{b.to_ascii_uppercase()}).filter(|b|b.is_ascii_graphic()).take(64).collect(),
         None=>base_name(name.as_bytes()),
     };
-    if bytes.is_empty()||bytes.len()>MAX_FILE{return Err("DOS input must contain 1..1048576 bytes".into());}
-    let mz=bytes.starts_with(b"MZ")||bytes.starts_with(b"ZM");
-    if !mz&&Path::new(name).extension().is_some_and(|x|x.to_str().is_some_and(|s|s.eq_ignore_ascii_case("exe"))){
+    if (!compiled&&bytes.is_empty())||bytes.len()>MAX_FILE{return Err("DOS input must contain 1..1048576 bytes".into());}
+    let mz=!compiled&&(bytes.starts_with(b"MZ")||bytes.starts_with(b"ZM"));
+    if !compiled&&!mz&&Path::new(name).extension().is_some_and(|x|x.to_str().is_some_and(|s|s.eq_ignore_ascii_case("exe"))){
         return Err(".EXE input requires a DOS MZ/ZM header; not a raw monitor image".into());
     }
     let(mut format,mut cpu,mut selectors,mut header_bytes,mut relocations)=(Format::Com,Cpu::default(),[PSP;6],0,0);
-    let(mut module_base,mut module_bytes,mut allocation_end,mut trailing)=(u32::from(PSP)*16+0x100,bytes.len(),LIMIT,0);
+    let(mut module_base,mut module_bytes,mut allocation_end,mut trailing)=(u32::from(PSP)*16+0x100,image_len,LIMIT,0);
     let mut module=bytes.to_vec();
     cpu.eip=0x100;cpu.regs[4]=0xfffe;cpu.eflags=0x202;
     if mz{
@@ -324,14 +488,14 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     // A20 masked. This does not advertise extended-memory or protected-mode support.
     let mut ram=Ram::new(PHYSICAL_RAM);ram.set_a20_enabled(false);
     console::initialize(&mut ram)?;
-    rom(&mut ram)?;
+    bios_rom(&mut ram)?;
     let psp_base=u32::from(PSP)*16;let mut psp=[0u8;256];psp[..2].copy_from_slice(&[0xcd,0x20]);
     put_word(&mut psp,2,(allocation_end/16)as u16);psp[0x18..0x1d].copy_from_slice(&[0,1,2,3,4]);psp[0x1d..0x2c].fill(0xff);
     put_word(&mut psp,0x40,DOS_COMPAT_VERSION);psp[0x81]=0x0d;put_word(&mut psp,0x2c,ENV);
     put_word(&mut psp,0x32,20);put_word(&mut psp,0x34,0x18);put_word(&mut psp,0x36,PSP);
     ram.write_bytes(psp_base,&psp).map_err(|e|format!("{e:?}"))?;
     ram.write_bytes(u32::from(ENV)*16,&environment(&program,drive.letter(),drive.memory_letter())).map_err(|e|format!("{e:?}"))?;
-    ram.write_bytes(module_base,&module).map_err(|e|format!("{e:?}"))?;
+    ram.write_bytes(module_base + data_offset as u32,&module).map_err(|e|format!("{e:?}"))?;
     if format==Format::Com{ram.store(psp_base+0xfffe,MemWidth::Word,0).map_err(|e|format!("{e:?}"))?;}
     let segments=selectors.map(SegmentCache::real_mode);
     let arena=Arena::new((allocation_end/16)as u16);arena.write_initial(&mut ram)?;
@@ -345,11 +509,19 @@ pub fn load_with_drives(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&st
     // Code may run anywhere in the block DOS gave the program (PSP to allocation
     // end), e.g. self-relocating unpackers; fetches elsewhere stay a Boundary.
     let mut system=[(0,0);SYSTEM_RANGES];
-    system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),nls::CODE.1);
+    // Dine's own guest code: the INT 23h handler and return point, then the
+    // case-map routine and the XMS driver entry.
+    system[0]=(u32::from(DOSDATA)*16+u32::from(brk::HANDLER),u32::from(DOSDATA)*16+u32::from(brk::HANDLER)+brk::CODE.len()as u32);
+    system[3]=(nls::CODE.0,xms::CODE_END);
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    Ok(Loaded{arena,format,cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,timer_ticks:0,timer_tick_adjust:0,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(bytes.to_vec()),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),return_code:0,con_pending:Vec::new(),speaker:ports::Speaker::default(),clock_offset:None,break_check:false,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),dos_date_adjust:0,country:1,com1:None,breaks:Vec::new(),mouse:mouse::Mouse::default(),cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default()})
+    with_upper_memory(Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default(),disks:Default::default(),booted:false,fdc:Default::default(),ata:Default::default()})
+}
+/// DOS=UMB comes with the XMS driver (dos_memory_arena::set_umbs).
+fn with_upper_memory(mut p:Loaded)->Result<Loaded,String>{
+    if p.dos.xms.installed(){memory_arena::set_umbs(&mut p,true)?;}
+    Ok(p)
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stop{Exit(u8),MissingEncoding{key:String,detail:String},Service(String),Fault(String),Boundary(String),Budget,WaitingForInput,Monitor(String)}
@@ -359,8 +531,10 @@ pub struct Probe{
     pub exceptions:Vec<ExceptionSite>,pub exception_count:usize,
     pub output:Vec<u8>,pub instructions:BTreeMap<String,usize>,pub stop_bytes:Vec<u8>,pub file_offset:Option<usize>,
 }
-#[path="dos_stoplog.rs"]
+#[path="dos/stoplog.rs"]
 pub(super) mod stoplog;
+#[path="dos/live_diagnostics.rs"]
+mod live_diagnostics;
 #[derive(Clone,Debug)]
 pub struct ExceptionSite{pub vector:u8,pub detail:String,pub diagnostic:String,pub cs:u16,pub eip:u32}
 impl ExceptionSite{
@@ -413,6 +587,7 @@ pub fn run_with_output(p:Loaded,budget:usize,output:&mut impl crate::host_io::Ou
 /// they wait for keyboard input in a 16-colour planar VGA mode. This is a
 /// console preview, not a full VGA graphics frontend. It samples the actual
 /// shared VGA planar framebuffer, without reinterpreting guest code.
+#[cfg(windows)]
 pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
     let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
     let geometry=planar::geometry(mode)?;
@@ -445,6 +620,7 @@ pub(crate) fn ansi_graphics_preview(p:&Loaded)->Option<String>{
 // Match the EGA/CGA 16-colour host palette already used by the PILdos
 // Python frontend. The CGA colour-select register 3D9h selects entries in
 // this palette; it is not the VGA 256-entry DAC.
+#[cfg(any(windows,unix,test))]
 const CGA_RGB:[u32;16]=[
     0x000000,0x0000aa,0x00aa00,0x00aaaa,
     0xaa0000,0xaa00aa,0xaa5500,0xaaaaaa,
@@ -453,6 +629,7 @@ const CGA_RGB:[u32;16]=[
 ];
 /// CGA even/odd banks, the 3D9h background/palette/intensity latch, and
 /// 320x200 four-colour / 640x200 two-colour scanout.
+#[cfg(any(windows,unix,test))]
 fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
     let width=if mode==6{640}else{320};
     let height=200usize;
@@ -495,14 +672,24 @@ fn desktop_cga_frame(p:&Loaded,mode:u32)->Option<(usize,usize,Vec<u32>)>{
     Some((width,height,pixels))
 }
 
+/// Standard 16x16 white arrow with a black outline (hot spot 0,0) when a DOS
+/// program uses graphics mouse mode without defining a custom shape (AX=0009h).
+#[cfg(any(windows,unix,test))]
+const DEFAULT_GRAPHICS_MOUSE_ARROW:(i16,i16,[u16;32])=(0,0,[
+    0x3fff,0x1fff,0x0fff,0x07ff,0x03ff,0x01ff,0x00ff,0x007f,
+    0x003f,0x003f,0x01ff,0x10ff,0x30ff,0xf87f,0xf87f,0xfcff,
+    0x0000,0x4000,0x6000,0x7000,0x7800,0x7c00,0x7e00,0x7f00,
+    0x7f80,0x7c00,0x6c00,0x4600,0x0600,0x0300,0x0300,0x0000,
+]);
 /// Native desktop scanout of the *existing* emulated VGA framebuffer.
 /// All text drawn by BIOS in a graphics mode has already reached these pixels
 /// via dos_graphics_text, so the host renderer needs no duplicate font logic.
 /// The output never aliases guest RAM and cannot mutate VGA/CPU state.
+#[cfg(any(windows,unix,test))]
 fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
-    let view=p.mouse.view();
+    let view=p.dos.mouse.view();
     if !view.visible{return;}
-    let Some((hx,hy,rows))=p.mouse.shape() else {return;};
+    let (hx,hy,rows)=p.dos.mouse.shape().unwrap_or(DEFAULT_GRAPHICS_MOUSE_ARROW);
     let mx=i32::from(view.x)*(width as i32)/(i32::from(view.max_x)+1);
     let my=i32::from(view.y)*(height as i32)/(i32::from(view.max_y)+1);
     for dy in 0..16i32{
@@ -526,17 +713,20 @@ fn overlay_mouse_cursor(p:&Loaded,width:usize,height:usize,pixels:&mut [u32]){
         }
     }
 }
+#[cfg(windows)]
 pub(crate) fn mouse_state(p:&Loaded)->(u16,u16,bool){
-    let view=p.mouse.view();
+    let view=p.dos.mouse.view();
     (view.max_x,view.max_y,view.visible)
 }
+#[cfg(any(windows,unix,test))]
 pub(crate) fn desktop_vga_frame(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
     let (width,height,mut pixels)=desktop_vga_raw(p)?;
     overlay_mouse_cursor(p,width,height,&mut pixels);
     Some((width,height,pixels))
 }
+#[cfg(any(windows,unix,test))]
 fn desktop_vga_raw(p:&Loaded)->Option<(usize,usize,Vec<u32>)>{
-    let mode=p.ram.load(0x449,MemWidth::Byte).ok()?;
+    let mode=u32::from(console::shown_mode(p).ok()?.mode);
     if matches!(mode,4|5|6){return desktop_cga_frame(p,mode);}
     let color=|rgb:[u8;3]|u32::from(rgb[0])<<16|u32::from(rgb[1])<<8|u32::from(rgb[2]);
     if mode==0x13 {
@@ -650,11 +840,49 @@ mod desktop_scanout_tests{
             (u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63);
         assert_eq!(pixels[0],expected);
     }
+    #[test]
+    fn mode13_visible_mouse_draws_default_arrow_without_custom_shape(){
+        let mut p=load(&[0xcd,0x20],"PTR.COM").unwrap();
+        p.ram.store(0x449,MemWidth::Byte,0x13).unwrap();
+        let rgb=p.vga.dac(1);
+        let bg=(u32::from(rgb[0])*255/63)<<16|
+            (u32::from(rgb[1])*255/63)<<8|(u32::from(rgb[2])*255/63);
+        assert_ne!(bg,0x000000);
+        assert_ne!(bg,0xffffff);
+        for y in 10..26u32{
+            for x in 19..36u32{
+                p.ram.store(0xa0000+y*320+x,MemWidth::Byte,1).unwrap();
+            }
+        }
+        p.dos.mouse.enable(0);
+        p.cpu.regs[0]=0x0000;
+        mouse::service(&mut p).unwrap();
+        p.cpu.regs[0]=0x0001;
+        mouse::service(&mut p).unwrap();
+        p.cpu.regs[0]=0x0004;
+        p.cpu.regs[1]=40;
+        p.cpu.regs[2]=10;
+        mouse::service(&mut p).unwrap();
+        assert!(p.dos.mouse.shape().is_none());
+        assert!(p.dos.mouse.view().visible);
+        let (_,_,pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!(pixels[10*320+20],0x000000);
+        assert_eq!(pixels[11*320+21],0xffffff);
+        assert_eq!(pixels[10*320+19],bg);
+        p.cpu.regs[0]=0x0002;
+        mouse::service(&mut p).unwrap();
+        let (_,_,hidden_pixels)=desktop_vga_frame(&p).unwrap();
+        assert_eq!(hidden_pixels[10*320+20],bg);
+        assert_eq!(hidden_pixels[11*320+21],bg);
+    }
 }
 
 /// An optional executor for decoded PIL instructions. A miss falls back to the
 /// interpreter; DOS services and instruction retirement stay in the shared loop.
 pub(crate) trait InstructionBackend {
+    /// An ahead-of-time application can supply instruction metadata directly.
+    /// Returning None keeps runtime-generated/modified code on the normal path.
+    fn decode(&mut self,_image:&Image,_ram:&Ram,_ip:u32)->Option<Result<std::rc::Rc<super::guest::Decoded>,super::guest::GuestError>>{None}
     /// Conservative eligibility hints: false skips native dispatch without
     /// forcing pending interpreter flags. True still requires normal guards.
     fn may_block(&mut self,_image:&Image,_ram:&Ram,_ip:u32)->bool{true}
@@ -662,7 +890,12 @@ pub(crate) trait InstructionBackend {
     fn block_stats(&self)->(u64,u64){(0,0)}
     /// Number of generated single-instruction dispatches outside native blocks.
     fn single_stats(&self)->u64{0}
-    fn block(&mut self,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
+    fn reference_retired(&mut self){}
+    fn reference_instruction(&mut self,_image:&Image,_ram:&Ram,_ip:u32,_decoded:&super::guest::Decoded){}
+    fn reference_stats(&self)->Option<u64>{None}
+    fn fallback_mode(&self)->Option<crate::precompiled::Mode>{None}
+    fn diagnostics(&self)->String{String::new()}
+    fn block(&mut self,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize,_chain:bool)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
 }
 /// Run one decoded PIL instruction through its precompiled native form
@@ -677,8 +910,10 @@ fn precompiled_step(m:crate::precompiled::Mode,decoded:&super::guest::Decoded,p:
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
     let before=(m==Mode::Verify).then(||(p.cpu.clone(),p.ram.clone(),*machine));
     let _span=crate::profile::span("precompiled_execute");
+    let old_ip=p.cpu.eip;
     let cpu=&mut p.cpu;
     let result=(native.form)(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,(dst.register,dst.low),(src.register,src.low),*flow,&mut p.ram,*address,machine,&native.consts);
+    if result.is_ok()&&(!program.partial||cpu.eip!=old_ip){p.blocks.single_instructions+=1;}
     if let Some((mut cpu,mut ram,mut reference))=before{
         let mut none=super::LazyFlags::None;
         let expected=super::execute_machine_lazy(program,&mut cpu,*dst,*src,*flow,&mut ram,*address,&mut reference,&mut none).map(|_|());
@@ -690,28 +925,59 @@ fn precompiled_step(m:crate::precompiled::Mode,decoded:&super::guest::Decoded,p:
     }
     Some(result)
 }
-pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,mut backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
+pub(crate) fn run_with_backend(p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
+    run_with_backend_inner(p,budget,output,backend,true)
+}
+/// Interactive session slice: keeps event counters (such as keyboard-poll
+/// counts for `idle_hint`, exceptions and IRQs) while skipping the
+/// per-instruction mnemonic mix.
+pub(crate) fn run_with_backend_session(p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,backend:Option<&mut dyn InstructionBackend>)->Result<Probe,String>{
+    run_with_backend_inner(p,budget,output,backend,false)
+}
+fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host_io::Output,mut backend:Option<&mut dyn InstructionBackend>,collect_mnemonic_mix:bool)->Result<Probe,String>{
     if !(1..=if p.rom_mode{MAX_ROM_STEPS}else{MAX_STEPS}).contains(&budget){return Err(if p.rom_mode{"ROM step budget must be 1..1000000000"}else{"DOS step budget must be 1..1000000"}.into());}
     let _profile_run=crate::profile::span("dos_run");
-    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();
+    // Between runs RAM is in host view (see Ram::host_access); the CPU's
+    // paging comes back here.
+    p.ram.set_paging(p.image.segment_state().ram_paging());
+    let(mut completed,mut pil_steps,mut dos_calls)=(0,0,0);let mut execution_steps=0;let mut instructions=BTreeMap::new();let mut native_block_count=0usize;
     let mut exceptions=Vec::new();let mut exception_count=0;
     let mut lazy=super::LazyFlags::None;
 
-    let mode=p.blocks.mode.unwrap_or_else(crate::precompiled::mode);
-    let blocks_enabled=mode==crate::precompiled::Mode::On&&!p.rom_mode;
+    let mode=backend.as_ref().and_then(|b|b.fallback_mode()).unwrap_or_else(||p.blocks.mode.unwrap_or_else(crate::precompiled::mode));
+    // Native blocks would hide intermediate control flow from the trace.
+    // The ordinary one-instruction interpreter still handles any DOS guest.
+    let history_enabled=p.history.enabled();
+    let watched=p.ram.text_watch_enabled();
+    let blocks_enabled=matches!(mode,crate::precompiled::Mode::On|crate::precompiled::Mode::Required)&&!history_enabled&&!watched;
     let stop=loop{
         crate::profile::site(p.selectors[1],p.cpu.eip);
         if execution_steps==budget{break Stop::Budget;}
+        if watched{p.ram.text_watch_site(p.selectors[1],p.cpu.eip);}
+        if history_enabled{
+            let entry=history::Dispatch::capture(&p);
+            p.history.record(entry);
+        }
         if !p.rom_mode {
         // A callback returns by RETF to the private BIOS continuation.
         // Its scratch registers/flags are discarded; guest memory writes remain.
+        // A booted OS has none of Dine's DOS: its return points are
+        // ordinary memory there (Linux runs its kernel at physical 0).
+        if !p.booted{
         match mouse::returned(&mut p){
             Ok(true)=>{lazy=super::LazyFlags::None;execution_steps+=1;
                 *instructions.entry("DOS mouse callback RETF".into()).or_insert(0)+=1;continue;},
             Ok(false)=>{},
             Err(message)=>break Stop::Service(message),
         }
-        if !p.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
+        // A far call to the XMS driver reaches its private HLT.
+        match xms::trapped(&mut p){
+            Ok(Some(ah))=>{execution_steps+=1;completed+=1;dos_calls+=1;
+                *instructions.entry(format!("XMS driver AH{ah:02x}")).or_insert(0)+=1;continue;},
+            Ok(None)=>{},
+            Err(message)=>break Stop::Service(message),
+        }
+        if !p.dos.breaks.is_empty(){lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);}
         match brk::returned(&mut p){
             Ok(None)=>{},
             Ok(Some(brk::Return::Resume))=>{execution_steps+=1;*instructions.entry("DOS INT23 return (resume)".into()).or_insert(0)+=1;continue;},
@@ -723,11 +989,16 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             },
             Err(message)=>break Stop::Service(message),
         }
+        }
         // The host clock is checked every 256 steps (about 0.1 ms of work here).
         if execution_steps%256==0{
             // An asynchronous hook observes the flags of the interrupted instruction.
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
             if let Err(message)=services::timer_interrupt(&mut p){break Stop::Service(message);}
+            // Poll DSP DMA at a bounded cadence. Without a host clock,
+            // deterministic guest progress advances the device by one slice.
+            let now=p.clock_offset.map(|_|p.speaker.pit_now(p.clock_offset));
+            if let Err(message)=p.sb.tick(now,&p.ram,&mut p.speaker.pic){break Stop::Service(message);}
         }
         // A scan code waiting for a program's INT 09h handler (IRQ1).
         if p.speaker.kbd.pending(){
@@ -735,6 +1006,87 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             match keyboard::interrupt(&mut p,false){
                 Ok(true)=>{execution_steps+=1;*instructions.entry("IRQ1 to INT 09h".into()).or_insert(0)+=1;continue;},
                 Ok(false)=>{},
+                Err(message)=>break Stop::Service(message),
+            }
+        }
+        // IRQ4 from COM1 (16450 UART), through the master PIC.
+        if p.com1.as_ref().is_some_and(serial::Serial::irq_active)
+            &&p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0{
+            p.speaker.pic.raise(4);
+            if p.speaker.pic.master_ready(4){
+                let vector=p.speaker.pic.master_vector(4);
+                let installed=if p.image.real_mode{vectors::reachable(&p,vector)}else{Ok(true)};
+                match installed{
+                    Ok(true)=>{
+                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                        match vectors::deliver_irq(&mut p,vector){
+                            Ok(())=>{
+                                p.speaker.pic.acknowledge_master(4);execution_steps+=1;
+                                *instructions.entry(format!("COM1 IRQ4 to INT {vector:02X}h")).or_insert(0)+=1;continue;},
+                            Err(message)=>break Stop::Service(message),
+                        }
+                    },
+                    Ok(false)=>{},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+        }
+        // IRQ5/IRQ7 from the Sound Blaster DSP. A DOS game installs its own
+        // handler and sends EOI to the PIC; reading DSP port 22Eh clears
+        // the DSP's interrupt latch, independently of PIC EOI.
+        if p.sb.pending_irq()&&p.cpu.eflags&0x200!=0
+            &&p.image.sti_shadow==0&&p.image.ss_shadow==0{
+            let irq=p.sb.irq();
+            let vector=p.speaker.pic.soundblaster_vector(irq);
+            if p.speaker.pic.soundblaster_ready(irq){
+                let installed=if p.image.real_mode{vectors::reachable(&p,vector)}else{Ok(true)};
+                match installed{
+                    Ok(true)=>{
+                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                        match vectors::deliver_irq(&mut p,vector){
+                            Ok(())=>{p.speaker.pic.acknowledge_soundblaster(irq);execution_steps+=1;
+                                *instructions.entry(format!("Sound Blaster IRQ{irq} to INT {vector:02X}h")).or_insert(0)+=1;continue;},
+                            Err(message)=>break Stop::Service(message),
+                        }
+                    },
+                    Ok(false)=>{}, // no guest handler: preserve IRR for polling
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+        }
+        // IRQ6 from the diskette controller, through the master PIC.
+        if p.fdc.irq&&p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0{
+            p.speaker.pic.raise(6);
+            if p.speaker.pic.master_ready(6){
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                let vector=p.speaker.pic.master_vector(6);
+                match vectors::deliver_irq(&mut p,vector){
+                    Ok(())=>{
+                        p.fdc.irq=false;p.speaker.pic.acknowledge_master(6);execution_steps+=1;
+                        *instructions.entry(format!("IRQ6 to INT {vector:02X}h")).or_insert(0)+=1;continue;},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+        }
+        // IRQ13 from the 387's ERROR# through the AT busy latch.
+        if p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0&&p.speaker.pic.slave_ready(5){
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            let vector=p.speaker.pic.slave_vector(5);
+            match vectors::deliver_irq(&mut p,vector){
+                Ok(())=>{
+                    p.speaker.pic.acknowledge_slave(5);execution_steps+=1;
+                    *instructions.entry(format!("IRQ13 to INT {vector:02X}h")).or_insert(0)+=1;continue;},
+                Err(message)=>break Stop::Service(message),
+            }
+        }
+        // IRQ14 from the hard-disk controller, through the slave PIC.
+        if p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0&&p.speaker.pic.slave_ready(6){
+            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+            let vector=p.speaker.pic.slave_vector(6);
+            match vectors::deliver_irq(&mut p,vector){
+                Ok(())=>{
+                    p.speaker.pic.acknowledge_slave(6);execution_steps+=1;
+                    *instructions.entry(format!("IRQ14 to INT {vector:02X}h")).or_insert(0)+=1;continue;},
                 Err(message)=>break Stop::Service(message),
             }
         }
@@ -760,9 +1112,11 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             Ok(false)=>{},
             Err(message)=>break Stop::Service(message),
         }
-        if let Ok(encoded)=p.image.fetch_signature(&p.ram,p.cpu.eip,2){if dine&&encoded[0]==0xcd{
+        // INT n in a program, or CS:IP at one of Dine's own entries.
+        let software=if !dine{None}else if let Some(n)=vectors::entry_vector(&p){Some(n)}else{
+            match p.image.fetch_signature(&p.ram,p.cpu.eip,2){Ok(encoded) if encoded[0]==0xcd=>Some(encoded[1]),_=>None}};
+        if let Some(vector)=software{{
             lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-            let vector=encoded[1];
             if vector==8&&vectors::at_timer_entry(&p){
                 match services::bios_timer(&mut p){
                     Ok(())=>{execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 08h (timer tick)".into()).or_insert(0)+=1;continue;},
@@ -770,9 +1124,10 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 }
             }
             if vector==9&&vectors::at_keyboard_entry(&p){
-                match keyboard::bios(&mut p){
-                    Ok(keyboard::Bios::Done)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
-                    Ok(keyboard::Bios::Break)=>{vectors::enter_break_wrapper(&mut p);execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (Ctrl+Break, INT 1Bh)".into()).or_insert(0)+=1;continue;},
+                match int09::bios(&mut p){
+                    Ok(int09::Bios::Done)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
+                    Ok(int09::Bios::HandledBreak)=>{p.dos.pending_scan=None;p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (keyboard)".into()).or_insert(0)+=1;continue;},
+                    Ok(int09::Bios::Break)=>{p.dos.pending_scan=None;vectors::enter_break_wrapper(&mut p);execution_steps+=1;completed+=1;dos_calls+=1;*instructions.entry("BIOS INT 09h (Ctrl+Break, INT 1Bh)".into()).or_insert(0)+=1;continue;},
                     Err(message)=>break Stop::Service(message),
                 }
             }
@@ -806,13 +1161,28 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 Err(message)=>break Stop::Service(message),
                 Ok(false)=>{},
             }
-            match service(&mut p,vector,output){
-                Ok(_) if p.input_wait=>{p.input_wait=false;break Stop::WaitingForInput},
+            // Save the caller and input registers before the shim mutates AX
+            // or advances IP. This records the serviced call, not its inner
+            // implementation in Rust; hooked guest interrupts are excluded.
+            let call_site=(p.selectors[1],p.cpu.eip);
+            let input_regs=[
+                p.cpu.regs[0] as u16,p.cpu.regs[3] as u16,
+                p.cpu.regs[1] as u16,p.cpu.regs[2] as u16,
+                p.selectors[3],p.selectors[0],
+            ];
+            let serviced=service(&mut p,vector,output);
+            if p.services_trace.enabled()&&matches!(vector,0x10|0x16|0x21){
+                let mut trace=std::mem::take(&mut p.services_trace);
+                trace.record(&p,vector,call_site,input_regs);
+                p.services_trace=trace;
+            }
+            match serviced{
+                Ok(_) if p.dos.input_wait=>{p.dos.input_wait=false;break Stop::WaitingForInput},
                 Ok(exit)=>{p.cpu.eip=(p.cpu.eip+2)&0xffff;p.image.retired();completed+=1;execution_steps+=1;dos_calls+=1;*instructions.entry(key).or_insert(0)+=1;
                     if let Some(code)=exit{
                         // A child returns to the parent that ran it; the first program ends the run.
                         if !exec::has_parent(&p){break Stop::Exit(code);}
-                        let kind=if p.resident.is_some(){3}else{0};
+                        let kind=if p.dos.resident.is_some(){3}else{0};
                         if let Err(message)=exec::terminate(&mut p,code,kind){break Stop::Service(message);}
                     }continue;},
                 Err(message) if message==console::BREAK=>match brk::start(&mut p,output){
@@ -834,6 +1204,35 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                 }
             }
         }}
+        // The 386 decoder already recognizes INS/OUTS, but its generic PIL
+        // mode uses an open bus. Dine must route each element to the actual
+        // device, retaining EIP across REP elements for interruptibility.
+        match ports::string_io(&mut p){
+            Ok(Some((length,partial)))=>{
+                let wrap=if p.image.segments[1].default_32(){u32::MAX}else{0xffff};
+                p.cpu.eip=p.cpu.eip.wrapping_add(length)&wrap;
+                if !partial{p.image.retired();completed+=1;}
+                execution_steps+=1;
+                *instructions.entry(if partial{"string I/O elements".into()}else{"INS/OUTS".into()}).or_insert(0)+=1;
+                continue;
+            },
+            Ok(None)=>{},
+            Err(ports::StringError::Device(message))=>break Stop::Service(message),
+            Err(ports::StringError::Fault(e))=>{
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                match exception(&mut p,&e,&mut lazy){
+                    Some(Ok(site))=>{
+                        exception_count+=1;
+                        *instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;
+                        if exceptions.len()<64{exceptions.push(site);}
+                        execution_steps+=1;
+                        continue;
+                    },
+                    Some(Err(message))=>break Stop::Fault(message),
+                    None=>break Stop::Fault(format!("{e:?}")),
+                }
+            },
+        }
         match ports::io(&mut p){
             Ok(Some(length))=>{
                 let wrap=if p.image.segments[1].default_32(){u32::MAX}else{0xffff};
@@ -842,6 +1241,27 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             },
             Ok(None)=>{},
             Err(message)=>break Stop::Service(message),
+        }
+        if backend.is_none()&&blocks_enabled{
+            let mut machine=p.image.segment_state();
+            if machine.ss_shadow==0&&machine.sti_shadow==0{
+                // Never step over a multiple of 256 steps: the timer check
+                // at the top of the loop runs there.
+                let block_budget=(budget-execution_steps).min(256-execution_steps%256);
+                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                // Blocks may follow one another without coming back here
+                // only while nothing waits for the checks at the top of
+                // the loop: a scan code or mouse event could become
+                // deliverable at any boundary.
+                let chain=!p.speaker.kbd.pending()&&(p.rom_mode||!mouse::ready(&p));
+                if let Some(r)=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut p.fpu,&mut machine,block_budget,chain){
+                    p.image.set_segment_state(machine);p.selectors=machine.selectors;
+                    execution_steps+=r.steps;completed+=r.steps;pil_steps+=r.pil_steps;
+                    if r.error_signalled{p.speaker.pic.raise_slave(5);}
+                    if let Err(e)=r.result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
+                    if r.steps>0{continue;}
+                }
+            }
         }
         // Numerics are a replaceable device, separate from integer PIL semantics.
         // Decode afresh so self-modifying code and changes to EM/TS are visible.
@@ -860,22 +1280,50 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
                         *instructions.entry(p.fpu.name().into()).or_insert(0)+=1;
                         continue;
                     },
+                    super::fpu::Outcome::ErrorSignalled=>{
+                        // ERROR# sets the AT busy latch, which raises IRQ13
+                        // (slave PIC IRQ5).
+                        p.speaker.pic.raise_slave(5);
+                        let mask=if p.image.segments[SegmentRegister::Cs.index()].default_32(){u32::MAX}else{0xffff};
+                        p.cpu.eip=p.cpu.eip.wrapping_add(instruction.length)&mask;
+                        p.image.retired();completed+=1;execution_steps+=1;
+                        *instructions.entry(p.fpu.name().into()).or_insert(0)+=1;
+                        continue;
+                    },
+                    super::fpu::Outcome::Busy=>{
+                        // BUSY# held by the AT latch: the CPU waits before
+                        // this instruction, taking interrupts meanwhile (the
+                        // IRQ13 handler writes port F0h), and runs it after.
+                        execution_steps+=1;
+                        *instructions.entry("80387 BUSY# wait".into()).or_insert(0)+=1;
+                        continue;
+                    },
                     super::fpu::Outcome::NotAvailable=>{
                         let fault_ip=p.cpu.eip;
-                        match vectors::answered(&p,7){
-                            Ok(false) if p.image.real_mode=>{
-                                match vectors::deliver_fault(&mut p,7,fault_ip){
-                                    Ok(())=>{
-                                        execution_steps+=1;
-                                        *instructions.entry("#NM (vector 07h)".into()).or_insert(0)+=1;
-                                        continue;
-                                    },
-                                    Err(message)=>break Stop::Fault(message),
-                                }
+                        // #NM is a fault, not an unsupported x87 opcode. In
+                        // protected mode its handler is an IDT gate, not an
+                        // entry in the DOS real-mode IVT. In particular CR0.TS
+                        // may be set deliberately until the handler runs CLTS.
+                        let deliver=if p.image.real_mode{
+                            match vectors::answered(&p,7){
+                                Ok(false)=>vectors::deliver_fault(&mut p,7,fault_ip),
+                                Ok(true)=>Err("no guest #NM handler (vector 07h)".into()),
+                                Err(message)=>Err(message),
+                            }
+                        }else{
+                            vectors::deliver_protected(&mut p,crate::interrupt::Event{
+                                vector:7,error_code:None,return_eip:fault_ip,
+                                software:false,cr2:None,
+                            })
+                        };
+                        match deliver{
+                            Ok(())=>{
+                                execution_steps+=1;
+                                *instructions.entry("#NM (vector 07h)".into()).or_insert(0)+=1;
+                                continue;
                             },
-                            Err(message)=>break Stop::Fault(message),
-                            _=>break Stop::Fault(format!(
-                                "{}; #NM (vector 07h); CS:IP={:04x}:{:04x}; MSW={:04x}; bytes={}",
+                            Err(message)=>break Stop::Fault(format!(
+                                "{}; #NM (vector 07h); CS:IP={:04x}:{:08x}; MSW={:04x}; bytes={}; delivery: {message}",
                                 p.fpu.name(),p.selectors[1],fault_ip,p.image.msw,
                                 instruction.bytes[..instruction.length as usize].iter()
                                     .map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" "))),
@@ -910,22 +1358,7 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             // The ordinary decoder retains ownership of malformed/non-x87 fetches.
             Ok(None)|Err(_)=>{},
         }
-        if backend.is_none()&&blocks_enabled{
-            let mut machine=p.image.segment_state();
-            if machine.ss_shadow==0&&machine.sti_shadow==0{
-                // Never step over a multiple of 256 steps: the timer check
-                // at the top of the loop runs there.
-                let block_budget=(budget-execution_steps).min(256-execution_steps%256);
-                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if let Some((n,result))=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
-                    p.image.set_segment_state(machine);p.selectors=machine.selectors;
-                    execution_steps+=n;completed+=n;pil_steps+=n;
-                    if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
-                    if n>0{continue;}
-                }
-            }
-        }
-        if let Some(b)=backend.as_deref_mut(){
+        if let Some(b)=backend.as_deref_mut().filter(|_|!history_enabled&&!watched){
             if b.may_block(&p.image,&p.ram,p.cpu.eip){
             // A clocked DOS session samples IRQ0 every 256 guest steps.
             // Never batch across that boundary, even when a guest owns INT 08h:
@@ -933,21 +1366,21 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             // check as the interpreter. Interrupt shadows still forbid batching.
             let mut machine=p.image.segment_state();
             if machine.ss_shadow==0&&machine.sti_shadow==0{
-                let remaining=budget-execution_steps;
-                let next_timer_poll=if p.clock_offset.is_some(){256-execution_steps%256}else{remaining};
-                let block_budget=remaining.min(next_timer_poll);
+                let block_budget=(budget-execution_steps).min(256-execution_steps%256);
                 lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                if let Some((n,result))=b.block(&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget){
+                let chain=!p.rom_mode&&!p.speaker.kbd.pending()&&!mouse::ready(&p)&&!p.sb.pending_irq();
+                if let Some((n,result))=b.block(&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget,chain){
                     p.image.set_segment_state(machine);p.selectors=machine.selectors;
                     execution_steps+=n;completed+=n;pil_steps+=n;
-                    *instructions.entry("native block instructions".into()).or_insert(0)+=n;
+                    native_block_count+=n;
                     if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
                     if n>0{continue;}
                 }
             }
             }
         }
-        let decoded=match {let _span=crate::profile::span("decode_cache");p.cache.fetch(&p.image,&p.ram,p.cpu.eip)}{
+        let prepared=backend.as_deref_mut().and_then(|b|b.decode(&p.image,&p.ram,p.cpu.eip));
+        let decoded=match prepared.unwrap_or_else(||{let _span=crate::profile::span("decode_cache");p.cache.fetch(&p.image,&p.ram,p.cpu.eip)}){
             Ok(d)=>d,Err(GuestError::Execution(e))=>match exception(&mut p,&e,&mut lazy){
                 Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
                 Some(Err(message))=>break Stop::Fault(message),
@@ -976,18 +1409,41 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         // answers its device ports itself in ports::io, so any port access
         // that reaches here (a prefixed IN/OUT, INS or OUTS) is not modelled.
         if is_port_access(&decoded.label){break Stop::Service(format!("{} at {:04x}:{:04x}: this port access is not modelled in Dine",decoded.label,p.selectors[1],p.cpu.eip));}
-        let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];
+        let old_ip=p.cpu.eip;let old_count=p.cpu.regs[1];let mut repeated_elements=0usize;
         let result=match &decoded.operation{
             Operation::Pil{program,dst,src,flow,address}=>{
+                if mode==crate::precompiled::Mode::Required && decoded.native().is_none(){
+                    break Stop::Service(format!("native form required for {} at {:04x}:{:08x}; interpreter fallback refused",decoded.label,p.selectors[1],p.cpu.eip));
+                }
                 let mut machine=p.image.segment_state();
-                let native=if let Some(b)=backend.as_deref_mut(){
-                    if b.may_execute(&p.image,&p.ram,p.cpu.eip){
-                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
-                        b.execute(&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
-                    }else{None}
-                }else{None};
-                let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
-                let result=match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|())}};
+                // One instruction, or one element of a repeated string
+                // instruction (REP leaves EIP on itself until it is done).
+                macro_rules! element{()=>{{
+                    let native=if let Some(b)=backend.as_deref_mut(){
+                        if b.may_execute(&p.image,&p.ram,p.cpu.eip){
+                            lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                            b.execute(&p.image,&decoded,&mut p.cpu,&mut p.ram,&mut machine)
+                        }else{None}
+                    }else{None};
+                    let native=match native{Some(result)=>Some(result),None=>precompiled_step(mode,&decoded,&mut p,&mut machine,&mut lazy)};
+                    match native{Some(result)=>result,None=>{let _span=crate::profile::span("pil_execute");if let Some(b)=backend.as_deref_mut(){b.reference_instruction(&p.image,&p.ram,old_ip,&decoded);}let result=super::execute_machine_lazy(program,&mut p.cpu,*dst,*src,*flow,&mut p.ram,*address,&mut machine,&mut lazy).map(|_|());if result.is_ok()&&(!program.partial||p.cpu.eip!=old_ip){p.blocks.interpreted_instructions+=1;if let Some(b)=backend.as_deref_mut(){b.reference_retired();}}result}}
+                }}}
+                let shadowed=machine.ss_shadow!=0||machine.sti_shadow!=0;
+                let mut result=element!();
+                // Further elements of the same REP run here, without a trip
+                // round the DOS loop each: up to the next timer poll and the
+                // budget, so interrupts and host events are still seen at
+                // the same step counts. A string element raises no event
+                // the loop looks at; a fault ends the batch where it was.
+                if program.partial&&result.is_ok()&&p.cpu.eip==old_ip&&!shadowed&&!p.rom_mode&&!history_enabled&&!watched{
+                    let limit=(budget-execution_steps-1).min(255-execution_steps%256);
+                    while repeated_elements<limit{
+                        let r=element!();
+                        if r.is_err(){result=r;break;}
+                        repeated_elements+=1;
+                        if p.cpu.eip!=old_ip{break;}
+                    }
+                }
                 p.image.set_segment_state(machine);p.selectors=machine.selectors;result
             },
             Operation::Halt if p.cpu.eflags&0x200!=0=>{
@@ -1030,6 +1486,8 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
             },
             _=>break Stop::Monitor("monitor-port I/O is outside the DOS probe shim".into()),
         };
+        // Elements a REP batch completed before its last one (or its fault).
+        execution_steps+=repeated_elements;pil_steps+=repeated_elements;
         if let Err(e)=result{
             match exception(&mut p,&e,&mut lazy){
                 Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},
@@ -1040,25 +1498,31 @@ pub(crate) fn run_with_backend(mut p:Loaded,budget:usize,output:&mut impl crate:
         execution_steps+=1;pil_steps+=1;
         let repeated=matches!(&decoded.operation,Operation::Pil{program,..}if program.partial);
         let partial=repeated&&p.cpu.eip==old_ip;
-        if repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1;}
+        if collect_mnemonic_mix&&repeated&&p.cpu.regs[1]!=old_count{*instructions.entry(format!("{} elements",decoded.label)).or_insert(0)+=1+repeated_elements;}
         if !partial{
             completed+=1;
-            let key=if repeated{decoded.label.as_str()}else{decoded.label.split_whitespace().next().unwrap_or("?")};
-            if let Some(count)=instructions.get_mut(key){*count+=1;}else{instructions.insert(key.to_string(),1);}
+            if collect_mnemonic_mix{
+                let key=if repeated{decoded.label.as_str()}else{decoded.label.split_whitespace().next().unwrap_or("?")};
+                if let Some(count)=instructions.get_mut(key){*count+=1;}else{instructions.insert(key.to_string(),1);}
+            }
         }
 
     };
     lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+    if native_block_count>0{*instructions.entry("native block instructions".into()).or_insert(0)+=native_block_count;}
     p.blocks.report(&mut instructions);
     let stop_bytes=site_bytes(&p);let linear=p.image.segments[SegmentRegister::Cs.index()].base.checked_add(p.cpu.eip);
-    let file_offset=linear.and_then(|a|a.checked_sub(p.module_base)).filter(|n|(*n as usize)<p.module_bytes).map(|n|n as usize+p.header_bytes);
+    let file_offset=linear.and_then(|a|a.checked_sub(p.dos.module_base)).filter(|n|(*n as usize)<p.dos.module_bytes).map(|n|n as usize+p.dos.header_bytes);
+    // Front ends read video memory and the BIOS data area between runs at
+    // their physical addresses, as the display hardware does.
+    p.ram.host_access();
     Ok(Probe{exceptions,exception_count,loaded:p,stop,completed,pil_steps,dos_calls,output:output.bytes().to_vec(),instructions,stop_bytes,file_offset})
 }
 fn ranked(counts:&BTreeMap<String,usize>)->Vec<(&String,&usize)>{let mut v:Vec<_>=counts.iter().collect();v.sort_by(|a,b|b.1.cmp(a.1).then(a.0.cmp(b.0)));v}
 pub fn report(paths:&[String],budget:usize)->Result<String,String>{
     if paths.is_empty()||paths.len()>256{return Err("DOS probe accepts 1..256 file paths".into());}
     if !(1..=MAX_STEPS).contains(&budget){return Err("DOS step budget must be 1..1000000".into());}
-    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; 80387 unavailable (no coprocessor installed); PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-FFFF with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at INT n/IRET entries at F000:F000+3n, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; 16 MiB physical RAM (15 MiB extended, AH88/CMOS); no LFN API, XMS or UMBs; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI, ANSI.SYS or XMS; colour VGA INT10 (AH10 palette/DAC, AX1130 8x8 font, AH12 BL10, AH1A; 16-colour planar modes 0D/0E/10/12; no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K conventional and 15 MiB extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
+    let mut report=format!("DOS executable probe v{}; step budget={} per program: concrete PIL interpreter plus minimal host DOS-call shim.\nSHIM PROFILE version6.22, OEM FF, serial0, no ROM; 80387 unavailable (no coprocessor installed); PSP:0040 supplies AH30 and AH33/06 version; default drive A: (empty, read-only; images and host folders become drives only in --dos-session); country 001 (358 Finland on request in --dos-session), code page 437; AH67 moves the handle table to an AH48 block when it grows; AH52 list of lists at 0070:0026 (first MCB, NUL device; no drives, DPB, SFT or CDS); AH34 InDOS at 0070:0001; Ctrl-C/Ctrl-Break at a DOS break check echoes ^C and calls INT 23h (default handler at 0070:0074 ends the program); INT1A/AH00 advances deterministic tick counter; PSP:002C environment with COMSPEC and the program path; INT21/AH3D validates DS:DX and returns file-not-found except for the program's own file, which opens read-only for AH3F/AH42; INT21/AH3E tracks open PSP handles 0..4; INT21/AH40 writes CON handles 0..2; INT21/AH31 ends the run as a TSR exit; date 1980-01-01 (no clock driver); first-fit allocation only; FFh read-only bus C000-C7FF and F000-FFFF (C800-EFFF too without XMS) with PC/AT model byte FCh and BIOS date 01/10/84 at F000:FFF5; vectors Dine answers start at entries at F000:F000+3n (a private HLT, n, IRET), caught by address, and INT n through a vector a program changed runs its handler; HLT with IF=1 idles one timer tick; PIT channel 0 latch reads 0 (time moves a tick at a time); NUL device; 16 MiB physical RAM (15 MiB extended: AX E801 and CMOS; INT15 AH87 block move); XMS 3.0 driver at 0070:03D0 (INT2F 4300h/4310h; 48 handles, HMA; INT15 AH88 then reports 0 KiB; PIL_XMS=off removes it) and DOS=UMB: C800-EFFF upper memory behind a system MCB at 9FFF, linked by AX=5803h; no LFN API; INT2F installation checks find no PRINT, ASSIGN, APPEND, redirector, Windows, DPMI or ANSI.SYS; colour VGA INT10 (AH10 palette/DAC, AX1130 8x8 font, AH12 BL10, AH1A; 16-colour planar modes 0D/0E/10/12; no VBE); INT33 reset finds no mouse driver; no serial port (COM1 only in --dos-session); CMOS at ports 70h/71h reads as an AT with 640K conventional and 15 MiB extended memory and no disks, its clock as AH2A/AH2C; MZ programs load whole 512-byte pages, as DOS does. Not a running DOS kernel.\n",env!("CARGO_PKG_VERSION"),budget);
     let mut inputs:Vec<(String,Result<Vec<u8>,String>)>=Vec::new();
     let mut fingerprints:BTreeMap<u64,Vec<Vec<u8>>>=BTreeMap::new();
     for path in paths{
@@ -1092,14 +1556,14 @@ pub fn report(paths:&[String],budget:usize)->Result<String,String>{
         let p=match bytes.and_then(|b|load(&b,&path)){
             Ok(p)=>p,Err(e)=>{writeln!(report,"IMPORT ERROR: {e}").unwrap();continue;}
         };imported+=1;
-        writeln!(report,"IMPORT {:?}: module={} bytes header={} relocations={} trailing={} PSP={PSP:04x} allocation_end={:05x}",p.format,p.module_bytes,p.header_bytes,p.relocations,p.trailing_bytes,p.allocated_end).unwrap();
+        writeln!(report,"IMPORT {:?}: module={} bytes header={} relocations={} trailing={} PSP={PSP:04x} allocation_end={:05x}",p.dos.format,p.dos.module_bytes,p.dos.header_bytes,p.dos.relocations,p.dos.trailing_bytes,p.dos.allocated_end).unwrap();
         writeln!(report,"ENTRY CS:IP={:04x}:{:04x} DS={:04x} ES={:04x} SS:SP={:04x}:{:04x}",p.selectors[1],p.cpu.eip,p.selectors[3],p.selectors[0],p.selectors[2],p.cpu.regs[4]).unwrap();
         let result=run(p,budget)?;
         if matches!(result.stop,Stop::Exit(_)){exited+=1;}
         if let Stop::MissingEncoding{key,..}=&result.stop{*blockers.entry(key.clone()).or_insert(0)+=1;}
         for(k,n)in &result.instructions{*mix.entry(k.clone()).or_insert(0)+=n;}
         writeln!(report,"STOP {:?}; CS:IP={:04x}:{:04x}; file_offset={:?}; bytes={}",result.stop,result.loaded.selectors[1],result.loaded.cpu.eip,result.file_offset,result.stop_bytes.iter().map(|b|format!("{b:02x}")).collect::<Vec<_>>().join(" ")).unwrap();
-        if let Some(paragraphs)=result.loaded.resident{writeln!(report,"RESIDENT INT21/AH31 kept {paragraphs} paragraphs; no resident code runs after this probe stop").unwrap();}
+        if let Some(paragraphs)=result.loaded.dos.resident{writeln!(report,"RESIDENT INT21/AH31 kept {paragraphs} paragraphs; no resident code runs after this probe stop").unwrap();}
         writeln!(report,"completed={} PIL={} DOS_calls={} EAX={:08x} ESP={:08x}",result.completed,result.pil_steps,result.dos_calls,result.loaded.cpu.regs[0],result.loaded.cpu.regs[4]).unwrap();
         writeln!(report,"OUTPUT (escaped bytes): {}",result.output.iter().map(|b|std::ascii::escape_default(*b).map(char::from).collect::<String>()).collect::<String>()).unwrap();
     }
@@ -1130,6 +1594,7 @@ pub fn run_rom(rom_path: &Path, budget: usize) -> Result<Probe, String> {
     ram.protect(rom_base,rom_data.len()).map_err(|e|format!("ROM protection: {e:?}"))?;
     p.ram = ram;
     p.rom_mode = true;
+    p.blocks.rom = true;
     p.cpu.regs = [0;8];
     p.image.system = [(0,0);SYSTEM_RANGES];
     p.image.fetch_base = 0;

@@ -6,6 +6,8 @@
 //! step, embeds a guest program. tools/verify_dine_library.py calls it with
 //! ctypes.
 use std::ffi::{c_char, CStr};
+#[path = "dine_compiled.rs"]
+mod compiled;
 
 /// Convert a host command line to the legacy 8.3 DOS view.
 /// File operands are resolved against the current host working directory,
@@ -27,7 +29,7 @@ fn dos_tail(loaded:&crate::dos::Loaded,command_line:&str)->Result<String,String>
             else{value.push(next);}
         }
         if quoted{return Err("unterminated quotation mark in Dine command line".into());}
-        if let Some(alias)=loaded.drive.host_argument_alias(&value)?{
+        if let Some(alias)=loaded.dos.drive.host_argument_alias(&value)?{
             arguments.push(alias);
         }else if had_quote {
             // Retain quotes for ordinary guest arguments that aren't host
@@ -40,18 +42,51 @@ fn dos_tail(loaded:&crate::dos::Loaded,command_line:&str)->Result<String,String>
     Ok(arguments.join(" "))
 }
 
-fn interpreted(guest: &[u8], name: &str, tail: &str) -> Result<i32, String> {
+pub(crate) fn prepare(guest:&[u8],name:&str,tail:&str,config:Option<&str>)->Result<(crate::dos::session::Session,crate::dos::host_console::Options),String>{
+    prepare_image(guest, name, tail, config, None)
+}
+
+fn prepare_image(data: &[u8], name: &str, tail: &str, config: Option<&str>, compiled: Option<(usize, usize)>) -> Result<(crate::dos::session::Session,crate::dos::host_console::Options),String>{
     // Current-directory mapping is intentional: Dine runs with the host
     // caller's folder as DOS C: so the aliases refer to real host files.
     // This is a compatibility mount, not unrestricted native filesystem I/O.
     let cwd=std::env::current_dir().map_err(|e|format!("Dine working directory: {e}"))?;
-    let mut loaded = crate::dos::load_with_drives(
-        guest, name, vec![crate::dos::Source::Host(cwd)], None)?;
-    let translated=dos_tail(&loaded,tail)?;
-    crate::dos::set_command_tail(&mut loaded,&translated)?;
-    let mut session = crate::dos::session::Session::new(loaded);
-    let options=crate::dos::host_console::Options{window:false,mouse:false,ansi:false,country:None,utc_offset:None};
+    let defaults=crate::dos_config::console_settings(config)?;
+    let drives = vec![crate::dos::Source::Host(cwd.clone()),crate::dos::Source::Memory(crate::dos::MemDir::default())];
+    let loaded = if let Some((image_len, offset)) = compiled { crate::dos::load_compiled_com(data, image_len, offset, name, drives)? }
+        else { crate::dos::load_with_drives(data, name, drives, None)? };
+    let mut session=crate::dos::session::configured(loaded,None,config,None,defaults.fpu.map(|on|if on{"80387"}else{"none"}))?;
+    // The launch folder stays the current directory (next to the configured
+    // drives), and the program finds its support files
+    // beside the host executable, as DOS programs do beside themselves.
+    let folder=std::env::current_exe().ok().and_then(|exe|exe.parent().map(std::path::Path::to_path_buf)).unwrap_or_else(||cwd.clone());
+    crate::dos::place_host_program(session.machine_mut().ok_or("session state lost")?,&cwd,&folder,name)?;
+    let translated=dos_tail(session.machine().ok_or("session state lost")?,tail)?;
+    crate::dos::set_command_tail(session.machine_mut().ok_or("session state lost")?,&translated)?;
+    let options=crate::dos::host_console::Options{window:false,mouse:defaults.mouse,ansi:defaults.ansi,country:None,utc_offset:defaults.utc_offset,host_pointer:defaults.host_pointer.unwrap_or_default(),speaker_volume:defaults.speaker_volume.unwrap_or(crate::dos::host_console::speaker::DEFAULT_VOLUME),rtc_year:None,guest_keymap:None};
+    Ok((session,options))
+}
+fn interpreted(guest: &[u8], name: &str, tail: &str,timed:bool) -> Result<i32, String> {
+    let (mut session,options)=prepare(guest,name,tail,None)?;
+    if timed{
+        crate::dos::host_console::configure(&mut session,&options)?;
+        let budget=std::env::var("DINE_BENCHMARK_STEPS").unwrap_or_else(|_|"1000000000".into())
+            .parse::<usize>().ok().filter(|n|(1..=1_000_000_000).contains(n)).ok_or("DINE_BENCHMARK_STEPS must be 1..1000000000")?;
+        let (elapsed,steps,boundary)=crate::dos_text_io::timed(&mut session,budget)?;
+        println!("DINE_TIMING elapsed_ms={:.3} instructions={steps} boundary={boundary} presentation=off",elapsed.as_secs_f64()*1000.0);
+        return Ok(i32::from(session.exit_code().unwrap_or(0)));
+    }
     crate::dos_text_io::run(&mut session,&options,false)
+}
+
+/// Optional shared settings editor. Existing ABI-1 loaders remain compatible.
+#[no_mangle]
+pub extern "C" fn dine_edit_settings()->i32{
+    match std::panic::catch_unwind(||crate::dos::setup::edit(None,cfg!(windows))){
+        Ok(Ok(line))=>{println!("{line}");0},
+        Ok(Err(e))=>{eprintln!("Dine settings: {e}");1},
+        Err(_)=>{eprintln!("Dine settings: runtime panicked");1},
+    }
 }
 
 /// Stable ABI version for hosts. A change to the C contract increases it.
@@ -69,6 +104,14 @@ pub unsafe extern "C" fn dine_run(
     guest: *const u8, guest_len: usize,
     name: *const c_char, tail: *const c_char,
 ) -> i32 {
+    run_inner(guest,guest_len,name,tail,false)
+}
+/// Execution timing through the same shared runtime, without host presentation.
+#[no_mangle]
+pub unsafe extern "C" fn dine_run_timed(guest:*const u8,guest_len:usize,name:*const c_char,tail:*const c_char)->i32{
+    run_inner(guest,guest_len,name,tail,true)
+}
+unsafe fn run_inner(guest:*const u8,guest_len:usize,name:*const c_char,tail:*const c_char,timed:bool)->i32{
     let outcome = std::panic::catch_unwind(|| -> Result<i32, String> {
         if guest.is_null() || name.is_null() || tail.is_null() {
             return Err("null argument to dine_run".into());
@@ -81,7 +124,7 @@ pub unsafe extern "C" fn dine_run(
             .to_str().map_err(|e| format!("DOS name is not UTF-8: {e}"))?;
         let tail = unsafe { CStr::from_ptr(tail) }
             .to_str().map_err(|e| format!("DOS command tail is not UTF-8: {e}"))?;
-        interpreted(guest, name, tail)
+        interpreted(guest, name, tail,timed)
     });
     match outcome {
         Ok(Ok(status)) => status,
@@ -98,6 +141,29 @@ pub unsafe extern "C" fn dine_run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn embedded_guests_use_shared_configuration_and_ansi_screen(){
+        let root=std::env::temp_dir().join(format!("dine-config-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(root.join("files")).unwrap();
+        std::fs::write(root.join("files/payload.dat"),b"data").unwrap();
+        let config=root.join("pildos.conf");
+        std::fs::write(&config,"ansi=true\nmouse=true\nfpu=80387\ncountry=358\nutc_offset=+02:00\nC=files\nown_programs=none\n").unwrap();
+        let mut bytes=Vec::new();
+        for &b in b"\x1b[92mX"{bytes.extend_from_slice(&[0xb2,b,0xb4,2,0xcd,0x21]);}
+        bytes.extend_from_slice(&[0xb8,0,0x4c,0xcd,0x21]);
+        let (mut session,options)=super::prepare(&bytes,"FIXTURE.COM","",config.to_str()).unwrap();
+        assert!(options.ansi&&options.mouse);assert_eq!(options.utc_offset,Some(7200));
+        let p=session.machine().unwrap();assert_eq!(p.dos.country,358);
+        assert_ne!(p.ram.load(0x410,crate::MemWidth::Word).unwrap()&2,0);
+        // The configured C: stays; host names on the command line are the
+        // launch folder's (the test's working directory), now current.
+        assert!(p.dos.drive.is_mounted(b'C')&&p.dos.drive.letter()!=b'C');
+        assert!(p.dos.drive.host_argument_alias("Cargo.toml").unwrap().is_some());
+        crate::dos::host_console::configure(&mut session,&options).unwrap();
+        crate::dos_text_io::stream(&mut session,&mut std::io::Cursor::new(""),&mut Vec::new()).unwrap();
+        assert_eq!(&session.screen().unwrap().0[..2],&[b'X',10]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn null_guest_is_rejected() {
         let name = b"HELLO.COM\0";
