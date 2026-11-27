@@ -775,11 +775,7 @@ fn compact_label(label: &str) -> &str {
     }
 }
 
-/// Compile every possible byte entry in the initial image, not just a trace.
-/// Entry discovery therefore does not remove unvisited functions or indirect
-/// targets. Unchanged entries call native forms; generated/modified code has
-/// its own reference path. Resources are data, not a second execution engine.
-pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), String> {
+fn prepare_startup(bytes: &[u8], name: &str) -> Result<(dos::Loaded, Vec<u8>, Vec<u8>), String> {
     let mut loaded = dos::load(bytes, name)?;
     // The loader installs DOS=UMB after allocating the process. Undo that
     // optional service setup while recording the original allocation request;
@@ -804,6 +800,15 @@ pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), S
     word(20, loaded.cpu.eip as u16);
     word(22, loaded.selectors[1].wrapping_sub(load_segment));
     startup.extend(&module);
+    Ok((loaded, module, startup))
+}
+
+/// Compile every possible byte entry in the initial image, not just a trace.
+/// Entry discovery therefore does not remove unvisited functions or indirect
+/// targets. Unchanged entries call native forms; generated/modified code has
+/// its own reference path. Resources are data, not a second execution engine.
+pub(crate) fn compile(bytes: &[u8], name: &str) -> Result<(Vec<u8>, Vec<u32>), String> {
+    let (loaded, module, startup) = prepare_startup(bytes, name)?;
     let mut unique: Vec<Vec<u8>> = Vec::new();
     let mut unique_index: std::collections::HashMap<Vec<u8>, u32> =
         std::collections::HashMap::new();
@@ -1001,6 +1006,519 @@ std::process::exit(if status<0{1}else{status});
     std::fs::write(&map_file, map).map_err(|e| e.to_string())?;
     std::fs::write(path, source).map_err(|e| e.to_string())?;
     Ok(format!("prepared {} native instruction entries; relocation completed at compilation; generated/modified code and executable resources retained separately",offsets.len()))
+}
+
+const PIL_IMG_MAGIC: &[u8; 8] = b"PILIMG01";
+
+#[repr(C)]
+pub struct DinePilCtx {
+    pub regs: [u32; 8],
+    pub eflags: u32,
+    pub undefined: u32,
+    pub eip: u32,
+    pub selectors: [u16; 6],
+    pub code_limit: u32,
+    pub steps_done: u32,
+    pub exit_kind: u32,
+    pub fault_eip: u32,
+    pub fault_vector: u8,
+    pub host: *mut std::ffi::c_void,
+}
+
+pub(crate) type PilEntryFn = unsafe extern "C" fn(*mut DinePilCtx, u32);
+
+pub(crate) struct PilImage {
+    image: Vec<u8>,
+    resource: Vec<u8>,
+    code_mask: Vec<u8>,
+}
+
+impl PilImage {
+    pub(crate) fn read(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() > 128 * 1024 * 1024 {
+            return Err("PIL native image exceeds size bound".into());
+        }
+        let mut r = Reader { data: bytes, at: 0 };
+        if r.take(8)? != PIL_IMG_MAGIC {
+            return Err("unsupported PIL native image format".into());
+        }
+        let image_len = r.dword()? as usize;
+        let resource_len = r.dword()? as usize;
+        let mask_len = r.dword()? as usize;
+        if image_len > dos::MAX_FILE || resource_len > dos::MAX_FILE || mask_len > dos::MAX_FILE {
+            return Err("PIL native image exceeds bounds".into());
+        }
+        let name_len = r.word()? as usize;
+        let name = std::str::from_utf8(r.take(name_len)?)
+            .map_err(|_| "invalid PIL native image name")?
+            .to_string();
+        let image = r.take(image_len)?.to_vec();
+        let resource = r.take(resource_len)?.to_vec();
+        let code_mask = r.take(mask_len)?.to_vec();
+        if r.at != bytes.len() {
+            return Err("trailing PIL native image data".into());
+        }
+        let initial = dos::load(&image, &name)?;
+        if initial.dos.relocations != 0 {
+            return Err("prepared startup must not contain relocation work".into());
+        }
+        Ok(Self {
+            image,
+            resource,
+            code_mask,
+        })
+    }
+
+    pub(crate) fn attach(
+        self,
+        session: &mut dos::session::Session,
+        entry: PilEntryFn,
+    ) -> Result<(), String> {
+        let p = session.machine_mut().ok_or("session state lost")?;
+        let start = p.dos.module_base as usize;
+        let original = p.ram.bytes()[start..start + p.dos.module_bytes].to_vec();
+        p.dos.own_file = std::sync::Arc::new(self.resource);
+        let resource = p.dos.own_file.clone();
+        p.ram
+            .track_resource(std::sync::Arc::as_ptr(&resource) as usize);
+        let module_base = p.dos.module_base;
+        let initial_cs = p.selectors[1];
+        let cs_base = p.image.segments[1].base;
+        session.set_backend(Box::new(CompiledPilBackend {
+            original,
+            code_mask: self.code_mask,
+            module_base,
+            initial_cs,
+            cs_base,
+            entry,
+            code_dirty: false,
+            blocks: 0,
+            instructions: 0,
+        }));
+        Ok(())
+    }
+}
+
+pub(crate) fn compile_pil(
+    bytes: &[u8],
+    name: &str,
+) -> Result<(Vec<u8>, crate::block_compiler::pil_rust::DiscoveredCfg), String> {
+    let (loaded, module, startup) = prepare_startup(bytes, name)?;
+    let mut image = loaded.image.clone();
+    image.end = image
+        .end
+        .max(loaded.dos.module_base + module.len() as u32);
+    let cfg = crate::block_compiler::pil_rust::discover_real16(
+        &image,
+        &loaded.ram,
+        loaded.dos.module_base,
+        module.len(),
+        loaded.cpu.eip,
+    );
+    if cfg.sites.is_empty() {
+        return Err("input has no compilable PIL basic blocks".into());
+    }
+    let mut out = PIL_IMG_MAGIC.to_vec();
+    put32(&mut out, startup.len() as u32);
+    put32(&mut out, bytes.len() as u32);
+    put32(&mut out, cfg.code_mask.len() as u32);
+    put16(
+        &mut out,
+        name.len()
+            .try_into()
+            .map_err(|_| "application name too long")?,
+    );
+    out.extend(name.as_bytes());
+    out.extend(&startup);
+    out.extend(bytes);
+    out.extend(&cfg.code_mask);
+    Ok((out, cfg))
+}
+
+pub(crate) fn emit_pil(input: &str, output: &str) -> Result<String, String> {
+    let bytes = std::fs::read(input).map_err(|e| format!("input: {e}"))?;
+    let name = Path::new(input)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("invalid input filename")?;
+    let (img_data, cfg) = compile_pil(&bytes, name)?;
+    let path = Path::new(output);
+    let img_file = path.with_extension("pilimg");
+    if path.exists() || img_file.exists() {
+        return Err("native application output already exists".into());
+    }
+    let img_include = img_file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("invalid PIL image filename")?;
+    let source = crate::block_compiler::pil_rust::emit_application_rust(&cfg, img_include, name);
+    std::fs::write(&img_file, img_data).map_err(|e| e.to_string())?;
+    std::fs::write(path, source).map_err(|e| e.to_string())?;
+    let covered_bytes: usize = cfg.code_mask.iter().filter(|&&b| b != 0).count();
+    Ok(format!(
+        "emitted {} PIL-lowered Rust blocks ({} instructions, {} bytes); relocation completed at compilation",
+        cfg.blocks.len(),
+        cfg.sites.len(),
+        covered_bytes
+    ))
+}
+
+struct HostMem<'a> {
+    ram: &'a mut Ram,
+    segments: &'a [address::SegmentCache; 6],
+    module_base: u32,
+    original: &'a [u8],
+    code_mask: &'a [u8],
+    code_dirty: &'a mut bool,
+    fault: Option<ExecError>,
+}
+
+fn translate_seg(
+    segments: &[address::SegmentCache; 6],
+    seg: u8,
+    offset: u64,
+    bytes: u32,
+    write: bool,
+    eip: u32,
+) -> Result<u32, ExecError> {
+    if seg == 255 {
+        return u32::try_from(offset).map_err(|_| ExecError::InvalidContext);
+    }
+    let reg = match seg {
+        0 => SegmentRegister::Es,
+        1 => SegmentRegister::Cs,
+        2 => SegmentRegister::Ss,
+        3 => SegmentRegister::Ds,
+        4 => SegmentRegister::Fs,
+        5 => SegmentRegister::Gs,
+        _ => return Err(ExecError::InvalidContext),
+    };
+    address::MemoryContext {
+        segment: reg,
+        cache: segments[seg as usize],
+    }
+    .translate_span(offset, bytes, write, eip)
+}
+
+#[cfg(any(feature = "dine-library", test))]
+#[no_mangle]
+pub unsafe extern "C" fn dine_pil_read(
+    host: *mut std::ffi::c_void,
+    seg: u8,
+    offset: u32,
+    bytes: u8,
+    eip: u32,
+    out: *mut u32,
+) -> i32 {
+    let host = unsafe { &mut *(host as *mut HostMem<'_>) };
+    let Some(width) = crate::MemWidth::from_bits(bytes.saturating_mul(8)) else {
+        host.fault = Some(ExecError::InvalidContext);
+        return -1;
+    };
+    let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), false, eip)
+        .and_then(|addr| host.ram.load(addr, width).map_err(|f| f.error(eip)));
+    match res {
+        Ok(val) => {
+            unsafe { *out = val };
+            0
+        }
+        Err(e) => {
+            host.fault = Some(e);
+            -1
+        }
+    }
+}
+
+#[cfg(any(feature = "dine-library", test))]
+#[no_mangle]
+pub unsafe extern "C" fn dine_pil_check_write(
+    host: *mut std::ffi::c_void,
+    seg: u8,
+    offset: u32,
+    bytes: u8,
+    eip: u32,
+) -> i32 {
+    let host = unsafe { &mut *(host as *mut HostMem<'_>) };
+    let Some(width) = crate::MemWidth::from_bits(bytes.saturating_mul(8)) else {
+        host.fault = Some(ExecError::InvalidContext);
+        return -1;
+    };
+    let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), true, eip)
+        .and_then(|addr| host.ram.check_write(addr, width).map_err(|f| f.error(eip)));
+    match res {
+        Ok(()) => 0,
+        Err(e) => {
+            host.fault = Some(e);
+            -1
+        }
+    }
+}
+
+#[cfg(any(feature = "dine-library", test))]
+#[no_mangle]
+pub unsafe extern "C" fn dine_pil_check_span(
+    host: *mut std::ffi::c_void,
+    seg: u8,
+    offset: u64,
+    bytes: u32,
+    eip: u32,
+) -> i32 {
+    let host = unsafe { &mut *(host as *mut HostMem<'_>) };
+    match translate_seg(host.segments, seg, offset, bytes, false, eip) {
+        Ok(_) => 0,
+        Err(e) => {
+            host.fault = Some(e);
+            -1
+        }
+    }
+}
+
+#[cfg(any(feature = "dine-library", test))]
+#[no_mangle]
+pub unsafe extern "C" fn dine_pil_write(
+    host: *mut std::ffi::c_void,
+    seg: u8,
+    offset: u32,
+    bytes: u8,
+    value: u32,
+    eip: u32,
+) -> i32 {
+    let host = unsafe { &mut *(host as *mut HostMem<'_>) };
+    let Some(width) = crate::MemWidth::from_bits(bytes.saturating_mul(8)) else {
+        host.fault = Some(ExecError::InvalidContext);
+        return -1;
+    };
+    let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), true, eip)
+        .and_then(|addr| {
+            host.ram
+                .store(addr, width, value)
+                .map(|()| addr)
+                .map_err(|f| f.error(eip))
+        });
+    let addr = match res {
+        Ok(addr) => addr,
+        Err(e) => {
+            host.fault = Some(e);
+            return -1;
+        }
+    };
+    for i in 0..u32::from(bytes) {
+        let p = host.ram.physical_address(addr.wrapping_add(i));
+        if host.ram.planar().is_some() && (0xa0000..0xb0000).contains(&(p as usize)) {
+            continue;
+        }
+        if let Some(rel) = p.checked_sub(host.module_base) {
+            let idx = rel as usize;
+            if idx < host.code_mask.len()
+                && host.code_mask[idx] != 0
+                && host.ram.bytes()[p as usize] != host.original[idx]
+            {
+                *host.code_dirty = true;
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+struct CompiledPilBackend {
+    original: Vec<u8>,
+    code_mask: Vec<u8>,
+    module_base: u32,
+    initial_cs: u16,
+    cs_base: u32,
+    entry: PilEntryFn,
+    code_dirty: bool,
+    blocks: u64,
+    instructions: u64,
+}
+
+impl CompiledPilBackend {
+    fn eligible(&self, image: &Image, cpu_eflags: u32, machine: &address::SegmentState) -> bool {
+        !self.code_mask.is_empty()
+            && image.real_mode
+            && !image.paging
+            && !image.segments[1].default_32()
+            && !matches!(
+                machine.segments[2].access,
+                address::SegmentAccess::Data { big: true, .. }
+            )
+            && image.selectors[1] == self.initial_cs
+            && image.segments[1].base == self.cs_base
+            && cpu_eflags & 0x100 == 0
+            && machine.ss_shadow == 0
+            && machine.sti_shadow == 0
+            && machine.flag_checkpoint.is_none()
+    }
+}
+
+impl dos::InstructionBackend for CompiledPilBackend {
+    fn may_block(&mut self, image: &Image, _ram: &Ram, _ip: u32) -> bool {
+        !self.code_mask.is_empty()
+            && image.real_mode
+            && !image.paging
+            && !image.segments[1].default_32()
+            && image.selectors[1] == self.initial_cs
+            && image.segments[1].base == self.cs_base
+    }
+    fn may_execute(&mut self, _image: &Image, _ram: &Ram, _ip: u32) -> bool {
+        false
+    }
+    fn block_stats(&self) -> (u64, u64) {
+        (self.blocks, self.instructions)
+    }
+    fn block(
+        &mut self,
+        image: &Image,
+        cpu: &mut Cpu,
+        ram: &mut Ram,
+        machine: &mut address::SegmentState,
+        budget: usize,
+        chain: bool,
+    ) -> Option<(usize, Result<(), ExecError>)> {
+        if budget == 0 || !self.eligible(image, cpu.eflags, machine) {
+            return None;
+        }
+        if self.code_dirty {
+            let ram_bytes = ram.bytes();
+            let base = self.module_base as usize;
+            let still_dirty = self.code_mask.iter().enumerate().any(|(i, &m)| {
+                m != 0 && ram_bytes.get(base + i).copied() != Some(self.original[i])
+            });
+            if still_dirty {
+                return None;
+            }
+            self.code_dirty = false;
+        }
+        let effective_budget = if chain { budget } else { 1 };
+        let mut host = HostMem {
+            ram,
+            segments: &machine.segments,
+            module_base: self.module_base,
+            original: &self.original,
+            code_mask: &self.code_mask,
+            code_dirty: &mut self.code_dirty,
+            fault: None,
+        };
+        let mut ctx = DinePilCtx {
+            regs: cpu.regs,
+            eflags: cpu.eflags,
+            undefined: cpu.undefined_flags,
+            eip: cpu.eip,
+            selectors: machine.selectors,
+            code_limit: machine.segments[1].limit,
+            steps_done: 0,
+            exit_kind: 0,
+            fault_eip: 0,
+            fault_vector: 0,
+            host: (&mut host as *mut HostMem<'_>).cast(),
+        };
+        unsafe { (self.entry)(&mut ctx, effective_budget as u32) };
+        cpu.regs = ctx.regs;
+        cpu.eflags = ctx.eflags;
+        cpu.undefined_flags = ctx.undefined;
+        cpu.eip = ctx.eip;
+        let done = ctx.steps_done as usize;
+        if done > 0 {
+            self.blocks += 1;
+            self.instructions += done as u64;
+        }
+        match ctx.exit_kind {
+            0..=2 => (done > 0).then_some((done, Ok(()))),
+            3 => Some((
+                done,
+                Err(host.fault.unwrap_or(ExecError::InvalidContext)),
+            )),
+            4 => Some((
+                done,
+                Err(ExecError::Exception {
+                    eip: ctx.fault_eip,
+                    vector: ctx.fault_vector,
+                }),
+            )),
+            _ => Some((done, Err(ExecError::InvalidContext))),
+        }
+    }
+    fn execute(
+        &mut self,
+        _image: &Image,
+        _decoded: &Rc<Decoded>,
+        _cpu: &mut Cpu,
+        _ram: &mut Ram,
+        _machine: &mut address::SegmentState,
+    ) -> Option<Result<(), ExecError>> {
+        None
+    }
+}
+
+#[cfg(feature = "dine-library")]
+#[no_mangle]
+pub unsafe extern "C" fn dine_run_pil_v1(
+    data: *const u8,
+    len: usize,
+    name: *const c_char,
+    tail: *const c_char,
+    entry: Option<PilEntryFn>,
+) -> i32 {
+    unsafe { pil_entry(data, len, name, tail, entry, false) }
+}
+
+#[cfg(feature = "dine-library")]
+#[no_mangle]
+pub unsafe extern "C" fn dine_session_pil_v1(
+    data: *const u8,
+    len: usize,
+    name: *const c_char,
+    tail: *const c_char,
+    entry: Option<PilEntryFn>,
+) -> i32 {
+    unsafe { pil_entry(data, len, name, tail, entry, true) }
+}
+
+#[cfg(feature = "dine-library")]
+unsafe fn pil_entry(
+    data: *const u8,
+    len: usize,
+    name: *const c_char,
+    tail: *const c_char,
+    entry: Option<PilEntryFn>,
+    protocol: bool,
+) -> i32 {
+    let run = || -> Result<i32, String> {
+        if data.is_null() || name.is_null() || tail.is_null() || len > 128 * 1024 * 1024 {
+            return Err("invalid PIL native application arguments".into());
+        }
+        let img = PilImage::read(unsafe { std::slice::from_raw_parts(data, len) })?;
+        let name = unsafe { std::ffi::CStr::from_ptr(name) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let tail = unsafe { std::ffi::CStr::from_ptr(tail) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let entry = entry.ok_or("missing compiled PIL entry point")?;
+        let config = application_config_path();
+        let (mut session, mut options) =
+            crate::dine_ffi::prepare(&img.image, name, tail, config.as_deref())?;
+        options.window = cfg!(windows);
+        img.attach(&mut session, entry)?;
+        if protocol {
+            dos::session::serve_native(session, name)?;
+            Ok(0)
+        } else {
+            crate::dos_text_io::run(&mut session, &options, false)
+        }
+    };
+    match std::panic::catch_unwind(run) {
+        Ok(Ok(status)) => status,
+        Ok(Err(e)) => {
+            eprintln!("Dine native application: {e}");
+            -1
+        }
+        Err(_) => {
+            eprintln!("Dine native application panicked");
+            -1
+        }
+    }
 }
 
 /// Foreign buffers, strings and dispatch callback must remain valid for the
@@ -1357,5 +1875,94 @@ mod tests {
         assert!(total >= 40, "expected >=40 native instructions, got {reply}");
         assert!(blocks < total, "expected block chaining (blocks={blocks} < total={total})");
         assert!(reply.contains("\"interpreter_instructions\":0"), "{reply}");
+    }
+
+    #[test]
+    fn pil_rust_cfg_and_rust_emission_covers_calls_loops_memory_and_div() {
+        // MOV CX, 4; XOR AX, AX; CALL +5; LOOP -3; MOV AX, 4C00h; INT 21h
+        // callee: MOV BX, 0x200; ADD AX, [BX]; DIV CL; RET
+        let com = [
+            0xb9, 0x04, 0x00, // 0100: MOV CX, 4
+            0x31, 0xc0, // 0103: XOR AX, AX
+            0xe8, 0x07, 0x00, // 0105: CALL 010F
+            0xe2, 0xfb, // 0108: LOOP 0105
+            0xb8, 0x00, 0x4c, // 010A: MOV AX, 4C00h
+            0xcd, 0x21, // 010D: INT 21h
+            0xbb, 0x00, 0x02, // 010F: MOV BX, 0200h
+            0x03, 0x07, // 0112: ADD AX, [BX]
+            0xf6, 0xf1, // 0114: DIV CL
+            0xc3, // 0116: RET
+        ];
+        let (img_bytes, cfg) = compile_pil(&com, "PILCFG.COM").unwrap();
+        let parsed = PilImage::read(&img_bytes).unwrap();
+        assert_eq!(parsed.resource, com);
+        assert!(cfg.sites.contains_key(&0x100));
+        assert!(cfg.sites.contains_key(&0x105));
+        assert!(cfg.sites.contains_key(&0x108));
+        assert!(cfg.sites.contains_key(&0x10a));
+        assert!(cfg.sites.contains_key(&0x10f));
+        assert!(cfg.sites.contains_key(&0x116));
+        assert!(!cfg.sites.contains_key(&0x10d)); // INT 21h handled by Dine
+        let rust = crate::block_compiler::pil_rust::emit_application_rust(
+            &cfg,
+            "app.pilimg",
+            "PILCFG.COM",
+        );
+        assert!(rust.contains("pub unsafe extern \"C\" fn run_compiled"));
+        assert!(rust.contains("dine_run_pil_v1"));
+        assert!(rust.contains("dine_pil_read"));
+    }
+
+    #[test]
+    fn pil_ffi_helpers_enforce_bounds_readonly_and_smc_detection() {
+        let mut ram = Ram::new(64 * 1024);
+        let module_base = 0x1000u32;
+        let original = vec![0x90, 0x40, 0xc3];
+        ram.write_bytes(module_base, &original).unwrap();
+        ram.protect(0x2000, 16).unwrap();
+        let code_mask = vec![1, 1, 1];
+        let mut segments = [address::SegmentCache::real_mode(0); 6];
+        segments[3] = address::SegmentCache::real_mode(0x100); // DS base = 0x1000
+        segments[2] = address::SegmentCache::real_mode(0x300); // SS base = 0x3000
+        let mut dirty = false;
+        let mut host = HostMem {
+            ram: &mut ram,
+            segments: &segments,
+            module_base,
+            original: &original,
+            code_mask: &code_mask,
+            code_dirty: &mut dirty,
+            fault: None,
+        };
+        let ptr = (&mut host as *mut HostMem<'_>).cast();
+        let mut out = 0u32;
+        unsafe {
+            assert_eq!(dine_pil_read(ptr, 3, 0, 2, 0x100, &mut out), 0);
+            assert_eq!(out, 0x4090);
+            // Write to non-code DS offset 0x10 returns 0 and keeps code_dirty false.
+            assert_eq!(dine_pil_check_write(ptr, 3, 0x10, 2, 0x100), 0);
+            assert_eq!(dine_pil_write(ptr, 3, 0x10, 2, 0x1234, 0x100), 0);
+            assert!(!*host.code_dirty);
+            // Write to compiled code byte returns 1 and sets code_dirty.
+            assert_eq!(dine_pil_write(ptr, 3, 1, 1, 0x41, 0x100), 1);
+            assert!(*host.code_dirty);
+            // Write to protected physical 0x2000 (DS offset 0x1000) returns -1 with MemoryAccess.
+            assert_eq!(dine_pil_check_write(ptr, 3, 0x1000, 1, 0x100), -1);
+            assert!(matches!(
+                host.fault,
+                Some(ExecError::MemoryAccess { write: true, .. })
+            ));
+            // Past segment limit faults with GeneralProtection / StackSegment.
+            assert_eq!(dine_pil_read(ptr, 3, 0xffff, 2, 0x100, &mut out), -1);
+            assert!(matches!(
+                host.fault,
+                Some(ExecError::GeneralProtection { eip: 0x100, .. })
+            ));
+            assert_eq!(dine_pil_check_write(ptr, 2, 0xffff, 2, 0x102), -1);
+            assert!(matches!(
+                host.fault,
+                Some(ExecError::StackSegment { eip: 0x102, .. })
+            ));
+        }
     }
 }

@@ -124,6 +124,8 @@ Debugger and checks:
 Code generation and examples:
   --emit-native-application INPUT OUTPUT.rs
                                     Prepare native application calls and relocated startup
+  --emit-native-pil INPUT OUTPUT.rs
+                                    Emit whole-block PIL-lowered Rust calling shared Dine library
   --emit-rust 8|16|32 [DESCRIPTION]  Emit a Rust instruction implementation
   --emit-suite-rust [N] [SAMPLES]    Emit backend verification suite
   --emit-loop-rust [N] [SAMPLES]     Emit small native loop benchmark
@@ -441,6 +443,10 @@ pub fn run_cli() -> Result<(), String> {
     if args.get(1).map(String::as_str)==Some("--emit-native-application"){
         if args.len()!=4{return Err("usage: pil --emit-native-application INPUT OUTPUT.rs".into());}
         println!("{}",native_application::emit(&args[2],&args[3])?);return Ok(());
+    }
+    if args.get(1).map(String::as_str)==Some("--emit-native-pil"){
+        if args.len()!=4{return Err("usage: pil --emit-native-pil INPUT OUTPUT.rs".into());}
+        println!("{}",native_application::emit_pil(&args[2],&args[3])?);return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("--emit-rust") {
         let w = args.get(2).ok_or("usage: pil --emit-rust 8|16|32 [description]")?;

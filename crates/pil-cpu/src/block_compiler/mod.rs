@@ -10,4 +10,5 @@ pub mod sites;
 pub mod codegen;
 pub mod guards;
 pub mod engine;
+pub mod pil_rust;
 mod compare_branch;

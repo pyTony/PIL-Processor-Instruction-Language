@@ -29,7 +29,7 @@
 //! `engine` blocks, native forms, then the interpreter. See
 //! docs/development/BLOCK_COMPILER.md.
 #![allow(dead_code)]
-pub(crate) use pil_cpu::block_compiler::{sites,engine};
+pub(crate) use pil_cpu::block_compiler::{sites,engine,pil_rust};
 #[cfg(test)]
 use pil_cpu::block_compiler::{codegen,guards};
 pub(crate) mod recorder;
