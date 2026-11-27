@@ -15,3 +15,4 @@ tools/package.py | dos-hello. | package smoke test of the built-in --write-dos-h
 tools/export_runtime.py | HELLO. | export smoke test of the built-in --write-dos-hello fixture, not a guest switch
 tools/export_runtime.py | dos-hello. | export smoke test of the built-in --write-dos-hello fixture, not a guest switch
 src/lib.rs | "FORMS.COM" | Name of the two-byte COM image the form enumeration decodes in; no guest program is involved
+tools/PILdos.sh | '/K D:\AUTOEXEC.BAT' | Legacy --python launcher fallback default for DOS shell startup; no guest switch

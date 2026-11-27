@@ -6,7 +6,7 @@
 #   --rust-text ...  pil --dos-text ... instead
 #   --python ...     the older Python/Tk terminal (tools/dos_terminal.py ...)
 # PILDOS_ENGINE chooses the pil executable.
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/.." || exit 1
 
 engine=${PILDOS_ENGINE:-}
 if [ -z "$engine" ]; then

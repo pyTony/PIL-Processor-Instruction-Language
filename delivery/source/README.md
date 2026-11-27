@@ -48,7 +48,7 @@ With an explicit program:
 pil --dos-text --mount driveD --fpu 80387 images/FD14LITE.img::COMMAND.COM
 ```
 
-`PILdos.vbs --rust-text` and `sh PILdos.sh --rust-text` are equivalent shortcuts;
+`PILdos.vbs --rust-text` and `sh tools/PILdos.sh --rust-text` are equivalent shortcuts;
 `PILDOS_ENGINE` can select a different built executable. Windows terminal mode
 opens the separate native graphics window as needed. `--dos-console --window`
 selects the Windows text/graphics window frontend. Ctrl+] exits terminal mode.
