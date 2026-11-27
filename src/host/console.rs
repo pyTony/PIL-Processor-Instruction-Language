@@ -336,6 +336,7 @@ fn serial_mouse_range(p:&Loaded)->(i32,i32){
 fn serial_mouse_active(session:&Session)->bool{
     session.machine().is_some_and(|p|p.booted&&p.com1.as_ref().is_some_and(crate::pc::serial::Serial::mouse_active))
 }
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 fn guest_mouse_visible(p:&Loaded)->bool{
     p.dos.mouse.view().visible||(p.booted&&p.com1.as_ref().is_some_and(crate::pc::serial::Serial::mouse_active))
 }
