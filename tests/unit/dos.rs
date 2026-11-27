@@ -1989,13 +1989,14 @@ fn com1_takes_bios_calls_uart_registers_and_dos_aux_handles(){
  let int14=|p:&mut Loaded,ax:u32|{p.cpu.regs[0]=ax;p.cpu.regs[2]=0;service(p,0x14,&mut vec![]).unwrap();p.cpu.regs[0]&0xffff};
  assert_eq!(int14(&mut p,0x0141),0x6041);assert_eq!(int14(&mut p,0x0300),0x60b0);assert_eq!(int14(&mut p,0x0200)&0x8000,0x8000);
  p.com1.as_mut().unwrap().rx.extend(b"hi");assert_eq!(int14(&mut p,0x0300),0x61b0);assert_eq!(int14(&mut p,0x0200),u32::from(b'h'));
- // The 8250 registers, polled: LSR shows the waiting byte, RBR takes it, THR sends; IER interrupts stop.
+ // The 16450 registers: LSR shows the waiting byte, RBR takes it, THR sends; IER enables IIR/IRQ4.
  let code=[0xba,0xfd,0x03,0xec,0x88,0xc3,0xba,0xf8,0x03,0xec,0x88,0xc7,0xb0,0x21,0xee,0xfa,0xf4];
  let mut q=load(&code,"uart.com").unwrap();serial::attach(&mut q).unwrap();q.com1.as_mut().unwrap().rx.push_back(b'z');
  let r=run(q,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
  assert_eq!((r.loaded.cpu.regs[3]&0xffff,r.loaded.com1.as_ref().unwrap().tx.clone()),(0x7a61,vec![0x21]));
- let mut q=load(&[0xba,0xf9,0x03,0xb0,0x01,0xee,0xfa,0xf4],"ier.com").unwrap();serial::attach(&mut q).unwrap();
- assert!(matches!(run(q,20).unwrap().stop,Stop::Service(_)));
+ let mut q=load(&[0xba,0xf9,0x03,0xb0,0x01,0xee,0xec,0x88,0xc3,0x42,0xec,0x88,0xc7,0xfa,0xf4],"ier.com").unwrap();serial::attach(&mut q).unwrap();
+ let r=run(q,20).unwrap();assert!(matches!(r.stop,Stop::Monitor(_)),"{:?}",r.stop);
+ assert_eq!(r.loaded.cpu.regs[3]&0xffff,0x0101);
  // Handle 3 (AUX) and COM1 opened by name write to the port and read what arrived.
  p.com1.as_mut().unwrap().tx.clear();p.com1.as_mut().unwrap().rx.clear();
  p.ram.write_bytes(psp+0x200,b"ok").unwrap();p.cpu.regs[0]=0x4000;p.cpu.regs[3]=3;p.cpu.regs[1]=2;p.cpu.regs[2]=0x200;service(&mut p,0x21,&mut vec![]).unwrap();

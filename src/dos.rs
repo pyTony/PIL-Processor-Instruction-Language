@@ -1033,6 +1033,28 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
                 Err(message)=>break Stop::Service(message),
             }
         }
+        // IRQ4 from COM1 (16450 UART), through the master PIC.
+        if p.com1.as_ref().is_some_and(serial::Serial::irq_active)
+            &&p.cpu.eflags&0x200!=0&&p.image.sti_shadow==0&&p.image.ss_shadow==0{
+            p.speaker.pic.raise(4);
+            if p.speaker.pic.master_ready(4){
+                let vector=p.speaker.pic.master_vector(4);
+                let installed=if p.image.real_mode{vectors::reachable(&p,vector)}else{Ok(true)};
+                match installed{
+                    Ok(true)=>{
+                        lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                        match vectors::deliver_irq(&mut p,vector){
+                            Ok(())=>{
+                                p.speaker.pic.acknowledge_master(4);execution_steps+=1;
+                                *instructions.entry(format!("COM1 IRQ4 to INT {vector:02X}h")).or_insert(0)+=1;continue;},
+                            Err(message)=>break Stop::Service(message),
+                        }
+                    },
+                    Ok(false)=>{},
+                    Err(message)=>break Stop::Service(message),
+                }
+            }
+        }
         // IRQ5/IRQ7 from the Sound Blaster DSP. A DOS game installs its own
         // handler and sends EOI to the PIC; reading DSP port 22Eh clears
         // the DSP's interrupt latch, independently of PIC EOI.

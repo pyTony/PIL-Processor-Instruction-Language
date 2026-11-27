@@ -33,6 +33,7 @@ pub fn setup_boot<F>(p:&mut Machine<F>,floppy:Option<(u8,Disk)>,fixed:Vec<Disk>,
     }
     disk::install_table(p)?;
     disk::install_fixed_table(p)?;
+    pil_pc::serial::attach(p)?;
     let floppies=p.disks.floppies();
     let equipment=p.ram.load(0x410,MemWidth::Word).map_err(|e|format!("BIOS equipment read: {e:?}"))? as u16;
     let equipment=(equipment&!0x00c1)|if floppies>0{1|((floppies-1)&3)<<6}else{0};

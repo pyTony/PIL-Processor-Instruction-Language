@@ -283,6 +283,8 @@ fn probe_scripts_parse_their_steps_and_refuse_unknown_ones(){
     assert!(parse_script("run many\n").is_err());
     assert_eq!(parse_script("shot a.ppm\n").unwrap(),vec![ScriptStep::Shot("a.ppm".into())]);
     assert!(parse_script("shot\n").unwrap_err().contains("file name"));
+    assert_eq!(parse_script("mouse on\nmouse 5 -3 1\n").unwrap(),vec![ScriptStep::MouseOn,ScriptStep::Mouse(5,-3,1)]);
+    assert!(parse_script("mouse 1 2 9\n").unwrap_err().contains("0..3"));
 }
 
 #[test]
@@ -352,4 +354,41 @@ fn a_tar_floppy_holds_a_ustar_archive_with_correct_checksums(){
     assert!(image[1024..].iter().all(|&b|b==0));
     let big=dir.with_extension("big");
     assert!(tar_floppy(&[big.to_string_lossy().into_owned()],1_228_800).is_err());
+}
+
+#[test]
+fn booted_com1_delivers_irq4_and_mouse_id_on_dtr_rts(){
+    // Install INT 0Ch (IRQ4) handler at 0000:0500 that reads RBR, stores AL at
+    // 0000:0520, sends EOI (20h -> 20h) and IRETs; enable OUT2|DTR|RTS + IER.RDA.
+    let mut disk=vec![0u8;1_474_560];disk[510]=0x55;disk[511]=0xaa;
+    let boot_code:&[u8]=&[
+        0xfa,                                           // cli
+        0x31,0xc0,0x8e,0xd8,                            // xor ax,ax; mov ds,ax
+        0xc7,0x06,0x30,0x00,0x00,0x05,                  // mov word [0030h], 0500h (INT 0Ch IP)
+        0xc7,0x06,0x32,0x00,0x00,0x00,                  // mov word [0032h], 0000h (INT 0Ch CS)
+        0xba,0xf9,0x03,0xb0,0x01,0xee,                  // mov dx,3F9h; mov al,1; out dx,al (IER=RDA)
+        0xba,0xfc,0x03,0xb0,0x0b,0xee,                  // mov dx,3FCh; mov al,0Bh; out dx,al (DTR|RTS|OUT2)
+        0xfb,                                           // sti
+        0xf4,                                           // hlt (wait for IRQ4)
+        0xfa,0xf4,                                      // cli; hlt
+    ];
+    let isr:&[u8]=&[
+        0xba,0xf8,0x03,0xec,                            // mov dx,3F8h; in al,dx
+        0xa2,0x20,0x05,                                 // mov [0520h],al
+        0xb0,0x20,0xe6,0x20,                            // mov al,20h; out 20h,al
+        0xcf,                                           // iret
+    ];
+    disk[..boot_code.len()].copy_from_slice(boot_code);
+    let mut session=session::Session::new(boot(&disk,0).unwrap());
+    let (reply,_)=session.command(1,"mouse on").unwrap();
+    assert!(reply.contains("\"ok\":true"),"{reply}");
+    {
+        let p=session.machine_mut().unwrap();
+        // INT 33h stays zero in a booted machine (serial mouse only).
+        assert_eq!(p.ram.load(0x33*4,MemWidth::Dword).unwrap(),0);
+        p.ram.write_bytes(0x500,isr).unwrap();
+    }
+    session.run(100).unwrap();
+    let p=session.machine().unwrap();
+    assert_eq!(p.ram.load(0x520,MemWidth::Byte).unwrap(),u32::from(b'M'));
 }

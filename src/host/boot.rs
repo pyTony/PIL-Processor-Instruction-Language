@@ -151,12 +151,16 @@ pub enum ScriptStep{
     Mark(String),
     /// Write the graphics screen to a binary PPM (P6) file.
     Shot(String),
+    /// Attach a Microsoft serial mouse to COM1 (must come before execution starts).
+    MouseOn,
+    /// Move or click the serial mouse (`dx dy buttons`, buttons: 0..3).
+    Mouse(i32,i32,u16),
 }
 
 /// Read a probe script: one step per line, `#` starts a comment line.
 /// `prompt TEXT`, `screen TEXT`, `type TEXT`, `floppy IMAGE`, `run STEPS`,
 /// `show`, `mark LABEL`, `shot FILE` (the graphics screen as a PPM
-/// picture). Image paths are relative to the current folder.
+/// picture), `mouse on`, `mouse DX DY BUTTONS`. Image paths are relative to the current folder.
 pub fn parse_script(text:&str)->Result<Vec<ScriptStep>,String>{
     let unescape=|t:&str|->String{
         let mut out=String::new();let mut chars=t.chars();
@@ -182,6 +186,16 @@ pub fn parse_script(text:&str)->Result<Vec<ScriptStep>,String>{
             "mark"=>ScriptStep::Mark(rest.trim().to_string()),
             "shot" if !rest.trim().is_empty()=>ScriptStep::Shot(rest.trim().to_string()),
             "shot"=>return Err(at("shot takes a file name".into())),
+            "mouse" if rest.trim()=="on"=>ScriptStep::MouseOn,
+            "mouse"=>{
+                let parts:Vec<&str>=rest.split_whitespace().collect();
+                let [dx,dy,buttons]=parts.as_slice() else{return Err(at("mouse takes `on` or `DX DY BUTTONS`".into()));};
+                let (Ok(dx),Ok(dy),Ok(buttons))=(dx.parse::<i32>(),dy.parse::<i32>(),buttons.parse::<u16>()) else{
+                    return Err(at("mouse needs integer DX, DY and BUTTONS (0..3)".into()));
+                };
+                if buttons>3{return Err(at("mouse buttons must be 0..3".into()));}
+                ScriptStep::Mouse(dx,dy,buttons)
+            },
             _=>return Err(at(format!("unknown step `{word}`"))),
         });
     }
@@ -253,6 +267,13 @@ pub fn script_probe(mut p:Loaded,steps:usize,script:&[ScriptStep],rtc_year:Optio
                 for px in pixels{ppm.extend_from_slice(&[(px>>16)as u8,(px>>8)as u8,px as u8]);}
                 std::fs::write(file,&ppm).map_err(|e|format!("shot {file}: {e}"))?;
                 writeln!(report,"-- shot {file}: {width}x{height}, mode {:02x}h, at {done} steps",display.mode).unwrap();
+            },
+            ScriptStep::MouseOn=>{
+                let (reply,_)=session.command(0,"mouse on")?;
+                if reply.contains("\"ok\":false"){return Err(format!("mouse on: {reply}"));}
+            },
+            ScriptStep::Mouse(dx,dy,buttons)=>{
+                session.serial_mouse(*dx,*dy,*buttons)?;
             },
         }
         // A long script shows its progress as it goes.

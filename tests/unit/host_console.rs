@@ -682,3 +682,22 @@ fn host_pointer_menu_marks_active_choice_and_maps_commands(){
     assert_eq!(host_pointer_command(13).map(|(m,_)|m),Some(HostPointer::Hide));
     assert_eq!(host_pointer_command(10),None);
 }
+
+#[test]
+fn booted_serial_mouse_range_and_visibility_track_guest_port_state(){
+    let mut disk=vec![0u8;1_474_560];disk[0]=0xfa;disk[1]=0xf4;disk[510]=0x55;disk[511]=0xaa;
+    let mut session=Session::new(crate::dos::boot::boot(&disk,0).unwrap());
+    session.command(1,"mouse on").unwrap();
+    assert!(!serial_mouse_active(&session));
+    {
+        let p=session.machine_mut().unwrap();
+        assert!(!guest_mouse_visible(p));
+        let port=p.com1.as_mut().unwrap();
+        port.mcr=0x0b;port.ier=0x01;
+        assert!(guest_mouse_visible(p));
+        assert_eq!(serial_mouse_range(p),(640,200));
+        p.vga.display=crate::pc::vga::Display{mode:0x13,columns:40,rows:25};
+        assert_eq!(serial_mouse_range(p),(320,200));
+    }
+    assert!(serial_mouse_active(&session));
+}
