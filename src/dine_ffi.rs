@@ -55,7 +55,7 @@ fn prepare_image(data: &[u8], name: &str, tail: &str, config: Option<&str>, comp
     let drives = vec![crate::dos::Source::Host(cwd.clone()),crate::dos::Source::Memory(crate::dos::MemDir::default())];
     let loaded = if let Some((image_len, offset)) = compiled { crate::dos::load_compiled_com(data, image_len, offset, name, drives)? }
         else { crate::dos::load_with_drives(data, name, drives, None)? };
-    let mut session=crate::dos::session::configured(loaded,None,config,None,defaults.fpu.map(|on|if on{"80387"}else{"none"}))?;
+    let mut session=crate::dos::session::configured(loaded,None,config,None,defaults.fpu.map(|on|if on{"80387"}else{"none"}),defaults.cpu.map(|c|c.name()))?;
     // The launch folder stays the current directory (next to the configured
     // drives), and the program finds its support files
     // beside the host executable, as DOS programs do beside themselves.

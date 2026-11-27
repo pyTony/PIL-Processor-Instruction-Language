@@ -387,7 +387,8 @@ fn launch(path:&Path,window:bool,stop_log:&str,front:&mut Front,rx:&mpsc::Receiv
     let (program,args)=dos_config::startup(Some(config))?;
     let settings=dos_config::console_settings(Some(config))?;
     let fpu=settings.fpu.map(|on|if on{"80387"}else{"none"});
-    let mut session=super::session::open(&program,None,args.as_deref(),Some(config),fpu)?;
+    let cpu=settings.cpu.map(|c|c.name());
+    let mut session=super::session::open(&program,None,args.as_deref(),Some(config),fpu,cpu)?;
     #[cfg(windows)]
     crate::dine_display::debug_log(&format!("PILdos program and drives loaded in {:.1} ms",started.elapsed().as_secs_f64()*1000.0));
     #[cfg(not(windows))]

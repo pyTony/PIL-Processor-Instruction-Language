@@ -77,7 +77,7 @@ DOS and ROM:
       (or CONFIG, or PILDOS_CONFIG) and start its program. With a program set
       it opens on a start page: Enter starts, S opens the setup screen.
   --pildos-startup [CONFIG]          Read configured program and arguments as JSON
-  --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] PROGRAM
+  --dos-session [--config FILE] [--mount DIR] [--args TEXT] [--fpu none|80387] [--cpu 386|486dx] PROGRAM
   --dos-media SHELL_PROGRAM [IMAGE_OR_DISK_SET]  Native Windows media browser
       Interactive JSON service; PROGRAM can be IMAGE.img::INNER_PATH.
   --dos-text [--plain] [OPTIONS] [PROGRAM]  Rust terminal; config startup if omitted
@@ -215,14 +215,14 @@ pub fn run_cli() -> Result<(), String> {
         return dos::host_console::media_launch::run(&dos_args[2],dos_args.get(3).map(String::as_str),&stop_log).map_err(Into::into);
     }
     if dos_args.get(1).map(String::as_str)==Some("--dos-session"){
-        let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
-        let(mut mount,mut tail,mut config,mut fpu,mut rest)=(None,None,None,None,&dos_args[2..]);
+        let usage="usage: pil --dos-session [--config FILE] [--mount HOST_FOLDER] [--args COMMAND_LINE] [--fpu none|80387] [--cpu 386|486dx] PROGRAM.COM|PROGRAM.EXE|IMAGE.img::INNER_PATH";
+        let(mut mount,mut tail,mut config,mut fpu,mut cpu,mut rest)=(None,None,None,None,None,&dos_args[2..]);
         while let[flag,value,more@..]=rest{
-            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),"--config" if config.is_none()=>config=Some(value.as_str()),"--fpu" if fpu.is_none()&&matches!(value.as_str(),"none"|"80387")=>fpu=Some(value.as_str()),_=>break}
+            match flag.as_str(){"--mount" if mount.is_none()=>mount=Some(value.as_str()),"--args" if tail.is_none()=>tail=Some(value.as_str()),"--config" if config.is_none()=>config=Some(value.as_str()),"--fpu" if fpu.is_none()&&matches!(value.as_str(),"none"|"80387")=>fpu=Some(value.as_str()),"--cpu" if cpu.is_none()&&matches!(value.as_str(),"386"|"486dx")=>cpu=Some(value.as_str()),_=>break}
             rest=more;
         }
         let[program]=rest else{return Err(usage.into())};
-        return dos::session::serve(program,mount,tail,&stop_log,config,fpu).map_err(Into::into);
+        return dos::session::serve(program,mount,tail,&stop_log,config,fpu,cpu).map_err(Into::into);
     }
     if matches!(dos_args.get(1).map(String::as_str),Some("--dos-console"|"--dos-text")){
         let code=dos_text_io::cli(&dos_args[2..],dos_args[1]=="--dos-text",&stop_log)?;
@@ -244,9 +244,9 @@ pub fn run_cli() -> Result<(), String> {
         return Ok(());
     }
     if dos_args.get(1).map(String::as_str)==Some("--boot-probe"){
-        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--hd-folder DIR] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--script FILE] [--fpu none|80387] [--rtc-year YEAR] [--guest-keymap us|uk|fi]";
+        let usage="usage: pil --boot-probe IMAGE [--hd] [--hd-image DISK] [--hd-folder DIR] [--steps N] [--keys TEXT] [--keys-after N] [--type STEPS:TEXT]... [--change-floppy STEPS:IMAGE]... [--script FILE] [--fpu none|80387] [--cpu 386|486dx] [--rtc-year YEAR] [--guest-keymap us|uk|fi]";
         let(mut image,mut drive,mut steps,mut at,mut keys,mut keys_after)=(None,0u8,10_000_000usize,2,String::new(),5_000_000usize);
-        let mut hard_disk=None;let mut folder=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;let mut script=None;let mut fpu=false;let mut keymap=dos::guest_keymap::Keymap::default();
+        let mut hard_disk=None;let mut folder=None;let mut typed=Vec::new();let mut changes=Vec::new();let mut rtc_year=None;let mut script=None;let mut fpu:Option<bool>=None;let mut cpu:Option<address::CpuModel>=None;let mut keymap=dos::guest_keymap::Keymap::default();
         while at<dos_args.len(){
             match dos_args[at].as_str(){
                 "--hd"=>drive=0x80,
@@ -263,7 +263,10 @@ pub fn run_cli() -> Result<(), String> {
                 },
                 "--hd-image"=>{hard_disk=Some(dos_args.get(at+1).ok_or(usage)?.clone());at+=1;},
                 "--fpu"=>{
-                    fpu=match dos_args.get(at+1).map(String::as_str){Some("80387")=>true,Some("none")=>false,_=>return Err("--fpu takes none or 80387".into())};at+=1;
+                    fpu=Some(match dos_args.get(at+1).map(String::as_str){Some("80387")=>true,Some("none")=>false,_=>return Err("--fpu takes none or 80387".into())});at+=1;
+                },
+                "--cpu"=>{
+                    cpu=Some(address::CpuModel::parse(dos_args.get(at+1).ok_or("--cpu takes 386 or 486dx")?)?);at+=1;
                 },
                 "--script"=>{
                     let file=dos_args.get(at+1).ok_or(usage)?;
@@ -287,7 +290,7 @@ pub fn run_cli() -> Result<(), String> {
         let folder=folder.map(|dir|dos::FolderDisk::create(std::path::Path::new(&dir))).transpose()?;
         if let Some((_,notes))=&folder{for note in notes{eprintln!("--hd-folder: {note}");}}
         let machine=dos::boot_command(image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()));
-        let machine=machine.and_then(|mut m|{if fpu{m.select_fpu(true)?;}Ok(m)});
+        let machine=machine.and_then(|mut m|{if let Some(model)=cpu{m.select_cpu(model)?;}if let Some(present)=fpu{m.select_fpu(present)?;}Ok(m)});
         let report=machine.and_then(|m|match &script{
             Some(script)=>{
                 let mut out=|text:&str|{use std::io::Write;let mut o=std::io::stdout();let _=o.write_all(text.as_bytes());let _=o.flush();};
@@ -495,3 +498,7 @@ mod fpu_tests;
 #[cfg(test)]
 #[path = "../tests/unit/precompiled.rs"]
 mod precompiled_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/cpu_486.rs"]
+mod cpu_486_tests;

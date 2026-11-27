@@ -1,0 +1,7 @@
+# INVLPG: invalidate the TLB entry for the page containing the memory operand.
+# Requires CPL 0 (#GP(0) in V86 mode or CPL > 0). Never faults on unmapped pages.
+require_ring0
+read_address addr
+invlpg addr
+preserve_flags all
+retire

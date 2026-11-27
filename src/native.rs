@@ -518,7 +518,7 @@ fn runner_source()->String {
     source.push_str("mod flow {\n");source.push_str(include_str!("../crates/pil-cpu/src/flow.rs"));source.push_str("\n}\nuse flow::{ExecError,FlowContext};\n");
     source.push_str("mod vga_planar {\n");source.push_str(include_str!("../crates/pil-cpu/src/vga_planar.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod memory {\n");source.push_str(include_str!("../crates/pil-cpu/src/memory.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse memory::{Ram,MemWidth};\n");
-    source.push_str("mod address {\n");source.push_str(include_str!("../crates/pil-cpu/src/address.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*,SegmentAccess::*};\n");
+    source.push_str("mod address {\n");source.push_str(include_str!("../crates/pil-cpu/src/address.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\nuse address::*;\nuse address::{EffectiveAddress::*,Address16::*,Gpr::*,SegmentRegister::*,SegmentAccess::*,CpuModel::*};\n");
     source.push_str("mod privilege {\n");source.push_str(include_str!("../crates/pil-cpu/src/privilege.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");source.push_str("mod task {\n");source.push_str(include_str!("../crates/pil-cpu/src/task.rs").split("#[cfg(test)]").next().unwrap());source.push_str("\n}\n");
     source.push_str("mod trace {\n");source.push_str(include_str!("../crates/pil-cpu/src/trace.rs"));source.push_str("\n}\n");
     source.push_str(RUNNER);
