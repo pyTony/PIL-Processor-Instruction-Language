@@ -62,6 +62,7 @@ pub fn prepare<F>(dos:F,ram_bytes:usize,floppy:Option<(u8,Disk)>,fixed:Vec<Disk>
             tables:[(0,0),pil_cpu::interrupt::RESET_IDTR],controls:[0;2],
             flag_checkpoint:None,ldt_tr:[Default::default(),pil_cpu::address::TR_RESET],
             paging:false,debug:pil_cpu::address::DEBUG_RESET,
+            cpu_model:pil_cpu::address::CpuModel::I386,
         },
         selectors,timer_ticks:0,timer_tick_adjust:0,
         speaker:pil_pc::ports::Speaker::default(),

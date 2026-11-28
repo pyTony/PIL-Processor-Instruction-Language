@@ -62,7 +62,7 @@ pub const SYSTEM_RANGES:usize=10;
 /// `fetch_base+start..fetch_base+end` is the program; `system` holds host-provided
 /// code ranges (such as Dine's case-map routine and interrupt entries) and waiting
 /// parent programs in EXEC that may run interrupt handlers.
-pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2],pub paging:bool,pub debug:[u32;6]}
+pub struct Image {pub fetch_base:u32,pub start:u32,pub end:u32,pub system:[(u32,u32);SYSTEM_RANGES],pub segments:[SegmentCache;6],pub selectors:[u16;6],pub msw:u16,pub real_mode:bool,pub ss_shadow:u8,pub sti_shadow:u8,pub tables:[(u16,u32);2],pub controls:[u32;2],pub flag_checkpoint:Option<(u32,u32,u32)>,pub ldt_tr:[crate::address::SystemSegment;2],pub paging:bool,pub debug:[u32;6],pub cpu_model:crate::address::CpuModel}
 impl Image {
     // Keep the imported physical code window fixed when CS changes.
     pub fn contains_offset(&self,offset:u32)->bool{
@@ -80,8 +80,8 @@ impl Image {
             &&self.segment_state().same_code_context(&other.segment_state())
     }
     pub fn retired(&mut self){let mut s=self.segment_state();s.retired();self.set_segment_state(s);}
-    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging,debug:self.debug}}
-    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;self.debug=s.debug;}
+    pub fn segment_state(&self)->SegmentState{SegmentState{controls:self.controls,msw:self.msw,segments:self.segments,selectors:self.selectors,real_mode:self.real_mode,ss_shadow:self.ss_shadow,sti_shadow:self.sti_shadow,tables:self.tables,flag_checkpoint:self.flag_checkpoint,ldt_tr:self.ldt_tr,paging:self.paging,debug:self.debug,cpu_model:self.cpu_model}}
+    pub fn set_segment_state(&mut self,s:SegmentState){self.controls=s.controls;self.tables=s.tables;self.msw=s.msw;self.segments=s.segments;self.selectors=s.selectors;self.real_mode=s.real_mode;self.ss_shadow=s.ss_shadow;self.sti_shadow=s.sti_shadow;self.flag_checkpoint=s.flag_checkpoint;self.ldt_tr=s.ldt_tr;self.paging=s.paging;self.debug=s.debug;self.cpu_model=s.cpu_model;}
 
     pub fn load(bytes:&[u8])->Result<(Self,Ram),String> {
         if bytes.is_empty() || bytes.len()>RAM_BYTES-ENTRY as usize {return Err("image must contain 1..3840 bytes".into());}
@@ -92,7 +92,7 @@ impl Image {
         segments[SegmentRegister::Ds.index()]=SegmentCache::real_mode(0x10);
         segments[SegmentRegister::Ss.index()]=SegmentCache::real_mode(0x20);
         segments[SegmentRegister::Fs.index()]=SegmentCache::real_mode(0x30);
-        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),crate::address::TR_RESET],paging:false,debug:crate::address::DEBUG_RESET},ram))
+        Ok((Self{fetch_base:0,start:ENTRY,end:ENTRY+bytes.len() as u32,system:[(0,0);SYSTEM_RANGES],segments,selectors:[0,0,0x20,0x10,0x30,0],msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),crate::address::TR_RESET],paging:false,debug:crate::address::DEBUG_RESET,cpu_model:crate::address::CpuModel::I386},ram))
     }
     pub fn fetch_signature(&self,ram:&Ram,eip:u32,length:u32)->Result<[u8;15],GuestError> {
         if length==0 || length>15{return Err(GuestError::Decode("invalid cached instruction length".into()));}
@@ -151,7 +151,9 @@ impl Image {
             let lockable=m>>6!=3&&match op{
                 0x00..=0x31=>op&6==0&&op&0x38!=0x38,
                 0x80..=0x83=>ext!=7,0xf6|0xf7=>matches!(ext,2|3),0xfe|0xff=>ext<2,
-                0x0fab|0x0fb3|0x0fbb=>true,0x0fba=>ext>=5,_=>false,
+                0x0fab|0x0fb3|0x0fbb=>true,0x0fba=>ext>=5,
+                0x0fb0|0x0fb1|0x0fc0|0x0fc1=>self.cpu_model.is_486(),
+                _=>false,
             };
             if !lockable{return Err(GuestError::Decode("LOCK requires a read-modify-write memory destination".into()));}
         }
@@ -257,7 +259,9 @@ impl Image {
             0x9c|0x9d=>{
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 let name=if opcode==0x9c{"pushf"}else{"popf"};
-                let text=description(name).map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string());
+                let ac_visible=if w==32&&self.cpu_model.is_486(){"294869"}else{"32725"};
+                let ac_pop=if w==32&&self.cpu_model.is_486(){"bit f18 packed 18\nflag AC f18"}else{""};
+                let text=description(name).map_err(GuestError::Decode)?.replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$VISIBLE",ac_visible).replace("$AC",ac_pop);
                 (format!("{}{}",name.to_ascii_uppercase(),if w==32{"D"}else{""}),compile(&instantiate(text,w),w))
             }
             0xfa|0xfb=>{
@@ -311,7 +315,8 @@ impl Image {
                 let stack_bits=if matches!(self.segments[2].access,SegmentAccess::Data{big:true,..}){32}else{16};
                 // VM sits in bit 17, so only IRETD's flags dword can carry it.
                 let vm_check=if w==32{"bit vm packed 17\nand vm_return vm ring0"}else{"const vm_return 1 0"};
-                let text=description(if self.real_mode||self.segment_state().v86(){"iret"}else{"iret_protected"}).map_err(GuestError::Decode)?.replace("$VM_CHECK",vm_check).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/8*3).to_string());
+                let ac_pop=if w==32&&self.cpu_model.is_486(){"bit f18 packed 18\nflag AC f18"}else{""};
+                let text=description(if self.real_mode||self.segment_state().v86(){"iret"}else{"iret_protected"}).map_err(GuestError::Decode)?.replace("$VM_CHECK",vm_check).replace("$AC",ac_pop).replace("$S",&stack_bits.to_string()).replace("$BYTES",&(w/8).to_string()).replace("$FRAME",&(w/8*3).to_string());
                 (if w==32{"IRETD".into()}else{"IRET".into()},compile(&instantiate(text,w),w))
             }
             0xc2|0xc3=>{
@@ -524,6 +529,12 @@ impl Image {
                         if m>>6!=3{address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});text=text.replace("read input src 16","read_address source\nload input source 16");}
                         (format!("LMSW {}",operand_name(src,address)),compile(&text,w))
                     }else{
+                    if (m>>3)&7==7&&self.cpu_model.is_486(){
+                        if m>>6==3{return Err(GuestError::Decode("INVLPG requires a memory operand".into()));}
+                        address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
+                        let mem=operand_name(view(0,w),address).split_once(' ').map_or(String::new(),|(_,a)|a.to_string());
+                        (format!("INVLPG {mem}"),compile(include_str!("../../../isa/i486/invlpg.pil"),w))
+                    }else{
                     if (m>>3)&7!=4{return Err(GuestError::Decode("unsupported 0F01 group extension".into()));}
                     // For r32 choose the full modeled CR0 for the undefined
                     // upper half. Memory and 16-bit registers get the MSW.
@@ -535,8 +546,42 @@ impl Image {
                     (format!("SMSW {}",operand_name(dst,address)),compile(&text,w))
                     }
                     }
+                    }
                 }else if second==0x06{
                     ("CLTS".into(),compile(include_str!("../../../isa/i386/clts.pil"),w))
+                }else if matches!(second,0x08|0x09)&&self.cpu_model.is_486(){
+                    (if second==0x08{"INVD"}else{"WBINVD"}.into(),compile(include_str!("../../../isa/i486/invd.pil"),w))
+                }else if (0xc8..=0xcf).contains(&second)&&self.cpu_model.is_486(){
+                    dst=view((second&7)as usize,w);src=dst;
+                    let text=if w==32{include_str!("../../../isa/i486/bswap.pil")}else{"const zero 16 0\nwrite dst zero\npreserve_flags all\nretire"};
+                    (format!("BSWAP {}",register_name(dst)),compile(text,w))
+                }else if matches!(second,0xc0|0xc1)&&self.cpu_model.is_486(){
+                    if second==0xc0{w=8;}
+                    let m=r.byte()?;let memory=m>>6!=3;
+                    dst=view((m&7)as usize,w);src=view(((m>>3)&7)as usize,w);
+                    let (load_dest,store_dest,write_src)=if memory{
+                        address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
+                        ("read_address addr\nload a addr $W","store addr r","write src a")
+                    }else{
+                        ("read a dst $W","write dst r",if dst==src{""}else{"write src a"})
+                    };
+                    let text=include_str!("../../../isa/i486/xadd.pil").replace("$LOAD_DEST",load_dest).replace("$STORE_DEST",store_dest).replace("$WRITE_SRC",write_src);
+                    (format!("XADD {},{}",operand_name(dst,address),register_name(src)),compile(&instantiate(text,w),w))
+                }else if matches!(second,0xb0|0xb1)&&self.cpu_model.is_486(){
+                    if second==0xb0{w=8;}
+                    let m=r.byte()?;let memory=m>>6!=3;
+                    let reg=((m>>3)&7)as usize;let rm=(m&7)as usize;
+                    let (load_acc,load_src,load_dest,commit,label)=if memory{
+                        dst=view(0,w);src=view(reg,w);
+                        address=Some(AddressContext{effective:r.effective(m,addr32)?,override_segment,segments:self.segments});
+                        ("read acc dst $W","read s src $W".to_string(),"read_address addr\nload dest addr $W","select out_mem zf s dest\nstore addr out_mem\nwrite_if dst dest neq",format!("CMPXCHG {},{}",operand_name(dst,address),register_name(src)))
+                    }else{
+                        dst=view(rm,w);src=view(0,w);let r_view=view(reg,w);
+                        let load_s=if w==8&&reg>=4{format!("read_gpr raw_s {} 16\nconst shift_s 16 8\nlshr hi_s raw_s shift_s\ntrunc s hi_s 8",reg-4)}else{format!("read_gpr s {reg} {w}")};
+                        ("read acc src $W",load_s,"read dest dst $W","write_if dst s zf\nwrite_if src dest neq",format!("CMPXCHG {},{}",register_name(dst),register_name(r_view)))
+                    };
+                    let text=include_str!("../../../isa/i486/cmpxchg.pil").replace("$LOAD_ACC",load_acc).replace("$LOAD_SRC",&load_src).replace("$LOAD_DEST",load_dest).replace("$COMMIT",commit);
+                    (label,compile(&instantiate(text,w),w))
                 }else if (0x80..=0x8f).contains(&second){
                     disp_bits=w;let raw=r.unsigned(w)?;disp=if w==16{raw as i16 as i32}else{raw as i32};
                     let name=format!("j{}",CONDITIONS[(second&15) as usize]);

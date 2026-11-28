@@ -6,7 +6,8 @@ mod instance;
 pub(super) fn open_program(shell:&str,tail:Option<&str>,config:Option<&str>)->Result<Session,String>{
     let defaults=crate::dos_config::console_settings(config)?;
     let fpu=defaults.fpu.map(|present|if present{"80387"}else{"none"});
-    let mut session=crate::dos::session::open(shell,None,tail,config,fpu)?;
+    let cpu=defaults.cpu.map(|c|c.name());
+    let mut session=crate::dos::session::open(shell,None,tail,config,fpu,cpu)?;
     if !session.machine().ok_or("session state lost")?.dos.drive.is_mounted(b'D')&&std::path::Path::new("driveD").is_dir(){
         session.mount_media(b'D',"driveD")?;
     }

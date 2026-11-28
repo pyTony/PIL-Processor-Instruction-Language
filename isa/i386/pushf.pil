@@ -10,7 +10,7 @@ bit v86_iopl1 raw 13
 and v86_iopl3 v86_iopl0 v86_iopl1
 or iopl_allowed no_vm v86_iopl3
 raise_unless iopl_allowed 13
-const visible 32 32725
+const visible 32 $VISIBLE
 and defined raw visible
 const fixed 32 2
 or packed defined fixed

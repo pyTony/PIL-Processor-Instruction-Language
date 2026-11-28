@@ -36,17 +36,17 @@ pub enum Shift { Left, Right, Arithmetic }
 #[derive(Clone, Copy, Debug)]
 pub enum Binary { Add, Sub, Mul, Div, Rem, Xor, And, Or }
 #[derive(Clone, Copy, Debug)]
-pub enum Flag { CF, PF, AF, ZF, SF, TF, IF, DF, OF, IOPL0, IOPL1, NT, VM }
+pub enum Flag { CF, PF, AF, ZF, SF, TF, IF, DF, OF, IOPL0, IOPL1, NT, VM, AC }
 impl Flag {
     pub fn bit(self) -> u8 { match self {
         Self::CF => 0, Self::PF => 2, Self::AF => 4,
-        Self::ZF => 6, Self::SF => 7, Self::TF => 8, Self::IF => 9, Self::DF => 10, Self::OF => 11, Self::IOPL0 => 12, Self::IOPL1 => 13, Self::NT => 14, Self::VM => 17,
+        Self::ZF => 6, Self::SF => 7, Self::TF => 8, Self::IF => 9, Self::DF => 10, Self::OF => 11, Self::IOPL0 => 12, Self::IOPL1 => 13, Self::NT => 14, Self::VM => 17, Self::AC => 18,
     }}
 }
 pub fn parse_flag(name: &str) -> R<Flag> {
     match name {
         "CF" => Ok(Flag::CF), "PF" => Ok(Flag::PF), "AF" => Ok(Flag::AF),
-        "TF" => Ok(Flag::TF), "IF" => Ok(Flag::IF), "IOPL0" => Ok(Flag::IOPL0), "IOPL1" => Ok(Flag::IOPL1), "NT" => Ok(Flag::NT), "VM" => Ok(Flag::VM),
+        "TF" => Ok(Flag::TF), "IF" => Ok(Flag::IF), "IOPL0" => Ok(Flag::IOPL0), "IOPL1" => Ok(Flag::IOPL1), "NT" => Ok(Flag::NT), "VM" => Ok(Flag::VM), "AC" => Ok(Flag::AC),
         "ZF" => Ok(Flag::ZF), "SF" => Ok(Flag::SF), "DF" => Ok(Flag::DF), "OF" => Ok(Flag::OF),
         _ => Err(format!("unknown flag: {name}")),
     }
@@ -80,6 +80,7 @@ pub enum Token {
     ReadDescriptor(usize,usize,usize),
     // LLDT (0) or LTR (1), checked by address.rs.
     LoadSystem(usize,usize),
+    Invlpg(usize),
     RequireProtectedMode,
     Require(usize),
     // A false predicate raises an architectural exception (only #DE, vector 0).
@@ -322,7 +323,7 @@ pub fn intermediates_are_dead(rest:&[Token], slots:&[usize])->bool {
         |Token::WriteSegment(_,a)|Token::InterruptShadowIf(a)|Token::RetireIf(a)
         |Token::ResumeIf(a)|Token::TaskReturnIf(a)|Token::Require(a)|Token::RaiseUnless(a,_)|Token::CheckSegment(_,a,_)|Token::CheckWriteSegment(_,a,_)
         |Token::ReadAddressAfter(_,_,a)|Token::Load(_,a,_)|Token::LoadSegment(_,a,_,_)=>used(a),
-        Token::WriteControl(_,a)|Token::ReadDescriptor(_,_,a)|Token::LoadSystem(_,a)|Token::CheckIo(a,_)=>used(a),
+        Token::WriteControl(_,a)|Token::ReadDescriptor(_,_,a)|Token::LoadSystem(_,a)|Token::Invlpg(a)|Token::CheckIo(a,_)=>used(a),
         Token::FarReturn(a,b,c,_,_,v)=>used(a)||used(b)||used(c)||v.as_ref().is_some_and(used),
         Token::WriteTable(_,a,b)=>used(a)||used(b),
         Token::Binary(_,_,a,b)|Token::Shift(_,_,a,b)|Token::Less(_,a,b)
@@ -666,6 +667,7 @@ impl Program {
             Token::ReadCpl(v) => format!("v{v} = read_cpl"),
             Token::ReadDescriptor(r,f,a) => format!("v{r}, v{f} = read_descriptor v{a}"),
             Token::LoadSystem(t,a) => format!("load_system {t} v{a}"),
+            Token::Invlpg(a) => format!("invlpg v{a}"),
             Token::RequireProtectedMode => "require_protected_mode".into(),
             Token::ReadControl(v,r)=>format!("v{v} = read_control {r}"),
             Token::WriteControl(r,v)=>format!("write_control {r} v{v}"),
@@ -747,7 +749,7 @@ impl Program {
                         Token::CheckpointFlags | Token::RequireRealMode | Token::RequireRing0 | Token::InterruptShadowIf(..)
                         | Token::LoadSegment(..) | Token::StoreSegment(..) | Token::ReadSegment(..)
                         | Token::ReadControl(..)|Token::WriteControl(..)|Token::WriteSegment(..) | Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..) | Token::CheckSegment(..) | Token::CheckWriteSegment(..) | Token::FarBranch(..) | Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..) | Token::TaskReturnIf(..) | Token::RequireIopl | Token::CheckIo(..)
-                        | Token::ReadTable(..) | Token::ReadSystem(..) | Token::ReadCpl(..) | Token::ReadDescriptor(..) | Token::LoadSystem(..) | Token::RequireProtectedMode) => {
+                        | Token::ReadTable(..) | Token::ReadSystem(..) | Token::ReadCpl(..) | Token::ReadDescriptor(..) | Token::LoadSystem(..) | Token::Invlpg(..) | Token::RequireProtectedMode) => {
                         early_stop = Some(idx); note = "; FAULT (missing machine context)".into();
                     }
                     Token::RequireRing0 => {
@@ -883,6 +885,7 @@ impl Program {
                     Token::ReadControl(o,r)=>{match machine.unwrap().read_control(r,cpu.eflags,cpu.eip){Ok(v)=>values[o]=value(v as u64,32),Err(e)=>{early_stop=Some(idx);note=format!("; FAULT {e:?}");}}}
                     Token::WriteControl(r,v)=>{if let Err(e)=machine.unwrap().validate_control(r,values[v].bits as u32,cpu.eflags,cpu.eip){early_stop=Some(idx);note=format!("; FAULT {e:?}");}else{note="; stage control register".into();}}
                     Token::WriteTable(..) => { note = "; stage descriptor table".into(); }
+                    Token::Invlpg(a) => { note = format!("; invlpg 0x{:08x}", values[a].bits as u32); }
                     Token::ReadMsw(o) => {
                         if let Some(m) = machine {
                             values[o] = value(m.machine_status() as u64, 16);
@@ -1239,7 +1242,7 @@ pub fn compile(source: &str, operand_width: u8) -> R<Program> {
                 }
                 ["retire_if", predicate]=>{
                     let c=slot(&names,predicate)?;
-                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
+                    if widths[c]!=1||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::Invlpg(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::ResumeIf(..))){return Err("retire_if requires bv1 and no earlier effects".into());}
                     Token::RetireIf(c)
                 }
                 ["resume_if", predicate]=>{
@@ -1269,6 +1272,11 @@ pub fn compile(source: &str, operand_width: u8) -> R<Program> {
                     let t=number(which)? as usize;let a=slot(&names,selector)?;
                     if t>1||widths[a]!=16||tokens.iter().any(|x|matches!(x,Token::LoadSystem(..))){return Err("load_system needs 0 (LLDT) or 1 (LTR) and a bv16 selector, once".into());}
                     Token::LoadSystem(t,a)
+                }
+                ["invlpg", address]=>{
+                    let a=slot(&names,address)?;
+                    if widths[a]!=32{return Err("invlpg address must be bv<32>".into());}
+                    Token::Invlpg(a)
                 }
                 ["raise_unless", predicate, vector]=>{
                     let c=slot(&names,predicate)?;let v=number(vector)?;
@@ -1336,14 +1344,14 @@ pub fn compile(source: &str, operand_width: u8) -> R<Program> {
                     if widths[a]!=16||widths[b]!=32||branched||segment_written||![16,32].contains(&operand_width){return Err("one far transfer requires bv16 selector,bv32 offset and no other segment/branch effect".into());}
                     let call=fields[0]=="far_call";
                     // A gate CALL ends the instruction here, so nothing may be staged before it.
-                    if call&&tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..))){return Err("far_call must precede every effect".into());}
+                    if call&&tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::Invlpg(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..))){return Err("far_call must precede every effect".into());}
                     branched=true;segment_written=true;if call{Token::FarCall(a,b)}else{Token::FarJump(a,b)}
                 }
                 ["task_return_if", predicate]=>{
                     let c=slot(&names,predicate)?;
                     if widths[c]!=1{return Err("task_return_if needs a bv1 predicate".into());}
                     // A task return ends the instruction here, as a gate CALL does.
-                    if branched||segment_written||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..)|Token::Load(..)|Token::LoadSegment(..))){return Err("task_return_if must precede every load and effect".into());}
+                    if branched||segment_written||tokens.iter().any(|t|matches!(t,Token::Write(..)|Token::WriteIf(..)|Token::WriteSource(..)|Token::WriteSourceIf(..)|Token::WriteGpr(..)|Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::Invlpg(..)|Token::InterruptShadowIf(..)|Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::Flag(..)|Token::FlagIf(..)|Token::UndefFlag(..)|Token::ResumeIf(..)|Token::Load(..)|Token::LoadSegment(..))){return Err("task_return_if must precede every load and effect".into());}
                     Token::TaskReturnIf(c)
                 }
                 ["far_return", selector, offset, outer, bytes, cleanup, rest @ ..] if rest.len()<=1=>{
@@ -1449,9 +1457,9 @@ pub fn compile(source: &str, operand_width: u8) -> R<Program> {
     if !retired { return Err("missing retire".into()); }
     // DF is optional in descriptions; unmentioned non-arithmetic flags stay intact.
     if flags_seen & ARITH_FLAGS != ARITH_FLAGS { return Err("classify all six arithmetic flags: flag, preserve_flag, preserve_flags or undef_flag".into()); }
-    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckWriteSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::TaskReturnIf(..)|Token::ResumeIf(..)));
+    let uses_flow=tokens.iter().any(|t| matches!(t,Token::ReadControl(..)|Token::WriteControl(..)|Token::ReadMsw(..)|Token::ReadMsw32(..)|Token::WriteTable(..)|Token::ReadTable(..)|Token::ReadSystem(..)|Token::ReadCpl(..)|Token::ReadDescriptor(..)|Token::LoadSystem(..)|Token::Invlpg(..)|Token::RequireProtectedMode|Token::CheckSegment(..)|Token::CheckWriteSegment(..)|Token::CheckpointFlags|Token::RequireRealMode|Token::RequireRing0|Token::RequireIopl|Token::CheckIo(..)|Token::InterruptShadowIf(..)|Token::ReadIp(..)|Token::ReadDisp(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::TaskReturnIf(..)|Token::ResumeIf(..)));
     let uses_displacement=tokens.iter().any(|t| matches!(t,Token::ReadDisp(..)));
-    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)|Token::LoadSegment(..)|Token::StoreSegment(..)|Token::CheckWriteSegment(..)));
+    let uses_memory=tokens.iter().any(|t|matches!(t,Token::ReadAddressAfter(..)|Token::ReadAddress(..)|Token::Load(..)|Token::Store(..)|Token::StoreIf(..)|Token::LoadSegment(..)|Token::StoreSegment(..)|Token::CheckWriteSegment(..)|Token::Invlpg(..)));
     let partial=tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)));
     let checkpoint_flags=tokens.iter().any(|t|matches!(t,Token::CheckpointFlags));
     let has_read_address=tokens.iter().any(|t|matches!(t,Token::ReadAddress(_)));
@@ -1464,7 +1472,7 @@ pub fn compile(source: &str, operand_width: u8) -> R<Program> {
     Ok(Program { checkpoint_flags,partial,tokens,packed, widths, register_effects, operand_width, source_width:source_width.unwrap_or(operand_width), uses_flow, uses_displacement, uses_memory, has_read_address, flushes_lazy })
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct View { pub register: usize, pub low: u8, pub width: u8 }
 impl View {
     pub fn validate(self, w: u8) -> R<()> {
@@ -1680,6 +1688,7 @@ pub fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowConte
     let mut pending_control:Option<(usize,u32)>=None;
     let mut pending_table:Option<(usize,u16,u32)>=None;
     let mut pending_system:Option<(usize,address::SystemSegment)>=None;
+    let mut pending_invlpg:Option<u32>=None;
     let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;
     let mut pending_transfer:Option<privilege::Transfer>=None;
     let mut pending_stores:[Option<(u32,MemWidth,u32)>;MAX_STORES]=[None;MAX_STORES];let mut store_index=0;let mut extra_stores:Vec<(u32,MemWidth,u32)>=Vec::new();
@@ -1980,6 +1989,11 @@ pub fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowConte
                 if let Some((at,v))=busy{stage_accessed(ram.as_deref(),at,v,eip,&mut pending_stores,&mut extra_stores,&mut store_index)?;}
                 pending_system=Some((t,loaded));
             }
+            Token::Invlpg(a)=>{
+                let offset=values[a].bits as u32;
+                let linear=memory_context.map_or(offset,|c|c.cache.base.wrapping_add(offset));
+                pending_invlpg=Some(linear);
+            }
             Token::Require(c)=>if values[c].bits==0{return Err(ExecError::InvalidContext);},
             Token::RaiseUnless(c,v)=>if values[c].bits==0{return Err(if v==13{ExecError::GeneralProtection{eip:cpu.eip,error_code:0}}else{ExecError::Exception{eip:cpu.eip,vector:v}});},
             Token::ReadAddressAfter(o,reg,a)=>{
@@ -2146,6 +2160,7 @@ pub fn execute_state(p:&Program,cpu:&mut Cpu,dst:View,src:View,context:FlowConte
                     if let Some((r,v))=pending_control{m.commit_control(r,v);}
                     if let Some((t,l,b))=pending_table{m.tables[t]=(l,b);}
                     if let Some((t,loaded))=pending_system{m.ldt_tr[t]=loaded;}
+                    if let Some(linear)=pending_invlpg{ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.invlpg(linear);}
                     if !pending_resume{m.retired();}if pending_interrupt_shadow{m.sti_shadow=1;}if let Some((reg,selector,cache))=pending_segment{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{m.ss_shadow=1;}}
                     if let Some(t)=pending_transfer{t.commit(&mut cpu.regs,&mut cpu.eflags,&mut cpu.undefined_flags,&mut cpu.eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}
                 }
@@ -2341,6 +2356,7 @@ pub fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {
     let has_control=p.tokens.iter().any(|t|matches!(t,Token::WriteControl(..)));
     let has_table=p.tokens.iter().any(|t|matches!(t,Token::WriteTable(..)));
     let has_system=p.tokens.iter().any(|t|matches!(t,Token::LoadSystem(..)));
+    let has_invlpg=p.tokens.iter().any(|t|matches!(t,Token::Invlpg(..)));
     let has_segment=p.tokens.iter().any(|t|matches!(t,Token::WriteSegment(..)|Token::FarBranch(..)|Token::FarCall(..)));
     let has_transfer=p.tokens.iter().any(|t|matches!(t,Token::FarJump(..)|Token::FarReturn(..)));
     let has_eip_write=p.tokens.iter().any(|t|matches!(t,Token::ResumeIf(..)|Token::BranchIf(..)|Token::FarBranch(..)|Token::FarCall(..)));
@@ -2367,6 +2383,7 @@ pub fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {
     if has_control{out.push_str("let mut pending_control:Option<(usize,u32)>=None;\n");}
     if has_table{out.push_str("let mut pending_table:Option<(usize,u16,u32)>=None;\n");}
     if has_system{out.push_str("let mut pending_system:Option<(usize,address::SystemSegment)>=None;\n");}
+    if has_invlpg{out.push_str("let mut pending_invlpg:Option<u32>=None;\n");}
     if has_segment{out.push_str("let mut pending_segment:Option<(usize,u16,address::SegmentCache)>=None;\n");}
     if has_transfer{out.push_str("let mut pending_transfer:Option<privilege::Transfer>=None;\n");}
     if has_stores{out.push_str(&format!("let mut pending_stores:[Option<(u32,MemWidth,u32)>;{stores}]=[None;{stores}];let mut store_index=0;\n"));}
@@ -2418,6 +2435,7 @@ pub fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {
             Token::ReadCpl(o)=>format!("let v{o}:u64=machine.cpl() as u64;"),
             Token::ReadDescriptor(r,f,a)=>format!("let (v{r},v{f}):(u64,u64)={{let e=*eip;let raw=machine.find_descriptor(v{a} as u16,&mut |at|privilege::read_descriptor(ram,at,e))?;(raw.unwrap_or(0),u64::from(raw.is_some()))}};"),
             Token::LoadSystem(t,a)=>format!("{{let e=*eip;let (loaded,busy)=machine.load_system({t},v{a} as u16,e,&mut |at|privilege::read_descriptor(ram,at,e))?;if let Some((at,v))=busy{{ram.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_system=Some(({t},loaded));}}"),
+            Token::Invlpg(a)=>format!("pending_invlpg=Some(memory_context.map_or(v{a} as u32,|c|c.cache.base.wrapping_add(v{a} as u32)));"),
             Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
             Token::RaiseUnless(c,v)=>if v==13{format!("if v{c}==0{{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}")}else{format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}")},
             Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
@@ -2491,6 +2509,7 @@ pub fn emit_rust_form(p:&Program,slots:&[Option<u64>])->String {
                 if has_control{r.push_str("if let Some((r,v))=pending_control{machine.commit_control(r,v);}");}
                 if has_table{r.push_str("if let Some((t,l,b))=pending_table{machine.tables[t]=(l,b);}");}
                 if has_system{r.push_str("if let Some((t,loaded))=pending_system{machine.ldt_tr[t]=loaded;}");}
+                if has_invlpg{r.push_str("if let Some(linear)=pending_invlpg{ram.invlpg(linear);}");}
                 if has_resume{r.push_str("if !pending_resume{machine.retired();}");}else{r.push_str("machine.retired();");}
                 if has_interrupt_shadow{r.push_str("if pending_interrupt_shadow{machine.sti_shadow=1;}");}
                 if has_segment{r.push_str("if let Some((reg,selector,cache))=pending_segment{machine.selectors[reg]=selector;machine.segments[reg]=cache;if reg==2{machine.ss_shadow=1;}}");}
@@ -2532,6 +2551,7 @@ pub fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
          let mut pending_control: Option<(usize,u32)> = None;\n\
          let mut pending_table: Option<(usize,u16,u32)> = None;\n\
          let mut pending_system: Option<(usize,address::SystemSegment)> = None;\n\
+         let mut pending_invlpg: Option<u32> = None;\n\
          let mut pending_segment: Option<(usize,u16,address::SegmentCache)> = None;\n\
          let mut pending_transfer: Option<privilege::Transfer> = None;\n\
          let mut pending_stores: [Option<(u32,MemWidth,u32)>;{}] = [None;{}];let mut store_index=0;\n\
@@ -2585,6 +2605,7 @@ pub fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
             Token::ReadCpl(o)=>format!("let v{o}:u64=machine.as_deref().ok_or(ExecError::InvalidContext)?.cpl() as u64;"),
             Token::ReadDescriptor(r,f,a)=>format!("let (v{r},v{f}):(u64,u64)={{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let raw=m.find_descriptor(v{a} as u16,&mut |at|{}(at))?;(raw.unwrap_or(0),u64::from(raw.is_some()))}};",EMIT_DESCRIPTOR_READ),
             Token::LoadSystem(t,a)=>format!("{{let m=machine.as_deref().ok_or(ExecError::InvalidContext)?;let (loaded,busy)=m.load_system({t},v{a} as u16,*eip,&mut |at|{}(at))?;if let Some((at,v))=busy{{ram.as_deref().ok_or(ExecError::InvalidContext)?.check_write(at,MemWidth::Byte).map_err(|f|f.error(*eip))?;pending_stores[store_index]=Some((at,MemWidth::Byte,u32::from(v)));store_index+=1;}}pending_system=Some(({t},loaded));}}",EMIT_DESCRIPTOR_READ),
+            Token::Invlpg(a)=>format!("pending_invlpg=Some(memory_context.map_or(v{a} as u32,|c|c.cache.base.wrapping_add(v{a} as u32)));"),
             Token::Require(c)=>format!("if v{c}==0{{return Err(ExecError::InvalidContext);}}"),
             Token::RaiseUnless(c,v)=>if v==13{format!("if v{c}==0{{return Err(ExecError::GeneralProtection{{eip:*eip,error_code:0}});}}")}else{format!("if v{c}==0{{return Err(ExecError::Exception{{eip:*eip,vector:{v}}});}}")},
             Token::ReadAddressAfter(o,reg,a)=>format!("let mut updated=*regs;updated[{reg}]=v{a} as u32;let v{o}:u64=effective.ok_or(ExecError::InvalidContext)?.resolve(&updated,None)?.offset as u64;"),
@@ -2639,7 +2660,7 @@ pub fn emit_rust_body(p:&Program,slots:Option<&[Option<u64>]>)->String {
             Token::WriteSourceIf(a,c)=>format!("if v{c} != 0 {{pending_src=Some(v{a});}}"),
             Token::Flag(f,a) => format!("pending_undefined &= !{}u32; pending_flags = (pending_flags & !{}u32) | ((v{a} as u32) << {});",1u32 << f.bit(),1u32 << f.bit(),f.bit()),
             Token::Retire => format!(
-                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|f.error(*eip))?; }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\n{register_commits}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}if let Some(t)=pending_transfer{{t.commit(regs,flags,undefined,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
+                "if let(Some(a),Some(b))=(pending_dst,pending_src) {{ let overlap=({}u64<<dst.1)&({}u64<<src.1); if dst.0==src.0&&((a<<dst.1)^(b<<src.1))&overlap!=0 {{return Err(ExecError::InvalidBinding);}} }}\nfor (addr,w,v) in pending_stores.into_iter().flatten() {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.store(addr,w,v).map_err(|f|f.error(*eip))?; }}\nif let Some(linear)=pending_invlpg {{ ram.as_deref_mut().ok_or(ExecError::InvalidContext)?.invlpg(linear); }}\nif let Some(value) = pending_dst {{ let m = {}u64 << dst.1;\nregs[dst.0] = (((regs[dst.0] as u64) & !m) | ((value << dst.1) & m)) as u32; }}\nif let Some(value)=pending_src {{let m={}u64<<src.1;regs[src.0]=(((regs[src.0] as u64)&!m)|((value<<src.1)&m)) as u32;}}\n{register_commits}\n*flags = pending_flags;\n*undefined = pending_undefined;\n*eip = pending_eip;\nif let Some(m)=machine.as_deref_mut(){{if let Some((r,v))=pending_control{{m.commit_control(r,v);}}if let Some((t,l,b))=pending_table{{m.tables[t]=(l,b);}}if let Some((t,loaded))=pending_system{{m.ldt_tr[t]=loaded;}}if !pending_resume{{m.retired();}}if pending_interrupt_shadow{{m.sti_shadow=1;}}if let Some((reg,selector,cache))=pending_segment{{m.selectors[reg]=selector;m.segments[reg]=cache;if reg==2{{m.ss_shadow=1;}}}}if let Some(t)=pending_transfer{{t.commit(regs,flags,undefined,eip,m,ram.as_deref_mut().ok_or(ExecError::InvalidContext)?)?;}}}}\nOk(())",mask(p.operand_width),mask(p.source_width),mask(p.operand_width),mask(p.source_width)),
         };
         out.push_str(&line); out.push('\n');
     }

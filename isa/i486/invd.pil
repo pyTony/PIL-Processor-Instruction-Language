@@ -1,0 +1,5 @@
+# INVD / WBINVD: invalidate (and write back) internal caches; requires CPL 0.
+# PIL's RAM is coherent without a data cache, so both retire as CPL 0 no-ops.
+require_ring0
+preserve_flags all
+retire
