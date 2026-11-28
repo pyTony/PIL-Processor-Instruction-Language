@@ -337,6 +337,11 @@ impl Blocks {
             let prefix = available - if pair.is_some() { 2 } else { 0 };
             if prefix != 0 {
                 flags.flush(&mut cpu.eflags, &mut cpu.undefined_flags);
+            } else if pair.is_some_and(|p| p.keeps_carry()) {
+                // A block that is only the pair (`dec ecx; jnz loop`) has no
+                // prefix to flush the flags the previous block left pending,
+                // and INC/DEC must keep that block's CF.
+                flags.flush_cf_only(&mut cpu.eflags, &mut cpu.undefined_flags);
             }
             for step in &block.steps[..prefix]{
                 match step {
@@ -377,7 +382,8 @@ impl Blocks {
             if failure.is_none() && !error_signalled && !fpu_stop {
                 if let Some(pair) = pair {
                     ram.set_paging(machine.ram_paging());
-                    // A pair overwrites all arithmetic flags before its branch.
+                    // A pair overwrites all arithmetic flags before its branch,
+                    // except CF for INC/DEC (flushed above).
                     *flags = pair.execute(cpu);
                     self.compare_branches += 1;
                     self.native_instructions += 2;

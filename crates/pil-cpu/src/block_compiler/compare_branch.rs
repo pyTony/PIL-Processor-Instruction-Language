@@ -136,6 +136,16 @@ impl CompareBranch {
         })
     }
 
+    /// INC and DEC leave CF as it was. A pending carry from an earlier block
+    /// has to be written out before this pair replaces the lazy flags, since
+    /// the pair's own flags no longer describe CF.
+    pub fn keeps_carry(&self) -> bool {
+        matches!(
+            self.kind,
+            AluKind::Sub { write_cf: false } | AluKind::Add { write_cf: false }
+        )
+    }
+
     pub fn execute(&self, cpu: &mut Cpu) -> LazyFlags {
         let a = cpu.read(self.left).bits;
         let b = match self.right {
