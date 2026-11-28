@@ -446,7 +446,7 @@ impl Ram {
         // covers the full `data` buffer in `CODE_LINE` (64-byte) increments.
         (
             self.data.as_mut_ptr(),
-            self.code_watch.lines.as_ptr() as *mut u64,
+            self.code_watch.lines.as_mut_ptr() as *mut u64,
             limit,
         )
     }

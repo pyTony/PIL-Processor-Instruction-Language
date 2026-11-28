@@ -933,6 +933,7 @@ pub(crate) trait InstructionBackend {
     fn reference_instruction(&mut self,_image:&Image,_ram:&Ram,_ip:u32,_decoded:&super::guest::Decoded){}
     fn reference_stats(&self)->Option<u64>{None}
     fn fallback_mode(&self)->Option<crate::precompiled::Mode>{None}
+    fn fallback_blocks(&self)->bool{false}
     fn diagnostics(&self)->String{String::new()}
     fn block(&mut self,_image:&Image,_cpu:&mut Cpu,_ram:&mut Ram,_machine:&mut super::address::SegmentState,_budget:usize,_chain:bool)->Option<(usize,Result<(),super::flow::ExecError>)>{None}
     fn execute(&mut self,image:&Image,decoded:&std::rc::Rc<super::guest::Decoded>,cpu:&mut Cpu,ram:&mut Ram,machine:&mut super::address::SegmentState)->Option<Result<(),super::flow::ExecError>>;
@@ -1398,7 +1399,6 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
             Ok(None)|Err(_)=>{},
         }
         if let Some(b)=backend.as_deref_mut().filter(|_|!history_enabled&&!watched){
-            if b.may_block(&p.image,&p.ram,p.cpu.eip){
             // A clocked DOS session samples IRQ0 every 256 guest steps.
             // Never batch across that boundary, even when a guest owns INT 08h:
             // the next outer-loop iteration must get the same timer/pending-IRQ
@@ -1406,16 +1406,31 @@ fn run_with_backend_inner(mut p:Loaded,budget:usize,output:&mut impl crate::host
             let mut machine=p.image.segment_state();
             if machine.ss_shadow==0&&machine.sti_shadow==0{
                 let block_budget=(budget-execution_steps).min(256-execution_steps%256);
-                lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
                 let chain=!p.rom_mode&&!p.speaker.kbd.pending()&&!mouse::ready(&p)&&!p.sb.pending_irq();
-                if let Some((n,result))=b.block(&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget,chain){
-                    p.image.set_segment_state(machine);p.selectors=machine.selectors;
-                    execution_steps+=n;completed+=n;pil_steps+=n;
-                    native_block_count+=n;
-                    if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
-                    if n>0{continue;}
+                let may_compiled=b.may_block(&p.image,&p.ram,p.cpu.eip);
+                let mut handled=false;
+                if may_compiled{
+                    lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                    if let Some((n,result))=b.block(&p.image,&mut p.cpu,&mut p.ram,&mut machine,block_budget,chain){
+                        handled=true;
+                        p.image.set_segment_state(machine);p.selectors=machine.selectors;
+                        execution_steps+=n;completed+=n;pil_steps+=n;
+                        native_block_count+=n;
+                        if let Err(e)=result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
+                        if n>0{continue;}
+                    }
                 }
-            }
+                if !handled && blocks_enabled && b.fallback_blocks() {
+                    lazy.flush(&mut p.cpu.eflags,&mut p.cpu.undefined_flags);
+                    let fallback_chain=chain&&!may_compiled;
+                    if let Some(r)=p.blocks.run(&mut p.cache,&p.image,&mut p.cpu,&mut p.ram,&mut p.fpu,&mut machine,block_budget,fallback_chain){
+                        p.image.set_segment_state(machine);p.selectors=machine.selectors;
+                        execution_steps+=r.steps;completed+=r.steps;pil_steps+=r.pil_steps;
+                        if r.error_signalled{p.speaker.pic.raise_slave(5);}
+                        if let Err(e)=r.result{match exception(&mut p,&e,&mut lazy){Some(Ok(site))=>{exception_count+=1;*instructions.entry(format!("{} (vector {:02x}h)",crate::interrupt::name(site.vector),site.vector)).or_insert(0)+=1;if exceptions.len()<64{exceptions.push(site);}execution_steps+=1;continue;},Some(Err(message))=>break Stop::Fault(message),None=>break Stop::Fault(format!("{e:?}"))}}
+                        if r.steps>0{continue;}
+                    }
+                }
             }
         }
         let prepared=backend.as_deref_mut().and_then(|b|b.decode(&p.image,&p.ram,p.cpu.eip));

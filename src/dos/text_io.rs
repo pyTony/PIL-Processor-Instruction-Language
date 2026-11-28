@@ -65,6 +65,13 @@ pub(crate) fn timed(session:&mut Session,budget:usize)->Result<(std::time::Durat
     }
     Err(format!("DOS timing exceeded its {budget}-step budget before exit or input wait"))
 }
+fn parse_wait_env(value:&str)->Result<bool,String>{
+    match value.trim().to_ascii_lowercase().as_str(){
+        "1"|"true"=>Ok(true),
+        "0"|"false"=>Ok(false),
+        _=>Err("DINE_WAIT must be 0, 1, true or false".into()),
+    }
+}
 pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool)->Result<i32,String>{
     let mode=std::env::var("DINE_TEXT").unwrap_or_else(|_|"auto".into());
     if !matches!(mode.as_str(),"auto"|"terminal"|"headless"){return Err("DINE_TEXT must be auto, terminal or headless".into());}
@@ -74,14 +81,19 @@ pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool
         host_console::configure(session,options)?;
         stream(session,&mut io::stdin().lock(),&mut io::stdout().lock())
     }else{
+        let wait_on_exit=match std::env::var("DINE_WAIT"){
+            Ok(v) if !v.trim().is_empty()=>parse_wait_env(&v)?,
+            _=>options.wait_on_exit,
+        };
+        let run_options=host_console::Options{wait_on_exit,..*options};
         // The window or alternate screen has closed: say how the program ended.
-        println!("{}",host_console::run(session,options)?);
+        println!("{}",host_console::run(session,&run_options)?);
         match session.status().0{"exit"=>Ok(exit_code(session).unwrap_or(0)),"running"|"waiting_input"=>Ok(0),_=>Err(format!("DOS stopped: {}",session.status().1))}
     }
 }
 pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,String>{
     let(mut config,mut mount,mut tail,mut fpu,mut cpu,mut program)=(None,None,None,None,None,None);
-    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME,rtc_year:None,guest_keymap:None};
+    let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,wait_on_exit:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME,rtc_year:None,guest_keymap:None};
     let mut plain=false;
     let mut boot:Option<(String,u8)>=None;
     let mut hard_disk:Option<String>=None;
@@ -93,7 +105,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     while at<args.len(){
         match args[at].as_str(){
             "--tty"|"--rust-graphics"=>options.window=false,"--window"=>options.window=true,"--plain"=>{plain=true;options.window=false;},
-            "--ansi"=>options.ansi=true,"--mouse"=>options.mouse=true,
+            "--ansi"=>options.ansi=true,"--mouse"=>options.mouse=true,"--wait"|"--wait-on-exit"=>options.wait_on_exit=true,
             "--host-pointer"=>{
                 let value=args.get(at+1).ok_or("missing DOS console option value")?;
                 host_pointer=Some(crate::dos_config::HostPointer::parse(value).ok_or("--host-pointer takes auto, show or hide")?);at+=1;
@@ -126,7 +138,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
         }at+=1;
     }
     let defaults=crate::dos_config::console_settings(config)?;
-    options.ansi|=defaults.ansi;options.mouse|=defaults.mouse;
+    options.ansi|=defaults.ansi;options.mouse|=defaults.mouse;options.wait_on_exit|=defaults.wait_on_exit;
     options.utc_offset=options.utc_offset.or(defaults.utc_offset);
     options.host_pointer=host_pointer.or(defaults.host_pointer).unwrap_or_default();
     options.speaker_volume=speaker_volume.or(defaults.speaker_volume).unwrap_or(host_console::speaker::DEFAULT_VOLUME);

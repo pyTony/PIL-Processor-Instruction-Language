@@ -286,12 +286,27 @@ impl Session{
         let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
         // The speaker: times it was switched on so far, and its tone now (0 off).
         let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
-        let(blocks,native)=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(b),_)=>b.block_stats(),(None,Some(p))=>(p.blocks.blocks,p.blocks.native_instructions),(None,None)=>(0,0)};
-        let single=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(b),_)=>b.single_stats(),(None,Some(p))=>p.blocks.single_instructions,(None,None)=>0};
+        let(blocks,native)=match(self.backend.as_ref(),self.loaded.as_ref()){
+            (Some(b),Some(p))=>{let(bb,bn)=b.block_stats();(bb+p.blocks.blocks,bn+p.blocks.native_instructions)},
+            (Some(b),None)=>b.block_stats(),
+            (None,Some(p))=>(p.blocks.blocks,p.blocks.native_instructions),
+            (None,None)=>(0,0),
+        };
+        let single=match(self.backend.as_ref(),self.loaded.as_ref()){
+            (Some(b),Some(p))=>b.single_stats()+p.blocks.single_instructions,
+            (Some(b),None)=>b.single_stats(),
+            (None,Some(p))=>p.blocks.single_instructions,
+            (None,None)=>0,
+        };
         let interpreted=self.backend.as_ref().and_then(|b|b.reference_stats()).unwrap_or_else(||self.loaded.as_ref().map_or(0,|p|p.blocks.interpreted_instructions));
         let application=self.backend.as_ref().map_or_else(String::new,|b|b.diagnostics());
         // Returns from block chains to the DOS loop (no chains with a backend).
-        let block_runs=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(_),_)=>blocks,(None,Some(p))=>p.blocks.runs,(None,None)=>0};
+        let block_runs=match(self.backend.as_ref(),self.loaded.as_ref()){
+            (Some(b),Some(p))=>b.block_stats().0+p.blocks.runs,
+            (Some(b),None)=>b.block_stats().0,
+            (None,Some(p))=>p.blocks.runs,
+            (None,None)=>0,
+        };
         let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
         let native_total=native+single;
         let compare_branches=self.loaded.as_ref().map_or(0,|p|p.blocks.compare_branches);

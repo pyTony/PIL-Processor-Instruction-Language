@@ -15,7 +15,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def check(engine, runtime, work, name, data, tail, expected, exit_code, pil=False):
+def check(engine, runtime, work, name, data, tail, expected, exit_code, pil=False, min_compiled=1):
     source = work / name
     source.write_bytes(data)
     output = work / ('output-pil' if pil else 'output')
@@ -27,10 +27,11 @@ def check(engine, runtime, work, name, data, tail, expected, exit_code, pil=Fals
     subprocess.run(cmd, cwd=ROOT, check=True)
     suffix = '.exe' if os.name == 'nt' else ''
     executable = output / ('Native_' + source.stem + suffix)
-    if not pil:
-        metadata = json.loads(executable.with_suffix('.native.json').read_text())
-        assert metadata['original_file_required_at_runtime'] is False
-        assert metadata['retained_executable_resources'] is True
+    metadata = json.loads(executable.with_suffix('.native.json').read_text())
+    assert metadata['original_file_required_at_runtime'] is False
+    assert metadata['retained_executable_resources'] is True
+    if pil:
+        assert 'PIL-lowered Rust' in metadata['application_dispatch'], metadata
     source.unlink()
     assert not source.exists()
     config = work / 'empty.conf'
@@ -53,6 +54,8 @@ def check(engine, runtime, work, name, data, tail, expected, exit_code, pil=Fals
         assert reply['detail'] == f'exit code {exit_code}', reply
         assert reply['interpreter_instructions'] == 0, reply
         assert 0 < reply['native_total_instructions'] <= reply['steps'], reply
+        if pil:
+            assert reply.get('compiled_pil_instructions', 0) >= min_compiled, reply
         process.stdin.write('quit\n')
         process.stdin.flush()
         json.loads(process.stdout.readline())
@@ -93,6 +96,14 @@ def main():
         check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFSMC.COM',
               bytes.fromhex('b90000b041a209019040b44c88c8cd21'),
               [], '', 1, pil=True)
+        # External SMC via REP STOSB (bypasses dine_pil_write): patches INC AX (0x40) at 0x010E to INC CX (0x41).
+        check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFRSM.COM',
+              bytes.fromhex('b90100bf0e01b041f3aab900009040b44c88c8cd21'),
+              [], '', 1, pil=True)
+        # Mutable data buffer immediately after terminating INT 21h must not poison code_mask.
+        check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFDAT.COM',
+              bytes.fromhex('b90a00fe061001e2fab44ca01001cd2100000000'),
+              [], '', 10, pil=True, min_compiled=20)
     print('Native application integration checks passed.')
 
 

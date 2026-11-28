@@ -89,3 +89,11 @@ fn speaker_volume_option_takes_0_to_100(){
     for v in ["101","-1","x"]{assert!(cli(&args(v),false,"").unwrap_err().contains("0..100"),"{v}");}
     assert!(cli(&["--speaker-volume".to_string()],false,"").unwrap_err().contains("missing"));
 }
+#[test]
+fn wait_env_accepts_only_booleans(){
+    assert_eq!(parse_wait_env("1"),Ok(true));
+    assert_eq!(parse_wait_env("TRUE"),Ok(true));
+    assert_eq!(parse_wait_env(" 0 "),Ok(false));
+    assert_eq!(parse_wait_env("false"),Ok(false));
+    assert!(parse_wait_env("yes").unwrap_err().contains("DINE_WAIT"));
+}

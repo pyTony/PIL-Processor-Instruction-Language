@@ -86,8 +86,9 @@ fn wsl_paths_convert_for_windows_targets(){
 }
 #[test]
 fn console_settings_and_offsets_follow_the_frontend_rules(){
-    let c=parse("program=A.COM\nfpu=80387\nmouse=1\nansi=false\nutc-offset=5.5\nspeaker_volume=100\n",Path::new("base")).unwrap();
-    assert_eq!((c.fpu,c.mouse,c.ansi,c.utc_offset),(Some(true),Some(true),Some(false),Some(19800)));
+    let c=parse("program=A.COM\nfpu=80387\nmouse=1\nansi=false\nwait_on_exit=true\nutc-offset=5.5\nspeaker_volume=100\n",Path::new("base")).unwrap();
+    assert_eq!((c.fpu,c.mouse,c.ansi,c.wait_on_exit,c.utc_offset),(Some(true),Some(true),Some(false),Some(true),Some(19800)));
+    assert_eq!(parse("wait-on-exit=false\n",Path::new("base")).unwrap().wait_on_exit,Some(false));
     assert_eq!(c.speaker_volume,Some(100));
     assert_eq!(parse("speaker-volume=0\nspeaker_volume=7\n",Path::new("base")).unwrap().speaker_volume,Some(7));
     assert_eq!(parse("mouse=1\n",Path::new("base")).unwrap().speaker_volume,None);
@@ -95,7 +96,7 @@ fn console_settings_and_offsets_follow_the_frontend_rules(){
         assert_eq!(parse_offset(text),Ok(seconds),"{text}");
     }
     for text in ["","7200","15","-12:30","2:60","x","1e3","+"]{assert!(parse_offset(text).is_err(),"{text}");}
-    for text in ["mouse=1\nmouse=0","utc_offset=99","speaker_volume=101","speaker-volume=x","fpu=none\nfpu=80387"]{
+    for text in ["mouse=1\nmouse=0","wait_on_exit=maybe","wait_on_exit=true\nwait-on-exit=false","utc_offset=99","speaker_volume=101","speaker-volume=x","fpu=none\nfpu=80387"]{
         assert!(parse(text,Path::new("base")).is_err(),"{text}");
     }
 }

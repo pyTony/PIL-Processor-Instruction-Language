@@ -342,7 +342,8 @@ fn guest_mouse_visible(p:&Loaded)->bool{
 }
 
 /// Options of `pil --dos-console`.
-pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) country:Option<u16>,pub(crate) utc_offset:Option<i64>,
+#[derive(Clone,Copy)]
+pub(crate) struct Options{pub(crate) window:bool,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) wait_on_exit:bool,pub(crate) country:Option<u16>,pub(crate) utc_offset:Option<i64>,
     /// The host pointer over the window (Windows); the terminal ignores it.
     pub(crate) host_pointer:HostPointer,
     /// PC speaker volume 0..100, 0 silent (`speaker_volume`).
@@ -397,12 +398,49 @@ pub(crate) fn run_on(session:&mut Session,options:&Options,front:&mut Front,rx:&
     if let Some(p)=session.machine_mut(){p.speaker.take_sound();p.sb.take_pcm();}
     let mut sound=speaker::Sound::host(options.speaker_volume);
     let mut sb_sound=sb_audio::Sound::host(options.speaker_volume);
-    let result=drive(session,front,rx,&mut sound,&mut sb_sound);
+    let result=drive(session,front,rx,&mut sound,&mut sb_sound,options.wait_on_exit);
     front.reset();
     result
 }
 
-fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound,sb_sound:&mut sb_audio::Sound)->Result<String,String>{
+fn wait_event_closes(event:Event)->bool{
+    match event{
+        Event::Quit|Event::Break|Event::Key(..)=>true,
+        // Ignore key-up and bare modifier presses so launching Enter release
+        // or Ctrl+Shift+C copy does not dismiss the screen.
+        Event::NativeKey{scan,down:true,..}=>!matches!(scan,0x1d|0x2a|0x36|0x38),
+        _=>false,
+    }
+}
+
+fn wait_before_close(session:&Session,front:&mut Front,rx:&mpsc::Receiver<Event>,message:&str)->Result<(),String>{
+    front.present(session,Some(format!("{message} - press any key to close")))?;
+    loop{
+        if front.closed(){return Ok(());}
+        let mut events:Vec<Event>=rx.try_iter().collect();
+        front.poll(&mut events)?;
+        if events.is_empty(){
+            if let Ok(event)=rx.recv_timeout(Duration::from_millis(16)){events.push(event);}
+        }
+        for event in events{
+            if wait_event_closes(event){return Ok(());}
+            match event{
+                Event::Copy=>front.copy(session)?,
+                Event::Mouse{x,y,width,height,buttons,..}=>{
+                    if width>0&&height>0{
+                        if let select::Gesture::Copy=front.select(session,x,y,width,height,buttons)?{
+                            front.copy(session)?;
+                        }
+                        front.present(session,None)?;
+                    }
+                },
+                _=>{},
+            }
+        }
+    }
+}
+
+fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&mut speaker::Sound,sb_sound:&mut sb_audio::Sound,wait_on_exit:bool)->Result<String,String>{
     // Normal native blocks should run in sufficiently large batches to
     // preserve Mandelbrot throughput. Host input is checked at each outer
     // frame; a short traced batch is used only while history is active.
@@ -541,8 +579,18 @@ fn drive(session:&mut Session,front:&mut Front,rx:&mpsc::Receiver<Event>,sound:&
                     if let Ok(event)=rx.recv_timeout(Duration::from_millis(10)){front.unpoll(event);}
                 }
             },
-            "exit"=>{front.present(session,None)?;return Ok(format!("DOS program ended: {detail}"));},
-            _=>{front.present(session,None)?;return Ok(format!("DOS session stopped after {} steps: {detail}",session.steps()));},
+            "exit"=>{
+                let message=format!("DOS program ended: {detail}");
+                if wait_on_exit{wait_before_close(session,front,rx,&message)?;}
+                else{front.present(session,None)?;}
+                return Ok(message);
+            },
+            _=>{
+                let message=format!("DOS session stopped after {} steps: {detail}",session.steps());
+                if wait_on_exit{wait_before_close(session,front,rx,&message)?;}
+                else{front.present(session,None)?;}
+                return Ok(message);
+            },
         }
         if front.closed(){return Ok("DOS console window closed".into());}
     }
@@ -1035,5 +1083,19 @@ mod text_cursor_font_regressions {
     fn window_title_uses_pil_pc_for_booted_and_dine_dos_for_dos() {
         assert_eq!(window_title(true), "PIL PC console");
         assert_eq!(window_title(false), "Dine DOS console");
+    }
+
+    #[test]
+    fn wait_event_closes_only_on_key_down_break_or_quit() {
+        assert!(wait_event_closes(Event::Quit));
+        assert!(wait_event_closes(Event::Break));
+        assert!(wait_event_closes(Event::Key(Key::Enter, Mods::default())));
+        assert!(wait_event_closes(Event::NativeKey { scan: 0x1c, extended: false, down: true, key: None }));
+        assert!(!wait_event_closes(Event::NativeKey { scan: 0x1c, extended: false, down: false, key: None }));
+        for mod_scan in [0x1d, 0x2a, 0x36, 0x38] {
+            assert!(!wait_event_closes(Event::NativeKey { scan: mod_scan, extended: false, down: true, key: None }));
+        }
+        assert!(!wait_event_closes(Event::Copy));
+        assert!(!wait_event_closes(Event::Mouse { x: 0, y: 0, width: 640, height: 400, buttons: 1, shift: false }));
     }
 }

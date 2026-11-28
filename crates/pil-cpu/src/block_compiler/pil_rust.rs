@@ -109,7 +109,7 @@ pub fn is_compilable(p: &Program) -> bool {
 }
 
 fn classify_terminator(label: &str, program: &Program, flow: &FlowContext) -> Terminator {
-    if !program.uses_flow {
+    if !program.tokens.iter().any(|t| matches!(t, Token::BranchIf(..))) {
         return Terminator::Fallthrough;
     }
     let target = program.uses_displacement.then(|| {
@@ -131,6 +131,18 @@ fn classify_terminator(label: &str, program: &Program, flow: &FlowContext) -> Te
     }
 }
 
+fn next_known_ah(bytes: &[u8], cur_ah: Option<u8>) -> Option<u8> {
+    match bytes {
+        [0xb4, imm] => Some(*imm),
+        [0xb8, _, hi] => Some(*hi),
+        [0x31, 0xc0] | [0x33, 0xc0] | [0x29, 0xc0] | [0x2b, 0xc0] => Some(0),
+        [0xb0, _] | [0xa0, _, _] | [0x30, 0xc0] | [0x32, 0xc0] => cur_ah,
+        [0x88, m] if *m >= 0xc0 && (*m & 7) == 0 => cur_ah,
+        [0x8a, m, ..] if ((*m >> 3) & 7) == 0 => cur_ah,
+        _ => None,
+    }
+}
+
 /// Discover reachable 16-bit real-mode sites and basic blocks inside `module_base..module_base+module_len`.
 pub fn discover_real16(
     image: &Image,
@@ -143,8 +155,28 @@ pub fn discover_real16(
     let module_end = module_base as usize + module_len;
     let mut sites: BTreeMap<u32, CompiledSite> = BTreeMap::new();
     let mut visited = BTreeSet::new();
+    let mut ah_at: BTreeMap<u32, Option<u8>> = BTreeMap::new();
     let mut queue = VecDeque::new();
-    queue.push_back(entry_ip);
+    let enqueue = |ah_at: &mut BTreeMap<u32, Option<u8>>,
+                   visited: &mut BTreeSet<u32>,
+                   queue: &mut VecDeque<u32>,
+                   target: u32,
+                   incoming: Option<u8>| {
+        match ah_at.get(&target).copied() {
+            None => {
+                ah_at.insert(target, incoming);
+                queue.push_back(target);
+            }
+            Some(Some(prev)) if incoming != Some(prev) => {
+                ah_at.insert(target, None);
+                if visited.remove(&target) {
+                    queue.push_back(target);
+                }
+            }
+            Some(_) => {}
+        }
+    };
+    enqueue(&mut ah_at, &mut visited, &mut queue, entry_ip, None);
 
     while let Some(ip) = queue.pop_front() {
         if !visited.insert(ip) || ip > 0xffff {
@@ -155,6 +187,27 @@ pub fn discover_real16(
         };
         let linear_usize = linear as usize;
         if linear_usize < module_base as usize || linear_usize >= module_end {
+            continue;
+        }
+        let cur_ah = ah_at.get(&ip).copied().flatten();
+        let fpu_decode = crate::fpu::decode_with_default(
+            |off| {
+                let a = linear
+                    .checked_add(off)
+                    .ok_or_else(|| crate::guest::GuestError::Decode(String::new()))?;
+                ram.contiguous_slice(a, 1)
+                    .map(|s| s[0])
+                    .ok_or_else(|| crate::guest::GuestError::Decode(String::new()))
+            },
+            false,
+        );
+        if let Ok(Some(ins)) = fpu_decode {
+            if linear_usize
+                .checked_add(ins.length as usize)
+                .is_some_and(|e| e <= module_end)
+            {
+                enqueue(&mut ah_at, &mut visited, &mut queue, ip + ins.length, None);
+            }
             continue;
         }
         let Ok(decoded) = image.decode(ram, ip) else {
@@ -172,7 +225,15 @@ pub fn discover_real16(
         let next_ip = ip + decoded.length;
         let falls_through = match &decoded.operation {
             Operation::Halt => false,
-            Operation::Interrupt { vector, .. } => *vector != 0x20,
+            Operation::Interrupt { vector, .. } => {
+                if *vector == 0x20 || *vector == 0x27 {
+                    false
+                } else if *vector == 0x21 {
+                    !matches!(cur_ah, Some(0x4c | 0x00 | 0x31))
+                } else {
+                    true
+                }
+            }
             Operation::Input { .. } | Operation::Output { .. } => true,
             Operation::Pil { .. } => {
                 !decoded.label.starts_with("RETF")
@@ -182,7 +243,7 @@ pub fn discover_real16(
         };
         if super::engine::answered_by_loop(bytes) {
             if falls_through {
-                queue.push_back(next_ip);
+                enqueue(&mut ah_at, &mut visited, &mut queue, next_ip, None);
             }
             continue;
         }
@@ -195,29 +256,35 @@ pub fn discover_real16(
         } = &decoded.operation
         else {
             if falls_through {
-                queue.push_back(next_ip);
+                enqueue(&mut ah_at, &mut visited, &mut queue, next_ip, None);
             }
             continue;
         };
         if !is_compilable(program) {
             if falls_through {
-                queue.push_back(next_ip);
+                let fall_ah = next_known_ah(bytes, cur_ah);
+                enqueue(&mut ah_at, &mut visited, &mut queue, next_ip, fall_ah);
             }
             continue;
         }
         let terminator = classify_terminator(&decoded.label, program, flow);
         match terminator {
-            Terminator::Fallthrough => queue.push_back(flow.next_eip),
-            Terminator::ConditionalBranch(t) => {
-                queue.push_back(t);
-                queue.push_back(flow.next_eip);
+            Terminator::Fallthrough => {
+                let fall_ah = next_known_ah(bytes, cur_ah);
+                enqueue(&mut ah_at, &mut visited, &mut queue, flow.next_eip, fall_ah);
             }
-            Terminator::UnconditionalJump(t) => queue.push_back(t),
+            Terminator::ConditionalBranch(t) => {
+                enqueue(&mut ah_at, &mut visited, &mut queue, t, cur_ah);
+                enqueue(&mut ah_at, &mut visited, &mut queue, flow.next_eip, cur_ah);
+            }
+            Terminator::UnconditionalJump(t) => {
+                enqueue(&mut ah_at, &mut visited, &mut queue, t, cur_ah);
+            }
             Terminator::Call(target) => {
                 if let Some(t) = target {
-                    queue.push_back(t);
+                    enqueue(&mut ah_at, &mut visited, &mut queue, t, None);
                 }
-                queue.push_back(flow.next_eip);
+                enqueue(&mut ah_at, &mut visited, &mut queue, flow.next_eip, None);
             }
             Terminator::DynamicJump | Terminator::Return => {}
         }
@@ -658,7 +725,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {mem_seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
+                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, &mut ram_ptr, &mut watch_ptr, ram_fast_limit, {mem_seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
                 )
                 .unwrap();
             }
@@ -666,7 +733,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
+                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, &mut ram_ptr, &mut watch_ptr, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
                 )
                 .unwrap();
             }
@@ -681,7 +748,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "if fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "if fast_check_write(host, &seg_bases, seg_fast_mask, &mut ram_ptr, &mut watch_ptr, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
             }
@@ -689,7 +756,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, &mut ram_ptr, &mut watch_ptr, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
                 staged_stores.push((
@@ -704,7 +771,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_cond_{index}: bool = v{c} != 0;\nlet store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif store_cond_{index} && fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_cond_{index}: bool = v{c} != 0;\nlet store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif store_cond_{index} && fast_check_write(host, &seg_bases, seg_fast_mask, &mut ram_ptr, &mut watch_ptr, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
                 staged_stores.push((
@@ -719,7 +786,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, &mut ram_ptr, &mut watch_ptr, ram_fast_limit, {seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
                 staged_stores.push((
@@ -756,7 +823,7 @@ fn emit_site_body(
                 }
                 for (seg, addr, val, bytes, cond) in &staged_stores {
                     let call = format!(
-                        "let rc = fast_write(host, &seg_bases, seg_fast_mask, ram_ptr, watch_ptr, ram_fast_limit, code_start, code_end, {seg}u8, {addr}, {bytes}u8, {val}, {inst_ip}u32);\nif rc < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nmodified |= rc == 1;"
+                        "let rc = fast_write(host, &seg_bases, seg_fast_mask, &mut ram_ptr, &mut watch_ptr, ram_fast_limit, code_start, code_end, {seg}u8, {addr}, {bytes}u8, {val}, {inst_ip}u32);\nif rc < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nmodified |= rc == 1;"
                     );
                     if let Some(c) = cond {
                         writeln!(out, "if {c} {{\n{call}\n}}").unwrap();
@@ -849,24 +916,31 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
              fn dine_pil_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32;\n\
              fn dine_pil_check_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32;\n\
              fn dine_pil_check_span(host: *mut c_void, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32;\n\
+             fn dine_pil_refresh(host: *mut c_void, ram_ptr: *mut *mut u8, watch_ptr: *mut *mut u64);\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn slow_read(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
-             dine_pil_read(host, seg, offset, bytes, eip, out)\n\
+         unsafe fn slow_read(host: *mut c_void, ram_ptr: &mut *mut u8, watch_ptr: &mut *mut u64, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
+             let rc = dine_pil_read(host, seg, offset, bytes, eip, out);\n\
+             dine_pil_refresh(host, ram_ptr, watch_ptr);\n\
+             rc\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn slow_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
-             dine_pil_write(host, seg, offset, bytes, value, eip)\n\
+         unsafe fn slow_write(host: *mut c_void, ram_ptr: &mut *mut u8, watch_ptr: &mut *mut u64, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
+             let rc = dine_pil_write(host, seg, offset, bytes, value, eip);\n\
+             dine_pil_refresh(host, ram_ptr, watch_ptr);\n\
+             rc\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn slow_check_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
-             dine_pil_check_write(host, seg, offset, bytes, eip)\n\
+         unsafe fn slow_check_write(host: *mut c_void, ram_ptr: &mut *mut u8, watch_ptr: &mut *mut u64, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
+             let rc = dine_pil_check_write(host, seg, offset, bytes, eip);\n\
+             dine_pil_refresh(host, ram_ptr, watch_ptr);\n\
+             rc\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
@@ -876,62 +950,63 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn fast_read(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
+         unsafe fn fast_read(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: &mut *mut u8, watch_ptr: &mut *mut u64, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
              if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
                  let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
                  if lin.wrapping_add(bytes as u32) <= ram_fast_limit {{\n\
-                     let p = ram_ptr.add(lin as usize);\n\
+                     let p = (*ram_ptr).add(lin as usize);\n\
                      *out = match bytes {{\n\
                          1 => *p as u32,\n\
                          2 => (p as *const u16).read_unaligned().to_le() as u32,\n\
                          4 => (p as *const u32).read_unaligned().to_le(),\n\
-                         _ => return slow_read(host, seg, offset, bytes, eip, out),\n\
+                         _ => return slow_read(host, ram_ptr, watch_ptr, seg, offset, bytes, eip, out),\n\
                      }};\n\
                      return 0;\n\
                  }}\n\
              }}\n\
-             slow_read(host, seg, offset, bytes, eip, out)\n\
+             slow_read(host, ram_ptr, watch_ptr, seg, offset, bytes, eip, out)\n\
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn fast_check_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
+         unsafe fn fast_check_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: &mut *mut u8, watch_ptr: &mut *mut u64, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
              if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
                  let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
                  if lin.wrapping_add(bytes as u32) <= ram_fast_limit {{\n\
                      return 0;\n\
                  }}\n\
              }}\n\
-             slow_check_write(host, seg, offset, bytes, eip)\n\
+             slow_check_write(host, ram_ptr, watch_ptr, seg, offset, bytes, eip)\n\
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn fast_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, watch_ptr: *mut u64, ram_fast_limit: u32, code_start: u32, code_end: u32, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
+         unsafe fn fast_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: &mut *mut u8, watch_ptr: &mut *mut u64, ram_fast_limit: u32, code_start: u32, code_end: u32, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
              if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
                  let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
                  let end = lin.wrapping_add(bytes as u32);\n\
                  if end <= ram_fast_limit && (end <= code_start || lin >= code_end) {{\n\
-                     let p = ram_ptr.add(lin as usize);\n\
+                     let p = (*ram_ptr).add(lin as usize);\n\
                      match bytes {{\n\
                          1 => *p = value as u8,\n\
                          2 => (p as *mut u16).write_unaligned((value as u16).to_le()),\n\
                          4 => (p as *mut u32).write_unaligned(value.to_le()),\n\
-                         _ => return slow_write(host, seg, offset, bytes, value, eip),\n\
+                         _ => return slow_write(host, ram_ptr, watch_ptr, seg, offset, bytes, value, eip),\n\
                      }}\n\
                      let l0 = (lin >> 6) as usize;\n\
                      let l1 = ((end - 1) >> 6) as usize;\n\
-                     *watch_ptr.add(l0) = (*watch_ptr.add(l0)).wrapping_add(1);\n\
+                     let wp = *watch_ptr;\n\
+                     *wp.add(l0) = (*wp.add(l0)).wrapping_add(1);\n\
                      if l1 != l0 {{\n\
-                         *watch_ptr.add(l1) = (*watch_ptr.add(l1)).wrapping_add(1);\n\
+                         *wp.add(l1) = (*wp.add(l1)).wrapping_add(1);\n\
                      }}\n\
                      return 0;\n\
                  }}\n\
              }}\n\
-             slow_write(host, seg, offset, bytes, value, eip)\n\
+             slow_write(host, ram_ptr, watch_ptr, seg, offset, bytes, value, eip)\n\
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
          unsafe fn fast_check_span(host: *mut c_void, seg_fast_mask: u8, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32 {{\n\
-             if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && bytes > 0 && offset <= 0x10000u64 - bytes as u64 {{\n\
+             if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && bytes > 0 && bytes <= 0x10000 && offset <= 0x10000u64 - bytes as u64 {{\n\
                  return 0;\n\
              }}\n\
              slow_check_span(host, seg, offset, bytes, eip)\n\
@@ -958,8 +1033,8 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
              let seg_bases = (*ctx).seg_bases;\n\
              let seg_fast_mask = (*ctx).seg_fast_mask;\n\
              let code_limit = (*ctx).code_limit;\n\
-             let ram_ptr = (*ctx).ram_ptr;\n\
-             let watch_ptr = (*ctx).watch_ptr;\n\
+             let mut ram_ptr = (*ctx).ram_ptr;\n\
+             let mut watch_ptr = (*ctx).watch_ptr;\n\
              let ram_fast_limit = (*ctx).ram_fast_limit;\n\
              let code_start = (*ctx).code_start;\n\
              let code_end = (*ctx).code_end;\n\
@@ -1029,4 +1104,22 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
     .unwrap();
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_terminator_treats_non_branch_flow_as_fallthrough() {
+        let program = crate::compile("require_real_mode\npreserve_flags all\nretire", 16).unwrap();
+        assert!(program.uses_flow);
+        let flow = FlowContext {
+            next_eip: 1,
+            displacement: 0,
+            displacement_bits: 0,
+            code_limit: 0xffff,
+        };
+        assert_eq!(classify_terminator("NOP", &program, &flow), Terminator::Fallthrough);
+    }
 }

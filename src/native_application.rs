@@ -1101,6 +1101,9 @@ impl PilImage {
             ),
             _ => (0, 0),
         };
+        let code_stamp = (code_start < code_end)
+            .then(|| p.ram.watch_code(code_start, (code_end - code_start) as usize))
+            .flatten();
         session.set_backend(Box::new(CompiledPilBackend {
             original,
             code_mask: self.code_mask,
@@ -1110,6 +1113,7 @@ impl PilImage {
             initial_cs,
             cs_base,
             entry,
+            code_stamp,
             code_dirty: false,
             blocks: 0,
             instructions: 0,
@@ -1342,6 +1346,21 @@ pub unsafe extern "C" fn dine_pil_write(
     0
 }
 
+#[cfg(any(feature = "dine-library", test))]
+#[no_mangle]
+pub unsafe extern "C" fn dine_pil_refresh(
+    host: *mut std::ffi::c_void,
+    ram_ptr: *mut *mut u8,
+    watch_ptr: *mut *mut u64,
+) {
+    let host = unsafe { &*(host as *const HostMem<'_>) };
+    let (rp, wp, _) = unsafe { (*host.ram).fast_conventional_mut() };
+    unsafe {
+        *ram_ptr = rp;
+        *watch_ptr = wp;
+    }
+}
+
 struct CompiledPilBackend {
     original: Vec<u8>,
     code_mask: Vec<u8>,
@@ -1351,6 +1370,7 @@ struct CompiledPilBackend {
     initial_cs: u16,
     cs_base: u32,
     entry: PilEntryFn,
+    code_stamp: Option<crate::memory::CodeStamp>,
     code_dirty: bool,
     blocks: u64,
     instructions: u64,
@@ -1359,6 +1379,7 @@ struct CompiledPilBackend {
 impl CompiledPilBackend {
     fn eligible(&self, image: &Image, cpu_eflags: u32, machine: &address::SegmentState) -> bool {
         !self.code_mask.is_empty()
+            && self.code_start < self.code_end
             && image.real_mode
             && !image.paging
             && !image.segments[1].default_32()
@@ -1378,6 +1399,7 @@ impl CompiledPilBackend {
 impl dos::InstructionBackend for CompiledPilBackend {
     fn may_block(&mut self, image: &Image, _ram: &Ram, _ip: u32) -> bool {
         !self.code_mask.is_empty()
+            && self.code_start < self.code_end
             && image.real_mode
             && !image.paging
             && !image.segments[1].default_32()
@@ -1387,8 +1409,17 @@ impl dos::InstructionBackend for CompiledPilBackend {
     fn may_execute(&mut self, _image: &Image, _ram: &Ram, _ip: u32) -> bool {
         false
     }
+    fn fallback_blocks(&self) -> bool {
+        true
+    }
     fn block_stats(&self) -> (u64, u64) {
         (self.blocks, self.instructions)
+    }
+    fn diagnostics(&self) -> String {
+        format!(
+            ",\"compiled_pil_blocks\":{},\"compiled_pil_instructions\":{}",
+            self.blocks, self.instructions
+        )
     }
     fn block(
         &mut self,
@@ -1402,16 +1433,23 @@ impl dos::InstructionBackend for CompiledPilBackend {
         if budget == 0 || !self.eligible(image, cpu.eflags, machine) {
             return None;
         }
-        if self.code_dirty {
+        let code_len = (self.code_end - self.code_start) as usize;
+        let stamp_ok = !self.code_dirty
+            && self
+                .code_stamp
+                .is_some_and(|s| ram.code_unchanged(s, self.code_start, code_len));
+        if !stamp_ok {
             let ram_bytes = ram.bytes();
             let base = self.module_base as usize;
             let still_dirty = self.code_mask.iter().enumerate().any(|(i, &m)| {
                 m != 0 && ram_bytes.get(base + i).copied() != Some(self.original[i])
             });
             if still_dirty {
+                self.code_dirty = true;
                 return None;
             }
             self.code_dirty = false;
+            self.code_stamp = ram.watch_code(self.code_start, code_len);
         }
         let effective_budget = if chain { budget } else { 1 };
         let seg_bases = machine.segments.map(|s| s.base);
@@ -1431,9 +1469,10 @@ impl dos::InstructionBackend for CompiledPilBackend {
                 seg_fast_mask |= 1u8 << i;
             }
         }
-        let (ram_ptr, watch_ptr, ram_fast_limit) = ram.fast_conventional_mut();
+        let ram_raw: *mut Ram = ram;
+        let (ram_ptr, watch_ptr, ram_fast_limit) = unsafe { (*ram_raw).fast_conventional_mut() };
         let mut host = HostMem {
-            ram: ram as *mut Ram,
+            ram: ram_raw,
             segments: &machine.segments,
             module_base: self.module_base,
             original: &self.original,
@@ -1982,6 +2021,116 @@ mod tests {
     }
 
     #[test]
+    fn pil_rust_cfg_stops_at_terminating_int_21h_and_preserves_trailing_data() {
+        let mut com = vec![
+            0xba, 0x0c, 0x01, // 0100: MOV DX, 010Ch
+            0xb4, 0x09, // 0103: MOV AH, 09h
+            0xcd, 0x21, // 0105: INT 21h
+            0xb8, 0x2a, 0x4c, // 0107: MOV AX, 4C2Ah
+            0xcd, 0x21, // 010A: INT 21h
+        ];
+        com.extend_from_slice(b"Native proof\r\n$\0\0\0\0");
+        let (_, cfg) = compile_pil(&com, "TRAIL.COM").unwrap();
+        assert!(cfg.sites.contains_key(&0x100));
+        assert!(cfg.sites.contains_key(&0x103));
+        assert!(cfg.sites.contains_key(&0x107));
+        assert!(
+            !cfg.sites.keys().any(|&ip| ip >= 0x10c),
+            "trailing data after terminating INT 21h must not be compiled: {:?}",
+            cfg.sites.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            cfg.code_mask[0x0c..].iter().all(|&b| b == 0),
+            "trailing data bytes must not be marked in code_mask"
+        );
+
+        // Register AL write between MOV AH, 4Ch and INT 21h still terminates.
+        let com_al = [0xb4, 0x4c, 0x88, 0xc8, 0xcd, 0x21, 0x40];
+        let (_, cfg2) = compile_pil(&com_al, "TERM_AL.COM").unwrap();
+        assert!(!cfg2.sites.contains_key(&0x106));
+        assert_eq!(cfg2.code_mask[6], 0);
+
+        // Shared INT 21h reachable from both AH=4Ch and AH=09h must still discover fallthrough.
+        let shared = [
+            0x74, 0x04, // 0100: JE 0106
+            0xb4, 0x4c, // 0102: MOV AH, 4Ch
+            0xeb, 0x02, // 0104: JMP 0108
+            0xb4, 0x09, // 0106: MOV AH, 09h
+            0xcd, 0x21, // 0108: INT 21h
+            0x40, // 010A: INC AX
+            0xb8, 0x00, 0x4c, // 010B: MOV AX, 4C00h
+            0xcd, 0x21, // 010E: INT 21h
+        ];
+        let (_, cfg3) = compile_pil(&shared, "SHARED21.COM").unwrap();
+        assert!(
+            cfg3.sites.contains_key(&0x10a),
+            "shared INT 21h stub must keep fallthrough discovery"
+        );
+    }
+
+    #[test]
+    fn pil_rust_cfg_skips_fpu_instructions() {
+        // FLDZ (D9 EE); INC AX (40); MOV AX, 4C00h; INT 21h
+        let com = [0xd9, 0xee, 0x40, 0xb8, 0x00, 0x4c, 0xcd, 0x21];
+        let (_, cfg) = compile_pil(&com, "FPUCFG.COM").unwrap();
+        assert!(
+            cfg.sites.contains_key(&0x102),
+            "instruction after x87 escape must be discovered"
+        );
+    }
+
+    #[test]
+    fn pil_backend_detects_external_smc_via_code_stamp() {
+        unsafe extern "C" fn mock_inc_ax(ctx: *mut DinePilCtx, _budget: u32) {
+            if (*ctx).eip == 0x100 {
+                (*ctx).regs[0] = (*ctx).regs[0].wrapping_add(1);
+                (*ctx).eip = 0x101;
+                (*ctx).steps_done = 1;
+                (*ctx).exit_kind = 0;
+            } else {
+                (*ctx).exit_kind = 1;
+            }
+        }
+        let com = [0x40, 0x90, 0xb8, 0x00, 0x4c, 0xcd, 0x21];
+        let (img_bytes, _) = compile_pil(&com, "EXTSMC.COM").unwrap();
+        let img = PilImage::read(&img_bytes).unwrap();
+        let loaded = dos::load(&img.image, "EXTSMC.COM").unwrap();
+        let module_base = loaded.dos.module_base;
+        let mut session = dos::session::Session::new(loaded);
+        img.attach(&mut session, mock_inc_ax).unwrap();
+
+        session.run(1).unwrap();
+        assert_eq!(session.machine().unwrap().cpu.regs[0], 1);
+        assert_eq!(session.machine().unwrap().cpu.eip, 0x101);
+
+        // External write directly to RAM (simulating REP STOSB / DOS read) bypassing dine_pil_write.
+        {
+            let p = session.machine_mut().unwrap();
+            p.cpu.eip = 0x100;
+            p.cpu.regs[0] = 0;
+            p.cpu.regs[1] = 0;
+            p.ram.store(module_base, crate::MemWidth::Byte, 0x41).unwrap();
+        }
+        session.run(1).unwrap();
+        assert_eq!(session.machine().unwrap().cpu.regs[1], 1);
+        assert_eq!(session.machine().unwrap().cpu.regs[0], 0);
+
+        // Restoring original code byte and writing a non-code byte in the same 64-byte line
+        // triggers re-validation without disabling compiled execution.
+        {
+            let p = session.machine_mut().unwrap();
+            p.cpu.eip = 0x100;
+            p.cpu.regs[0] = 0;
+            p.ram.store(module_base, crate::MemWidth::Byte, 0x40).unwrap();
+            p.ram
+                .store(module_base + 16, crate::MemWidth::Byte, 0x99)
+                .unwrap();
+        }
+        session.run(1).unwrap();
+        assert_eq!(session.machine().unwrap().cpu.regs[0], 1);
+    }
+
+    #[test]
     fn pil_ffi_helpers_enforce_bounds_readonly_and_smc_detection() {
         let mut ram = Ram::new(64 * 1024);
         let module_base = 0x1000u32;
@@ -2031,6 +2180,13 @@ mod tests {
                 host.fault,
                 Some(ExecError::StackSegment { eip: 0x102, .. })
             ));
+            let mut rp = std::ptr::null_mut();
+            let mut wp = std::ptr::null_mut();
+            dine_pil_refresh(ptr, &mut rp, &mut wp);
+            assert!(!rp.is_null() && !wp.is_null());
+            let (expected_rp, expected_wp, _) = ram.fast_conventional_mut();
+            assert_eq!(rp, expected_rp);
+            assert_eq!(wp, expected_wp);
         }
     }
 }

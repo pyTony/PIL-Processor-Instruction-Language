@@ -63,7 +63,7 @@ fn prepare_image(data: &[u8], name: &str, tail: &str, config: Option<&str>, comp
     crate::dos::place_host_program(session.machine_mut().ok_or("session state lost")?,&cwd,&folder,name)?;
     let translated=dos_tail(session.machine().ok_or("session state lost")?,tail)?;
     crate::dos::set_command_tail(session.machine_mut().ok_or("session state lost")?,&translated)?;
-    let options=crate::dos::host_console::Options{window:false,mouse:defaults.mouse,ansi:defaults.ansi,country:None,utc_offset:defaults.utc_offset,host_pointer:defaults.host_pointer.unwrap_or_default(),speaker_volume:defaults.speaker_volume.unwrap_or(crate::dos::host_console::speaker::DEFAULT_VOLUME),rtc_year:None,guest_keymap:None};
+    let options=crate::dos::host_console::Options{window:false,mouse:defaults.mouse,ansi:defaults.ansi,wait_on_exit:defaults.wait_on_exit,country:None,utc_offset:defaults.utc_offset,host_pointer:defaults.host_pointer.unwrap_or_default(),speaker_volume:defaults.speaker_volume.unwrap_or(crate::dos::host_console::speaker::DEFAULT_VOLUME),rtc_year:None,guest_keymap:None};
     Ok((session,options))
 }
 fn interpreted(guest: &[u8], name: &str, tail: &str,timed:bool) -> Result<i32, String> {

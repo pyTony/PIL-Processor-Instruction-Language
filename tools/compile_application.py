@@ -87,7 +87,8 @@ def main(argv=None):
         'application': executable.name,
         'shared_runtime': runtime.name,
         'startup_relocation': 'completed during compilation',
-        'application_dispatch': 'native address dispatch to shared native CPU forms',
+        'application_dispatch': ('whole-block PIL-lowered Rust with shared Dine runtime' if args.pil
+                                 else 'native address dispatch to shared native CPU forms'),
         'original_file_required_at_runtime': False,
         'retained_executable_resources': True,
         'original_input_bytes_retained_as_resources': True,
