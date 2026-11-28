@@ -66,10 +66,15 @@ def main(argv=None):
     run([engine, emit_flag, source, rust_source])
     output.mkdir(parents=True, exist_ok=True)
     staged_executable = build / ('application' + binary_suffix)
-    opt_level = '3' if args.pil else 's'
+    if args.pil:
+        if rust_source.stat().st_size > 200_000:
+            opt_flags = ['-C', 'opt-level=2', '-C', 'codegen-units=8']
+        else:
+            opt_flags = ['-C', 'opt-level=3', '-C', 'lto=fat', '-C', 'codegen-units=1']
+    else:
+        opt_flags = ['-C', 'opt-level=s', '-C', 'lto=fat', '-C', 'codegen-units=1']
     command = ['rustc', '--edition=2021', '--crate-name', 'native_application',
-               '-C', f'opt-level={opt_level}', '-C', 'strip=symbols', '-C', 'panic=abort',
-               '-C', 'lto=fat', '-C', 'codegen-units=1',
+               *opt_flags, '-C', 'strip=symbols', '-C', 'panic=abort',
                '-L', 'native=' + str(runtime.parent),
                rust_source, '-o', staged_executable]
     if os.name != 'nt':

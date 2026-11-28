@@ -1008,7 +1008,7 @@ std::process::exit(if status<0{1}else{status});
     Ok(format!("prepared {} native instruction entries; relocation completed at compilation; generated/modified code and executable resources retained separately",offsets.len()))
 }
 
-const PIL_IMG_MAGIC: &[u8; 8] = b"PILIMG01";
+const PIL_IMG_MAGIC: &[u8; 8] = b"PILIMG02";
 
 #[repr(C)]
 pub struct DinePilCtx {
@@ -1017,6 +1017,7 @@ pub struct DinePilCtx {
     pub undefined: u32,
     pub eip: u32,
     pub selectors: [u16; 6],
+    pub load_segment: u16,
     pub seg_bases: [u32; 6],
     pub seg_fast_mask: u8,
     pub code_limit: u32,
@@ -1038,6 +1039,7 @@ pub(crate) struct PilImage {
     image: Vec<u8>,
     resource: Vec<u8>,
     code_mask: Vec<u8>,
+    segments: Vec<u16>,
 }
 
 impl PilImage {
@@ -1052,6 +1054,7 @@ impl PilImage {
         let image_len = r.dword()? as usize;
         let resource_len = r.dword()? as usize;
         let mask_len = r.dword()? as usize;
+        let seg_count = r.word()? as usize;
         if image_len > dos::MAX_FILE || resource_len > dos::MAX_FILE || mask_len > dos::MAX_FILE {
             return Err("PIL native image exceeds bounds".into());
         }
@@ -1059,6 +1062,14 @@ impl PilImage {
         let name = std::str::from_utf8(r.take(name_len)?)
             .map_err(|_| "invalid PIL native image name")?
             .to_string();
+        let mut segments = Vec::with_capacity(seg_count);
+        for _ in 0..seg_count {
+            let seg = r.word()?;
+            if segments.last().is_some_and(|&prev| prev >= seg) {
+                return Err("PIL native image segments are not strictly ascending".into());
+            }
+            segments.push(seg);
+        }
         let image = r.take(image_len)?.to_vec();
         let resource = r.take(resource_len)?.to_vec();
         let code_mask = r.take(mask_len)?.to_vec();
@@ -1073,6 +1084,7 @@ impl PilImage {
             image,
             resource,
             code_mask,
+            segments,
         })
     }
 
@@ -1089,8 +1101,7 @@ impl PilImage {
         p.ram
             .track_resource(std::sync::Arc::as_ptr(&resource) as usize);
         let module_base = p.dos.module_base;
-        let initial_cs = p.selectors[1];
-        let cs_base = p.image.segments[1].base;
+        let load_segment = (module_base >> 4) as u16;
         let (code_start, code_end) = match (
             self.code_mask.iter().position(|&b| b != 0),
             self.code_mask.iter().rposition(|&b| b != 0),
@@ -1104,11 +1115,11 @@ impl PilImage {
         session.set_backend(Box::new(CompiledPilBackend {
             original,
             code_mask: self.code_mask,
+            segments: self.segments,
             module_base,
+            load_segment,
             code_start,
             code_end,
-            initial_cs,
-            cs_base,
             entry,
             code_dirty: false,
             blocks: 0,
@@ -1143,11 +1154,21 @@ pub(crate) fn compile_pil(
     put32(&mut out, cfg.code_mask.len() as u32);
     put16(
         &mut out,
+        cfg.segments
+            .len()
+            .try_into()
+            .map_err(|_| "segment count overflow")?,
+    );
+    put16(
+        &mut out,
         name.len()
             .try_into()
             .map_err(|_| "application name too long")?,
     );
     out.extend(name.as_bytes());
+    for &seg in &cfg.segments {
+        put16(&mut out, seg);
+    }
     out.extend(&startup);
     out.extend(bytes);
     out.extend(&cfg.code_mask);
@@ -1175,8 +1196,9 @@ pub(crate) fn emit_pil(input: &str, output: &str) -> Result<String, String> {
     std::fs::write(path, source).map_err(|e| e.to_string())?;
     let covered_bytes: usize = cfg.code_mask.iter().filter(|&&b| b != 0).count();
     Ok(format!(
-        "emitted {} PIL-lowered Rust blocks ({} instructions, {} bytes); relocation completed at compilation",
+        "emitted {} PIL-lowered Rust blocks across {} segment(s) ({} instructions, {} bytes); relocation completed at compilation",
         cfg.blocks.len(),
+        cfg.segments.len(),
         cfg.sites.len(),
         covered_bytes
     ))
@@ -1194,6 +1216,7 @@ struct HostMem<'a> {
 
 fn translate_seg(
     segments: &[address::SegmentCache; 6],
+    cs_sel: u16,
     seg: u8,
     offset: u64,
     bytes: u32,
@@ -1212,9 +1235,14 @@ fn translate_seg(
         5 => SegmentRegister::Gs,
         _ => return Err(ExecError::InvalidContext),
     };
+    let cache = if seg == 1 {
+        address::SegmentCache::real_mode(cs_sel)
+    } else {
+        segments[seg as usize]
+    };
     address::MemoryContext {
         segment: reg,
-        cache: segments[seg as usize],
+        cache,
     }
     .translate_span(offset, bytes, write, eip)
 }
@@ -1223,6 +1251,7 @@ fn translate_seg(
 #[no_mangle]
 pub unsafe extern "C" fn dine_pil_read(
     host: *mut std::ffi::c_void,
+    cs_sel: u16,
     seg: u8,
     offset: u32,
     bytes: u8,
@@ -1235,8 +1264,16 @@ pub unsafe extern "C" fn dine_pil_read(
         host.fault = Some(ExecError::InvalidContext);
         return -1;
     };
-    let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), false, eip)
-        .and_then(|addr| ram.load(addr, width).map_err(|f| f.error(eip)));
+    let res = translate_seg(
+        host.segments,
+        cs_sel,
+        seg,
+        u64::from(offset),
+        u32::from(bytes),
+        false,
+        eip,
+    )
+    .and_then(|addr| ram.load(addr, width).map_err(|f| f.error(eip)));
     match res {
         Ok(val) => {
             unsafe { *out = val };
@@ -1253,6 +1290,7 @@ pub unsafe extern "C" fn dine_pil_read(
 #[no_mangle]
 pub unsafe extern "C" fn dine_pil_check_write(
     host: *mut std::ffi::c_void,
+    cs_sel: u16,
     seg: u8,
     offset: u32,
     bytes: u8,
@@ -1264,8 +1302,16 @@ pub unsafe extern "C" fn dine_pil_check_write(
         host.fault = Some(ExecError::InvalidContext);
         return -1;
     };
-    let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), true, eip)
-        .and_then(|addr| ram.check_write(addr, width).map_err(|f| f.error(eip)));
+    let res = translate_seg(
+        host.segments,
+        cs_sel,
+        seg,
+        u64::from(offset),
+        u32::from(bytes),
+        true,
+        eip,
+    )
+    .and_then(|addr| ram.check_write(addr, width).map_err(|f| f.error(eip)));
     match res {
         Ok(()) => 0,
         Err(e) => {
@@ -1279,13 +1325,14 @@ pub unsafe extern "C" fn dine_pil_check_write(
 #[no_mangle]
 pub unsafe extern "C" fn dine_pil_check_span(
     host: *mut std::ffi::c_void,
+    cs_sel: u16,
     seg: u8,
     offset: u64,
     bytes: u32,
     eip: u32,
 ) -> i32 {
     let host = unsafe { &mut *(host as *mut HostMem<'_>) };
-    match translate_seg(host.segments, seg, offset, bytes, false, eip) {
+    match translate_seg(host.segments, cs_sel, seg, offset, bytes, false, eip) {
         Ok(_) => 0,
         Err(e) => {
             host.fault = Some(e);
@@ -1298,6 +1345,7 @@ pub unsafe extern "C" fn dine_pil_check_span(
 #[no_mangle]
 pub unsafe extern "C" fn dine_pil_write(
     host: *mut std::ffi::c_void,
+    cs_sel: u16,
     seg: u8,
     offset: u32,
     bytes: u8,
@@ -1310,12 +1358,20 @@ pub unsafe extern "C" fn dine_pil_write(
         host.fault = Some(ExecError::InvalidContext);
         return -1;
     };
-    let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), true, eip)
-        .and_then(|addr| {
-            ram.store(addr, width, value)
-                .map(|()| addr)
-                .map_err(|f| f.error(eip))
-        });
+    let res = translate_seg(
+        host.segments,
+        cs_sel,
+        seg,
+        u64::from(offset),
+        u32::from(bytes),
+        true,
+        eip,
+    )
+    .and_then(|addr| {
+        ram.store(addr, width, value)
+            .map(|()| addr)
+            .map_err(|f| f.error(eip))
+    });
     let addr = match res {
         Ok(addr) => addr,
         Err(e) => {
@@ -1345,11 +1401,11 @@ pub unsafe extern "C" fn dine_pil_write(
 struct CompiledPilBackend {
     original: Vec<u8>,
     code_mask: Vec<u8>,
+    segments: Vec<u16>,
     module_base: u32,
+    load_segment: u16,
     code_start: u32,
     code_end: u32,
-    initial_cs: u16,
-    cs_base: u32,
     entry: PilEntryFn,
     code_dirty: bool,
     blocks: u64,
@@ -1358,16 +1414,21 @@ struct CompiledPilBackend {
 
 impl CompiledPilBackend {
     fn eligible(&self, image: &Image, cpu_eflags: u32, machine: &address::SegmentState) -> bool {
-        !self.code_mask.is_empty()
+        !self.segments.is_empty()
+            && !self.code_mask.is_empty()
             && image.real_mode
             && !image.paging
             && !image.segments[1].default_32()
+            && image.segments[1].limit == 0xffff
+            && image.segments[1].base == (u32::from(image.selectors[1]) << 4)
             && !matches!(
                 machine.segments[2].access,
                 address::SegmentAccess::Data { big: true, .. }
             )
-            && image.selectors[1] == self.initial_cs
-            && image.segments[1].base == self.cs_base
+            && self
+                .segments
+                .binary_search(&image.selectors[1].wrapping_sub(self.load_segment))
+                .is_ok()
             && cpu_eflags & 0x100 == 0
             && machine.ss_shadow == 0
             && machine.sti_shadow == 0
@@ -1377,12 +1438,17 @@ impl CompiledPilBackend {
 
 impl dos::InstructionBackend for CompiledPilBackend {
     fn may_block(&mut self, image: &Image, _ram: &Ram, _ip: u32) -> bool {
-        !self.code_mask.is_empty()
+        !self.segments.is_empty()
+            && !self.code_mask.is_empty()
             && image.real_mode
             && !image.paging
             && !image.segments[1].default_32()
-            && image.selectors[1] == self.initial_cs
-            && image.segments[1].base == self.cs_base
+            && image.segments[1].limit == 0xffff
+            && image.segments[1].base == (u32::from(image.selectors[1]) << 4)
+            && self
+                .segments
+                .binary_search(&image.selectors[1].wrapping_sub(self.load_segment))
+                .is_ok()
     }
     fn may_execute(&mut self, _image: &Image, _ram: &Ram, _ip: u32) -> bool {
         false
@@ -1447,6 +1513,7 @@ impl dos::InstructionBackend for CompiledPilBackend {
             undefined: cpu.undefined_flags,
             eip: cpu.eip,
             selectors: machine.selectors,
+            load_segment: self.load_segment,
             seg_bases,
             seg_fast_mask,
             code_limit: machine.segments[1].limit,
@@ -1462,10 +1529,15 @@ impl dos::InstructionBackend for CompiledPilBackend {
             host: (&mut host as *mut HostMem<'_>).cast(),
         };
         unsafe { (self.entry)(&mut ctx, effective_budget as u32) };
+        let fault = host.fault.take();
         cpu.regs = ctx.regs;
         cpu.eflags = ctx.eflags;
         cpu.undefined_flags = ctx.undefined;
         cpu.eip = ctx.eip;
+        if ctx.selectors[1] != machine.selectors[1] {
+            machine.selectors[1] = ctx.selectors[1];
+            machine.segments[1] = address::SegmentCache::real_mode(ctx.selectors[1]);
+        }
         let done = ctx.steps_done as usize;
         if done > 0 {
             self.blocks += 1;
@@ -1475,7 +1547,7 @@ impl dos::InstructionBackend for CompiledPilBackend {
             0..=2 => (done > 0).then_some((done, Ok(()))),
             3 => Some((
                 done,
-                Err(host.fault.unwrap_or(ExecError::InvalidContext)),
+                Err(fault.unwrap_or(ExecError::InvalidContext)),
             )),
             4 => Some((
                 done,
@@ -1945,13 +2017,17 @@ mod tests {
         let (img_bytes, cfg) = compile_pil(&com, "PILCFG.COM").unwrap();
         let parsed = PilImage::read(&img_bytes).unwrap();
         assert_eq!(parsed.resource, com);
-        assert!(cfg.sites.contains_key(&0x100));
-        assert!(cfg.sites.contains_key(&0x105));
-        assert!(cfg.sites.contains_key(&0x108));
-        assert!(cfg.sites.contains_key(&0x10a));
-        assert!(cfg.sites.contains_key(&0x10f));
-        assert!(cfg.sites.contains_key(&0x116));
-        assert!(!cfg.sites.contains_key(&0x10d)); // INT 21h handled by Dine
+        let key = |ip| crate::block_compiler::pil_rust::CodeKey {
+            cs_rel: cfg.entry.cs_rel,
+            ip,
+        };
+        assert!(cfg.sites.contains_key(&key(0x100)));
+        assert!(cfg.sites.contains_key(&key(0x105)));
+        assert!(cfg.sites.contains_key(&key(0x108)));
+        assert!(cfg.sites.contains_key(&key(0x10a)));
+        assert!(cfg.sites.contains_key(&key(0x10f)));
+        assert!(cfg.sites.contains_key(&key(0x116)));
+        assert!(!cfg.sites.contains_key(&key(0x10d))); // INT 21h handled by Dine
         let rust = crate::block_compiler::pil_rust::emit_application_rust(
             &cfg,
             "app.pilimg",
@@ -1966,7 +2042,7 @@ mod tests {
 
     #[test]
     fn pil_rust_cfg_discovers_blocks_after_int_21h() {
-        // MOV AH, 9; INT 21h; INC AX; MOV AX, 4C00h; INT 21h; DB '$'
+        // MOV AH, 9; INT 21h; INC AX; MOV AX, 4C00h; INT 21h
         let com = [
             0xb4, 0x09, // 0100: MOV AH, 9
             0xcd, 0x21, // 0102: INT 21h
@@ -1975,10 +2051,78 @@ mod tests {
             0xcd, 0x21, // 0108: INT 21h
         ];
         let (_, cfg) = compile_pil(&com, "POSTINT.COM").unwrap();
-        assert!(cfg.sites.contains_key(&0x100));
-        assert!(!cfg.sites.contains_key(&0x102));
-        assert!(cfg.sites.contains_key(&0x104));
-        assert!(cfg.sites.contains_key(&0x105));
+        let key = |ip| crate::block_compiler::pil_rust::CodeKey {
+            cs_rel: cfg.entry.cs_rel,
+            ip,
+        };
+        assert!(cfg.sites.contains_key(&key(0x100)));
+        assert!(!cfg.sites.contains_key(&key(0x102)));
+        assert!(cfg.sites.contains_key(&key(0x104)));
+        assert!(cfg.sites.contains_key(&key(0x105)));
+    }
+
+    #[test]
+    fn pil_rust_discovers_multi_segment_mz_and_emits_regions() {
+        // Two relocated MZ code segments: CALL FAR seg1:0; JMP FAR seg1:4; seg1: ADD AX,1; RETF; MOV AH,4Ch; INT 21h
+        let seg0: &[u8] = &[
+            0x31, 0xc0, // 0000: XOR AX, AX
+            0x9a, 0x00, 0x00, 0x02, 0x00, // 0002: CALL FAR 0002:0000
+            0xea, 0x04, 0x00, 0x02, 0x00, // 0007: JMP FAR 0002:0004
+        ];
+        let seg1: &[u8] = &[
+            0x05, 0x2a, 0x00, // 0000: ADD AX, 42
+            0xcb, // 0003: RETF
+            0xb4, 0x4c, // 0004: MOV AH, 4Ch
+            0xcd, 0x21, // 0006: INT 21h
+        ];
+        let mut module = seg0.to_vec();
+        module.resize(0x20, 0);
+        module.extend_from_slice(seg1);
+        let mut exe = vec![0u8; 48];
+        let total = exe.len() + module.len();
+        exe[0..2].copy_from_slice(b"MZ");
+        exe[2..4].copy_from_slice(&((total % 512) as u16).to_le_bytes());
+        exe[4..6].copy_from_slice(&((total.div_ceil(512)) as u16).to_le_bytes());
+        exe[6..8].copy_from_slice(&2u16.to_le_bytes());
+        exe[8..10].copy_from_slice(&3u16.to_le_bytes());
+        exe[12..14].copy_from_slice(&0xffffu16.to_le_bytes());
+        exe[14..16].copy_from_slice(&0x10u16.to_le_bytes());
+        exe[16..18].copy_from_slice(&0x100u16.to_le_bytes());
+        exe[24..26].copy_from_slice(&28u16.to_le_bytes());
+        exe[28..30].copy_from_slice(&5u16.to_le_bytes());
+        exe[32..34].copy_from_slice(&10u16.to_le_bytes());
+        exe.extend_from_slice(&module);
+        let (img_bytes, cfg) = compile_pil(&exe, "FAR2.EXE").unwrap();
+        let parsed = PilImage::read(&img_bytes).unwrap();
+        assert_eq!(parsed.segments, vec![0, 2]);
+        assert_eq!(cfg.segments.len(), 2);
+        let rust = crate::block_compiler::pil_rust::emit_application_rust(
+            &cfg,
+            "far2.pilimg",
+            "FAR2.EXE",
+        );
+        assert!(rust.contains("unsafe fn region_0("));
+        assert!(rust.contains("unsafe fn region_1("));
+        assert!(rust.contains("load_segment"));
+    }
+
+    #[test]
+    fn pil_rust_partitions_large_program_into_multiple_regions() {
+        // 70 short basic blocks (each `JZ +0; INC AX`) so blocks > REGION_MAX_BLOCKS (64).
+        let mut com = Vec::new();
+        for _ in 0..70 {
+            com.extend_from_slice(&[0x74, 0x00, 0x40]);
+        }
+        com.extend_from_slice(&[0xb8, 0x00, 0x4c, 0xcd, 0x21]);
+        let (_, cfg) = compile_pil(&com, "MANYBLK.COM").unwrap();
+        assert!(cfg.blocks.len() > crate::block_compiler::pil_rust::REGION_MAX_BLOCKS);
+        let rust = crate::block_compiler::pil_rust::emit_application_rust(
+            &cfg,
+            "many.pilimg",
+            "MANYBLK.COM",
+        );
+        assert!(rust.contains("unsafe fn region_0("));
+        assert!(rust.contains("unsafe fn region_1("));
     }
 
     #[test]
@@ -2005,28 +2149,28 @@ mod tests {
         let ptr = (&mut host as *mut HostMem<'_>).cast();
         let mut out = 0u32;
         unsafe {
-            assert_eq!(dine_pil_read(ptr, 3, 0, 2, 0x100, &mut out), 0);
+            assert_eq!(dine_pil_read(ptr, 0x100, 3, 0, 2, 0x100, &mut out), 0);
             assert_eq!(out, 0x4090);
             // Write to non-code DS offset 0x10 returns 0 and keeps code_dirty false.
-            assert_eq!(dine_pil_check_write(ptr, 3, 0x10, 2, 0x100), 0);
-            assert_eq!(dine_pil_write(ptr, 3, 0x10, 2, 0x1234, 0x100), 0);
+            assert_eq!(dine_pil_check_write(ptr, 0x100, 3, 0x10, 2, 0x100), 0);
+            assert_eq!(dine_pil_write(ptr, 0x100, 3, 0x10, 2, 0x1234, 0x100), 0);
             assert!(!*host.code_dirty);
             // Write to compiled code byte returns 1 and sets code_dirty.
-            assert_eq!(dine_pil_write(ptr, 3, 1, 1, 0x41, 0x100), 1);
+            assert_eq!(dine_pil_write(ptr, 0x100, 3, 1, 1, 0x41, 0x100), 1);
             assert!(*host.code_dirty);
             // Write to protected physical 0x2000 (DS offset 0x1000) returns -1 with MemoryAccess.
-            assert_eq!(dine_pil_check_write(ptr, 3, 0x1000, 1, 0x100), -1);
+            assert_eq!(dine_pil_check_write(ptr, 0x100, 3, 0x1000, 1, 0x100), -1);
             assert!(matches!(
                 host.fault,
                 Some(ExecError::MemoryAccess { write: true, .. })
             ));
             // Past segment limit faults with GeneralProtection / StackSegment.
-            assert_eq!(dine_pil_read(ptr, 3, 0xffff, 2, 0x100, &mut out), -1);
+            assert_eq!(dine_pil_read(ptr, 0x100, 3, 0xffff, 2, 0x100, &mut out), -1);
             assert!(matches!(
                 host.fault,
                 Some(ExecError::GeneralProtection { eip: 0x100, .. })
             ));
-            assert_eq!(dine_pil_check_write(ptr, 2, 0xffff, 2, 0x102), -1);
+            assert_eq!(dine_pil_check_write(ptr, 0x100, 2, 0xffff, 2, 0x102), -1);
             assert!(matches!(
                 host.fault,
                 Some(ExecError::StackSegment { eip: 0x102, .. })

@@ -14,6 +14,20 @@ use crate::guest::{Image, Operation};
 use crate::{mask, Binary, Binding, Flag, FlowContext, Program, Ram, Shift, Token, View};
 
 pub const MAX_BLOCK_INSTRUCTIONS: usize = 32;
+pub const REGION_MAX_BLOCKS: usize = 64;
+pub const REGION_MAX_INSNS: usize = 512;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CodeKey {
+    pub cs_rel: u16,
+    pub ip: u16,
+}
+
+impl CodeKey {
+    pub fn packed(self) -> u32 {
+        (u32::from(self.cs_rel) << 16) | u32::from(self.ip)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Terminator {
@@ -21,12 +35,16 @@ pub enum Terminator {
     ConditionalBranch(u32),
     UnconditionalJump(u32),
     Call(Option<u32>),
+    FarCall(Option<CodeKey>),
+    FarJump(Option<CodeKey>),
+    FarReturn,
     DynamicJump,
     Return,
 }
 
 #[derive(Clone)]
 pub struct CompiledSite {
+    pub cs_rel: u16,
     pub ip: u32,
     pub length: u32,
     pub program: Program,
@@ -38,9 +56,11 @@ pub struct CompiledSite {
 }
 
 pub struct DiscoveredCfg {
-    pub entry_ip: u32,
-    pub sites: BTreeMap<u32, CompiledSite>,
-    pub blocks: BTreeMap<u32, Vec<u32>>,
+    pub load_segment: u16,
+    pub entry: CodeKey,
+    pub segments: BTreeSet<u16>,
+    pub sites: BTreeMap<CodeKey, CompiledSite>,
+    pub blocks: BTreeMap<CodeKey, Vec<CodeKey>>,
     pub code_mask: Vec<u8>,
 }
 
@@ -51,8 +71,8 @@ fn flag_allowed(flag: Flag) -> bool {
     )
 }
 
-/// Phase-1 eligibility: straight-line/flow/memory PIL subset without partial
-/// repeats, checkpointed flags, segment/control writes, or load-after-store.
+/// Eligibility: straight-line/flow/memory/far-transfer PIL subset without
+/// partial repeats, checkpointed flags, control writes, or load-after-store.
 pub fn is_compilable(p: &Program) -> bool {
     if p.partial || p.checkpoint_flags {
         return false;
@@ -93,6 +113,8 @@ pub fn is_compilable(p: &Program) -> bool {
             | Token::CheckWriteSegment(..)
             | Token::CheckSegment(..)
             | Token::Retire => true,
+            Token::FarJump(..) | Token::FarCall(..) => p.operand_width == 16,
+            Token::FarReturn(_, _, _, crate::MemWidth::Word, _, None) => p.operand_width == 16,
             Token::Flag(f, _) | Token::FlagIf(f, ..) | Token::UndefFlag(f) => flag_allowed(f),
             Token::Load(..) | Token::LoadSegment(..) => !saw_store,
             Token::Store(..) | Token::StoreIf(..) | Token::StoreSegment(..) => {
@@ -108,9 +130,59 @@ pub fn is_compilable(p: &Program) -> bool {
     true
 }
 
-fn classify_terminator(label: &str, program: &Program, flow: &FlowContext) -> Terminator {
+fn static_far_target(p: &Program) -> Option<(u16, u16)> {
+    let mut consts: Vec<Option<u64>> = vec![None; p.widths.len()];
+    for t in &p.tokens {
+        match *t {
+            Token::Const(o, val) => consts[o] = Some(val.bits),
+            Token::Extend(o, a, _) | Token::Truncate(o, a, _) => consts[o] = consts[a],
+            Token::FarJump(sel, off) | Token::FarCall(sel, off) => {
+                let s = consts[sel]?;
+                let o = consts[off]?;
+                if s <= 0xffff && o <= 0xffff {
+                    return Some((s as u16, o as u16));
+                }
+                return None;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn classify_terminator(
+    label: &str,
+    program: &Program,
+    flow: &FlowContext,
+    load_segment: u16,
+    module_base: u32,
+    module_end: usize,
+) -> Terminator {
     if !program.uses_flow {
         return Terminator::Fallthrough;
+    }
+    let far_key = |sel: u16, off: u16| -> Option<CodeKey> {
+        let lin = (u32::from(sel) << 4).checked_add(u32::from(off))? as usize;
+        if lin < module_base as usize || lin >= module_end {
+            return None;
+        }
+        Some(CodeKey {
+            cs_rel: sel.wrapping_sub(load_segment),
+            ip: off,
+        })
+    };
+    if program.tokens.iter().any(|t| matches!(t, Token::FarCall(..))) {
+        return Terminator::FarCall(
+            static_far_target(program).and_then(|(s, o)| far_key(s, o)),
+        );
+    }
+    if program.tokens.iter().any(|t| matches!(t, Token::FarJump(..))) {
+        return Terminator::FarJump(
+            static_far_target(program).and_then(|(s, o)| far_key(s, o)),
+        );
+    }
+    if program.tokens.iter().any(|t| matches!(t, Token::FarReturn(..))) {
+        return Terminator::FarReturn;
     }
     let target = program.uses_displacement.then(|| {
         flow.next_eip.wrapping_add_signed(flow.displacement) & mask(program.operand_width) as u32
@@ -131,7 +203,8 @@ fn classify_terminator(label: &str, program: &Program, flow: &FlowContext) -> Te
     }
 }
 
-/// Discover reachable 16-bit real-mode sites and basic blocks inside `module_base..module_base+module_len`.
+/// Discover reachable 16-bit real-mode sites and basic blocks inside `module_base..module_base+module_len`,
+/// following intra-module static `CALL FAR` / `JMP FAR` targets across segments.
 pub fn discover_real16(
     image: &Image,
     ram: &Ram,
@@ -139,17 +212,27 @@ pub fn discover_real16(
     module_len: usize,
     entry_ip: u32,
 ) -> DiscoveredCfg {
-    let cs_base = image.segments[SegmentRegister::Cs.index()].base;
+    let load_segment = (module_base >> 4) as u16;
+    let entry = CodeKey {
+        cs_rel: image.selectors[SegmentRegister::Cs.index()].wrapping_sub(load_segment),
+        ip: entry_ip as u16,
+    };
     let module_end = module_base as usize + module_len;
-    let mut sites: BTreeMap<u32, CompiledSite> = BTreeMap::new();
+    let mut decode_image = image.clone();
+    let mut sites: BTreeMap<CodeKey, CompiledSite> = BTreeMap::new();
     let mut visited = BTreeSet::new();
     let mut queue = VecDeque::new();
-    queue.push_back(entry_ip);
+    if entry_ip <= 0xffff {
+        queue.push_back(entry);
+    }
 
-    while let Some(ip) = queue.pop_front() {
-        if !visited.insert(ip) || ip > 0xffff {
+    while let Some(key) = queue.pop_front() {
+        if !visited.insert(key) {
             continue;
         }
+        let cs = load_segment.wrapping_add(key.cs_rel);
+        let cs_base = u32::from(cs) << 4;
+        let ip = u32::from(key.ip);
         let Some(linear) = cs_base.checked_add(ip) else {
             continue;
         };
@@ -157,19 +240,26 @@ pub fn discover_real16(
         if linear_usize < module_base as usize || linear_usize >= module_end {
             continue;
         }
-        let Ok(decoded) = image.decode(ram, ip) else {
+        decode_image.selectors[SegmentRegister::Cs.index()] = cs;
+        decode_image.segments[SegmentRegister::Cs.index()] =
+            crate::address::SegmentCache::real_mode(cs);
+        let Ok(decoded) = decode_image.decode(ram, ip) else {
             continue;
         };
         let Some(end_linear) = linear_usize.checked_add(decoded.length as usize) else {
             continue;
         };
-        if end_linear > module_end {
+        if end_linear > module_end || ip + decoded.length > 0x10000 {
             continue;
         }
         let Some(bytes) = ram.contiguous_slice(linear, decoded.length as usize) else {
             continue;
         };
         let next_ip = ip + decoded.length;
+        let next_key = (next_ip <= 0xffff).then_some(CodeKey {
+            cs_rel: key.cs_rel,
+            ip: next_ip as u16,
+        });
         let falls_through = match &decoded.operation {
             Operation::Halt => false,
             Operation::Interrupt { vector, .. } => *vector != 0x20,
@@ -182,7 +272,9 @@ pub fn discover_real16(
         };
         if super::engine::answered_by_loop(bytes) {
             if falls_through {
-                queue.push_back(next_ip);
+                if let Some(nk) = next_key {
+                    queue.push_back(nk);
+                }
             }
             continue;
         }
@@ -195,35 +287,80 @@ pub fn discover_real16(
         } = &decoded.operation
         else {
             if falls_through {
-                queue.push_back(next_ip);
+                if let Some(nk) = next_key {
+                    queue.push_back(nk);
+                }
             }
             continue;
         };
         if !is_compilable(program) {
             if falls_through {
-                queue.push_back(next_ip);
+                if let Some(nk) = next_key {
+                    queue.push_back(nk);
+                }
             }
             continue;
         }
-        let terminator = classify_terminator(&decoded.label, program, flow);
+        let terminator = classify_terminator(
+            &decoded.label,
+            program,
+            flow,
+            load_segment,
+            module_base,
+            module_end,
+        );
+        let same_seg = |t: u32| -> Option<CodeKey> {
+            (t <= 0xffff).then_some(CodeKey {
+                cs_rel: key.cs_rel,
+                ip: t as u16,
+            })
+        };
         match terminator {
-            Terminator::Fallthrough => queue.push_back(flow.next_eip),
-            Terminator::ConditionalBranch(t) => {
-                queue.push_back(t);
-                queue.push_back(flow.next_eip);
-            }
-            Terminator::UnconditionalJump(t) => queue.push_back(t),
-            Terminator::Call(target) => {
-                if let Some(t) = target {
-                    queue.push_back(t);
+            Terminator::Fallthrough => {
+                if let Some(k) = same_seg(flow.next_eip) {
+                    queue.push_back(k);
                 }
-                queue.push_back(flow.next_eip);
             }
-            Terminator::DynamicJump | Terminator::Return => {}
+            Terminator::ConditionalBranch(t) => {
+                if let Some(k) = same_seg(t) {
+                    queue.push_back(k);
+                }
+                if let Some(k) = same_seg(flow.next_eip) {
+                    queue.push_back(k);
+                }
+            }
+            Terminator::UnconditionalJump(t) => {
+                if let Some(k) = same_seg(t) {
+                    queue.push_back(k);
+                }
+            }
+            Terminator::Call(target) => {
+                if let Some(k) = target.and_then(same_seg) {
+                    queue.push_back(k);
+                }
+                if let Some(k) = same_seg(flow.next_eip) {
+                    queue.push_back(k);
+                }
+            }
+            Terminator::FarCall(target) => {
+                if let Some(tk) = target {
+                    queue.push_back(tk);
+                }
+                if let Some(k) = same_seg(flow.next_eip) {
+                    queue.push_back(k);
+                }
+            }
+            Terminator::FarJump(target) => {
+                if let Some(tk) = target {
+                    queue.push_back(tk);
+                }
+            }
+            Terminator::FarReturn | Terminator::DynamicJump | Terminator::Return => {}
         }
         sites.insert(
-            ip,
+            key,
             CompiledSite {
+                cs_rel: key.cs_rel,
                 ip,
                 length: decoded.length,
                 program: program.clone(),
@@ -237,48 +374,67 @@ pub fn discover_real16(
     }
 
     let mut leaders = BTreeSet::new();
-    let mut predecessors: BTreeMap<u32, usize> = BTreeMap::new();
-    if sites.contains_key(&entry_ip) {
-        leaders.insert(entry_ip);
+    let mut predecessors: BTreeMap<CodeKey, usize> = BTreeMap::new();
+    if sites.contains_key(&entry) {
+        leaders.insert(entry);
     }
-    for (&ip, site) in &sites {
+    for (&key, site) in &sites {
+        let same_seg = |t: u32| -> Option<CodeKey> {
+            (t <= 0xffff).then_some(CodeKey {
+                cs_rel: key.cs_rel,
+                ip: t as u16,
+            })
+        };
         match site.terminator {
             Terminator::Fallthrough => {
-                if sites.contains_key(&site.flow.next_eip) {
-                    if site.flow.next_eip <= ip {
-                        leaders.insert(site.flow.next_eip);
+                if let Some(nk) = same_seg(site.flow.next_eip).filter(|k| sites.contains_key(k)) {
+                    if nk <= key {
+                        leaders.insert(nk);
                     } else {
-                        *predecessors.entry(site.flow.next_eip).or_default() += 1;
+                        *predecessors.entry(nk).or_default() += 1;
                     }
                 }
             }
             Terminator::ConditionalBranch(t) => {
-                if sites.contains_key(&t) {
-                    leaders.insert(t);
+                if let Some(tk) = same_seg(t).filter(|k| sites.contains_key(k)) {
+                    leaders.insert(tk);
                 }
-                if sites.contains_key(&site.flow.next_eip) {
-                    leaders.insert(site.flow.next_eip);
+                if let Some(nk) = same_seg(site.flow.next_eip).filter(|k| sites.contains_key(k)) {
+                    leaders.insert(nk);
                 }
             }
             Terminator::UnconditionalJump(t) => {
-                if sites.contains_key(&t) {
-                    leaders.insert(t);
+                if let Some(tk) = same_seg(t).filter(|k| sites.contains_key(k)) {
+                    leaders.insert(tk);
                 }
             }
             Terminator::Call(target) => {
-                if let Some(t) = target.filter(|t| sites.contains_key(t)) {
-                    leaders.insert(t);
+                if let Some(tk) = target.and_then(same_seg).filter(|k| sites.contains_key(k)) {
+                    leaders.insert(tk);
                 }
-                if sites.contains_key(&site.flow.next_eip) {
-                    leaders.insert(site.flow.next_eip);
+                if let Some(nk) = same_seg(site.flow.next_eip).filter(|k| sites.contains_key(k)) {
+                    leaders.insert(nk);
                 }
             }
-            Terminator::DynamicJump | Terminator::Return => {}
+            Terminator::FarCall(target) => {
+                if let Some(tk) = target.filter(|k| sites.contains_key(k)) {
+                    leaders.insert(tk);
+                }
+                if let Some(nk) = same_seg(site.flow.next_eip).filter(|k| sites.contains_key(k)) {
+                    leaders.insert(nk);
+                }
+            }
+            Terminator::FarJump(target) => {
+                if let Some(tk) = target.filter(|k| sites.contains_key(k)) {
+                    leaders.insert(tk);
+                }
+            }
+            Terminator::FarReturn | Terminator::DynamicJump | Terminator::Return => {}
         }
     }
-    for &ip in sites.keys() {
-        if predecessors.get(&ip) != Some(&1) {
-            leaders.insert(ip);
+    for &key in sites.keys() {
+        if predecessors.get(&key) != Some(&1) {
+            leaders.insert(key);
         }
     }
 
@@ -296,10 +452,14 @@ pub fn discover_real16(
             covered.insert(cur);
             if seq.len() >= MAX_BLOCK_INSTRUCTIONS
                 || !matches!(site.terminator, Terminator::Fallthrough)
+                || site.flow.next_eip > 0xffff
             {
                 break;
             }
-            let next = site.flow.next_eip;
+            let next = CodeKey {
+                cs_rel: cur.cs_rel,
+                ip: site.flow.next_eip as u16,
+            };
             if next <= cur
                 || !sites.contains_key(&next)
                 || leaders.contains(&next)
@@ -312,9 +472,11 @@ pub fn discover_real16(
         blocks.insert(start, seq);
     }
 
+    let segments: BTreeSet<u16> = blocks.keys().map(|k| k.cs_rel).collect();
     let mut code_mask = vec![0u8; module_len];
     for site in sites.values() {
-        let Some(linear) = cs_base.checked_add(site.ip) else {
+        let cs = load_segment.wrapping_add(site.cs_rel);
+        let Some(linear) = (u32::from(cs) << 4).checked_add(site.ip) else {
             continue;
         };
         let off = (linear - module_base) as usize;
@@ -324,7 +486,9 @@ pub fn discover_real16(
     }
 
     DiscoveredCfg {
-        entry_ip,
+        load_segment,
+        entry,
+        segments,
         sites,
         blocks,
         code_mask,
@@ -405,10 +569,33 @@ fn emit_site_body(
     site: &CompiledSite,
     idx_in_block: usize,
     is_last: bool,
+    multi_region: bool,
+    region_cs_rel: u16,
+    has_start_steps: bool,
 ) {
     let p = &site.program;
     let inst_ip = site.ip;
     let mem_seg = static_segment(site.address);
+    let exit_expr = if has_start_steps {
+        "*steps = cur_steps; (*ctx).exit_kind = 1; exit_rc = 1; break 'dispatch;"
+    } else {
+        "(*ctx).exit_kind = 1; break 'dispatch;"
+    };
+    let fault_exit = |out: &mut String, idx: usize| {
+        if has_start_steps {
+            writeln!(
+                out,
+                "ip = {inst_ip}u32; cur_steps += {idx}u32; *steps = cur_steps; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; exit_rc = 3; break 'dispatch;"
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "ip = {inst_ip}u32; steps += {idx}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch;"
+            )
+            .unwrap();
+        }
+    };
     let has_stores = p.tokens.iter().any(|t| {
         matches!(
             t,
@@ -428,6 +615,13 @@ fn emit_site_body(
         .iter()
         .any(|t| matches!(t, Token::Flag(..) | Token::FlagIf(..) | Token::UndefFlag(..)));
     let has_branch = p.tokens.iter().any(|t| matches!(t, Token::BranchIf(..)));
+    let has_far_transfer = p
+        .tokens
+        .iter()
+        .any(|t| matches!(t, Token::FarJump(..) | Token::FarCall(..) | Token::FarReturn(..)));
+    let has_far_sp = p.tokens.iter().any(|t| matches!(t, Token::FarReturn(..)));
+    let has_next_ip = has_branch || has_far_transfer;
+    let steps_var = if has_start_steps { "cur_steps" } else { "steps" };
 
     writeln!(out, "{{").unwrap();
     if has_stores {
@@ -446,8 +640,14 @@ fn emit_site_body(
         )
         .unwrap();
     }
-    if has_branch {
+    if has_next_ip {
         writeln!(out, "let mut next_ip: u32 = {}u32;", site.flow.next_eip).unwrap();
+    }
+    if has_far_transfer {
+        writeln!(out, "let mut pending_cs: Option<u16> = None;").unwrap();
+    }
+    if has_far_sp {
+        writeln!(out, "let mut pending_far_sp: Option<u32> = None;").unwrap();
     }
 
     let mut staged_stores: Vec<(u8, String, String, u8, Option<String>)> = Vec::new();
@@ -466,14 +666,11 @@ fn emit_site_body(
         }
         match *t {
             Token::PreserveFlags(_) => {}
-            Token::RequireRealMode => {
-                // Backend only enters compiled code in 16-bit real mode without VM,
-                // so this always holds; keep guard out of hot path.
-            }
+            Token::RequireRealMode => {}
             Token::Require(c) => {
                 writeln!(
                     out,
-                    "if v{c} == 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 1; break 'dispatch; }}"
+                    "if v{c} == 0 {{ ip = {inst_ip}u32; {steps_var} += {idx_in_block}u32; {exit_expr} }}"
                 )
                 .unwrap();
             }
@@ -481,7 +678,13 @@ fn emit_site_body(
                 if v == 13 {
                     writeln!(
                         out,
-                        "if v{c} == 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 1; break 'dispatch; }}"
+                        "if v{c} == 0 {{ ip = {inst_ip}u32; {steps_var} += {idx_in_block}u32; {exit_expr} }}"
+                    )
+                    .unwrap();
+                } else if has_start_steps {
+                    writeln!(
+                        out,
+                        "if v{c} == 0 {{ ip = {inst_ip}u32; cur_steps += {idx_in_block}u32; *steps = cur_steps; (*ctx).exit_kind = 4; (*ctx).fault_eip = {inst_ip}u32; (*ctx).fault_vector = {v}u8; exit_rc = 4; break 'dispatch; }}"
                     )
                     .unwrap();
                 } else {
@@ -658,40 +861,50 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {mem_seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
+                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, selectors[1], &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {mem_seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{"
                 )
                 .unwrap();
+                fault_exit(out, idx_in_block);
+                writeln!(out, "}}\nlet v{o}: u64 = tmp_{o} as u64;").unwrap();
             }
             Token::LoadSegment(o, a, w, seg) => {
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
+                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, selectors[1], &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{"
                 )
                 .unwrap();
+                fault_exit(out, idx_in_block);
+                writeln!(out, "}}\nlet v{o}: u64 = tmp_{o} as u64;").unwrap();
             }
             Token::CheckSegment(seg, a, bytes) => {
                 writeln!(
                     out,
-                    "if fast_check_span(host, seg_fast_mask, {seg}u8, v{a}, {bytes}u32, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "if fast_check_span(host, selectors[1], seg_fast_mask, {seg}u8, v{a}, {bytes}u32, {inst_ip}u32) < 0 {{"
                 )
                 .unwrap();
+                fault_exit(out, idx_in_block);
+                writeln!(out, "}}").unwrap();
             }
             Token::CheckWriteSegment(seg, a, w) => {
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "if fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "if fast_check_write(host, selectors[1], &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32) < 0 {{"
                 )
                 .unwrap();
+                fault_exit(out, idx_in_block);
+                writeln!(out, "}}").unwrap();
             }
             Token::Store(a, v, w) => {
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, selectors[1], &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{"
                 )
                 .unwrap();
+                fault_exit(out, idx_in_block);
+                writeln!(out, "}}").unwrap();
                 staged_stores.push((
                     mem_seg,
                     format!("store_addr_{index}"),
@@ -704,9 +917,11 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_cond_{index}: bool = v{c} != 0;\nlet store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif store_cond_{index} && fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_cond_{index}: bool = v{c} != 0;\nlet store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif store_cond_{index} && fast_check_write(host, selectors[1], &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{"
                 )
                 .unwrap();
+                fault_exit(out, idx_in_block);
+                writeln!(out, "}}").unwrap();
                 staged_stores.push((
                     mem_seg,
                     format!("store_addr_{index}"),
@@ -719,9 +934,11 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, selectors[1], &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{"
                 )
                 .unwrap();
+                fault_exit(out, idx_in_block);
+                writeln!(out, "}}").unwrap();
                 staged_stores.push((
                     seg as u8,
                     format!("store_addr_{index}"),
@@ -733,7 +950,21 @@ fn emit_site_body(
             Token::BranchIf(a, c) => {
                 writeln!(
                     out,
-                    "if v{c} != 0 {{ if (v{a} as u32) > code_limit {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 1; break 'dispatch; }} next_ip = v{a} as u32; }}"
+                    "if v{c} != 0 {{ if (v{a} as u32) > code_limit {{ ip = {inst_ip}u32; {steps_var} += {idx_in_block}u32; {exit_expr} }} next_ip = v{a} as u32; }}"
+                )
+                .unwrap();
+            }
+            Token::FarJump(sel, off) | Token::FarCall(sel, off) => {
+                writeln!(
+                    out,
+                    "if (v{off} as u32) > 0xffffu32 {{ ip = {inst_ip}u32; {steps_var} += {idx_in_block}u32; {exit_expr} }}\npending_cs = Some(v{sel} as u16);\nnext_ip = v{off} as u32;"
+                )
+                .unwrap();
+            }
+            Token::FarReturn(sel, off, outer, ..) => {
+                writeln!(
+                    out,
+                    "if (v{off} as u32) > 0xffffu32 {{ ip = {inst_ip}u32; {steps_var} += {idx_in_block}u32; {exit_expr} }}\npending_cs = Some(v{sel} as u16);\nnext_ip = v{off} as u32;\npending_far_sp = Some(v{outer} as u32);"
                 )
                 .unwrap();
             }
@@ -749,19 +980,22 @@ fn emit_site_body(
                         & (mask(p.source_width) << site.src.low);
                     writeln!(
                         out,
-                        "if let (Some(a), Some(b)) = (pending_dst, pending_src) {{ if (((a << {}) ^ (b << {})) & {overlap}u64) != 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 1; break 'dispatch; }} }}",
+                        "if let (Some(a), Some(b)) = (pending_dst, pending_src) {{ if (((a << {}) ^ (b << {})) & {overlap}u64) != 0 {{ ip = {inst_ip}u32; {steps_var} += {idx_in_block}u32; {exit_expr} }} }}",
                         site.dst.low, site.src.low
                     )
                     .unwrap();
                 }
                 for (seg, addr, val, bytes, cond) in &staged_stores {
-                    let call = format!(
-                        "let rc = fast_write(host, &seg_bases, seg_fast_mask, ram_ptr, watch_ptr, ram_fast_limit, code_start, code_end, {seg}u8, {addr}, {bytes}u8, {val}, {inst_ip}u32);\nif rc < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nmodified |= rc == 1;"
-                    );
-                    if let Some(c) = cond {
-                        writeln!(out, "if {c} {{\n{call}\n}}").unwrap();
-                    } else {
-                        writeln!(out, "{call}").unwrap();
+                    writeln!(
+                        out,
+                        "{}let rc = fast_write(host, selectors[1], &seg_bases, seg_fast_mask, ram_ptr, watch_ptr, ram_fast_limit, code_start, code_end, {seg}u8, {addr}, {bytes}u8, {val}, {inst_ip}u32);\nif rc < 0 {{",
+                        cond.as_deref().map_or_else(String::new, |c| format!("if {c} {{\n"))
+                    )
+                    .unwrap();
+                    fault_exit(out, idx_in_block);
+                    writeln!(out, "}}\nmodified |= rc == 1;").unwrap();
+                    if cond.is_some() {
+                        writeln!(out, "}}").unwrap();
                     }
                 }
                 if has_dst_write {
@@ -785,30 +1019,116 @@ fn emit_site_body(
                 if !gpr_commits.is_empty() {
                     out.push_str(&gpr_commits);
                 }
+                if has_far_sp {
+                    writeln!(
+                        out,
+                        "if let Some(sp) = pending_far_sp {{ r4 = (r4 & !0xffffu32) | (sp & 0xffffu32); }}"
+                    )
+                    .unwrap();
+                }
                 if has_flag_write {
                     writeln!(out, "flags = pending_flags;\nundef = pending_undef;").unwrap();
                 }
-                let next_expr = if has_branch {
+                if has_far_transfer {
+                    writeln!(
+                        out,
+                        "if let Some(new_cs) = pending_cs {{\n\
+                         selectors[1] = new_cs;\n\
+                         seg_bases[1] = (new_cs as u32) << 4;\n\
+                         seg_fast_mask |= 2u8;\n\
+                         code_limit = 0xffffu32;\n\
+                         }}"
+                    )
+                    .unwrap();
+                }
+                let next_expr = if has_next_ip {
                     "next_ip".to_string()
                 } else {
                     format!("{}u32", site.flow.next_eip)
                 };
                 if has_stores {
-                    writeln!(
-                        out,
-                        "if modified {{ ip = {next_expr}; steps += {}u32; (*ctx).exit_kind = 2; break 'dispatch; }}",
-                        idx_in_block + 1
-                    )
-                    .unwrap();
+                    if has_start_steps {
+                        writeln!(
+                            out,
+                            "if modified {{ ip = {next_expr}; cur_steps += {}u32; *steps = cur_steps; (*ctx).exit_kind = 2; exit_rc = 2; break 'dispatch; }}",
+                            idx_in_block + 1
+                        )
+                        .unwrap();
+                    } else {
+                        writeln!(
+                            out,
+                            "if modified {{ ip = {next_expr}; steps += {}u32; (*ctx).exit_kind = 2; break 'dispatch; }}",
+                            idx_in_block + 1
+                        )
+                        .unwrap();
+                    }
                 }
                 if is_last {
                     writeln!(out, "ip = {next_expr};").unwrap();
+                }
+                if multi_region && has_far_transfer {
+                    writeln!(
+                        out,
+                        "if selectors[1].wrapping_sub(load_segment) != {region_cs_rel}u16 {{\n\
+                         ip = {next_expr};\n\
+                         cur_steps += {}u32;\n\
+                         *steps = cur_steps;\n\
+                         exit_rc = 5;\n\
+                         break 'dispatch;\n\
+                         }}",
+                        idx_in_block + 1
+                    )
+                    .unwrap();
                 }
             }
             _ => unreachable!("is_compilable filtered all unsupported tokens"),
         }
     }
     writeln!(out, "}}").unwrap();
+}
+
+struct Region {
+    id: usize,
+    cs_rel: u16,
+    min_ip: u16,
+    max_ip: u16,
+    blocks: Vec<CodeKey>,
+}
+
+fn partition_regions(cfg: &DiscoveredCfg) -> Vec<Region> {
+    let mut regions = Vec::new();
+    let mut current: Option<Region> = None;
+    let mut current_insns = 0usize;
+    for (&key, seq) in &cfg.blocks {
+        let should_split = match &current {
+            Some(r) => {
+                r.cs_rel != key.cs_rel
+                    || r.blocks.len() >= REGION_MAX_BLOCKS
+                    || (current_insns + seq.len() > REGION_MAX_INSNS && !r.blocks.is_empty())
+            }
+            None => false,
+        };
+        if should_split {
+            if let Some(r) = current.take() {
+                regions.push(r);
+            }
+            current_insns = 0;
+        }
+        let r = current.get_or_insert_with(|| Region {
+            id: regions.len(),
+            cs_rel: key.cs_rel,
+            min_ip: key.ip,
+            max_ip: key.ip,
+            blocks: Vec::new(),
+        });
+        r.max_ip = r.max_ip.max(key.ip);
+        r.blocks.push(key);
+        current_insns += seq.len();
+    }
+    if let Some(r) = current {
+        regions.push(r);
+    }
+    regions
 }
 
 /// Render a complete Rust source module implementing `run_compiled` and linking `dine`.
@@ -825,6 +1145,7 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
              pub undefined: u32,\n\
              pub eip: u32,\n\
              pub selectors: [u16; 6],\n\
+             pub load_segment: u16,\n\
              pub seg_bases: [u32; 6],\n\
              pub seg_fast_mask: u8,\n\
              pub code_limit: u32,\n\
@@ -845,38 +1166,38 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
          extern \"C\" {{\n\
              fn dine_run_pil_v1(data: *const u8, len: usize, name: *const c_char, tail: *const c_char, entry: unsafe extern \"C\" fn(*mut DinePilCtx, u32)) -> i32;\n\
              fn dine_session_pil_v1(data: *const u8, len: usize, name: *const c_char, tail: *const c_char, entry: unsafe extern \"C\" fn(*mut DinePilCtx, u32)) -> i32;\n\
-             fn dine_pil_read(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32;\n\
-             fn dine_pil_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32;\n\
-             fn dine_pil_check_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32;\n\
-             fn dine_pil_check_span(host: *mut c_void, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32;\n\
+             fn dine_pil_read(host: *mut c_void, cs_sel: u16, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32;\n\
+             fn dine_pil_write(host: *mut c_void, cs_sel: u16, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32;\n\
+             fn dine_pil_check_write(host: *mut c_void, cs_sel: u16, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32;\n\
+             fn dine_pil_check_span(host: *mut c_void, cs_sel: u16, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32;\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn slow_read(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
-             dine_pil_read(host, seg, offset, bytes, eip, out)\n\
+         unsafe fn slow_read(host: *mut c_void, cs_sel: u16, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
+             dine_pil_read(host, cs_sel, seg, offset, bytes, eip, out)\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn slow_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
-             dine_pil_write(host, seg, offset, bytes, value, eip)\n\
+         unsafe fn slow_write(host: *mut c_void, cs_sel: u16, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
+             dine_pil_write(host, cs_sel, seg, offset, bytes, value, eip)\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn slow_check_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
-             dine_pil_check_write(host, seg, offset, bytes, eip)\n\
+         unsafe fn slow_check_write(host: *mut c_void, cs_sel: u16, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
+             dine_pil_check_write(host, cs_sel, seg, offset, bytes, eip)\n\
          }}\n\
          #[cold]\n\
          #[inline(never)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn slow_check_span(host: *mut c_void, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32 {{\n\
-             dine_pil_check_span(host, seg, offset, bytes, eip)\n\
+         unsafe fn slow_check_span(host: *mut c_void, cs_sel: u16, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32 {{\n\
+             dine_pil_check_span(host, cs_sel, seg, offset, bytes, eip)\n\
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn fast_read(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
+         unsafe fn fast_read(host: *mut c_void, cs_sel: u16, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
              if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
                  let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
                  if lin.wrapping_add(bytes as u32) <= ram_fast_limit {{\n\
@@ -885,27 +1206,27 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
                          1 => *p as u32,\n\
                          2 => (p as *const u16).read_unaligned().to_le() as u32,\n\
                          4 => (p as *const u32).read_unaligned().to_le(),\n\
-                         _ => return slow_read(host, seg, offset, bytes, eip, out),\n\
+                         _ => return slow_read(host, cs_sel, seg, offset, bytes, eip, out),\n\
                      }};\n\
                      return 0;\n\
                  }}\n\
              }}\n\
-             slow_read(host, seg, offset, bytes, eip, out)\n\
+             slow_read(host, cs_sel, seg, offset, bytes, eip, out)\n\
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn fast_check_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
+         unsafe fn fast_check_write(host: *mut c_void, cs_sel: u16, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
              if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
                  let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
                  if lin.wrapping_add(bytes as u32) <= ram_fast_limit {{\n\
                      return 0;\n\
                  }}\n\
              }}\n\
-             slow_check_write(host, seg, offset, bytes, eip)\n\
+             slow_check_write(host, cs_sel, seg, offset, bytes, eip)\n\
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn fast_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, watch_ptr: *mut u64, ram_fast_limit: u32, code_start: u32, code_end: u32, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
+         unsafe fn fast_write(host: *mut c_void, cs_sel: u16, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, watch_ptr: *mut u64, ram_fast_limit: u32, code_start: u32, code_end: u32, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
              if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
                  let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
                  let end = lin.wrapping_add(bytes as u32);\n\
@@ -915,7 +1236,7 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
                          1 => *p = value as u8,\n\
                          2 => (p as *mut u16).write_unaligned((value as u16).to_le()),\n\
                          4 => (p as *mut u32).write_unaligned(value.to_le()),\n\
-                         _ => return slow_write(host, seg, offset, bytes, value, eip),\n\
+                         _ => return slow_write(host, cs_sel, seg, offset, bytes, value, eip),\n\
                      }}\n\
                      let l0 = (lin >> 6) as usize;\n\
                      let l1 = ((end - 1) >> 6) as usize;\n\
@@ -926,85 +1247,232 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
                      return 0;\n\
                  }}\n\
              }}\n\
-             slow_write(host, seg, offset, bytes, value, eip)\n\
+             slow_write(host, cs_sel, seg, offset, bytes, value, eip)\n\
          }}\n\
          #[inline(always)]\n\
          #[allow(dead_code)]\n\
-         unsafe fn fast_check_span(host: *mut c_void, seg_fast_mask: u8, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32 {{\n\
+         unsafe fn fast_check_span(host: *mut c_void, cs_sel: u16, seg_fast_mask: u8, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32 {{\n\
              if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && bytes > 0 && offset <= 0x10000u64 - bytes as u64 {{\n\
                  return 0;\n\
              }}\n\
-             slow_check_span(host, seg, offset, bytes, eip)\n\
+             slow_check_span(host, cs_sel, seg, offset, bytes, eip)\n\
          }}"
     )
     .unwrap();
 
-    writeln!(
-        out,
-        "#[allow(unused_variables, unused_mut, unused_assignments)]\n\
-         pub unsafe extern \"C\" fn run_compiled(ctx: *mut DinePilCtx, budget: u32) {{\n\
-             let mut r0 = (*ctx).regs[0];\n\
-             let mut r1 = (*ctx).regs[1];\n\
-             let mut r2 = (*ctx).regs[2];\n\
-             let mut r3 = (*ctx).regs[3];\n\
-             let mut r4 = (*ctx).regs[4];\n\
-             let mut r5 = (*ctx).regs[5];\n\
-             let mut r6 = (*ctx).regs[6];\n\
-             let mut r7 = (*ctx).regs[7];\n\
-             let mut flags = (*ctx).eflags;\n\
-             let mut undef = (*ctx).undefined;\n\
-             let mut ip = (*ctx).eip;\n\
-             let selectors = (*ctx).selectors;\n\
-             let seg_bases = (*ctx).seg_bases;\n\
-             let seg_fast_mask = (*ctx).seg_fast_mask;\n\
-             let code_limit = (*ctx).code_limit;\n\
-             let ram_ptr = (*ctx).ram_ptr;\n\
-             let watch_ptr = (*ctx).watch_ptr;\n\
-             let ram_fast_limit = (*ctx).ram_fast_limit;\n\
-             let code_start = (*ctx).code_start;\n\
-             let code_end = (*ctx).code_end;\n\
-             let host = (*ctx).host;\n\
-             let mut steps: u32 = 0;\n\
-             'dispatch: loop {{\n\
-                 match ip {{"
-    )
-    .unwrap();
+    let regions = partition_regions(cfg);
+    let has_far = cfg.sites.values().any(|s| {
+        matches!(
+            s.terminator,
+            Terminator::FarCall(..) | Terminator::FarJump(..) | Terminator::FarReturn
+        )
+    });
+    let single_fast = regions.len() == 1 && !has_far;
 
-    for (&block_ip, seq) in &cfg.blocks {
-        let k = seq.len();
+    if single_fast {
+        let region = &regions[0];
         writeln!(
             out,
-            "{block_ip}u32 => {{\n\
-             if steps + {k}u32 > budget {{ (*ctx).exit_kind = 0; break 'dispatch; }}"
+            "#[allow(unused_variables, unused_mut, unused_assignments)]\n\
+             pub unsafe extern \"C\" fn run_compiled(ctx: *mut DinePilCtx, budget: u32) {{\n\
+                 let mut selectors = (*ctx).selectors;\n\
+                 let load_segment = (*ctx).load_segment;\n\
+                 if selectors[1].wrapping_sub(load_segment) != {}u16 {{\n\
+                     (*ctx).exit_kind = 1;\n\
+                     return;\n\
+                 }}\n\
+                 let mut r0 = (*ctx).regs[0];\n\
+                 let mut r1 = (*ctx).regs[1];\n\
+                 let mut r2 = (*ctx).regs[2];\n\
+                 let mut r3 = (*ctx).regs[3];\n\
+                 let mut r4 = (*ctx).regs[4];\n\
+                 let mut r5 = (*ctx).regs[5];\n\
+                 let mut r6 = (*ctx).regs[6];\n\
+                 let mut r7 = (*ctx).regs[7];\n\
+                 let mut flags = (*ctx).eflags;\n\
+                 let mut undef = (*ctx).undefined;\n\
+                 let mut ip = (*ctx).eip;\n\
+                 let mut seg_bases = (*ctx).seg_bases;\n\
+                 let mut seg_fast_mask = (*ctx).seg_fast_mask;\n\
+                 let mut code_limit = (*ctx).code_limit;\n\
+                 let ram_ptr = (*ctx).ram_ptr;\n\
+                 let watch_ptr = (*ctx).watch_ptr;\n\
+                 let ram_fast_limit = (*ctx).ram_fast_limit;\n\
+                 let code_start = (*ctx).code_start;\n\
+                 let code_end = (*ctx).code_end;\n\
+                 let host = (*ctx).host;\n\
+                 let mut steps: u32 = 0;\n\
+                 'dispatch: loop {{\n\
+                     match ip {{",
+            region.cs_rel
         )
         .unwrap();
-        for (idx, &site_ip) in seq.iter().enumerate() {
-            let site = &cfg.sites[&site_ip];
-            emit_site_body(&mut out, site, idx, idx + 1 == k);
+        for &key in &region.blocks {
+            let seq = &cfg.blocks[&key];
+            let k = seq.len();
+            writeln!(
+                out,
+                "{}u32 => {{\n\
+                 if steps + {k}u32 > budget {{ (*ctx).exit_kind = 0; break 'dispatch; }}",
+                key.ip
+            )
+            .unwrap();
+            for (idx, &site_key) in seq.iter().enumerate() {
+                let site = &cfg.sites[&site_key];
+                emit_site_body(&mut out, site, idx, idx + 1 == k, false, region.cs_rel, false);
+            }
+            writeln!(out, "steps += {k}u32;\n}}").unwrap();
         }
-        writeln!(out, "steps += {k}u32;\n}}").unwrap();
-    }
-
-    writeln!(
-        out,
-        "_ => {{ (*ctx).exit_kind = 1; break 'dispatch; }}\n\
+        writeln!(
+            out,
+            "_ => {{ (*ctx).exit_kind = 1; break 'dispatch; }}\n\
+                 }}\n\
              }}\n\
-         }}\n\
-         (*ctx).regs[0] = r0;\n\
-         (*ctx).regs[1] = r1;\n\
-         (*ctx).regs[2] = r2;\n\
-         (*ctx).regs[3] = r3;\n\
-         (*ctx).regs[4] = r4;\n\
-         (*ctx).regs[5] = r5;\n\
-         (*ctx).regs[6] = r6;\n\
-         (*ctx).regs[7] = r7;\n\
-         (*ctx).eflags = flags;\n\
-         (*ctx).undefined = undef;\n\
-         (*ctx).eip = ip;\n\
-         (*ctx).steps_done = steps;\n\
-     }}"
-    )
-    .unwrap();
+             (*ctx).regs[0] = r0;\n\
+             (*ctx).regs[1] = r1;\n\
+             (*ctx).regs[2] = r2;\n\
+             (*ctx).regs[3] = r3;\n\
+             (*ctx).regs[4] = r4;\n\
+             (*ctx).regs[5] = r5;\n\
+             (*ctx).regs[6] = r6;\n\
+             (*ctx).regs[7] = r7;\n\
+             (*ctx).eflags = flags;\n\
+             (*ctx).undefined = undef;\n\
+             (*ctx).eip = ip;\n\
+             (*ctx).steps_done = steps;\n\
+         }}"
+        )
+        .unwrap();
+    } else {
+        for region in &regions {
+            writeln!(
+                out,
+                "#[inline(never)]\n\
+                 #[allow(unused_variables, unused_mut, unused_assignments)]\n\
+                 unsafe fn region_{id}(ctx: *mut DinePilCtx, budget: u32, steps: &mut u32) -> u32 {{\n\
+                     let mut r0 = (*ctx).regs[0];\n\
+                     let mut r1 = (*ctx).regs[1];\n\
+                     let mut r2 = (*ctx).regs[2];\n\
+                     let mut r3 = (*ctx).regs[3];\n\
+                     let mut r4 = (*ctx).regs[4];\n\
+                     let mut r5 = (*ctx).regs[5];\n\
+                     let mut r6 = (*ctx).regs[6];\n\
+                     let mut r7 = (*ctx).regs[7];\n\
+                     let mut flags = (*ctx).eflags;\n\
+                     let mut undef = (*ctx).undefined;\n\
+                     let mut ip = (*ctx).eip;\n\
+                     let mut selectors = (*ctx).selectors;\n\
+                     let load_segment = (*ctx).load_segment;\n\
+                     let mut seg_bases = (*ctx).seg_bases;\n\
+                     let mut seg_fast_mask = (*ctx).seg_fast_mask;\n\
+                     let mut code_limit = (*ctx).code_limit;\n\
+                     let ram_ptr = (*ctx).ram_ptr;\n\
+                     let watch_ptr = (*ctx).watch_ptr;\n\
+                     let ram_fast_limit = (*ctx).ram_fast_limit;\n\
+                     let code_start = (*ctx).code_start;\n\
+                     let code_end = (*ctx).code_end;\n\
+                     let host = (*ctx).host;\n\
+                     let start_steps: u32 = *steps;\n\
+                     let mut cur_steps: u32 = start_steps;\n\
+                     let mut exit_rc: u32 = 1;\n\
+                     'dispatch: loop {{\n\
+                         match ip {{",
+                id = region.id
+            )
+            .unwrap();
+            for &key in &region.blocks {
+                let seq = &cfg.blocks[&key];
+                let k = seq.len();
+                writeln!(
+                    out,
+                    "{}u32 => {{\n\
+                     if cur_steps + {k}u32 > budget {{ *steps = cur_steps; (*ctx).exit_kind = 0; exit_rc = 0; break 'dispatch; }}",
+                    key.ip
+                )
+                .unwrap();
+                for (idx, &site_key) in seq.iter().enumerate() {
+                    let site = &cfg.sites[&site_key];
+                    emit_site_body(
+                        &mut out,
+                        site,
+                        idx,
+                        idx + 1 == k,
+                        true,
+                        region.cs_rel,
+                        true,
+                    );
+                }
+                writeln!(out, "cur_steps += {k}u32;\n}}").unwrap();
+            }
+            writeln!(
+                out,
+                "_ => {{\n\
+                     *steps = cur_steps;\n\
+                     if cur_steps == start_steps {{ (*ctx).exit_kind = 1; exit_rc = 1; }} else {{ exit_rc = 5; }}\n\
+                     break 'dispatch;\n\
+                 }}\n\
+                 }}\n\
+             }}\n\
+             (*ctx).regs[0] = r0;\n\
+             (*ctx).regs[1] = r1;\n\
+             (*ctx).regs[2] = r2;\n\
+             (*ctx).regs[3] = r3;\n\
+             (*ctx).regs[4] = r4;\n\
+             (*ctx).regs[5] = r5;\n\
+             (*ctx).regs[6] = r6;\n\
+             (*ctx).regs[7] = r7;\n\
+             (*ctx).eflags = flags;\n\
+             (*ctx).undefined = undef;\n\
+             (*ctx).eip = ip;\n\
+             (*ctx).selectors[1] = selectors[1];\n\
+             (*ctx).seg_bases[1] = seg_bases[1];\n\
+             (*ctx).seg_fast_mask = seg_fast_mask;\n\
+             (*ctx).code_limit = code_limit;\n\
+             exit_rc\n\
+         }}"
+            )
+            .unwrap();
+        }
+        writeln!(
+            out,
+            "#[allow(unused_variables)]\n\
+             pub unsafe extern \"C\" fn run_compiled(ctx: *mut DinePilCtx, budget: u32) {{\n\
+                 let mut steps: u32 = 0;\n\
+                 loop {{\n\
+                     let cs_rel = (*ctx).selectors[1].wrapping_sub((*ctx).load_segment);\n\
+                     let key = ((cs_rel as u32) << 16) | ((*ctx).eip & 0xffffu32);\n\
+                     let rc = match key {{"
+        )
+        .unwrap();
+        for region in &regions {
+            let min_key = CodeKey {
+                cs_rel: region.cs_rel,
+                ip: region.min_ip,
+            }
+            .packed();
+            let max_key = CodeKey {
+                cs_rel: region.cs_rel,
+                ip: region.max_ip,
+            }
+            .packed();
+            writeln!(
+                out,
+                "        {min_key}u32..={max_key}u32 => region_{}(ctx, budget, &mut steps),",
+                region.id
+            )
+            .unwrap();
+        }
+        writeln!(
+            out,
+            "        _ => {{ (*ctx).exit_kind = 1; 1 }}\n\
+                     }};\n\
+                     if rc != 5 {{ break; }}\n\
+                 }}\n\
+                 (*ctx).steps_done = steps;\n\
+             }}"
+        )
+        .unwrap();
+    }
 
     writeln!(
         out,

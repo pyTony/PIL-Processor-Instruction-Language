@@ -68,6 +68,38 @@ def check(engine, runtime, work, name, data, tail, expected, exit_code, pil=Fals
             stream.close()
 
 
+def make_far_mz():
+    # Segment 0 (cs_rel=0x0000): MOV AX,10; PUSH AX; CALL FAR seg1:0; JMP FAR seg2:0
+    seg0 = bytes.fromhex('b80a00509a00000200ea00000400')
+    # Segment 1 (cs_rel=0x0002, offset 0x0020): PUSH BP; MOV BP,SP; MOV AX,[BP+6]; ADD AX,32; POP BP; RETF 2
+    seg1 = bytes.fromhex('5589e58b46060520005dca0200')
+    # Segment 2 (cs_rel=0x0004, offset 0x0040): MOV AH,4Ch; INT 21h
+    seg2 = bytes.fromhex('b44ccd21')
+    module = seg0.ljust(0x20, b'\x00') + seg1.ljust(0x20, b'\x00') + seg2
+    header_len = 48
+    total = header_len + len(module)
+    h = bytearray(header_len)
+    h[0:2] = b'MZ'
+    def put16(at, val):
+        h[at:at + 2] = val.to_bytes(2, 'little')
+    put16(2, total % 512)
+    put16(4, (total + 511) // 512)
+    put16(6, 2)     # e_crlc
+    put16(8, 3)     # e_cparhdr (48 bytes)
+    put16(10, 0x10) # e_minalloc
+    put16(12, 0xffff)
+    put16(14, 0x0010) # e_ss
+    put16(16, 0x0100) # e_sp
+    put16(20, 0x0000) # e_ip
+    put16(22, 0x0000) # e_cs
+    put16(24, 28)     # e_lfarlc
+    put16(28, 7)      # reloc 0 offset (CALL FAR seg)
+    put16(30, 0)
+    put16(32, 12)     # reloc 1 offset (JMP FAR seg)
+    put16(34, 0)
+    return bytes(h) + module
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine', type=Path, required=True)
@@ -93,6 +125,9 @@ def main():
         check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFSMC.COM',
               bytes.fromhex('b90000b041a209019040b44c88c8cd21'),
               [], '', 1, pil=True)
+        # Multi-segment relocated MZ: CALL FAR, RETF 2, and JMP FAR across three segments.
+        check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFMFAR.EXE',
+              make_far_mz(), [], '', 42, pil=True)
     print('Native application integration checks passed.')
 
 
