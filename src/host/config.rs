@@ -4,7 +4,7 @@ use std::path::{Path,PathBuf};
 
 #[derive(Debug,Default)]
 struct Config{drives:Vec<(u8,PathBuf)>,disk_sets:Vec<(u8,PathBuf)>,country:Option<u16>,program:Option<String>,args:Option<String>,
-    fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>,host_pointer:Option<HostPointer>,speaker_volume:Option<u8>,
+    cpu:Option<crate::address::CpuModel>,fpu:Option<bool>,mouse:Option<bool>,ansi:Option<bool>,utc_offset:Option<i64>,host_pointer:Option<HostPointer>,speaker_volume:Option<u8>,
     /// `own_programs`: Some(None) for none, Some(Some(letter)) for a drive.
     own_programs:Option<Option<u8>>,
     /// The folder of the configuration file.
@@ -39,7 +39,7 @@ impl HostPointer{
 /// The settings `pil --dos-console` takes from a configuration besides the
 /// drives and country (which `apply` loads into the machine).
 #[derive(Debug,Default,PartialEq,Eq)]
-pub(crate) struct ConsoleSettings{pub(crate) fpu:Option<bool>,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) utc_offset:Option<i64>,pub(crate) host_pointer:Option<HostPointer>,pub(crate) speaker_volume:Option<u8>}
+pub(crate) struct ConsoleSettings{pub(crate) cpu:Option<crate::address::CpuModel>,pub(crate) fpu:Option<bool>,pub(crate) mouse:bool,pub(crate) ansi:bool,pub(crate) utc_offset:Option<i64>,pub(crate) host_pointer:Option<HostPointer>,pub(crate) speaker_volume:Option<u8>}
 
 /// A UTC offset as the frontends write it: hours ("2", "-5", "5.5") or
 /// "+HH:MM", in seconds; -12:00..+14:00.
@@ -107,6 +107,11 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
             "mouse"=>{once(config.mouse.is_some())?;config.mouse=Some(boolean(key,value,i+1)?);continue;},
             "ansi"=>{once(config.ansi.is_some())?;config.ansi=Some(boolean(key,value,i+1)?);continue;},
             "headless"|"rust_graphics"|"shell"=>{boolean(key,value,i+1)?;continue;},
+            "cpu"=>{
+                once(config.cpu.is_some())?;
+                config.cpu=Some(crate::address::CpuModel::parse(value).map_err(|e|format!("{e} on config line {}",i+1))?);
+                continue;
+            },
             "fpu"=>{
                 once(config.fpu.is_some())?;
                 config.fpu=Some(match value.to_ascii_lowercase().as_str(){"none"=>false,"80387"=>true,_=>return Err(format!("invalid fpu on config line {}",i+1))});
@@ -158,6 +163,9 @@ fn parse(text:&str,parent:&Path)->Result<Config,String>{
     if config.disk_sets.iter().any(|(letter,_)|config.drives.iter().any(|(d,_)|d==letter)){
         return Err("a drive cannot have both a mount and a disk set".into());
     }
+    if config.cpu.is_some_and(|c|c.is_486())&&config.fpu==Some(false){
+        return Err("fpu cannot be none when cpu is 486dx".into());
+    }
     Ok(config)
 }
 /// The configuration file to use: the explicit one, PILDOS_CONFIG, or
@@ -191,7 +199,7 @@ pub(crate) fn startup_optional(explicit:Option<&str>)->Result<Option<(String,Opt
 /// FPU, mouse, ANSI driver, clock offset, host pointer and speaker volume for `pil --dos-console`.
 pub(crate) fn console_settings(explicit:Option<&str>)->Result<ConsoleSettings,String>{
     let Some(config)=load(explicit)? else{return Ok(ConsoleSettings::default())};
-    Ok(ConsoleSettings{fpu:config.fpu,mouse:config.mouse==Some(true),ansi:config.ansi==Some(true),utc_offset:config.utc_offset,host_pointer:config.host_pointer,speaker_volume:config.speaker_volume})
+    Ok(ConsoleSettings{cpu:config.cpu,fpu:config.fpu,mouse:config.mouse==Some(true),ansi:config.ansi==Some(true),utc_offset:config.utc_offset,host_pointer:config.host_pointer,speaker_volume:config.speaker_volume})
 }
 /// The drive `own_programs` names (default D:) and the report of copying
 /// programs/dos next to the configuration into its host folder.

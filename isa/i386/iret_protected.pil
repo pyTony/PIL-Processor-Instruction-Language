@@ -69,4 +69,5 @@ bit f13 packed 13
 flag_if IOPL1 f13 yes ring0
 bit f14 packed 14
 flag NT f14
+$AC
 retire

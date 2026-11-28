@@ -39,8 +39,8 @@ From the checkout, check the tools and build your DOS input:
 On Linux, macOS or Termux:
 
 ```sh
-sh compile-dos.sh --doctor
-sh compile-dos.sh path/to/program.exe --run
+sh tools/compile-dos.sh --doctor
+sh tools/compile-dos.sh path/to/program.exe --run
 ```
 
 The cross-platform command is `python tools/build_dine.py PROGRAM`.

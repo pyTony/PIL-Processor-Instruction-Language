@@ -152,9 +152,9 @@ fn excluded(image:&Image,ram:&Ram,linear:u32,rom:bool)->bool{
 fn boundary(p:&crate::Program)->bool{
     p.uses_flow||p.tokens.iter().any(|t|match t{
         Token::Store(..)|Token::StoreIf(..)|Token::StoreSegment(..)|Token::WriteSegment(..)|Token::WriteControl(..)|
-        Token::WriteTable(..)|Token::LoadSystem(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|
+        Token::WriteTable(..)|Token::LoadSystem(..)|Token::Invlpg(..)|Token::FarBranch(..)|Token::FarJump(..)|Token::FarCall(..)|
         Token::FarReturn(..)|Token::TaskReturnIf(..)|Token::InterruptShadowIf(..)|Token::CheckIo(..)|Token::CheckpointFlags=>true,
-        Token::Flag(f,_)|Token::FlagIf(f,..)=>matches!(f,Flag::TF|Flag::IF|Flag::IOPL0|Flag::IOPL1|Flag::NT|Flag::VM),
+        Token::Flag(f,_)|Token::FlagIf(f,..)=>matches!(f,Flag::TF|Flag::IF|Flag::IOPL0|Flag::IOPL1|Flag::NT|Flag::VM|Flag::AC),
         _=>false,
     })
 }
@@ -165,10 +165,10 @@ fn boundary(p:&crate::Program)->bool{
 /// A near jump, CALL, RET or store does not.
 fn context(p:&crate::Program)->bool{
     p.partial||p.tokens.iter().any(|t|match t{
-        Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::LoadSystem(..)|Token::FarBranch(..)|
+        Token::WriteSegment(..)|Token::WriteControl(..)|Token::WriteTable(..)|Token::LoadSystem(..)|Token::Invlpg(..)|Token::FarBranch(..)|
         Token::FarJump(..)|Token::FarCall(..)|Token::FarReturn(..)|Token::TaskReturnIf(..)|Token::InterruptShadowIf(..)|
         Token::CheckIo(..)|Token::CheckpointFlags|Token::ResumeIf(..)=>true,
-        Token::Flag(f,_)|Token::FlagIf(f,..)=>matches!(f,Flag::TF|Flag::IF|Flag::IOPL0|Flag::IOPL1|Flag::NT|Flag::VM),
+        Token::Flag(f,_)|Token::FlagIf(f,..)=>matches!(f,Flag::TF|Flag::IF|Flag::IOPL0|Flag::IOPL1|Flag::NT|Flag::VM|Flag::AC),
         _=>false,
     })
 }

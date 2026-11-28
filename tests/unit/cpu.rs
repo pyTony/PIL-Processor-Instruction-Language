@@ -53,7 +53,7 @@ let flow=FlowContext{{next_eip:0x101,displacement:0,displacement_bits:32,code_li
 let mut ram=Ram::new(16);
 let mut machine=address::SegmentState{{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],
 msw:0,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,
-ldt_tr:[address::SystemSegment::default();2],paging:false,debug:address::DEBUG_RESET}};
+ldt_tr:[address::SystemSegment::default();2],paging:false,debug:address::DEBUG_RESET,cpu_model:Default::default()}};
 ALLOCATIONS.store(0,Ordering::Relaxed);COUNTING.store(true,Ordering::Relaxed);
 let result={call};
 COUNTING.store(false,Ordering::Relaxed);
@@ -105,7 +105,7 @@ fn pil_trace_stops_at_the_same_mode_segment_and_branch_checks_as_execution(){
         let p=compile(source,16).unwrap();
         let mut cpu=Cpu{regs:[0;8],eflags:flags,undefined_flags:0,eip:128};
         let mut ram=Ram::new(0x20000);
-        let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0,real_mode:mode.unwrap_or(true),ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false,debug:[0;6]};
+        let mut machine=address::SegmentState{segments:[address::SegmentCache::real_mode(0);6],selectors:[0;6],msw:0,real_mode:mode.unwrap_or(true),ss_shadow:0,sti_shadow:0,tables:[(0,0);2],controls:[0;2],flag_checkpoint:None,ldt_tr:Default::default(),paging:false,debug:[0;6],cpu_model:Default::default()};
         let view=View{register:0,low:0,width:16};
         let context=FlowContext{next_eip:130,displacement:0,displacement_bits:8,code_limit:limit};
         let old_cpu=cpu.clone();let old_ram=ram.clone();let old_machine=machine;

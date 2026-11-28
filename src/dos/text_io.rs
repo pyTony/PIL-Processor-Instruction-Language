@@ -80,7 +80,7 @@ pub(crate) fn run(session:&mut Session,options:&host_console::Options,plain:bool
     }
 }
 pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,String>{
-    let(mut config,mut mount,mut tail,mut fpu,mut program)=(None,None,None,None,None);
+    let(mut config,mut mount,mut tail,mut fpu,mut cpu,mut program)=(None,None,None,None,None,None);
     let mut options=host_console::Options{window:cfg!(windows)&&!text_alias,mouse:false,ansi:false,country:None,utc_offset:None,host_pointer:Default::default(),speaker_volume:host_console::speaker::DEFAULT_VOLUME,rtc_year:None,guest_keymap:None};
     let mut plain=false;
     let mut boot:Option<(String,u8)>=None;
@@ -117,9 +117,9 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
                 let value=args.get(at+1).ok_or("--boot takes a disk image")?;
                 boot=Some((value.clone(),if args[at]=="--boot-hd"{0x80}else{0}));at+=1;
             },
-            "--config"|"--mount"|"--args"|"--fpu"|"--country"|"--utc-offset"=>{
+            "--config"|"--mount"|"--args"|"--fpu"|"--cpu"|"--country"|"--utc-offset"=>{
                 let value=args.get(at+1).ok_or("missing DOS console option value")?.as_str();
-                match args[at].as_str(){"--config"=>config=Some(value),"--mount"=>mount=Some(value),"--args"=>tail=Some(value),"--fpu"=>fpu=Some(value),"--country"=>options.country=Some(value.parse().map_err(|_|"invalid country")?),_=>options.utc_offset=Some(value.parse().map_err(|_|"invalid UTC offset")?)}at+=1;
+                match args[at].as_str(){"--config"=>config=Some(value),"--mount"=>mount=Some(value),"--args"=>tail=Some(value),"--fpu"=>fpu=Some(value),"--cpu"=>cpu=Some(value),"--country"=>options.country=Some(value.parse().map_err(|_|"invalid country")?),_=>options.utc_offset=Some(value.parse().map_err(|_|"invalid UTC offset")?)}at+=1;
             },
             flag if flag.starts_with('-')=>return Err(format!("unknown DOS console option: {flag}")),
             path=>if program.replace(path.to_string()).is_some(){return Err("only one DOS program is allowed".into());},
@@ -139,7 +139,12 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
         if let Some((_,notes))=&folder{for note in notes{eprintln!("--hd-folder: {note}");}}
         let result=(||{
             let mut machine=dos::boot_command(&image,drive,hard_disk.as_deref(),folder.as_ref().map(|f|f.0.image.as_path()))?;
-            if fpu.or(defaults.fpu.map(|on|if on{"80387"}else{"none"}))==Some("80387"){machine.select_fpu(true)?;}
+            let cpu=cpu.or(defaults.cpu.map(|c|c.name()));
+            let fpu=fpu.or(defaults.fpu.map(|on|if on{"80387"}else{"none"}));
+            if let Some(model)=cpu{machine.select_cpu(crate::address::CpuModel::parse(model)?)?;}
+            if let Some(mode)=fpu{
+                match mode{"none"=>machine.select_fpu(false)?,"80387"=>machine.select_fpu(true)?,_=>return Err("FPU must be none or 80387".into())}
+            }
             let mut session=dos::session::Session::new(machine);
             if !floppies.is_empty(){
                 if drive!=0{return Err("--floppy changes the diskette a --boot started from".into());}
@@ -162,7 +167,7 @@ pub(crate) fn cli(args:&[String],text_alias:bool,log_path:&str)->Result<i32,Stri
     let startup=if program.is_none(){Some(crate::dos_config::startup(config)?)}else{None};
     let path=program.as_deref().or_else(||startup.as_ref().map(|s|s.0.as_str())).ok_or("DOS program required")?;
     let tail=tail.or_else(||startup.as_ref().and_then(|s|s.1.as_deref()));
-    let mut session=dos::session::open(path,mount,tail,config,fpu.or(defaults.fpu.map(|on|if on{"80387"}else{"none"})))?;
+    let mut session=dos::session::open(path,mount,tail,config,fpu.or(defaults.fpu.map(|on|if on{"80387"}else{"none"})),cpu.or(defaults.cpu.map(|c|c.name())))?;
     let result=run(&mut session,&options,plain);
     session.log_stop(&mut dos::stoplog::Logger::new(log_path,path));
     result

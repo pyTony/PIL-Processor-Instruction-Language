@@ -1,6 +1,6 @@
 """Create a "PIL DOS" shortcut that opens the PILdos setup screen.
 
-The shortcut starts the launcher (PILdos.vbs or PILdos.sh), which runs the
+The shortcut starts the launcher (PILdos.vbs or tools/PILdos.sh), which runs the
 Rust setup screen `pil --pildos`: it edits pildos.conf and F10 starts the
 configured program. Only this one-time creator uses Python.
 
@@ -11,8 +11,8 @@ script to refresh the absolute paths.
 Windows: uses the bundled PILdos.ico (Pillow is needed only if it is missing) and puts
 "PIL DOS.lnk" on the Desktop, starting PILdos.vbs.
 
-Linux: writes pildos.desktop, starting PILdos.sh in a terminal with
-PILdos.png as its icon, into ~/.local/share/applications (the desktop's
+Linux: writes pildos.desktop, starting tools/PILdos.sh in a terminal with
+tools/PILdos.png as its icon, into ~/.local/share/applications (the desktop's
 application menu) and onto the Desktop folder if there is one.
 Termux: also writes ~/.shortcuts/PIL DOS for the Termux:Widget widget, which
 opens the setup screen in a Termux session (no Termux-x11 needed).
@@ -23,12 +23,12 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parent.parent
-png = root / "PILdos.png"
+png = root / "tools/PILdos.png"
 
 
 def validate_setup():
     """Catch an unbuilt checkout before installing a silent link."""
-    launcher = root / ("PILdos.vbs" if sys.platform == "win32" else "PILdos.sh")
+    launcher = root / ("PILdos.vbs" if sys.platform == "win32" else "tools/PILdos.sh")
     if not launcher.is_file():
         raise SystemExit(f"Missing launcher: {launcher}")
     executable = "pil.exe" if sys.platform == "win32" else "pil"
@@ -117,7 +117,7 @@ def write_executable(path, text):
 
 
 def unix():
-    launcher = root / "PILdos.sh"
+    launcher = root / "tools/PILdos.sh"
     if not launcher.exists():
         raise SystemExit(f"Missing launcher: {launcher}")
     launcher.chmod(0o755)

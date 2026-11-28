@@ -194,6 +194,30 @@ impl AddressContext {
     }
 }
 
+/// Selectable x86 CPU generation. `I386` stays the default so existing
+/// 80386 tests and behavior remain strictly unchanged; `I486Dx` adds 486DX
+/// semantics incrementally.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CpuModel {
+    #[default]
+    I386 = 0,
+    I486Dx = 1,
+}
+impl CpuModel {
+    pub fn is_486(self) -> bool { matches!(self, Self::I486Dx) }
+    pub fn name(self) -> &'static str {
+        match self { Self::I386 => "386", Self::I486Dx => "486dx" }
+    }
+    pub fn parse(text: &str) -> Result<Self, String> {
+        match text.to_ascii_lowercase().as_str() {
+            "386" | "80386" | "i386" => Ok(Self::I386),
+            "486dx" | "i486dx" | "80486dx" => Ok(Self::I486Dx),
+            _ => Err(format!("invalid CPU model '{text}' (expected 386 or 486dx)")),
+        }
+    }
+}
+
 // Mutable architectural segment state. Only ordinary real-mode loads are admitted.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct SegmentState {
@@ -207,6 +231,8 @@ pub struct SegmentState {
     /// DR4 and DR5 are reserved on the 386; moves to and from them reach
     /// DR6 and DR7, as on later processors. Breakpoints are not modelled.
     pub debug:[u32;6],
+    /// Active CPU model (386 default, or 486DX).
+    pub cpu_model:CpuModel,
 }
 /// DR0-DR3, DR6 and DR7 after reset (Intel SDM vol. 3 table 9-1; the 386
 /// manual gives no values).
@@ -229,7 +255,7 @@ impl SegmentState {
     /// code stamps, so a task switch or a page fault keeps what was decoded.
     pub fn same_code_context(&self,other:&Self)->bool{
         self.segments==other.segments&&self.selectors==other.selectors
-            &&self.msw==other.msw&&self.real_mode==other.real_mode&&self.paging==other.paging&&self.flag_checkpoint==other.flag_checkpoint
+            &&self.msw==other.msw&&self.real_mode==other.real_mode&&self.paging==other.paging&&self.flag_checkpoint==other.flag_checkpoint&&self.cpu_model==other.cpu_model
     }
 }
 impl SegmentState {

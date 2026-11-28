@@ -13,7 +13,7 @@ impl InstructionProfile {
     pub fn of(p:&Program,address:Option<address::AddressContext>)->Self{
         Self{register_only:address.is_none()&&unpaged_register_only(p),memory:p.uses_memory,
             stores:p.tokens.iter().any(|t|matches!(t,crate::Token::Store(..)|crate::Token::StoreIf(..)|crate::Token::StoreSegment(..))),
-            changes_context:p.tokens.iter().any(|t|matches!(t,crate::Token::WriteControl(..)|crate::Token::WriteTable(..)|crate::Token::LoadSystem(..)|crate::Token::FarBranch(..)|crate::Token::FarJump(..)|crate::Token::FarCall(..)|crate::Token::FarReturn(..)|crate::Token::WriteSegment(..)))}
+            changes_context:p.tokens.iter().any(|t|matches!(t,crate::Token::WriteControl(..)|crate::Token::WriteTable(..)|crate::Token::LoadSystem(..)|crate::Token::Invlpg(..)|crate::Token::FarBranch(..)|crate::Token::FarJump(..)|crate::Token::FarCall(..)|crate::Token::FarReturn(..)|crate::Token::WriteSegment(..)))}
     }
     pub fn tag(self)->&'static str{if self.changes_context{"machine-context"}else if self.memory||self.stores{"memory"}else if self.register_only{"register-only"}else{"guarded"}}
 }

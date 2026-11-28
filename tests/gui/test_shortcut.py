@@ -25,7 +25,7 @@ class ShortcutTests(unittest.TestCase):
         root = Path(self.temp.name) / name
         (root / 'tools').mkdir(parents=True)
         shutil.copyfile(ROOT / 'tools/makeshortcut.py', root / 'tools/makeshortcut.py')
-        for name in ('PILdos.vbs', 'PILdos.sh', 'PILdos.ico'):
+        for name in ('PILdos.vbs', 'PILdos.ico', 'tools/PILdos.sh', 'tools/PILdos.png'):
             (root / name).write_bytes(b'fixture')
         spec = importlib.util.spec_from_file_location('shortcut_fixture', root / 'tools/makeshortcut.py')
         module = importlib.util.module_from_spec(spec)
@@ -69,10 +69,10 @@ class ShortcutTests(unittest.TestCase):
             module.unix()
         entry = (home / '.local/share/applications/pildos.desktop').read_text()
         self.assertIn('Terminal=true', entry)
-        self.assertIn('PILdos.sh', entry)
+        self.assertIn('tools/PILdos.sh', entry)
         widget = (home / '.shortcuts' / 'PIL DOS').read_text()
         self.assertNotIn('termux-x11', widget)
-        self.assertIn('PILdos.sh', widget)
+        self.assertIn('tools/PILdos.sh', widget)
 
     def test_custom_config_does_not_require_default_data_paths(self):
         module = self.checkout('external data')
