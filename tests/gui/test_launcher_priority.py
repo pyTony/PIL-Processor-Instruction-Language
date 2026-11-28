@@ -19,7 +19,7 @@ class LauncherEnginePriorityTests(unittest.TestCase):
         self.assertIn("If Len(engine) = 0 Then", text)
 
     def test_shell_launcher_prefers_release_and_keeps_override(self):
-        text = (ROOT / "PILdos.sh").read_text(encoding="utf-8")
+        text = (ROOT / "tools/PILdos.sh").read_text(encoding="utf-8")
         candidates = next(line.strip() for line in text.splitlines()
                           if line.strip().startswith("for candidate in "))
         self.assertEqual(

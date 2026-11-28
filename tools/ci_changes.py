@@ -10,14 +10,14 @@ MODULES = ("core", "dos", "frontend", "web", "integration", "library", "backends
 FRONTEND = {
     "tools/termux_web.py", "tools/termux_web.html", "tools/dos_terminal.py",
     "tools/pil_debugger.py", "tools/makeshortcut.py",
-    "PILdos.sh", "PILdos.vbs", "PILdos.ico", "PILdos.png",
+    "tools/PILdos.sh", "PILdos.vbs", "PILdos.ico", "tools/PILdos.png",
     "pildos.conf.example",
 }
 # These only select/build/load the shared runtime; they do not implement CPU
 # instructions. ABI and delivery checks still verify the produced launchers.
 RUNTIME_LAUNCHERS = {
     "tools/runtime_startup.py", "tools/build_dine.py",
-    "compile-dos.cmd", "compile-dos.sh", "PILbuild.cmd",
+    "compile-dos.cmd", "tools/compile-dos.sh", "PILbuild.cmd",
     "PILmedia.vbs", "PILmedia.cmd",
 }
 # Shared rendering and container import need DOS/container tests and integration,

@@ -40,7 +40,7 @@ program on the current computer:
 .\compile-dos.cmd "path\to\program.exe" --run
 ```
 
-On Linux, macOS or Termux: `sh compile-dos.sh path/to/program.exe --run`.
+On Linux, macOS or Termux: `sh tools/compile-dos.sh path/to/program.exe --run`.
 Use `--doctor` to check build tools, `--force` to rebuild, and `--run -- ARGS`
 to pass guest arguments. Outputs go to `programs/compiled/`: a native
 `Dine_<name>` launcher plus the shared Dine library. Native instruction forms
