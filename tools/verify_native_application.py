@@ -89,6 +89,10 @@ def main():
         check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFM.EXE',
               (ROOT / 'programs' / 'dos' / 'MZARGS.EXE').read_bytes(),
               ['A', 'B'], 'PIL MZ:  A B\n', 0, pil=True)
+        # Self-modifying code: patches INC AX (0x40) at 0x0109 to INC CX (0x41), exits with CL=1.
+        check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFSMC.COM',
+              bytes.fromhex('b90000b041a209019040b44c88c8cd21'),
+              [], '', 1, pil=True)
     print('Native application integration checks passed.')
 
 

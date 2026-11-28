@@ -169,7 +169,21 @@ pub fn discover_real16(
         let Some(bytes) = ram.contiguous_slice(linear, decoded.length as usize) else {
             continue;
         };
+        let next_ip = ip + decoded.length;
+        let falls_through = match &decoded.operation {
+            Operation::Halt => false,
+            Operation::Interrupt { vector, .. } => *vector != 0x20,
+            Operation::Input { .. } | Operation::Output { .. } => true,
+            Operation::Pil { .. } => {
+                !decoded.label.starts_with("RETF")
+                    && !decoded.label.starts_with("IRET")
+                    && !decoded.label.starts_with("JMP ")
+            }
+        };
         if super::engine::answered_by_loop(bytes) {
+            if falls_through {
+                queue.push_back(next_ip);
+            }
             continue;
         }
         let Operation::Pil {
@@ -180,9 +194,15 @@ pub fn discover_real16(
             address,
         } = &decoded.operation
         else {
+            if falls_through {
+                queue.push_back(next_ip);
+            }
             continue;
         };
         if !is_compilable(program) {
+            if falls_through {
+                queue.push_back(next_ip);
+            }
             continue;
         }
         let terminator = classify_terminator(&decoded.label, program, flow);
@@ -326,6 +346,7 @@ fn emit_effective_offset(address: Option<AddressContext>) -> String {
         return "0u64".to_string();
     };
     let gpr_expr = |g: Gpr| format!("(r{} as u32)", g as usize);
+    let gpr_bare = |g: Gpr| format!("r{} as u32", g as usize);
     match a.effective {
         EffectiveAddress::Bits16 { form, displacement } => {
             let (base, index) = match form {
@@ -340,7 +361,7 @@ fn emit_effective_offset(address: Option<AddressContext>) -> String {
                 Address16::Direct => (None, None),
             };
             let mut sum = match (base, index) {
-                (Some(b), Some(i)) => format!("{}.wrapping_add({})", gpr_expr(b), gpr_expr(i)),
+                (Some(b), Some(i)) => format!("{}.wrapping_add({})", gpr_expr(b), gpr_bare(i)),
                 (Some(b), None) => gpr_expr(b),
                 (None, Some(i)) => gpr_expr(i),
                 (None, None) => "0u32".to_string(),
@@ -348,7 +369,7 @@ fn emit_effective_offset(address: Option<AddressContext>) -> String {
             if displacement != 0 {
                 sum = format!("{sum}.wrapping_add({displacement}u32)");
             }
-            format!("(({sum} & 0xffffu32) as u64)")
+            format!("({sum} & 0xffffu32) as u64")
         }
         EffectiveAddress::Bits32 {
             base,
@@ -359,16 +380,22 @@ fn emit_effective_offset(address: Option<AddressContext>) -> String {
             let mut sum = base.map_or_else(|| "0u32".to_string(), gpr_expr);
             if let Some(i) = index {
                 let term = if scale == 1 {
-                    gpr_expr(i)
+                    if base.is_none() { gpr_expr(i) } else { gpr_bare(i) }
                 } else {
                     format!("{}.wrapping_mul({scale}u32)", gpr_expr(i))
                 };
-                sum = format!("{sum}.wrapping_add({term})");
+                sum = if base.is_none() && scale == 1 {
+                    term
+                } else if base.is_none() {
+                    term
+                } else {
+                    format!("{sum}.wrapping_add({term})")
+                };
             }
             if displacement != 0 {
                 sum = format!("{sum}.wrapping_add({displacement}u32)");
             }
-            format!("({sum} as u64)")
+            format!("{sum} as u64")
         }
     }
 }
@@ -631,7 +658,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let mut tmp_{o}: u32 = 0;\nif dine_pil_read(host, {mem_seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
+                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {mem_seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
                 )
                 .unwrap();
             }
@@ -639,14 +666,14 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let mut tmp_{o}: u32 = 0;\nif dine_pil_read(host, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
+                    "let mut tmp_{o}: u32 = 0;\nif fast_read(host, &seg_bases, seg_fast_mask, ram_ptr, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32, &mut tmp_{o}) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nlet v{o}: u64 = tmp_{o} as u64;"
                 )
                 .unwrap();
             }
             Token::CheckSegment(seg, a, bytes) => {
                 writeln!(
                     out,
-                    "if dine_pil_check_span(host, {seg}u8, v{a}, {bytes}u32, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "if fast_check_span(host, seg_fast_mask, {seg}u8, v{a}, {bytes}u32, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
             }
@@ -654,7 +681,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "if dine_pil_check_write(host, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "if fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, v{a} as u32, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
             }
@@ -662,7 +689,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif dine_pil_check_write(host, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
                 staged_stores.push((
@@ -677,7 +704,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_cond_{index}: bool = v{c} != 0;\nlet store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif store_cond_{index} && dine_pil_check_write(host, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_cond_{index}: bool = v{c} != 0;\nlet store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif store_cond_{index} && fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {mem_seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
                 staged_stores.push((
@@ -692,7 +719,7 @@ fn emit_site_body(
                 let bytes = w.bytes();
                 writeln!(
                     out,
-                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif dine_pil_check_write(host, {seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
+                    "let store_addr_{index}: u32 = v{a} as u32;\nlet store_val_{index}: u32 = v{v} as u32;\nif fast_check_write(host, &seg_bases, seg_fast_mask, ram_fast_limit, {seg}u8, store_addr_{index}, {bytes}u8, {inst_ip}u32) < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}"
                 )
                 .unwrap();
                 staged_stores.push((
@@ -729,7 +756,7 @@ fn emit_site_body(
                 }
                 for (seg, addr, val, bytes, cond) in &staged_stores {
                     let call = format!(
-                        "let rc = dine_pil_write(host, {seg}u8, {addr}, {bytes}u8, {val}, {inst_ip}u32);\nif rc < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nmodified |= rc == 1;"
+                        "let rc = fast_write(host, &seg_bases, seg_fast_mask, ram_ptr, watch_ptr, ram_fast_limit, code_start, code_end, {seg}u8, {addr}, {bytes}u8, {val}, {inst_ip}u32);\nif rc < 0 {{ ip = {inst_ip}u32; steps += {idx_in_block}u32; (*ctx).exit_kind = 3; (*ctx).fault_eip = {inst_ip}u32; break 'dispatch; }}\nmodified |= rc == 1;"
                     );
                     if let Some(c) = cond {
                         writeln!(out, "if {c} {{\n{call}\n}}").unwrap();
@@ -798,7 +825,14 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
              pub undefined: u32,\n\
              pub eip: u32,\n\
              pub selectors: [u16; 6],\n\
+             pub seg_bases: [u32; 6],\n\
+             pub seg_fast_mask: u8,\n\
              pub code_limit: u32,\n\
+             pub ram_ptr: *mut u8,\n\
+             pub watch_ptr: *mut u64,\n\
+             pub ram_fast_limit: u32,\n\
+             pub code_start: u32,\n\
+             pub code_end: u32,\n\
              pub steps_done: u32,\n\
              pub exit_kind: u32,\n\
              pub fault_eip: u32,\n\
@@ -807,6 +841,7 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
          }}\n\
          #[cfg_attr(windows, link(name = \"dine\", kind = \"raw-dylib\"))]\n\
          #[cfg_attr(not(windows), link(name = \"dine\"))]\n\
+         #[allow(dead_code)]\n\
          extern \"C\" {{\n\
              fn dine_run_pil_v1(data: *const u8, len: usize, name: *const c_char, tail: *const c_char, entry: unsafe extern \"C\" fn(*mut DinePilCtx, u32)) -> i32;\n\
              fn dine_session_pil_v1(data: *const u8, len: usize, name: *const c_char, tail: *const c_char, entry: unsafe extern \"C\" fn(*mut DinePilCtx, u32)) -> i32;\n\
@@ -814,6 +849,92 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
              fn dine_pil_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32;\n\
              fn dine_pil_check_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32;\n\
              fn dine_pil_check_span(host: *mut c_void, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32;\n\
+         }}\n\
+         #[cold]\n\
+         #[inline(never)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn slow_read(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
+             dine_pil_read(host, seg, offset, bytes, eip, out)\n\
+         }}\n\
+         #[cold]\n\
+         #[inline(never)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn slow_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
+             dine_pil_write(host, seg, offset, bytes, value, eip)\n\
+         }}\n\
+         #[cold]\n\
+         #[inline(never)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn slow_check_write(host: *mut c_void, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
+             dine_pil_check_write(host, seg, offset, bytes, eip)\n\
+         }}\n\
+         #[cold]\n\
+         #[inline(never)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn slow_check_span(host: *mut c_void, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32 {{\n\
+             dine_pil_check_span(host, seg, offset, bytes, eip)\n\
+         }}\n\
+         #[inline(always)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn fast_read(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32, out: *mut u32) -> i32 {{\n\
+             if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
+                 let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
+                 if lin.wrapping_add(bytes as u32) <= ram_fast_limit {{\n\
+                     let p = ram_ptr.add(lin as usize);\n\
+                     *out = match bytes {{\n\
+                         1 => *p as u32,\n\
+                         2 => (p as *const u16).read_unaligned().to_le() as u32,\n\
+                         4 => (p as *const u32).read_unaligned().to_le(),\n\
+                         _ => return slow_read(host, seg, offset, bytes, eip, out),\n\
+                     }};\n\
+                     return 0;\n\
+                 }}\n\
+             }}\n\
+             slow_read(host, seg, offset, bytes, eip, out)\n\
+         }}\n\
+         #[inline(always)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn fast_check_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_fast_limit: u32, seg: u8, offset: u32, bytes: u8, eip: u32) -> i32 {{\n\
+             if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
+                 let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
+                 if lin.wrapping_add(bytes as u32) <= ram_fast_limit {{\n\
+                     return 0;\n\
+                 }}\n\
+             }}\n\
+             slow_check_write(host, seg, offset, bytes, eip)\n\
+         }}\n\
+         #[inline(always)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn fast_write(host: *mut c_void, seg_bases: &[u32; 6], seg_fast_mask: u8, ram_ptr: *mut u8, watch_ptr: *mut u64, ram_fast_limit: u32, code_start: u32, code_end: u32, seg: u8, offset: u32, bytes: u8, value: u32, eip: u32) -> i32 {{\n\
+             if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && offset <= 0x10000u32 - bytes as u32 {{\n\
+                 let lin = seg_bases[seg as usize].wrapping_add(offset);\n\
+                 let end = lin.wrapping_add(bytes as u32);\n\
+                 if end <= ram_fast_limit && (end <= code_start || lin >= code_end) {{\n\
+                     let p = ram_ptr.add(lin as usize);\n\
+                     match bytes {{\n\
+                         1 => *p = value as u8,\n\
+                         2 => (p as *mut u16).write_unaligned((value as u16).to_le()),\n\
+                         4 => (p as *mut u32).write_unaligned(value.to_le()),\n\
+                         _ => return slow_write(host, seg, offset, bytes, value, eip),\n\
+                     }}\n\
+                     let l0 = (lin >> 6) as usize;\n\
+                     let l1 = ((end - 1) >> 6) as usize;\n\
+                     *watch_ptr.add(l0) = (*watch_ptr.add(l0)).wrapping_add(1);\n\
+                     if l1 != l0 {{\n\
+                         *watch_ptr.add(l1) = (*watch_ptr.add(l1)).wrapping_add(1);\n\
+                     }}\n\
+                     return 0;\n\
+                 }}\n\
+             }}\n\
+             slow_write(host, seg, offset, bytes, value, eip)\n\
+         }}\n\
+         #[inline(always)]\n\
+         #[allow(dead_code)]\n\
+         unsafe fn fast_check_span(host: *mut c_void, seg_fast_mask: u8, seg: u8, offset: u64, bytes: u32, eip: u32) -> i32 {{\n\
+             if seg < 6 && (seg_fast_mask & (1u8 << seg)) != 0 && bytes > 0 && offset <= 0x10000u64 - bytes as u64 {{\n\
+                 return 0;\n\
+             }}\n\
+             slow_check_span(host, seg, offset, bytes, eip)\n\
          }}"
     )
     .unwrap();
@@ -834,7 +955,14 @@ pub fn emit_application_rust(cfg: &DiscoveredCfg, img_include: &str, name: &str)
              let mut undef = (*ctx).undefined;\n\
              let mut ip = (*ctx).eip;\n\
              let selectors = (*ctx).selectors;\n\
+             let seg_bases = (*ctx).seg_bases;\n\
+             let seg_fast_mask = (*ctx).seg_fast_mask;\n\
              let code_limit = (*ctx).code_limit;\n\
+             let ram_ptr = (*ctx).ram_ptr;\n\
+             let watch_ptr = (*ctx).watch_ptr;\n\
+             let ram_fast_limit = (*ctx).ram_fast_limit;\n\
+             let code_start = (*ctx).code_start;\n\
+             let code_end = (*ctx).code_end;\n\
              let host = (*ctx).host;\n\
              let mut steps: u32 = 0;\n\
              'dispatch: loop {{\n\

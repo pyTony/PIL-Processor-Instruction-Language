@@ -1017,7 +1017,14 @@ pub struct DinePilCtx {
     pub undefined: u32,
     pub eip: u32,
     pub selectors: [u16; 6],
+    pub seg_bases: [u32; 6],
+    pub seg_fast_mask: u8,
     pub code_limit: u32,
+    pub ram_ptr: *mut u8,
+    pub watch_ptr: *mut u64,
+    pub ram_fast_limit: u32,
+    pub code_start: u32,
+    pub code_end: u32,
     pub steps_done: u32,
     pub exit_kind: u32,
     pub fault_eip: u32,
@@ -1084,10 +1091,22 @@ impl PilImage {
         let module_base = p.dos.module_base;
         let initial_cs = p.selectors[1];
         let cs_base = p.image.segments[1].base;
+        let (code_start, code_end) = match (
+            self.code_mask.iter().position(|&b| b != 0),
+            self.code_mask.iter().rposition(|&b| b != 0),
+        ) {
+            (Some(first), Some(last)) => (
+                module_base.saturating_add(first as u32),
+                module_base.saturating_add(last as u32 + 1),
+            ),
+            _ => (0, 0),
+        };
         session.set_backend(Box::new(CompiledPilBackend {
             original,
             code_mask: self.code_mask,
             module_base,
+            code_start,
+            code_end,
             initial_cs,
             cs_base,
             entry,
@@ -1164,7 +1183,7 @@ pub(crate) fn emit_pil(input: &str, output: &str) -> Result<String, String> {
 }
 
 struct HostMem<'a> {
-    ram: &'a mut Ram,
+    ram: *mut Ram,
     segments: &'a [address::SegmentCache; 6],
     module_base: u32,
     original: &'a [u8],
@@ -1211,12 +1230,13 @@ pub unsafe extern "C" fn dine_pil_read(
     out: *mut u32,
 ) -> i32 {
     let host = unsafe { &mut *(host as *mut HostMem<'_>) };
+    let ram = unsafe { &*host.ram };
     let Some(width) = crate::MemWidth::from_bits(bytes.saturating_mul(8)) else {
         host.fault = Some(ExecError::InvalidContext);
         return -1;
     };
     let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), false, eip)
-        .and_then(|addr| host.ram.load(addr, width).map_err(|f| f.error(eip)));
+        .and_then(|addr| ram.load(addr, width).map_err(|f| f.error(eip)));
     match res {
         Ok(val) => {
             unsafe { *out = val };
@@ -1239,12 +1259,13 @@ pub unsafe extern "C" fn dine_pil_check_write(
     eip: u32,
 ) -> i32 {
     let host = unsafe { &mut *(host as *mut HostMem<'_>) };
+    let ram = unsafe { &*host.ram };
     let Some(width) = crate::MemWidth::from_bits(bytes.saturating_mul(8)) else {
         host.fault = Some(ExecError::InvalidContext);
         return -1;
     };
     let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), true, eip)
-        .and_then(|addr| host.ram.check_write(addr, width).map_err(|f| f.error(eip)));
+        .and_then(|addr| ram.check_write(addr, width).map_err(|f| f.error(eip)));
     match res {
         Ok(()) => 0,
         Err(e) => {
@@ -1284,14 +1305,14 @@ pub unsafe extern "C" fn dine_pil_write(
     eip: u32,
 ) -> i32 {
     let host = unsafe { &mut *(host as *mut HostMem<'_>) };
+    let ram = unsafe { &mut *host.ram };
     let Some(width) = crate::MemWidth::from_bits(bytes.saturating_mul(8)) else {
         host.fault = Some(ExecError::InvalidContext);
         return -1;
     };
     let res = translate_seg(host.segments, seg, u64::from(offset), u32::from(bytes), true, eip)
         .and_then(|addr| {
-            host.ram
-                .store(addr, width, value)
+            ram.store(addr, width, value)
                 .map(|()| addr)
                 .map_err(|f| f.error(eip))
         });
@@ -1303,15 +1324,15 @@ pub unsafe extern "C" fn dine_pil_write(
         }
     };
     for i in 0..u32::from(bytes) {
-        let p = host.ram.physical_address(addr.wrapping_add(i));
-        if host.ram.planar().is_some() && (0xa0000..0xb0000).contains(&(p as usize)) {
+        let p = ram.physical_address(addr.wrapping_add(i));
+        if ram.planar().is_some() && (0xa0000..0xb0000).contains(&(p as usize)) {
             continue;
         }
         if let Some(rel) = p.checked_sub(host.module_base) {
             let idx = rel as usize;
             if idx < host.code_mask.len()
                 && host.code_mask[idx] != 0
-                && host.ram.bytes()[p as usize] != host.original[idx]
+                && ram.bytes()[p as usize] != host.original[idx]
             {
                 *host.code_dirty = true;
                 return 1;
@@ -1325,6 +1346,8 @@ struct CompiledPilBackend {
     original: Vec<u8>,
     code_mask: Vec<u8>,
     module_base: u32,
+    code_start: u32,
+    code_end: u32,
     initial_cs: u16,
     cs_base: u32,
     entry: PilEntryFn,
@@ -1391,8 +1414,26 @@ impl dos::InstructionBackend for CompiledPilBackend {
             self.code_dirty = false;
         }
         let effective_budget = if chain { budget } else { 1 };
+        let seg_bases = machine.segments.map(|s| s.base);
+        let mut seg_fast_mask = 0u8;
+        for (i, seg) in machine.segments.iter().enumerate() {
+            if seg.base <= 0x10_0000
+                && seg.limit == 0xffff
+                && matches!(
+                    seg.access,
+                    address::SegmentAccess::Data {
+                        writable: true,
+                        expand_down: false,
+                        ..
+                    }
+                )
+            {
+                seg_fast_mask |= 1u8 << i;
+            }
+        }
+        let (ram_ptr, watch_ptr, ram_fast_limit) = ram.fast_conventional_mut();
         let mut host = HostMem {
-            ram,
+            ram: ram as *mut Ram,
             segments: &machine.segments,
             module_base: self.module_base,
             original: &self.original,
@@ -1406,7 +1447,14 @@ impl dos::InstructionBackend for CompiledPilBackend {
             undefined: cpu.undefined_flags,
             eip: cpu.eip,
             selectors: machine.selectors,
+            seg_bases,
+            seg_fast_mask,
             code_limit: machine.segments[1].limit,
+            ram_ptr,
+            watch_ptr,
+            ram_fast_limit,
+            code_start: self.code_start,
+            code_end: self.code_end,
             steps_done: 0,
             exit_kind: 0,
             fault_eip: 0,
@@ -1911,6 +1959,25 @@ mod tests {
         assert!(rust.contains("pub unsafe extern \"C\" fn run_compiled"));
         assert!(rust.contains("dine_run_pil_v1"));
         assert!(rust.contains("dine_pil_read"));
+        assert!(rust.contains("fast_read"));
+        assert!(rust.contains("fast_write"));
+    }
+
+    #[test]
+    fn pil_rust_cfg_discovers_blocks_after_int_21h() {
+        // MOV AH, 9; INT 21h; INC AX; MOV AX, 4C00h; INT 21h; DB '$'
+        let com = [
+            0xb4, 0x09, // 0100: MOV AH, 9
+            0xcd, 0x21, // 0102: INT 21h
+            0x40, // 0104: INC AX (must be discovered after INT 21h!)
+            0xb8, 0x00, 0x4c, // 0105: MOV AX, 4C00h
+            0xcd, 0x21, // 0108: INT 21h
+        ];
+        let (_, cfg) = compile_pil(&com, "POSTINT.COM").unwrap();
+        assert!(cfg.sites.contains_key(&0x100));
+        assert!(!cfg.sites.contains_key(&0x102));
+        assert!(cfg.sites.contains_key(&0x104));
+        assert!(cfg.sites.contains_key(&0x105));
     }
 
     #[test]
@@ -1926,7 +1993,7 @@ mod tests {
         segments[2] = address::SegmentCache::real_mode(0x300); // SS base = 0x3000
         let mut dirty = false;
         let mut host = HostMem {
-            ram: &mut ram,
+            ram: &mut ram as *mut Ram,
             segments: &segments,
             module_base,
             original: &original,

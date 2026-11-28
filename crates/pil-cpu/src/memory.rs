@@ -404,6 +404,34 @@ impl Ram {
         if let Some(w)=self.video_watch.as_mut(){w.note(index,changed);}
     }
     pub fn bytes(&self)->&[u8] {&self.data}
+    /// Physical limit below 0xA0000 (640 KiB conventional RAM) that has no
+    /// paging, readonly ranges, or ROM mappings, so reads and non-code writes
+    /// can access `data` directly without MMIO/ROM/fault handling.
+    pub fn fast_conventional_limit(&self) -> u32 {
+        if self.paging.get().is_some() {
+            return 0;
+        }
+        let mut limit = 0xa0000u32.min(self.data.len() as u32);
+        for r in self.readonly.iter().chain(self.rom.iter()) {
+            if r.start < limit as usize {
+                limit = r.start as u32;
+            }
+        }
+        limit
+    }
+    /// Settles pending page-table marks and returns `(ram_ptr, watch_ptr, fast_limit)`
+    /// for guarded direct conventional-RAM access on the current thread.
+    pub fn fast_conventional_mut(&mut self) -> (*mut u8, *mut u64, u32) {
+        self.settle();
+        let limit = self.fast_conventional_limit();
+        // `Cell<u64>` is `#[repr(transparent)]` over `u64`, and `code_watch.lines`
+        // covers the full `data` buffer in `CODE_LINE` (64-byte) increments.
+        (
+            self.data.as_mut_ptr(),
+            self.code_watch.lines.as_ptr() as *mut u64,
+            limit,
+        )
+    }
     /// Physical read-only spans, for reproducing an initialized guest snapshot.
     pub fn a20_enabled(&self)->bool{self.a20_enabled}
     pub fn planar(&self)->Option<&super::vga_planar::Planar>{self.planar.as_deref()}
@@ -611,5 +639,22 @@ mod micro_tlb_tests {
         ram.store(0x2010, MemWidth::Dword, pte4_updated).unwrap();
         assert!(ram.micro_tlb.get().is_none());
         assert_eq!(ram.translate(0x4010, false).unwrap(), 0x6010);
+    }
+
+    #[test]
+    fn fast_conventional_limit_clamps_below_readonly_rom_and_paging() {
+        let mut ram = Ram::new(1024 * 1024);
+        assert_eq!(ram.fast_conventional_limit(), 0xa0000);
+        let (_, _, lim) = ram.fast_conventional_mut();
+        assert_eq!(lim, 0xa0000);
+
+        ram.protect(0x50000, 0x1000).unwrap();
+        assert_eq!(ram.fast_conventional_limit(), 0x50000);
+
+        ram.rom(0x20000, 0x100).unwrap();
+        assert_eq!(ram.fast_conventional_limit(), 0x20000);
+
+        ram.set_paging(Some(Paging { directory: 0x1000, user: false }));
+        assert_eq!(ram.fast_conventional_limit(), 0);
     }
 }
