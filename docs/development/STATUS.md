@@ -1,3 +1,35 @@
+# Fused INC/DEC branches keep the carry of the previous block — 28 November 2026
+
+Review of 8ad623e (pack 32-bit Jcc, fuse AddLazy/LogicLazy branches, add
+MicroTlb), asked for by Tony.
+- Bug: 8ad623e lets `CompareBranch` fuse ADD, INC, DEC and logic
+  instructions with their Jcc. A block that is only the pair (`dec ecx; jnz
+  loop`) has no instruction before it, so the engine did not write out the
+  flags the previous block left pending, and the pair's own lazy flags
+  (`write_cf: false` for INC and DEC) replaced them: CF read as it was before
+  the earlier compare. `MOV CX,5; MOV AX,1; MOV BX,2; CMP AX,BX; JNE +0 |
+  DEC CX; JNZ +0 | SBB DX,DX` left DX=FFFFh in the interpreter and 0000h with
+  blocks. CMP, SUB, ADD and logic pairs write CF themselves and are as before.
+- Fix: `CompareBranch::keeps_carry` (ADD or SUB with `write_cf: false`); the
+  engine calls `LazyFlags::flush_cf_only` before such a pair when the block
+  has no instructions before it. A block with a prefix already flushed.
+- Test: `fused_inc_and_dec_branches_keep_the_carry_of_the_previous_block` in
+  tests/unit/precompiled.rs: DEC and INC with CF 1, INC with CF 0 after a
+  stale STC, DEC ECX with JNZ rel32; each with and without blocks, the pair
+  asserted fused, and the per-slice states compared. It fails (DX=0000h
+  against FFFFh) without the engine change.
+- Not changed: `Ram` equality now includes the MicroTlb entry (a cache, not
+  machine state); `Tlb` compares always equal for that reason.
+
+Cloud Linux, debug: 18 `precompiled` tests pass (1 new) and the pil-cpu
+`compare_branch` tests pass; the new test fails without the engine change
+(DX 0000h against FFFFh); 0 rustc warnings (`cargo check --locked`);
+portable-path, program-specific and layer checks pass; docs/SHA256SUMS
+regenerated (it was out of date on dev). Not run: the whole test suite,
+release builds (pil-cpu runs the cloud host out of memory in release), the
+x86_64-pc-windows-gnu check and any DOS program by hand. The `--emit-native-pil`
+emitter of #332 was not reviewed.
+
 # 80387 IRQ13 exceptions and x87 instructions inside blocks — 25 November 2026
 
 Follow-on to Linux boot plan milestone 5 (`docs/development/LINUX_BOOT_PLAN.md`).

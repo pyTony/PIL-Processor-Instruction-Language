@@ -713,3 +713,34 @@ fn x87_loops_and_irq13_exceptions_run_inside_blocks_in_lockstep_with_the_interpr
     assert_eq!(right.loaded.ram.load(base+0x220,crate::MemWidth::Word).unwrap(),1);
     assert_eq!(right.loaded.ram.load(base+0x214,crate::MemWidth::Dword).unwrap(),0x3ff0_0000);
 }
+
+/// INC and DEC keep CF. A block that is only `dec cx; jnz` has no earlier
+/// instruction of its own to write out the flags the previous block left
+/// pending, so the fused pair has to keep that block's CF itself.
+#[test]
+fn fused_inc_and_dec_branches_keep_the_carry_of_the_previous_block(){
+    const EXIT:[u8;5]=[0xb8,0,0x4c,0xcd,0x21];
+    let programs:[(&str,Vec<u8>,u16);4]=[
+        // MOV CX,5; MOV AX,1; MOV BX,2; CMP AX,BX (CF=1); JNE +0 | DEC CX; JNZ +0 | SBB DX,DX
+        ("DEC keeps CF 1",vec![0xb9,5,0, 0xb8,1,0, 0xbb,2,0, 0x39,0xd8, 0x75,0x00, 0x49, 0x75,0x00, 0x19,0xd2],0xffff),
+        // The same with INC CX.
+        ("INC keeps CF 1",vec![0xb9,5,0, 0xb8,1,0, 0xbb,2,0, 0x39,0xd8, 0x75,0x00, 0x41, 0x75,0x00, 0x19,0xd2],0xffff),
+        // STC; ... CMP AX,BX (2-1: CF=0); JNE +0 | INC CX; JNZ +0 | SBB DX,DX: the stale CF of STC must not show.
+        ("INC keeps CF 0",vec![0xf9, 0xb9,5,0, 0xb8,2,0, 0xbb,1,0, 0x39,0xd8, 0x75,0x00, 0x41, 0x75,0x00, 0x19,0xd2],0x0000),
+        // DEC ECX; JNZ rel32 with operand-size prefixes.
+        ("DEC ECX with JNZ rel32",vec![0x66,0xb9,5,0,0,0, 0xb8,1,0, 0xbb,2,0, 0x39,0xd8, 0x75,0x00,
+            0x66,0x49, 0x66,0x0f,0x85,0,0,0,0, 0x19,0xd2],0xffff),
+    ];
+    for (name,mut bytes,expected) in programs{
+        bytes.extend_from_slice(&EXIT);
+        for mode in [Mode::Off,Mode::On]{
+            let mut out=CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+            let r=dos::run_with_backend(load_with(&bytes,"INCDECCF.COM",mode),10_000,&mut out,None).unwrap();
+            assert_eq!(r.stop,Stop::Exit(0),"{name} {mode:?}");
+            assert_eq!(r.loaded.cpu.regs[2]&0xffff,u32::from(expected),"{name} {mode:?}");
+            // The pair really was fused, or the test would prove nothing.
+            if mode==Mode::On{assert!(r.loaded.blocks.compare_branches>=2,"{name}: {}",r.loaded.blocks.compare_branches);}
+        }
+        same_run(&bytes,"INCDECCF.COM",40);
+    }
+}
