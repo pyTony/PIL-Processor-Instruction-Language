@@ -1,0 +1,28 @@
+# CMPXCHG: compare AL/AX/EAX with dest (setting CMP flags). If equal, write src
+# to dest; otherwise load dest into AL/AX/EAX. Memory forms always perform a write.
+$LOAD_ACC
+$LOAD_SRC
+$LOAD_DEST
+zext aw acc $EXT
+zext dw dest $EXT
+sub wide aw dw
+trunc r wide $W
+bit cf wide $W
+xor ab acc dest
+xor ar acc r
+and overflow ab ar
+bit of overflow $SIGN
+xor abr ab r
+bit af abr 4
+bit sf r $SIGN
+zero zf r
+parity pf r
+not neq zf
+$COMMIT
+flag CF cf
+flag PF pf
+flag AF af
+flag ZF zf
+flag SF sf
+flag OF of
+retire

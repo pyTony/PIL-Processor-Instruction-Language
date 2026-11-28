@@ -224,6 +224,9 @@ pub(crate) trait LoadedOps{
     /// Keep the BIOS equipment word consistent with INT 11h without replacing
     /// unrelated BDA bits. Commit the device only after the RAM write succeeds.
     fn select_fpu(&mut self,present:bool)->Result<(),String>;
+    /// Select the CPU model (`386` default, or `486dx`) before executing the
+    /// first guest instruction. Selecting `486dx` also enables the integrated FPU.
+    fn select_cpu(&mut self,model:crate::address::CpuModel)->Result<(),String>;
     /// Run the RTC and DOS's date in `year` (1980-2099), from today's month,
     /// day and time on the session clock: for systems that cannot read a
     /// date in this century (Linux 0.99 takes CMOS year 26 as 1926).
@@ -236,6 +239,9 @@ impl LoadedOps for Loaded{
         memory_arena::set_umbs(self,installed)?;self.dos.xms.set_installed(installed);Ok(())
     }
     fn select_fpu(&mut self,present:bool)->Result<(),String>{
+        if !present&&self.image.cpu_model.is_486(){
+            return Err("486DX has an integrated FPU; FPU cannot be set to none".into());
+        }
         let selected=if present{super::fpu::Fpu::present()}else{super::fpu::Fpu::default()};
         let equipment=self.ram.load(0x410,MemWidth::Word).map_err(|e|format!("FPU BIOS equipment read: {e:?}"))? as u16;
         self.ram.store(0x410,MemWidth::Word,u32::from(selected.equipment(equipment))).map_err(|e|format!("FPU BIOS equipment write: {e:?}"))?;
@@ -243,6 +249,15 @@ impl LoadedOps for Loaded{
         self.fpu=selected;
         // A booted operating system takes the 387's errors through IRQ13.
         self.fpu.set_error_irq(self.booted);
+        Ok(())
+    }
+    fn select_cpu(&mut self,model:crate::address::CpuModel)->Result<(),String>{
+        if model.is_486(){
+            self.select_fpu(true)?;
+        }
+        self.image.cpu_model=model;
+        self.cache.clear();
+        self.blocks.clear();
         Ok(())
     }
     fn set_rtc_year(&mut self,year:u32)->Result<(),String>{
@@ -540,7 +555,7 @@ fn load_program(bytes:&[u8],name:&str,drives:Vec<Source>,path:Option<&str>,compi
     system[1]=(vectors::ENTRIES,vectors::END);
     // Raw DOS extenders load executable code above 1 MiB themselves.
     system[2]=(0x100000,PHYSICAL_RAM as u32);
-    with_upper_memory(Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default(),disks:Default::default(),booted:false,fdc:Default::default(),ata:Default::default()})
+    with_upper_memory(Loaded{dos:Dos{arena,format,relocations,module_bytes,header_bytes,module_base,allocated_end:allocation_end as u32,trailing_bytes:trailing,open_handles:0x1f,dos_error:0,dta:(PSP,0x80),pending_scan:None,flushed:false,line:None,input_wait:false,alloc_strategy:0,resident:None,own_file:std::sync::Arc::new(if compiled { Vec::new() } else { bytes.to_vec() }),own_name:base_name(name.as_bytes()),drive,psp:PSP,exec:Vec::new(),in_memory:Vec::new(),load_only:Vec::new(),return_code:0,con_pending:Vec::new(),break_check:false,verify:false,dos_date_adjust:0,country:1,breaks:Vec::new(),mouse:mouse::Mouse::default(),xms:xms::Xms::default()},cpu,ram,image:Image{fetch_base:psp_base,start:0,end:allocation_end as u32-psp_base,system,segments,selectors,msw:0x10,real_mode:true,ss_shadow:0,sti_shadow:0,tables:[(0,0),crate::interrupt::RESET_IDTR],controls:[0;2],flag_checkpoint:None,ldt_tr:[Default::default(),super::address::TR_RESET],paging:false,debug:super::address::DEBUG_RESET,cpu_model:super::address::CpuModel::I386},selectors,timer_ticks:0,timer_tick_adjust:0,speaker:ports::Speaker::default(),sb:soundblaster::SoundBlaster::default(),clock_offset:None,cmos_index:0,cmos_shutdown:0,rtc:rtc::Rtc::default(),com1:None,cache:super::cache::DecodeCache::default(),rom_mode:false,fpu:super::fpu::Fpu::default(),vga:vga::Vga::default(),blocks:Default::default(),history:history::History::from_env(),services_trace:history::ServiceTrace::default(),disks:Default::default(),booted:false,fdc:Default::default(),ata:Default::default()})
 }
 /// DOS=UMB comes with the XMS driver (dos_memory_arena::set_umbs).
 fn with_upper_memory(mut p:Loaded)->Result<Loaded,String>{

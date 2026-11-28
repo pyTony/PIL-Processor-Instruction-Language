@@ -296,6 +296,7 @@ impl Session{
         let native_total=native+single;
         let compare_branches=self.loaded.as_ref().map_or(0,|p|p.blocks.compare_branches);
         let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_compare_branches\":{compare_branches},\"native_block_runs\":{block_runs},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total},\"interpreter_instructions\":{interpreted}{application}",mode_control&8!=0,mode_control&0x20!=0);
+        let cpu_model=self.loaded.as_ref().map_or("386",|p|p.image.cpu_model.name());
         let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
         let com1_wait=matches!(self.stop,Stop::WaitingForInput)&&self.loaded.as_ref().is_some_and(services::stdin_aux);
         let view=self.loaded.as_ref().map(|p|p.dos.mouse.view());
@@ -307,7 +308,7 @@ impl Session{
         let shape=self.loaded.as_ref().and_then(|p|p.dos.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
             format!(",\"mouse_hotspot\":[{hx},{hy}],\"mouse_shape\":\"{}\"",rows.iter().map(|w|format!("{:02x}{:02x}",w&0xff,w>>8)).collect::<String>()));
         let video_watch=self.loaded.as_ref().map_or_else(||r#"{\"enabled\":false}"#.to_string(),|p|p.ram.video_watch_json());
-        let diagnostic=format!("{diagnostic},\"video_writes\":{video_watch},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
+        let diagnostic=format!("{diagnostic},\"video_writes\":{video_watch},\"native_graphics\":{native_graphics},\"cpu_model\":\"{cpu_model}\",\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
         Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"com1_wait\":{com1_wait},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
             quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
     }
@@ -328,6 +329,15 @@ impl Session{
         let mut output=Vec::new();
         let(ok,text,quit)=match words.as_slice(){
             []|["snapshot"]=>(true,String::new(),false),
+            ["cpu",mode @ ("386"|"486dx")]=>{
+                if self.started{(false,"CPU selection requires a fresh session before the first run".into(),false)}
+                else{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    p.select_cpu(crate::address::CpuModel::parse(mode)?)?;
+                    (true,format!("CPU: {}",p.image.cpu_model.name()),false)
+                }
+            },
+            ["cpu",..]=>(false,"cpu requires 386 or 486dx".into(),false),
             ["fpu",mode @ ("none"|"80387")]=>{
                 if self.started{(false,"FPU selection requires a fresh session before the first run".into(),false)}
                 else{
@@ -499,9 +509,9 @@ pub(crate) fn quote(text:&str)->String{crate::pc::json_quote(text)}
 /// `--dos-session [--mount DIR] [--args TEXT] PATH`: PATH is a file or
 /// IMAGE::INNER inside a container. A FAT16 image becomes read-only drive C:
 /// and DIR the next drive; TEXT is the program's command line.
-pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config:Option<&str>,fpu_mode:Option<&str>)->Result<(),String>{
+pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config:Option<&str>,fpu_mode:Option<&str>,cpu_mode:Option<&str>)->Result<(),String>{
     let mut logger=stoplog::Logger::new(log_path,path);
-    let mut session=open(path,mount,args,config,fpu_mode)?;
+    let mut session=open(path,mount,args,config,fpu_mode,cpu_mode)?;
     serve_session(&mut session,&mut logger)
 }
 #[cfg(feature="dine-library")]
@@ -510,8 +520,8 @@ pub(crate) fn serve_native(mut session:Session,name:&str)->Result<(),String>{
 }
 /// Load PATH (a file or IMAGE::INNER) with its drives, configuration, FPU
 /// choice, command line and COM1, as `--dos-session` and `--dos-console` do.
-pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<&str>,fpu_mode:Option<&str>)->Result<Session,String>{
-    if Path::new(path).extension().is_some_and(|e|e=="pilapp"){return crate::native_application::open(path,mount,args,config,fpu_mode);}
+pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<&str>,fpu_mode:Option<&str>,cpu_mode:Option<&str>)->Result<Session,String>{
+    if Path::new(path).extension().is_some_and(|e|e=="pilapp"){return crate::native_application::open(path,mount,args,config,fpu_mode,cpu_mode);}
     let _span=crate::profile::span("dos_session_open");
     let containers=super::super::containers::split_container_path(path);
     let mut drives=Vec::new();let mut inner=None;
@@ -535,11 +545,14 @@ pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<
     drives.push(Source::Memory(MemDir::default()));
     let loaded=load_with_drives(&bytes,path,drives,inner)?;
     let skip=mount.map(|_|if inner.is_some(){b'D'}else{b'C'});
-    configured(loaded,args,config,skip,fpu_mode)
+    configured(loaded,args,config,skip,fpu_mode,cpu_mode)
 }
 /// Common configuration for file-backed and embedded guest sessions.
-pub(crate) fn configured(mut loaded:Loaded,args:Option<&str>,config:Option<&str>,skip:Option<u8>,fpu_mode:Option<&str>)->Result<Session,String>{
+pub(crate) fn configured(mut loaded:Loaded,args:Option<&str>,config:Option<&str>,skip:Option<u8>,fpu_mode:Option<&str>,cpu_mode:Option<&str>)->Result<Session,String>{
     crate::dos_config::apply(&mut loaded,config,skip)?;
+    if let Some(mode)=cpu_mode{
+        loaded.select_cpu(crate::address::CpuModel::parse(mode)?)?;
+    }
     if let Some(mode)=fpu_mode{
         match mode{"none"=>loaded.select_fpu(false)?,"80387"=>loaded.select_fpu(true)?,_=>return Err("FPU must be none or 80387".into())}
     }

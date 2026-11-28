@@ -287,6 +287,24 @@ impl Ram {
     }
     /// A CPU write to a frame holding a page table the TLB has used.
     fn table_write(&mut self,index:usize){let tlb=self.tlb.get_mut();if tlb.used&&tlb.holds_table(index){tlb.flush();self.micro_tlb.set(None);}}
+    /// Evicts the single linear page containing `linear` from both the
+    /// micro-TLB and the 256-entry TLB, without faulting or walking page tables.
+    pub fn invlpg(&mut self,linear:u32){
+        if !self.marks.get_mut().is_empty(){self.settle();}
+        let page=linear>>12;
+        if self.micro_tlb.get().is_some_and(|m|m.page==page){self.micro_tlb.set(None);}
+        let slot=(page&255)as usize;
+        let tlb=self.tlb.get_mut();
+        if tlb.tags[slot]==(page<<1|1){tlb.tags[slot]=0;}
+    }
+    /// Returns whether the page containing `linear` is currently cached in
+    /// the micro-TLB or 256-entry TLB.
+    pub fn tlb_contains(&self,linear:u32)->bool{
+        let page=linear>>12;
+        if self.micro_tlb.get().is_some_and(|m|m.page==page){return true;}
+        let slot=(page&255)as usize;
+        self.tlb.borrow().tags[slot]==(page<<1|1)
+    }
     /// Turns paging on or off (CR0.PG, CR3, CPL). Paging off, or another
     /// page directory, flushes the TLB.
     #[inline]

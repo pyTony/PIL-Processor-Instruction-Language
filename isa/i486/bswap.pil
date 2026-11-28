@@ -1,0 +1,23 @@
+# BSWAP: reverse the four bytes of a 32-bit register; flags preserved.
+require_width 32
+read a dst 32
+const m0 32 0x000000ff
+const m1 32 0x0000ff00
+const m2 32 0x00ff0000
+const m3 32 0xff000000
+const s8 32 8
+const s24 32 24
+and b0 a m0
+and b1 a m1
+and b2 a m2
+and b3 a m3
+shl o0 b0 s24
+shl o1 b1 s8
+lshr o2 b2 s8
+lshr o3 b3 s24
+or o01 o0 o1
+or o23 o2 o3
+or r o01 o23
+write dst r
+preserve_flags all
+retire

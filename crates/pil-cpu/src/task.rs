@@ -151,8 +151,9 @@ pub fn switch(machine:&SegmentState,ram:&Ram,regs:&[u32;8],eflags:u32,return_eip
     let mut selectors=[0u16;6];
     let (new_eip,mut new_flags,ldt_selector,cr3);
     if big{
+        let flag_mask=if machine.cpu_model.is_486(){0x0006_7fd5}else{0x0002_7fd5};
         new_eip=read(0x20,MemWidth::Dword)?;
-        new_flags=(read(0x24,MemWidth::Dword)?&0x0002_7fd5)|2;
+        new_flags=(read(0x24,MemWidth::Dword)?&flag_mask)|2;
         for (i,r) in new_regs.iter_mut().enumerate(){*r=read(0x28+4*i as u32,MemWidth::Dword)?;}
         for (i,s) in selectors.iter_mut().enumerate(){*s=read(0x48+4*i as u32,MemWidth::Word)? as u16;}
         ldt_selector=read(0x60,MemWidth::Word)? as u16;

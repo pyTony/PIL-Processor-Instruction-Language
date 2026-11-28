@@ -1107,6 +1107,7 @@ pub(crate) fn open(
     args: Option<&str>,
     config: Option<&str>,
     fpu: Option<&str>,
+    cpu: Option<&str>,
 ) -> Result<dos::session::Session, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let application = Application::read(&bytes)?;
@@ -1116,7 +1117,7 @@ pub(crate) fn open(
     }
     drives.push(dos::Source::Memory(dos::MemDir::default()));
     let loaded = dos::load_with_drives(&application.image, &application.name, drives, None)?;
-    let mut session = dos::session::configured(loaded, args, config, mount.map(|_| b'C'), fpu)?;
+    let mut session = dos::session::configured(loaded, args, config, mount.map(|_| b'C'), fpu, cpu)?;
     application.attach(&mut session, None)?;
     Ok(session)
 }
