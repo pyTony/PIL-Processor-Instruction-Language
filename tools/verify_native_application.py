@@ -15,18 +15,22 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def check(engine, runtime, work, name, data, tail, expected, exit_code):
+def check(engine, runtime, work, name, data, tail, expected, exit_code, pil=False):
     source = work / name
     source.write_bytes(data)
-    output = work / 'output'
-    subprocess.run([sys.executable, str(ROOT / 'tools' / 'compile_application.py'),
-                    str(source), '--engine', str(engine), '--runtime', str(runtime),
-                    '--output-dir', str(output)], cwd=ROOT, check=True)
+    output = work / ('output-pil' if pil else 'output')
+    cmd = [sys.executable, str(ROOT / 'tools' / 'compile_application.py'),
+           str(source), '--engine', str(engine), '--runtime', str(runtime),
+           '--output-dir', str(output)]
+    if pil:
+        cmd.append('--pil')
+    subprocess.run(cmd, cwd=ROOT, check=True)
     suffix = '.exe' if os.name == 'nt' else ''
     executable = output / ('Native_' + source.stem + suffix)
-    metadata = json.loads(executable.with_suffix('.native.json').read_text())
-    assert metadata['original_file_required_at_runtime'] is False
-    assert metadata['retained_executable_resources'] is True
+    if not pil:
+        metadata = json.loads(executable.with_suffix('.native.json').read_text())
+        assert metadata['original_file_required_at_runtime'] is False
+        assert metadata['retained_executable_resources'] is True
     source.unlink()
     assert not source.exists()
     config = work / 'empty.conf'
@@ -79,6 +83,16 @@ def main():
         check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFM.EXE',
               (ROOT / 'programs' / 'dos' / 'MZARGS.EXE').read_bytes(),
               ['A', 'B'], 'PIL MZ:  A B\n', 0)
+        check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFC.COM',
+              bytes.fromhex('ba0c01b409cd21b82a4ccd21') + b'Native proof\r\n$',
+              [], 'Native proof\n', 42, pil=True)
+        check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFM.EXE',
+              (ROOT / 'programs' / 'dos' / 'MZARGS.EXE').read_bytes(),
+              ['A', 'B'], 'PIL MZ:  A B\n', 0, pil=True)
+        # Self-modifying code: patches INC AX (0x40) at 0x0109 to INC CX (0x41), exits with CL=1.
+        check(args.engine.resolve(), args.runtime.resolve(), work, 'PROOFSMC.COM',
+              bytes.fromhex('b90000b041a209019040b44c88c8cd21'),
+              [], '', 1, pil=True)
     print('Native application integration checks passed.')
 
 

@@ -221,3 +221,14 @@ program-independence self-tests also pass. The full suite exposed an existing
 text-watch fixture writing its initial 07h attribute while expecting a change;
 the fixture now writes 1Fh so its five-event expectation checks five changed
 bytes.
+
+## Whole-block PIL-in-Rust native applications
+
+Ahead-of-time native application builds (`pil --emit-native-pil`) extend the
+native application route by emitting PIL-lowered Rust basic blocks for the
+guest's instructions directly into the generated application source so
+`rustc`/LLVM can see consecutive instructions together (dead-flag elimination,
+host register allocation, branch folding), calling the shared `dine` library
+only for startup, memory/MMIO/paging helpers, DOS/BIOS/device services,
+interrupts and unreached/modified-code fallback. `pil` and `dine` themselves
+remain program-independent libraries.

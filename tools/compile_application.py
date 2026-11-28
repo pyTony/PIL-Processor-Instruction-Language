@@ -28,6 +28,8 @@ def main(argv=None):
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'programs' / 'compiled')
     parser.add_argument('--engine', type=Path, help='existing application compiler executable')
     parser.add_argument('--runtime', type=Path, help='existing shared Dine library')
+    parser.add_argument('--pil', action='store_true',
+                        help='emit whole-block PIL-lowered Rust (opt-level=3) instead of PILAPP02 metadata')
     args = parser.parse_args(argv)
     source = args.input.resolve(strict=True)
     if not source.is_file():
@@ -57,14 +59,16 @@ def main(argv=None):
     rust_source = build / 'application.rs'
     prepared = rust_source.with_suffix('.pilapp')
     # Only disposable compiler output under this exact build directory is replaced.
-    for path in (rust_source, prepared, rust_source.with_suffix('.pilmap')):
+    for path in (rust_source, prepared, rust_source.with_suffix('.pilmap'), rust_source.with_suffix('.pilimg')):
         if path.exists():
             path.unlink()
-    run([engine, '--emit-native-application', source, rust_source])
+    emit_flag = '--emit-native-pil' if args.pil else '--emit-native-application'
+    run([engine, emit_flag, source, rust_source])
     output.mkdir(parents=True, exist_ok=True)
     staged_executable = build / ('application' + binary_suffix)
+    opt_level = '3' if args.pil else 's'
     command = ['rustc', '--edition=2021', '--crate-name', 'native_application',
-               '-C', 'opt-level=s', '-C', 'strip=symbols', '-C', 'panic=abort',
+               '-C', f'opt-level={opt_level}', '-C', 'strip=symbols', '-C', 'panic=abort',
                '-C', 'lto=fat', '-C', 'codegen-units=1',
                '-L', 'native=' + str(runtime.parent),
                rust_source, '-o', staged_executable]

@@ -20,8 +20,17 @@ plus guest bytes on the shared dine library, no copy of Dine or PIL. See docs/de
 System execution code includes flag formulas, lazy-flag descriptors and
 materialization, native instruction forms, block dispatch, CPU state and
 DOS/BIOS/device services. Keep these in the shared PIL/Dine implementation;
-guest code, launchers and guest-specific build outputs must not copy or
-specialize them. Lazy-flag optimization must follow this same boundary.
+guest code, launchers and `PILAPP02` metadata-only outputs must not copy or
+specialize them. Lazy-flag optimization in the shared engine must follow this
+same boundary.
+
+Ahead-of-time native application builds (`--emit-native-pil`, distinct from
+`pil` and `dine` themselves) *may* emit PIL-lowered Rust blocks for the guest's
+instructions into the generated application crate so `rustc`/LLVM can optimize
+across instructions (dead-flag elimination, host register allocation, branch
+folding), while keeping all DOS/BIOS/device services, memory/MMIO/paging,
+interrupts and modified/unreached-code fallback as calls into the shared `dine`
+library. The `pil` compiler and `dine` library remain 100% program-independent.
 
 Do not put code for one guest program into PIL's general files (src/, isa/,
 Cargo.toml and every script in tools/ except tests, benchmarks and fixture
