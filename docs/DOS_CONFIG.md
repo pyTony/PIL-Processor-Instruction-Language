@@ -5,7 +5,7 @@ menu, see [multi-disk installation media](DOS_INSTALL_MEDIA.md).
 
 The Python-free Rust route is `pil --dos-text` (Windows:
 `.\target\release\pil.exe --dos-text`), or `PILdos.vbs --rust-text` /
-`sh PILdos.sh --rust-text`. It reads the same startup and drive configuration.
+`sh tools/PILdos.sh --rust-text`. It reads the same startup and drive configuration.
 See [Rust DOS console](DOS_CONSOLE.md) for options and redirected I/O behavior.
 
 ## Build once, start without parameters
@@ -21,11 +21,11 @@ On Linux or Termux, use `cp pildos.conf.example pildos.conf`. Edit the paths
 before starting. The example requires your local FreeDOS image, `driveD` folder
 and `D:\AUTOEXEC.BAT`; the config file does not supply these files.
 
-`PILdos.vbs` on Windows and `sh PILdos.sh` on Linux/Termux open the Rust
+`PILdos.vbs` on Windows and `sh tools/PILdos.sh` on Linux/Termux open the Rust
 PILdos start page below (`pil --pildos`): Enter starts the configured
 program, S opens the setup screen. The
 older Python/Tk terminal is `python tools/dos_terminal.py`, or
-`PILdos.vbs --python` / `sh PILdos.sh --python` (Linux/Termux needs a
+`PILdos.vbs --python` / `sh tools/PILdos.sh --python` (Linux/Termux needs a
 graphical display for it). `freedos.cmd` also uses the Python terminal and
 connects COM1 to its launching console. For a headless terminal, run
 `python tools/dos_terminal.py --headless --shell` for a command shell such as
@@ -43,7 +43,7 @@ When the desktop shortcut needs to rebuild the shared runtime, an **Updating
 PIL DOS** progress console remains visible until the build finishes. Keep it
 open; the PILdos start window opens after the update succeeds.
 
-The `PILdos.vbs` and `PILdos.sh` desktop launchers prefer `target/release/pil`,
+The `PILdos.vbs` and `tools/PILdos.sh` desktop launchers prefer `target/release/pil`,
 then `target/debug/pil`, and only use a root-level `pil` as a fallback (`.exe`
 on Windows). Thus a stale root executable cannot shadow a newly built Cargo
 release. `PILDOS_ENGINE` overrides this order when set. The Python debugger
