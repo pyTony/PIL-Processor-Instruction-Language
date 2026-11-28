@@ -43,7 +43,7 @@ tail unless `--args` is given.
 
 On Windows, terminal mode opens the existing separate graphics window when
 needed; `--rust-graphics` is accepted as an alias for `--tty`. No Python process
-is involved. `PILdos.vbs --rust-text` and `sh PILdos.sh --rust-text` use this route,
+is involved. `PILdos.vbs --rust-text` and `sh tools/PILdos.sh --rust-text` use this route,
 forwarding remaining options. `PILDOS_ENGINE` selects another executable;
 otherwise the shortcuts use `target/release/pil`. Ordinary shortcut launches
 retain the existing Python/COM1 behavior. Existing `headless`, `com1`, `shell`,

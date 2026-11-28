@@ -41,7 +41,7 @@ programs never go into the repository. The project's own DOS programs
 
 Since the folder is ignored, a pull used to leave old copies of our
 programs on D:. Now every start that reads `pildos.conf` (`PILdos.vbs`,
-`sh PILdos.sh`, `pil --pildos`, `pil --dos-console`, the Python terminal)
+`sh tools/PILdos.sh`, `pil --pildos`, `pil --dos-console`, the Python terminal)
 copies the programs of `programs/dos` (COM, EXE, BAT and BAS files, not the
 sources or notes) into the folder `PIL` on the drive named by `own_programs`
 (default D:, so `driveD\PIL` on the host), and puts that folder on PATH:
@@ -109,12 +109,12 @@ itself uses Python.
 
 - Windows: `PIL DOS.lnk` on the Desktop, starting `PILdos.vbs`, which runs
   `target\release\pil.exe --pildos` in the Dine window (Pillow is needed only
-  to rebuild a missing `PILdos.ico` from `PILdos.png`).
+  to rebuild a missing `PILdos.ico` from `tools/PILdos.png`).
 - Linux: `pildos.desktop` in the application menu and on the Desktop folder,
-  starting `PILdos.sh` in a terminal.
+  starting `tools/PILdos.sh` in a terminal.
 - Termux: also `~/.shortcuts/PIL DOS` for the Termux:Widget widget; the
   setup screen runs in a Termux session, so Termux-x11 is not needed.
 
-`PILdos.vbs --python` and `sh PILdos.sh --python` still start the older
+`PILdos.vbs --python` and `sh tools/PILdos.sh --python` still start the older
 Python/Tk terminal (it needs Tk: `pkg install python-tkinter` in Termux,
 `python3-tk` on Debian/Ubuntu), and `--rust-text` starts `pil --dos-text`.
