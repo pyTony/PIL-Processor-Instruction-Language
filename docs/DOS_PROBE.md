@@ -1587,7 +1587,7 @@ The default DOS/ROM machine has **no 80387 installed**. This is an absent
 hardware backend, not floating-point emulation. INT 11h and CMOS equipment
 bit 1 both report absence.
 
-`src/fpu.rs` owns the coprocessor instruction envelope and the `Fpu` backend
+`crates/pil-cpu/src/fpu.rs` owns the coprocessor instruction envelope and the `Fpu` backend
 alias, currently `AbsentFpu`. Each loaded machine owns its backend; cloning
 and resuming a session preserves it. The runner passes the full instruction
 bytes, CPU, RAM and segment image to `execute`. A future stateful backend can

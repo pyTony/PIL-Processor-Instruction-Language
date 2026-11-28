@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>PILdos on Android</title>
+<style>
+:root { color-scheme:dark; --bg:#10141b; --panel:#202a36; --ink:#eff4ff; --muted:#aab7c9; --accent:#80dfff; }
+* { box-sizing:border-box; }
+body { margin:0; padding:12px; font:15px system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+header { display:flex; justify-content:space-between; gap:12px; align-items:center; margin:0 auto 12px; max-width:1000px; }
+h1 { margin:0; font-size:20px; letter-spacing:.03em; }
+small { color:var(--muted); }
+main { max-width:1000px; margin:0 auto; }
+.screen { background:#000; border:2px solid #364557; border-radius:7px; overflow:hidden; box-shadow:0 6px 28px #0007; }
+canvas { width:100%; aspect-ratio:4/3; display:block; background:#000; image-rendering:pixelated; touch-action:none; }
+.controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 0; }
+button,select,input { font:inherit; background:var(--panel); color:var(--ink); border:1px solid #4d6075; border-radius:7px; padding:10px 13px; min-height:43px; }
+button { cursor:pointer; user-select:none; touch-action:manipulation; }
+button:active { background:#48637c; }
+button:focus-visible, input:focus-visible { outline:2px solid var(--accent); }
+#status { color:var(--muted); overflow-wrap:anywhere; margin:6px 0 12px; min-height:2em; }
+.keyboard-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(155px,1fr); gap:12px; margin:12px 0; }
+.keygroup { border:1px solid #364557; border-radius:9px; padding:8px; min-width:0; }
+.keygroup h2 { font-size:13px; margin:0 0 8px; color:var(--muted); font-weight:600; }
+.keyrow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.keyrow button, .arrowpad button, .function-keys button { width:100%; min-width:0; font-weight:600; padding:8px 3px; }
+.arrowpad { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.arrowpad .up { grid-column:2; }
+.arrowpad .left { grid-column:1; grid-row:2; }
+.arrowpad .down { grid-column:2; grid-row:2; }
+.arrowpad .right { grid-column:3; grid-row:2; }
+.extra-keys { margin:8px 0 12px; }
+.extra-keys summary { cursor:pointer; padding:8px; }
+.function-keys { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px; }
+.viewer { position:relative; background:var(--bg); }
+.viewer-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:6px 0; }
+.viewer-toolbar button { min-height:40px; padding:7px 11px; }
+#zoom-level { min-width:48px; text-align:center; font-variant-numeric:tabular-nums; }
+.viewer .screen { overflow:auto; overscroll-behavior:contain; }
+.viewer:fullscreen, .viewer.expanded { display:flex; flex-direction:column; position:fixed; inset:0; width:100%; height:100%; height:100dvh; padding:max(6px,env(safe-area-inset-top)) max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left)); z-index:1000; background:var(--bg); }
+.viewer:fullscreen .screen, .viewer.expanded .screen { flex:1; min-height:0; display:flex; align-items:flex-start; justify-content:flex-start; }
+.viewer:fullscreen canvas, .viewer.expanded canvas { flex:none; }
+.viewer-keys { display:none; grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; padding:6px 0; }
+.viewer:fullscreen .viewer-keys, .viewer.expanded .viewer-keys { display:grid; }
+.viewer-keys button { min-height:42px; padding:6px 0; }
+@media (max-width:420px) { .keyboard-layout { gap:6px; } .keygroup { padding:5px; } .keyrow button, .arrowpad button { font-size:14px; } }
+@media (max-width:330px) { .keyboard-layout { grid-template-columns:1fr; } }
+.media-controls { border:1px solid #364557; border-radius:9px; padding:9px; margin:10px 0; }
+.media-controls summary { cursor:pointer; font-weight:600; }
+.media-controls form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+.media-controls input { flex:1 1 180px; min-width:0; font-size:16px; }
+.media-controls select { min-width:70px; }
+#media-status { color:var(--muted); overflow-wrap:anywhere; min-height:1.3em; font-size:13px; }
+#ansi-on[aria-pressed="true"] { border-color:var(--accent); }
+
+/* Kept focusable for Android's IME, but input is shown only in DOS video RAM. */
+#type { position:absolute; width:1px; height:1px; min-height:0; padding:0;
+        border:0; opacity:0; pointer-events:none; font-size:16px; }
+#log { white-space:pre-wrap; max-height:110px; overflow:auto; color:#b3d7af; font:12px ui-monospace,monospace; }
+details { color:var(--muted); margin-top:14px; }
+footer { color:var(--muted); font-size:12px; margin-top:20px; }
+@media (max-width:420px) { body { padding:6px; } h1 { font-size:17px; } }
+</style>
+</head>
+<body>
+<header>
+<div><h1>PILdos · Android</h1><small>Native Android browser, no X11</small></div>
+<button id="toggle" aria-pressed="true">Pause</button>
+</header>
+<main>
+<section id="viewer" class="viewer" aria-label="DOS display and zoom controls">
+<div class="viewer-toolbar">
+<button type="button" id="fullscreen" aria-pressed="false">⛶ Full screen</button>
+<button type="button" id="zoomout" aria-label="Zoom out">−</button>
+<output id="zoom-level" aria-live="polite">Fit</output>
+<button type="button" id="zoomin" aria-label="Zoom in">+</button>
+<button type="button" id="zoomfit">Fit</button>
+<button type="button" id="keyboard" aria-label="Open software keyboard">⌨ Keyboard</button>
+</div>
+<div class="screen" id="screen" aria-label="DOS graphics and text screen">
+<canvas id="display" width="720" height="400" tabindex="0" aria-label="DOS screen. Tap to type directly, or use the mouse."></canvas>
+<input id="type" type="text" enterkeyhint="enter" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="DOS keyboard input">
+</div>
+<div class="viewer-keys" aria-label="Fullscreen DOS keyboard">
+<button data-ascii="27" data-scan="1">Esc</button>
+<button data-ascii="0" data-scan="75">←</button>
+<button data-ascii="0" data-scan="72">↑</button>
+<button data-ascii="0" data-scan="80">↓</button>
+<button data-ascii="0" data-scan="77">→</button>
+<button data-ascii="13" data-scan="28">Enter</button>
+</div>
+</section>
+<div id="status" role="status">Connecting to PILdos...</div>
+<details id="diagnostics"><summary>Execution diagnostics</summary>
+<button type="button" id="video-watch" aria-pressed="false">Count video writes</button>
+<div id="diagnostic-report" role="status" aria-live="off">Waiting for a frame...</div><small>Step progress does not guarantee guest graphics progress. Pause to inspect the last frame.</small></details>
+<div id="interrupt-status" role="status" aria-live="polite"></div>
+<div class="controls">
+<label>CPU slice <select id="budget"><option value="5000">5k</option><option value="20000" selected>20k</option><option value="50000">50k</option><option value="100000">100k</option></select></label>
+<button id="break">Ctrl+Break</button>
+<button id="view" aria-pressed="false">Text view</button>
+<button id="refresh">Refresh</button>
+</div>
+<details class="media-controls">
+<summary>Drives and ANSI.SYS</summary>
+<div class="controls">
+<button type="button" id="ansi-on" aria-pressed="false">Enable ANSI.SYS</button>
+<small>ANSI can be enabled for this DOS session; turning it off requires restarting the session.</small>
+</div>
+<form id="media-form">
+<label for="media-drive">DOS drive</label>
+<select id="media-drive" aria-label="DOS drive">
+<option value="A">A:</option><option value="B">B:</option><option value="C">C:</option>
+<option value="D" selected>D:</option><option value="E">E:</option>
+</select>
+<input id="media-path" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Termux folder or .img/.ima path" aria-label="Termux mount path">
+<button type="submit">Mount</button>
+<button type="button" id="unmount">Unmount</button>
+</form>
+<div id="media-status" role="status" aria-live="polite"></div>
+<small>Paths are on the Termux device, not Chrome's downloads. Example: driveD or images/FD14LITE.img. Avoid replacing a drive with open DOS files.</small>
+</details>
+<section class="keyboard-layout" aria-label="On-screen DOS keyboard">
+<div class="keygroup">
+<h2>Commands and editing</h2>
+<div class="keyrow">
+<button data-ascii="27" data-scan="1">Esc</button>
+<button data-ascii="13" data-scan="28">Enter ↵</button>
+<button data-ascii="8" data-scan="14">⌫</button>
+<button data-ascii="9" data-scan="15">Tab</button>
+<button data-ascii="0" data-scan="71">Home</button>
+<button data-ascii="0" data-scan="79">End</button>
+</div>
+</div>
+<div class="keygroup">
+<h2>Navigation</h2>
+<div class="arrowpad">
+<button class="up" data-ascii="0" data-scan="72">↑</button>
+<button class="left" data-ascii="0" data-scan="75">←</button>
+<button class="down" data-ascii="0" data-scan="80">↓</button>
+<button class="right" data-ascii="0" data-scan="77">→</button>
+</div>
+</div>
+</section>
+<details class="extra-keys"><summary>Function keys and page navigation</summary>
+<div class="function-keys">
+<button data-ascii="0" data-scan="59">F1</button>
+<button data-ascii="0" data-scan="60">F2</button>
+<button data-ascii="0" data-scan="61">F3</button>
+<button data-ascii="0" data-scan="62">F4</button>
+<button data-ascii="0" data-scan="63">F5</button>
+<button data-ascii="0" data-scan="64">F6</button>
+<button data-ascii="0" data-scan="65">F7</button>
+<button data-ascii="0" data-scan="66">F8</button>
+<button data-ascii="0" data-scan="67">F9</button>
+<button data-ascii="0" data-scan="68">F10</button>
+<button data-ascii="0" data-scan="73">PgUp</button>
+<button data-ascii="0" data-scan="81">PgDn</button>
+<button data-ascii="0" data-scan="82">Ins</button>
+<button data-ascii="0" data-scan="83">Del</button>
+</div></details>
+<details><summary>Console output</summary><pre id="log"></pre></details>
+<footer>Uses the existing general-purpose PIL DOS session. Text, CGA, EGA and VGA are drawn from guest video memory. Tap the screen for an opt-in DOS mouse.</footer>
+</main>
+<script>
+"use strict";
+const canvas=document.getElementById("display"), ctx=canvas.getContext("2d",{alpha:false});
+const viewer=document.getElementById("viewer"), screen=document.getElementById("screen");
+const zoomLabel=document.getElementById("zoom-level");
+const zoomSteps=[1,1.25,1.5,2,3,4];
+let zoomIndex=0;
+function isExpanded(){return document.fullscreenElement===viewer||viewer.classList.contains("expanded");}
+function updateZoom(){
+  // A fitted image must use *both* viewport dimensions. Portrait prioritizes
+  // width, landscape often prioritizes height; larger zoom factors scroll.
+  const ratio=4/3;
+  const availableWidth=Math.max(1,screen.clientWidth);
+  const availableHeight=isExpanded()?Math.max(1,screen.clientHeight):Number.POSITIVE_INFINITY;
+  const fitted=Math.min(availableWidth,availableHeight*ratio);
+  canvas.style.width=Math.max(1,Math.round(fitted*zoomSteps[zoomIndex]))+"px";
+  zoomLabel.textContent=zoomIndex===0?"Fit":Math.round(zoomSteps[zoomIndex]*100)+"%";
+}
+// Chrome Android may change the visual viewport (address bar or IME) without
+// dispatching a window resize. Coalesce those events after CSS layout.
+let pendingFit=false;
+function scheduleFit(){
+  if(pendingFit)return;
+  pendingFit=true;
+  requestAnimationFrame(()=>{pendingFit=false;updateZoom();});
+}
+function updateFullscreen(){
+  const expanded=isExpanded();
+  const button=document.getElementById("fullscreen");
+  button.textContent=expanded?"✕ Exit full screen":"⛶ Full screen";
+  button.setAttribute("aria-pressed",String(expanded));
+  updateZoom();
+}
+async function toggleFullscreen(){
+  if(isExpanded()){
+    if(document.fullscreenElement===viewer&&document.exitFullscreen){
+      try{await document.exitFullscreen();}catch(_){}
+    }
+    viewer.classList.remove("expanded");
+  }else{
+    if(viewer.requestFullscreen){
+      try{await viewer.requestFullscreen();}catch(_){viewer.classList.add("expanded");}
+    }else{viewer.classList.add("expanded");}
+  }
+  updateFullscreen();
+}
+document.getElementById("fullscreen").addEventListener("click",toggleFullscreen);
+document.getElementById("zoomin").addEventListener("click",()=>{zoomIndex=Math.min(zoomIndex+1,zoomSteps.length-1);updateZoom();});
+document.getElementById("zoomout").addEventListener("click",()=>{zoomIndex=Math.max(zoomIndex-1,0);updateZoom();});
+document.getElementById("zoomfit").addEventListener("click",()=>{zoomIndex=0;screen.scrollTo(0,0);updateZoom();});
+document.addEventListener("fullscreenchange",updateFullscreen);
+window.addEventListener("resize",scheduleFit);
+window.addEventListener("orientationchange",()=>{
+  scheduleFit();
+  // Android browser controls can settle one frame after orientationchange.
+  setTimeout(scheduleFit,180);
+});
+if(window.visualViewport)window.visualViewport.addEventListener("resize",scheduleFit);
+if(window.screen.orientation?.addEventListener){
+  window.screen.orientation.addEventListener("change",scheduleFit);
+}
+if(window.ResizeObserver){
+  const observer=new ResizeObserver(scheduleFit);
+  observer.observe(screen);
+}
+scheduleFit();
+const status=document.getElementById("status"), log=document.getElementById("log");
+const interruptStatus=document.getElementById("interrupt-status");
+let forceTextView=false;
+let glyphs=[], colors=[], latest=null, running=true, inLoop=false, terminated=false;
+let buttons=0, imageMouse=false;
+// Cap screen transfers at 60 FPS while allowing CPU-only slices between frames.
+const MIN_FRAME_MS=1000/60, IDLE_WAIT_MS=120;
+let lastFrameAt=0;
+function bytes(hex) {
+  if(typeof hex!=="string" || hex.length%2) throw Error("bad frame encoding");
+  const out=new Uint8Array(hex.length/2);
+  for(let i=0;i<out.length;i++)out[i]=parseInt(hex.slice(i*2,i*2+2),16);
+  return out;
+}
+function resize(w,h){
+  if(canvas.width!==w||canvas.height!==h){ canvas.width=w;canvas.height=h; }
+  canvas.style.aspectRatio="4 / 3";
+  ctx.imageSmoothingEnabled=false;
+  updateZoom();
+}
+function textFrame(reply){
+  const data=bytes(reply.screen||"");
+  if(data.length%2 || data.length<160) return;
+  const cols=reply.columns||80, rows=Math.floor(data.length/(cols*2));
+  const cw=9,ch=16;
+  resize(cols*cw,rows*ch);
+  ctx.textBaseline="top";ctx.font="15px monospace";
+  for(let i=0;i<cols*rows;i++){
+    const x=(i%cols)*cw, y=Math.floor(i/cols)*ch, attr=data[i*2+1];
+    ctx.fillStyle=colors[(attr>>>4)&15]||"#000";
+    ctx.fillRect(x,y,cw,ch);
+    ctx.fillStyle=colors[attr&15]||"#aaa";
+    ctx.fillText(glyphs[data[i*2]]||" ",x,y);
+  }
+  if(Array.isArray(reply.cursor)){
+    const [y,x]=reply.cursor;
+    if(x<cols&&y<rows){ctx.fillStyle="#ccc";ctx.fillRect(x*cw,y*ch+14,cw,2);}
+  }
+}
+function rgbaFrame(w,h,pixel){
+  resize(w,h);
+  const img=ctx.createImageData(w,h),d=img.data;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const index=(y*w+x)*4,rgb=pixel(x,y);
+    d[index]=rgb[0];d[index+1]=rgb[1];d[index+2]=rgb[2];d[index+3]=255;
+  }
+  ctx.putImageData(img,0,0);
+}
+function mode13(reply){
+  const data=bytes(reply.graphics13), pal=bytes(reply.palette);
+  if(data.length!==64000||pal.length!==768)throw Error("mode 13 frame size mismatch");
+  rgbaFrame(320,200,(x,y)=>{const i=data[y*320+x]*3;return [pal[i],pal[i+1],pal[i+2]];});
+}
+function cga(reply){
+  const mode=reply.cga_mode, value=reply.cga_color, data=bytes(reply.graphics_cga);
+  const pal=colors.map(c=>[parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)]);
+  if(data.length!==16384)throw Error("CGA frame size mismatch");
+  const w=mode===6?640:320;
+  let indices;
+  if(mode===6)indices=[0,value&15];
+  else{
+    const base=mode===5?[3,4,7]:(value&0x20?[3,5,7]:[2,4,6]);
+    indices=[value&15,...base.map(i=>i+(value&0x10?8:0))];
+  }
+  rgbaFrame(w,200,(x,y)=>{
+    const address=(y&1)*0x2000+Math.floor(y/2)*80+Math.floor(x/(mode===6?8:4));
+    const b=data[address],i=mode===6?(b>>(7-x%8))&1:(b>>(6-2*(x%4)))&3;
+    return pal[indices[i]]||[0,0,0];
+  });
+}
+function planar(reply){
+  const w=reply.planar_width,h=reply.planar_height,data=bytes(reply.graphics_planar),pal=bytes(reply.planar_rgb);
+  const plane=Math.floor(w*h/8);
+  if(plane*4!==data.length||pal.length!==48)throw Error("planar frame size mismatch");
+  rgbaFrame(w,h,(x,y)=>{
+    const offset=y*(w/8)+Math.floor(x/8),bit=7-x%8;
+    let index=0;
+    for(let n=0;n<4;n++)index|=((data[n*plane+offset]>>bit)&1)<<n;
+    return [pal[index*3],pal[index*3+1],pal[index*3+2]];
+  });
+}
+let previousDiagnosticSteps=null, previousDiagnosticTime=null;
+let firstDiagnosticSteps=null, firstDiagnosticTime=null;
+let previousFrameSignature=null, unchangedFrames=0;
+let previousPc=null, repeatedPc=0, previousVideoTotal=null;
+function formatRate(value){
+  return Number.isFinite(value)&&value>=0?Math.round(value).toLocaleString()+" steps/s":"measuring...";
+}
+function frameSignature(reply){
+  // Sample guest framebuffer bytes, not the rendered canvas. Avoid expensive
+  // full-frame comparisons on memory-constrained Android phones.
+  const frame=reply.graphics13||reply.graphics_cga||reply.graphics_planar;
+  if(!frame)return null;
+  const raw=typeof frame==="string"?frame:JSON.stringify(frame);
+  if(!raw.length)return "empty";
+  let hash=2166136261;
+  // A sparse 256-point sample can miss narrow Mandelbrot row updates.
+  // Sample at least 4096 positions, while staying bounded on Android.
+  const stride=Math.max(1,Math.floor(raw.length/4096));
+  for(let i=0;i<raw.length;i+=stride){
+    hash=Math.imul(hash^raw.charCodeAt(i),16777619);
+  }
+  return raw.length+":"+(hash>>>0);
+}
+function reportProgress(reply){
+  const steps=Number(reply.steps);
+  const now=performance.now();
+  const valid=reply.steps!==undefined&&reply.steps!==null&&Number.isFinite(steps);
+  // Session reset may restart the counter; avoid negative rates.
+  if(valid&&(firstDiagnosticSteps===null||steps<previousDiagnosticSteps)){
+    firstDiagnosticSteps=steps;firstDiagnosticTime=now;
+    previousDiagnosticSteps=null;previousDiagnosticTime=null;
+  }
+  const delta=valid&&previousDiagnosticSteps!==null?steps-previousDiagnosticSteps:null;
+  const seconds=previousDiagnosticTime!==null?(now-previousDiagnosticTime)/1000:0;
+  const instantRate=delta!==null&&delta>=0&&seconds>0?delta/seconds:NaN;
+  const elapsed=firstDiagnosticTime!==null?(now-firstDiagnosticTime)/1000:0;
+  const totalRate=valid&&elapsed>0?(steps-firstDiagnosticSteps)/elapsed:NaN;
+  if(valid){previousDiagnosticSteps=steps;previousDiagnosticTime=now;}
+  const signature=frameSignature(reply);
+  if(signature!==null){
+    unchangedFrames=signature===previousFrameSignature?unchangedFrames+1:0;
+    previousFrameSignature=signature;
+  }else{unchangedFrames=0;previousFrameSignature=null;}
+  const changed=signature===null?"no graphics framebuffer":unchangedFrames===0?"sample changed":"sample unchanged for "+unchangedFrames+" polls";
+  // A single sampled CS:IP is not proof of a loop, but repeat samples
+  // alongside stagnant VRAM counts provide useful independent evidence.
+  const pc=Number.isInteger(reply.cs)&&Number.isInteger(reply.eip)
+    ?reply.cs.toString(16).toUpperCase().padStart(4,"0")+":"+
+     reply.eip.toString(16).toUpperCase().padStart(4,"0"):"unavailable";
+  repeatedPc=pc===previousPc?repeatedPc+1:0;
+  previousPc=pc;
+  const video=reply.video_writes;
+  let videoDetail="write counter off";
+  if(video&&video.enabled){
+    const total=Number(video.total);
+    const difference=previousVideoTotal!==null&&total>=previousVideoTotal?total-previousVideoTotal:null;
+    videoDetail="writes "+total.toLocaleString()+
+      " (+"+(difference===null?"?":difference.toLocaleString())+" since frame)"+
+      " | graphics "+Number(video.graphics).toLocaleString()+
+      " | text "+Number(video.text).toLocaleString();
+    previousVideoTotal=total;
+  }else{previousVideoTotal=null;}
+  const watchButton=document.getElementById("video-watch");
+  watchButton.setAttribute("aria-pressed",String(!!video?.enabled));
+  watchButton.textContent=video?.enabled?"Stop counting video writes":"Count video writes";
+  document.getElementById("diagnostic-report").textContent=
+    "Guest: "+(reply.status||"unknown")+" | total steps: "+(reply.steps??"?")+
+    " | steps since prior update: "+(delta??"first sample")+
+    " | recent: "+formatRate(instantRate)+
+    " | average: "+formatRate(totalRate)+
+    " | graphics: "+changed+
+    " | CS:IP "+pc+(repeatedPc?" ("+repeatedPc+" repeated samples)":"")+
+    " | VRAM: "+videoDetail;
+}
+function paint(reply){
+  latest=reply;
+  reportProgress(reply);
+  const graphics=!!(reply.graphics13||reply.graphics_cga||reply.graphics_planar);
+  document.getElementById("view").hidden=!graphics;
+  if(forceTextView&&reply.screen)textFrame(reply);
+  else if(reply.graphics13)mode13(reply);
+  else if(reply.graphics_cga)cga(reply);
+  else if(reply.graphics_planar)planar(reply);
+  else if(reply.screen)textFrame(reply);
+  if(reply.output){
+    log.textContent=(log.textContent+reply.output).slice(-4000);
+    log.scrollTop=log.scrollHeight;
+  }
+  const detail=(reply.detail||reply.text||"").slice(0,500);
+  status.textContent="DOS: "+(reply.status||"unknown")+" | steps "+(reply.steps||0)+(detail?" | "+detail:"");
+  if(reply.status==="exit"||reply.status==="stopped"||reply.status==="monitor") {
+    running=false;document.getElementById("toggle").textContent="Resume";
+    document.getElementById("toggle").setAttribute("aria-pressed","false");
+  }
+}
+async function api(path,body){
+  const options=body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)};
+  const response=await fetch(path,options);
+  const json=await response.json();
+  if(!response.ok)throw Error(json.error||response.statusText);
+  return json;
+}
+function error(e){
+  status.textContent="PILdos: "+String(e.message||e);
+  running=false;document.getElementById("toggle").textContent="Resume";
+}
+async function refresh(){try{paint(await api("/api/state"));}catch(e){error(e);}}
+document.getElementById("video-watch").addEventListener("click",async()=>{
+  const button=document.getElementById("video-watch");
+  const enabled=button.getAttribute("aria-pressed")!=="true";
+  button.disabled=true;
+  try{
+    await api("/api/video-watch",{enabled});
+    previousVideoTotal=null;
+    await refresh();
+  }catch(e){status.textContent="Video diagnostics: "+String(e.message||e);}
+  finally{button.disabled=false;}
+});
+async function loop(){
+  if(inLoop||!running)return;
+  inLoop=true;
+  try{
+    while(running){
+      if(document.hidden){await new Promise(resolve=>setTimeout(resolve,450));continue;}
+      const budget=Number(document.getElementById("budget").value);
+      const now=performance.now();
+      const frame=(now-lastFrameAt)>=MIN_FRAME_MS;
+      // Buffered run omits the expensive VGA JSON when the 60 FPS frame cap
+      // has not elapsed. No fixed delay is applied while the CPU is working.
+      const reply=await api("/api/run",{budget,frame});
+      if(frame){
+        lastFrameAt=performance.now();
+        paint(reply);
+      }else{
+        // Preserve output and stop state even between screen refreshes.
+        if(reply.output){
+          log.textContent=(log.textContent+reply.output).slice(-4000);
+          log.scrollTop=log.scrollHeight;
+        }
+        if(reply.status==="exit"||reply.status==="stopped"||reply.status==="monitor"){
+          running=false;
+          await refresh();
+          document.getElementById("toggle").textContent="Resume";
+          document.getElementById("toggle").setAttribute("aria-pressed","false");
+        }
+      }
+      if(reply.idle_hint&&running){
+        await new Promise(resolve=>setTimeout(resolve,IDLE_WAIT_MS));
+      }
+    }
+  }catch(e){error(e);}finally{inLoop=false;}
+}
+async function key(ascii,scan){try{await api("/api/key",{ascii,scan});}catch(e){error(e);}}
+document.querySelectorAll("[data-ascii]").forEach(b=>b.addEventListener("click",()=>key(Number(b.dataset.ascii),Number(b.dataset.scan))));
+const scans={Escape:[27,1],Enter:[13,28],Backspace:[8,14],Tab:[9,15],
+ ArrowUp:[0,72],ArrowDown:[0,80],ArrowLeft:[0,75],ArrowRight:[0,77],
+ Home:[0,71],End:[0,79],PageUp:[0,73],PageDown:[0,81],Insert:[0,82],Delete:[0,83]};
+"1234567890".split("").forEach((c,i)=>{scans["Digit"+c]=[c.charCodeAt(0),i===9?11:i+2];});
+"QWERTYUIOP".split("").forEach((c,i)=>scans["Key"+c]=[c.toLowerCase().charCodeAt(0),16+i]);
+"ASDFGHJKL".split("").forEach((c,i)=>scans["Key"+c]=[c.toLowerCase().charCodeAt(0),30+i]);
+"ZXCVBNM".split("").forEach((c,i)=>scans["Key"+c]=[c.toLowerCase().charCodeAt(0),44+i]);
+for(let i=1;i<=10;i++)scans["F"+i]=[0,58+i];
+document.addEventListener("keydown",e=>{
+  if(e.target===document.getElementById("type"))return;
+  if(e.repeat||e.altKey||e.metaKey)return;
+  let value=scans[e.code]||scans[e.key];
+  if(value){
+    let [ascii,scan]=value;
+    if(e.ctrlKey&&e.code.startsWith("Key"))ascii=e.code.charCodeAt(3)-64;
+    else if(ascii&&e.key.length===1&&e.key.charCodeAt(0)<127)ascii=e.key.charCodeAt(0);
+    e.preventDefault();key(ascii,scan);
+  }else if(e.key===" "){e.preventDefault();key(32,57);}
+});
+const field=document.getElementById("type");
+let composing=false, pendingText=Promise.resolve();
+// A hidden input is needed only to open Android's software keyboard. Text
+// travels straight to DOS and appears in the guest video RAM, not a web form.
+function forwardText(text){
+  if(!text)return;
+  pendingText=pendingText.catch(()=>{}).then(()=>api("/api/type",{text}))
+    .catch(error);
+}
+function flushInput(){
+  if(composing||!field.value)return;
+  const text=field.value;
+  field.value="";
+  forwardText(text);
+}
+field.addEventListener("compositionstart",()=>{composing=true;});
+field.addEventListener("compositionend",()=>{composing=false;flushInput();});
+field.addEventListener("input",()=>flushInput());
+field.addEventListener("keydown",e=>{
+  if(e.isComposing||e.keyCode===229)return;
+  // Printable characters, including pasted text, are delivered by input.
+  // Nonprintables have no input event and must be sent as BIOS keys.
+  if(e.key==="Enter"||e.key==="Backspace"||e.key==="Tab"||
+     e.key==="Escape"||e.key.startsWith("Arrow")||
+     /^F(?:[1-9]|10)$/.test(e.key)||e.ctrlKey){
+    const value=scans[e.code]||scans[e.key];
+    if(value){
+      e.preventDefault();
+      let [ascii,scan]=value;
+      if(e.ctrlKey&&e.code.startsWith("Key"))ascii=e.code.charCodeAt(3)-64;
+      flushInput();
+      pendingText=pendingText.catch(()=>{}).then(()=>key(ascii,scan));
+    }
+  }
+});
+document.getElementById("keyboard").addEventListener("click",()=>field.focus());
+
+document.getElementById("toggle").addEventListener("click",()=>{
+  running=!running;
+  document.getElementById("toggle").textContent=running?"Pause":"Resume";
+  document.getElementById("toggle").setAttribute("aria-pressed",String(running));
+  if(running)loop();
+});
+document.getElementById("break").addEventListener("click",async()=>{
+  try{
+    const reply=await api("/api/break",{});
+    if(!reply.ok){
+      interruptStatus.textContent="Ctrl+Break refused: "+(reply.text||reply.detail||"DOS did not accept the interrupt");
+    }else{
+      interruptStatus.textContent="Ctrl+Break delivered. DOS may act on it at the next break check; graphics mode is not automatically reset.";
+    }
+    // An interrupt can change guest status or screen without a run slice.
+    paint(await api("/api/state"));
+  }catch(e){interruptStatus.textContent="Ctrl+Break failed: "+String(e.message||e);}
+});
+document.getElementById("view").addEventListener("click",()=>{
+  forceTextView=!forceTextView;
+  const button=document.getElementById("view");
+  button.textContent=forceTextView?"Graphics view":"Text view";
+  button.setAttribute("aria-pressed",String(forceTextView));
+  if(latest)paint(latest);
+});
+const mediaStatus=document.getElementById("media-status");
+const ansiButton=document.getElementById("ansi-on");
+function mediaFeedback(message){mediaStatus.textContent=message;}
+async function mediaRequest(action){
+  const drive=document.getElementById("media-drive").value;
+  const path=document.getElementById("media-path").value.trim();
+  if(action==="mount"&&!path){mediaFeedback("Enter a Termux directory or disk image path.");return;}
+  try{
+    const reply=await api("/api/media",{action,drive,path});
+    if(reply.ok){
+      mediaFeedback(reply.text||drive+": "+(action==="mount"?"mounted":"unmounted"));
+      await refresh();
+    }else mediaFeedback(reply.text||reply.error||"DOS refused the media change");
+  }catch(e){mediaFeedback("Media change failed: "+String(e.message||e));}
+}
+document.getElementById("media-form").addEventListener("submit",e=>{e.preventDefault();mediaRequest("mount");});
+document.getElementById("unmount").addEventListener("click",()=>mediaRequest("unmount"));
+ansiButton.addEventListener("click",async()=>{
+  if(ansiButton.getAttribute("aria-pressed")==="true")return;
+  try{
+    const reply=await api("/api/ansi",{});
+    if(reply.ok){
+      ansiButton.textContent="ANSI.SYS enabled";
+      ansiButton.setAttribute("aria-pressed","true");
+      ansiButton.disabled=true;
+      mediaFeedback("ANSI.SYS enabled for the current DOS session.");
+    }else mediaFeedback(reply.text||"DOS refused ANSI.SYS");
+  }catch(e){mediaFeedback("ANSI.SYS failed: "+String(e.message||e));}
+});
+document.getElementById("refresh").addEventListener("click",refresh);
+function mousePosition(e){
+  const rect=canvas.getBoundingClientRect(),maxX=latest?.mouse_max_x??639,maxY=latest?.mouse_max_y??199;
+  return [Math.min(maxX,Math.max(0,Math.floor((e.clientX-rect.left)*maxX/rect.width))),
+          Math.min(maxY,Math.max(0,Math.floor((e.clientY-rect.top)*maxY/rect.height)))];
+}
+async function mouse(e,down){
+  if(!latest?.mouse_present)return;
+  if(down)canvas.setPointerCapture(e.pointerId);
+  const [x,y]=mousePosition(e);buttons=down?1:0;
+  try{await api("/api/mouse",{x,y,buttons});}catch(err){error(err);}
+}
+// Desktop hardware keyboards type into the focused canvas. On touch
+// devices, focus the invisible IME input to open the software keyboard.
+canvas.addEventListener("pointerdown",e=>{
+  if(!latest?.mouse_present){
+    e.preventDefault();
+    if(e.pointerType==="touch")field.focus();
+    else canvas.focus();
+    return;
+  }
+  e.preventDefault();mouse(e,true);
+});
+canvas.addEventListener("pointerup",e=>{e.preventDefault();mouse(e,false);});
+canvas.addEventListener("pointercancel",e=>mouse(e,false));
+(async()=>{
+ try{
+   const meta=await api("/api/meta");glyphs=Array.from(meta.glyphs);colors=meta.colors;
+   await refresh();
+   loop();
+ }catch(e){error(e);}
+})();
+</script>
+</body>
+</html>

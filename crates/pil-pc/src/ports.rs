@@ -1,0 +1,473 @@
+//! DOS ISA port devices: PC speaker, Sound Blaster PCM and AT peripherals.
+//! The PC speaker ports, answered on the host as INT services are: PIT
+//! channel 2 (count at 42h, mode at 43h) sets the tone and port 61h bits 0
+//! and 1 gate it to the speaker. The CMOS clock and setup bytes read through
+//! ports 70h (index) and 71h (data). Byte IN and OUT only; any other port, a
+//! word access, unsupported CMOS writes or unsupported PIT use stops the run.
+//! Channel 0 supports binary modes 2/3; channel 2 has timed binary modes
+//! 0/2/3 and latched reads. Port 3DAh (and 3BAh) reports video status.
+//! Writes to the AT coprocessor ports F0h (clear busy) and F1h (reset) are
+//! taken; reads from them stop.
+use super::*;
+#[path="pit.rs"]
+mod pit;
+#[path="string_io.rs"]
+pub mod string_io;
+pub use string_io::{access as string_access,io as string_io,Error as StringError};
+#[path="pic.rs"]
+pub mod pic;
+#[path="speaker_wave.rs"]
+pub mod wave;
+/// PIT input clock in Hz.
+pub static IGNORE_UNASSIGNED_OUT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+/// Conventional PC assignments, not an exhaustive list of expansion hardware.
+fn device(port:u16)->Option<&'static str>{Some(match port{
+    0x00..=0x0f|0x80..=0x8f|0xc0..=0xdf=>"DMA controller/page registers",
+    0x20..=0x21|0xa0..=0xa1=>"interrupt controller",
+    0x40..=0x43=>"PIT timer",0x60..=0x64=>"keyboard/system control",
+    0x70..=0x71=>"CMOS/RTC",0x92=>"system control/A20",
+    0xf0..=0xf1=>"coprocessor control",0x168..=0x177|0x1e8..=0x1f7|0x36e|0x376|0x3f6=>"ATA disk controller",
+    0x200..=0x207=>"game/joystick port",0x220..=0x22f=>"Sound Blaster",
+    0x278..=0x27f|0x378..=0x37f|0x3bc..=0x3bf=>"parallel port",
+    0x2e8..=0x2ef|0x2f8..=0x2ff|0x3e8..=0x3ef|0x3f8..=0x3ff=>"serial port",
+    0x3b0..=0x3bb|0x3c0..=0x3df=>"video controller",
+    0x3f0..=0x3f5|0x3f7=>"floppy controller",
+    _=>return None,
+})}
+pub const PIT_HZ:u32=1_193_182;
+/// Speaker changes kept for a frontend that has not taken them.
+const MAX_CHANGES:usize=4096;
+#[derive(Clone,Debug,Default)]
+pub struct Speaker{
+    /// Port 61h bits 0..3 as last written; bit 4 toggles on each read as
+    /// the refresh bit does.
+    control:u8,refresh:bool,
+    /// Channel 2 access mode (1 low, 2 high, 3 low then high), the count and
+    /// whether the high byte comes next.
+    access:u8,count:u16,high_next:bool,
+    counter2:pit::Counter2,
+    pub pic:pic::Pair,
+    /// The channel 0 IRQ edge total (BIOS ticks since midnight) last seen;
+    /// a different total is a new edge that sets IRR bit 0.
+    pub irq_edges:Option<u32>,
+    /// Times the speaker was switched on, for a frontend to sound.
+    pub beeps:u64,
+    /// The speaker signal now, and its changes (PIT clock, signal) not yet
+    /// taken by a frontend.
+    signal:Option<wave::Wave>,
+    changes:Vec<(u64,wave::Wave)>,
+    /// BIOS beeps (BEL on the console) not yet taken, at their PIT clocks.
+    bells:Vec<u64>,
+    pub pit:pit::Counter0,
+    pit_clock:Option<(std::time::Instant,u64)>,
+    /// The PIT clock at the last guest access to ports 40h-43h or 61h.
+    pit_last_io:u64,
+    /// Counter for video status register 1 (port 3DAh/3BAh): toggles horizontal
+    /// blanking and cycles vertical retrace so snow-check and sync loops advance.
+    retrace:u32,
+    ignored_out:std::collections::BTreeSet<u16>,
+    fast_a20:u8,kbc_a20:bool,kbc_write_output:bool,kbc_reply:Option<u8>,
+    /// ISA Plug and Play: the register last selected through the address
+    /// port 279h, and the read-data port software placed with register 00h
+    /// (Set RD_DATA Port). No PnP card is fitted, so that port reads FFh.
+    pnp_register:u8,pnp_read_port:Option<u16>,
+    /// Scan codes on their way to port 60h and IRQ1.
+    pub kbd:keyboard::Keyboard,
+}
+impl Speaker{
+    fn update_a20(&self,ram:&mut Ram){ram.set_a20_enabled(self.kbc_a20||self.fast_a20&2!=0);}
+    pub fn bios_a20(&mut self,ram:&mut Ram,enabled:bool){self.kbc_a20=enabled;if !enabled{self.fast_a20&=!2;}self.update_a20(ram);}
+    /// Host PIT time is sampled once, then advances monotonically. Headless
+    /// deterministic sessions keep it at zero unless a host clock is selected.
+    pub fn pit_now(&mut self,clock:Option<i64>)->u64{
+        let Some(offset)=clock else{return 0;};
+        let (start,initial)=self.pit_clock.get_or_insert_with(||{
+            let ns=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()as i128+i128::from(offset)*1_000_000_000;
+            let initial=(ns.rem_euclid(86_400_000_000_000)*i128::from(PIT_HZ)/1_000_000_000)as u64;
+            (std::time::Instant::now(),initial)
+        });
+        *initial+(start.elapsed().as_nanos()*u128::from(PIT_HZ)/1_000_000_000)as u64
+    }
+    /// The PIT clock for a guest port access. An AT bus I/O cycle takes about
+    /// a microsecond, longer than one PIT clock (838 ns), so no two accesses
+    /// see the same count: on a host clock this waits until the next PIT
+    /// clock after the previous access. It waits at most one PIT clock.
+    pub fn pit_io(&mut self,clock:Option<i64>)->u64{
+        let mut now=self.pit_now(clock);
+        if clock.is_some(){
+            while now<=self.pit_last_io{std::hint::spin_loop();now=self.pit_now(clock);}
+            self.pit_last_io=now;
+        }
+        now
+    }
+    pub fn pit_interrupts(&mut self,clock:Option<i64>)->u64{let now=self.pit_now(clock);self.pit.interrupts(now)}
+    /// Record the speaker signal after a write to port 61h, 42h or 43h:
+    /// port 61h bit 1 AND channel 2's OUT, whose gate is bit 0.
+    fn sound(&mut self,now:u64){
+        let signal=if self.control&2==0{wave::Wave::Level(false)}else{self.counter2.wave(now)};
+        if self.signal==Some(signal){return;}
+        self.signal=Some(signal);
+        // A program that never lets a frontend look keeps only recent changes.
+        if self.changes.len()>=MAX_CHANGES{self.changes.drain(..MAX_CHANGES/2);}
+        self.changes.push((now,signal));
+    }
+    /// A BIOS beep (BEL written to the console).
+    pub fn bell(&mut self,clock:Option<i64>){
+        let now=self.pit_now(clock);
+        if self.bells.len()<16{self.bells.push(now);}
+    }
+    /// The speaker changes and BIOS beeps since the last call, for a frontend.
+    pub fn take_sound(&mut self)->(Vec<(u64,wave::Wave)>,Vec<u64>){
+        (std::mem::take(&mut self.changes),std::mem::take(&mut self.bells))
+    }
+    /// The host time of a PIT clock this speaker recorded, once a host
+    /// clock was sampled.
+    pub fn host_time(&self,clock:u64)->Option<std::time::Instant>{
+        let (start,initial)=self.pit_clock?;
+        let ahead=clock.checked_sub(initial)?;
+        Some(start+std::time::Duration::from_nanos((u128::from(ahead)*1_000_000_000/u128::from(PIT_HZ)) as u64))
+    }
+    /// The tone the speaker plays now in Hz, or 0 when it is off.
+    pub fn tone(&self)->u32{
+        if self.control&3!=3{return 0;}
+        // A count of 0 is 65536.
+        PIT_HZ/(if self.count==0{65536}else{u32::from(self.count)})
+    }
+}
+/// Runs the IN or OUT at CS:IP when it is one, returning its length;
+/// `Ok(None)` for any other instruction.
+/// The port and byte count of the unprefixed IN or OUT at CS:EIP, for the
+/// protected-mode I/O permission check before `io` answers it.
+fn instruction<F>(p:&Machine<F>)->Option<(u8,u16,u32,u8)>{
+    let mut at=0u32;let mut operand=false;
+    let first=loop{
+        if at>=15{return None;}
+        let byte=p.image.fetch_signature(&p.ram,p.cpu.eip,at+1).ok()?[at as usize];at+=1;
+        match byte{0x66=>operand=true,0x67|0x26|0x2e|0x36|0x3e|0x64|0x65|0xf2|0xf3=>{},_=>break byte}
+    };
+    let port=match first{
+        0xe4..=0xe7=>{if at>=15{return None;}let byte=p.image.fetch_signature(&p.ram,p.cpu.eip,at+1).ok()?[at as usize];at+=1;u16::from(byte)},
+        0xec..=0xef=>(p.cpu.regs[2]&0xffff)as u16,
+        _=>return None,
+    };
+    let width=if first&1==0{1}else if p.image.segments[1].default_32()^operand{4}else{2};
+    Some((first,port,at,width))
+}
+pub fn access<F>(p:&Machine<F>)->Option<(u16,u8)>{
+    string_access(p).or_else(||instruction(p).map(|(_,port,_,width)|(port,width)))
+}
+pub fn io<F:Firmware>(p:&mut Machine<F>)->Result<Option<u32>,String>{
+    let Some((first,port,length,width))=instruction(p)else{return Ok(None)};
+    transfer(p,first,port,width)?;
+    Ok(Some(length))
+}
+/// The hardware-device logic shared by scalar and string port instructions.
+/// FIRST is the effective scalar IN/OUT opcode and WIDTH is the operand
+/// size in bytes.  The caller handles its own guest instruction retirement.
+pub fn transfer<F:Firmware>(p:&mut Machine<F>,first:u8,port:u16,width:u8)->Result<(),String>{
+    if width==4{return Err(format!("dword I/O at port {port:04x}h is not modelled in Dine"));}
+    let input=first&2==0;
+    if matches!(port,0x3c0|0x3c1|0x3c4|0x3c5|0x3ce|0x3cf){
+        let word=first&1!=0;
+        let value=F::vga_controller_io(p,port,input,p.cpu.regs[0]as u16,word)?;
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
+        return Ok(());
+    }
+    if matches!(port,0x3b4|0x3b5|0x3d4|0x3d5|0x3c2|0x3cc|0x3cd|0x3de|0x3df|0x3c6..=0x3c9|0x3d8|0x3d9){
+        let word=first&1!=0;
+        if word&&!matches!(port,0x3b4|0x3d4){return Err("VGA word access must start at CRTC index port 3B4h or 3D4h".into());}
+        let mut device=p.vga.clone();
+        let lo=device.io(port,input,p.cpu.regs[0] as u8)?.ok_or_else(||format!("unsupported VGA port direction at {port:04X}h"))?;
+        let hi=if word{device.io(port+1,input,(p.cpu.regs[0]>>8)as u8)?.unwrap()}else{0};
+        p.vga=device;
+        if !input{super::vga_regs::sync(p);}
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|u32::from(lo)|(u32::from(hi)<<8);}
+        return Ok(());
+    }
+    let word=first&1!=0;
+    // The hard-disk controller of a booted machine with a fixed disk.
+    if let Some(value)=ata::Ata::io(p,port,input,word,p.cpu.regs[0] as u16)?{
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]=(p.cpu.regs[0]&!mask)|(u32::from(value)&mask);}
+        return Ok(());
+    }
+    // ATA task-file and device-control ports at the primary (1F0h/3F6h),
+    // secondary (170h/376h), third (1E8h/3EEh) and fourth (168h/36Eh)
+    // addresses. Without a booted fixed disk this AT has no hard-disk
+    // controller (CMOS register 12h says no hard disk; drives are DOS-level),
+    // the other channels have none at all, and there is no COM3 card at 3E8h, so
+    // nothing answers on the bus: reads float high, as on an ISA bus with no
+    // card at the address, and writes reach nothing. A driver that polls the
+    // status for BSY clear or DRDY sees FFh and gives up.
+    if matches!(port,0x168..=0x16f|0x170..=0x177|0x1e8..=0x1ef|0x1f0..=0x1f7|0x36e|0x376|0x3ee|0x3f6){
+        if input{let mask=if word{65535}else{255};p.cpu.regs[0]|=mask;}
+        return Ok(());
+    }
+    let assigned=device(port).or_else(||if word{device(port.wrapping_add(1))}else{None});
+    // DOS sound libraries probe optional AdLib/OPL and nearby ISA expansion
+    // addresses even when no board is installed. No FM synthesizer is modeled
+    // yet, so these ports float high on reads and ignore writes rather than
+    // stopping the entire DOS program. This deliberately does not simulate
+    // OPL timers, synthesize audio, or claim an installed AdLib device.
+    if (0x380..=0x38b).contains(&port)&&(!word||port<0x38b){
+        if input{p.cpu.regs[0]|=if word{0xffff}else{0xff};}
+        return Ok(());
+    }
+    // Only truly unassigned writes qualify; normal device handlers still run.
+    if !input&&assigned.is_none()&&!matches!(port,0xe9|0x190)&&IGNORE_UNASSIGNED_OUT.load(std::sync::atomic::Ordering::Relaxed){
+        if p.speaker.ignored_out.insert(port){eprintln!("Ignored unassigned OUT port {port:04X}h, width {}, value {:04X}, CS:IP={:04X}:{:04X}",if word{16}else{8},p.cpu.regs[0]&if word{65535}else{255},p.selectors[1],p.cpu.eip);}
+        return Ok(());
+    }
+    if word&&matches!(port,0x224|0x228){
+        // The 8-bit ISA Sound Blaster mixer uses consecutive index/data
+        // ports (224h/225h), as do its FM aliases (228h/229h). An AT word I/O to an 8-bit card is split
+        // into two byte cycles, not treated as a native 16-bit register.
+        // Stage both accesses so an unsupported second byte cannot leave
+        // partially changed mixer/PIC state.
+        let mut sb=p.sb.clone();let mut pic=p.speaker.pic.clone();
+        let now=p.clock_offset.map(|_|p.speaker.pit_now(p.clock_offset));
+        sb.tick(now,&p.ram,&mut pic)?;
+        let lo=sb.io(port,input,p.cpu.regs[0]as u8,&p.ram,&mut pic)?
+            .ok_or("Sound Blaster index port unavailable")?;
+        let hi=sb.io(port+1,input,(p.cpu.regs[0]>>8)as u8,&p.ram,&mut pic)?
+            .ok_or("Sound Blaster data port unavailable")?;
+        p.sb=sb;p.speaker.pic=pic;
+        if input{p.cpu.regs[0]=(p.cpu.regs[0]&!0xffff)|u32::from(lo)|(u32::from(hi)<<8);}
+        return Ok(());
+    }
+    // A booted OS's word probe of an ISA card that is not there (an
+    // Ethernet card's data port, for one) reads the open bus, FFFFh, and its
+    // writes go nowhere, as the byte accesses below do.
+    if first&1!=0&&p.booted&&assigned.is_none(){
+        if input{p.cpu.regs[0]|=0xffff;}
+        return Ok(());
+    }
+    if first&1!=0{return Err(format!("word {} port {port:02x}h is not modelled",if input{"IN from"}else{"OUT to"}));}
+    // The diskette controller and DMA channel 2. Writes to the DMA
+    // registers channels share also reach the channel-1 model below.
+    if let Some(value)=fdc::Fdc::io(p,port,input,p.cpu.regs[0]as u8)?{
+        if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
+        return Ok(());
+    }
+    if let Some(value)=serial::io(p,port,input,p.cpu.regs[0]as u8)?{
+        if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
+        return Ok(());
+    }
+    // Digital audio card and its ISA channel-1 DMA controller. Route
+    // only the documented DMA registers; other channels keep their current
+    // compatibility behaviour until their devices are implemented.
+    if matches!(port,0x02|0x03|0x08|0x0a|0x0b|0x0c|0x0d|0x0e|0x0f|0x83|0x220..=0x22f){
+        let now=p.clock_offset.map(|_|p.speaker.pit_now(p.clock_offset));
+        p.sb.tick(now,&p.ram,&mut p.speaker.pic)?;
+        if let Some(value)=p.sb.io(port,input,p.cpu.regs[0]as u8,&p.ram,&mut p.speaker.pic)?{
+            if input{p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);}
+            return Ok(());
+        }
+    }
+    if port==0x71{
+        if !input{
+            match p.cmos_index{
+                // BIOS shutdown byte: a subsequent CPU reset is separate.
+                0x0f=>p.cmos_shutdown=p.cpu.regs[0]as u8,
+                // BCD calendar-year writes adjust only this virtual RTC.
+                // The clock registers and status B (SET freezes the clock).
+                0x00|0x02|0x04|0x06..=0x0b|0x32=>p.rtc.write(p.clock_offset,p.cmos_index,p.cpu.regs[0]as u8)?,
+                _=>return Err(format!("CMOS write to register {:02x}h is not modelled",p.cmos_index)),
+            }
+            return Ok(());
+        }
+        let value=cmos(p,p.cmos_index)?;
+        p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+        return Ok(());
+    }
+    if port==0x70{
+        if input{return Err("IN from port 70h is not modelled (the index register is write-only)".into());}
+        // Bit 7 masks NMI, which nothing raises here; the index is 6 bits.
+        p.cmos_index=p.cpu.regs[0]as u8&0x3f;
+        return Ok(());
+    }
+    if matches!(port,0x20|0x21|0xa0|0xa1){
+        if input{
+            // IRR must reflect a pending edge even when IF or the IRQ mask
+            // prevents the BIOS timer shortcut from delivering it.
+            if port==0x20&&p.clock_offset.is_some(){
+                let now=super::sampled_ticks(p);
+                super::timer_edge(p,now);
+            }
+            let value=p.speaker.pic.read(port);p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+        }else{p.speaker.pic.write(port,p.cpu.regs[0]as u8)?;}
+        return Ok(());
+    }
+    // Bounded AT keyboard-controller output-port interface and fast A20 gate.
+    // CPU reset requests remain explicit stops rather than being ignored.
+    if matches!(port,0x60|0x64|0x92){
+        let irq_possible=p.cpu.eflags&0x200!=0&&p.speaker.pic.keyboard_ready();
+        let announce=port==0x60&&!input&&keyboard::hooked(p)?;
+        let s=&mut p.speaker;
+        if input&&port==0x64{s.kbd.poll(irq_possible);}
+        if input{
+            let value=match port{
+                // Output full (a controller reply or a scan code); input always ready.
+                0x64=>u8::from(s.kbc_reply.is_some()||s.kbd.full()),
+                // A controller reply first, else the keyboard's last scan code.
+                0x60=>match s.kbc_reply.take(){Some(reply)=>reply,None=>s.kbd.read()},
+                _=>s.fast_a20,
+            };
+            p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+        }else{
+            let value=p.cpu.regs[0]as u8;
+            match port{
+                0x92=>{if value&1!=0{return Err("system reset through port 92h is not modelled".into());}s.fast_a20=value;s.update_a20(&mut p.ram);},
+                0x64=>match value{
+                    0xd0=>{if s.kbc_reply.is_some(){return Err("keyboard-controller output buffer is already full".into());}s.kbc_reply=Some(1|u8::from(s.kbc_a20)<<1);},
+                    0xd1=>s.kbc_write_output=true,
+                    // Disable and enable the keyboard interface (an OS
+                    // keyboard handler brackets its port 60h read so).
+                    0xad=>s.kbd.disabled=true,
+                    0xae=>s.kbd.disabled=false,
+                    // F0h-FFh pulse the output-port lines whose bits 3-0 are
+                    // clear low for about 6 us. Bit 0 is the CPU reset line,
+                    // which stays an explicit stop. A pulse of the A20 line
+                    // (bit 1) ends before the next guest access, and bits 2-3
+                    // are not wired on an AT, so the other values leave the
+                    // output port as it was. FFh pulses nothing: software
+                    // sends it to wait until the 8042 has taken a command.
+                    0xf0..=0xff if value&1==0=>return Err("keyboard-controller CPU reset (pulse command) is not modelled".into()),
+                    0xf0..=0xff=>{},
+                    _=>return Err(format!("keyboard-controller command {value:02x}h is not modelled")),
+                },
+                0x60 if s.kbc_write_output=>{if value&1==0{return Err("keyboard-controller CPU reset is not modelled".into());}s.kbc_write_output=false;s.kbc_a20=value&2!=0;s.update_a20(&mut p.ram);},
+                // Any other byte goes to the keyboard itself.
+                0x60=>s.kbd.command(value,announce),
+                _=>unreachable!("port 60h, 64h or 92h"),
+            }
+        }
+        return Ok(());
+    }
+    // DOS benchmarks turn off diskette motors while measuring. This does
+    // not issue a disk command; controller/data accesses remain unsupported.
+    if port==0x3f2&&!input&&p.cpu.regs[0]&0xf0==0{return Ok(());}
+    let booted=p.booted;
+    let s=&mut p.speaker;
+    if input{
+        let value=match port{
+            0x00..=0x0f=>0xff,
+            0x200..=0x207=>0xff, // no game adapter decodes them: open bus
+            // The ISA PnP read-data port the program placed: no card drives
+            // it, so isolation and register reads float high.
+            port if Some(port)==s.pnp_read_port=>0xff,
+            0x81..=0x8f=>0xff,
+            0x61=>{s.refresh=!s.refresh;s.control|if s.refresh{0x10}else{0}},
+            0x3da|0x3ba if !p.vga.status_active(port)=>0xff,
+            0x3da|0x3ba=>{
+                p.vga.reset_attribute_flip_flop();
+                s.retrace=s.retrace.wrapping_add(1);
+                // Sample a repeating VGA scanout phase. Display-blanking
+                // (status bit 0) lasts for several polls, rather than
+                // alternating on every IN: a guest may sample the same
+                // level twice to synchronize video-memory updates.
+                // Bit 3 remains asserted only during vertical retrace.
+                let phase=s.retrace&0x3f;
+                let vblank=phase>=56;
+                let hblank=vblank||(phase&7)>=4;
+                (if hblank{1}else{0})|(if vblank{8}else{0})
+            },
+            0x40=>{let now=s.pit_io(p.clock_offset);s.pit.read(now)},
+            0x42=>{let now=s.pit_io(p.clock_offset);s.counter2.read(now)?},
+                        0x378..=0x37a | 0x278..=0x27a | 0x3bc..=0x3be => 0x80,
+            // A booted OS probes for ISA cards that are not there (SCSI,
+            // sound, network); an address no device answers is an open bus.
+            // A device the table knows but Dine does not model still stops.
+            _ if booted&&device(port).is_none()=>0xff,
+            _=>return Err(format!("IN from port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
+        };
+        p.cpu.regs[0]=(p.cpu.regs[0]&!255)|u32::from(value);
+    }else{
+        let value=p.cpu.regs[0]as u8;
+        match port{
+            0x00..=0x0f=>{},
+            0x200..=0x207=>{}, // no game adapter to receive the write
+            0x81..=0x8f=>{},
+            0x61=>{
+                let was=s.tone()!=0;let now=s.pit_io(p.clock_offset);s.counter2.gate(value&1!=0,now);s.control=value&0x0f;
+                if !was&&s.tone()!=0{s.beeps+=1;}
+                s.sound(now);
+            },
+            // Channel 2 mode: access in bits 5..4; the counting mode is not timed.
+            0x43 if value>>6==2=>{let now=s.pit_io(p.clock_offset);s.counter2.command(value,now)?;if value&0x30!=0{s.access=value>>4&3;s.high_next=s.access==2;}s.sound(now);},
+            0x43 if value>>6==0=>{let now=s.pit_io(p.clock_offset);s.pit.command(value,now)?;},
+            0x43=>return Err(format!("PIT command {value:02x}h is not modelled")),
+            0x40=>{let now=s.pit_io(p.clock_offset);s.pit.write(value,now)?;},
+            0x42 if s.access==0=>return Err("PIT channel 2 count written before its mode".into()),
+            0x42=>{
+                let now=s.pit_io(p.clock_offset);s.counter2.write(value,now);
+                if s.high_next{s.count=(s.count&0xff)|u16::from(value)<<8;}else{s.count=(s.count&0xff00)|u16::from(value);}
+                if s.access==3{s.high_next=!s.high_next;}
+                s.sound(now);
+            },
+            // The POST diagnostic port: writes go nowhere on a PC. The ROM
+            // runner traces them (test386 reports its stages there); an
+            // operating system uses port 80h only as an I/O delay.
+            0x80 | 0x190 => {
+                if p.rom_mode{eprintln!("  [POST] Stage 0x{:02X} (CS:IP={:04X}:{:04X})", value, p.selectors[1], p.cpu.eip);}
+            },
+            // Port E9h (the Bochs debug port): the ROM runner passes its bytes to
+            // stdout, so test386 built with OUT_PORT equ 0E9h prints its POST EEh
+            // results there; a DOS session ignores them.
+            0xe9 if p.rom_mode => {use std::io::Write;let _=std::io::stdout().write_all(&[value]);},
+            // 279h is also the ISA Plug and Play address port; the register
+            // it selects matters only for a write to A79h below.
+            0x279 => s.pnp_register=value,
+            0xe9 | 0x378..=0x37a | 0x278..=0x27a | 0x3bc..=0x3be => {},
+            // Port EDh is unassigned on the AT; software writes to it as an
+            // I/O delay (one bus cycle), like port 80h. Nothing receives it.
+            0xed => {},
+            // ISA Plug and Play write-data port. No PnP card is on this bus,
+            // so the initiation key and commands reach nothing; register 00h
+            // (Set RD_DATA Port) still places the port the software reads
+            // next, at (value << 2) | 3, inside 203h-3FFh.
+            0xa79 => if s.pnp_register==0{s.pnp_read_port=Some(u16::from(value)<<2|3);},
+            // AT coprocessor ports, any byte value. F0h clears the busy latch
+            // that the 287/387 ERROR# output sets and that raises IRQ13 (in
+            // a booted machine; Dine's DOS stops on an unmasked exception
+            // instead, so there the latch is never set). F1h resets it.
+            0xf0 => p.fpu.clear_busy(),
+            0xf1 => p.fpu.reset(),
+            _ if booted&&device(port).is_none()=>{},
+            _=>return Err(format!("OUT to port {port:04x}h ({}) is not modelled",device(port).unwrap_or("unassigned or unknown device"))),
+        }
+    }
+    Ok(())
+}
+/// One CMOS byte as an AT with no diskette or hard disk, 640 KiB base memory
+/// and no extended memory would hold it. The clock registers are BCD in 24-hour
+/// form: the host's local time with the session clock, else midnight on
+/// Tuesday 1 January 1980. Direct RTC year changes are session-local and do
+/// not alter the DOS-maintained clock or the host clock. Bit 7 of register
+/// 0Ah (update in progress) stays clear, so a read never has to wait.
+pub fn cmos<F>(p:&Machine<F>,index:u8)->Result<u8,String>{
+    if let Some(value)=p.rtc.read(p.clock_offset,index){return Ok(value);}
+    Ok(match index{
+        // Alarm registers: no alarm set.
+        0x01|0x03|0x05=>0,
+        // Divider 32.768 kHz, 1024 Hz rate; 24-hour BCD; no flags; battery good.
+        0x0a=>p.rtc.status_a(),0x0b=>p.rtc.status_b(),0x0c=>0x00,0x0d=>0x80,
+        // Diagnostics passed, normal shutdown.
+        0x0e|0x11|0x13=>0,0x0f=>p.cmos_shutdown,
+        // Fixed disk types: drive C: in the high nibble, D: in the low, Fh
+        // meaning the extended type in register 19h (C:) or 1Ah (D:): 47,
+        // user-defined geometry.
+        0x12=>(if p.disks.fixed_unit(0).is_some(){0xf0}else{0})|if p.disks.fixed_unit(1).is_some(){0x0f}else{0},
+        0x19=>if p.disks.fixed_unit(0).is_some(){47}else{0},
+        0x1a=>if p.disks.fixed_unit(1).is_some(){47}else{0},
+        // Diskette drive types (A: high nibble, B: low) of attached BIOS disks.
+        0x10=>p.disks.cmos_floppy_types(),
+        // Equipment: CGA 80 columns, no diskette, no coprocessor.
+        0x14=>p.fpu.equipment(0x20) as u8,
+        0x15=>0x80,0x16=>0x02,
+        // No expansion card or pending setup notice in the POST information byte.
+        0x17|0x30=>(p.ram.bytes().len().saturating_sub(0x100000)/1024).min(0xffff)as u8,
+        0x18|0x31=>((p.ram.bytes().len().saturating_sub(0x100000)/1024).min(0xffff)>>8)as u8,
+        0x33=>0,
+        _=>return Err(format!("CMOS register {index:02x}h is not modelled")),
+    })
+}

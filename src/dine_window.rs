@@ -1,31 +1,89 @@
 //! Reusable Win32/GDI RGB framebuffer window for Dine (pil and the Dine
-//! library). No interpreter or DOS dependency.
+//! library); on Linux and Termux:X11 the window is `dine_x11` (feature `x11`).
+//! No interpreter or DOS dependency.
 //! `Frame` contains host RGB pixels, never guest state or pointers.
 
-#[cfg(windows)]
+#[cfg(any(windows,all(unix,feature="x11")))]
 pub(crate) struct Frame {
     pub(crate) width: i32,
     pub(crate) height: i32,
     pub(crate) pixels: Vec<u32>,
 }
 
+/// Groups `(title, [(command_id, label)])` shown in the host popup menu.
+#[cfg(any(windows,all(unix,feature="x11"),test))]
+pub(crate) type MenuGroups=Vec<(String,Vec<(u16,String)>)>;
+
 /// Input from an interactive window, before any DOS mapping: a typed
 /// character, a key that types none (Windows virtual-key code), or the mouse
 /// in client coordinates.
-#[cfg(windows)]
+#[cfg(any(windows,all(unix,feature="x11"),test))]
 #[derive(Clone,Copy,Debug)]
+#[cfg_attr(not(windows),allow(dead_code))]
 pub(crate) enum Input{
+    Physical{vk:u16,scan:u8,extended:bool,down:bool,repeat:u16,shift:bool,ctrl:bool,alt:bool},
+    Text{scan:u8,extended:bool,ch:char,shift:bool,ctrl:bool,alt:bool},
+    DeadKey,
+    FocusLost,
     Char{ch:char,shift:bool,ctrl:bool,alt:bool},
     Key{vk:u16,shift:bool,ctrl:bool,alt:bool},
-    Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16},
+    Mouse{x:i32,y:i32,width:i32,height:i32,buttons:u16,shift:bool},
+    Menu{id:u16},
 }
 
 #[cfg(windows)]
-pub(crate) use self::windows::Window;
+pub(crate) use self::windows::{Window,set_clipboard,clipboard};
+#[cfg(all(unix,feature="x11"))]
+pub(crate) use crate::dine_x11::{Window,set_clipboard,clipboard};
+
+/// Where a `frame_w` x `frame_h` picture goes in a client area, centred
+/// (x, y, width, height): the largest whole-number enlargement that fits, so
+/// every guest pixel is the same number of host pixels. When that would use
+/// less than 85% of the size that fits with the picture's proportions (a
+/// 640x480 mode in a window made for 2x text), it is drawn at that size
+/// instead, proportions kept.
+#[cfg_attr(not(any(windows,all(unix,feature="x11"))),allow(dead_code))]
+pub(crate) fn view(client_w:i32,client_h:i32,frame_w:i32,frame_h:i32)->(i32,i32,i32,i32){
+    if client_w<=0||client_h<=0||frame_w<=0||frame_h<=0{return (0,0,client_w.max(0),client_h.max(0));}
+    let (cw,ch,fw,fh)=(i64::from(client_w),i64::from(client_h),i64::from(frame_w),i64::from(frame_h));
+    let (fit_w,fit_h)=if cw*fh<=ch*fw{(cw,(cw*fh/fw).max(1))}else{((ch*fw/fh).max(1),ch)};
+    let scale=(cw/fw).min(ch/fh);
+    let (w,h)=if scale>=1&&fw*scale*100>=fit_w*85{(fw*scale,fh*scale)}else{(fit_w,fit_h)};
+    (((cw-w)/2) as i32,((ch-h)/2) as i32,w as i32,h as i32)
+}
+
+/// The whole-number enlargement for a new window: `DINE_WINDOW_SCALE` (1-8)
+/// when set, otherwise the largest that fits the free desktop area
+/// (`room_w` x `room_h`, without the window frame), at least 1.
+#[cfg_attr(not(any(windows,all(unix,feature="x11"))),allow(dead_code))]
+pub(crate) fn initial_scale(setting:Option<&str>,room_w:i32,room_h:i32,frame_w:i32,frame_h:i32)->i32{
+    if let Some(n)=setting.and_then(|s|s.trim().parse::<i32>().ok()).filter(|n|(1..=8).contains(n)){return n;}
+    if frame_w<=0||frame_h<=0{return 1;}
+    (room_w/frame_w).min(room_h/frame_h).clamp(1,8)
+}
+
+/// Non-empty border strips `(x, y, width, height)` around the centered picture
+/// `(vx, vy, vw, vh)` inside a `client_w` x `client_h` window.
+#[cfg(any(all(unix,feature="x11"),test))]
+pub(crate) fn border_rects(client_w:i32,client_h:i32,vx:i32,vy:i32,vw:i32,vh:i32)->Vec<(i32,i32,i32,i32)>{
+    let mut rects=Vec::with_capacity(4);
+    if client_w<=0||client_h<=0{return rects;}
+    if vw<=0||vh<=0{
+        rects.push((0,0,client_w,client_h));
+        return rects;
+    }
+    if vy>0{rects.push((0,0,client_w,vy));}
+    let bottom=vy.saturating_add(vh);
+    if bottom<client_h{rects.push((0,bottom,client_w,client_h-bottom));}
+    if vx>0{rects.push((0,vy,vx,vh));}
+    let right=vx.saturating_add(vw);
+    if right<client_w{rects.push((right,vy,client_w-right,vh));}
+    rects
+}
 
 #[cfg(windows)]
 mod windows {
-    use super::{Frame,Input};
+    use super::{Frame,Input,MenuGroups,view,initial_scale};
     // This module is also copied into generated standalone DOS executables.
     // Keep diagnostics self-contained: standalone code has no dine_display.
     fn debug_log(message:&str) {
@@ -65,20 +123,32 @@ mod windows {
     const CW_USEDEFAULT:i32=i32::MIN;
     const DIB_RGB_COLORS:u32=0;
     const SRCCOPY:u32=0x00cc0020;
-    const COLOR_WINDOW:isize=6;
+    const BLACK_BRUSH:i32=4;
+    const BLACKNESS:u32=0x00000042;
+    const CS_VREDRAW:u32=0x0001;
+    const CS_HREDRAW:u32=0x0002;
+    const SPI_GETWORKAREA:u32=0x0030;
 
     static FRAME:OnceLock<Mutex<Option<Frame>>>=OnceLock::new();
     static MOUSE_EVENTS:OnceLock<Mutex<VecDeque<(u16,u16,u16)>>>=OnceLock::new();
     static MOUSE_MAX_X:AtomicU16=AtomicU16::new(639);
     static MOUSE_MAX_Y:AtomicU16=AtomicU16::new(199);
-    static MOUSE_VISIBLE:AtomicBool=AtomicBool::new(false);
+    /// Hide the host pointer over the client area (the guest draws its own).
+    static HIDE_POINTER:AtomicBool=AtomicBool::new(false);
     static WINDOW:AtomicIsize=AtomicIsize::new(0);
     static CLOSED:AtomicBool=AtomicBool::new(false);
     static PAINT_REPORTED:AtomicBool=AtomicBool::new(false);
     /// Set for a window that takes keyboard and mouse input (the DOS console).
     static INPUT:OnceLock<Mutex<Option<mpsc::Sender<Input>>>>=OnceLock::new();
     static TITLE:OnceLock<Mutex<String>>=OnceLock::new();
+    static HOST_MENU:OnceLock<Mutex<MenuGroups>>=OnceLock::new();
+    const WM_HOST_MENU:u32=0x8001;
     const WM_KEYDOWN:u32=0x100;
+    const WM_KEYUP:u32=0x101;
+    const WM_SYSKEYUP:u32=0x105;
+    const WM_KILLFOCUS:u32=0x08;
+    const WM_DEADCHAR:u32=0x103;
+    const WM_SYSDEADCHAR:u32=0x107;
     const WM_CHAR:u32=0x102;
     const WM_SYSKEYDOWN:u32=0x104;
     const WM_SYSCHAR:u32=0x106;
@@ -93,9 +163,6 @@ mod windows {
         match guard.as_ref(){Some(tx)=>{let _=tx.send(input);true},None=>false}
     }
     fn held(vk:i32)->bool{unsafe{GetKeyState(vk)<0}}
-    /// Keys that type no character reach WM_KEYDOWN only: arrows, the editing
-    /// block, F1-F12 and Ctrl+Break.
-    fn untyped(vk:usize)->bool{matches!(vk,0x03|0x21..=0x28|0x2d|0x2e|0x70..=0x7b)}
 
     #[repr(C)]
     #[derive(Default,Clone,Copy)]
@@ -135,6 +202,11 @@ mod windows {
     extern "system" {
         fn GetModuleHandleW(name:*const u16)->Handle;
         fn GetLastError()->u32;
+        fn GlobalAlloc(flags:u32,bytes:usize)->Handle;
+        fn GlobalLock(memory:Handle)->*mut c_void;
+        fn GlobalUnlock(memory:Handle)->i32;
+        fn GlobalFree(memory:Handle)->Handle;
+        fn GlobalSize(memory:Handle)->usize;
     }
     #[link(name="user32")]
     extern "system" {
@@ -159,18 +231,113 @@ mod windows {
         fn IsWindowVisible(window:Handle)->i32;
         fn GetKeyState(key:i32)->i16;
         fn SetFocus(window:Handle)->Handle;
+        fn SetForegroundWindow(window:Handle)->i32;
         fn LoadCursorW(instance:Handle,name:usize)->Handle;
         fn SetCursor(cursor:Handle)->Handle;
+        fn AdjustWindowRectEx(area:*mut Rect,style:u32,menu:i32,ex:u32)->i32;
+        fn SystemParametersInfoW(action:u32,param:u32,data:*mut c_void,ini:u32)->i32;
+        fn OpenClipboard(owner:Handle)->i32;
+        fn CloseClipboard()->i32;
+        fn EmptyClipboard()->i32;
+        fn SetClipboardData(format:u32,memory:Handle)->Handle;
+        fn GetClipboardData(format:u32)->Handle;
+        fn SetCapture(window:Handle)->Handle;
+        fn ReleaseCapture()->i32;
+        fn CreatePopupMenu()->Handle;
+        fn AppendMenuW(menu:Handle,flags:u32,id:usize,text:*const u16)->i32;
+        fn TrackPopupMenu(menu:Handle,flags:u32,x:i32,y:i32,reserved:i32,owner:Handle,area:*const Rect)->u32;
+        fn DestroyMenu(menu:Handle)->i32;
+        fn GetCursorPos(point:*mut Point)->i32;
+        fn SetWindowTextW(window:Handle,text:*const u16)->i32;
+    }
+    const CF_UNICODETEXT:u32=13;
+    const GMEM_MOVEABLE:u32=0x0002;
+
+    /// Put `text` on the Windows clipboard, owned by the window. Returns
+    /// whether it got there.
+    pub(crate) fn set_clipboard(text:&str)->bool{
+        let wide:Vec<u16>=text.encode_utf16().chain(std::iter::once(0)).collect();
+        let hwnd=WINDOW.load(Ordering::Acquire);
+        if hwnd==0{return false;}
+        unsafe{
+            if OpenClipboard(hwnd as Handle)==0{return false;}
+            let mut done=false;
+            if EmptyClipboard()!=0{
+                let memory=GlobalAlloc(GMEM_MOVEABLE,wide.len()*2);
+                if !memory.is_null(){
+                    let at=GlobalLock(memory).cast::<u16>();
+                    if at.is_null(){GlobalFree(memory);}else{
+                        ptr::copy_nonoverlapping(wide.as_ptr(),at,wide.len());
+                        GlobalUnlock(memory);
+                        // The clipboard owns the memory once this succeeds.
+                        if SetClipboardData(CF_UNICODETEXT,memory).is_null(){GlobalFree(memory);}else{done=true;}
+                    }
+                }
+            }
+            CloseClipboard();
+            done
+        }
+    }
+    /// The text on the Windows clipboard, if there is any.
+    pub(crate) fn clipboard()->Option<String>{
+        let hwnd=WINDOW.load(Ordering::Acquire);
+        unsafe{
+            if OpenClipboard(hwnd as Handle)==0{return None;}
+            let memory=GetClipboardData(CF_UNICODETEXT);
+            let text=if memory.is_null(){None}else{
+                let at=GlobalLock(memory).cast::<u16>();
+                if at.is_null(){None}else{
+                    let units=GlobalSize(memory)/2;
+                    let slice=std::slice::from_raw_parts(at,units);
+                    let end=slice.iter().position(|&u|u==0).unwrap_or(units);
+                    let text=String::from_utf16_lossy(&slice[..end]);
+                    GlobalUnlock(memory);
+                    Some(text)
+                }
+            };
+            CloseClipboard();
+            text
+        }
     }
     #[link(name="gdi32")]
     extern "system" {
         fn StretchDIBits(dc:Handle,dx:i32,dy:i32,dw:i32,dh:i32,
             sx:i32,sy:i32,sw:i32,sh:i32,bits:*const c_void,
             info:*const BitmapInfo,usage:u32,rop:u32)->i32;
+        fn PatBlt(dc:Handle,x:i32,y:i32,w:i32,h:i32,rop:u32)->i32;
+        fn GetStockObject(object:i32)->Handle;
+    }
+
+    /// The picture's place in the client area, from the current frame.
+    fn frame_view(client:&Rect)->Option<(i32,i32,i32,i32)>{
+        let guard=FRAME.get()?.lock().ok()?;
+        let frame=guard.as_ref()?;
+        Some(view(client.right-client.left,client.bottom-client.top,frame.width,frame.height))
     }
 
     unsafe extern "system" fn wndproc(hwnd:Handle,msg:u32,w:usize,l:isize)->isize{
         match msg{
+            WM_HOST_MENU=>{
+                send(Input::FocusLost);
+                let menu=CreatePopupMenu();
+                if menu.is_null(){send(Input::Menu{id:0});return 0;}
+                if let Some(groups)=HOST_MENU.get().and_then(|m|m.lock().ok()){
+                    for (title,items) in groups.iter(){
+                        let sub=CreatePopupMenu();
+                        if sub.is_null(){continue;}
+                        for (id,label) in items{
+                            let text:Vec<u16>=label.encode_utf16().chain(Some(0)).collect();
+                            AppendMenuW(sub,0,usize::from(*id),text.as_ptr());
+                        }
+                        let title:Vec<u16>=title.encode_utf16().chain(Some(0)).collect();
+                        AppendMenuW(menu,0x10,sub as usize,title.as_ptr());
+                    }
+                }
+                let mut point=Point::default();GetCursorPos(&mut point);
+                SetCursor(LoadCursorW(ptr::null_mut(),32512));
+                let id=TrackPopupMenu(menu,0x100|0x2,point.x,point.y,0,hwnd,ptr::null());
+                DestroyMenu(menu);send(Input::Menu{id:id as u16});0
+            },
             WM_PAINT=>{
                 let mut paint=Paint::default();
                 let dc=BeginPaint(hwnd,&mut paint);
@@ -189,8 +356,14 @@ mod windows {
                                     },
                                     colors:[0],
                                 };
-                                let drawn=StretchDIBits(dc,0,0,rect.right-rect.left,
-                                    rect.bottom-rect.top,0,0,frame.width,frame.height,
+                                let (cw,ch)=(rect.right-rect.left,rect.bottom-rect.top);
+                                let (x,y,w,h)=view(cw,ch,frame.width,frame.height);
+                                // Black borders around a picture that does not fill the window.
+                                PatBlt(dc,0,0,cw,y,BLACKNESS);
+                                PatBlt(dc,0,y+h,cw,ch-y-h,BLACKNESS);
+                                PatBlt(dc,0,y,x,h,BLACKNESS);
+                                PatBlt(dc,x+w,y,cw-x-w,h,BLACKNESS);
+                                let drawn=StretchDIBits(dc,x,y,w,h,0,0,frame.width,frame.height,
                                     frame.pixels.as_ptr().cast(),&info,DIB_RGB_COLORS,SRCCOPY);
                                 if !PAINT_REPORTED.swap(true,Ordering::AcqRel) {
                                     debug_log(&format!("WM_PAINT first GDI result={drawn}; client={}x{}; scanout={}x{}",
@@ -203,33 +376,46 @@ mod windows {
                 }
                 0
             },
-            WM_KEYDOWN|WM_SYSKEYDOWN if untyped(w)&&!(msg==WM_SYSKEYDOWN&&w==VK_F4)=>{
-                let input=Input::Key{vk:w as u16,shift:held(VK_SHIFT),ctrl:held(VK_CONTROL),alt:held(VK_MENU)};
-                if send(input){0}else{DefWindowProcW(hwnd,msg,w,l)}
+            WM_KEYDOWN|WM_SYSKEYDOWN|WM_KEYUP|WM_SYSKEYUP=>{
+                // TranslateMessage retains layout/AltGr/dead-key text. Physical
+                // identity comes from lParam, never from a translated character.
+                let sent=send(Input::Physical{vk:w as u16,scan:((l>>16)&0x7f)as u8,extended:l&(1<<24)!=0,
+                    down:matches!(msg,WM_KEYDOWN|WM_SYSKEYDOWN),repeat:(l as u16).max(1),shift:held(VK_SHIFT),ctrl:held(VK_CONTROL),alt:held(VK_MENU)});
+                if !sent||(matches!(msg,WM_SYSKEYDOWN|WM_SYSKEYUP)&&w==VK_F4){DefWindowProcW(hwnd,msg,w,l)}else{0}
             },
+            WM_KILLFOCUS=>{send(Input::FocusLost);DefWindowProcW(hwnd,msg,w,l)},
+            WM_DEADCHAR|WM_SYSDEADCHAR=>{send(Input::DeadKey);0},
             WM_CHAR|WM_SYSCHAR=>{
                 let Some(ch)=char::from_u32(w as u32) else {return 0;};
                 let (ctrl,alt)=(held(VK_CONTROL),msg==WM_SYSCHAR||held(VK_MENU));
                 // AltGr arrives as Ctrl+Alt with the character it typed.
                 let altgr=ctrl&&alt&&!ch.is_control();
-                let input=Input::Char{ch,shift:held(VK_SHIFT),ctrl:ctrl&&!altgr,alt:alt&&!altgr};
-                if send(input){0}else{DefWindowProcW(hwnd,msg,w,l)}
+                let input=Input::Text{scan:((l>>16)&0x7f)as u8,extended:l&(1<<24)!=0,ch,shift:held(VK_SHIFT),ctrl:ctrl&&!altgr,alt:alt&&!altgr};
+                let mut sent=false;
+                for _ in 0..(l as u16).max(1){sent|=send(input);}
+                if sent{0}else{DefWindowProcW(hwnd,msg,w,l)}
             },
             WM_MOUSEMOVE|WM_LBUTTONDOWN|WM_LBUTTONUP|WM_RBUTTONDOWN|WM_RBUTTONUP|WM_MBUTTONDOWN|WM_MBUTTONUP=>{
                 let mut client=Rect::default();
+                if GetClientRect(hwnd,&mut client)==0{return 0;}
+                // The pointer relative to the picture, not to the borders around it.
+                let (px,py,pw,ph)=frame_view(&client).unwrap_or((0,0,client.right,client.bottom));
+                let x=i32::from(l as u16 as i16)-px;
+                let y=i32::from((l>>16) as u16 as i16)-py;
                 // An interactive console window maps the pointer itself.
-                if GetClientRect(hwnd,&mut client)!=0{
-                    let (x,y)=(i32::from(l as u16 as i16),i32::from((l>>16) as u16 as i16));
-                    let buttons=(w&1) as u16|((w>>1)&1) as u16*2|((w>>4)&1) as u16*4;
-                    if send(Input::Mouse{x,y,width:client.right-client.left,height:client.bottom-client.top,buttons}){return 0;}
+                let buttons=(w&1) as u16|((w>>1)&1) as u16*2|((w>>4)&1) as u16*4;
+                // Keep the pointer while a button is down, so a drag that
+                // leaves the window still ends here.
+                if INPUT.get().is_some(){
+                    if matches!(msg,WM_LBUTTONDOWN|WM_RBUTTONDOWN|WM_MBUTTONDOWN){SetCapture(hwnd);}
+                    else if msg!=WM_MOUSEMOVE&&buttons==0{ReleaseCapture();}
                 }
-                if GetClientRect(hwnd,&mut client)!=0 && client.right>0 && client.bottom>0 {
-                    let cx=((l as usize&0xffff) as u16 as i16) as i32;
-                    let cy=(((l as usize>>16)&0xffff) as u16 as i16) as i32;
+                if send(Input::Mouse{x,y,width:pw,height:ph,buttons,shift:w&4!=0}){return 0;}
+                if pw>0 && ph>0 {
                     let max_x=i32::from(MOUSE_MAX_X.load(Ordering::Relaxed));
                     let max_y=i32::from(MOUSE_MAX_Y.load(Ordering::Relaxed));
-                    let vx=((cx*(max_x+1))/client.right).clamp(0,max_x) as u16;
-                    let vy=((cy*(max_y+1))/client.bottom).clamp(0,max_y) as u16;
+                    let vx=((x.clamp(0,pw-1)*(max_x+1))/pw).clamp(0,max_x) as u16;
+                    let vy=((y.clamp(0,ph-1)*(max_y+1))/ph).clamp(0,max_y) as u16;
                     let buttons=u16::from(w&1!=0)
                         |(u16::from(w&2!=0)<<1)
                         |(u16::from(w&0x10!=0)<<2);
@@ -247,14 +433,14 @@ mod windows {
             },
             WM_SETCURSOR=>{
                 if (l as usize&0xffff)==1 {
-                    let cursor=if MOUSE_VISIBLE.load(Ordering::Acquire){ptr::null_mut()}else{LoadCursorW(ptr::null_mut(),32512)};
+                    let cursor=if HIDE_POINTER.load(Ordering::Acquire){ptr::null_mut()}else{LoadCursorW(ptr::null_mut(),32512)};
                     SetCursor(cursor);
                     1
                 } else {
                     DefWindowProcW(hwnd,msg,w,l)
                 }
             },
-            WM_CLOSE=>{DestroyWindow(hwnd);0},
+            WM_CLOSE=>{send(Input::FocusLost);DestroyWindow(hwnd);0},
             WM_DESTROY=>{
                 debug_log("WM_DESTROY: VGA window closed");
                 CLOSED.store(true,Ordering::Release);
@@ -276,9 +462,9 @@ mod windows {
             let interactive=INPUT.get().is_some_and(|i|i.lock().is_ok_and(|i|i.is_some()));
             let instance=GetModuleHandleW(ptr::null());
             let descriptor=WndClass{
-                style:0,proc:Some(wndproc),class_extra:0,window_extra:0,
+                style:CS_HREDRAW|CS_VREDRAW,proc:Some(wndproc),class_extra:0,window_extra:0,
                 instance,icon:ptr::null_mut(),cursor:LoadCursorW(ptr::null_mut(),32512),
-                background:(COLOR_WINDOW+1) as Handle,
+                background:GetStockObject(BLACK_BRUSH),
                 menu_name:ptr::null(),class_name:class.as_ptr(),
             };
             if RegisterClassW(&descriptor)==0{
@@ -289,8 +475,24 @@ mod windows {
                 return;
             }
             debug_log("RegisterClassW succeeded; calling CreateWindowExW (WS_EX_NOACTIVATE)");
-            let hwnd=CreateWindowExW(if interactive{0}else{WS_EX_NOACTIVATE},class.as_ptr(),title.as_ptr(),
-                WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,664,520,
+            let ex_style=if interactive{0}else{WS_EX_NOACTIVATE};
+            // Size the client area to the first picture times a whole number,
+            // the largest that fits the desktop (720x400 text: 1440x800 on a
+            // 1920x1080 screen).
+            let (fw,fh)=FRAME.get().and_then(|f|f.lock().ok().and_then(|f|f.as_ref().map(|f|(f.width,f.height)))).unwrap_or((640,480));
+            let mut decor=Rect::default();
+            AdjustWindowRectEx(&mut decor,WS_OVERLAPPEDWINDOW,0,ex_style);
+            let (decor_w,decor_h)=(decor.right-decor.left,decor.bottom-decor.top);
+            let mut work=Rect{left:0,top:0,right:1024,bottom:768};
+            SystemParametersInfoW(SPI_GETWORKAREA,0,(&mut work as *mut Rect).cast(),0);
+            let setting=std::env::var("DINE_WINDOW_SCALE").ok();
+            let scale=initial_scale(setting.as_deref(),work.right-work.left-decor_w,work.bottom-work.top-decor_h,fw,fh);
+            let mut outer=Rect{left:0,top:0,right:fw*scale,bottom:fh*scale};
+            AdjustWindowRectEx(&mut outer,WS_OVERLAPPEDWINDOW,0,ex_style);
+            let (outer_w,outer_h)=(outer.right-outer.left,outer.bottom-outer.top);
+            debug_log(&format!("window scale {scale} for {fw}x{fh}: outer {outer_w}x{outer_h}"));
+            let hwnd=CreateWindowExW(ex_style,class.as_ptr(),title.as_ptr(),
+                WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,outer_w,outer_h,
                 ptr::null_mut(),ptr::null_mut(),instance,ptr::null_mut());
             if hwnd.is_null(){
                 let error=GetLastError();
@@ -303,13 +505,27 @@ mod windows {
             CLOSED.store(false,Ordering::Release);
             WINDOW.store(hwnd as isize,Ordering::Release);
             let _=ready.send(hwnd as isize);
-            let previous_visible=ShowWindow(hwnd,if interactive{SW_SHOWNORMAL}else{SW_SHOWNOACTIVATE});
+            let show=if interactive{SW_SHOWNORMAL}else{SW_SHOWNOACTIVATE};
+            let previous_visible=ShowWindow(hwnd,show);
+            // Windows replaces the first ShowWindow of a process with the
+            // launcher's STARTUPINFO show mode. A launcher that hides the
+            // console (PILdos.vbs: WshShell.Run with style 0) would hide
+            // this window too, so show it again; only the first call is
+            // replaced.
+            if IsWindowVisible(hwnd)==0{ShowWindow(hwnd,show);}
             let hwnd_topmost=(-1isize) as Handle;
             let hwnd_notopmost=(-2isize) as Handle;
             let swp_flags=0x0001u32|0x0002u32|0x0010u32; // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
             SetWindowPos(hwnd,hwnd_topmost,0,0,0,0,swp_flags);
             SetWindowPos(hwnd,hwnd_notopmost,0,0,0,0,swp_flags);
-            if interactive{SetFocus(hwnd);}
+            if interactive{
+                // SetFocus only sets this thread's keyboard focus. The hidden
+                // shortcut launcher can leave another process in the foreground,
+                // so also request activation once when its interactive UI opens.
+                let activated=SetForegroundWindow(hwnd);
+                SetFocus(hwnd);
+                debug_log(&format!("interactive startup foreground activation={activated}"));
+            }
             let now_visible=IsWindowVisible(hwnd);
             let mut bounds=Rect::default();
             let rect_ok=GetWindowRect(hwnd,&mut bounds);
@@ -355,7 +571,23 @@ mod windows {
         pub(crate) fn set_mouse_state(&self,max_x:u16,max_y:u16,visible:bool){
             MOUSE_MAX_X.store(max_x,Ordering::Relaxed);
             MOUSE_MAX_Y.store(max_y,Ordering::Relaxed);
-            MOUSE_VISIBLE.store(visible,Ordering::Release);
+            HIDE_POINTER.store(visible,Ordering::Release);
+        }
+        /// Hide the host pointer over the client area, or show the arrow
+        /// again. Takes effect at the pointer's next move over the window.
+        pub(crate) fn hide_pointer(&self,hidden:bool){HIDE_POINTER.store(hidden,Ordering::Release);}
+        /// Display a host popup on the UI thread; IDs belong to the caller.
+        pub(crate) fn popup(&self,groups:MenuGroups){
+            if let Ok(mut slot)=HOST_MENU.get_or_init(||Mutex::new(Vec::new())).lock(){*slot=groups;}
+            let hwnd=WINDOW.load(Ordering::Acquire);
+            if hwnd==0{send(Input::Menu{id:0});return;}
+            unsafe{PostMessageW(hwnd as Handle,WM_HOST_MENU,0,0);}
+        }
+        pub(crate) fn title(&self,text:&str){
+            if let Ok(mut slot)=TITLE.get_or_init(||Mutex::new(String::new())).lock(){*slot=text.into();}
+            let text:Vec<u16>=text.encode_utf16().chain(Some(0)).collect();
+            let hwnd=WINDOW.load(Ordering::Acquire);
+            if hwnd!=0{unsafe{SetWindowTextW(hwnd as Handle,text.as_ptr());}}
         }
         pub(crate) fn drain_mouse_events(&self)->Vec<(u16,u16,u16)>{
             let Some(queue)=MOUSE_EVENTS.get() else {return Vec::new();};
@@ -399,5 +631,28 @@ mod windows {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{border_rects,view};
+
+    #[test]
+    fn border_rects_cover_margins_without_overlapping_the_picture(){
+        // Exact fill: no borders.
+        let (vx,vy,vw,vh)=view(1440,800,720,400);
+        assert!(border_rects(1440,800,vx,vy,vw,vh).is_empty());
+
+        // Pillarbox (640x480 inside 1440x800): left and right borders only.
+        let (vx,vy,vw,vh)=view(1440,800,640,480);
+        let rects=border_rects(1440,800,vx,vy,vw,vh);
+        assert_eq!(rects.len(),2);
+        let area:i64=rects.iter().map(|&(_,_,w,h)|i64::from(w)*i64::from(h)).sum::<i64>()+i64::from(vw)*i64::from(vh);
+        assert_eq!(area,1440*800);
+
+        // Centered smaller picture: all four borders, exact total area.
+        let rects=border_rects(1440,800,100,80,640,400);
+        assert_eq!(rects,vec![(0,0,1440,80),(0,480,1440,320),(0,80,100,400),(740,80,700,400)]);
     }
 }

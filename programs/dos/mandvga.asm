@@ -1,8 +1,8 @@
 ; MANDVGA.COM - the Mandelbrot set in VGA mode 12h (640x480, 16 colours),
-; using 4.12 fixed point and 8086 instructions only. It computes 320x240
-; points and draws each as a 2x2 block through the graphics controller:
-; write mode 2 (the CPU byte is the colour), the bit mask selecting the two
-; pixels, and a read before each write to load the latches so the other six
+; using 4.12 fixed point and 8086 instructions only. It computes every one
+; of the 640x480 pixels and draws each through the graphics controller:
+; write mode 2 (the CPU byte is the colour), the bit mask selecting the
+; pixel, and a read before each write to load the latches so the other seven
 ; pixels of the byte keep their colours. Inside points are colour 0; the
 ; others take 1 + (iterations mod 15). The caption is printed through DOS
 ; in the 8x16 text cells of mode 12h. Any key returns to text mode.
@@ -10,7 +10,7 @@
         org 100h
 MAXIT   equ 30
 ONE     equ 4096
-STEP    equ 42                  ; 3.25/320 in 4.12, the same on both axes
+STEP    equ 21                  ; 3.25/640 in 4.12, the same on both axes
         cld
         mov ax,0012h
         int 10h
@@ -19,37 +19,34 @@ STEP    equ 42                  ; 3.25/320 in 4.12, the same on both axes
         mov dx,3ceh
         mov ax,0205h            ; graphics mode register: write mode 2
         out dx,ax
-        mov word [cy],-(120*STEP)
-        mov word [line],0       ; offset of the first of the block's two lines
+        mov word [cy],-(240*STEP)
+        mov word [line],0       ; offset of the row in video memory
 .row:   mov word [cx_],-(9*ONE/4)
         mov word [xp],0
 .pt:    call point
         mov [col],al
         mov bx,[xp]
         mov cl,bl
-        and cl,3
-        shl cl,1
-        mov ah,0c0h
-        shr ah,cl               ; the block's two pixels in this byte
+        and cl,7
+        mov ah,80h
+        shr ah,cl               ; the pixel in its byte
         mov al,8                ; bit mask register
         mov dx,3ceh
         out dx,ax
         mov di,[line]
-        shr bx,1
-        shr bx,1
+        mov cl,3
+        shr bx,cl
         add di,bx
         mov al,[es:di]          ; load the latches
         mov al,[col]
         mov [es:di],al
-        mov ah,[es:di+80]
-        mov [es:di+80],al
         add word [cx_],STEP
         inc word [xp]
-        cmp word [xp],320
+        cmp word [xp],640
         jb .pt
         add word [cy],STEP
-        add word [line],160
-        cmp word [line],160*240
+        add word [line],80
+        cmp word [line],80*480
         jb .row
         mov dx,3ceh
         mov ax,0ff08h           ; bit mask FFh

@@ -4,7 +4,7 @@
 
 This is the reference for the executable PIL grammar in the current repository,
 checked against the parser, interpreter and Rust emitter in
-[src/main.rs](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/src/main.rs).
+[crates/pil-cpu/src/lib.rs](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/crates/pil-cpu/src/lib.rs).
 The [original v0.1 proposal](https://github.com/pyTony/PIL-Processor-Instruction-Language/blob/dev/docs/design/processor_instruction_language_v01.md)
 is a separate design document. Its architecture declarations, encoding DSL,
 effect graphs, helpers and restart checkpoints are not executable syntax.
@@ -274,7 +274,7 @@ Register aliases FF /6 and 8F /0 share the same PUSH/POP descriptions.
 `read_segment out INDEX` snapshots a visible selector (ES,CS,SS,DS,FS,GS =0..5)
 as bv16. `write_segment INDEX value` stages one bv16 non-CS selector load and
 commits it with the GPR and memory effects. Both backends call the shared
-`SegmentState::load_segment` (src/address.rs):
+`SegmentState::load_segment` (crates/pil-cpu/src/address.rs):
 - In real mode only the base changes (selector * 16). The limit and
   attributes stay, so limits loaded in protected mode survive the return to
   real mode ("unreal mode"). CS gets the ordinary real-mode cache.
@@ -338,7 +338,7 @@ References: Intel386 [MOV](https://pdos.csail.mit.edu/6.828/2012/readings/i386/M
 ## Privilege levels: far transfers, IOPL and I/O permission (increment 5)
 
 These tokens hand the descriptor and stack rules to the shared Rust in
-src/privilege.rs, which both backends embed. Each only reads and checks;
+crates/pil-cpu/src/privilege.rs, which both backends embed. Each only reads and checks;
 the transfer it returns is applied when the instruction retires.
 - `far_jump SELECTOR OFFSET` (jmp_far.pil): a code segment at CPL
   (conforming with DPL <= CPL, or nonconforming with RPL <= CPL and DPL =
@@ -366,7 +366,7 @@ the transfer it returns is applied when the instruction retires.
   popped as dwords from OUTER, every segment register gets its V86 cache
   and EIP must be within FFFFh. The description sets VM itself
   (`flag VM`).
-- Task switches (src/task.rs, embedded next to privilege.rs): `far_jump`
+- Task switches (crates/pil-cpu/src/task.rs, embedded next to privilege.rs): `far_jump`
   and `far_call` to an available TSS descriptor or a task gate (DPL >= CPL
   and >= RPL, else #GP(selector); a gate that is not present is #NP) switch
   tasks instead of loading CS. The old task's EIP, EFLAGS, general
@@ -404,7 +404,7 @@ the one PIL write of VM. INT n, INT3 and INTO need IOPL 3 (else #GP(0));
 interrupts and exceptions go through the IDT to a nonconforming ring 0
 handler only (else #GP(selector)), on the TSS ring 0 stack with GS, FS, DS
 and ES pushed before SS, ESP, EFLAGS, CS and EIP, and with those four
-registers nulled as VM clears (src/interrupt.rs).
+registers nulled as VM clears (crates/pil-cpu/src/interrupt.rs).
 
 Descriptor tables, the TSS and an inner-level stack are read and written at
 supervisor level whatever the CPL (`Ram::as_level`, `Ram::store_as`). A
@@ -500,19 +500,33 @@ Each element consumes a budget step;full retirement occurs on count exhaustion
 or failed ZF repeat condition. Movement-string F2 remains rejected.
 
 `checkpoint_flags` is a first-operation generic machine effect. Machine-backed
-execution remembers entry EIP/EFLAGS/undefined metadata across partial resumes.
-Execution faults restore that original flag state,clear the checkpoint and
-retain completed element count/pointer progress. Full retirement clears it.
-The checkpoint is included in traces;debugger and DOS runner retain fault-state
-updates. Normal single-element CMPS/SCAS faults retain incoming state. This
-models memory/execution fault recovery,not interrupt delivery or exception frames.
+execution remembers entry EIP/EFLAGS/undefined metadata across partial resumes;
+it is included in traces and ends the run-time blocks. A fault in a later
+element clears it and keeps the flags of the elements already compared, with
+their count/pointer progress: the 386 pushes those flags in the #GP/#SS frame
+(SingleStepTests/80386, 20 November 2026). The current Intel SDM (REP)
+describes restoring the entry EFLAGS instead; until then PIL did so. Full retirement
+clears it. Normal single-element CMPS/SCAS faults retain incoming state.
+
+`effects_before_fault` (first operation, after `checkpoint_flags` if any): when
+a `load`, `load_segment`, `store` or `store_segment` fails its segment or RAM
+check (not `check_write_segment`), the stores staged so far and
+the `write_gpr` effects of earlier tokens are made, in token order, before the
+fault is returned. Other effects (bound writes, flags, EIP, segments) are not.
+PUSHA/PUSHAD stage their slots from the lowest address (DI) upwards and POPA/
+POPAD write each register as its slot is read, so a slot that crosses the end
+of a 16-bit stack (or the SS limit) leaves the earlier slots or registers
+changed and SP/ESP unchanged, as the 386 does (SingleStepTests/80386 6660, 61,
+6661). ENTER with a nesting level writes BP and the copied frame pointers
+pushed before a copy whose read faults (C8, 66C8). Without the token every
+fault leaves memory and registers unchanged.
 
 SETcc may now store one byte to ordinary ModRM/SIB memory,using existing PIL
 conditional selection/store effects. A false predicate still stores zero and
 checks permissions. Flags/markers/registers are unchanged; /0 profile restriction
 and existing normalized segment/memory checks remain.
 
-Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf), including entry-EFLAGS recovery for faulting REPE/REPNE CMPS/SCAS; legacy386 REP pseudocode has inverted stop-condition typos,so use its detailed step6 description for ZF termination.
+Reference: [Intel REP instruction semantics](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf) (it describes entry-EFLAGS recovery for faulting REPE/REPNE CMPS/SCAS, which the 386 does not do, see above); legacy386 REP pseudocode has inverted stop-condition typos,so use its detailed step6 description for ZF termination.
 
 ## Real-mode far return and checked frame spans (0.29)
 
@@ -567,7 +581,7 @@ commits nothing, like every other fault. Vectors 0 (#DE), 5 (#BR) and 13
 (#GP(0), as `ExecError::GeneralProtection` with error code 0) are
 accepted; PUSHF, POPF and IRET use 13 for the V86 IOPL rule; DIV, IDIV and AAM use 0 for a zero divisor or a quotient that does
 not fit, and BOUND uses 5 for an index outside its bounds. The
-runner, not PIL, then delivers the exception (`src/interrupt.rs`): in real
+runner, not PIL, then delivers the exception (`crates/pil-cpu/src/interrupt.rs`): in real
 mode through the IDTR table with FLAGS, CS and the faulting IP pushed, so the
 handler's IRET restarts the instruction. #GP and #SS faults from segment
 limit checks are delivered the same way (vectors 0Dh and 0Ch). In protected

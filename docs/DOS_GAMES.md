@@ -1,5 +1,63 @@
 # DOS Doom and 3DBench, 10 November 2026
 
+## Native Windows input milestone, 17 November 2026
+
+Issue [#238](https://github.com/pyTony/PIL-Processor-Instruction-Language/issues/238)
+reports visible gameplay but no held movement in the Rust native window. Its
+old route synthesized a make and immediate break for every translated key.
+The earlier GUI edge work below applied to the Python frontend/session protocol;
+it did not wire the Rust native window's Windows releases.
+
+The native route now joins physical set-1 identity with Windows text translation
+in a host-independent state machine. IRQ1 receives separate make/break codes,
+including E0 prefixes and repeats; chained BIOS handlers receive one translated
+word per make. BIOS-only programs keep down-only text input. Pending input and
+paste share one FIFO, with all-or-none extended-code enqueue. Focus loss and
+host menus release tracked keys, including modifiers.
+
+Deterministic Rust fixtures cover held/repeated/simultaneous keys, releases,
+focus loss, layout changes, AltGr text, controls, host shortcuts, BIOS versus IRQ1
+dispatch, and full queues. These are synthetic tests: no new DOOM, EDIT, Turbo
+Pascal or other private DOS application pass is claimed by this increment.
+
+### Windows retest
+
+1. Build `cargo build --release --locked`; launch the Rust native console with
+   `target/release/pil.exe --dos-console --window --config pildos.conf` (or the
+   same configured Retro entry previously used). Verify the executable is this
+   build and use the same game installation and options for comparisons.
+2. At FreeCOM, type text, hold Backspace, recall commands with arrows, and try
+   Ctrl+C, AltGr characters and paste. In EDIT and Turbo Pascal, check typing,
+   held navigation, Shift selection, Ctrl/Alt shortcuts, function keys, menus,
+   clipboard host shortcuts and normal exit back to the shell.
+3. Launch DOOM through the same Retro entry as the original report. Hold each
+   configured movement key for several frames; release and verify movement
+   stops. Hold two movement keys together, release one, then the other. Repeat
+   with Ctrl/Alt/Shift actions. Use the game's configured bindings rather than
+   assuming WASD. Repeat from the D: installation that previously stopped at
+   word IN 224h; that is a separate reproduction, fixed by merged PR #239.
+4. While holding movement, Alt+Tab away, release outside the window and return.
+   Verify no stuck movement/modifiers. Repeat with the host right-click menu,
+   Shift+F10 and Ctrl+Shift+Enter. Check ordinary shell input after game exit.
+5. If movement still fails, use Diagnostics > Save live guest snapshot twice
+   while holding and twice after release. Compare CS:IP, PIC/IRQ1 state and host
+   pending input. Disable instruction history afterwards to restore speed.
+   Record build SHA, launch entry, bindings, exact action and observed result.
+
+### Next smallest Retro milestone
+
+After the native input retest, use merged PR #237 snapshots to diagnose the
+reported Wolfenstein black-screen/polling loop before choosing a CPU, VGA or
+service fix. Require a reproducible trace and an original regression fixture.
+Issue #216 still tracks digital audio validation; word mixer I/O #239 does not
+prove full audio compatibility. OPL music remains separate. Turbo C++ 3 issue
+#234 needs a bounded allocation/DPMI-probe trace before implementing services;
+the IDE's memory message alone is insufficient evidence for a DPMI fix.
+CI modularization is in separate PR #243; this change does not alter workflows
+or the recently refreshed README status.
+
+## Original 10 November increment
+
 This increment uses the ordinary release interpreter, without shadow/native
 program substitutions. The user's game executables and WAD/data files are
 local inputs, not repository fixtures. No game assets or ROMs are distributed.

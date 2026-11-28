@@ -1,0 +1,617 @@
+//! Interactive DOS session over stdin/stdout for a frontend: one command per
+//! line, one JSON reply per line. The frontend draws text and graphics buffers
+//! and sends keys; all execution stays in the PIL interpreter and Dine.
+use super::*;
+use std::io::{BufRead,Write as _};
+const MAX_LINE:usize=1024;
+fn parse_drive_letter(text:&str)->Option<u8>{
+    match text.as_bytes(){
+        [l]|[l,b':'] if l.is_ascii_alphabetic()=>Some(l.to_ascii_uppercase()),
+        _=>None,
+    }
+}
+pub(crate) fn open_mount_source(path:&str)->Result<Source,String>{
+    let normalized=crate::dos_config::host_path(path);let p=normalized.as_path();
+    let is_image=p.extension().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("img")||x.eq_ignore_ascii_case("ima"));
+    if is_image&&p.is_file(){
+        let data=super::super::containers::read_image(p)?;
+        return Ok(Source::Image(std::sync::Arc::new(super::super::containers::fat16_tree(&data)?)));
+    }
+    if p.is_dir(){return Ok(Source::Host(p.to_path_buf()));}
+    Err(format!("mount {path} is not a folder or .img/.ima image"))
+}
+#[path="disk_set.rs"]
+mod disk_set;
+pub struct Session{loaded:Option<Loaded>,stop:Stop,steps:usize,started:bool,exceptions:Vec<ExceptionSite>,exception_count:usize,idle_hint:bool,native_video:bool,backend:Option<Box<dyn InstructionBackend>>,disk_sets:BTreeMap<u8,disk_set::DiskSet>,
+    /// The guest's keyboard layout for pasted text in a booted machine.
+    pub(crate) keymap:super::guest_keymap::Keymap}
+impl Session{
+    pub(crate) fn mount_media(&mut self,letter:u8,path:&str)->Result<String,String>{
+        let source=open_mount_source(path)?;
+        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.mount(letter,source)?;
+        self.disk_sets.remove(&letter);Ok(format!("{}: {path}",char::from(letter)))
+    }
+    pub(crate) fn unmount_media(&mut self,letter:u8)->Result<String,String>{
+        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.unmount(letter)?;
+        self.disk_sets.remove(&letter);Ok(format!("{}: unmounted",char::from(letter)))
+    }
+    pub fn new(loaded:Loaded)->Self{Self{loaded:Some(loaded),stop:Stop::Budget,steps:0,started:false,exceptions:Vec::new(),exception_count:0,idle_hint:false,native_video:false,backend:None,disk_sets:BTreeMap::new(),keymap:Default::default()}}
+    pub(crate) fn set_backend(&mut self,backend:Box<dyn InstructionBackend>){self.backend=Some(backend);}
+    /// Install disk one only after the manifest and media have been checked.
+    pub(crate) fn disk_set(&mut self,letter:u8,manifest:&Path)->Result<String,String>{
+        if !matches!(letter,b'A'|b'B'){return Err("disk sets use floppy drive A: or B:".into());}
+        let set=disk_set::DiskSet::read(manifest)?;
+        self.insert_set(letter,set)
+    }
+    /// Native browsing can infer numbered neighbouring images without a manifest.
+    #[cfg(any(windows,all(unix,feature="x11"),test))]
+    pub(crate) fn floppy_media(&mut self,letter:u8,image:&Path)->Result<String,String>{
+        if !matches!(letter,b'A'|b'B'){return Err("disk sets use floppy drive A: or B:".into());}
+        if let Some(set)=disk_set::DiskSet::numbered(image)?{return self.insert_set(letter,set);}
+        self.mount_media(letter,image.to_str().ok_or("media path is not Unicode")?)
+    }
+    fn insert_set(&mut self,letter:u8,set:disk_set::DiskSet)->Result<String,String>{
+        let path=set.images[0].to_str().ok_or("disk-set path is not Unicode")?;
+        let source=open_mount_source(path)?;
+        self.loaded.as_mut().ok_or("session state lost")?.dos.drive.mount(letter,source)?;
+        let text=set.description(letter);self.disk_sets.insert(letter,set);Ok(text)
+    }
+    /// A failed read or busy-drive refusal leaves both media and index intact.
+    pub(crate) fn disk(&mut self,letter:u8,selection:Option<&str>)->Result<String,String>{
+        let set=self.disk_sets.get(&letter).ok_or("no disk set on this drive")?;
+        let Some(selection)=selection else{return Ok(set.description(letter))};
+        let index=set.select(selection)?;
+        let path=set.images[index].to_str().ok_or("disk-set path is not Unicode")?;
+        let loaded=self.loaded.as_mut().ok_or("session state lost")?;
+        if loaded.booted{
+            // A booted machine's drive A: or B: gets the next diskette, with
+            // its change line, as a hand at the drive would do it.
+            let bytes=std::fs::read(path).map_err(|e|format!("{path}: {e}"))?;
+            loaded.disks.change_floppy(letter-b'A',super::disks::Disk::floppy(bytes)?)?;
+        }else{
+            let source=open_mount_source(path)?;
+            loaded.dos.drive.mount(letter,source)?;
+        }
+        let set=self.disk_sets.get_mut(&letter).unwrap();set.current=index;Ok(set.description(letter))
+    }
+    /// A booted machine's diskettes for drive A:, the one in the drive
+    /// first: the host's disk keys change among them.
+    pub(crate) fn boot_diskettes(&mut self,images:Vec<std::path::PathBuf>)->Result<(),String>{
+        if !self.loaded.as_ref().is_some_and(|p|p.booted){return Err("diskettes to change need a booted machine".into());}
+        if images.len()>1{self.disk_sets.insert(b'A',disk_set::DiskSet{images,current:0});}
+        Ok(())
+    }
+    /// Keep the executor for the whole session, including across frontend slices.
+    #[allow(dead_code)]
+    pub(crate) fn with_backend(loaded:Loaded,backend:Box<dyn InstructionBackend>)->Self{
+        let mut session=Self::new(loaded);session.backend=Some(backend);session
+    }
+    fn live(&self)->bool{matches!(self.stop,Stop::Budget|Stop::WaitingForInput)}
+    /// Runs up to `budget` steps; output already reaches the screen through Dine.
+    pub fn run(&mut self,budget:usize)->Result<Vec<u8>,String>{
+        if !self.live(){return Ok(Vec::new());}
+        self.started=true;
+        let loaded=self.loaded.take().ok_or("session state lost")?;
+        let mut output=crate::host_io::CaptureOutput::new(crate::host_io::DOS_OUTPUT_LIMIT);
+        let mut probe=match self.backend.as_mut(){
+            Some(backend)=>run_with_backend_session(loaded,budget,&mut output,Some(backend.as_mut()))?,
+            None=>run_with_backend_session(loaded,budget,&mut output,None)?,
+        };
+        probe.output=output.into_bytes();
+        // A hint only: polling programs continue running, but a frontend may
+        // reduce its execution rate while the screen is unchanged.
+        let polls=probe.instructions.get("DOS INT16/AH01").copied().unwrap_or(0)+probe.instructions.get("DOS INT16/AH11").copied().unwrap_or(0);
+        self.idle_hint=probe.completed>=1000&&polls.saturating_mul(200)>probe.completed&&probe.output.is_empty();
+        self.exception_count+=probe.exception_count;
+        self.exceptions.extend(probe.exceptions.into_iter().take(64-self.exceptions.len()));
+        self.steps+=probe.completed;self.stop=probe.stop;self.loaded=Some(probe.loaded);
+        Ok(probe.output)
+    }
+    #[cfg(test)]
+    pub fn loaded(&self)->Option<&Loaded>{self.loaded.as_ref()}
+    /// The machine, for a host console in this process.
+    pub(crate) fn machine(&self)->Option<&Loaded>{self.loaded.as_ref()}
+    pub(crate) fn exit_code(&self)->Option<u8>{match self.stop{Stop::Exit(code)=>Some(code),_=>None}}
+    pub(crate) fn machine_mut(&mut self)->Option<&mut Loaded>{self.loaded.as_mut()}
+    pub(crate) fn steps(&self)->usize{self.steps}
+    /// Read a consistent snapshot between instruction slices. The first call
+    /// turns on a small dispatch ring, so a second capture can show the loop
+    /// the guest is executing. Existing PIL_DOS_HISTORY settings are retained.
+    pub(crate) fn live_snapshot(&mut self,host_pending:usize)->Result<(String,bool),String>{
+        let steps=self.steps;
+        let status=self.status().0;
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        let started=!p.history.enabled();
+        if started{p.history=history::History::new(32);}
+        Ok((super::live_diagnostics::capture(p,steps,host_pending,status),started))
+    }
+    /// Enable a bounded DOS dispatch ring without taking an initial snapshot.
+    /// Native block execution can resume after the trace is disabled.
+    pub(crate) fn enable_live_trace(&mut self,capacity:usize)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.history=history::History::new(capacity);
+        Ok(())
+    }
+    /// Observe writes to all B0000h..BFFFFh text display pages, independent
+    /// of DOS program and current active text page. Off by default.
+    pub(crate) fn start_text_write_watch(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.ram.start_text_watch();
+        Ok(())
+    }
+    pub(crate) fn stop_text_write_watch(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.ram.stop_text_watch();
+        Ok(())
+    }
+    pub(crate) fn enable_service_trace(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.services_trace.enable();Ok(())
+    }
+    pub(crate) fn disable_service_trace(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.services_trace.disable();Ok(())
+    }
+    /// Restore the normal execution pipeline when tracing is no longer needed.
+    pub(crate) fn disable_live_trace(&mut self)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        p.history=history::History::default();
+        Ok(())
+    }
+    /// Record a stop in the stop log, as `--dos-session` does.
+    pub(crate) fn log_stop(&self,logger:&mut stoplog::Logger){
+        if self.status().0=="stopped"{if let Some(p)=self.loaded.as_ref(){logger.record(p,"stopped",&self.status().1,self.steps,&self.exceptions,self.exception_count);}}
+    }
+    /// Queues one key as the BIOS stores it: scan code in the high byte, ASCII low.
+    pub fn key(&mut self,ascii:u8,scan:u8)->Result<bool,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        let word=u16::from(scan)<<8|u16::from(ascii);
+        // A program's own INT 09h handler sees the key arrive through IRQ1.
+        if keyboard::hooked(p)?{return keyboard::key(p,word);}
+        // The BIOS ring stands behind INT 09h only; IRQ1 moved elsewhere
+        // with no program handler there is not modelled.
+        let vector=p.speaker.pic.keyboard_vector();
+        if vector!=0x09{return Err(format!("IRQ1 through INT {vector:02X}h (PIC base moved), which has no program handler, is not modelled"));}
+        console::enqueue(p,word)
+    }
+    /// The host mouse at Microsoft virtual coordinates X, Y; BUTTONS bit 0/1/2
+    /// is left/right/middle.
+    pub(crate) fn mouse(&mut self,x:u16,y:u16,buttons:u16)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        let mode=p.ram.load(0x449,MemWidth::Byte).map_err(|e|format!("mouse mode: {e:?}"))?as u8;
+        p.dos.mouse.host(x,y,buttons&7,mode);Ok(())
+    }
+    /// Relative host pointer motion and buttons (`buttons`: bit 0 left, bit 1
+    /// right) for a Microsoft serial mouse on COM1.
+    pub(crate) fn serial_mouse(&mut self,dx:i32,dy:i32,buttons:u16)->Result<(),String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        if let Some(com1)=p.com1.as_mut(){com1.mouse_motion(dx,dy,buttons,&mut p.speaker.pic);}
+        Ok(())
+    }
+    /// Ctrl+Break. The inner error is a refusal the frontend may show.
+    pub(crate) fn ctrl_break(&mut self)->Result<Result<(),String>,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        let through_irq=keyboard::hooked(p)?||(super::vectors::answered(p,p.speaker.pic.keyboard_vector())?&&super::vectors::reachable(p,0x1b)?);
+        if through_irq{
+            Ok(if keyboard::ctrl_break(p)?{Ok(())}else{Err("keyboard scan codes still waiting for the program".into())})
+        }else{Ok(brk::ctrl_break(p))}
+    }
+    fn key_edge(&mut self,ascii:u8,scan:u8,down:bool)->Result<bool,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        if keyboard::hooked(p)?{return keyboard::edge(p,u16::from(scan)<<8|u16::from(ascii),down);}
+        if down{self.key(ascii,scan)}else{Ok(true)}
+    }
+    /// Native window input has physical scan codes, independent of BIOS words.
+    pub(crate) fn native_key(&mut self,scan:u8,extended:bool,down:bool,word:Option<u16>)->Result<bool,String>{
+        let p=self.loaded.as_mut().ok_or("session state lost")?;
+        if keyboard::hooked(p)?{return keyboard::physical(p,scan,extended,down,word);}
+        // With the built-in BIOS handler, keys enter the ring directly rather
+        // than through IRQ1. Keep INT16/AH02's modifier state in that path too.
+        super::int09::bios_modifiers(p,scan|if down{0}else{0x80})?;
+        if down{if let Some(word)=word{return self.key(word as u8,(word>>8)as u8);}}
+        Ok(true)
+    }
+    /// The active text page as character/attribute pairs, its width and the cursor.
+    pub fn screen(&self)->Result<(Vec<u8>,u32,(u32,u32)),String>{
+        let p=self.loaded.as_ref().ok_or("session state lost")?;
+        let byte=|at|p.ram.load(at,MemWidth::Byte).map_err(|e|format!("screen read: {e:?}"));
+        let word=|at|p.ram.load(at,MemWidth::Word).map_err(|e|format!("screen read: {e:?}"));
+        let columns=super::console::shown_mode(p).map_err(|e|format!("screen read: {e:?}"))?.columns;
+        // In a booted machine the CRTC start and cursor registers place the
+        // page and the cursor, as the display hardware does (the BIOS keeps
+        // them in step with its data area at each call).
+        let page=if p.booted{0}else{byte(0x462)?&7};
+        let origin=if p.booted||p.vga.start_override{u32::from(p.vga.start())*2}else{page*word(0x44c)?};
+        let base=0xb8000;
+        let cells=(0..columns*25*2).map(|i|byte(base+(origin+i)%32768).map(|b|b as u8)).collect::<Result<Vec<_>,_>>()?;
+        let cursor=if p.booted||p.vga.cursor_override{let cell=u32::from(p.vga.cursor()).wrapping_sub(origin/2)&0x3fff;((cell/columns)<<8)|(cell%columns)}else{word(0x450+page*2)?};
+        let mut cells=cells;
+        if let Some(at)=Self::mouse_cell(p,columns)?{
+            // The software text cursor: the cell's character/attribute word
+            // ANDed with the screen mask and XORed with the cursor mask
+            // (INT 33h AX=000Ah), on this copy only, never in B800h.
+            let (screen,cursor_mask)=p.dos.mouse.text_masks().unwrap();
+            let value=(u16::from(cells[at])|u16::from(cells[at+1])<<8)&screen^cursor_mask;
+            cells[at]=value as u8;cells[at+1]=(value>>8)as u8;
+        }
+        Ok((cells,columns,(cursor>>8,cursor&0xff)))
+    }
+    /// The byte offset in `screen` of the cell under a visible software text
+    /// mouse cursor, in text modes only.
+    fn mouse_cell(p:&Loaded,columns:u32)->Result<Option<usize>,String>{
+        let view=p.dos.mouse.view();
+        let mode=super::console::shown_mode(p).map_err(|e|format!("screen read: {e:?}"))?.mode&0x7f;
+        if !view.visible||!matches!(mode,0..=3|7)||p.dos.mouse.text_masks().is_none(){return Ok(None);}
+        // Virtual X spans 640 for 40 and 80 columns alike; rows are 8 high.
+        let (column,row)=((u32::from(view.x)*columns/640).min(columns-1),(u32::from(view.y)/8).min(24));
+        Ok(Some(((row*columns+column)*2)as usize))
+    }
+    pub(crate) fn status(&self)->(&'static str,String){
+        match &self.stop{
+            Stop::Budget=>("running",String::new()),Stop::WaitingForInput=>("waiting_input",String::new()),
+            Stop::Exit(code)=>("exit",format!("exit code {code}")),
+            Stop::MissingEncoding{key,detail}=>("stopped",format!("missing encoding {key}: {detail}")),
+            Stop::Service(m)=>("stopped",format!("unimplemented service: {m}")),
+            Stop::Fault(m)=>("stopped",format!("fault: {m}")),Stop::Boundary(m)=>("stopped",format!("boundary: {m}")),
+            Stop::Monitor(m)=>("stopped",format!("monitor stop: {m}")),
+        }
+    }
+    /// The reply line; it hands the frontend what the program sent to COM1
+    /// since the last reply.
+    fn reply(&mut self,seq:u64,ok:bool,text:&str,output:&[u8])->Result<String,String>{
+        let com1:String=self.loaded.as_mut().and_then(|p|p.com1.as_mut()).map_or(Vec::new(),|s|std::mem::take(&mut s.tx)).iter().map(|b|format!("{b:02x}")).collect();
+        let(cells,columns,(row,column))=self.screen()?;let(status,detail)=self.status();
+        let hex:String=cells.iter().map(|b|format!("{b:02x}")).collect();
+        let cs=self.loaded.as_ref().map(|p|p.selectors[SegmentRegister::Cs.index()]).unwrap_or(0);
+        let diagnostic=self.loaded.as_ref().map(|p|{
+            let mut bytes=Vec::new();
+            for n in 0..15{match p.image.fetch_signature(&p.ram,p.cpu.eip,n+1){Ok(b)=>bytes.push(b[n as usize]),Err(_)=>break}}
+            format!("\"instruction_bytes\":\"{}\",\"registers\":{:?},\"selectors\":{:?},\"eflags\":{},\"msw\":{}",bytes.iter().map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" "),p.cpu.regs,p.selectors,p.cpu.eflags,p.image.msw)
+        }).unwrap_or_else(||"\"instruction_bytes\":\"\"".into());
+        // Native graphics sample VRAM directly; preserve JSON frames for other clients.
+        let native_video=self.native_video;
+        let native_graphics=native_video&&self.loaded.as_ref()
+            .and_then(|p|p.ram.load(0x449,MemWidth::Byte).ok())
+            .is_some_and(|mode|matches!(mode,4|5|6|0x0d|0x0e|0x10|0x12|0x13));
+        let graphics=if native_video{String::new()}else{self.loaded.as_ref().and_then(super::planar::mode13_snapshot).map_or(String::new(),|g|format!(",\"graphics13\":\"{g}\",\"palette\":\"{}\"",self.loaded.as_ref().unwrap().vga.palette_hex()))};
+        let cga=if native_video{String::new()}else{self.loaded.as_ref().and_then(|p|match p.ram.load(0x449,MemWidth::Byte).ok(){
+            Some(bios_mode @ (4|5|6))=>{let mode=if bios_mode==6{6}else if p.vga.cga_mode()&4!=0{5}else{4};Some(format!(",\"graphics_cga\":\"{}\",\"cga_mode\":{mode},\"cga_color\":{}",
+                p.ram.bytes()[0xb8000..0xbc000].iter().map(|b|format!("{b:02x}")).collect::<String>(),p.vga.cga_color()))},
+            _=>None,
+        }).unwrap_or_default()};
+        // 16-colour planar modes: each plane's used bytes, then the 16 RGB colours.
+        let planar=if native_video{String::new()}else{self.loaded.as_ref().and_then(super::planar::snapshot).map(|(mode,g,planes,rgb)|
+            format!(",\"graphics_planar\":\"{planes}\",\"planar_mode\":{mode},\"planar_width\":{},\"planar_height\":{},\"planar_rgb\":\"{rgb}\"",g.width,g.height)).unwrap_or_default()};
+        let raw_keyboard=self.loaded.as_ref().is_some_and(|p|keyboard::hooked(p).unwrap_or(false));
+        let eip=self.loaded.as_ref().map(|p|p.cpu.eip).unwrap_or(0);
+        // The speaker: times it was switched on so far, and its tone now (0 off).
+        let(beeps,tone)=self.loaded.as_ref().map_or((0,0),|p|(p.speaker.beeps,p.speaker.tone()));
+        let(blocks,native)=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(b),_)=>b.block_stats(),(None,Some(p))=>(p.blocks.blocks,p.blocks.native_instructions),(None,None)=>(0,0)};
+        let single=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(b),_)=>b.single_stats(),(None,Some(p))=>p.blocks.single_instructions,(None,None)=>0};
+        let interpreted=self.backend.as_ref().and_then(|b|b.reference_stats()).unwrap_or_else(||self.loaded.as_ref().map_or(0,|p|p.blocks.interpreted_instructions));
+        let application=self.backend.as_ref().map_or_else(String::new,|b|b.diagnostics());
+        // Returns from block chains to the DOS loop (no chains with a backend).
+        let block_runs=match(self.backend.as_ref(),self.loaded.as_ref()){(Some(_),_)=>blocks,(None,Some(p))=>p.blocks.runs,(None,None)=>0};
+        let mode_control=self.loaded.as_ref().map_or(0x29,|p|p.vga.cga_mode());
+        let native_total=native+single;
+        let compare_branches=self.loaded.as_ref().map_or(0,|p|p.blocks.compare_branches);
+        let diagnostic=format!("\"video_enabled\":{},\"text_blink\":{},\"cga_mode_control\":{mode_control},{diagnostic},\"native_blocks\":{blocks},\"native_compare_branches\":{compare_branches},\"native_block_runs\":{block_runs},\"native_block_instructions\":{native},\"native_single_instructions\":{single},\"native_total_instructions\":{native_total},\"interpreter_instructions\":{interpreted}{application}",mode_control&8!=0,mode_control&0x20!=0);
+        let fpu_present=self.loaded.as_ref().is_some_and(|p|p.fpu.available());
+        let com1_wait=matches!(self.stop,Stop::WaitingForInput)&&self.loaded.as_ref().is_some_and(services::stdin_aux);
+        let view=self.loaded.as_ref().map(|p|p.dos.mouse.view());
+        let (present,active,visible,mx,my,max_x,max_y)=view.map_or((false,false,false,0,0,639,199),|v|(v.present,v.active,v.visible,v.x,v.y,v.max_x,v.max_y));
+        // Text modes: the session already applied the text cursor masks.
+        let drawn=self.loaded.as_ref().is_some_and(|p|Self::mouse_cell(p,columns).ok().flatten().is_some());
+        // Graphics cursor from AX=0009h: hot spot, then 16 screen-mask and
+        // 16 cursor-mask rows (high bit leftmost) as little-endian words.
+        let shape=self.loaded.as_ref().and_then(|p|p.dos.mouse.shape()).map_or(String::new(),|(hx,hy,rows)|
+            format!(",\"mouse_hotspot\":[{hx},{hy}],\"mouse_shape\":\"{}\"",rows.iter().map(|w|format!("{:02x}{:02x}",w&0xff,w>>8)).collect::<String>()));
+        let video_watch=self.loaded.as_ref().map_or_else(||r#"{\"enabled\":false}"#.to_string(),|p|p.ram.video_watch_json());
+        let diagnostic=format!("{diagnostic},\"video_writes\":{video_watch},\"native_graphics\":{native_graphics},\"fpu_present\":{fpu_present},\"mouse_present\":{present},\"mouse_active\":{active},\"mouse_visible\":{visible},\"mouse_drawn\":{drawn},\"mouse_x\":{mx},\"mouse_y\":{my},\"mouse_max_x\":{max_x},\"mouse_max_y\":{max_y}{shape}");
+        Ok(format!("{{\"protocol\":1,\"buffered_run\":true,\"key_edges\":true,\"raw_keyboard\":{raw_keyboard},\"seq\":{seq},\"ok\":{ok},\"text\":{},\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"com1_wait\":{com1_wait},\"cs\":{cs},\"eip\":{eip},{diagnostic},\"columns\":{columns},\"cursor\":[{row},{column}],\"screen\":\"{hex}\"{graphics}{cga}{planar},\"beeps\":{beeps},\"tone\":{tone},\"com1\":\"{com1}\",\"output\":{}}}",
+            quote(text),quote(&detail),self.steps,self.idle_hint,quote(&crate::dos_encoding::decode(output))))
+    }
+    /// One protocol command: `run N`, `key ASCII SCAN`, `break`, `clock OFFSET`, `snapshot` or `quit`.
+    pub fn command(&mut self,seq:u64,line:&str)->Result<(String,bool),String>{
+        let words:Vec<&str>=line.split_whitespace().collect();
+        // Execute without serializing a framebuffer. The frontend requests a
+        // full snapshot when it is ready to present the latest buffered state.
+        if let ["run",n,"buffered"]=words.as_slice(){
+            if let Ok(n)=n.parse::<usize>(){if (1..=MAX_STEPS).contains(&n){
+                let output=self.run(n)?;let(status,detail)=self.status();
+                let p=self.loaded.as_mut().ok_or("session state lost")?;
+                let com1= p.com1.as_mut().map_or(Vec::new(),|s|std::mem::take(&mut s.tx));
+                let hex:String=com1.iter().map(|b|format!("{b:02x}")).collect();
+                return Ok((format!("{{\"protocol\":1,\"seq\":{seq},\"ok\":true,\"frame_pending\":true,\"status\":\"{status}\",\"detail\":{},\"steps\":{},\"idle_hint\":{},\"beeps\":{},\"tone\":{},\"com1\":\"{hex}\",\"output\":{}}}",quote(&detail),self.steps,self.idle_hint,p.speaker.beeps,p.speaker.tone(),quote(&crate::dos_encoding::decode(&output))),false));
+            }}
+        }
+        let mut output=Vec::new();
+        let(ok,text,quit)=match words.as_slice(){
+            []|["snapshot"]=>(true,String::new(),false),
+            ["fpu",mode @ ("none"|"80387")]=>{
+                if self.started{(false,"FPU selection requires a fresh session before the first run".into(),false)}
+                else{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    p.select_fpu(*mode=="80387")?;
+                    (true,format!("FPU: {}",p.fpu.name()),false)
+                }
+            },
+            ["fpu",..]=>(false,"fpu requires none or 80387".into(),false),
+            // Explicit opt-in while callbacks and custom cursors are incomplete.
+            // Never advertise a mouse to an existing DOS app by surprise.
+            ["mouse","on"]=>{
+                if self.started{(false,"mouse on requires a fresh session before the first run".into(),false)}
+                else{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    if p.booted{
+                        if p.com1.is_none(){serial::attach(p)?;}
+                        p.com1.as_mut().unwrap().attach_mouse();
+                        (true,"Serial mouse enabled on COM1".into(),false)
+                    }else{
+                        let vector=p.ram.load(0x33*4,MemWidth::Dword).map_err(|e|format!("mouse IVT read: {e:?}"))?;
+                        if vector!=0 && vector!=vectors::entry(0x33){
+                            (false,"INT 33h already belongs to another mouse handler".into(),false)
+                        }else{
+                            p.ram.store(0x33*4,MemWidth::Dword,vectors::entry(0x33))
+                                .map_err(|e|format!("mouse IVT write: {e:?}"))?;
+                            p.dos.mouse.enable(vector);(true,"DOS mouse enabled".into(),false)
+                        }
+                    }
+                }
+            },
+            // X/Y are Microsoft virtual mouse coordinates; BUTTONS bit 0/1/2
+            // represents left/right/middle. Events never enter the BIOS key ring.
+            ["mouse",x,y,buttons]=>match(x.parse::<u16>(),y.parse::<u16>(),buttons.parse::<u16>()){
+                (Ok(x),Ok(y),Ok(buttons)) if buttons<=7=>{self.mouse(x,y,buttons)?;(true,String::new(),false)},
+                _=>(false,"mouse needs X Y BUTTONS (0..7)".into(),false),
+            },
+            ["run",n]=>match n.parse::<usize>(){
+                Ok(n) if (1..=MAX_STEPS).contains(&n)=>{output=self.run(n)?;(true,String::new(),false)},
+                _=>(false,"run budget must be 1..1000000".into(),false),
+            },
+            [direction @ ("keydown"|"keyup"),a,s]=>match(a.parse::<u8>(),s.parse::<u8>()){
+                (Ok(a),Ok(s))=>if self.key_edge(a,s,*direction=="keydown")?{(true,String::new(),false)}else{(false,"keyboard scan codes still waiting for the program".into(),false)},
+                _=>(false,"key edge needs ASCII and scan code bytes".into(),false),
+            },
+            ["key",a,s]=>match(a.parse::<u8>(),s.parse::<u8>()){
+                (Ok(a),Ok(s))=>if self.key(a,s)?{(true,String::new(),false)}else{(false,"BIOS keyboard buffer full".into(),false)},
+                _=>(false,"key needs ASCII and scan code bytes".into(),false),
+            },
+            // `shift FLAGS`: the shift keys held now, as BIOS 0040:0017 bits 0-3
+            // (right Shift, left Shift, Ctrl, Alt); the toggle bits are kept.
+            ["shift",flags]=>match flags.parse::<u8>(){
+                Ok(flags) if flags<16=>{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    let old=p.ram.load(0x417,MemWidth::Byte).map_err(|e|format!("keyboard flags: {e:?}"))?as u8;
+                    p.ram.store(0x417,MemWidth::Byte,u32::from(old&0xf0|flags)).map_err(|e|format!("keyboard flags: {e:?}"))?;
+                    (true,String::new(),false)
+                },
+                _=>(false,"shift needs flags 0..15".into(),false),
+            },
+            // `clock OFFSET`: run the clock on host time, OFFSET seconds east of UTC.
+            ["clock",offset]=>match offset.parse::<i64>(){
+                Ok(offset) if offset.abs()<=14*3600=>{self.loaded.as_mut().ok_or("session state lost")?.clock_offset=Some(offset);(true,String::new(),false)},
+                _=>(false,"clock needs a UTC offset in seconds (-50400..50400)".into(),false),
+            },
+            // `rtc-year YEAR`: the RTC and DOS's date run in YEAR from today's
+            // month, day and time (after `clock`).
+            ["rtc-year",year]=>match year.parse::<u32>(){
+                Ok(year)=>match self.loaded.as_mut().ok_or("session state lost")?.set_rtc_year(year){Ok(())=>(true,String::new(),false),Err(e)=>(false,e,false)},
+                _=>(false,"rtc-year needs a year (1980..2099)".into(),false),
+            },
+            // `guest-keymap NAME`: the guest's keyboard layout (us, uk, fi) for
+            // text pasted into a booted machine.
+            ["guest-keymap",name]=>match super::guest_keymap::Keymap::parse(name){
+                Ok(map)=>{self.keymap=map;(true,String::new(),false)},
+                Err(e)=>(false,e,false),
+            },
+            // `country CODE`: the DOS country, as AH38 with DX=FFFFh would set it.
+            ["country",code]=>match code.parse::<u16>(){
+                Ok(code) if COUNTRIES.contains(&code)=>{self.loaded.as_mut().ok_or("session state lost")?.dos.country=code;(true,String::new(),false)},
+                _=>(false,"country needs 1 or 358".into(),false),
+            },
+            // `ansi on`: load the ANSI.SYS-style CON driver, as DEVICE=ANSI.SYS would.
+            // Diagnostics are opt-in to preserve normal Termux performance.
+            ["video-watch","on"]=>{
+                self.loaded.as_mut().ok_or("session state lost")?.ram.start_video_watch();
+                (true,"Video write counter enabled".into(),false)
+            },
+            ["video-watch","off"]=>{
+                self.loaded.as_mut().ok_or("session state lost")?.ram.stop_video_watch();
+                (true,"Video write counter disabled".into(),false)
+            },
+            ["ansi","on"]=>{super::console::ansi::install(self.loaded.as_mut().ok_or("session state lost")?)?;(true,String::new(),false)},
+            ["console","com1"]=>{
+                let p=self.loaded.as_mut().ok_or("session state lost")?;
+                if self.steps!=0{return Err("console com1 must be selected before execution".into());}
+                if p.com1.is_none(){return Err("COM1 is not attached".into());}
+                let table=u32::from(p.dos.psp)*16+0x18;
+                p.ram.check_write(table,MemWidth::Word).map_err(|e|format!("console handles: {e:?}"))?;
+                p.ram.store(table,MemWidth::Word,0x0303).map_err(|e|format!("console handles: {e:?}"))?;
+                p.com1.as_mut().unwrap().info|=0x23;
+                (true,String::new(),false)
+            },
+            // Media selection is a host operation; it does not run the guest.
+            ["diskset",drive,..]=>{
+                let path=line.trim_start().strip_prefix("diskset").unwrap_or("").trim_start().strip_prefix(drive).unwrap_or("").trim();
+                let result=match parse_drive_letter(drive){
+                    Some(letter) if !path.is_empty()=>self.disk_set(letter,&crate::dos_config::host_path(path)),
+                    _=>Err("diskset needs A or B and a manifest path".into()),
+                };
+                match result{Ok(text)=>(true,text,false),Err(e)=>(false,e,false)}
+            },
+            ["disk",drive]|["disk",drive,_]=>{
+                let selection=line.split_whitespace().nth(2);
+                let result=match parse_drive_letter(drive){Some(letter)=>self.disk(letter,selection),None=>Err("disk needs A or B and optionally next, prev or a disk number".into())};
+                match result{Ok(text)=>(true,text,false),Err(e)=>(false,e,false)}
+            },
+            // `mount DRIVE PATH`: mount or replace drive A..E with a host folder or .img/.ima image.
+            ["mount",drive,..]=>{
+                let path=line.trim_start().strip_prefix("mount").unwrap_or("").trim_start().strip_prefix(drive).unwrap_or("").trim();
+                match parse_drive_letter(drive){
+                    Some(letter) if !path.is_empty()=>{
+                        match self.mount_media(letter,path){
+                            Ok(text)=>(true,text,false),
+                            Err(e)=>(false,e,false),
+                        }
+                    },
+                    _=>(false,"mount needs drive A..E and a folder or .img/.ima path".into(),false),
+                }
+            },
+            ["mount"]=>(false,"mount needs drive A..E and a folder or .img/.ima path".into(),false),
+            // `unmount DRIVE`: detach drive A..E when no files are open on it.
+            ["unmount",drive]=>match parse_drive_letter(drive){
+                Some(letter)=>{
+                    match self.unmount_media(letter){
+                        Ok(text)=>(true,text,false),
+                        Err(e)=>(false,e,false),
+                    }
+                },
+                None=>(false,"unmount needs drive A..E".into(),false),
+            },
+            ["unmount"]=>(false,"unmount needs drive A..E".into(),false),
+            // `com1 HEX`: bytes arriving at COM1 from the host terminal.
+            ["com1",hex]=>match(0..hex.len()).step_by(2).map(|i|hex.get(i..i+2).and_then(|b|u8::from_str_radix(b,16).ok())).collect::<Option<Vec<u8>>>(){
+                Some(bytes) if !bytes.is_empty()=>{
+                    let p=self.loaded.as_mut().ok_or("session state lost")?;
+                    let pic=&mut p.speaker.pic;
+                    match p.com1.as_mut(){
+                        Some(port)=>{port.rx.extend(bytes);port.update_irq(pic);(true,String::new(),false)},
+                        None=>(false,"COM1 is not attached".into(),false),
+                    }
+                },
+                _=>(false,"com1 needs bytes in hex".into(),false),
+            },
+            // `break`: Ctrl+Break, as the BIOS and DOS's INT 1Bh handler take it.
+            // When the program owns INT 09h or INT 1Bh, Ctrl and Scroll Lock
+            // arrive through IRQ1 and the BIOS keyboard handler calls INT 1Bh.
+            ["break"]=>match self.ctrl_break()?{
+                Ok(())=>(true,String::new(),false),
+                Err(message)=>(false,message,false),
+            },
+            ["quit"]=>(true,String::new(),true),
+            _=>(false,format!("unknown command: {line}"),false),
+        };
+        Ok((self.reply(seq,ok,&text,&output)?,quit))
+    }
+}
+pub(crate) fn quote(text:&str)->String{crate::pc::json_quote(text)}
+/// `--dos-session [--mount DIR] [--args TEXT] PATH`: PATH is a file or
+/// IMAGE::INNER inside a container. A FAT16 image becomes read-only drive C:
+/// and DIR the next drive; TEXT is the program's command line.
+pub fn serve(path:&str,mount:Option<&str>,args:Option<&str>,log_path:&str,config:Option<&str>,fpu_mode:Option<&str>)->Result<(),String>{
+    let mut logger=stoplog::Logger::new(log_path,path);
+    let mut session=open(path,mount,args,config,fpu_mode)?;
+    serve_session(&mut session,&mut logger)
+}
+#[cfg(feature="dine-library")]
+pub(crate) fn serve_native(mut session:Session,name:&str)->Result<(),String>{
+    let mut logger=stoplog::Logger::new("",name);serve_session(&mut session,&mut logger)
+}
+/// Load PATH (a file or IMAGE::INNER) with its drives, configuration, FPU
+/// choice, command line and COM1, as `--dos-session` and `--dos-console` do.
+pub(crate) fn open(path:&str,mount:Option<&str>,args:Option<&str>,config:Option<&str>,fpu_mode:Option<&str>)->Result<Session,String>{
+    if Path::new(path).extension().is_some_and(|e|e=="pilapp"){return crate::native_application::open(path,mount,args,config,fpu_mode);}
+    let _span=crate::profile::span("dos_session_open");
+    let containers=super::super::containers::split_container_path(path);
+    let mut drives=Vec::new();let mut inner=None;
+    let bytes=match containers{
+        Some((container,entry))=>{
+            let is_image=Path::new(container).extension().and_then(|x|x.to_str()).is_some_and(|x|x.eq_ignore_ascii_case("img")||x.eq_ignore_ascii_case("ima"));
+            if is_image{
+                let data=super::super::containers::read_image(Path::new(container))?;
+                let tree=std::sync::Arc::new(super::super::containers::fat16_tree(&data)?);
+                let bytes=tree.read_entry(entry)?.as_ref().clone();
+                drives.push(Source::Image(tree));inner=Some(entry);
+                bytes
+            }else{
+                super::super::containers::read_entry(Path::new(container),entry)?
+            }
+        },
+        None=>read_file(Path::new(path))?,
+    };
+    if let Some(mount)=mount{drives.push(open_mount_source(mount)?);}
+    // Z: holds files in memory for the session, and TEMP points there.
+    drives.push(Source::Memory(MemDir::default()));
+    let loaded=load_with_drives(&bytes,path,drives,inner)?;
+    let skip=mount.map(|_|if inner.is_some(){b'D'}else{b'C'});
+    configured(loaded,args,config,skip,fpu_mode)
+}
+/// Common configuration for file-backed and embedded guest sessions.
+pub(crate) fn configured(mut loaded:Loaded,args:Option<&str>,config:Option<&str>,skip:Option<u8>,fpu_mode:Option<&str>)->Result<Session,String>{
+    crate::dos_config::apply(&mut loaded,config,skip)?;
+    if let Some(mode)=fpu_mode{
+        match mode{"none"=>loaded.select_fpu(false)?,"80387"=>loaded.select_fpu(true)?,_=>return Err("FPU must be none or 80387".into())}
+    }
+    if let Some(args)=args{set_command_tail(&mut loaded,args)?;}
+    serial::attach(&mut loaded)?;
+    let mut session=Session::new(loaded);
+    for (letter,manifest) in crate::dos_config::disk_sets(config)?{session.disk_set(letter,&manifest)?;}
+    Ok(session)
+}
+fn serve_session(session:&mut Session,logger:&mut stoplog::Logger)->Result<(),String>{
+    // The normal interpreted pil.exe owns opt-in Win32 graphics, not Python.
+    #[cfg(windows)]
+    let mut desktop=std::env::var("DINE_VIDEO").ok()
+        .filter(|mode|matches!(mode.to_ascii_lowercase().as_str(),"window"|"desktop"))
+        .map(|_|crate::dine_display::Display::new());
+    #[cfg(windows)]
+    {session.native_video=desktop.is_some();}
+    #[cfg(windows)]
+    let mut last_video=std::time::Instant::now()-std::time::Duration::from_millis(40);
+    #[cfg(windows)]
+    let mut last_bda_mode:Option<u32>=None;
+    #[cfg(windows)]
+    crate::dine_display::debug_log(&format!("DOS session started: DINE_VIDEO={:?}, native_window={}",
+        std::env::var("DINE_VIDEO").ok(),desktop.is_some()));
+    let stdin=std::io::stdin();let mut stdout=std::io::stdout();
+    let(first,_)=session.command(0,"snapshot")?;writeln!(stdout,"{first}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
+    for(seq,line)in stdin.lock().lines().enumerate(){
+        let line=line.map_err(|e|e.to_string())?;
+        #[cfg(windows)]
+        let mut native_mouse_dirty=false;
+        #[cfg(windows)]
+        if let Some(display)=desktop.as_ref(){
+            let events=display.drain_mouse_events();
+            if !events.is_empty(){
+                if let Some(p)=session.loaded.as_mut(){
+                    let mode=p.ram.load(0x449,MemWidth::Byte).unwrap_or(3) as u8;
+                    for (x,y,buttons) in events {
+                        p.dos.mouse.host(x,y,buttons,mode);
+                    }
+                    native_mouse_dirty=p.dos.mouse.view().visible;
+                }
+            }
+        }
+        let(reply,quit)=if line.len()>MAX_LINE{(session.reply(seq as u64+1,false,"command line too long",&[])?,false)}else{session.command(seq as u64+1,&line)?};
+        #[cfg(windows)]
+        if let Some(p)=session.loaded.as_ref(){
+            let mode=p.ram.load(0x449,MemWidth::Byte).ok();
+            if mode!=last_bda_mode{
+                crate::dine_display::debug_log(&format!(
+                    "BDA video mode changed: previous={last_bda_mode:?} current={mode:?}; steps={} status={}",
+                    session.steps,session.status().0));
+                last_bda_mode=mode;
+            }
+        }
+        #[cfg(windows)]
+        let reply=if let Some(display)=desktop.as_mut(){
+            let waiting=session.status().0=="waiting_input";
+            if waiting||native_mouse_dirty||last_video.elapsed()>=std::time::Duration::from_millis(33){
+                if let Some(p)=session.loaded.as_ref(){
+                    display.update(p,waiting);
+                    last_video=std::time::Instant::now();
+                }
+            }
+            // Host window close is not a guest DOS exit.
+            if display.window_closed(){
+                format!("{},\"native_window_closed\":true}}",reply.strip_suffix('}').unwrap_or(&reply))
+            }else{reply}
+        }else{reply};
+        if session.status().0=="stopped"{if let Some(p)=session.loaded.as_ref(){logger.record(p,"stopped",&session.status().1,session.steps,&session.exceptions,session.exception_count);}}
+        writeln!(stdout,"{reply}").map_err(|e|e.to_string())?;stdout.flush().map_err(|e|e.to_string())?;
+        if quit{break;}
+    }
+    Ok(())
+}
+
